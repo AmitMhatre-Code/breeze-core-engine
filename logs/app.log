@@ -1,0 +1,881 @@
+2026-03-19 23:45:26 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-19 23:45:26 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-19 23:45:32 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-19 23:45:32 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to data/
+2026-03-19 23:45:32 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/NSEFreezeLimits.txt
+2026-03-19 23:45:32 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/BSEFreezeLimits.txt
+2026-03-19 23:45:32 | WARNING  | main | ICICI master update failed at startup: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/main.py", line 130, in start_application
+    breeze.update_ICICImaster()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1209, in update_ICICImaster
+    self.load_qty_limits([
+    ~~~~~~~~~~~~~~~~~~~~^^
+        (os.path.join(cfg.DATA_PATH, cfg.LIMITS_MASTER_NSE), cfg.NFO),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        (os.path.join(cfg.DATA_PATH, cfg.LIMITS_MASTER_BSE), cfg.BFO),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ])
+    ^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1292, in load_qty_limits
+    raise FileNotFoundError("No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.")
+FileNotFoundError: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+2026-03-20 12:10:49 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:10:49 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:10:50 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:10:50 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to data/
+2026-03-20 12:10:50 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/NSEFreezeLimits.txt
+2026-03-20 12:10:50 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/BSEFreezeLimits.txt
+2026-03-20 12:10:50 | WARNING  | main | ICICI master update failed at startup: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/main.py", line 140, in start_application
+    breeze.update_ICICImaster()
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1209, in update_ICICImaster
+    self.load_qty_limits([
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1292, in load_qty_limits
+    raise FileNotFoundError("No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.")
+FileNotFoundError: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+2026-03-20 12:15:08 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:15:08 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:15:08 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:15:08 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to data/
+2026-03-20 12:15:08 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/NSEFreezeLimits.txt
+2026-03-20 12:15:08 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/BSEFreezeLimits.txt
+2026-03-20 12:15:08 | WARNING  | main | ICICI master update failed at startup: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/main.py", line 140, in start_application
+    breeze.update_ICICImaster()
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1209, in update_ICICImaster
+    self.load_qty_limits([
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1292, in load_qty_limits
+    raise FileNotFoundError("No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.")
+FileNotFoundError: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+2026-03-20 12:15:29 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:15:29 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:15:29 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:15:29 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to data/
+2026-03-20 12:15:29 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/NSEFreezeLimits.txt
+2026-03-20 12:15:29 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/BSEFreezeLimits.txt
+2026-03-20 12:15:29 | WARNING  | main | ICICI master update failed at startup: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/main.py", line 142, in start_application
+    breeze.update_ICICImaster()
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1209, in update_ICICImaster
+    self.load_qty_limits([
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1292, in load_qty_limits
+    raise FileNotFoundError("No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.")
+FileNotFoundError: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+2026-03-20 12:15:31 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:15:31 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:15:31 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:15:31 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to data/
+2026-03-20 12:15:31 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/NSEFreezeLimits.txt
+2026-03-20 12:15:31 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/BSEFreezeLimits.txt
+2026-03-20 12:15:31 | WARNING  | main | ICICI master update failed at startup: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/main.py", line 142, in start_application
+    breeze.update_ICICImaster()
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1209, in update_ICICImaster
+    self.load_qty_limits([
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1292, in load_qty_limits
+    raise FileNotFoundError("No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.")
+FileNotFoundError: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+2026-03-20 12:16:19 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:16:19 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:16:20 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:16:20 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to data/
+2026-03-20 12:16:20 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/NSEFreezeLimits.txt
+2026-03-20 12:16:20 | WARNING  | icici_breeze_backend.app.services.processor | Quantity limits file not found: data/BSEFreezeLimits.txt
+2026-03-20 12:16:20 | WARNING  | main | ICICI master update failed at startup: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/main.py", line 142, in start_application
+    breeze.update_ICICImaster()
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1209, in update_ICICImaster
+    self.load_qty_limits([
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/services/processor.py", line 1292, in load_qty_limits
+    raise FileNotFoundError("No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.")
+FileNotFoundError: No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.
+2026-03-20 12:16:42 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:16:42 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:16:42 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:16:43 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 12:16:43 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 12:16:43 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 12:16:44 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 12:16:44 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:16:44 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:16:44 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 12:16:44 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 12:16:44 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:16:44 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:16:51 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:16:51 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:16:51 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:16:51 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 12:16:51 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 12:16:51 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 12:16:52 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 12:16:52 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:16:52 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:16:52 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 12:16:52 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 12:16:52 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:16:52 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:20:47 | INFO     | httpx | HTTP Request: GET https://accounts.google.com/.well-known/openid-configuration "HTTP/1.1 200 OK"
+2026-03-20 12:20:47 | INFO     | app.middleware | Incoming request GET /auth/google user_id=127.0.0.1
+2026-03-20 12:20:51 | INFO     | httpx | HTTP Request: POST https://oauth2.googleapis.com/token "HTTP/1.1 200 OK"
+2026-03-20 12:20:51 | INFO     | httpx | HTTP Request: GET https://www.googleapis.com/oauth2/v3/certs "HTTP/1.1 200 OK"
+2026-03-20 12:20:51 | INFO     | app.middleware | Incoming request GET /auth/google/callback user_id=127.0.0.1
+2026-03-20 12:20:51 | INFO     | app.middleware | Incoming request GET /auth/icici-redirect user_id=127.0.0.1
+2026-03-20 12:21:06 | INFO     | app.middleware | Incoming request POST /icici-return user_id=127.0.0.1
+2026-03-20 12:21:56 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:21:56 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:21:56 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:21:56 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 12:21:56 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 12:21:56 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 12:21:57 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 12:21:57 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:21:57 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:21:57 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 12:21:57 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 12:21:57 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:21:57 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:22:00 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:22:00 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:22:01 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:22:01 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 12:22:01 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 12:22:01 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 12:22:02 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 12:22:02 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:22:02 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:22:02 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 12:22:02 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 12:22:02 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:22:02 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:22:07 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:22:07 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:22:08 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:22:08 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 12:22:08 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 12:22:08 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 12:22:08 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 12:22:08 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:22:08 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:22:08 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 12:22:09 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 12:22:09 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:22:09 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:22:09 | INFO     | app.middleware | Incoming request POST /icici-return user_id=testclient
+2026-03-20 12:22:09 | INFO     | httpx | HTTP Request: POST http://testserver/icici-return?apisession=abc123 "HTTP/1.1 303 See Other"
+2026-03-20 12:22:09 | INFO     | app.middleware | Incoming request POST /icici-return user_id=testclient
+2026-03-20 12:22:09 | INFO     | httpx | HTTP Request: POST http://testserver/icici-return?apisession=abc123 "HTTP/1.1 303 See Other"
+2026-03-20 12:25:37 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:25:37 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:25:37 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:25:37 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 12:25:37 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 12:25:37 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 12:25:38 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 12:25:38 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:25:38 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:25:38 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 12:25:38 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 12:25:38 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:25:38 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:25:57 | INFO     | httpx | HTTP Request: GET https://accounts.google.com/.well-known/openid-configuration "HTTP/1.1 200 OK"
+2026-03-20 12:25:57 | INFO     | app.middleware | Incoming request GET /auth/google user_id=127.0.0.1
+2026-03-20 12:26:01 | INFO     | httpx | HTTP Request: POST https://oauth2.googleapis.com/token "HTTP/1.1 200 OK"
+2026-03-20 12:26:01 | INFO     | httpx | HTTP Request: GET https://www.googleapis.com/oauth2/v3/certs "HTTP/1.1 200 OK"
+2026-03-20 12:26:01 | INFO     | app.middleware | Incoming request GET /auth/google/callback user_id=127.0.0.1
+2026-03-20 12:26:01 | INFO     | app.middleware | Incoming request GET /auth/icici-redirect user_id=127.0.0.1
+2026-03-20 12:26:17 | INFO     | app.middleware | Incoming request POST /icici-return user_id=127.0.0.1
+2026-03-20 12:27:09 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:27:09 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:27:09 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:27:09 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 12:27:09 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 12:27:09 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 12:27:10 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 12:27:10 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:27:10 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:27:10 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 12:27:10 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 12:27:10 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:27:10 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:53:54 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:53:54 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:53:54 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:53:54 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 12:53:54 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 12:53:54 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 12:53:55 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 12:53:55 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:53:55 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:53:56 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 12:53:56 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 12:53:56 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:53:56 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:55:54 | INFO     | httpx | HTTP Request: GET https://accounts.google.com/.well-known/openid-configuration "HTTP/1.1 200 OK"
+2026-03-20 12:55:54 | INFO     | app.middleware | Incoming request GET /auth/google user_id=127.0.0.1
+2026-03-20 12:55:58 | INFO     | httpx | HTTP Request: POST https://oauth2.googleapis.com/token "HTTP/1.1 200 OK"
+2026-03-20 12:55:58 | INFO     | httpx | HTTP Request: GET https://www.googleapis.com/oauth2/v3/certs "HTTP/1.1 200 OK"
+2026-03-20 12:55:58 | INFO     | app.middleware | Incoming request GET /auth/google/callback user_id=127.0.0.1
+2026-03-20 12:55:58 | INFO     | app.middleware | Incoming request GET /auth/icici-redirect user_id=127.0.0.1
+2026-03-20 12:56:14 | INFO     | app.middleware | Incoming request POST /icici-return user_id=127.0.0.1
+2026-03-20 12:56:14 | INFO     | app.middleware | Incoming request GET /auth/challenge-context user_id=127.0.0.1
+2026-03-20 12:56:25 | INFO     | icici_breeze_backend.app.api.v1.home | login_submit user_id=VIKRAMMH apisession_present=True secret_fragment_present=True
+2026-03-20 12:56:29 | INFO     | httpx | HTTP Request: GET https://api.icicidirect.com/breezeapi/api/v1/customerdetails "HTTP/1.1 200 OK"
+2026-03-20 12:56:29 | INFO     | httpx | HTTP Request: GET https://api.icicidirect.com/breezeapi/api/v1/margin "HTTP/1.1 200 OK"
+2026-03-20 12:56:29 | INFO     | icici_breeze_backend.app.api.v1.home | login_submit success user_id=VIKRAMMH
+2026-03-20 12:56:29 | INFO     | app.middleware | Incoming request POST /auth/icici-session user_id=127.0.0.1
+2026-03-20 12:56:31 | INFO     | icici_breeze_backend.app.services.processor | get_session_breeze: session created for user_id=VIKRAMMH
+2026-03-20 12:56:33 | ERROR    | main | Unhandled exception: path=/home/data correlation_id=70f26172-e232-43bc-b34c-65fceb36519d error=processor.get_margin_situation() missing 1 required positional argument: 'target_margin_ute'
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 98, in receive
+    return self.receive_nowait()
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 93, in receive_nowait
+    raise WouldBlock
+anyio.WouldBlock
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 78, in call_next
+    message = await recv_stream.receive()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 118, in receive
+    raise EndOfStream
+anyio.EndOfStream
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/request_logger.py", line 20, in dispatch
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/correlation.py", line 14, in dispatch
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/rate_limit.py", line 39, in dispatch
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/sessions.py", line 86, in __call__
+    await self.app(scope, receive, send_wrapper)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 274, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 191, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/api/v1/home.py", line 385, in get_home_api
+    margin = breeze.get_margin_situation(user_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: processor.get_margin_situation() missing 1 required positional argument: 'target_margin_ute'
+2026-03-20 12:56:33 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 12:56:35 | ERROR    | main | Unhandled exception: path=/home/data correlation_id=16030747-7475-4952-a0fc-cb58e5cbeedb error=processor.get_margin_situation() missing 1 required positional argument: 'target_margin_ute'
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 98, in receive
+    return self.receive_nowait()
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 93, in receive_nowait
+    raise WouldBlock
+anyio.WouldBlock
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 78, in call_next
+    message = await recv_stream.receive()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 118, in receive
+    raise EndOfStream
+anyio.EndOfStream
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/request_logger.py", line 20, in dispatch
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/correlation.py", line 14, in dispatch
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/rate_limit.py", line 39, in dispatch
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/sessions.py", line 86, in __call__
+    await self.app(scope, receive, send_wrapper)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 274, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 191, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/api/v1/home.py", line 385, in get_home_api
+    margin = breeze.get_margin_situation(user_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: processor.get_margin_situation() missing 1 required positional argument: 'target_margin_ute'
+2026-03-20 12:56:35 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 12:56:38 | ERROR    | main | Unhandled exception: path=/home/data correlation_id=3bcbf1c6-ed29-418f-92eb-b5c8b5b00647 error=processor.get_margin_situation() missing 1 required positional argument: 'target_margin_ute'
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 98, in receive
+    return self.receive_nowait()
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 93, in receive_nowait
+    raise WouldBlock
+anyio.WouldBlock
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 78, in call_next
+    message = await recv_stream.receive()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 118, in receive
+    raise EndOfStream
+anyio.EndOfStream
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/request_logger.py", line 20, in dispatch
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/correlation.py", line 14, in dispatch
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/rate_limit.py", line 39, in dispatch
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/sessions.py", line 86, in __call__
+    await self.app(scope, receive, send_wrapper)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 274, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 191, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/api/v1/home.py", line 385, in get_home_api
+    margin = breeze.get_margin_situation(user_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: processor.get_margin_situation() missing 1 required positional argument: 'target_margin_ute'
+2026-03-20 12:56:38 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 12:56:44 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 12:56:44 | ERROR    | main | Unhandled exception: path=/home/data correlation_id=f7516ce1-e165-45bb-8e58-2050d4cd8b0d error=processor.get_margin_situation() missing 1 required positional argument: 'target_margin_ute'
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 98, in receive
+    return self.receive_nowait()
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 93, in receive_nowait
+    raise WouldBlock
+anyio.WouldBlock
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 78, in call_next
+    message = await recv_stream.receive()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/anyio/streams/memory.py", line 118, in receive
+    raise EndOfStream
+anyio.EndOfStream
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/request_logger.py", line 20, in dispatch
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/correlation.py", line 14, in dispatch
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 108, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/middleware/rate_limit.py", line 39, in dispatch
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 84, in call_next
+    raise app_exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 70, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/sessions.py", line 86, in __call__
+    await self.app(scope, receive, send_wrapper)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 274, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 191, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/src/icici_breeze_backend/app/api/v1/home.py", line 385, in get_home_api
+    margin = breeze.get_margin_situation(user_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: processor.get_margin_situation() missing 1 required positional argument: 'target_margin_ute'
+2026-03-20 12:57:16 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:57:16 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:57:17 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:57:17 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 12:57:17 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 12:57:17 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 12:57:18 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 12:57:18 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:57:18 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:57:18 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 12:57:18 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 12:57:18 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:57:18 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:58:52 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 12:58:52 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 12:58:52 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 12:58:52 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 12:58:52 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 12:58:52 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 12:58:53 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 12:58:53 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:58:53 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:58:53 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 12:58:54 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 12:58:54 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 12:58:54 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 12:58:55 | INFO     | icici_breeze_backend.app.services.processor | get_session_breeze: session created for user_id=VIKRAMMH
+2026-03-20 12:58:57 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 12:58:57 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 12:59:42 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 12:59:43 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 12:59:47 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 12:59:47 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:01:10 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:01:10 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:04:31 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 13:04:31 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 13:04:32 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 13:04:32 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 13:04:32 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 13:04:32 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 13:04:33 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 13:04:33 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 13:04:34 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 13:04:34 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 13:04:34 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 13:04:34 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 13:04:35 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 13:04:35 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:04:35 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:04:35 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 13:04:35 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 13:04:35 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:04:35 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:04:54 | INFO     | icici_breeze_backend.app.services.processor | get_session_breeze: session created for user_id=VIKRAMMH
+2026-03-20 13:04:56 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:04:56 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:04:56 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:04:56 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:04:56 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:05:01 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 13:05:01 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 13:05:01 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 13:05:01 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 13:05:01 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 13:05:01 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 13:05:02 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 13:05:02 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:05:02 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:05:03 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 13:05:03 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 13:05:03 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:05:03 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:05:37 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 13:05:37 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 13:05:38 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 13:05:38 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 13:05:38 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 13:05:38 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 13:05:39 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 13:05:39 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:05:39 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:05:39 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 13:05:39 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 13:05:39 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:05:39 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:05:42 | INFO     | icici_breeze_backend.app.services.processor | get_session_breeze: session created for user_id=VIKRAMMH
+2026-03-20 13:05:43 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:05:43 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:05:45 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:08:31 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:08:31 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:08:32 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:08:34 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:08:34 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:08:35 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:08:38 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:08:38 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:08:39 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:08:40 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:08:40 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:08:41 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:08:52 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:08:52 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:08:52 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:08:57 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:08:57 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:08:59 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:12:18 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:12:18 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:12:19 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:16:29 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:16:29 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:16:29 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:16:30 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:16:46 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:16:46 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:17:41 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:17:41 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:17:41 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:17:48 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:17:48 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:17:48 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:17:55 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:17:55 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:17:55 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:18:03 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:18:03 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:18:05 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:18:05 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:18:05 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:18:05 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:18:31 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 13:18:31 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 13:18:32 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 13:18:32 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 13:18:32 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 13:18:32 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 13:18:33 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 13:18:33 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:18:33 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:18:33 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 13:18:33 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 13:18:33 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:18:33 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:18:36 | INFO     | icici_breeze_backend.app.services.processor | get_session_breeze: session created for user_id=VIKRAMMH
+2026-03-20 13:18:37 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:18:37 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:18:44 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:18:44 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:18:44 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:18:52 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:18:52 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:18:52 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:24:50 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:25:14 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:25:14 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 1 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:25:15 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 2 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:25:17 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 3 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:25:18 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:25:18 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:25:18 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:28:29 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:28:29 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 1 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:28:30 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 2 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:28:32 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 3 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:28:34 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:28:34 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:28:34 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:28:34 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:28:44 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 13:28:44 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 13:28:45 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 13:28:45 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 13:28:45 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 13:28:45 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 13:28:46 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 13:28:46 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:28:46 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:28:46 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 13:28:46 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 13:28:46 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:28:46 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:28:48 | INFO     | icici_breeze_backend.app.services.processor | get_session_breeze: session created for user_id=VIKRAMMH
+2026-03-20 13:28:48 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:28:48 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 1 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:28:49 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 2 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:28:51 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 3 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:28:52 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:28:52 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:28:52 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:31:25 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:31:45 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:31:45 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 1 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:31:46 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 2 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:31:48 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 3 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:31:49 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:31:49 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:31:49 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:31:52 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:31:52 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:32:02 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:32:02 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:32:02 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:32:46 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 13:32:46 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 13:32:47 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 13:32:47 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 13:32:47 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 13:32:47 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 13:32:48 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 13:32:48 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:32:48 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:32:48 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 13:32:48 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 13:32:48 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:32:48 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:32:51 | INFO     | icici_breeze_backend.app.services.processor | get_session_breeze: session created for user_id=VIKRAMMH
+2026-03-20 13:32:51 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:32:51 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 1 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:32:52 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 2 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:32:54 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 3 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:32:54 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:32:54 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:32:54 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:36:40 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:36:40 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 1 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:36:41 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 2 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:36:43 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 3 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:36:45 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:36:45 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:36:45 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:36:45 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:38:10 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:38:10 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 1 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:38:11 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 2 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:38:13 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 3 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:38:15 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:38:15 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:38:15 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:38:15 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:38:40 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:38:41 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:38:41 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:38:41 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:38:41 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:38:46 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:38:47 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:38:47 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:38:47 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:38:47 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:40:02 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:40:02 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 1 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:40:03 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 2 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:40:05 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 3 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:40:06 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:40:06 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:40:06 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:40:06 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:41:56 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:41:56 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 1 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:41:57 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 2 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:41:59 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 3 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:41:59 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:41:59 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:41:59 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:41:59 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:42:14 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:42:19 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:42:19 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:42:19 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:42:19 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:42:28 | INFO     | main | JWT_SECRET loaded (length=43). Login and credential decryption will use it.
+2026-03-20 13:42:28 | INFO     | icici_breeze_backend.app.services.processor | Downloading ICICI master from https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+2026-03-20 13:42:29 | INFO     | icici_breeze_backend.app.services.processor | ICICI master download completed
+2026-03-20 13:42:29 | INFO     | icici_breeze_backend.app.services.processor | Extracted 5 items to /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/
+2026-03-20 13:42:29 | INFO     | icici_breeze_backend.app.services.processor | Loaded quantity limits rows into raw_limits_data (222 rows)
+2026-03-20 13:42:29 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FONSEScripMaster.txt
+2026-03-20 13:42:30 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (104783 rows)
+2026-03-20 13:42:30 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:42:30 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:42:30 | INFO     | icici_breeze_backend.app.services.processor | Loading scrip master from /Users/amitmhatre/Documents/GitHub/ICICI-Breeze-Modern/backend/data/FOBSEScripMaster.txt
+2026-03-20 13:42:30 | INFO     | icici_breeze_backend.app.services.processor | Loaded raw_scrip_data from CSV (6304 rows)
+2026-03-20 13:42:30 | INFO     | icici_breeze_backend.app.services.processor | Inserted filtered data into scrip_master
+2026-03-20 13:42:30 | INFO     | icici_breeze_backend.app.services.processor | Scrip master load completed successfully
+2026-03-20 13:42:33 | INFO     | icici_breeze_backend.app.services.processor | get_session_breeze: session created for user_id=VIKRAMMH
+2026-03-20 13:42:33 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:42:33 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 1 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:42:34 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 2 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:42:36 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 3 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:42:36 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:42:36 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:42:36 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:42:46 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:42:46 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:42:46 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:42:46 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:42:46 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:42:54 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:42:56 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:42:56 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:42:56 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:42:56 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH
+2026-03-20 13:44:02 | INFO     | icici_breeze_backend.core.icici_client | Fetching portfolio for user VIKRAMMH
+2026-03-20 13:44:02 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 1 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:44:03 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 2 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:44:05 | WARNING  | icici_breeze_backend.core.icici_client | Call attempt 3 failed: 'NoneType' object has no attribute 'get'
+2026-03-20 13:44:07 | INFO     | app.middleware | Incoming request GET /home/data user_id=VIKRAMMH
+2026-03-20 13:44:07 | INFO     | app.middleware | Incoming request GET /portfolio/data user_id=VIKRAMMH
+2026-03-20 13:44:07 | INFO     | app.middleware | Incoming request GET /dashboard/vix user_id=VIKRAMMH
+2026-03-20 13:44:07 | INFO     | app.middleware | Incoming request GET /dashboard/vix/options user_id=VIKRAMMH

@@ -1,0 +1,42 @@
+# Backend dependencies for running `backend/` on Python 3.13.
+# This file is intentionally less strictly pinned than the original legacy backend requirements
+# because older `pydantic`/`pydantic-core` pins can fail to build on Python 3.13.
+#
+# Usage:
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+starlette==0.27.0
+
+sqlalchemy==2.0.23
+
+PyJWT==2.8.0
+authlib==1.2.1
+itsdangerous>=2.1.0
+cryptography==41.0.7
+python-multipart==0.0.6
+
+breeze-connect==1.0.65
+
+python-dotenv==1.0.0
+requests==2.31.0
+httpx==0.25.1
+
+markupsafe>=2.1.0
+jinja2>=3.1.0
+scipy>=1.11.0
+feedparser>=6.0.0
+
+python-json-logger==2.0.7
+pytz==2023.3
+
+# Important for Python 3.13: allow pip to pick pydantic/pydantic-core versions
+# that have prebuilt wheels for your platform (avoids native build failures).
+#
+# FastAPI will bring in `pydantic` as a dependency; we intentionally do not pin it
+# here to avoid old pydantic-core builds on Python 3.13.
+pydantic-settings>=2.0.0
+

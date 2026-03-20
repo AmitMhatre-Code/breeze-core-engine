@@ -1,0 +1,35 @@
+# Core Framework & Server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+starlette==0.27.0
+
+# Database & ORM
+sqlalchemy==2.0.23
+
+# Authentication & Cryptography
+PyJWT==2.8.0
+authlib==1.2.1
+itsdangerous>=2.1.0
+cryptography==41.0.7
+python-multipart==0.0.6
+
+# ICICI Breeze API
+breeze-connect==1.0.65
+
+# Environment & Configuration
+python-dotenv==1.0.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Utilities
+requests==2.31.0
+httpx==0.25.1
+markupsafe>=2.1.0
+scipy>=1.11.0
+feedparser>=6.0.0
+
+# Monitoring & Logging
+python-json-logger==2.0.7
+
+# Date/Time
+pytz==2023.3

@@ -1,0 +1,137 @@
+"use client";
+
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
+import { apiClient } from "@/lib/api-client";
+
+type ChallengeCtx = { user_id: string | null };
+
+function ChallengeForm() {
+  const searchParams = useSearchParams();
+  const apisession = searchParams.get("apisession") ?? "";
+  const [secret, setSecret] = useState("");
+  const [ctx, setCtx] = useState<ChallengeCtx | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiClient
+      .get<ChallengeCtx>("/auth/challenge-context")
+      .then((c) => {
+        if (!cancelled) setCtx(c);
+      })
+      .catch(() => {
+        if (!cancelled) setCtx({ user_id: null });
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const userId = ctx?.user_id ?? "";
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    setSubmitting(true);
+    try {
+      const res = await apiClient.post<{ redirect: string }>(
+        "/auth/icici-session",
+        {
+          user_id: userId,
+          apisession,
+          secret_user: secret,
+          action: "Submit",
+        },
+      );
+      window.location.href = res.redirect || "/dashboard";
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Sign-in failed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-400">
+        Loading…
+      </div>
+    );
+  }
+
+  if (!apisession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 text-zinc-100">
+        <div className="max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/80 p-6 text-sm">
+          <p className="text-zinc-300">Missing session token in URL.</p>
+          <Link href="/login" className="mt-4 inline-block text-emerald-400">
+            Back to login
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 text-zinc-50">
+      <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/80 p-8 shadow-xl">
+        <h1 className="text-xl font-semibold">Complete ICICI login</h1>
+        <p className="mt-1 text-xs text-zinc-500">Step 2 of 2</p>
+        <p className="mt-4 text-sm text-zinc-400">
+          User id{" "}
+          <span className="font-medium text-emerald-400">{userId || "—"}</span>
+        </p>
+        {err && (
+          <p className="mt-4 rounded-lg border border-red-900/50 bg-red-950/30 px-3 py-2 text-sm text-red-200">
+            {err}
+          </p>
+        )}
+        <form onSubmit={onSubmit} className="mt-6 space-y-4">
+          <label className="block text-sm text-zinc-300">
+            Challenge fragment (the part you memorized)
+            <input
+              required
+              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              autoComplete="off"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={submitting || !userId}
+            className="w-full rounded-xl bg-emerald-500 py-2 text-sm font-medium text-black hover:bg-emerald-400 disabled:opacity-50"
+          >
+            {submitting ? "Signing in…" : "Submit"}
+          </button>
+        </form>
+        <p className="mt-6 text-center text-xs text-zinc-500">
+          <Link href="/register/correct" className="text-emerald-400 hover:underline">
+            Wrong credentials? Update them
+          </Link>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export default function ChallengePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-400">
+          Loading…
+        </div>
+      }
+    >
+      <ChallengeForm />
+    </Suspense>
+  );
+}
