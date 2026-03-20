@@ -1,0 +1,3 @@
+InstrumentName,ShortName,ExchangeCode,QtyLimit
+OPTIDX,BANKEX,BANKEX,900
+OPTIDX,BSESEN,SENSEX,1000

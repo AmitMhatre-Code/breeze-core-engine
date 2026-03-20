@@ -1,0 +1,31 @@
+{% extends "common_base.html" %}
+
+{% block content %}
+
+{% include "_alert_messages.html" with context %}
+
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-12 col-lg-5 col-xl-4">
+            <div class="card">
+                <div class="card-body p-5">
+                    <h2 class="card-title text-center mb-2">Login</h2>
+                    <p class="text-center text-muted small mb-4">Sign in to access your options trading dashboard</p>
+                    <div class="text-center mb-4 py-2">
+                        {% include "_google_signin_button.html" with context %}
+                    </div>
+                    <p class="text-center mt-4 mb-0 small d-flex flex-wrap justify-content-center gap-2">
+                        <a href="/register" class="text-primary">New user? Register</a>
+                        <!-- <span class="text-muted">·</span> -->
+                        <a href="/register/correct" class="text-primary">Wrong credentials? Update them</a>
+                        <!-- <span class="text-muted">·</span> -->
+                        <a href="/register/delete" class="text-primary">Delete registration</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+

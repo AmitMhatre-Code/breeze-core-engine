@@ -64,6 +64,30 @@ echo "Starting backend on ${BACKEND_UPSTREAM_URL} ..."
 ) &
 BACK_PID=$!
 
+# Backend runs heavy startup (ICICI master zip, scrip DB) before binding; Next proxies to :8000
+# immediately and floods ECONNREFUSED until uvicorn is ready — wait for /health first.
+HEALTH_URL="http://${APP_HOST}:${BACKEND_PORT}/health"
+BACKEND_READY_TIMEOUT="${BACKEND_READY_TIMEOUT:-120}"
+echo "Waiting for backend (up to ${BACKEND_READY_TIMEOUT}s): ${HEALTH_URL} ..."
+ready=0
+for ((i = 1; i <= BACKEND_READY_TIMEOUT; i++)); do
+  if ! kill -0 "$BACK_PID" 2>/dev/null; then
+    echo "Backend exited before becoming ready." >&2
+    wait "$BACK_PID" || true
+    exit 1
+  fi
+  if curl -sf --connect-timeout 1 --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$ready" -ne 1 ]]; then
+  echo "Timed out waiting for backend at ${HEALTH_URL}" >&2
+  exit 1
+fi
+echo "Backend is ready."
+
 echo "Starting frontend on http://${APP_HOST}:${FRONTEND_PORT} ..."
 (
   cd "$ROOT/frontend"

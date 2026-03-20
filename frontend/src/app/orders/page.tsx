@@ -48,7 +48,7 @@ export default function OrdersPage() {
             )}
           </header>
           <div className="app-table-wrap">
-            <table className="min-w-full text-left text-xs">
+            <table className="min-w-full text-left text-xs text-zinc-800 dark:text-zinc-200">
               <thead className="app-table-head">
                 <tr>
                   <th className="px-3 py-2 font-medium">Order ID</th>

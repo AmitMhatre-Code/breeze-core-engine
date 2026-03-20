@@ -3,6 +3,9 @@
 export type HomeDataResponse = {
   customer: Record<string, unknown>;
   margin: Record<string, unknown>;
+  api_calls_today?: number;
+  api_calls_limit?: number;
+  api_usage_band?: "green" | "amber" | "red" | string;
 };
 
 function readSuccess(

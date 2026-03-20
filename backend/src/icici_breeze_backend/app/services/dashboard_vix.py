@@ -142,6 +142,33 @@ def _quote_nse_cash(breeze, stock_code: str) -> Optional[Dict]:
     return None
 
 
+def _india_vix_ltp_from_quote(quote: Dict[str, Any]) -> Optional[float]:
+    """
+    INDVIX last price from a get_quotes Success row.
+
+    ICICI intermittently returns INDVIX ``ltp`` (and intraday OHLC) scaled down by
+    ~100× while ``previous_close`` stays on the correct scale; the UI would show
+    e.g. 0.23 instead of 23.xx. When that pattern is detected, use ``ltp * 100``.
+    """
+    if not quote:
+        return None
+    try:
+        ltp = float(quote.get("ltp") or 0)
+    except (TypeError, ValueError):
+        return None
+    if ltp <= 0:
+        return None
+    try:
+        prev = float(quote.get("previous_close") or 0)
+    except (TypeError, ValueError):
+        prev = 0.0
+    if prev > 10 and ltp < 5:
+        scaled = ltp * 100
+        if prev and abs(scaled - prev) / prev <= 0.45:
+            return scaled
+    return ltp
+
+
 def _historical_vix(breeze, from_date: str, to_date: str) -> List[Dict[str, Any]]:
     """Get INDVIX daily history. Returns list of {date, value}."""
     if breeze is None:
@@ -528,10 +555,9 @@ def fetch_vix_core(user_id: str, processor) -> Dict[str, Any]:
 
     vix_quote = _quote_nse_cash(breeze, INDVIX_SYMBOL)
     if vix_quote:
-        try:
-            result["current_vix"] = round(float(vix_quote.get("ltp")), 2)
-        except (TypeError, ValueError):
-            pass
+        vix_ltp = _india_vix_ltp_from_quote(vix_quote)
+        if vix_ltp is not None:
+            result["current_vix"] = round(vix_ltp, 2)
 
     nifty_quote = _quote_nse_cash(breeze, NIFTY_SYMBOL)
     if nifty_quote:

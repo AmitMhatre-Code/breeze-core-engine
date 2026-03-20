@@ -112,11 +112,6 @@ function ChallengeForm() {
             {submitting ? "Signing in…" : "Submit"}
           </button>
         </form>
-        <p className="mt-6 text-center text-xs text-zinc-500">
-          <Link href="/register/correct" className="text-emerald-400 hover:underline">
-            Wrong credentials? Update them
-          </Link>
-        </p>
       </div>
     </div>
   );

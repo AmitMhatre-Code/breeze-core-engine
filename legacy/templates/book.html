@@ -1,0 +1,190 @@
+{% extends "common_base.html" %}
+
+{% block content %}
+
+{% include "_alert_messages.html" with context %}
+
+<div class="container">
+    <form method="POST">
+        <div class="row g-3 mb-4">
+            <div class="col-12 col-md-4">
+                <label class="form-label">From date</label>
+                <input type="date" required class="form-control fw-light" name="start" value="{{start}}" placeholder="YYYY-MM-DD" data-testid="book-from-date">
+            </div>
+            <div class="col-12 col-md-4">
+                <label class="form-label">To date</label>
+                <input type="date" required class="form-control fw-light" name="end" value="{{end}}" placeholder="YYYY-MM-DD" data-testid="book-to-date">
+            </div>
+            <div class="col-12 col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100 fw-light" name="action" value="Fetch" data-testid="book-fetch">Fetch</button>
+            </div>
+        </div>
+
+        {% if grouped_orders is defined and grouped_orders != None %}
+            <div class="table-responsive px-2 d-none d-md-block">
+                <table class="table table-striped table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Group</th>
+                            <th class="text-center">Buy/Sell</th>
+                            <th class="text-center">Ordered</th>
+                            <th class="text-center">Cancelled</th>
+                            <th class="text-center">Expired</th>
+                            <th class="text-center text-info">Open</th>
+                            <th class="text-center text-success">Executed</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for group in grouped_orders %}
+                            <tr>
+                                <th scope="row">{{ loop.index }}</th>
+                                <td>{{ group.group_option }}</td>
+                                <td class="text-center">{{ group.group_action }}</td>
+                                <td class="text-center">{{ group.group_ordered }}</td>
+                                <td class="text-center">{{ group.group_cancelled }}</td>
+                                <td class="text-center">{{ group.group_expired }}</td>
+                                <td class="text-center text-info">{{ group.group_open }}</td>
+                                <td class="text-center text-success">{{ group.group_executed }}</td>
+                                <td class="text-center">
+                                    <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#{{group.group}}" aria-expanded="false" aria-controls="{{group.group}}"><i class="bi bi-chevron-down"></i></button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td colspan="10" class="p-0 border-0">
+                                    <div class="collapse" id="{{group.group}}">
+                                        <div class="table-responsive">
+                                            <table class="table mb-0">
+                                                <thead>
+                                                    <tr>
+                                                        <th>#</th>
+                                                        <th>Option</th>
+                                                        <th class="text-center">Exchange</th>
+                                                        <th class="text-center">Buy/Sell</th>
+                                                        <th class="text-center">Ordered</th>
+                                                        <th class="text-center">Open</th>
+                                                        <th class="text-center">LTP</th>
+                                                        <th class="text-center">Price</th>
+                                                        <th>Status</th>
+                                                        <th class="text-center">
+                                                            {% if group.group_open > 0 %}
+                                                                <input class="form-check-input" type="checkbox"
+                                                                       id="select-all-{{group.group}}" data-group-id="{{group.group}}" onclick="selectall(this)"
+                                                                       data-testid="book-select-all">
+                                                            {% endif %}
+                                                        </th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody> 
+                                                    {% for order in group.group_orders %}
+                                                        <tr>
+                                                            <th>{{ loop.index }}</th>
+                                                            <td>{{ order.option }}</td>
+                                                            <td class="text-center">{{ order.exchange_code }}</td>
+                                                            <td class="text-center">{{ order.action }}</td>
+                                                            <td class="text-center">{{ order.quantity }}</td>
+                                                            <td class="text-center">{{ order.open_quantity }}</td>
+                                                            <td class="text-center">₹{{ group.group_ltp }}</td>
+                                                            <td class="text-center">₹{{ order.price }}</td>
+                                                            <td>{{ order['status'] }}</td>
+                                                            <td class="text-center">
+                                                                {% if order.cancelable %}
+                                                                    <input class="form-check-input" type="checkbox"
+                                                                           id="order-{{group.group}}-{{order.order_id}}" name="order_ids"
+                                                                           value="{{order.order_id}}|{{order.exchange_code}}" data-group-id="{{group.group}}"
+                                                                           data-testid="book-order-checkbox">
+                                                                {% endif %}
+                                                            </td>
+                                                        </tr>
+                                                    {% endfor %}
+                                                    {% if group.group_open > 0 %}
+                                                        <tr>
+                                                            <td colspan="9"></td>
+                                                            <td>
+                                                                <button type="submit"
+                                                                        class="btn btn-primary fw-light w-100"
+                                                                        name="action" value="Cancel"
+                                                                        data-testid="book-cancel-btn">Cancel
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    {% endif %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Mobile Version: Grouped Orders as Cards -->
+            <div class="d-md-none px-2">
+                {% for group in grouped_orders %}
+                    <div class="card bg-body-tertiary mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ group.group_option }}</strong> | {{ group.group_action }}
+                            </div>
+                            <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#card-{{ group.group }}" aria-expanded="false" aria-controls="card-{{ group.group }}"><i class="bi bi-chevron-down"></i></button>
+                        </div>
+                        <div class="card-body">
+                            <p class="mb-1">Ordered: {{ group.group_ordered }}</p>
+                            <p class="mb-1">Cancelled: {{ group.group_cancelled }}</p>
+                            <p class="mb-1">Expired: {{ group.group_expired }}</p>
+                            <p class="mb-1 text-info">Open: {{ group.group_open }}</p>
+                            <p class="mb-1 text-success">Executed: {{ group.group_executed }}</p>
+                        </div>
+                        <div class="collapse" id="card-{{ group.group }}">
+                            {% for order in group.group_orders %}
+                                <div class="card-body border-top">
+                                    <p class="mb-1"><strong>{{ order.option }}</strong></p>
+                                    <p class="mb-1">Action: {{ order.action }}</p>
+                                    <p class="mb-1">Ordered: {{ order.quantity }}</p>
+                                    <p class="mb-1">Open: {{ order.open_quantity }}</p>
+                                    <p class="mb-1">Price: ₹{{ order.price }} | LTP: ₹{{ group.group_ltp }}</p>
+                                    <p class="mb-1">Status: {{ order['status'] }}</p>
+                                    {% if order.cancelable %}
+                                        <div class="form-check mt-1">
+                                    <input class="form-check-input" type="checkbox" id="order-card-{{group.group}}-{{order.order_id}}" name="order_ids" value="{{order.order_id}}|{{order.exchange_code}}" data-testid="book-order-checkbox">
+                                            <label class="form-check-label">Select</label>
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            {% endfor %}
+                            {% if group.group_open > 0 %}
+                                <div class="card-footer">
+                                    <button type="submit" class="btn btn-primary w-100 fw-light" name="action" value="Cancel" data-testid="book-cancel-btn">Cancel</button>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="row justify-content-center my-5">
+                <div class="col-12">
+                  {% set icon = "journal-text" %}
+                  {% set message = "No active orders" %}
+                  {% set cta_url = "/order" %}
+                  {% set cta_text = "Place Order" %}
+                  {% include "_empty_state.html" with context %}
+                </div>
+            </div>
+        {% endif %}
+    </form>
+</div>
+
+<script type="text/javascript">
+    function selectall(objCheck) {
+        var g = objCheck.getAttribute("data-group-id");
+        if (!g) return;
+        var checkboxes = document.querySelectorAll("input[name=\"order_ids\"][data-group-id=\"" + g + "\"]");
+        for (var i = 0; i < checkboxes.length; i++) checkboxes[i].checked = objCheck.checked;
+    }
+</script>
+
+{% endblock %}

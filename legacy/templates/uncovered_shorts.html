@@ -1,0 +1,207 @@
+{% extends "common_base.html" %}
+
+{% block content %}
+
+
+{% set product_type = 'Options' %}
+{% set otm_call_distance = 10 %}
+{% set otm_put_distance = 10 %}
+{% set provision_elm_checked = "" %}
+
+{% if parameters is defined and parameters != None %}
+  {% set stock_code = parameters.stock_code %}
+  {% set expiry_date = parameters.expiry_date %}
+  {% set limits = parameters.limits %}
+  {% if parameters.elm == 'on' %}
+    {% set provision_elm_checked = "checked" %}
+  {% endif %}
+  {% set otm_call_distance = parameters.otm_call_distance %}
+  {% set otm_put_distance = parameters.otm_put_distance %}
+  {% set top = parameters.top %}
+{% endif %}
+
+<div class="container">
+  <div class="row justify-content-center my-5">
+    <div class="col-lg-10">
+      <div class="card bg-body-tertiary">
+        <div class="card-body">
+          <h3 class="card-title text-center mb-4">Uncovered Shorts</h3>
+          <p class="text-center mb-4 small">Margin deployed: <span class="fw-normal">₹{{"{:,.1f}".format(margin.get('Success', {}).get('actual_margin_ute', 0)*-1/100000)}}L</span> · Available: {% if margin.get('Success', {}).get('actual_margin_avl', 0) < 0 %}<span class="text-danger fw-normal">(₹{{"{:,.1f}".format(margin.get('Success', {}).get('actual_margin_avl', 0)*-1/100000)}}L)</span>{% else %}<span class="text-success fw-normal">₹{{"{:,.1f}".format(margin.get('Success', {}).get('actual_margin_avl', 0)/100000)}}L</span>{% endif %}</p>
+
+          <form method="POST">
+            <h6 class="text-secondary mb-3">Underlying &amp; Expiry</h6>
+            <div class="row g-3 mb-3">
+              <div class="col-md-4">
+                <div class="d-flex gap-3">
+                  <div class="form-check">
+                    <input
+                      class="form-check-input"
+                      type="radio"
+                      name="exchange_code"
+                      value="NFO"
+                      id="exchange_nfo_uncovered"
+                      {% if exchange_code == 'NFO' %}checked{% endif %}
+                      onchange="window.location.href='/uncovered-shorts?exchange_code='+this.value"
+                    />
+                    <label class="form-check-label" for="exchange_nfo_uncovered">NSE</label>
+                  </div>
+                  <div class="form-check">
+                    <input
+                      class="form-check-input"
+                      type="radio"
+                      name="exchange_code"
+                      value="BFO"
+                      id="exchange_bfo_uncovered"
+                      {% if exchange_code == 'BFO' %}checked{% endif %}
+                      onchange="window.location.href='/uncovered-shorts?exchange_code='+this.value"
+                    />
+                    <label class="form-check-label" for="exchange_bfo_uncovered">BSE</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="row g-3 mb-4">
+              <div class="col-md-4">
+                <label class="form-label">Product</label>
+                <input type="text" required class="form-control" name="product_type" value="{{product_type}}" readonly>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Stock Code</label>
+                {% if stock_codes is defined and stock_codes != None %}
+                <select id="stock_code" class="form-select" name="stock_code" required>
+                  <option value="" disabled {% if parameters is not defined %} selected {% endif %}>Select Underlying</option>
+                  {% for stock in stock_codes %}
+                  <option value="{{ stock.stock_code }}" {% if parameters is defined and stock.stock_code == stock_code %} selected {% endif %}>{{ stock.stock_code }}</option>
+                  {% endfor %}
+                </select>
+                {% else %}
+                <input type="text" required class="form-control" name="stock_code" value="{{stock_code}}">
+                {% endif %}
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Expiry</label>
+                {% if stock_codes is defined and stock_codes != None %}
+                <select id="expiry_date" class="form-select" name="expiry_date" required>
+                  <option value="" disabled {% if parameters is not defined %} selected {% endif %}>Select Expiry</option>
+                  {% if parameters is defined %}
+                  {% for stock in stock_codes %}
+                  {% if stock.stock_code == parameters.stock_code %}
+                  {% for date in stock.expiry_dates %}
+                  <option value="{{ date }}" {% if date == expiry_date %} selected {% endif %}>{{ date }}</option>
+                  {% endfor %}
+                  {% endif %}
+                  {% endfor %}
+                  {% endif %}
+                </select>
+                {% else %}
+                <input type="date" required class="form-control" name="expiry_date" value="{{expiry_date}}" placeholder="YYYY-MM-DD">
+                {% endif %}
+              </div>
+
+            <h6 class="text-secondary mb-3">Parameters</h6>
+            <div class="row g-3 mb-4">
+              <div class="col-md-4">
+                <label class="form-label">Margin to deploy (Lacs)</label>
+                <input type="number" required class="form-control" name="limits" value="{{limits}}" placeholder="margin to deploy">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label"># of Options</label>
+                <input type="number" required class="form-control" name="top" value="{{top}}" min="1" max="500">
+              </div>
+              <div class="col-md-4 d-flex align-items-end">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="provision_elm" id="provision_elm" {{provision_elm_checked}}>
+                  <label class="form-check-label" for="provision_elm">Provision for ELM</label>
+                </div>
+              </div>
+
+            <h6 class="text-secondary mb-3">OTM Sliders</h6>
+            <div class="row g-3 mb-4">
+              <div class="col-md-6">
+                <label class="form-label">CALL safety margin: <span id="callValue">{{otm_call_distance}}</span>%</label>
+                <input type="range" class="form-range" name="otm_call_distance" value={{otm_call_distance}} min="1" max="20" oninput="callValue.innerText = this.value">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">PUT safety margin: <span id="putValue">{{otm_put_distance}}</span>%</label>
+                <input type="range" class="form-range" name="otm_put_distance" value="{{otm_put_distance}}" min="1" max="20" oninput="putValue.innerText = this.value">
+              </div>
+              <div class="d-flex gap-2 mt-3">
+                <button type="submit" class="btn btn-primary fw-light flex-fill" name="action" value="Optimize">Get Options</button>
+                <button type="submit" class="btn btn-secondary fw-light flex-fill" name="action" value="Clear">Clear</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if options is defined and options != None %}
+  <div class="row mt-5">
+    <div class="col-12">
+      <h5 class="subsection-title border-bottom pb-2 mb-4">CALL Options</h5>
+    </div>
+  </div>
+  <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
+    {% for option in options.get('ce_options', {}).get('Success', []) %}
+    <div class="col" data-testid="option-card-ce">
+      <div class="card bg-body-tertiary h-100">
+        <div class="card-body p-4">
+          <h6 class="card-title mb-2">{{ option.stock_code }} {{ option.strike_price }} {{ option.right }}</h6>
+          <p class="card-text mb-2"><span class="fw-normal">Premium: ₹{{ "{:.0f}".format(option.premium) }}</span> <span class="text-success fw-semibold">· {{ "{:.2f}".format(option.carry_returns) }}% returns</span></p>
+          <p class="card-text small text-muted mb-2">LTP: ₹{{ option.ltp }} · Bid: ₹{{ option.best_bid_price }} / Offer: ₹{{ option.best_offer_price }}{% if option.buy_sell_ratio is number %} · Bid:Ask {{ "{:.2f}".format(option.buy_sell_ratio) }}{% else %} · Bid:Ask NA{% endif %}</p>
+          <p class="small text-muted mb-3">Qty: {{ option.quantity }} · Buy: {{ "{:,}".format(option.total_buy_qty|int/1000) }}K / Sell: {{ "{:,}".format(option.total_sell_qty|int/1000) }}K · Spot: {{ "{:.0f}".format(option.spot_distance * 100) }}%</p>
+          <button type="button" class="btn btn-primary w-100 fw-light" name="action" value="Sell" data-testid="btn-sell" onclick="window.openOrderConfirmModal({ product_type: 'Options', stock_code: '{{ option.stock_code }}', exchange_code: '{{ exchange_code }}', expiry_date: '{{ option.expiry_date }}', right: '{{ option.right }}', strike_price: '{{ option.strike_price }}', quantity: '{{ option.quantity }}', price: '{{ option.best_bid_price or '' }}', action: 'Sell' });">Sell</button>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="row mt-5">
+    <div class="col-12">
+      <h5 class="subsection-title border-bottom pb-2 mb-4">PUT Options</h5>
+    </div>
+  </div>
+  <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
+    {% for option in options.get('pe_options', {}).get('Success', []) %}
+    <div class="col" data-testid="option-card-pe">
+      <div class="card bg-body-tertiary h-100">
+        <div class="card-body p-4">
+          <h6 class="card-title mb-2">{{ option.stock_code }} {{ option.strike_price }} {{ option.right }}</h6>
+          <p class="card-text mb-2"><span class="fw-normal">Premium: ₹{{ "{:.0f}".format(option.premium) }}</span> <span class="text-success fw-semibold">· {{ "{:.2f}".format(option.carry_returns) }}% returns</span></p>
+          <p class="card-text small text-muted mb-2">LTP: ₹{{ option.ltp }} · Bid: ₹{{ option.best_bid_price }} / Offer: ₹{{ option.best_offer_price }}{% if option.buy_sell_ratio is number %} · Bid:Ask {{ "{:.2f}".format(option.buy_sell_ratio) }}{% else %} · Bid:Ask NA{% endif %}</p>
+          <p class="small text-muted mb-3">Qty: {{ option.quantity }} · Buy: {{ "{:,}".format(option.total_buy_qty|int/1000) }}K / Sell: {{ "{:,}".format(option.total_sell_qty|int/1000) }}K · Spot: {{ "{:.0f}".format(option.spot_distance * 100) }}%</p>
+          <button type="button" class="btn btn-primary w-100 fw-light" name="action" value="Sell" data-testid="btn-sell" onclick="window.openOrderConfirmModal({ product_type: 'Options', stock_code: '{{ option.stock_code }}', exchange_code: '{{ exchange_code }}', expiry_date: '{{ option.expiry_date }}', right: '{{ option.right }}', strike_price: '{{ option.strike_price }}', quantity: '{{ option.quantity }}', price: '{{ option.best_bid_price or '' }}', action: 'Sell' });">Sell</button>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+{% include "_order_confirm_modal.html" %}
+
+{% if stock_codes is defined and stock_codes != None %}
+<script>
+  document.getElementById('stock_code').addEventListener('change', function () {
+    let stock_codes = "{{stock_codes | safe}}".replaceAll("'","\"");
+    const stockData = JSON.parse(stock_codes);
+    const selectedCode = this.value;
+    const expiryDropdown = document.getElementById('expiry_date');
+    expiryDropdown.innerHTML = '<option value="" disabled selected>Select expiry date</option>';
+    const selectedOption = stockData.find(s => s.stock_code === selectedCode);
+    if (selectedOption && selectedOption.expiry_dates) {
+      selectedOption.expiry_dates.sort((a, b) => new Date(a) - new Date(b));
+      selectedOption.expiry_dates.forEach(date => {
+        const option = document.createElement('option');
+        option.value = date;
+        option.textContent = date;
+        expiryDropdown.appendChild(option);
+      });
+    }
+  });
+</script>
+{% endif %}
+
+{% endblock %}

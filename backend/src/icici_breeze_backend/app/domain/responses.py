@@ -80,6 +80,18 @@ class HomeDataResponse(BaseModel):
     """Home /data: customer and margin info."""
     customer: Dict[str, Any] = Field(default_factory=dict)
     margin: Dict[str, Any] = Field(default_factory=dict)
+    api_calls_today: int = Field(
+        0,
+        description="ICICI Breeze REST calls counted for this user today (IST)",
+    )
+    api_calls_limit: int = Field(
+        5000,
+        description="ICICI-documented daily cap for Breeze API calls",
+    )
+    api_usage_band: str = Field(
+        "green",
+        description="green | amber | red relative to daily limit thresholds",
+    )
 
 
 class PerformanceDataResponse(BaseModel):

@@ -1,0 +1,176 @@
+{% extends "common_base.html" %}
+
+{% block content %}
+<div class="container">
+  {% if warnings %}
+  <div class="alert alert-warning mb-4" role="alert">
+    <strong>Something went wrong loading some data.</strong>
+    {{ warnings | join(' ') }}
+    If this persists or you see invalid customer or session messages, try <a href="/logout" class="alert-link">logging out</a> and logging back in.
+  </div>
+  {% endif %}
+  <div class="row justify-content-center my-5">
+    {% if positions is defined and positions.get('Success') is not none and positions.get('Success')|length > 0 %}
+
+      <!-- Table view for md and larger -->
+      <div class="d-none d-md-block table-responsive">
+        <table id="positions" class="table table-striped table-hover">
+          <thead>
+            <tr>
+              <th scope="col">#</th>
+              <th scope="col">Option</th>
+              <th scope="col">Position</th>
+              <th class="text-end" scope="col">Qty</th>
+              <th class="text-end" scope="col">Avg. Price</th>
+              <th class="text-end" scope="col">LTP</th>
+              <th class="text-end" scope="col">Spot</th>
+              <th class="text-end" scope="col">MTM</th>
+              <th class="text-end" scope="col">Carry</th>
+              <th class="text-end" scope="col"><abbr title="Span Margin">Span Marg.</abbr></th>
+              <th class="text-end" scope="col"><abbr title="ELM at 2%">ELM</abbr></th>
+              <th class="text-end" scope="col">Carry Ret.</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for position in positions.get('Success', []) %}
+            <tr>
+              <form method="POST">
+                <input type="hidden" name="product_type" value="{{position.product_type}}">
+                <input type="hidden" name="stock_code" value="{{position.stock_code}}">
+                <input type="hidden" name="exchange_code" value="{{position.exchange_code}}">
+                <input type="hidden" name="expiry_date" value="{{position.expiry_date}}">
+                <input type="hidden" name="right" value="{{position.right}}">
+                <input type="hidden" name="position_action" value="{{position.action}}">
+                <input type="hidden" name="strike_price" value="{{position.strike_price}}">
+                <input type="hidden" name="quantity" value="{{position.quantity}}">
+
+                <th scope="row" class="align-middle">{{ loop.index }}</th>
+                <td class="align-middle">{{ position.option }}</td>
+                <td class="align-middle">{{ position.action }}</td>
+                <td class="text-end align-middle">{{ position.quantity }}</td>
+                <td class="text-end align-middle">₹{{ position.average_price }}</td>
+                <td class="text-end align-middle">₹{{ position.ltp }}</td>
+                <td class="text-end align-middle">₹{{ position.spot_price }}</td>
+                {% if position.current_profit < 0 %}
+                  <td class="text-end text-danger fw-normal align-middle">(₹{{ "{:,.0f}".format(position.current_profit * -1) }})</td>
+                {% else %}
+                  <td class="text-end text-success fw-normal align-middle">₹{{ "{:,.0f}".format(position.current_profit) }}</td>
+                {% endif %}
+                {% if position.carry_profit < 0 %}
+                  <td class="text-end text-danger fw-normal align-middle">(₹{{ "{:,.0f}".format(position.carry_profit * -1) }})</td>
+                {% else %}
+                  <td class="text-end text-success fw-normal align-middle">₹{{ "{:,.0f}".format(position.carry_profit) }}</td>
+                {% endif %}
+                <td class="text-end align-middle">
+                  {% if position.span_margin_required is defined and position.span_margin_required != None %}
+                    ₹{{ "{:,.0f}".format(position.span_margin_required/100000) }}L
+                  {% else %}-{% endif %}
+                </td>
+                <td class="text-end align-middle">
+                  {% if position.elm_margin_required is defined and position.elm_margin_required != None %}
+                    ₹{{ "{:,.0f}".format(position.elm_margin_required/100000) }}L
+                  {% else %}-{% endif %}
+                </td>
+                <td class="text-end align-middle">
+                  {% if position.carry_margin_returns is defined and position.carry_margin_returns != None %}
+                    {% if position.carry_margin_returns >= 0 %}
+                      <span class="text-success">{{ "{:,.2f}%".format(position.carry_margin_returns) }}</span>
+                    {% else %}
+                      <span class="text-danger">{{ "{:,.2f}%".format(position.carry_margin_returns) }}</span>
+                    {% endif %}
+                  {% else %}-{% endif %}
+                </td>
+                <td class="text-center">
+                  <div class="d-flex gap-2 justify-content-center">
+                    <button type="submit" class="btn btn-primary btn-sm fw-light flex-fill" name="action" value="SquareOff">Square Off</button>
+                    {% if position.hedgeable %}
+                    <button type="submit" class="btn btn-secondary btn-sm fw-light flex-fill" name="action" value="Hedge">Get Hedges</button>
+                    {% endif %}
+                  </div>
+                </td>
+              </form>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Card view for small screens -->
+      <div class="d-block d-md-none">
+        <div class="row row-cols-1 g-4">
+          {% for position in positions.get('Success', []) %}
+          <div class="col">
+            <div class="card bg-body-tertiary">
+              <div class="card-body p-4">
+                <h6 class="card-title mb-3">{{ position.option }}</h6>
+                <p class="card-text mb-2"><strong>Position:</strong> {{ position.action }}</p>
+                <p class="card-text mb-2"><strong>Qty:</strong> {{ position.quantity }}</p>
+                <p class="card-text mb-2"><strong>Avg Price:</strong> ₹{{ position.average_price }}</p>
+                <p class="card-text mb-2"><strong>LTP:</strong> ₹{{ position.ltp }}</p>
+                <p class="card-text mb-2"><strong>Spot:</strong> ₹{{ position.spot_price }}</p>
+                <p class="card-text mb-1">
+                  <strong>MTM:</strong>
+                  {% if position.current_profit < 0 %}
+                    <span class="text-danger fw-normal">(₹{{ "{:,.0f}".format(position.current_profit * -1) }})</span>
+                  {% else %}
+                    <span class="text-success fw-normal">₹{{ "{:,.0f}".format(position.current_profit) }}</span>
+                  {% endif %}
+                </p>
+                <p class="card-text mb-2">
+                  <strong>Carry:</strong>
+                  {% if position.carry_profit < 0 %}
+                    <span class="text-danger fw-normal">(₹{{ "{:,.0f}".format(position.carry_profit * -1) }})</span>
+                  {% else %}
+                    <span class="text-success fw-normal">₹{{ "{:,.0f}".format(position.carry_profit) }}</span>
+                  {% endif %}
+                </p>
+                <p class="card-text mb-2"><strong>Span Margin:</strong> {{ position.span_margin_required is defined and position.span_margin_required != None and "₹{:,.0f}L".format(position.span_margin_required/100000) or '-' }}</p>
+                <p class="card-text mb-2"><strong>ELM @2%:</strong> {{ position.elm_margin_required is defined and position.elm_margin_required != None and "₹{:,.0f}L".format(position.elm_margin_required/100000) or '-' }}</p>
+                <p class="card-text mb-3">
+                  <strong>Carry Returns:</strong>
+                  {% if position.carry_margin_returns is defined and position.carry_margin_returns != None %}
+                    {% if position.carry_margin_returns >= 0 %}
+                      <span class="text-success">{{ "{:,.2f}%".format(position.carry_margin_returns) }}</span>
+                    {% else %}
+                      <span class="text-danger">{{ "{:,.2f}%".format(position.carry_margin_returns) }}</span>
+                    {% endif %}
+                  {% else %}-{% endif %}
+                </p>
+                <form method="POST">
+                  <input type="hidden" name="product_type" value="{{position.product_type}}">
+                  <input type="hidden" name="stock_code" value="{{position.stock_code}}">
+                  <input type="hidden" name="exchange_code" value="{{position.exchange_code}}">
+                  <input type="hidden" name="expiry_date" value="{{position.expiry_date}}">
+                  <input type="hidden" name="right" value="{{position.right}}">
+                  <input type="hidden" name="position_action" value="{{position.action}}">
+                  <input type="hidden" name="strike_price" value="{{position.strike_price}}">
+                  <input type="hidden" name="quantity" value="{{position.quantity}}">
+                  <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary btn-sm fw-light flex-fill" name="action" value="SquareOff">Square Off</button>
+                    {% if position.hedgeable %}
+                    <button type="submit" class="btn btn-secondary btn-sm fw-light flex-fill" name="action" value="Hedge">Get Hedges</button>
+                    {% endif %}
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+    {% else %}
+      <div class="row justify-content-center my-5">
+        <div class="col-12">
+          {% set icon = "pie-chart" %}
+          {% set message = "No positions to display" %}
+          {% set cta_url = "/order" %}
+          {% set cta_text = "Place Order" %}
+          {% include "_empty_state.html" with context %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

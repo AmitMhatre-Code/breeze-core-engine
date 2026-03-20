@@ -1696,6 +1696,15 @@ class processor():
         # prefer the module-level client when one exists; this mirrors the
         # behaviour of the earlier implementation at the top of the file.
         if broker_token is not None and icici_client is not None:
+            user_id = kwargs.get("user_id") or (args[0] if args else None)
+            if user_id:
+                breeze = self.get_session_breeze(user_id)
+                if breeze is None:
+                    return {
+                        "Status": 400,
+                        "Error": "Unable to connect to broker. Please check your credentials and re-login.",
+                    }
+                return icici_client.get_portfolio(broker_token, user_id=user_id, breeze=breeze)
             return icici_client.get_portfolio(broker_token, *args, **kwargs)
 
         # fallback: if caller provided a user_id, use get_positions
@@ -1721,9 +1730,25 @@ class processor():
                 today = datetime.date.today()
                 end_date = end_date or today.strftime("%Y-%m-%d")
                 start_date = start_date or (today - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
+            if user_id:
+                breeze = self.get_session_breeze(user_id)
+                if breeze is None:
+                    return {
+                        "Status": 400,
+                        "Error": "Unable to connect to broker. Please check your credentials and re-login.",
+                    }
+                return icici_client.get_orders(
+                    broker_token,
+                    user_id=user_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    breeze=breeze,
+                )
             return icici_client.get_orders(
-                broker_token, user_id=user_id,
-                start_date=start_date, end_date=end_date
+                broker_token,
+                user_id=user_id,
+                start_date=start_date,
+                end_date=end_date,
             )
 
         # fallback: if caller provided a user_id (args or kwargs), use legacy breeze path

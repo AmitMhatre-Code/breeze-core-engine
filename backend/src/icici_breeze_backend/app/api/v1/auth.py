@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from icici_breeze_backend.app.api.deps import get_current_user, RequestContext, ICICI_BROKER_TOKEN_COOKIE, ACCESS_TOKEN_COOKIE, CREDENTIAL_FULL_SECRET_COOKIE
+from icici_breeze_backend.app.api.deps import get_current_user, get_optional_user, RequestContext, ICICI_BROKER_TOKEN_COOKIE, ACCESS_TOKEN_COOKIE, CREDENTIAL_FULL_SECRET_COOKIE
 from icici_breeze_backend.app.domain.auth import (
     AdminRotateRequest,
     AdminRevokeRequest,
@@ -13,6 +13,15 @@ from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 import icici_breeze_backend.app.core.config as cfg
 
 router = APIRouter(tags=["Authentication"])
+
+
+@router.get("/auth/session", include_in_schema=False)
+async def auth_session_status(request: Request):
+    """Lightweight check: valid JWT + ICICI broker cookie. Used by SPA landing redirect."""
+    ctx = get_optional_user(request)
+    if ctx and ctx.broker_token:
+        return JSONResponse(content={"authenticated": True})
+    return JSONResponse(content={"authenticated": False}, status_code=401)
 
 
 async def _require_admin(ctx: RequestContext = Depends(get_current_user)) -> RequestContext:

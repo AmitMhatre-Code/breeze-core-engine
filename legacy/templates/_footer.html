@@ -1,0 +1,25 @@
+<footer class="mt-5 py-4 border-top">
+  <div class="container">
+    <div class="row">
+      <div class="col-12">
+        {% if api_calls_today is defined %}
+        <p class="small mb-2">
+          <span class="text-muted">ICICI API today:</span>
+          <span class="{% if api_usage_band == 'green' %}text-success{% elif api_usage_band == 'amber' %}text-warning{% else %}text-danger{% endif %}">{{ api_calls_today }} / {{ api_calls_limit }}</span>
+        </p>
+        {% endif %}
+        <p class="small text-muted mb-2">
+          <a href="/updatemaster" class="link-secondary">Update the ICICI Master Data File</a>
+          {% if master_file_age is defined and master_file_age and master_file_age.get('Success') %}
+            <span class="ms-2 {% if master_file_age['Success'].get('age', 0) > 7 %}text-danger{% else %}text-muted{% endif %}">
+              (last updated {{ master_file_age['Success'].get('date', '—') }})
+            </span>
+          {% endif %}
+        </p>
+        <p class="small text-muted mb-0">
+          <strong>Disclaimer:</strong> This is an experimental application for personal OTM options trading. The application is barely tested and may malfunction. Error handling is incomplete. Use at your own risk. The developer is not responsible for any commercial impact.
+        </p>
+      </div>
+    </div>
+  </div>
+</footer>

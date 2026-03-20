@@ -1,0 +1,277 @@
+{% extends "common_base.html" %}
+
+{% block content %}
+
+<style>
+  /* Option chain: compact, theme-safe, ITM shading */
+  .option-chain-table { font-size: 0.8rem; }
+  .option-chain-table th, .option-chain-table td { padding: 0.35rem 0.5rem; white-space: nowrap; }
+  .option-chain-vol-line { display: block; font-size: 0.75em; opacity: 0.9; }
+  .option-chain-ratio { display: block; }
+  .option-chain-oi-bar-wrap { min-width: 28px; }
+  .option-chain-oi-call-bar-wrap { width: 3.5rem; min-width: 3.5rem; display: flex; justify-content: flex-end; }
+  .option-chain-oi-bar { height: 10px; border-radius: 2px; }
+  [data-bs-theme="dark"] .option-chain-thead-row { background-color: var(--bs-secondary-bg); color: var(--bs-body-color); }
+  [data-bs-theme="dark"] .option-chain-calls-header { background-color: rgba(25, 135, 84, 0.2); color: var(--bs-success); }
+  [data-bs-theme="dark"] .option-chain-puts-header { background-color: rgba(220, 53, 69, 0.2); color: var(--bs-danger); }
+  [data-bs-theme="dark"] .option-chain-strike-header { background-color: var(--bs-tertiary-bg); color: var(--bs-body-color); }
+  [data-bs-theme="light"] .option-chain-thead-row { background-color: var(--bs-secondary-bg); color: var(--bs-body-color); }
+  [data-bs-theme="light"] .option-chain-calls-header { background-color: rgba(25, 135, 84, 0.12); color: var(--bs-success); }
+  [data-bs-theme="light"] .option-chain-puts-header { background-color: rgba(220, 53, 69, 0.12); color: var(--bs-danger); }
+  [data-bs-theme="light"] .option-chain-strike-header { background-color: var(--bs-tertiary-bg); color: var(--bs-body-color); }
+  .option-chain-oi-bar-call { background-color: var(--bs-success); opacity: 0.8; }
+  .option-chain-oi-bar-put { background-color: var(--bs-danger); opacity: 0.8; }
+  [data-bs-theme="dark"] .option-chain-table { background-color: var(--bs-body-bg); color: var(--bs-body-color); }
+  [data-bs-theme="dark"] .option-chain-table td, [data-bs-theme="dark"] .option-chain-table th { border-color: rgba(255,255,255,0.1); }
+  [data-bs-theme="dark"] .option-chain-empty { background-color: rgba(255,255,255,0.03); }
+  [data-bs-theme="light"] .option-chain-empty { background-color: rgba(0,0,0,0.03); }
+  .option-itm-call, .option-itm-put { background-color: rgba(128, 128, 128, 0.18) !important; }
+  [data-bs-theme="dark"] .option-itm-call, [data-bs-theme="dark"] .option-itm-put { background-color: rgba(128, 128, 128, 0.22) !important; }
+  .option-chain-table th, .option-chain-table td { border-left: none !important; border-right: none !important; }
+  .option-chain-table thead th { border-bottom-width: 1px; }
+  .option-chain-actions { width: 1%; white-space: nowrap; }
+  .option-chain-oi-call-wrap { display: flex; align-items: center; gap: 0.25rem; justify-content: flex-end; width: 100%; }
+</style>
+
+{% set product_type = 'Options' %}
+
+<div class="container my-5">
+  <div class="row justify-content-center">
+    <div class="col-12 col-lg-10">
+      <div class="card">
+        <div class="card-body">
+          <h3 class="card-title text-center mb-4">Order</h3>
+
+          {% include "_alert_messages.html" with context %}
+
+          {# 3-input form: exchange, stock, expiry → Load Chain (GET) #}
+          <form method="GET" action="/order" id="load_chain_form">
+            <h6 class="text-secondary mb-3">Underlying &amp; Expiry</h6>
+            <div class="row g-3 mb-3 align-items-end">
+              <div class="col-md-2">
+                <label class="form-label">Exchange</label>
+                <div class="d-flex gap-3 pt-1">
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="exchange_code" value="NFO" id="exchange_nfo_order" {% if exchange_code == 'NFO' %}checked{% endif %} onchange="this.form.submit()">
+                    <label class="form-check-label" for="exchange_nfo_order">NSE</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="exchange_code" value="BFO" id="exchange_bfo_order" {% if exchange_code == 'BFO' %}checked{% endif %} onchange="this.form.submit()">
+                    <label class="form-check-label" for="exchange_bfo_order">BSE</label>
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">Stock Code</label>
+                {% if stock_codes %}
+                  <select id="stock_code" class="form-select" name="stock_code" required>
+                    <option value="" disabled selected>Select Underlying</option>
+                    {% for stock in stock_codes %}
+                      <option value="{{ stock.stock_code }}" {% if option_chain and option_chain.stock_code == stock.stock_code %}selected{% endif %}>{{ stock.stock_code }}</option>
+                    {% endfor %}
+                  </select>
+                {% else %}
+                  <input type="text" class="form-control" name="stock_code" value="{{ option_chain.stock_code if option_chain else '' }}" required>
+                {% endif %}
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">Expiry</label>
+                {% if stock_codes %}
+                  <select id="expiry_date" class="form-select" name="expiry_date" required>
+                    <option value="" disabled selected>Select Expiry</option>
+                    {% if option_chain %}
+                      {% for stock in stock_codes %}
+                        {% if stock.stock_code == option_chain.stock_code and stock.expiry_dates %}
+                          {% for date in stock.expiry_dates %}
+                            <option value="{{ date }}" {% if date == option_chain.expiry_display %}selected{% endif %}>{{ date }}</option>
+                          {% endfor %}
+                        {% endif %}
+                      {% endfor %}
+                    {% endif %}
+                  </select>
+                {% else %}
+                  <input type="date" class="form-control" name="expiry_date" value="{{ option_chain.expiry_display if option_chain else '' }}" required>
+                {% endif %}
+              </div>
+              <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">Load Chain</button>
+              </div>
+            </div>
+          </form>
+
+          {# Legacy: when redirected from strategy with order prefilled, show single confirm card #}
+          {% if order is defined and order != None and not option_chain %}
+          <div class="border border-secondary rounded p-3 mb-4">
+            <h6 class="text-secondary mb-2">Order from strategy</h6>
+            <p class="mb-2">{{ order.buy_sell }} {{ order.quantity }} × {{ order.stock_code }} {{ order.expiry_date }} {{ order.right }} {{ order.strike_price }}</p>
+            <button type="button" class="btn {% if order.buy_sell == 'Sell' %}btn-danger{% else %}btn-success{% endif %} fw-light" onclick="window.openOrderConfirmModal({ product_type: 'Options', stock_code: '{{ order.stock_code }}', exchange_code: '{{ order.exchange_code }}', expiry_date: '{{ order.expiry_date }}', right: '{{ order.right }}', strike_price: '{{ order.strike_price }}', quantity: '{{ order.quantity }}', price: '0', action: '{{ order.buy_sell }}' });">Confirm &amp; place order</button>
+          </div>
+          {% endif %}
+
+          {# Option chain table: Calls | Strike | Puts (no Qty/Price; Vol bundled; ITM shaded; theme-safe) #}
+          {% if option_chain is defined and option_chain != None %}
+          {% set spot = option_chain.spot_price %}
+          {% set atm_strike = option_chain.atm_strike %}
+          <div class="table-responsive mt-4" id="option_chain_wrapper" data-spot="{{ spot if spot is not none else '' }}" data-atm-strike="{{ atm_strike if atm_strike is not none else '' }}">
+            <table class="table table-bordered table-sm table-hover align-middle mb-0 option-chain-table" id="option_chain_table">
+              <thead>
+                <tr class="option-chain-thead-row">
+                  <th colspan="4" class="text-center option-chain-calls-header">CALLS</th>
+                  <th class="text-center option-chain-strike-header"></th>
+                  <th colspan="4" class="text-center option-chain-puts-header">PUTS</th>
+                </tr>
+                <tr class="option-chain-thead-row small">
+                  <th class="option-chain-actions"></th>
+                  <th class="text-end">OI</th>
+                  <th class="text-end">LTP</th>
+                  <th class="option-chain-vol-header text-end">Bid/Ask</th>
+                  <th class="text-center">Strike</th>
+                  <th class="option-chain-vol-header">Bid/Ask</th>
+                  <th class="text-start">LTP</th>
+                  <th class="text-start">OI</th>
+                  <th class="option-chain-actions"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in option_chain.chain_rows %}
+                {% set is_atm = (atm_strike is not none and row.strike_price == atm_strike) %}
+                {% set call_itm = (spot is not none and row.call and row.strike_price < spot) %}
+                {% set put_itm = (spot is not none and row.put and row.strike_price > spot) %}
+                {% set row_class = "option-chain-row" + (" option-chain-atm" if is_atm else "") + (" option-chain-itm" if (call_itm or put_itm) else "") %}
+                <tr class="{{ row_class }}" {{ 'data-atm="true"' if is_atm else '' }}>
+                  {# CALL side: Actions first (extreme left), then OI (right-aligned bar), LTP, Bid/Ask #}
+                  {% if row.call %}
+                    {% set call_actions_class = "option-chain-actions option-chain-call-cell" + (" option-itm-call" if call_itm else "") %}
+                    <td class="{{ call_actions_class }}">
+                      <div class="d-flex gap-1 flex-nowrap chain-btns" data-stock-code="{{ option_chain.stock_code }}" data-exchange-code="{{ option_chain.exchange_code }}" data-expiry-date="{{ option_chain.expiry_display }}" data-right="Call" data-strike-price="{{ row.strike_price }}" data-best-bid="{{ row.call.best_bid_price or '' }}" data-best-offer="{{ row.call.best_offer_price or '' }}" data-lot-size="{{ row.call.lot_size or row.put.lot_size if row.put else '' }}">
+                        <button type="button" class="btn btn-success btn-sm" data-testid="btn-buy-call" data-action="Buy">Buy</button>
+                        <button type="button" class="btn btn-danger btn-sm" data-testid="btn-sell-call" data-action="Sell">Sell</button>
+                      </div>
+                    </td>
+                    {% set call_oi_class = "text-end option-chain-oi option-chain-call-cell" + (" option-itm-call" if call_itm else "") %}
+                    <td class="{{ call_oi_class }}">
+                      {% set oi_pct = (row.call.open_interest / option_chain.max_call_oi * 100) if option_chain.max_call_oi else 0 %}
+                      <div class="option-chain-oi-call-wrap">
+                        <div class="option-chain-oi-bar-wrap option-chain-oi-call-bar-wrap"><div class="option-chain-oi-bar option-chain-oi-bar-call" data-oi-pct="{{ oi_pct }}"></div></div>
+                        <span class="option-chain-oi-text">{{ (row.call.open_interest / 100000)|round(1) }}L</span>
+                      </div>
+                    </td>
+                    {% set call_ltp_class = "text-end option-chain-ltp option-chain-call-cell" + (" option-itm-call" if call_itm else "") %}
+                    <td class="{{ call_ltp_class }}">{{ row.call.ltp }}</td>
+                    {% set call_vol_class = "text-end option-chain-vol option-chain-call-cell" + (" option-itm-call" if call_itm else "") %}
+                    <td class="{{ call_vol_class }}">
+                      <span class="option-chain-ratio">{% if row.call.buy_sell_ratio is number %}{{ "%.2f"|format(row.call.buy_sell_ratio) }}{% else %}—{% endif %}</span>
+                      <span class="option-chain-vol-line">{{ "{:,.0f}".format(row.call.total_buy_qty / 1000) }}K / {{ "{:,.0f}".format(row.call.total_sell_qty / 1000) }}K</span>
+                    </td>
+                  {% else %}
+                    <td colspan="4" class="option-chain-empty"></td>
+                  {% endif %}
+                  <td class="text-center fw-semibold option-chain-strike-cell">{{ row.strike_price }}</td>
+                  {# PUT side: Bid/Ask, LTP, OI, then Actions (extreme right) #}
+                  {% if row.put %}
+                    {% set put_vol_class = "text-start option-chain-vol option-chain-put-cell" + (" option-itm-put" if put_itm else "") %}
+                    <td class="{{ put_vol_class }}">
+                      <span class="option-chain-ratio">{% if row.put.buy_sell_ratio is number %}{{ "%.2f"|format(row.put.buy_sell_ratio) }}{% else %}—{% endif %}</span>
+                      <span class="option-chain-vol-line">{{ "{:,.0f}".format(row.put.total_sell_qty / 1000) }}K / {{ "{:,.0f}".format(row.put.total_buy_qty / 1000) }}K</span>
+                    </td>
+                    {% set put_ltp_class = "text-start option-chain-ltp option-chain-put-cell" + (" option-itm-put" if put_itm else "") %}
+                    <td class="{{ put_ltp_class }}">{{ row.put.ltp }}</td>
+                    {% set put_oi_class = "text-start option-chain-oi option-chain-put-cell" + (" option-itm-put" if put_itm else "") %}
+                    <td class="{{ put_oi_class }}">
+                      {% set oi_pct_put = (row.put.open_interest / option_chain.max_put_oi * 100) if option_chain.max_put_oi else 0 %}
+                      <div class="d-flex align-items-center gap-1">
+                        <span class="option-chain-oi-text">{{ (row.put.open_interest / 100000)|round(1) }}L</span>
+                        <div class="flex-grow-1 option-chain-oi-bar-wrap"><div class="option-chain-oi-bar option-chain-oi-bar-put" data-oi-pct="{{ oi_pct_put }}"></div></div>
+                      </div>
+                    </td>
+                    {% set put_actions_class = "option-chain-actions option-chain-put-cell" + (" option-itm-put" if put_itm else "") %}
+                    <td class="{{ put_actions_class }}">
+                      <div class="d-flex gap-1 flex-nowrap chain-btns" data-stock-code="{{ option_chain.stock_code }}" data-exchange-code="{{ option_chain.exchange_code }}" data-expiry-date="{{ option_chain.expiry_display }}" data-right="Put" data-strike-price="{{ row.strike_price }}" data-best-bid="{{ row.put.best_bid_price or '' }}" data-best-offer="{{ row.put.best_offer_price or '' }}" data-lot-size="{{ row.put.lot_size or row.call.lot_size if row.call else '' }}">
+                        <button type="button" class="btn btn-success btn-sm" data-testid="btn-buy-put" data-action="Buy">Buy</button>
+                        <button type="button" class="btn btn-danger btn-sm" data-testid="btn-sell-put" data-action="Sell">Sell</button>
+                      </div>
+                    </td>
+                  {% else %}
+                    <td colspan="4" class="option-chain-empty"></td>
+                  {% endif %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% include "_order_confirm_modal.html" %}
+
+{% if (stock_codes is defined and stock_codes != None) or (option_chain is defined and option_chain != None) %}
+<div id="order-page-config" data-stock-codes="{{ (stock_codes_json | e) if (stock_codes_json is defined) else 'null' }}" style="display: none;" aria-hidden="true"></div>
+<script>
+(function() {
+  var configEl = document.getElementById('order-page-config');
+  var stockData = null;
+  if (configEl) {
+    var raw = configEl.getAttribute('data-stock-codes');
+    if (raw && raw !== 'null') {
+      try { stockData = JSON.parse(raw); } catch (e) { stockData = null; }
+    }
+  }
+  var stockCodeEl = document.getElementById('stock_code');
+  var expiryEl = document.getElementById('expiry_date');
+  if (stockData && stockCodeEl && expiryEl) {
+    stockCodeEl.addEventListener('change', function() {
+      var code = this.value;
+      expiryEl.innerHTML = '<option value="" disabled selected>Select Expiry</option>';
+      var stock = stockData.find(function(s) { return s.stock_code === code; });
+      if (stock && stock.expiry_dates) {
+        stock.expiry_dates.sort(function(a, b) { return new Date(a) - new Date(b); });
+        stock.expiry_dates.forEach(function(date) {
+          var opt = document.createElement('option');
+          opt.value = date;
+          opt.textContent = date;
+          expiryEl.appendChild(opt);
+        });
+      }
+    });
+  }
+
+  document.querySelectorAll('.option-chain-oi-bar[data-oi-pct]').forEach(function(el) {
+    var pct = el.getAttribute('data-oi-pct');
+    if (pct !== null && pct !== '') el.style.width = pct + '%';
+  });
+
+  var chainTable = document.getElementById('option_chain_table');
+  if (chainTable) {
+    chainTable.addEventListener('click', function(e) {
+      var btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      var wrap = e.target.closest('.chain-btns');
+      if (!wrap) return;
+      var action = btn.getAttribute('data-action');
+      var payload = {
+        product_type: 'Options',
+        stock_code: wrap.getAttribute('data-stock-code'),
+        exchange_code: wrap.getAttribute('data-exchange-code'),
+        expiry_date: wrap.getAttribute('data-expiry-date'),
+        right: wrap.getAttribute('data-right'),
+        strike_price: wrap.getAttribute('data-strike-price'),
+        quantity: '',
+        price: '',
+        action: action
+      };
+      window.openOrderConfirmModal(payload);
+    });
+    var atmRow = chainTable.querySelector('tr[data-atm="true"]');
+    if (atmRow) {
+      atmRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }
+})();
+</script>
+{% endif %}
+
+{% endblock %}

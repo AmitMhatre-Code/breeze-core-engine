@@ -348,15 +348,8 @@ def _icici_session_body_to_legacy(body: IciciSessionRequest) -> LegacyLoginFormR
     )
 
 
-@router.post("/")
-async def initiate_session(request: Request, body: IciciSessionRequest):
-    form = _icici_session_body_to_legacy(body)
-    return await _complete_icici_session(request, form, body.apisession)
-
-
-@router.post("/icici-return")
-async def initiate_session_icici_return(request: Request):
-    """ICICI redirects here with POST (often form or empty body + apisession in query); SPA submits JSON to /auth/icici-session."""
+async def _post_icici_callback(request: Request):
+    """ICICI browser POST (form/empty + apisession in query) or JSON body; same as legacy /icici-return."""
     ct = (request.headers.get("content-type") or "").lower()
     if "application/json" in ct:
         raw = await request.body()
@@ -376,6 +369,18 @@ async def initiate_session_icici_return(request: Request):
     return resp
 
 
+@router.post("/")
+async def initiate_session(request: Request):
+    """ICICI may POST here (callback URL = app root); SPA completion uses /auth/icici-session."""
+    return await _post_icici_callback(request)
+
+
+@router.post("/icici-return")
+async def initiate_session_icici_return(request: Request):
+    """ICICI redirects here with POST (often form or empty body + apisession in query); SPA submits JSON to /auth/icici-session."""
+    return await _post_icici_callback(request)
+
+
 @router.get("/home/data", response_model=HomeDataResponse)
 async def get_home_api(ctx: RequestContext = Depends(get_request_context)):
     user_id = ctx.user_id
@@ -386,7 +391,16 @@ async def get_home_api(ctx: RequestContext = Depends(get_request_context)):
     from icici_breeze_backend.audit.logger import AuditLogger
 
     AuditLogger(None).log_portfolio_access(user_id)
-    return HomeDataResponse(customer=customer or {}, margin=margin or {})
+    from icici_breeze_backend.app.services.api_usage import get_usage_for_display
+
+    usage = get_usage_for_display(user_id)
+    return HomeDataResponse(
+        customer=customer or {},
+        margin=margin or {},
+        api_calls_today=usage["api_calls_today"],
+        api_calls_limit=usage["api_calls_limit"],
+        api_usage_band=usage["api_usage_band"],
+    )
 
 
 @router.get("/data", response_model=HomeDataResponse, include_in_schema=False)

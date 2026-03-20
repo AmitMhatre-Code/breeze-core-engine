@@ -3,6 +3,7 @@
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 
 function LoginContent() {
   const sp = useSearchParams();
@@ -41,10 +42,10 @@ function LoginContent() {
       <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white/90 p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900/80 dark:shadow-xl dark:shadow-black/40">
         <div className="mb-6 space-y-2">
           <h1 className="text-xl font-semibold tracking-tight">
-            Sign in to ICICI Breeze
+            Breeze Web
           </h1>
           <p className="text-xs text-zinc-600 dark:text-zinc-400">
-            Sign in with Google, then complete ICICI broker login.
+            Sign in with Google, then complete ICICI Direct login.
           </p>
         </div>
         {banner && (
@@ -65,12 +66,7 @@ function LoginContent() {
           </div>
         )}
         <div className="space-y-3">
-          <a
-            href="/auth/google?next=/auth/icici-redirect"
-            className="btn-google inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-300 bg-zinc-50 px-4 py-3 text-sm font-medium text-zinc-900 transition hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950/40 dark:text-zinc-100 dark:hover:border-zinc-500"
-          >
-            Sign in with Google
-          </a>
+          <GoogleSignInButton href="/auth/google?next=/auth/icici-redirect" />
           <p className="text-center text-[11px] text-zinc-500">
             New user?{" "}
             <a
@@ -78,6 +74,15 @@ function LoginContent() {
               className="font-medium text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-400"
             >
               Register with Google
+            </a>
+          </p>
+          <p className="text-center text-[11px] text-zinc-500">
+            Wrong credentials?{" "}
+            <a
+              href="/register/correct"
+              className="font-medium text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-400"
+            >
+              Update credentials
             </a>
           </p>
         </div>

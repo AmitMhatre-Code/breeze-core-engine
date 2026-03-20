@@ -1,0 +1,51 @@
+{% extends "common_base.html" %}
+
+{% block content %}
+<div class="container my-5">
+  <div class="row justify-content-center">
+    <div class="col-12 col-lg-6 col-xl-5">
+      <div class="card bg-body-tertiary">
+        <div class="card-body">
+          <h3 class="card-title text-center mb-4">Update Credentials</h3>
+          {% if has_account is none %}
+            <p class="text-center">Sign in with Google to update your credentials.</p>
+            <div class="text-center mt-4">
+              {% set next_url = '/register/correct' %}
+              {% include "_google_signin_button.html" with context %}
+            </div>
+            <p class="text-center small text-muted mt-4"><a href="/" class="link-primary">Back to login</a></p>
+          {% elif has_account == false %}
+            <div class="alert alert-warning">No account linked. <a href="/register" class="alert-link">Register first</a>.</div>
+            <p class="text-center small text-muted mt-4"><a href="/" class="link-primary">Back to login</a></p>
+          {% else %}
+            {% if request.query_params.get('error') == 'missing' %}
+            <div class="alert alert-danger small">Please provide all fields.</div>
+            {% elif request.query_params.get('error') == 'mismatch' %}
+            <div class="alert alert-danger small">User ID does not match your account.</div>
+            {% elif request.query_params.get('error') == 'cred_failed' %}
+            <div class="alert alert-danger small">Failed to update credentials. Please try again.</div>
+            {% endif %}
+            <p class="small text-muted mb-3">Update your ICICI API credentials. You cannot change the User ID; it must match your registered account.</p>
+            <form method="POST" action="/register/correct">
+              <div class="mb-3">
+                <label class="form-label" for="user_id">ICICI User ID</label>
+                <input type="text" class="form-control" id="user_id" name="user_id" value="{{ user_id }}" readonly>
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="api_key">New API Key</label>
+                <input type="text" class="form-control" id="api_key" name="api_key" required placeholder="Your ICICI API Key">
+              </div>
+              <div class="mb-3">
+                <label class="form-label" for="secret_fragment">New secret fragment to store</label>
+                <input type="text" class="form-control" id="secret_fragment" name="secret_fragment" required placeholder="The portion to store (remember the rest for challenge)" autocomplete="off">
+              </div>
+              <button type="submit" class="btn btn-primary fw-light">Update</button>
+            </form>
+            <p class="text-center small text-muted mt-4"><a href="/" class="link-primary">Back to login</a></p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

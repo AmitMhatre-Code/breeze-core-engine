@@ -108,8 +108,16 @@ class ICICIClient:
                 if isinstance(result, dict) and result.get('Status') == 200:
                     _breaker.record_success()
                     return result
-                last_error = result.get('Error', 'Unknown error')
+                if not isinstance(result, dict):
+                    last_error = (
+                        "ICICI API returned empty response"
+                        if result is None
+                        else f"Unexpected response type ({type(result).__name__})"
+                    )
+                else:
+                    last_error = result.get('Error', 'Unknown error')
                 _breaker.record_failure()
+                logger.warning(f"Call attempt {attempt + 1} failed: {last_error}")
             except Exception as e:
                 last_error = str(e)
                 _breaker.record_failure()
@@ -121,12 +129,18 @@ class ICICIClient:
         code, msg = icici_error_to_http(str(last_error))
         return {'Status': code, 'Error': msg}
     
-    def get_portfolio(self, broker_token: str, user_id: str = None) -> Dict[str, Any]:
+    def get_portfolio(
+        self,
+        broker_token: str,
+        user_id: str = None,
+        breeze: Optional[BreezeConnect] = None,
+    ) -> Dict[str, Any]:
         """Fetch real-time portfolio positions from ICICI API.
         
         Args:
             broker_token: ICICI broker session token (user-specific)
             user_id: User ID (optional, for logging/context)
+            breeze: Pre-authenticated BreezeConnect (preferred; must have generate_session called)
         
         Returns:
             {
@@ -140,16 +154,21 @@ class ICICIClient:
         """
         logger.info(f"Fetching portfolio for user {user_id or 'unknown'}")
         
-        # Create a fresh BreezeConnect session for this user
-        breeze = self._create_breeze_session(broker_token)
+        if breeze is None:
+            breeze = self._create_breeze_session(broker_token)
         if breeze is None:
             return {'Status': 500, 'Error': 'Failed to create ICICI session'}
         
-        # Call with retries
         return self._call_with_retries(breeze.get_portfolio_positions, user_id=user_id)
     
-    def get_orders(self, broker_token: str, user_id: str = None, 
-                   start_date: str = None, end_date: str = None) -> Dict[str, Any]:
+    def get_orders(
+        self,
+        broker_token: str,
+        user_id: str = None,
+        start_date: str = None,
+        end_date: str = None,
+        breeze: Optional[BreezeConnect] = None,
+    ) -> Dict[str, Any]:
         """Fetch real-time order history from ICICI API.
         
         Args:
@@ -157,6 +176,7 @@ class ICICIClient:
             user_id: User ID (optional, for logging/context)
             start_date: Order start date (YYYY-MM-DD, optional)
             end_date: Order end date (YYYY-MM-DD, optional)
+            breeze: Pre-authenticated BreezeConnect (preferred)
         
         Returns:
             {
@@ -170,8 +190,8 @@ class ICICIClient:
         """
         logger.info(f"Fetching orders for user {user_id or 'unknown'}")
         
-        # Create a fresh BreezeConnect session for this user
-        breeze = self._create_breeze_session(broker_token)
+        if breeze is None:
+            breeze = self._create_breeze_session(broker_token)
         if breeze is None:
             return {'Status': 500, 'Error': 'Failed to create ICICI session'}
         

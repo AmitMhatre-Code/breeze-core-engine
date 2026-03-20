@@ -7,14 +7,14 @@ type Point = { date: string; value: number };
 
 const W = 560;
 const H = 140;
-const PAD_L = 40;
+const PAD_L = 48;
 const PAD_R = 10;
 const PAD_T = 8;
-const PAD_B = 20;
+const PAD_B = 26;
 
 /** Line & markers */
 const LINE_BLUE = "#3b82f6";
-const LINE_WIDTH = 1;
+const LINE_WIDTH = 2;
 const DOT_R = 1.75;
 const DOT_HOVER_R = 3;
 
@@ -108,8 +108,8 @@ export function Vix30dChart({ series }: { series: Point[] }) {
     const [px, py] = pts[hi];
     const date = formatChartDate(series[hi].date);
     const val = series[hi].value.toFixed(2);
-    const boxW = 76;
-    const boxH = 26;
+    const boxW = 92;
+    const boxH = 36;
     let lx = px - boxW / 2;
     let ly = py - boxH - 6;
     lx = Math.min(Math.max(lx, PAD_L + 2), W - PAD_R - boxW - 2);
@@ -142,11 +142,11 @@ export function Vix30dChart({ series }: { series: Point[] }) {
                 strokeWidth={0.6}
               />
               <text
-                x={PAD_L - 5}
-                y={y + 3}
+                x={PAD_L - 6}
+                y={y + 4}
                 textAnchor="end"
                 className="fill-zinc-500 dark:fill-zinc-500"
-                style={{ fontSize: "6.5px" }}
+                style={{ fontSize: "10px" }}
               >
                 {tick.toFixed(1)}
               </text>
@@ -191,27 +191,31 @@ export function Vix30dChart({ series }: { series: Point[] }) {
             <rect
               x={hoverLabel.x}
               y={hoverLabel.y}
-              width={76}
-              height={26}
-              rx={3}
+              width={92}
+              height={36}
+              rx={4}
               className="fill-zinc-900/90 stroke-zinc-600/35 dark:fill-zinc-950/94 dark:stroke-zinc-500/35"
               strokeWidth={0.5}
             />
             <text
-              x={hoverLabel.x + 38}
-              y={hoverLabel.y + 11}
+              x={hoverLabel.x + 46}
+              y={hoverLabel.y + 15}
               textAnchor="middle"
               fill="rgb(244 244 245)"
-              style={{ fontSize: "6.5px", fontWeight: 500 }}
+              style={{ fontSize: "10px", fontWeight: 500 }}
             >
               {hoverLabel.date}
             </text>
             <text
-              x={hoverLabel.x + 38}
-              y={hoverLabel.y + 21}
+              x={hoverLabel.x + 46}
+              y={hoverLabel.y + 29}
               textAnchor="middle"
               fill={LINE_BLUE}
-              style={{ fontSize: "7px", fontWeight: 600, fontFamily: "ui-monospace, monospace" }}
+              style={{
+                fontSize: "11px",
+                fontWeight: 600,
+                fontFamily: "ui-monospace, monospace",
+              }}
             >
               {`VIX ${hoverLabel.val}`}
             </text>
@@ -219,18 +223,18 @@ export function Vix30dChart({ series }: { series: Point[] }) {
         ) : null}
         <text
           x={PAD_L}
-          y={H - 3}
+          y={H - 5}
           className="fill-zinc-600 dark:fill-zinc-500"
-          style={{ fontSize: "6.5px" }}
+          style={{ fontSize: "10px" }}
         >
           {first}
         </text>
         <text
           x={W - PAD_R}
-          y={H - 3}
+          y={H - 5}
           textAnchor="end"
           className="fill-zinc-600 dark:fill-zinc-500"
-          style={{ fontSize: "6.5px" }}
+          style={{ fontSize: "10px" }}
         >
           {last}
         </text>

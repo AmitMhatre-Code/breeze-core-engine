@@ -151,9 +151,21 @@ def start_application():
     # Session for Google OAuth (Authlib stores state here)
     session_secret = (cfg.JWT_SECRET or "dev-session-secret").strip()[:32].ljust(32, "0")
     app.add_middleware(SessionMiddleware, secret_key=session_secret)
-    # CORS: allow web UI domain only (Phase 6 T104)
-    origins = os.environ.get("CORS_ORIGINS", "http://localhost:8000").split(",")
-    app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in origins], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+    # CORS: allow web UI. .env uses ALLOWED_ORIGINS; CORS_ORIGINS overrides if set.
+    _cors_raw = (
+        os.environ.get("CORS_ORIGINS")
+        or os.environ.get("ALLOWED_ORIGINS")
+        or "http://localhost:8000,http://localhost:3000,http://127.0.0.1:3000,http://127.0.0.1:8000"
+    )
+    _parsed = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+    # Browsers send localhost vs 127.0.0.1 as distinct origins; mirror localhost entries.
+    origins = list(_parsed)
+    for o in _parsed:
+        if "://localhost" in o and "127.0.0.1" not in o:
+            twin = o.replace("://localhost", "://127.0.0.1", 1)
+            if twin not in origins:
+                origins.append(twin)
+    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
     app.add_middleware(RequestLoggerMiddleware)

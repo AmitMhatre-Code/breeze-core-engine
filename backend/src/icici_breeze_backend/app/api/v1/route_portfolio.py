@@ -1,3 +1,5 @@
+from typing import Any, Dict, List, Optional
+
 from fastapi import APIRouter, Request, Depends, HTTPException
 from icici_breeze_backend.app.services.processor import processor
 import icici_breeze_backend.app.core.config as cfg
@@ -6,6 +8,90 @@ from icici_breeze_backend.app.domain.portfolio import PortfolioActionRequest
 from icici_breeze_backend.app.domain.responses import IciciApiResponse
 from icici_breeze_backend.audit.logger import AuditLogger
 from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend, json_redirect
+
+
+def _maybe_coerce_float(out: Dict[str, Any], key: str) -> None:
+    v = out.get(key)
+    if v is None or v == "" or v == "Err" or isinstance(v, bool):
+        return
+    if isinstance(v, (int, float)):
+        return
+    if isinstance(v, str):
+        t = v.strip()
+        if not t or t == "*":
+            return
+        try:
+            out[key] = float(t)
+        except (ValueError, TypeError):
+            pass
+
+
+def _coerce_position_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize broker strings to JSON numbers; keep spot_price 'Err' as-is."""
+    out = dict(row)
+    q = out.get("quantity")
+    if q is None:
+        out["quantity"] = 0
+    elif isinstance(q, str):
+        try:
+            out["quantity"] = int(float(q.strip() or 0))
+        except (ValueError, TypeError):
+            out["quantity"] = 0
+    elif not isinstance(q, int):
+        try:
+            out["quantity"] = int(q)
+        except (ValueError, TypeError):
+            out["quantity"] = 0
+    p = out.get("pnl")
+    if p is None:
+        out["pnl"] = 0.0
+    elif isinstance(p, str):
+        try:
+            out["pnl"] = float(p.strip() or 0)
+        except (ValueError, TypeError):
+            out["pnl"] = 0.0
+    elif isinstance(p, bool):
+        out["pnl"] = 0.0
+    elif not isinstance(p, (int, float)):
+        try:
+            out["pnl"] = float(p)
+        except (ValueError, TypeError):
+            out["pnl"] = 0.0
+    for key in (
+        "average_price",
+        "ltp",
+        "strike_price",
+        "margin_amount",
+        "price",
+        "current_profit",
+        "carry_profit",
+        "span_margin_required",
+        "carry_margin_returns",
+        "elm_margin_required",
+    ):
+        _maybe_coerce_float(out, key)
+    return out
+
+
+def _normalize_portfolio_success_for_ui(data: Dict[str, Any]) -> Dict[str, Any]:
+    """ICICI Breeze uses Success: [ {...}, ... ]; UI expects Success: { positions: [...] }."""
+    if not isinstance(data, dict) or data.get("Status") != 200:
+        return data
+    success = data.get("Success")
+    if success is None:
+        return data
+    rows: Optional[List[Any]] = None
+    if isinstance(success, list):
+        rows = success
+    elif isinstance(success, dict) and isinstance(success.get("positions"), list):
+        rows = success["positions"]
+    if rows is None:
+        return data
+    positions = [
+        _coerce_position_row(r) if isinstance(r, dict) else r for r in rows
+    ]
+    data = {**data, "Success": {"positions": positions}}
+    return data
 
 
 router = APIRouter()
@@ -47,10 +133,11 @@ async def get_portfolio_api(ctx: RequestContext = Depends(get_request_context)):
     user_id = ctx.user_id
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
-    token_str = ctx.broker_token
 
-    from icici_breeze_backend.app.services.processor import get_portfolio_realtime
-
-    data = get_portfolio_realtime(broker_token=token_str, user_id=user_id)
+    # Same enrichment as legacy `processor.get_positions`: NFO/BFO options only,
+    # quotes, current_profit / carry_profit, span & ELM, hedgeable.
+    data = breeze.get_positions(user_id)
+    if isinstance(data, dict):
+        data = _normalize_portfolio_success_for_ui(data)
     AuditLogger(None).log_portfolio_access(user_id)
     return IciciApiResponse.model_validate(data)

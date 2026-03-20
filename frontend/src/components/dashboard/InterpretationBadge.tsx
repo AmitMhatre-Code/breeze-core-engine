@@ -10,9 +10,9 @@ const TONE_STYLE: Record<InterpretTone, CSSProperties> = {
     forcedColorAdjust: "none",
   },
   muted: {
-    backgroundColor: "#fbbf24",
-    color: "#422006",
-    border: "1px solid rgba(245, 158, 11, 0.75)",
+    backgroundColor: "#059669",
+    color: "#ffffff",
+    border: "1px solid rgba(16, 185, 129, 0.65)",
     forcedColorAdjust: "none",
   },
   caution: {

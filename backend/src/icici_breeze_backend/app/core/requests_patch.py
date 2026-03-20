@@ -32,9 +32,13 @@ class _SafeBreezeResponse:
                 "Error": (self.text[:500] if self.text else "Request failed"),
             }
         try:
-            return self._raw.json()
+            data = self._raw.json()
         except Exception:
             return {"Status": 502, "Error": "Invalid response"}
+        # ICICI occasionally returns HTTP 200 with body `null`; breeze_connect then does response.get(...)
+        if data is None:
+            return {"Status": 502, "Error": "Empty API response"}
+        return data
 
 
 def _record_breeze_call(url):
