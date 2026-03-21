@@ -13,6 +13,16 @@
 # testing
 /coverage
 
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+
+# Backend
+backend/__pycache__/
+backend/venv/
+backend/.env
+
 # next.js
 /.next/
 /out/
@@ -39,3 +49,78 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Logs
+logs
+*.log
+log.txt
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+*.swp
+*.swo
+*.swn
+*.bak
+*.tmp
+~*
+
+# vscode settings
+.vscode/
+.history/
+
+# IDE files
+.idea/
+*.iml
+
+# Mac system files
+Icon?
+._*
+
+# npm pack output
+*.tgz
+
+# Parcel, Snowpack, Vite
+/dist
+
+# Svelte
+*.svelte-kit
+
+# Storybook
+.out/
+.storybook-static
+
+# misc build/dev artifacts
+/.turbo
+npm-debug.log*
+lerna-debug.log*
+
+# lock files (choose which to commit, most often only one should be tracked)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Custom environment or secret files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.envrc
+
+# temporary config overrides
+.env.*.backup
+*.local.js
+*.local.ts
+
+# Linux/Mac Trash
+.Trash-*
+
+# Logs
+logs/
+*.log
+
+# Database files
+data/db.sqlite3
+data/scrip_master.db
+
+legacy/

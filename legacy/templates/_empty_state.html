@@ -1,8 +1,0 @@
-{# Empty state partial. Pass: icon (Bootstrap icon class, e.g. bi-inbox), message, cta_url (optional), cta_text (optional) #}
-<div class="text-center py-5">
-  <i class="bi bi-{{ icon | default('inbox') }} display-4 text-muted mb-3"></i>
-  <p class="fs-5 text-muted mb-4">{{ message }}</p>
-  {% if cta_url and cta_text %}
-  <a href="{{ cta_url }}" class="btn btn-primary fw-light">{{ cta_text }}</a>
-  {% endif %}
-</div>

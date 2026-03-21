@@ -1,0 +1,72 @@
+# --- Secrets & local env (never publish) ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+.eggs/
+*.egg
+dist/
+build/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+*.cover
+.hypothesis/
+
+# --- Node / Next.js (anywhere in repo) ---
+node_modules/
+.next/
+out/
+.turbo/
+.vercel
+*.tsbuildinfo
+
+# --- Logs ---
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# --- Backend runtime (Docker volumes / local downloads & DBs) ---
+backend/data/
+backend/logs/
+
+# --- OS & editors ---
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+.vscode/
+.history/
+
+# --- Keys & misc ---
+*.pem
+*.key
+*.crt
+*.p12
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Legacy ---
+legacy/
