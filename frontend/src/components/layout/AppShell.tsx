@@ -18,6 +18,7 @@ const navItems = [
   { href: "/portfolio", label: "Portfolio" },
   { href: "/performance", label: "Performance" },
   { href: "/orders", label: "Orders" },
+  { href: "/trade-options-chain", label: "Trade Options Chain" },
   { href: "/strategies", label: "Strategies" },
   { href: "/strategy-builder", label: "Strategy Builder" },
   { href: "/settings", label: "Settings" },

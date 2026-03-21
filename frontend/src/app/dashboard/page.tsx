@@ -436,6 +436,20 @@ export default function DashboardPage() {
                   )}
                 </span>
               </div>
+              <div className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400">
+                <span
+                  className="max-w-[55%] shrink-0"
+                  title="From lowest to highest of the strikes with max call OI and max put OI (nearest expiry)"
+                >
+                  Range based on highest OI
+                </span>
+                <span className="max-w-[45%] text-right font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {formatHighestOiStrikeRange(
+                    opts?.strike_highest_call_oi,
+                    opts?.strike_highest_put_oi,
+                  )}
+                </span>
+              </div>
               <div className="flex items-start justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
                 <span className="shrink-0 pt-0.5">Put:call (OI)</span>
                 <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-0.5 text-right font-medium text-zinc-900 dark:text-zinc-100">
@@ -451,20 +465,7 @@ export default function DashboardPage() {
                   ) : null}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400">
-                <span
-                  className="max-w-[55%] shrink-0"
-                  title="From lowest to highest of the strikes with max call OI and max put OI (nearest expiry)"
-                >
-                  Range based on highest OI
-                </span>
-                <span className="max-w-[45%] text-right font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
-                  {formatHighestOiStrikeRange(
-                    opts?.strike_highest_call_oi,
-                    opts?.strike_highest_put_oi,
-                  )}
-                </span>
-              </div>
+
             </div>
             {opts?.error ? (
               <p className="text-[11px] text-amber-800 dark:text-amber-200/90">

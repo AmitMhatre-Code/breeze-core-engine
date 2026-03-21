@@ -29,6 +29,8 @@ export type ChainSuccess = {
   expiry_display: string;
   stock_code: string;
   exchange_code: string;
+  max_call_oi?: number;
+  max_put_oi?: number;
 };
 
 export type ChainApiResponse = {
