@@ -1,4 +1,6 @@
-@import "tailwindcss";
+/* Scan from package root so utilities are always generated (Next/Turbopack cwd-safe). */
+@import "tailwindcss" source("../..");
+@source inline("sr-only");
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -47,6 +49,19 @@ body {
   .app-table-row {
     @apply border-t border-zinc-200 dark:border-zinc-800/80;
   }
+  /** Primary actions (matches sidebar “Breeze Web” sky brand). */
+  .app-btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg border border-sky-600 bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-sky-500 hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 disabled:pointer-events-none disabled:opacity-50 dark:border-sky-500 dark:bg-sky-500 dark:hover:border-sky-400 dark:hover:bg-sky-400;
+  }
+  /** Secondary / navigation actions — sky outline. */
+  .app-btn-outline {
+    @apply inline-flex items-center justify-center rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-800 shadow-sm transition hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 dark:border-sky-800/70 dark:bg-zinc-900 dark:text-sky-200 dark:hover:border-sky-600 dark:hover:bg-sky-950/40;
+  }
+  /** Inline & text links (same brand blue as Breeze Web). */
+  .app-link {
+    @apply font-medium text-sky-600 underline-offset-2 transition-colors hover:text-sky-500 hover:underline dark:text-sky-400 dark:hover:text-sky-300;
+  }
+  /** Neutral — Cancel / dismiss only. */
   .app-btn-secondary {
     @apply inline-flex items-center justify-center rounded-lg border border-zinc-200 bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-200 dark:border-transparent dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700;
   }
@@ -54,12 +69,249 @@ body {
     @apply text-sm font-semibold text-zinc-900 dark:text-zinc-100;
   }
   .app-text-muted {
-    @apply text-xs text-zinc-500;
+    @apply text-xs text-zinc-500 dark:text-zinc-400;
+  }
+  /** Stronger dark-mode contrast when body text is near-white (subtitle chips, captions). */
+  html.dark .app-text-muted {
+    color: rgb(212 212 216);
+  }
+
+  /**
+   * Order book date range: use html.dark descendant rules so styling survives even if
+   * `dark:*` utilities are missed (dynamic strings) or variant ordering shifts.
+   */
+  .orders-date-surface {
+    border-radius: 0.75rem;
+    border: 1px solid rgb(228 228 231 / 0.9);
+    background-color: rgb(244 244 245 / 0.45);
+    padding: 0.75rem 1rem;
+  }
+  html.dark .orders-date-surface {
+    border-color: rgb(39 39 42);
+    background-color: rgb(9 9 11);
+  }
+  .orders-date-picker-field {
+    position: relative;
+    width: 100%;
+    min-width: 11rem;
+    color-scheme: light;
+  }
+  html.dark .orders-date-picker-field {
+    color-scheme: dark;
+  }
+  .orders-date-field-display {
+    box-sizing: border-box;
+    display: flex;
+    height: 2.75rem;
+    width: 100%;
+    min-width: 11rem;
+    align-items: center;
+    border-radius: 0.75rem;
+    border: 1px solid rgb(228 228 231);
+    background-color: #fff;
+    padding: 0 2.25rem 0 2.5rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    color: rgb(24 24 24);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+    outline: none;
+    pointer-events: none;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+    color-scheme: light;
+  }
+  .orders-date-picker-field:hover .orders-date-field-display {
+    border-color: rgb(212 212 216);
+  }
+  .orders-date-picker-field:focus-within .orders-date-field-display {
+    border-color: rgb(14 165 233);
+    box-shadow: 0 0 0 2px rgb(14 165 233 / 0.2);
+  }
+  html.dark .orders-date-field-display {
+    border-color: rgb(82 82 91);
+    background-color: rgb(39 39 42);
+    color: rgb(250 250 250);
+    box-shadow: none;
+    color-scheme: dark;
+  }
+  html.dark .orders-date-picker-field:hover .orders-date-field-display {
+    border-color: rgb(113 113 122);
+  }
+  html.dark .orders-date-picker-field:focus-within .orders-date-field-display {
+    border-color: rgb(56 189 248);
+    box-shadow: 0 0 0 2px rgb(56 189 248 / 0.25);
+  }
+  .orders-date-picker-field input[type="date"].orders-date-input-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    box-sizing: border-box;
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    cursor: pointer;
+    border: 0;
+    padding: 0;
+    opacity: 0;
+    color-scheme: inherit;
+  }
+  .orders-date-picker-field
+    input[type="date"].orders-date-input-overlay::-webkit-calendar-picker-indicator {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    width: 100%;
+    cursor: pointer;
+  }
+  .orders-fetch-btn {
+    display: inline-flex;
+    width: 100%;
+    height: 2.75rem;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.75rem;
+    border: 1px solid rgb(2 132 199 / 0.45);
+    background-color: rgb(2 132 199);
+    padding: 0 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #fff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      opacity 0.15s ease;
+  }
+  .orders-fetch-btn:hover:not(:disabled) {
+    background-color: rgb(14 165 233);
+    border-color: rgb(14 165 233 / 0.5);
+  }
+  .orders-fetch-btn:focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 2px rgb(255 255 255),
+      0 0 0 4px rgb(14 165 233 / 0.45);
+  }
+  html.dark .orders-fetch-btn:focus-visible {
+    box-shadow: 0 0 0 2px rgb(24 24 27 / 0.9), 0 0 0 4px rgb(56 189 248 / 0.35);
+  }
+  .orders-fetch-btn:disabled {
+    pointer-events: none;
+    opacity: 0.4;
+  }
+  @media (min-width: 640px) {
+    .orders-fetch-btn {
+      width: auto;
+    }
+  }
+  .orders-date-caption {
+    margin-bottom: 0.75rem;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    color: rgb(113 113 122);
+  }
+  html.dark .orders-date-caption {
+    color: rgb(161 161 170);
+  }
+  .orders-date-sep {
+    flex-shrink: 0;
+    text-align: center;
+    font-size: 0.875rem;
+    color: rgb(113 113 122);
+  }
+  html.dark .orders-date-sep {
+    color: rgb(161 161 170);
+  }
+  .orders-page-desc {
+    font-size: 0.875rem;
+    line-height: 1.45;
+    color: rgb(82 82 91);
+  }
+  html.dark .orders-page-desc {
+    color: rgb(212 212 216);
   }
   .app-alert-error {
     @apply rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-200;
   }
   .app-pre {
     @apply overflow-auto rounded-lg border border-zinc-200 bg-zinc-100 p-3 text-[11px] text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400;
+  }
+
+  /**
+   * Slim strategy-builder range (modal OTM sliders): thin track, small thumb, consistent WebKit/Firefox.
+   */
+  .sb-range-slim {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 1.125rem;
+    background: transparent;
+    cursor: pointer;
+  }
+  .sb-range-slim:focus {
+    outline: none;
+  }
+  .sb-range-slim::-webkit-slider-runnable-track {
+    height: 3px;
+    border-radius: 9999px;
+    background: rgb(228 228 231);
+  }
+  .dark .sb-range-slim::-webkit-slider-runnable-track {
+    background: rgb(63 63 70 / 0.85);
+  }
+  .sb-range-slim::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 13px;
+    height: 13px;
+    margin-top: -5px;
+    border-radius: 9999px;
+    border: 2px solid rgb(255 255 255);
+    background: rgb(2 132 199);
+    box-shadow:
+      0 0 0 1px rgb(24 24 27 / 0.06),
+      0 1px 2px rgb(0 0 0 / 0.08);
+  }
+  .dark .sb-range-slim::-webkit-slider-thumb {
+    border-color: rgb(24 24 27);
+    background: rgb(56 189 248);
+    box-shadow:
+      0 0 0 1px rgb(255 255 255 / 0.08),
+      0 1px 2px rgb(0 0 0 / 0.35);
+  }
+  .sb-range-slim:focus-visible::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 3px rgb(14 165 233 / 0.35),
+      0 1px 2px rgb(0 0 0 / 0.08);
+  }
+  .sb-range-slim::-moz-range-track {
+    height: 3px;
+    border-radius: 9999px;
+    border: none;
+    background: rgb(228 228 231);
+  }
+  .dark .sb-range-slim::-moz-range-track {
+    background: rgb(63 63 70 / 0.85);
+  }
+  .sb-range-slim::-moz-range-thumb {
+    width: 13px;
+    height: 13px;
+    border: 2px solid rgb(255 255 255);
+    border-radius: 9999px;
+    background: rgb(2 132 199);
+    box-shadow:
+      0 0 0 1px rgb(24 24 27 / 0.06),
+      0 1px 2px rgb(0 0 0 / 0.08);
+  }
+  .dark .sb-range-slim::-moz-range-thumb {
+    border-color: rgb(24 24 27);
+    background: rgb(56 189 248);
+  }
+  .sb-range-slim:focus-visible::-moz-range-thumb {
+    box-shadow:
+      0 0 0 3px rgb(14 165 233 / 0.35),
+      0 1px 2px rgb(0 0 0 / 0.08);
   }
 }

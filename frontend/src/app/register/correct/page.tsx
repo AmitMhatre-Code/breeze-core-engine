@@ -62,11 +62,11 @@ export default function RegisterCorrectPage() {
           onClick={() => {
             window.location.href = "/auth/google?next=/register/correct";
           }}
-          className="rounded-xl bg-emerald-500 px-6 py-2 text-sm font-medium text-black"
+          className="app-btn-primary px-6 py-2.5"
         >
           Sign in with Google
         </button>
-        <Link href="/login" className="mt-4 text-xs text-zinc-500 hover:underline">
+        <Link href="/login" className="app-link mt-4 text-xs">
           Back to login
         </Link>
       </div>
@@ -77,7 +77,7 @@ export default function RegisterCorrectPage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 text-center text-sm text-zinc-400">
         No ICICI account linked to this Google user.
-        <Link href="/register" className="ml-2 text-emerald-400">
+        <Link href="/register" className="app-link ml-2 text-sm">
           Register
         </Link>
       </div>
@@ -113,7 +113,7 @@ export default function RegisterCorrectPage() {
           <button
             type="submit"
             disabled={busy}
-            className="w-full rounded-xl bg-emerald-500 py-2 text-sm font-medium text-black disabled:opacity-50"
+            className="app-btn-primary w-full py-2.5"
           >
             {busy ? "Saving…" : "Save"}
           </button>

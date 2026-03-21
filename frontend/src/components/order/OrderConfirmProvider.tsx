@@ -93,6 +93,7 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
       );
       setState({ open: false, base: null });
       void queryClient.invalidateQueries({ queryKey: ["orders", "list"] });
+      void queryClient.invalidateQueries({ queryKey: ["book"] });
       const dest = res.redirect || "/orders";
       router.push(dest);
     } catch (e) {
@@ -118,7 +119,7 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
             role="dialog"
             aria-modal="true"
             aria-labelledby="order-confirm-title"
-            className="app-card max-h-[90vh] w-full max-w-md overflow-y-auto p-5 shadow-lg"
+            className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-2">
@@ -203,7 +204,7 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
               </button>
               <button
                 type="button"
-                className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+                className="app-btn-primary px-3 py-1.5 text-xs font-medium disabled:opacity-60"
                 onClick={() => void onConfirm()}
                 disabled={submitting}
               >

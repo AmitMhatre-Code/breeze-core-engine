@@ -1,8 +1,12 @@
 from fastapi import APIRouter
 from fastapi import Request, Depends
 from fastapi import HTTPException
+from typing import Optional
 from icici_breeze_backend.app.auth.context import get_request_context, get_request_context_or_redirect, RequestContext
-from icici_breeze_backend.app.domain.responses import UncoveredShortsDataResponse
+from icici_breeze_backend.app.domain.responses import (
+    UncoveredShortsDataResponse,
+    UncoveredShortsScanResponse,
+)
 from icici_breeze_backend.app.domain.trading import UncoveredShortsFormRequest
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 from icici_breeze_backend.app.services.processor import processor
@@ -59,3 +63,43 @@ async def get_uncovered_shorts_data(ctx: RequestContext = Depends(get_request_co
     options = breeze.uncovered_shorts(user_id, stock_code=None, expiry_date=None, limits=None)
     AuditLogger(None).log_operation(user_id, OperationType.PORTFOLIO_VIEW, "Uncovered Shorts")
     return UncoveredShortsDataResponse(options=options)
+
+
+@router.get("/scan", response_model=UncoveredShortsScanResponse)
+async def get_uncovered_shorts_scan(
+    stock_code: str,
+    expiry_date: str,
+    limits: int,
+    top: int = 10,
+    otm_call_distance: int = 10,
+    otm_put_distance: int = 10,
+    provision_elm: Optional[str] = None,
+    exchange_code: str = cfg.NFO,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Same inputs as legacy uncovered_shorts Optimize: margin (lacs), OTM %, ELM, top N."""
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    if limits <= 0:
+        raise HTTPException(status_code=400, detail="limits (margin lacs) must be positive")
+    if top < 1 or top > 500:
+        raise HTTPException(status_code=400, detail="top must be between 1 and 500")
+    if otm_call_distance < 1 or otm_call_distance > 50 or otm_put_distance < 1 or otm_put_distance > 50:
+        raise HTTPException(status_code=400, detail="OTM distance must be between 1 and 50")
+    elm = cfg.CHECKED if provision_elm in (cfg.CHECKED, "on", "true", "1") else None
+    raw = breeze.uncovered_shorts(
+        ctx.user_id,
+        stock_code=stock_code.strip(),
+        expiry_date=expiry_date.strip(),
+        limits=limits,
+        elm=elm,
+        otm_call_distance=otm_call_distance,
+        otm_put_distance=otm_put_distance,
+        top=top,
+        exchange_code=exchange_code or cfg.NFO,
+    )
+    AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "UncoveredShortsScan")
+    return UncoveredShortsScanResponse(
+        ce_options=raw.get("ce_options") or {},
+        pe_options=raw.get("pe_options") or {},
+    )

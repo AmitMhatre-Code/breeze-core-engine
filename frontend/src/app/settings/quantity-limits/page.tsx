@@ -90,7 +90,7 @@ export default function QuantityLimitsPage() {
             type="button"
             disabled={m.isPending || merged.length === 0}
             onClick={() => m.mutate()}
-            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-emerald-500 dark:text-black"
+            className="app-btn-primary px-3 py-1.5 text-xs font-medium"
           >
             Save all
           </button>

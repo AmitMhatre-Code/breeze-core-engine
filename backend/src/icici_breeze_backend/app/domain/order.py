@@ -50,12 +50,20 @@ class BreakOrderRequest(BaseModel):
     action: Literal["Buy", "Sell"]
 
 
+class CancelOrderDetail(BaseModel):
+    """Per-order context from the book UI when cancelling (for consolidated messaging)."""
+
+    option: str = ""
+    open_quantity: int = 0
+
+
 class BookActionRequest(BaseModel):
     """Request for order book actions (cancel, view)."""
     order_ids: List[str] = Field(default_factory=list)
     start: Optional[str] = None
     end: Optional[str] = None
     action: str
+    cancel_details: Optional[List[CancelOrderDetail]] = None
 
     @field_validator("order_ids", mode="before")
     @classmethod

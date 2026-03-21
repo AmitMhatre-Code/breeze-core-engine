@@ -54,11 +54,11 @@ export default function RegisterDeletePage() {
           onClick={() => {
             window.location.href = "/auth/google?next=/register/delete";
           }}
-          className="rounded-xl bg-emerald-500 px-6 py-2 text-sm font-medium text-black"
+          className="app-btn-primary px-6 py-2.5"
         >
           Sign in with Google
         </button>
-        <Link href="/login" className="mt-4 text-xs text-zinc-500">
+        <Link href="/login" className="app-link mt-4 text-xs">
           Back to login
         </Link>
       </div>

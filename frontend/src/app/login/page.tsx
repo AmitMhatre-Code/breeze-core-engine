@@ -41,7 +41,7 @@ function LoginContent() {
       </div>
       <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white/90 p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900/80 dark:shadow-xl dark:shadow-black/40">
         <div className="mb-6 space-y-2">
-          <h1 className="text-xl font-semibold tracking-tight">
+          <h1 className="text-xl font-semibold tracking-tight text-sky-500 dark:text-sky-500">
             Breeze Web
           </h1>
           <p className="text-xs text-zinc-600 dark:text-zinc-400">
@@ -69,19 +69,13 @@ function LoginContent() {
           <GoogleSignInButton href="/auth/google?next=/auth/icici-redirect" />
           <p className="text-center text-[11px] text-zinc-500">
             New user?{" "}
-            <a
-              href="/register"
-              className="font-medium text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-400"
-            >
+            <a href="/register" className="app-link">
               Register with Google
             </a>
           </p>
           <p className="text-center text-[11px] text-zinc-500">
             Wrong credentials?{" "}
-            <a
-              href="/register/correct"
-              className="font-medium text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-400"
-            >
+            <a href="/register/correct" className="app-link">
               Update credentials
             </a>
           </p>

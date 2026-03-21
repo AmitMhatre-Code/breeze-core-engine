@@ -30,6 +30,10 @@ type DashboardVixOptions = {
   expected_range: [number, number] | null;
   expected_move_pct: number | null;
   put_call_ratio: number | null;
+  /** Strike with largest call open interest (nearest listed expiry). */
+  strike_highest_call_oi: number | null;
+  /** Strike with largest put open interest (nearest listed expiry). */
+  strike_highest_put_oi: number | null;
   error?: string | null;
 };
 
@@ -86,7 +90,38 @@ const emptyOpts = (): DashboardVixOptions => ({
   expected_range: null,
   expected_move_pct: null,
   put_call_ratio: null,
+  strike_highest_call_oi: null,
+  strike_highest_put_oi: null,
 });
+
+/** NIFTY index / strike style values in the volatility widget (whole points). */
+function formatNiftyIndexInt(v: number | null | undefined): string {
+  if (typeof v !== "number" || !Number.isFinite(v)) return "—";
+  return Math.round(v).toLocaleString("en-IN");
+}
+
+/** Span from min to max of highest call-OI and highest put-OI strikes (same expiry). */
+function formatHighestOiStrikeRange(
+  callStrike: number | null | undefined,
+  putStrike: number | null | undefined,
+): string {
+  const c =
+    typeof callStrike === "number" && Number.isFinite(callStrike)
+      ? Math.round(callStrike)
+      : null;
+  const p =
+    typeof putStrike === "number" && Number.isFinite(putStrike)
+      ? Math.round(putStrike)
+      : null;
+  if (c != null && p != null) {
+    const lo = Math.min(c, p);
+    const hi = Math.max(c, p);
+    return `${lo.toLocaleString("en-IN")} - ${hi.toLocaleString("en-IN")}`;
+  }
+  if (c != null) return c.toLocaleString("en-IN");
+  if (p != null) return p.toLocaleString("en-IN");
+  return "—";
+}
 
 function sumOpenPositionsPnl(data: PortfolioApiResponse | undefined): number | null {
   if (!data || data.Status !== 200) return null;
@@ -363,8 +398,8 @@ export default function DashboardPage() {
               </div>
               <div className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400">
                 <span>NIFTY spot</span>
-                <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                  {typeof niftySpot === "number" ? niftySpot.toFixed(2) : "—"}
+                <span className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {formatNiftyIndexInt(niftySpot)}
                 </span>
               </div>
               <div className="flex items-start justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
@@ -388,8 +423,8 @@ export default function DashboardPage() {
                   {Array.isArray(opts?.expected_range) &&
                   opts.expected_range.length === 2 ? (
                     <>
-                      {opts.expected_range[0].toFixed(2)} –{" "}
-                      {opts.expected_range[1].toFixed(2)}
+                      {formatNiftyIndexInt(opts.expected_range[0])} -{" "}
+                      {formatNiftyIndexInt(opts.expected_range[1])}
                       {typeof opts.expected_move_pct === "number" ? (
                         <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
                           ±{opts.expected_move_pct.toFixed(2)}% to expiry
@@ -414,6 +449,20 @@ export default function DashboardPage() {
                       tone={pcrInterp.tone}
                     />
                   ) : null}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400">
+                <span
+                  className="max-w-[55%] shrink-0"
+                  title="From lowest to highest of the strikes with max call OI and max put OI (nearest expiry)"
+                >
+                  Range based on highest OI
+                </span>
+                <span className="max-w-[45%] text-right font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {formatHighestOiStrikeRange(
+                    opts?.strike_highest_call_oi,
+                    opts?.strike_highest_put_oi,
+                  )}
                 </span>
               </div>
             </div>

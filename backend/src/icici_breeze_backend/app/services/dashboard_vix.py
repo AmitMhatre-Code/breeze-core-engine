@@ -437,22 +437,24 @@ def _option_chain_oi_metrics(
     strike_highest_call_oi: Optional[float] = None
     if calls:
         best = max(calls, key=lambda r: _oi(r))
-        try:
-            k = float(best.get("strike_price", 0))
-            if k > 0:
-                strike_highest_call_oi = k
-        except (TypeError, ValueError):
-            pass
+        if _oi(best) > 0:
+            try:
+                k = float(best.get("strike_price", 0))
+                if k > 0:
+                    strike_highest_call_oi = k
+            except (TypeError, ValueError):
+                pass
 
     strike_highest_put_oi: Optional[float] = None
     if puts:
         best = max(puts, key=lambda r: _oi(r))
-        try:
-            k = float(best.get("strike_price", 0))
-            if k > 0:
-                strike_highest_put_oi = k
-        except (TypeError, ValueError):
-            pass
+        if _oi(best) > 0:
+            try:
+                k = float(best.get("strike_price", 0))
+                if k > 0:
+                    strike_highest_put_oi = k
+            except (TypeError, ValueError):
+                pass
 
     return put_call_ratio, strike_highest_call_oi, strike_highest_put_oi
 

@@ -48,6 +48,10 @@ const nextConfig: NextConfig = {
         destination: `${backendUpstream}/order`,
       },
       {
+        source: "/book/data",
+        destination: `${backendUpstream}/book/data`,
+      },
+      {
         source: "/book/:path*",
         destination: `${backendUpstream}/book/:path*`,
       },
@@ -68,8 +72,28 @@ const nextConfig: NextConfig = {
         destination: `${backendUpstream}/uncovered-shorts/data`,
       },
       {
+        source: "/uncovered-shorts/scan",
+        destination: `${backendUpstream}/uncovered-shorts/scan`,
+      },
+      {
         source: "/performance/data",
         destination: `${backendUpstream}/performance/data`,
+      },
+      {
+        source: "/strategy-builder/underlyings",
+        destination: `${backendUpstream}/strategy-builder/underlyings`,
+      },
+      {
+        source: "/strategy-builder/chain",
+        destination: `${backendUpstream}/strategy-builder/chain`,
+      },
+      {
+        source: "/strategy-builder/margin",
+        destination: `${backendUpstream}/strategy-builder/margin`,
+      },
+      {
+        source: "/strategy-builder/execute",
+        destination: `${backendUpstream}/strategy-builder/execute`,
       },
       {
         source: "/admin/data",

@@ -71,7 +71,7 @@ function ChallengeForm() {
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 text-zinc-100">
         <div className="max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/80 p-6 text-sm">
           <p className="text-zinc-300">Missing session token in URL.</p>
-          <Link href="/login" className="mt-4 inline-block text-emerald-400">
+          <Link href="/login" className="app-link mt-4 inline-block">
             Back to login
           </Link>
         </div>
@@ -86,7 +86,7 @@ function ChallengeForm() {
         <p className="mt-1 text-xs text-zinc-500">Step 2 of 2</p>
         <p className="mt-4 text-sm text-zinc-400">
           User id{" "}
-          <span className="font-medium text-emerald-400">{userId || "—"}</span>
+          <span className="font-medium text-zinc-200">{userId || "—"}</span>
         </p>
         {err && (
           <p className="mt-4 rounded-lg border border-red-900/50 bg-red-950/30 px-3 py-2 text-sm text-red-200">
@@ -107,7 +107,7 @@ function ChallengeForm() {
           <button
             type="submit"
             disabled={submitting || !userId}
-            className="w-full rounded-xl bg-emerald-500 py-2 text-sm font-medium text-black hover:bg-emerald-400 disabled:opacity-50"
+            className="app-btn-primary w-full py-2.5"
           >
             {submitting ? "Signing in…" : "Submit"}
           </button>

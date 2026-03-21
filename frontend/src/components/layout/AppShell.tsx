@@ -19,6 +19,7 @@ const navItems = [
   { href: "/performance", label: "Performance" },
   { href: "/orders", label: "Orders" },
   { href: "/strategies", label: "Strategies" },
+  { href: "/strategy-builder", label: "Strategy Builder" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -53,13 +54,20 @@ export function AppShell({
   // Backend may omit keys (older server or cached payload); `undefined != null` is false in JS, so coalesce.
   const apiCallsToday = homeQ.data?.api_calls_today ?? 0;
   const apiCallsLimit = homeQ.data?.api_calls_limit ?? 5000;
-  const apiBand = homeQ.data?.api_usage_band ?? "green";
-  const apiUsageClass =
-    apiBand === "red"
-      ? "text-red-700 dark:text-red-300"
-      : apiBand === "amber"
-        ? "text-amber-800 dark:text-amber-200/90"
-        : "text-emerald-800 dark:text-emerald-300/90";
+
+  const freeMarginDisplay = useMemo(() => {
+    if (freeMargin == null || !Number.isFinite(freeMargin)) return null;
+    if (freeMargin < 0) {
+      return {
+        text: `(${formatIndianMoneyCompact(Math.abs(freeMargin))})`,
+        tone: "negative" as const,
+      };
+    }
+    return {
+      text: formatIndianMoneyCompact(freeMargin),
+      tone: "positive" as const,
+    };
+  }, [freeMargin]);
 
   return (
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
@@ -75,7 +83,9 @@ export function AppShell({
             const active =
               item.href === "/dashboard"
                 ? pathname === "/" || pathname.startsWith("/dashboard")
-                : pathname.startsWith(item.href);
+                : item.href === "/strategies"
+                  ? pathname === "/strategies"
+                  : pathname.startsWith(item.href);
             return (
               <Link
                 key={item.href}
@@ -83,8 +93,8 @@ export function AppShell({
                 className={[
                   "flex items-center gap-2 rounded-lg px-3 py-2 transition",
                   active
-                    ? "bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-50"
-                    : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
+                    ? "bg-sky-100 text-sky-950 dark:bg-sky-950/45 dark:text-sky-50"
+                    : "text-zinc-600 hover:bg-sky-50 hover:text-sky-900 dark:text-zinc-400 dark:hover:bg-sky-950/35 dark:hover:text-sky-100",
                 ].join(" ")}
               >
                 <span>{item.label}</span>
@@ -108,7 +118,7 @@ export function AppShell({
             ) : (
               <>
                 <span
-                  className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100"
+                  className="truncate text-sm font-medium text-emerald-600 dark:text-emerald-400"
                   title={displayName ?? undefined}
                 >
                   {displayName ?? "—"}
@@ -123,10 +133,17 @@ export function AppShell({
                   <span className="hidden truncate text-sm text-zinc-600 dark:text-zinc-400 md:inline">
                     Free margin
                   </span>
-                  <span className="truncate text-sm font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
-                    {freeMargin != null
-                      ? formatIndianMoneyCompact(freeMargin)
-                      : "—"}
+                  <span
+                    className={[
+                      "truncate text-sm font-medium tabular-nums",
+                      freeMarginDisplay?.tone === "negative"
+                        ? "text-red-600 dark:text-red-400"
+                        : freeMarginDisplay?.tone === "positive"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-zinc-900 dark:text-zinc-100",
+                    ].join(" ")}
+                  >
+                    {freeMarginDisplay?.text ?? "—"}
                   </span>
                 </span>
               </>
@@ -135,21 +152,21 @@ export function AppShell({
           <div className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-3">
             {homeDataReady && (
               <span
-                className={`min-w-0 shrink-0 whitespace-nowrap text-[11px] tabular-nums sm:text-xs ${apiUsageClass}`}
+                className="min-w-0 max-w-[9rem] shrink-0 whitespace-nowrap text-[10px] font-normal tabular-nums leading-tight text-zinc-400 dark:text-zinc-500 sm:max-w-none sm:text-[11px]"
                 title="Breeze REST calls from this app today (IST calendar day, ICICI daily cap 5,000)"
               >
-                <span className="hidden sm:inline">Breeze API </span>
-                <span className="font-normal">
-                  {apiCallsToday.toLocaleString()} /{" "}
-                  {apiCallsLimit.toLocaleString()}
+                <span className="hidden sm:inline">API calls </span>
+                <span>
+                  {apiCallsToday.toLocaleString("en-IN")} /{" "}
+                  {apiCallsLimit.toLocaleString("en-IN")}
                 </span>
               </span>
             )}
-            <span className="hidden text-xs text-zinc-500 lg:inline">
+            <span className="hidden text-[10px] font-normal text-zinc-400 dark:text-zinc-500 lg:inline">
               ICICI
             </span>
             <span
-              className="hidden h-2 w-2 rounded-full bg-emerald-500 sm:inline"
+              className="hidden h-2 w-2 rounded-full bg-sky-500 sm:inline"
               title="Session active"
               aria-hidden
             />

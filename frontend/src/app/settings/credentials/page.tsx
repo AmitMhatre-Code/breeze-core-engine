@@ -128,7 +128,7 @@ function CredentialsFormLoaded(props: {
           <button
             type="submit"
             disabled={props.busy}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-emerald-500 dark:text-black"
+            className="app-btn-primary"
           >
             {props.busy ? "Saving…" : "Save"}
           </button>

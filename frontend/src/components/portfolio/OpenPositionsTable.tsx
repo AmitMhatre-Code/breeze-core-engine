@@ -66,6 +66,45 @@ function formatSpanElmLakhs(raw: unknown): string {
   return `₹${rounded.toLocaleString("en-IN")}L`;
 }
 
+function carryMarginRoiTitle(row: PortfolioPositionRecord): string | undefined {
+  const avg = coerceNum(row.average_price);
+  const qty = coerceNum(row.quantity);
+  const span = coerceNum(row.span_margin_required);
+  const dte = coerceNum(row.days_to_expiry);
+  const cr = coerceNum(row.carry_margin_returns);
+  if (
+    avg == null ||
+    qty == null ||
+    span == null ||
+    dte == null ||
+    cr == null ||
+    span <= 0 ||
+    dte <= 0
+  ) {
+    return undefined;
+  }
+  const premium = avg * Math.abs(qty);
+  const premS = `₹${premium.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+  const spanS = `₹${span.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+  return [
+    "Annualised carry return on SPAN (%):",
+    "(premium at entry ÷ DTE) × 365 ÷ span × 100",
+    "",
+    `premium (avg sell price × |qty|) = ${premS}`,
+    `DTE = ${Math.round(dte)} days`,
+    `span = ${spanS}`,
+    "",
+    `= (${premium.toLocaleString("en-IN", { maximumFractionDigits: 2 })} ÷ ${Math.round(dte)}) × 365 ÷ ${span.toLocaleString("en-IN", { maximumFractionDigits: 2 })} × 100`,
+    `≈ ${cr.toFixed(2)}%`,
+  ].join("\n");
+}
+
 /** Carry returns %: gain = green x%, loss = red (x%) with brackets like MTM. */
 function formatCarryRet(raw: unknown): { text: string; className: string } {
   const n = coerceNum(raw);
@@ -147,14 +186,14 @@ export function hedgeHref(row: PortfolioPositionRecord): string {
 
 /** Table row: compact on xl, roomier on 2xl. Cards: touch-friendly full-width on narrow phones. */
 const btnPrimaryTable =
-  "inline-flex shrink-0 items-center justify-center rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 2xl:px-3 2xl:py-2 2xl:text-sm dark:bg-emerald-600 dark:hover:bg-emerald-500";
+  "app-btn-primary shrink-0 px-2.5 py-1.5 text-xs font-medium 2xl:px-3 2xl:py-2 2xl:text-sm";
 const btnSecondaryTable =
-  "inline-flex shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-100 px-2.5 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-200 2xl:px-3 2xl:py-2 2xl:text-sm dark:border-transparent dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700";
+  "app-btn-outline shrink-0 px-2.5 py-1.5 text-xs 2xl:px-3 2xl:py-2 2xl:text-sm";
 
 const btnPrimaryCard =
-  "inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500";
+  "app-btn-primary px-3 py-2.5 text-sm font-medium";
 const btnSecondaryCard =
-  "inline-flex items-center justify-center rounded-lg border border-zinc-200 bg-zinc-100 px-3 py-2.5 text-sm font-medium text-zinc-900 hover:bg-zinc-200 dark:border-transparent dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700";
+  "app-btn-outline px-3 py-2.5 text-sm font-medium";
 
 function PositionActionsTable({ row }: { row: PortfolioPositionRecord }) {
   const { openOrderConfirm } = useOrderConfirm();
@@ -258,7 +297,14 @@ export function OpenPositionsTable({
                 <th className={`${thBase} text-right`} title="ELM at 2%">
                   ELM
                 </th>
-                <th className={`${thBase} text-right`}>Carry Ret.</th>
+                <th
+                  className={`${thBase} text-right`}
+                  title={
+                    "Annualised on SPAN (%): (premium at entry ÷ DTE) × 365 ÷ span × 100. Hover a row value for the exact inputs."
+                  }
+                >
+                  Carry Ret.
+                </th>
                 <th
                   className={`${thBase} text-right whitespace-nowrap`}
                   title="Square off or hedge this leg"
@@ -281,6 +327,7 @@ export function OpenPositionsTable({
                   const mtm = formatMtmCarry(row.current_profit);
                   const carry = formatMtmCarry(row.carry_profit);
                   const cr = formatCarryRet(row.carry_margin_returns);
+                  const carryRoiTitle = carryMarginRoiTitle(row);
                   const spot = formatSpot(row.spot_price);
                   const qty = coerceNum(row.quantity);
                   return (
@@ -331,6 +378,7 @@ export function OpenPositionsTable({
                       </td>
                       <td
                         className={`${tdShell} text-right tabular-nums ${cr.className}`}
+                        title={carryRoiTitle}
                       >
                         {cr.text}
                       </td>
@@ -357,6 +405,7 @@ export function OpenPositionsTable({
             const mtm = formatMtmCarry(row.current_profit);
             const carry = formatMtmCarry(row.carry_profit);
             const cr = formatCarryRet(row.carry_margin_returns);
+            const carryRoiTitle = carryMarginRoiTitle(row);
             const spot = formatSpot(row.spot_price);
             const qty = coerceNum(row.quantity);
             return (
@@ -407,7 +456,7 @@ export function OpenPositionsTable({
                   <span className="app-text-muted">ELM @2%:</span>{" "}
                   {formatSpanElmLakhs(row.elm_margin_required)}
                 </p>
-                <p>
+                <p title={carryRoiTitle}>
                   <span className="app-text-muted">Carry Returns:</span>{" "}
                   <span className={cr.className}>{cr.text}</span>
                 </p>

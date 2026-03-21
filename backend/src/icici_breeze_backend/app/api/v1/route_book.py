@@ -1,10 +1,18 @@
-from fastapi import APIRouter
-from fastapi import Request, Depends
-from icici_breeze_backend.app.auth.context import get_request_context_or_redirect, RequestContext
-from icici_breeze_backend.app.domain.order import BookActionRequest
-from icici_breeze_backend.app.services.processor import processor
-from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend, json_redirect
+import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.api.error_utils import raise_route_errors
+from icici_breeze_backend.app.api.frontend_redirect import json_redirect, redirect_to_frontend
+from icici_breeze_backend.app.auth.context import (
+    RequestContext,
+    get_request_context,
+    get_request_context_or_redirect,
+)
+from icici_breeze_backend.app.domain.order import BookActionRequest
+from icici_breeze_backend.app.domain.responses import BookDataResponse
+from icici_breeze_backend.app.services.processor import processor
 
 router = APIRouter()
 breeze = processor()
@@ -16,6 +24,101 @@ async def serve_landing(request: Request):
     return redirect_to_frontend("/orders" + ("?" + q if q else ""))
 
 
+@router.get("/data", response_model=BookDataResponse)
+async def get_book_data(
+    start: str | None = None,
+    end: str | None = None,
+    context: RequestContext = Depends(get_request_context),
+):
+    """Same data as legacy GET /book (messages, grouped order book, date range)."""
+    user_id = context.user_id
+    if not context.broker_token:
+        raise HTTPException(
+            status_code=401,
+            detail="ICICI broker token missing; re-login required",
+        )
+
+    error: dict = {}
+
+    customer = breeze.get_customer_details(user_id)
+    if customer is None:
+        error["location"] = (
+            "In route_book.py --> get_book_data() get_customer_details returned None"
+        )
+        error["contents"] = "get_customer_details() returned None for user_id = " + user_id
+        breeze.store_error(error)
+    elif customer["Status"] != 200:
+        error["location"] = "In route_book.py --> get_book_data() get_customer_details failed"
+        error["contents"] = (
+            "customer['status'] = "
+            + str(customer["Status"])
+            + " and customer['error'] = "
+            + customer.get("Error", "")
+        )
+        breeze.store_error(error)
+
+    margin = breeze.get_margin_situation(user_id, target_margin_ute=100)
+    if margin["Status"] != 200:
+        error["location"] = "In route_book.py --> get_book_data() get_margin_situation failed"
+        error["contents"] = (
+            "margin['status'] = "
+            + str(margin["Status"])
+            + " and margin['error'] = "
+            + margin.get("Error", "")
+        )
+        breeze.store_error(error)
+
+    errors = breeze.retrieve_errors()
+    if len(errors) > 0:
+        raise_route_errors(errors, log_context="route_book.get_book_data")
+
+    raw_messages = breeze.retrieve_messages(user_id)
+    messages: list[dict] = list(raw_messages) if raw_messages else []
+
+    start = (start or "").strip() or None
+    end = (end or "").strip() or None
+    if start is None or end is None:
+        start = datetime.datetime.today().strftime("%Y-%m-%d")
+        start_date = datetime.datetime.strptime(start, "%Y-%m-%d")
+        next_day = start_date
+        while True:
+            next_day += datetime.timedelta(days=1)
+            if next_day.weekday() < 5:
+                break
+        end = next_day.strftime("%Y-%m-%d")
+
+    orders = breeze.get_orders(user_id, start=start, end=end)
+    orders_failed = False
+    grouped_orders = None
+    if orders["Status"] != 200:
+        grouped_orders = None
+        orders_failed = True
+    elif orders.get("Success") is None:
+        grouped_orders = None
+    else:
+        grouped_orders = breeze.group_orders(user_id, orders)
+
+    if orders_failed:
+        messages = list(messages)
+        messages.append(
+            {
+                "type": cfg.WARNING,
+                "message": (
+                    "Orders could not be loaded for the selected date range. "
+                    "Try a shorter range or try again."
+                ),
+            }
+        )
+
+    return BookDataResponse(
+        messages=messages,
+        grouped_orders=grouped_orders,
+        start=start,
+        end=end,
+        orders_failed=orders_failed,
+    )
+
+
 @router.post("")
 async def process_post(
     body: BookActionRequest,
@@ -24,7 +127,19 @@ async def process_post(
     user_id = context.user_id
 
     if body.action == cfg.CANCEL and body.order_ids:
-        messages = breeze.cancel_orders(user_id, body.order_ids)
+        details = body.cancel_details
+        if details is not None and len(details) != len(body.order_ids):
+            details = None
+        cancel_meta = (
+            [d.model_dump() for d in details]
+            if details
+            else None
+        )
+        messages = breeze.cancel_orders(
+            user_id,
+            body.order_ids,
+            cancel_details=cancel_meta,
+        )
         breeze.store_messages(user_id, messages)
         return json_redirect("/orders")
     return json_redirect(f"/orders?start={body.start or ''}&end={body.end or ''}")

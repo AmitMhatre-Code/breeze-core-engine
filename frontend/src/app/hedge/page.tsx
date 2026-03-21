@@ -20,10 +20,7 @@ function HedgeInner() {
         {q && (
           <pre className="app-pre mt-4 max-h-40">{q}</pre>
         )}
-        <Link
-          href="/strategies"
-          className="mt-4 inline-block text-xs text-emerald-700 dark:text-emerald-400"
-        >
+        <Link href="/strategies" className="app-link mt-4 inline-block text-xs">
           Back to strategies
         </Link>
       </section>

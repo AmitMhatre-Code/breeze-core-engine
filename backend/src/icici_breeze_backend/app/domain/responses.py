@@ -116,6 +116,31 @@ class UncoveredShortsDataResponse(BaseModel):
     options: Any = Field(default=None)
 
 
+class UncoveredShortsScanResponse(BaseModel):
+    """Uncovered Shorts /scan: CE/PE option lists from get_options (legacy Optimize)."""
+
+    model_config = ConfigDict(extra="allow")
+    ce_options: Dict[str, Any] = Field(default_factory=dict)
+    pe_options: Dict[str, Any] = Field(default_factory=dict)
+
+
 class OrderDetailResponse(BaseModel):
     """Order detail response (from get_order_detail)."""
     model_config = ConfigDict(extra="allow")
+
+
+class BookDataResponse(BaseModel):
+    """Order book JSON for SPA (legacy book.html parity: messages + grouped orders)."""
+
+    model_config = ConfigDict(extra="forbid")
+    messages: List[Dict[str, Any]] = Field(default_factory=list)
+    grouped_orders: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description="Grouped rows from Processor.group_orders; None when no data",
+    )
+    start: str = Field("", description="Applied from_date YYYY-MM-DD")
+    end: str = Field("", description="Applied to_date YYYY-MM-DD")
+    orders_failed: bool = Field(
+        False,
+        description="True when get_orders returned non-200",
+    )

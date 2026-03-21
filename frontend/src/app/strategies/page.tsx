@@ -1,12 +1,19 @@
 // Client component so auth cookies are included with browser fetch.
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { apiClient } from "@/lib/api-client";
 
+type UnderlyingRow = {
+  stock_code: string;
+  long_name?: string;
+  expiry_dates?: string[];
+};
+
 type StockCodesResponse = {
-  stock_codes: string[];
+  stock_codes: UnderlyingRow[];
 };
 
 type UncoveredShortsDataResponse = {
@@ -48,6 +55,20 @@ export default function StrategiesPage() {
           <header className="flex items-center justify-between">
             <h2 className="app-text-heading">Strategies workspace</h2>
           </header>
+          <div className="app-card-muted p-3 text-sm text-zinc-700 dark:text-zinc-300">
+            <div className="font-medium text-zinc-900 dark:text-zinc-100">
+              Strategy Builder
+            </div>
+            <p className="mt-1 app-text-muted">
+              Outlook-first payoff, margin, and multi-leg execution.
+            </p>
+            <Link
+              href="/strategy-builder"
+              className="app-link mt-3 inline-block text-xs"
+            >
+              Open Strategy Builder →
+            </Link>
+          </div>
           <div className="grid gap-3 md:grid-cols-3">
             <div className="app-card-muted p-3 text-sm text-zinc-700 dark:text-zinc-300">
               <div className="font-medium text-zinc-900 dark:text-zinc-100">

@@ -48,6 +48,12 @@ type MarginSuccess = {
   actual_margin_avl?: number;
 };
 
+type AnnualisedRoiBreakdown = {
+  premium_earned?: number;
+  days_to_expiry?: number;
+  span_margin?: number;
+};
+
 type PerformanceSuccess = {
   net_pnl?: number;
   premium_earned?: number;
@@ -55,12 +61,48 @@ type PerformanceSuccess = {
   brokerage?: number;
   taxes?: number;
   annualised_roi?: number;
+  annualised_roi_breakdown?: AnnualisedRoiBreakdown;
 };
 
 function num(v: unknown, fallback = 0): number {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function buildPerformanceRoiTooltip(
+  roiFraction: number,
+  breakdown: AnnualisedRoiBreakdown | undefined,
+): string {
+  if (
+    breakdown == null ||
+    breakdown.span_margin == null ||
+    breakdown.days_to_expiry == null
+  ) {
+    return [
+      "Annualised ROI (FY): (premium earned ÷ DTE) × 365 ÷ span margin.",
+      "The value is shown as a percentage (×100).",
+      "Span margin uses your cash limit from the broker.",
+      "DTE is premium-weighted from sell-trade date to expiry when the ticket includes expiry; otherwise FY elapsed days.",
+    ].join("\n");
+  }
+  const pe = num(breakdown.premium_earned);
+  const dte = Math.max(1, Math.round(num(breakdown.days_to_expiry, 1)));
+  const sm = num(breakdown.span_margin);
+  const peS = `₹${pe.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const smS = `₹${sm.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const pct = roiFraction * 100;
+  return [
+    "Annualised ROI (FY):",
+    "(premium earned ÷ DTE) × 365 ÷ span margin",
+    "",
+    `premium earned (option sells in window) = ${peS}`,
+    `DTE = ${dte} days`,
+    `span margin (cash limit) = ${smS}`,
+    "",
+    `= (${pe.toLocaleString("en-IN", { maximumFractionDigits: 2 })} ÷ ${dte}) × 365 ÷ ${sm.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`,
+    `× 100 on screen ≈ ${pct.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`,
+  ].join("\n");
 }
 
 function PerformancePageInner() {
@@ -85,6 +127,13 @@ function PerformancePageInner() {
   const performance = perfBlock
     ? iciciSuccess<PerformanceSuccess>(perfBlock)
     : undefined;
+  const performanceRoiTooltip = useMemo(() => {
+    if (!performance) return "";
+    return buildPerformanceRoiTooltip(
+      num(performance.annualised_roi),
+      performance.annualised_roi_breakdown,
+    );
+  }, [performance]);
   const perfStatus =
     perfBlock && typeof perfBlock === "object"
       ? (perfBlock as { Status?: number }).Status
@@ -144,8 +193,7 @@ function PerformancePageInner() {
                 Performance
               </h1>
               <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                Bank balance, margins, and options P&amp;L by financial year
-                (same sources as the classic app).
+                Bank balance, margins, and options P&amp;L
               </p>
             </div>
           </header>
@@ -306,8 +354,9 @@ function PerformancePageInner() {
                       </dd>
                     </div>
                     <div className="flex justify-between gap-2">
-                      <dt>Annualised ROI</dt>
+                      <dt title={performanceRoiTooltip}>Annualised ROI</dt>
                       <dd
+                        title={performanceRoiTooltip}
                         className={[
                           "tabular-nums font-medium",
                           num(performance.annualised_roi) >= 0

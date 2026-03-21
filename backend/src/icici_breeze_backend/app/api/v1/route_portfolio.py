@@ -68,6 +68,7 @@ def _coerce_position_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "span_margin_required",
         "carry_margin_returns",
         "elm_margin_required",
+        "days_to_expiry",
     ):
         _maybe_coerce_float(out, key)
     return out

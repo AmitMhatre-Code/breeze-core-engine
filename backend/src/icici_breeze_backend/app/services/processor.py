@@ -55,9 +55,104 @@ def _days_to_expiry(expiry_str: str) -> int:
     return (future - datetime.datetime.today()).days + 2
 
 
+def _parse_option_expiry_date(raw) -> datetime.date | None:
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    s = s.removesuffix("T06:00:00.000Z")
+    try:
+        if len(s.split("-")[0]) == 4:
+            return datetime.datetime.strptime(s[:10], "%Y-%m-%d").date()
+        return datetime.datetime.strptime(s, "%d-%b-%Y").date()
+    except ValueError:
+        return None
+
+
+def _trade_days_to_expiry_at_fill(trade: dict) -> int | None:
+    """Calendar days from trade_date to expiry_date (≥1), when both are present."""
+    try:
+        td_raw = trade.get("trade_date") or trade.get("trade_book_date")
+        if not td_raw:
+            return None
+        td = datetime.datetime.strptime(str(td_raw).strip(), "%d-%b-%Y").date()
+        ed = _parse_option_expiry_date(trade.get("expiry_date"))
+        if ed is None:
+            return None
+        d = (ed - td).days
+        if d < 0:
+            return None
+        return max(1, d)
+    except (ValueError, TypeError):
+        return None
+
+
+def _annualized_carry_percent_on_span(
+    premium: float, days_to_expiry: int, span_margin: float
+) -> float:
+    """(Premium / DTE) * 365 / Span Margin, as a display percentage (e.g. 15.5 → 15.5%)."""
+    dte = max(1, int(days_to_expiry))
+    try:
+        sm = float(span_margin)
+        pr = float(premium)
+    except (TypeError, ValueError):
+        return 0.0
+    if sm <= 0 or not math.isfinite(sm) or not math.isfinite(pr):
+        return 0.0
+    return (pr / dte) * (365.0 / sm) * 100.0
+
+
+def _annualized_roi_fraction_on_span(
+    premium: float, days_to_expiry: int, span_margin: float
+) -> float:
+    """Same as _annualized_carry_percent_on_span but without *100 (performance API / FY UI)."""
+    dte = max(1, int(days_to_expiry))
+    try:
+        sm = float(span_margin)
+        pr = float(premium)
+    except (TypeError, ValueError):
+        return 0.0
+    if sm <= 0 or not math.isfinite(sm) or not math.isfinite(pr):
+        return 0.0
+    return (pr / dte) * (365.0 / sm)
+
+
 def _icici_error(error_msg: str, status: int = 400) -> dict:
     """Standard ICICI API error response dict."""
     return {"Status": status, "Error": error_msg}
+
+
+def _format_indian_integer_digits(n: int) -> str:
+    """Format integer with Indian-style grouping (e.g. 1234567 → 12,34,567)."""
+    n = int(n)
+    sign = "-" if n < 0 else ""
+    n = abs(n)
+    s = str(n)
+    if len(s) <= 3:
+        return sign + s
+    last3 = s[-3:]
+    rest = s[:-3]
+    parts = [last3]
+    while rest:
+        if len(rest) >= 2:
+            parts.insert(0, rest[-2:])
+            rest = rest[:-2]
+        else:
+            parts.insert(0, rest)
+            rest = ""
+    return sign + ",".join(parts)
+
+
+def _format_inr_integer_indian(value) -> str:
+    """Rupees, rounded to integer, with ₹ and Indian-style commas."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "₹0"
+    if math.isnan(v) or math.isinf(v):
+        return "₹0"
+    return "₹" + _format_indian_integer_digits(int(round(v)))
 
 
 def _normalize_icici_response(data: dict) -> tuple:
@@ -486,7 +581,26 @@ class processor():
                         if temp['quantity'] <= int(i['total_buy_qty']):
                             temp['best_bid_price'] = i["best_bid_price"]
                             temp['premium'] = temp['quantity'] * i["best_bid_price"]
-                            temp['carry_returns'] = (temp['premium']/(limits * 100000)) * (365/_days_to_expiry(expiry_date)) * 100
+                            # Annualised carry on SPAN: (premium / DTE) * 365 / span for this line.
+                            num_lots = (
+                                (temp["quantity"] // lot_size)
+                                if lot_size
+                                else 0
+                            )
+                            span_total = float(num_lots) * margin
+                            dte = max(1, _days_to_expiry(temp["expiry_date"]))
+                            if span_total > 0:
+                                temp["carry_returns"] = (
+                                    _annualized_carry_percent_on_span(
+                                        float(temp["premium"]),
+                                        dte,
+                                        span_total,
+                                    )
+                                )
+                                temp["span_margin_total"] = span_total
+                                temp["days_to_expiry"] = dte
+                            else:
+                                temp["carry_returns"] = 0.0
                             options.append(copy.deepcopy(temp))
                     else:
                         sorted_options['Error'] = "Error calling margin_calculator : " + option_margin.get('Error', '')
@@ -671,31 +785,87 @@ class processor():
 
         return grouped_orders
 
-    def cancel_orders(self,user_id,orders):
+    def cancel_orders(self, user_id, orders, cancel_details: list | None = None):
         breeze = self.get_session_breeze(user_id)
-        message = {}
-        messages = []        
-        for order in orders:
+        messages: list[dict] = []
+        meta_ok = (
+            cancel_details is not None
+            and len(cancel_details) == len(orders)
+        )
+        success_idx: list[int] = []
+        failures: list[tuple[str, str]] = []
+
+        for i, order in enumerate(orders):
             order_id = order
             exchange_code = cfg.NFO
             if isinstance(order, str) and "|" in order:
                 # Book UI passes: "<order_id>|<exchange_code>"
                 order_id, exchange_code = order.split("|", 1)
             try:
-                response = breeze.cancel_order(exchange_code=exchange_code,order_id=order_id)
+                response = breeze.cancel_order(
+                    exchange_code=exchange_code, order_id=order_id
+                )
             except Exception as e:
-                response = _icici_error(f"Error calling ICICI Breeze API cancel_order(exchange_code={exchange_code},order_id={order_id}): {e}")
+                response = _icici_error(
+                    f"Error calling ICICI Breeze API cancel_order(exchange_code={exchange_code},order_id={order_id}): {e}"
+                )
 
             self._maybe_evict_session(user_id, response)
-            if response.get('Status') == 200:
-                message['type'] = cfg.SUCCESS
-                message['message'] = order + " : " + response['Success']['message']
-                messages.append(message.copy())
+            if response.get("Status") == 200:
+                success_idx.append(i)
             else:
-                message['type'] = cfg.DANGER
-                message['message'] = order + " : " + response.get('Error', '')
-                messages.append(message.copy())
-        
+                err = str(response.get("Error") or "Unknown error")
+                failures.append((str(order), err))
+
+        if success_idx:
+            n = len(success_idx)
+            if meta_ok:
+                opts = {
+                    str((cancel_details[j] or {}).get("option") or "").strip()
+                    for j in success_idx
+                }
+                opts.discard("")
+                total_qty = sum(
+                    int((cancel_details[j] or {}).get("open_quantity") or 0)
+                    for j in success_idx
+                )
+                if len(opts) == 1 and total_qty > 0:
+                    opt = next(iter(opts))
+                    line = (
+                        f"Cancelled {_format_indian_integer_digits(n)} orders for {opt} "
+                        f"totalling {_format_indian_integer_digits(total_qty)} quantity"
+                    )
+                elif total_qty > 0:
+                    line = (
+                        f"Cancelled {_format_indian_integer_digits(n)} orders totalling "
+                        f"{_format_indian_integer_digits(total_qty)} quantity"
+                    )
+                else:
+                    line = (
+                        f"Cancelled {_format_indian_integer_digits(n)} "
+                        f"order{'s' if n != 1 else ''}."
+                    )
+            else:
+                line = (
+                    f"Cancelled {_format_indian_integer_digits(n)} "
+                    f"order{'s' if n != 1 else ''}."
+                )
+            messages.append({"type": cfg.SUCCESS, "message": line})
+
+        if failures:
+            fail_parts = [f"{oid}: {em}" for oid, em in failures[:5]]
+            extra = len(failures) - 5
+            tail = f" (+{extra} more)" if extra > 0 else ""
+            messages.append(
+                {
+                    "type": cfg.DANGER,
+                    "message": "Failed to cancel "
+                    f"{_format_indian_integer_digits(len(failures))} order(s): "
+                    + "; ".join(fail_parts)
+                    + tail,
+                }
+            )
+
         return messages
 
     def get_positions(self, user_id):
@@ -778,7 +948,18 @@ class processor():
                                     margins = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
                                 if margins.get('Status') == 200:
                                     i['span_margin_required'] = float(margins['Success']['span_margin_required'])
-                                    i['carry_margin_returns'] = (i['carry_profit']/i['span_margin_required']) * (365/_days_to_expiry(i['expiry_date'])) * 100
+                                    prem_earned = float(i["average_price"]) * abs(
+                                        int(float(i["quantity"]))
+                                    )
+                                    dte = max(1, _days_to_expiry(i["expiry_date"]))
+                                    i["days_to_expiry"] = dte
+                                    i["carry_margin_returns"] = (
+                                        _annualized_carry_percent_on_span(
+                                            prem_earned,
+                                            dte,
+                                            i["span_margin_required"],
+                                        )
+                                    )
                                 else:
                                     i['span_margin_required'] = None
                                     i['carry_margin_returns'] = None
@@ -1091,19 +1272,30 @@ class processor():
         return response
 
     def break_order(self,user_id,stock_code,expiry_date,product_type,right,strike_price,total_qty,price,action, exchange_code: str = cfg.NFO):
-        message = {}
-        messages = []
+        messages: list[dict] = []
+        contract_label = f"{stock_code}-{expiry_date}-{strike_price}-{right}"
+        try:
+            price_f = float(str(price).strip() or 0)
+        except (TypeError, ValueError):
+            price_f = 0.0
 
         qty_limits = self.fetch_qty_limits(stock_code, exchange_code=exchange_code)
         if qty_limits is None:
-            message['type'] = cfg.DANGER
-            message['message'] = "No entries for stock code " + stock_code + " in the Options Quantity Limits file"
-            messages.append(message.copy())
+            messages.append(
+                {
+                    "type": cfg.DANGER,
+                    "message": "No entries for stock code "
+                    + stock_code
+                    + " in the Options Quantity Limits file",
+                }
+            )
         else:
             lot_size = self.fetch_lot_size(stock_code, expiry_date, exchange_code=exchange_code)
             qty_per_order = (max(1, int(qty_limits)) // lot_size) * lot_size  # avoid ZeroDivisionError when qty_limits is 1
             iterations = int(int(total_qty) / qty_per_order)
             remainder = int(total_qty) % int(qty_per_order)
+            success_qty_chunks: list[int] = []
+            danger_messages: list[str] = []
 
             while iterations > 0:
                 response = self.place_order(
@@ -1118,16 +1310,19 @@ class processor():
                     quantity=qty_per_order,
                     exchange_code=exchange_code,
                 )
-                iterations -=1
-                if response and response.get('Status') == 200:
-                    message['type'] = cfg.SUCCESS
-                    message['message'] = stock_code + "-" + expiry_date + "-" + str(strike_price) + "-" + right + " | Qty = " + str(qty_per_order) + " | Price = " + str(price) + " >> " + (response.get('Success') or {}).get('message', '') + " : " + (response.get('Success') or {}).get('order_id', '')
-                    messages.append(message.copy())
+                iterations -= 1
+                if response and response.get("Status") == 200:
+                    success_qty_chunks.append(int(qty_per_order))
                 else:
-                    message['type'] = cfg.DANGER
-                    err = (response or {}).get('Error') or 'Unknown error'
-                    message['message'] = err + stock_code + "-" + expiry_date + "-" + str(strike_price) + "-" + right + " | Qty = " + str(qty_per_order) + " | Price = " + str(price)
-                    messages.append(message.copy())
+                    err = (response or {}).get("Error") or "Unknown error"
+                    danger_messages.append(
+                        str(err)
+                        + contract_label
+                        + " | Qty = "
+                        + _format_indian_integer_digits(int(qty_per_order))
+                        + " | Price = "
+                        + _format_inr_integer_indian(price_f)
+                    )
 
             if remainder > 0:
                 response = self.place_order(
@@ -1142,16 +1337,52 @@ class processor():
                     quantity=remainder,
                     exchange_code=exchange_code,
                 )
-                if response and response.get('Status') == 200:
-                    message['type'] = cfg.SUCCESS
-                    succ = response.get('Success') or {}
-                    message['message'] = stock_code + "-" + expiry_date + "-" + str(strike_price) + "-" + right + " | Qty = " + str(remainder) + " | Price = " + str(price) + " >> " + succ.get('message', '') + " : " + succ.get('order_id', '')
-                    messages.append(message.copy())
+                if response and response.get("Status") == 200:
+                    success_qty_chunks.append(int(remainder))
                 else:
-                    message['type'] = cfg.DANGER
-                    err = (response or {}).get('Error') or 'Unknown error'
-                    message['message'] = err + stock_code + "-" + expiry_date + "-" + str(strike_price) + "-" + right + " | Qty = " + str(remainder) + " | Price = " + str(price)
-                    messages.append(message.copy())
+                    err = (response or {}).get("Error") or "Unknown error"
+                    danger_messages.append(
+                        str(err)
+                        + contract_label
+                        + " | Qty = "
+                        + _format_indian_integer_digits(int(remainder))
+                        + " | Price = "
+                        + _format_inr_integer_indian(price_f)
+                    )
+
+            if success_qty_chunks:
+                n_orders = len(success_qty_chunks)
+                total_q = sum(success_qty_chunks)
+                total_prem = total_q * price_f
+                prem_s = _format_inr_integer_indian(total_prem)
+                messages.append(
+                    {
+                        "type": cfg.SUCCESS,
+                        "message": (
+                            f"Successfully placed {_format_indian_integer_digits(n_orders)} orders "
+                            f"for {contract_label} totaling "
+                            f"{_format_indian_integer_digits(total_q)} quantity for a total "
+                            f"premium of {prem_s}"
+                        ),
+                    }
+                )
+            if danger_messages:
+                k = len(danger_messages)
+                preview = "; ".join(danger_messages[:4])
+                tail = (
+                    f" (+{_format_indian_integer_digits(k - 4)} more)"
+                    if k > 4
+                    else ""
+                )
+                messages.append(
+                    {
+                        "type": cfg.DANGER,
+                        "message": (
+                            f"Failed to place {_format_indian_integer_digits(k)} order(s): "
+                            f"{preview}{tail}"
+                        ),
+                    }
+                )
 
         return messages
 
@@ -1407,14 +1638,41 @@ class processor():
                 per_month[trade_month_name]['brokerage'] += float(trade['brokerage_amount'])
                 per_month[trade_month_name]['taxes'] += float(trade['total_taxes'])
                 per_month[trade_month_name]['pnl'] = per_month[trade_month_name]['pnl'] - float(trade['brokerage_amount']) - float(trade['total_taxes'])
-            
-            margin_denom = margin if margin and float(margin) > 0 else None
-            if margin_denom:
-                performance['Success']['annualised_roi'] = (
-                    performance['Success']['net_pnl'] / float(margin_denom)
-                ) * (365 / period)
+
+            premium_earned = performance["Success"]["premium_earned"]
+            weighted_dte = 0.0
+            prem_for_dte = 0.0
+            for trade in trades["Success"]:
+                if str(trade.get("action", "")).strip() != cfg.SELL:
+                    continue
+                prem = float(trade["quantity"]) * float(trade["average_cost"])
+                d_fill = _trade_days_to_expiry_at_fill(trade)
+                if d_fill is not None:
+                    weighted_dte += prem * float(d_fill)
+                    prem_for_dte += prem
+            if prem_for_dte > 0 and weighted_dte > 0:
+                avg_dte = max(1.0, weighted_dte / prem_for_dte)
             else:
-                performance['Success']['annualised_roi'] = 0.0
+                avg_dte = float(period)
+
+            margin_denom = margin if margin and float(margin) > 0 else None
+            avg_dte_i = int(round(avg_dte))
+            if margin_denom:
+                performance["Success"]["annualised_roi_breakdown"] = {
+                    "premium_earned": float(premium_earned),
+                    "days_to_expiry": max(1, avg_dte_i),
+                    "span_margin": float(margin_denom),
+                }
+            if margin_denom and premium_earned > 0:
+                performance["Success"]["annualised_roi"] = (
+                    _annualized_roi_fraction_on_span(
+                        premium_earned,
+                        max(1, avg_dte_i),
+                        float(margin_denom),
+                    )
+                )
+            else:
+                performance["Success"]["annualised_roi"] = 0.0
             monthly = [{"month": month, "pnl": values["pnl"], "brokerage": values["brokerage"], "taxes": values["taxes"]}for month, values in per_month.items()]
             monthly.sort(key=lambda x: datetime.datetime.strptime(x["month"], "%b-%y"))
             performance['Success']['monthly'] = monthly
@@ -1697,6 +1955,48 @@ class processor():
             return Markup(f'<span class="text-danger">({formatted})</span>')
         else:
             return Markup(f'<span>{formatted}</span>')
+
+    def strategy_builder_margin(self, user_id: str, exchange_code: str, legs: list):
+        """Compute SPAN margin for multiple fresh option legs via ICICI margin_calculator."""
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return {
+                "Status": 400,
+                "Error": "Unable to connect to broker. Please check your credentials and re-login.",
+                "Success": None,
+            }
+        margin_input = []
+        for leg in legs:
+            ed = (leg.get("expiry_date") or "").strip()
+            if len(ed) >= 10 and ed[4] == "-" and "T" not in ed:
+                expiry_api = ed + "T06:00:00.000Z"
+            elif "T" in ed:
+                expiry_api = ed
+            else:
+                try:
+                    expiry_api = _expiry_display_to_api(ed)
+                except Exception:
+                    return {"Status": 400, "Error": f"Invalid expiry_date: {ed}", "Success": None}
+            try:
+                margin_input.append(
+                    {
+                        "strike_price": int(float(leg["strike_price"])),
+                        "quantity": int(leg["quantity"]),
+                        "product": leg.get("product_type") or cfg.OPTIONS,
+                        "action": leg["action"],
+                        "expiry_date": expiry_api,
+                        "stock_code": leg["stock_code"],
+                        "right": leg["right"],
+                    }
+                )
+            except (TypeError, ValueError) as e:
+                return {"Status": 400, "Error": f"Invalid leg fields: {e}", "Success": None}
+        try:
+            margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
+        except Exception as e:
+            return _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
+        self._maybe_evict_session(user_id, margins)
+        return margins
 
     # Real-time portfolio fetch for US3 (called by tests)
     def get_portfolio_realtime(self, broker_token=None, *args, **kwargs):

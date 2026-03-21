@@ -16,7 +16,7 @@ export default function SettingsPage() {
             <p className="app-text-muted">
               Update ICICI API key and secret fragment.
             </p>
-            <Link href="/settings/credentials" className="app-btn-secondary">
+            <Link href="/settings/credentials" className="app-btn-outline">
               Open credentials
             </Link>
           </div>
@@ -27,7 +27,7 @@ export default function SettingsPage() {
             <p className="app-text-muted">
               Per-instrument caps from master data.
             </p>
-            <Link href="/settings/quantity-limits" className="app-btn-secondary">
+            <Link href="/settings/quantity-limits" className="app-btn-outline">
               Open quantity limits
             </Link>
           </div>

@@ -60,7 +60,7 @@ export default function RegisterPage() {
             <GoogleSignInButton href="/auth/google?next=/register" />
           </div>
           <p className="mt-4 text-center text-xs text-zinc-500">
-            <Link href="/login" className="text-emerald-400 hover:underline">
+            <Link href="/login" className="app-link">
               Back to login
             </Link>
           </p>
@@ -107,7 +107,7 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={busy}
-            className="w-full rounded-xl bg-emerald-500 py-2 text-sm font-medium text-black hover:bg-emerald-400 disabled:opacity-50"
+            className="app-btn-primary w-full py-2.5"
           >
             {busy ? "Saving…" : "Complete registration"}
           </button>
