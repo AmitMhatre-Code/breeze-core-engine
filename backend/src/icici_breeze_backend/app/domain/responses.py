@@ -95,9 +95,20 @@ class HomeDataResponse(BaseModel):
 
 
 class PerformanceDataResponse(BaseModel):
-    """Performance /data: performance and funds."""
+    """Performance /data: margin, funds, FY-scoped performance, and FY picker metadata."""
     performance: Dict[str, Any] = Field(default_factory=dict)
     funds: Dict[str, Any] = Field(default_factory=dict)
+    margin: Dict[str, Any] = Field(default_factory=dict)
+    years: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Recent financial years with year label and start/end dates",
+    )
+    fy: str = Field(
+        "",
+        description="Financial year label applied for performance (e.g. 2024-25)",
+    )
+    start: str = Field("", description="Applied performance window start YYYY-MM-DD")
+    end: str = Field("", description="Applied performance window end YYYY-MM-DD")
 
 
 class UncoveredShortsDataResponse(BaseModel):

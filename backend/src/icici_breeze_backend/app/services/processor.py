@@ -1338,7 +1338,15 @@ class processor():
         # dates = self.get_current_fy_dates()
         start_date = start+"T06:00:00.000Z"
         end_date = end+"T06:00:00.000Z"
-        period = (datetime.datetime.today() - datetime.datetime.strptime(start,"%Y-%m-%d")).days
+        # Annualised ROI denominator: elapsed FY length. In-progress FY → start→today only; closed FY
+        # → full start→end (do not keep growing the denominator after the FY ends).
+        start_d = datetime.datetime.strptime(start, "%Y-%m-%d").date()
+        end_d = datetime.datetime.strptime(end, "%Y-%m-%d").date()
+        today_d = datetime.date.today()
+        if today_d > end_d:
+            period = max(1, (end_d - start_d).days)
+        else:
+            period = max(1, (today_d - start_d).days)
         product_type = cfg.OPTIONS
 
         try:
@@ -1382,12 +1390,13 @@ class processor():
                 trade_date = datetime.datetime.strptime(trade_date, "%d-%b-%Y")
                 trade_month_name = trade_date.strftime("%b-%y")
                 premium = float(trade['quantity']) * float(trade['average_cost'])
-                if trade['action'] == cfg.SELL:
+                action = str(trade.get("action", "")).strip()
+                if action == cfg.SELL:
                     performance['Success']['premium_earned'] += premium
                     performance['Success']['net_pnl'] += premium
                     per_month[trade_month_name]['pnl'] += premium
 
-                if trade['action'] == cfg.BUY:
+                if action == cfg.BUY:
                     performance['Success']['premium_paid'] += premium
                     performance['Success']['net_pnl'] -= premium
                     per_month[trade_month_name]['pnl'] -= premium
@@ -1399,7 +1408,13 @@ class processor():
                 per_month[trade_month_name]['taxes'] += float(trade['total_taxes'])
                 per_month[trade_month_name]['pnl'] = per_month[trade_month_name]['pnl'] - float(trade['brokerage_amount']) - float(trade['total_taxes'])
             
-            performance['Success']['annualised_roi'] = (performance['Success']['net_pnl'] / margin) * (365 / period)
+            margin_denom = margin if margin and float(margin) > 0 else None
+            if margin_denom:
+                performance['Success']['annualised_roi'] = (
+                    performance['Success']['net_pnl'] / float(margin_denom)
+                ) * (365 / period)
+            else:
+                performance['Success']['annualised_roi'] = 0.0
             monthly = [{"month": month, "pnl": values["pnl"], "brokerage": values["brokerage"], "taxes": values["taxes"]}for month, values in per_month.items()]
             monthly.sort(key=lambda x: datetime.datetime.strptime(x["month"], "%b-%y"))
             performance['Success']['monthly'] = monthly

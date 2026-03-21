@@ -430,7 +430,7 @@ export default function DashboardPage() {
           </section>
           <section className="app-card col-span-full min-w-0 p-4">
             <header className="mb-3 flex items-center justify-between">
-              <h2 className="app-text-heading">India VIX — 30 days</h2>
+              <h2 className="app-text-heading">India VIX — 3 months</h2>
             </header>
             <Vix30dChart series={core?.vix_30d ?? []} />
           </section>

@@ -16,6 +16,7 @@ import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/portfolio", label: "Portfolio" },
+  { href: "/performance", label: "Performance" },
   { href: "/orders", label: "Orders" },
   { href: "/strategies", label: "Strategies" },
   { href: "/settings", label: "Settings" },
@@ -64,10 +65,10 @@ export function AppShell({
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
       <aside className="hidden w-64 border-r border-zinc-200 bg-white/90 dark:border-zinc-800 dark:bg-zinc-950/80 md:flex md:flex-col">
         <div className="mb-6 px-2">
-          <div className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-            ICICI Breeze
+          <div className="text-lg font-semibold tracking-tight text-sky-500 dark:text-sky-500">
+            Breeze Web
           </div>
-          <div className="app-text-muted">Local trading workspace</div>
+          <div className="app-text-muted">Enabled by ICICI Direct Breeze API</div>
         </div>
         <nav className="space-y-1 text-sm">
           {navItems.map((item) => {

@@ -11,7 +11,7 @@ breeze = processor()
 
 @router.get("/vix")
 async def get_dashboard_vix(ctx: RequestContext = Depends(get_request_context)):
-    """Fast: current VIX, NIFTY spot, 30d chart. Use /vix/options for ATM IV, expected range."""
+    """Fast: current VIX, NIFTY spot, ~3m INDVIX history. Use /vix/options for ATM IV, expected range."""
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
     return fetch_vix_core(ctx.user_id, breeze)

@@ -1,25 +1,131 @@
 "use client";
 
 import type { PointerEvent } from "react";
-import { useCallback, useMemo, useState } from "react";
+import {
+  useCallback,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 type Point = { date: string; value: number };
 
 const W = 560;
-const H = 140;
-const PAD_L = 48;
-const PAD_R = 10;
+const H = 148;
+const PAD_L = 40;
+const PAD_R = 0;
 const PAD_T = 8;
-const PAD_B = 26;
+const PAD_B = 28;
 
-/** Line & markers */
 const LINE_BLUE = "#3b82f6";
-const LINE_WIDTH = 2;
-const DOT_R = 1.75;
-const DOT_HOVER_R = 3;
+const LINE_WIDTH = 1.25;
+/** Target on-screen px for axis text (matches ~`text-[10px]` / small widget copy; SVG viewBox scaling otherwise blows it up). */
+const AXIS_LABEL_SCREEN_PX = 10;
+const HOVER_LABEL_SCREEN_PX = 10;
+const AREA_TOP_OPACITY = 0.38;
+const AREA_BOTTOM_OPACITY = 0.03;
+
+/** Catmull–Rom → cubic Béziers (open curve). */
+function smoothPathThrough(
+  pts: ReadonlyArray<readonly [number, number]>,
+): string {
+  if (pts.length === 0) return "";
+  if (pts.length === 1) return `M ${pts[0][0]} ${pts[0][1]}`;
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i === 0 ? 0 : i - 1];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[Math.min(i + 2, pts.length - 1)];
+    const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2[0]} ${p2[1]}`;
+  }
+  return d;
+}
+
+function buildAreaPath(
+  smoothTop: string,
+  firstX: number,
+  firstY: number,
+  lastX: number,
+  lastY: number,
+  yBase: number,
+  cornerR: number,
+): string {
+  const r = Math.max(0, cornerR);
+  const span = lastX - firstX;
+  const rr = span >= 2 * r ? r : Math.max(0, span / 2 - 0.5);
+  if (rr <= 0.5) {
+    return `${smoothTop} L ${lastX} ${yBase} L ${firstX} ${yBase} Z`;
+  }
+  return [
+    smoothTop,
+    `L ${lastX} ${yBase - rr}`,
+    `Q ${lastX} ${yBase} ${lastX - rr} ${yBase}`,
+    `L ${firstX + rr} ${yBase}`,
+    `Q ${firstX} ${yBase} ${firstX} ${yBase - rr}`,
+    `L ${firstX} ${firstY}`,
+    "Z",
+  ].join(" ");
+}
+
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+function monthStartTickIndices(series: Point[]): { i: number; label: string }[] {
+  const out: { i: number; label: string }[] = [];
+  let prevKey = "";
+  for (let i = 0; i < series.length; i++) {
+    const d = series[i].date.slice(0, 10);
+    const [y, m, day] = d.split("-");
+    if (!y || !m || !day) continue;
+    const key = `${y}-${m}`;
+    if (key === prevKey) continue;
+    prevKey = key;
+    const mi = parseInt(m, 10) - 1;
+    const mon = MONTHS[mi] ?? m;
+    out.push({ i, label: `${day}-${mon}` });
+  }
+  return out;
+}
 
 export function Vix30dChart({ series }: { series: Point[] }) {
   const [hoverI, setHoverI] = useState<number | null>(null);
+  const gradId = useId().replace(/:/g, "");
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [svgClientW, setSvgClientW] = useState(W);
+
+  useLayoutEffect(() => {
+    const el = svgRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const w = el.getBoundingClientRect().width;
+      setSvgClientW(w > 0 ? w : W);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const pxPerViewUnit = Math.max(svgClientW, 1) / W;
+  const axisFontUser = AXIS_LABEL_SCREEN_PX / pxPerViewUnit;
+  const hoverFontUser = HOVER_LABEL_SCREEN_PX / pxPerViewUnit;
 
   const layout = useMemo(() => {
     if (!series?.length) return null;
@@ -30,28 +136,42 @@ export function Vix30dChart({ series }: { series: Point[] }) {
     const n = series.length;
     const innerW = W - PAD_L - PAD_R;
     const innerH = H - PAD_T - PAD_B;
+    const yBase = PAD_T + innerH;
     const pts = series.map((p, i) => {
       const x = PAD_L + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
       const y = PAD_T + innerH - ((p.value - minV) / spread) * innerH;
       return [x, y] as const;
     });
-    const pathD = pts
-      .map(([x, y], i) => `${i === 0 ? "M" : "L"} ${x} ${y}`)
-      .join(" ");
-    const yTicks = [maxV, minV + spread / 2, minV].map(
-      (v) => Math.round(v * 100) / 100,
+    const smoothTop = smoothPathThrough(pts);
+    const firstX = pts[0][0];
+    const firstY = pts[0][1];
+    const lastX = pts[n - 1][0];
+    const lastY = pts[n - 1][1];
+    const cornerR = Math.min(10, innerH * 0.2, (lastX - firstX) * 0.04);
+    const areaD = buildAreaPath(
+      smoothTop,
+      firstX,
+      firstY,
+      lastX,
+      lastY,
+      yBase,
+      cornerR,
     );
-    const first = series[0]?.date?.slice(5) ?? "";
-    const last = series[n - 1]?.date?.slice(5) ?? "";
+    const yTicks = [maxV, minV].map((v) => Math.round(v * 100) / 100);
+    const xTicks = monthStartTickIndices(series).map(({ i, label }) => ({
+      label,
+      x: pts[i][0],
+    }));
     return {
       minV,
       spread,
       innerH,
+      yBase,
       pts,
-      pathD,
+      smoothTop,
+      areaD,
       yTicks,
-      first,
-      last,
+      xTicks,
     };
   }, [series]);
 
@@ -77,12 +197,7 @@ export function Vix30dChart({ series }: { series: Point[] }) {
       const rect = e.currentTarget.getBoundingClientRect();
       const svgX = ((e.clientX - rect.left) / rect.width) * W;
       const svgY = ((e.clientY - rect.top) / rect.height) * H;
-      if (
-        svgX < PAD_L ||
-        svgX > W - PAD_R ||
-        svgY < PAD_T ||
-        svgY > H - PAD_B
-      ) {
+      if (svgX < PAD_L || svgX > W - PAD_R || svgY < PAD_T || svgY > H - PAD_B) {
         setHoverI(null);
         return;
       }
@@ -99,7 +214,8 @@ export function Vix30dChart({ series }: { series: Point[] }) {
 
   if (!layout) return null;
 
-  const { minV, spread, innerH, pts, pathD, yTicks, first, last } = layout;
+  const { minV, spread, innerH, pts, smoothTop, areaD, yTicks, yBase, xTicks } =
+    layout;
   const hi = hoverI;
 
   let hoverLabel: { x: number; y: number; date: string; val: string } | null =
@@ -121,14 +237,37 @@ export function Vix30dChart({ series }: { series: Point[] }) {
   return (
     <div className="space-y-2">
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-        className="w-full max-h-44 cursor-crosshair touch-none"
+        className="block w-full cursor-crosshair touch-none overflow-visible"
+        style={{ aspectRatio: `${W} / ${H}` }}
         role="img"
-        aria-label="India VIX last 30 trading days; hover for date and value"
+        aria-label="India VIX last three months; hover for date and value"
         onPointerMove={onPointerMove}
         onPointerLeave={onPointerLeave}
         onPointerCancel={onPointerLeave}
       >
+        <defs>
+          <linearGradient
+            id={`vix-area-${gradId}`}
+            gradientUnits="userSpaceOnUse"
+            x1={0}
+            y1={PAD_T}
+            x2={0}
+            y2={yBase}
+          >
+            <stop
+              offset="0%"
+              stopColor={LINE_BLUE}
+              stopOpacity={AREA_TOP_OPACITY}
+            />
+            <stop
+              offset="100%"
+              stopColor={LINE_BLUE}
+              stopOpacity={AREA_BOTTOM_OPACITY}
+            />
+          </linearGradient>
+        </defs>
         {yTicks.map((tick) => {
           const y = PAD_T + innerH - ((tick - minV) / spread) * innerH;
           return (
@@ -139,14 +278,15 @@ export function Vix30dChart({ series }: { series: Point[] }) {
                 x2={W - PAD_R}
                 y2={y}
                 className="stroke-zinc-200 dark:stroke-zinc-700/90"
-                strokeWidth={0.6}
+                strokeWidth={0.45}
               />
               <text
-                x={PAD_L - 6}
-                y={y + 4}
+                x={PAD_L - 5}
+                y={y}
                 textAnchor="end"
-                className="fill-zinc-500 dark:fill-zinc-500"
-                style={{ fontSize: "10px" }}
+                dominantBaseline="middle"
+                className="fill-zinc-500 font-sans dark:fill-zinc-500"
+                fontSize={axisFontUser}
               >
                 {tick.toFixed(1)}
               </text>
@@ -154,37 +294,41 @@ export function Vix30dChart({ series }: { series: Point[] }) {
           );
         })}
         <path
-          d={pathD}
+          d={areaD}
+          fill={`url(#vix-area-${gradId})`}
+          stroke="none"
+        />
+        <path
+          d={smoothTop}
           fill="none"
           stroke={LINE_BLUE}
           strokeWidth={LINE_WIDTH}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
-        {pts.map(([x, y], i) => (
-          <circle
-            key={i}
-            cx={x}
-            cy={y}
-            r={hi === i ? DOT_HOVER_R : DOT_R}
-            fill={LINE_BLUE}
-            stroke="white"
-            strokeWidth={hi === i ? 0.9 : 0.5}
-            className="dark:stroke-zinc-900"
-          />
-        ))}
         {hi != null ? (
-          <line
-            x1={pts[hi][0]}
-            y1={PAD_T}
-            x2={pts[hi][0]}
-            y2={H - PAD_B}
-            stroke={LINE_BLUE}
-            strokeOpacity={0.35}
-            strokeWidth={0.65}
-            strokeDasharray="3 2"
-            pointerEvents="none"
-          />
+          <>
+            <circle
+              cx={pts[hi][0]}
+              cy={pts[hi][1]}
+              r={2.75}
+              fill={LINE_BLUE}
+              stroke="white"
+              strokeWidth={0.75}
+              className="dark:stroke-zinc-900"
+            />
+            <line
+              x1={pts[hi][0]}
+              y1={PAD_T}
+              x2={pts[hi][0]}
+              y2={H - PAD_B}
+              stroke={LINE_BLUE}
+              strokeOpacity={0.35}
+              strokeWidth={0.5}
+              strokeDasharray="3 2"
+              pointerEvents="none"
+            />
+          </>
         ) : null}
         {hoverLabel ? (
           <g pointerEvents="none">
@@ -201,8 +345,11 @@ export function Vix30dChart({ series }: { series: Point[] }) {
               x={hoverLabel.x + 46}
               y={hoverLabel.y + 15}
               textAnchor="middle"
+              dominantBaseline="middle"
               fill="rgb(244 244 245)"
-              style={{ fontSize: "10px", fontWeight: 500 }}
+              className="font-sans"
+              fontSize={hoverFontUser}
+              fontWeight={500}
             >
               {hoverLabel.date}
             </text>
@@ -210,37 +357,32 @@ export function Vix30dChart({ series }: { series: Point[] }) {
               x={hoverLabel.x + 46}
               y={hoverLabel.y + 29}
               textAnchor="middle"
+              dominantBaseline="middle"
               fill={LINE_BLUE}
-              style={{
-                fontSize: "11px",
-                fontWeight: 600,
-                fontFamily: "ui-monospace, monospace",
-              }}
+              className="font-mono"
+              fontSize={hoverFontUser}
+              fontWeight={600}
             >
               {`VIX ${hoverLabel.val}`}
             </text>
           </g>
         ) : null}
-        <text
-          x={PAD_L}
-          y={H - 5}
-          className="fill-zinc-600 dark:fill-zinc-500"
-          style={{ fontSize: "10px" }}
-        >
-          {first}
-        </text>
-        <text
-          x={W - PAD_R}
-          y={H - 5}
-          textAnchor="end"
-          className="fill-zinc-600 dark:fill-zinc-500"
-          style={{ fontSize: "10px" }}
-        >
-          {last}
-        </text>
+        {xTicks.map(({ x, label }) => (
+          <text
+            key={label + x}
+            x={Math.min(Math.max(x, PAD_L + 14), W - 14)}
+            y={H - 6}
+            textAnchor="middle"
+            dominantBaseline="auto"
+            className="fill-zinc-600 font-sans dark:fill-zinc-500"
+            fontSize={axisFontUser}
+          >
+            {label}
+          </text>
+        ))}
       </svg>
       <p className="app-text-muted">
-        India VIX (INDVIX), daily close — last ~30 days · hover for date
+        India VIX (INDVIX), daily close — last ~3 months · hover for date
         &amp; value on chart
       </p>
     </div>

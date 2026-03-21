@@ -54,7 +54,10 @@ NSE = "NSE"
 NFO = "NFO"
 PRODUCT_CASH = "cash"
 PRODUCT_OPTIONS = "options"
-VIX_HISTORY_DAYS = 30
+# Calendar lookback for INDVIX daily series (UI: ~last 3 months).
+VIX_HISTORY_MONTHS = 3
+# Breeze HIST_CHART often returns ~30 calendar days per call; use smaller chunks and merge.
+VIX_HIST_API_CHUNK_DAYS = 28
 
 
 def _expiry_display_to_api(expiry: str) -> str:
@@ -202,6 +205,49 @@ def _historical_vix(breeze, from_date: str, to_date: str) -> List[Dict[str, Any]
     except Exception as e:
         _logger.warning("get_historical_data_v2 INDVIX failed: %s", e)
         return []
+
+
+def _historical_vix_range(
+    breeze,
+    start_d: datetime.datetime,
+    end_d: datetime.datetime,
+) -> List[Dict[str, Any]]:
+    """
+    INDVIX daily closes from start_d through end_d (inclusive on calendar dates).
+
+    ICICI's historical chart API typically caps how many days each request returns
+    (~30). We request overlapping windows in chunks and merge by date.
+    """
+    if breeze is None:
+        return []
+    start = start_d.date()
+    end = end_d.date()
+    if start > end:
+        return []
+
+    by_date: Dict[str, float] = {}
+    cur = start
+    chunks = 0
+    span = max(1, VIX_HIST_API_CHUNK_DAYS)
+    while cur <= end:
+        chunk_end = min(cur + datetime.timedelta(days=span - 1), end)
+        from_iso = f"{cur.isoformat()}T05:30:00.000Z"
+        to_iso = f"{chunk_end.isoformat()}T15:30:00.000Z"
+        part = _historical_vix(breeze, from_iso, to_iso)
+        chunks += 1
+        for row in part:
+            by_date[row["date"]] = row["value"]
+        cur = chunk_end + datetime.timedelta(days=1)
+
+    if chunks > 1:
+        _logger.debug(
+            "INDVIX history: merged %s rows from %s API chunk(s) (%s .. %s)",
+            len(by_date),
+            chunks,
+            start,
+            end,
+        )
+    return [{"date": d, "value": by_date[d]} for d in sorted(by_date.keys())]
 
 
 def _option_chain(breeze, expiry_api: str, right: str) -> List[Dict]:
@@ -539,7 +585,7 @@ def _log_atm_iv_trace(
 
 def fetch_vix_core(user_id: str, processor) -> Dict[str, Any]:
     """
-    Fast payload: current_vix, nifty_spot, vix_30d only (no option chains).
+    Fast payload: current_vix, nifty_spot, vix_30d (~3 calendar months) only (no option chains).
     Use so the page can show VIX and NIFTY quickly; then call fetch_vix_options for ATM IV etc.
     """
     result = {
@@ -567,10 +613,12 @@ def fetch_vix_core(user_id: str, processor) -> Dict[str, Any]:
             pass
 
     end_d = datetime.datetime.now()
-    start_d = end_d - datetime.timedelta(days=VIX_HISTORY_DAYS)
-    from_iso = start_d.strftime("%Y-%m-%dT05:30:00.000Z")
-    to_iso = end_d.strftime("%Y-%m-%dT15:30:00.000Z")
-    result["vix_30d"] = _historical_vix(breeze, from_iso, to_iso)
+    y, m = end_d.year, end_d.month - VIX_HISTORY_MONTHS
+    while m < 1:
+        m += 12
+        y -= 1
+    start_d = end_d.replace(year=y, month=m, day=1, hour=0, minute=0, second=0, microsecond=0)
+    result["vix_30d"] = _historical_vix_range(breeze, start_d, end_d)
     return result
 
 

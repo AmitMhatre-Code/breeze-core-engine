@@ -1,0 +1,14 @@
+---
+description: Legacy folder is read-only reference — never edit
+globs: legacy/**/*
+alwaysApply: true
+---
+
+# Legacy folder (`legacy/`)
+
+The `legacy/` directory is **reference only** (historical app snapshot). Do **not** modify, create, or delete files under `legacy/`.
+
+- Read files there when you need to compare behaviour or copy ideas into `backend/`, `frontend/`, etc.
+- Implement all fixes and features **outside** `legacy/`.
+
+If a task explicitly asks to change `legacy/`, clarify with the user that this repo treats it as read-only unless they override.
