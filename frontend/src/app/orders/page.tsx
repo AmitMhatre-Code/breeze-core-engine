@@ -2,7 +2,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { Suspense } from "react";
 import { AppShell } from "@/components/layout/AppShell";
+import { PrefilledOrderCard } from "@/components/order/PrefilledOrderCard";
 import { apiClient } from "@/lib/api-client";
 
 type IciciApiResponse = {
@@ -19,7 +21,7 @@ type IciciApiResponse = {
   };
 };
 
-export default function OrdersPage() {
+function OrdersBody() {
   const q = useQuery({
     queryKey: ["orders", "list"],
     queryFn: async () => apiClient.get<IciciApiResponse>("/order/data"),
@@ -29,7 +31,10 @@ export default function OrdersPage() {
   const orders = data?.Success?.orders ?? [];
 
   return (
-    <AppShell>
+    <>
+      <Suspense fallback={null}>
+        <PrefilledOrderCard />
+      </Suspense>
       {q.isLoading ? (
         <div className="app-card p-4">Loading orders...</div>
       ) : q.error ? (
@@ -90,6 +95,14 @@ export default function OrdersPage() {
           </div>
         </section>
       )}
+    </>
+  );
+}
+
+export default function OrdersPage() {
+  return (
+    <AppShell>
+      <OrdersBody />
     </AppShell>
   );
 }

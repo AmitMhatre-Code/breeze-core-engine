@@ -4,12 +4,16 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { AppShell } from "@/components/layout/AppShell";
+import { PrefilledOrderCard } from "@/components/order/PrefilledOrderCard";
 
 function Inner() {
   const sp = useSearchParams();
   const q = sp.toString();
   return (
     <AppShell>
+      <Suspense fallback={null}>
+        <PrefilledOrderCard />
+      </Suspense>
       <section className="app-card p-4 text-sm text-zinc-700 dark:text-zinc-300">
         <h2 className="app-text-heading">Uncovered shorts</h2>
         <p className="mt-2 app-text-muted">

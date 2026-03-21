@@ -31,10 +31,17 @@ async function request<TResponse, TBody = unknown>(
     body?: TBody;
     signal?: AbortSignal;
     credentials?: RequestCredentials;
+    headers?: Record<string, string>;
   } = {},
 ): Promise<TResponse> {
   const url = new URL(path, BACKEND_BASE_URL);
-  const { method = "GET", body, signal, credentials = "include" } = options;
+  const {
+    method = "GET",
+    body,
+    signal,
+    credentials = "include",
+    headers: extraHeaders,
+  } = options;
 
   const res = await fetch(url.toString(), {
     method,
@@ -42,6 +49,7 @@ async function request<TResponse, TBody = unknown>(
     signal,
     headers: {
       "Content-Type": "application/json",
+      ...(extraHeaders || {}),
     },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -62,6 +70,12 @@ export const apiClient = {
   post: <TResponse, TBody = unknown>(
     path: string,
     body: TBody,
-    signal?: AbortSignal,
-  ) => request<TResponse, TBody>(path, { method: "POST", body, signal }),
+    opts?: { signal?: AbortSignal; headers?: Record<string, string> },
+  ) =>
+    request<TResponse, TBody>(path, {
+      method: "POST",
+      body,
+      signal: opts?.signal,
+      headers: opts?.headers,
+    }),
 };

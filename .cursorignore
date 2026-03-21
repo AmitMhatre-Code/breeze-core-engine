@@ -1,0 +1,14 @@
+# Re-include paths that are in .gitignore so Cursor can index, search, and @-mention them.
+# Syntax matches .gitignore; `!` negates ignore rules from this file + merged .gitignore.
+
+!legacy/
+!legacy/**
+
+!logs/
+!logs/**
+
+!backend/data/
+!backend/data/**
+
+!frontend/data/
+!frontend/data/**

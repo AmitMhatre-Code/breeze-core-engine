@@ -1,6 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
+import {
+  ltpAsOrderPrice,
+  squareOffToOrderPayload,
+} from "@/lib/order-confirm";
 
 /**
  * Matches legacy `templates/portfolio.html` fed by `get_positions` (see
@@ -120,7 +125,9 @@ export function squareOffHref(row: PortfolioPositionRecord): string {
     strike_price: String(row.strike_price ?? ""),
     quantity: String(row.quantity ?? ""),
   });
-  return `/order?${params.toString()}`;
+  const ltpPrice = ltpAsOrderPrice(row.ltp);
+  if (ltpPrice !== "0") params.set("price", ltpPrice);
+  return `/orders?${params.toString()}`;
 }
 
 export function hedgeHref(row: PortfolioPositionRecord): string {
@@ -150,11 +157,23 @@ const btnSecondaryCard =
   "inline-flex items-center justify-center rounded-lg border border-zinc-200 bg-zinc-100 px-3 py-2.5 text-sm font-medium text-zinc-900 hover:bg-zinc-200 dark:border-transparent dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700";
 
 function PositionActionsTable({ row }: { row: PortfolioPositionRecord }) {
+  const { openOrderConfirm } = useOrderConfirm();
+  const squarePayload = squareOffToOrderPayload(row);
   return (
     <div className="flex flex-nowrap items-center justify-end gap-1.5 2xl:gap-2">
-      <Link href={squareOffHref(row)} className={btnPrimaryTable}>
-        Square Off
-      </Link>
+      {squarePayload ? (
+        <button
+          type="button"
+          className={btnPrimaryTable}
+          onClick={() => openOrderConfirm(squarePayload)}
+        >
+          Square Off
+        </button>
+      ) : (
+        <Link href={squareOffHref(row)} className={btnPrimaryTable}>
+          Square Off
+        </Link>
+      )}
       {isHedgeable(row.hedgeable) ? (
         <Link href={hedgeHref(row)} className={btnSecondaryTable}>
           Get Hedges
@@ -165,14 +184,26 @@ function PositionActionsTable({ row }: { row: PortfolioPositionRecord }) {
 }
 
 function PositionActionsCard({ row }: { row: PortfolioPositionRecord }) {
+  const { openOrderConfirm } = useOrderConfirm();
+  const squarePayload = squareOffToOrderPayload(row);
   return (
     <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap">
-      <Link
-        href={squareOffHref(row)}
-        className={`${btnPrimaryCard} w-full min-h-11 sm:min-h-0 sm:flex-1`}
-      >
-        Square Off
-      </Link>
+      {squarePayload ? (
+        <button
+          type="button"
+          className={`${btnPrimaryCard} w-full min-h-11 sm:min-h-0 sm:flex-1`}
+          onClick={() => openOrderConfirm(squarePayload)}
+        >
+          Square Off
+        </button>
+      ) : (
+        <Link
+          href={squareOffHref(row)}
+          className={`${btnPrimaryCard} w-full min-h-11 sm:min-h-0 sm:flex-1`}
+        >
+          Square Off
+        </Link>
+      )}
       {isHedgeable(row.hedgeable) ? (
         <Link
           href={hedgeHref(row)}
@@ -232,7 +263,6 @@ export function OpenPositionsTable({
                   className={`${thBase} text-right whitespace-nowrap`}
                   title="Square off or hedge this leg"
                 >
-                  Actions
                 </th>
               </tr>
             </thead>
