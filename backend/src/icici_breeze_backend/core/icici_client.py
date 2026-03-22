@@ -93,7 +93,7 @@ class ICICIClient:
     
     def _call_with_retries(self, func, *args, user_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Execute with circuit breaker, retries and exponential backoff (Phase 6 T096, T098).
-        API call counting (one per HTTP request) is done in requests_patch + call_icici_api_direct, not here.
+        API call counting (one per HTTP request) is in requests_patch, icici_api (httpx), not here.
         """
         if _breaker.is_open:
             self.metrics.record_call(0, error=True)

@@ -57,14 +57,14 @@ export function ExpirySelectPill({
 
   const buttonClass = (() => {
     if (toolbarLayout && darkToolbar) {
-      return "flex min-w-[8.5rem] shrink-0 items-center gap-1 rounded border-0 bg-transparent py-1 pl-0 pr-0.5 text-left text-sm font-semibold text-white outline-none transition hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-sky-500/40 disabled:cursor-not-allowed disabled:opacity-50";
+      return "flex min-w-[8.5rem] shrink-0 items-center gap-1 rounded border-0 bg-transparent py-1 pl-0 pr-0.5 text-left text-sm font-semibold text-zinc-900 outline-none transition hover:bg-zinc-200/60 dark:text-white dark:hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-sky-500/40 disabled:cursor-not-allowed disabled:opacity-50";
     }
     if (toolbarLayout) {
       return "flex min-w-[11rem] shrink-0 items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus-visible:border-sky-500 focus-visible:ring-4 focus-visible:ring-sky-500/15 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus-visible:border-sky-400 dark:focus-visible:ring-sky-400/20";
     }
     if (darkToolbar) {
       return [
-        "flex w-full min-w-0 items-center justify-between gap-2 border border-zinc-600 bg-zinc-800 px-3.5 py-2.5 text-left text-sm text-zinc-100 shadow-sm outline-none transition hover:border-zinc-500 focus-visible:border-sky-500 focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:cursor-not-allowed disabled:opacity-50",
+        "flex w-full min-w-0 items-center justify-between gap-2 border border-zinc-300 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-400 focus-visible:border-sky-500 focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:border-zinc-500",
         open ? "rounded-t-lg rounded-b-none border-b-0" : "rounded-lg",
       ].join(" ");
     }
@@ -84,7 +84,7 @@ export function ExpirySelectPill({
         <span
           className={
             darkToolbar
-              ? "whitespace-nowrap text-sm font-medium text-zinc-500"
+              ? "whitespace-nowrap text-sm font-medium text-zinc-600 dark:text-zinc-500"
               : "whitespace-nowrap text-xs font-medium text-zinc-600 dark:text-zinc-400"
           }
         >
@@ -94,7 +94,7 @@ export function ExpirySelectPill({
         <span
           className={
             darkToolbar
-              ? "mb-1.5 block text-xs font-medium text-zinc-500"
+              ? "mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-500"
               : "mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
           }
         >
@@ -116,10 +116,10 @@ export function ExpirySelectPill({
               className={
                 value
                   ? darkToolbar
-                    ? "text-white"
+                    ? "text-zinc-900 dark:text-white"
                     : "font-semibold text-zinc-900 dark:text-zinc-100"
                   : darkToolbar
-                    ? "font-normal text-zinc-500"
+                    ? "font-normal text-zinc-500 dark:text-zinc-500"
                     : "font-normal text-zinc-400 dark:text-zinc-500"
               }
             >
@@ -130,7 +130,9 @@ export function ExpirySelectPill({
           ) : (
             <span
               className={
-                darkToolbar ? "text-zinc-500" : "text-zinc-400 dark:text-zinc-500"
+                darkToolbar
+                  ? "text-zinc-500 dark:text-zinc-500"
+                  : "text-zinc-400 dark:text-zinc-500"
               }
             >
               Select expiry…
@@ -140,11 +142,11 @@ export function ExpirySelectPill({
         <span
           className={
             toolbarLayout && darkToolbar
-              ? "shrink-0 text-zinc-400"
+              ? "shrink-0 text-zinc-500 dark:text-zinc-400"
               : toolbarLayout
                 ? "shrink-0 text-zinc-400 dark:text-zinc-500"
                 : darkToolbar
-                  ? "shrink-0 text-zinc-500"
+                  ? "shrink-0 text-zinc-500 dark:text-zinc-500"
                   : "shrink-0 text-zinc-400"
           }
           aria-hidden
@@ -164,11 +166,11 @@ export function ExpirySelectPill({
           <div
             className={
               darkToolbar && toolbarLayout
-                ? "fixed inset-0 z-[300] flex flex-col bg-zinc-900 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-1 lg:max-h-[min(22rem,70vh)] lg:w-52 lg:min-w-[12rem] lg:rounded-lg lg:border lg:border-zinc-600 lg:bg-zinc-800 lg:shadow-xl"
+                ? "fixed inset-0 z-[300] flex flex-col bg-white dark:bg-zinc-900 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-1 lg:max-h-[min(22rem,70vh)] lg:w-52 lg:min-w-[12rem] lg:rounded-lg lg:border lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-600 lg:dark:bg-zinc-800"
                 : toolbarLayout
                   ? "fixed inset-0 z-[300] flex flex-col bg-zinc-50 dark:bg-zinc-950 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-1 lg:max-h-[min(22rem,70vh)] lg:w-52 lg:min-w-[12rem] lg:rounded-xl lg:border lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-700 lg:dark:bg-zinc-900"
                   : darkToolbar
-                    ? "fixed inset-0 z-[300] flex flex-col bg-zinc-900 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-0 lg:max-h-[min(22rem,70vh)] lg:w-full lg:min-w-[18rem] lg:max-w-lg lg:rounded-b-lg lg:rounded-t-none lg:border lg:border-t-0 lg:border-zinc-600 lg:bg-zinc-800 lg:shadow-xl"
+                    ? "fixed inset-0 z-[300] flex flex-col bg-white dark:bg-zinc-900 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-0 lg:max-h-[min(22rem,70vh)] lg:w-full lg:min-w-[18rem] lg:max-w-lg lg:rounded-b-lg lg:rounded-t-none lg:border lg:border-t-0 lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-600 lg:dark:bg-zinc-800"
                     : "fixed inset-0 z-[300] flex flex-col bg-zinc-50 dark:bg-zinc-950 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-1.5 lg:max-h-[min(22rem,70vh)] lg:w-full lg:min-w-[18rem] lg:max-w-lg lg:rounded-xl lg:border lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-700 lg:dark:bg-zinc-900"
             }
             role="listbox"
@@ -177,14 +179,14 @@ export function ExpirySelectPill({
             <div
               className={
                 darkToolbar
-                  ? "flex shrink-0 items-center justify-between border-b border-zinc-700 px-3 py-2.5 lg:hidden"
+                  ? "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-700 lg:hidden"
                   : "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800 lg:hidden"
               }
             >
               <span
                 className={
                   darkToolbar
-                    ? "text-sm font-semibold text-zinc-100"
+                    ? "text-sm font-semibold text-zinc-900 dark:text-zinc-100"
                     : "text-sm font-semibold text-zinc-900 dark:text-zinc-50"
                 }
               >
@@ -194,7 +196,7 @@ export function ExpirySelectPill({
                 type="button"
                 className={
                   darkToolbar
-                    ? "rounded-lg p-2 text-zinc-400 hover:bg-zinc-700/80"
+                    ? "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:text-zinc-400 dark:hover:bg-zinc-700/80"
                     : "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:hover:bg-zinc-800"
                 }
                 aria-label="Close"
@@ -215,7 +217,7 @@ export function ExpirySelectPill({
                     aria-selected={false}
                     className={
                       darkToolbar
-                        ? "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-400 transition hover:bg-zinc-700/50"
+                        ? "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700/50"
                         : "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/80"
                     }
                     onClick={() => pick("")}
@@ -228,7 +230,7 @@ export function ExpirySelectPill({
                 <li
                   className={
                     darkToolbar
-                      ? "px-3 py-6 text-center text-sm text-zinc-500"
+                      ? "px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500"
                       : "px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400"
                   }
                 >
@@ -245,8 +247,8 @@ export function ExpirySelectPill({
                         darkToolbar
                           ? `flex w-full rounded-lg px-3 py-2 text-left text-sm transition ${
                               d === value
-                                ? "bg-sky-950/55 text-sky-400"
-                                : "text-zinc-100 hover:bg-zinc-700/50"
+                                ? "bg-sky-100 text-sky-900 dark:bg-sky-950/55 dark:text-sky-400"
+                                : "text-zinc-900 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700/50"
                             }`
                           : `flex w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800/80 ${
                               d === value

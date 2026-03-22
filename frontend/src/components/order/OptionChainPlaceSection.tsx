@@ -9,6 +9,11 @@ import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { ltpAsOrderPrice } from "@/lib/order-confirm";
 import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import {
+  chainLotSize,
+  legLotSize,
+  OptionChainTable,
+} from "@/components/order/OptionChainTable";
 import type {
   ChainApiResponse,
   ChainRow,
@@ -17,8 +22,6 @@ import type {
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
 
-const LAKH = 100_000;
-
 function parseNum(v: unknown): number {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string") {
@@ -26,57 +29,6 @@ function parseNum(v: unknown): number {
     return Number.isFinite(n) ? n : NaN;
   }
   return NaN;
-}
-
-function formatOiLakh(oi: number): string {
-  if (!Number.isFinite(oi)) return "—";
-  return `${(oi / LAKH).toLocaleString("en-IN", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 1,
-  })}L`;
-}
-
-function formatLtpInr(ltp: unknown): string {
-  if (ltp == null || ltp === "") return "—";
-  const s = String(ltp).trim();
-  if (!s) return "—";
-  return `₹${s}`;
-}
-
-function chainLotSize(rows: ChainRow[]): number {
-  for (const r of rows) {
-    const ls =
-      parseNum(r.call?.lot_size) || parseNum(r.put?.lot_size);
-    if (Number.isFinite(ls) && ls > 0) return Math.round(ls);
-  }
-  return 1;
-}
-
-function legLotSize(
-  side: Record<string, unknown> | null | undefined,
-  fallback: number,
-): number {
-  const ls = parseNum(side?.lot_size);
-  if (Number.isFinite(ls) && ls > 0) return Math.round(ls);
-  return fallback;
-}
-
-function formatBuySellRatio(ratio: unknown): string {
-  if (typeof ratio === "number" && Number.isFinite(ratio)) {
-    return ratio.toLocaleString("en-IN", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 1,
-    });
-  }
-  if (typeof ratio === "string" && ratio.trim()) {
-    return ratio.trim();
-  }
-  return "—";
-}
-
-function formatBookQtyLakh(q: unknown): string {
-  const v = parseNum(q);
-  return formatOiLakh(v);
 }
 
 /** e.g. `NIFTY-24-MAR-2026-25000` */
@@ -107,26 +59,6 @@ function spanFromMarginResponse(res: MarginApiResponse): number | null {
     .span_margin_required;
   const v = parseNum(raw);
   return Number.isFinite(v) ? v : null;
-}
-
-function BuySellBookLines({ leg }: { leg: Record<string, unknown> }) {
-  const ratio = formatBuySellRatio(leg.buy_sell_ratio);
-  const buy = formatBookQtyLakh(leg.total_buy_qty);
-  const sell = formatBookQtyLakh(leg.total_sell_qty);
-  return (
-    <div className="w-full min-w-0 space-y-0.5 py-0.5 text-center">
-      <div className="tabular-nums text-zinc-400">
-        {ratio}
-      </div>
-      <div className="text-[9px] leading-tight text-zinc-500 sm:text-[10px]">
-        Buy {buy}
-        <span className="text-zinc-600" aria-hidden>
-          {" · "}
-        </span>
-        Sell {sell}
-      </div>
-    </div>
-  );
 }
 
 type SheetState = { strike: number; row: ChainRow };
@@ -205,11 +137,6 @@ export function OptionChainPlaceSection() {
     () => chainLotSize(chainSuccess?.chain_rows ?? []),
     [chainSuccess?.chain_rows],
   );
-
-  const maxCallOi = chainSuccess?.max_call_oi ?? 0;
-  const maxPutOi = chainSuccess?.max_put_oi ?? 0;
-  const spot = chainSuccess?.spot_price ?? null;
-  const atmStrike = chainSuccess?.atm_strike ?? null;
 
   useEffect(() => {
     if (!chainSuccess) return;
@@ -316,11 +243,6 @@ export function OptionChainPlaceSection() {
     return () => window.removeEventListener("keydown", onKey);
   }, [sheet, closeSheet]);
 
-  const itmCall = (strike: number) =>
-    spot != null && Number.isFinite(spot) && strike < spot;
-  const itmPut = (strike: number) =>
-    spot != null && Number.isFinite(spot) && strike > spot;
-
   const sheetHasCall = Boolean(sheet?.row.call);
   const sheetHasPut = Boolean(sheet?.row.put);
 
@@ -385,23 +307,23 @@ export function OptionChainPlaceSection() {
   return (
     <section className="space-y-4" aria-label="Option chain">
       <div
-        className="flex min-h-[2.75rem] flex-col overflow-visible rounded-xl bg-[#1b1c1f] sm:flex-row sm:items-center"
+        className="flex min-h-[2.75rem] flex-col overflow-visible rounded-xl border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] dark:shadow-none sm:flex-row sm:items-center"
         role="toolbar"
         aria-label="Underlying, expiry, and fetch"
       >
         <div
-          className="flex shrink-0 items-center border-b border-zinc-700/70 px-2 py-2 sm:border-b-0 sm:border-r sm:border-zinc-700/70 sm:py-0 sm:ps-2.5 sm:pe-2"
+          className="flex shrink-0 items-center border-b border-zinc-200 dark:border-zinc-700/70 px-2 py-2 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-0 sm:ps-2.5 sm:pe-2"
           role="group"
           aria-label="Exchange segment"
         >
-          <div className="inline-flex rounded-lg bg-black/30 p-0.5 ring-1 ring-zinc-700/70">
+          <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
             <button
               type="button"
               onClick={() => onSegmentChange("NFO")}
               className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
                 segmentExchange === "NFO"
-                  ? "bg-zinc-700 text-white shadow-sm"
-                  : "text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-200"
+                  ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
+                  : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
               }`}
             >
               NSE
@@ -411,8 +333,8 @@ export function OptionChainPlaceSection() {
               onClick={() => onSegmentChange("BFO")}
               className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
                 segmentExchange === "BFO"
-                  ? "bg-zinc-700 text-white shadow-sm"
-                  : "text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-200"
+                  ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
+                  : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
               }`}
             >
               BSE
@@ -420,7 +342,7 @@ export function OptionChainPlaceSection() {
           </div>
         </div>
 
-        <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center overflow-visible border-b border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-700/70 sm:py-2.5">
+        <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center overflow-visible border-b border-zinc-200 dark:border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-2.5">
           <OptionChainUnderlyingSearch
             variant="ticker"
             chainBar
@@ -438,7 +360,7 @@ export function OptionChainPlaceSection() {
           />
         </div>
 
-        <div className="relative z-20 flex shrink-0 items-center overflow-visible border-b border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-700/70 sm:py-2.5">
+        <div className="relative z-20 flex shrink-0 items-center overflow-visible border-b border-zinc-200 dark:border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-2.5">
           <ExpirySelectPill
             layout="toolbar"
             tone="darkToolbar"
@@ -464,7 +386,7 @@ export function OptionChainPlaceSection() {
               !expiryDate.trim() ||
               chainMut.isPending
             }
-            className="inline-flex w-full min-w-[9.25rem] items-center justify-center rounded-lg border border-sky-500/85 bg-transparent px-4 py-2 text-sm font-semibold text-sky-400 shadow-none transition hover:bg-sky-500/10 hover:text-sky-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 disabled:pointer-events-none disabled:opacity-45 sm:w-auto"
+            className="inline-flex w-full min-w-[9.25rem] items-center justify-center rounded-lg border border-sky-600/70 bg-transparent px-4 py-2 text-sm font-semibold text-sky-700 shadow-none transition hover:bg-sky-500/15 hover:text-sky-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 disabled:pointer-events-none disabled:opacity-45 dark:border-sky-500/85 dark:text-sky-400 dark:hover:bg-sky-500/10 dark:hover:text-sky-300 sm:w-auto"
           >
             {chainMut.isPending ? "Fetching..." : "Fetch"}
           </button>
@@ -476,195 +398,12 @@ export function OptionChainPlaceSection() {
       ) : null}
 
       {chainSuccess?.chain_rows?.length ? (
-        <div
-          ref={scrollRef}
-          className="max-h-[min(70vh,42rem)] overflow-auto rounded-xl border border-zinc-800 bg-[#0e0e10] shadow-lg ring-1 ring-black/20 dark:ring-zinc-800/80"
-        >
-          <table className="w-full max-w-full border-collapse text-xs leading-snug tabular-nums text-zinc-300 sm:text-sm">
-            <thead className="sticky top-0 z-20 bg-[#0e0e10]">
-              <tr className="border-b border-zinc-800">
-                <th
-                  colSpan={4}
-                  className="bg-emerald-950/25 px-1 py-2 text-center text-xs font-semibold uppercase tracking-wide text-emerald-200/95 sm:text-sm"
-                >
-                  Calls
-                </th>
-                <th
-                  rowSpan={2}
-                  className="border-x border-zinc-700/80 bg-zinc-900 px-1 py-2 align-middle text-center text-xs font-medium uppercase tracking-wide text-zinc-300 sm:text-sm"
-                >
-                  Strike
-                </th>
-                <th
-                  colSpan={4}
-                  className="bg-rose-950/25 px-1 py-2 text-center text-xs font-semibold uppercase tracking-wide text-rose-200/95 sm:text-sm"
-                >
-                  Puts
-                </th>
-              </tr>
-              <tr className="border-b border-zinc-800 text-[10px] font-semibold uppercase tracking-wide sm:text-xs">
-                <th className="min-w-[3.5rem] bg-emerald-950 px-0.5 py-1.5 text-center text-zinc-500">
-                  Buy/Sell
-                </th>
-                <th className="bg-emerald-950 px-0.5 py-1.5 text-end text-zinc-500">
-                  OI (L)
-                </th>
-                <th className="min-w-[11rem] bg-emerald-950 px-0 py-1.5 text-center text-zinc-500 sm:min-w-[12.5rem]">
-                  <span className="inline-flex items-center justify-center gap-1">
-                    <span
-                      className="h-1 w-3.5 shrink-0 rounded-full bg-[#2d4a3c]"
-                      aria-hidden
-                    />
-                    OI
-                  </span>
-                </th>
-                <th className="w-[4.5rem] max-w-[4.5rem] bg-emerald-950 px-0 py-1.5 pe-0.5 text-end text-zinc-500 sm:w-[4.75rem] sm:max-w-[4.75rem]">
-                  LTP
-                </th>
-                <th className="w-[4.5rem] max-w-[4.5rem] bg-rose-950 px-0 py-1.5 ps-0.5 text-start text-zinc-500 sm:w-[4.75rem] sm:max-w-[4.75rem]">
-                  LTP
-                </th>
-                <th className="min-w-[11rem] bg-rose-950 px-0 py-1.5 text-center text-zinc-500 sm:min-w-[12.5rem]">
-                  <span className="inline-flex items-center justify-center gap-1">
-                    <span
-                      className="h-1 w-3.5 shrink-0 rounded-full bg-[#5a3d3a]"
-                      aria-hidden
-                    />
-                    OI
-                  </span>
-                </th>
-                <th className="bg-rose-950 px-0.5 py-1.5 text-start text-zinc-500">
-                  OI (L)
-                </th>
-                <th className="min-w-[3.5rem] bg-rose-950 px-0.5 py-1.5 text-center text-zinc-500">
-                  Buy/Sell
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {chainSuccess.chain_rows.map((row) => {
-                const c = row.call ?? null;
-                const p = row.put ?? null;
-                const strike = row.strike_price;
-                const isAtm =
-                  atmStrike != null && strike === atmStrike;
-                const callItm = c != null && itmCall(strike);
-                const putItm = p != null && itmPut(strike);
-                const callOi = c ? parseNum(c.open_interest) : NaN;
-                const putOi = p ? parseNum(p.open_interest) : NaN;
-                const callOiPct =
-                  maxCallOi > 0 && Number.isFinite(callOi)
-                    ? Math.min(100, (callOi / maxCallOi) * 100)
-                    : 0;
-                const putOiPct =
-                  maxPutOi > 0 && Number.isFinite(putOi)
-                    ? Math.min(100, (putOi / maxPutOi) * 100)
-                    : 0;
-
-                /** Light gray wash on ITM legs — reads as “avoid / out of play” on the dark chain. */
-                const itmLegCls = "bg-zinc-500/22";
-                const strikeAtmCls = isAtm
-                  ? "bg-sky-950/60 font-normal text-sky-100 ring-1 ring-sky-500/35"
-                  : "font-normal text-zinc-300";
-
-                return (
-                  <tr
-                    key={strike}
-                    data-atm-strike={isAtm ? "true" : undefined}
-                    className="cursor-pointer border-b border-zinc-800/90 transition hover:bg-zinc-800/35"
-                    onClick={() => openSheetForRow(row)}
-                  >
-                    {c ? (
-                      <>
-                        <td
-                          className={`px-0.5 py-1 text-center align-top ${callItm ? itmLegCls : ""}`}
-                        >
-                          <BuySellBookLines leg={c} />
-                        </td>
-                        <td
-                          className={`px-0.5 py-1 text-end text-zinc-400 whitespace-nowrap ${callItm ? itmLegCls : ""}`}
-                        >
-                          {formatOiLakh(callOi)}
-                        </td>
-                        <td
-                          className={`overflow-visible px-0 py-1 ${callItm ? itmLegCls : ""}`}
-                        >
-                          <div
-                            className="relative h-2.5 w-full min-w-0 overflow-hidden bg-transparent sm:h-3"
-                            title={`Call OI ${formatOiLakh(callOi)}`}
-                          >
-                            <div
-                              className="absolute top-0 h-full rounded-l-full bg-[#2d4a3c] shadow-none"
-                              style={{
-                                right: 0,
-                                width: `${callOiPct}%`,
-                              }}
-                            />
-                          </div>
-                        </td>
-                        <td
-                          className={`w-[4.5rem] max-w-[4.5rem] truncate px-0.5 py-1 pe-0.5 text-end text-xs whitespace-nowrap text-zinc-400 sm:w-[4.75rem] sm:max-w-[4.75rem] sm:text-sm ${callItm ? itmLegCls : ""}`}
-                        >
-                          {formatLtpInr(c.ltp)}
-                        </td>
-                      </>
-                    ) : (
-                      <td
-                        colSpan={4}
-                        className="bg-zinc-900/40"
-                      />
-                    )}
-                    <td
-                      className={`border-x border-zinc-800/80 bg-zinc-900/50 px-1 py-1 text-center text-xs font-normal tabular-nums whitespace-nowrap sm:text-sm ${strikeAtmCls}`}
-                    >
-                      {strike.toLocaleString("en-IN")}
-                    </td>
-                    {p ? (
-                      <>
-                        <td
-                          className={`w-[4.5rem] max-w-[4.5rem] truncate px-0.5 py-1 ps-0.5 text-start text-xs whitespace-nowrap text-zinc-400 sm:w-[4.75rem] sm:max-w-[4.75rem] sm:text-sm ${putItm ? itmLegCls : ""}`}
-                        >
-                          {formatLtpInr(p.ltp)}
-                        </td>
-                        <td
-                          className={`overflow-visible px-0 py-1 ${putItm ? itmLegCls : ""}`}
-                        >
-                          <div
-                            className="relative h-2.5 w-full min-w-0 overflow-hidden bg-transparent sm:h-3"
-                            title={`Put OI ${formatOiLakh(putOi)}`}
-                          >
-                            <div
-                              className="absolute top-0 h-full rounded-r-full bg-[#5a3d3a] shadow-none"
-                              style={{
-                                left: 0,
-                                width: `${putOiPct}%`,
-                              }}
-                            />
-                          </div>
-                        </td>
-                        <td
-                          className={`px-0.5 py-1 text-start text-zinc-400 whitespace-nowrap ${putItm ? itmLegCls : ""}`}
-                        >
-                          {formatOiLakh(putOi)}
-                        </td>
-                        <td
-                          className={`px-0.5 py-1 text-center align-top ${putItm ? itmLegCls : ""}`}
-                        >
-                          <BuySellBookLines leg={p} />
-                        </td>
-                      </>
-                    ) : (
-                      <td
-                        colSpan={4}
-                        className="bg-zinc-900/40"
-                      />
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <OptionChainTable
+          chainSuccess={chainSuccess}
+          scrollRef={scrollRef}
+          mode="trade"
+          onRowClick={openSheetForRow}
+        />
       ) : null}
 
       {sheet && chainSuccess ? (

@@ -1,7 +1,7 @@
 """Per-user ICICI Breeze API call count (daily). Used for footer counter and safety thresholds.
 
 One 'call' = one HTTP request from this app to a Breeze REST endpoint (api.icicidirect.com/breezeapi/).
-Counted in: requests_patch (SDK/requests) and call_icici_api_direct (direct httpx).
+Counted in: requests_patch (SDK via requests.api.request), CustomerDetails + call_icici_api_direct (httpx).
 """
 import sqlite3
 import threading

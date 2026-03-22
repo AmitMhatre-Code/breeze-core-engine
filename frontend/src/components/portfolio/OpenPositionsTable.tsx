@@ -1,11 +1,19 @@
 "use client";
 
+import { Fragment, useCallback, useMemo, useState } from "react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { ExecutionPreviewModal } from "@/components/order/ExecutionPreviewModal";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
+import { PortfolioHedgeOrderSheet } from "@/components/portfolio/PortfolioHedgeOrderSheet";
+import { apiClient } from "@/lib/api-client";
+import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import {
   ltpAsOrderPrice,
   squareOffToOrderPayload,
 } from "@/lib/order-confirm";
+import type { PortfolioPositionRecord } from "@/lib/portfolio";
+import type { OptionRight } from "@/lib/strategy-builder/types";
 
 /**
  * Matches legacy `templates/portfolio.html` fed by `get_positions` (see
@@ -14,7 +22,7 @@ import {
  * Responsive: &lt;xl = card layout (phones + tablets); xl+ = wide table with
  * side-by-side actions. Fallback horizontal scroll remains inside `.app-table-wrap`.
  */
-export type PortfolioPositionRecord = Record<string, unknown>;
+export type { PortfolioPositionRecord };
 
 function coerceNum(v: unknown): number | null {
   if (v == null || v === "") return null;
@@ -195,7 +203,163 @@ const btnPrimaryCard =
 const btnSecondaryCard =
   "app-btn-outline px-3 py-2.5 text-sm font-medium";
 
-function PositionActionsTable({ row }: { row: PortfolioPositionRecord }) {
+function positionRowKey(row: PortfolioPositionRecord, index: number): string {
+  return `${String(row.option)}-${String(row.stock_code)}-${index}`;
+}
+
+type HedgeCandidatesApiResponse = {
+  Status: number;
+  Error?: string;
+  Success?: unknown;
+};
+
+function hedgeCandidatesQueryString(row: PortfolioPositionRecord): string {
+  const qRaw = coerceNum(row.quantity);
+  const qty =
+    qRaw != null && qRaw !== 0
+      ? String(Math.abs(Math.trunc(qRaw)))
+      : "";
+  const q = new URLSearchParams({
+    stock_code: String(row.stock_code ?? "").trim(),
+    exchange_code: (String(row.exchange_code ?? "NFO").trim() || "NFO"),
+    expiry_date: String(row.expiry_date ?? "").trim(),
+    right: String(row.right ?? "").trim(),
+    strike_price: String(row.strike_price ?? "").trim(),
+    quantity: qty,
+    top: "5",
+  });
+  return q.toString();
+}
+
+function parseHedgeNum(v: unknown): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = parseFloat(v.replace(/,/g, ""));
+    return Number.isFinite(n) ? n : NaN;
+  }
+  return NaN;
+}
+
+function PortfolioHedgeExpandPanel({
+  row,
+  onSelect,
+}: {
+  row: PortfolioPositionRecord;
+  onSelect: (opt: Record<string, unknown>) => void;
+}) {
+  const qs = useMemo(() => hedgeCandidatesQueryString(row), [row]);
+  const q = useQuery({
+    queryKey: ["portfolio", "hedge-candidates", qs],
+    queryFn: () =>
+      apiClient.get<HedgeCandidatesApiResponse>(
+        `/portfolio/hedge-candidates?${qs}`,
+      ),
+  });
+
+  const list: Record<string, unknown>[] = useMemo(() => {
+    const d = q.data;
+    if (!d || d.Status !== 200 || !Array.isArray(d.Success)) return [];
+    return d.Success.filter((x): x is Record<string, unknown> =>
+      Boolean(x && typeof x === "object"),
+    );
+  }, [q.data]);
+
+  if (q.isLoading) {
+    return (
+      <div className="px-3 py-4 text-sm app-text-muted">Loading hedges…</div>
+    );
+  }
+  if (q.isError) {
+    return (
+      <div className="px-3 py-4 text-sm text-red-600 dark:text-red-400">
+        {q.error instanceof Error ? q.error.message : "Unable to load hedges."}
+      </div>
+    );
+  }
+  if (q.data && q.data.Status !== 200) {
+    return (
+      <div className="px-3 py-4 text-sm text-red-600 dark:text-red-400">
+        {q.data.Error?.trim() || "No hedge candidates."}
+      </div>
+    );
+  }
+  if (!list.length) {
+    return (
+      <div className="px-3 py-4 text-sm app-text-muted">
+        No hedge candidates for this position.
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-zinc-200/80 bg-zinc-50/80 px-3 py-3 dark:border-zinc-700/80 dark:bg-zinc-900/50">
+      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        Top hedge strikes (by estimated premium)
+      </p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        {list.map((opt, hi) => {
+          const strike = parseHedgeNum(opt.strike_price);
+          const hq = parseHedgeNum(opt.hedge_quantity);
+          const hp = parseHedgeNum(opt.hedge_premium);
+          const offer = parseHedgeNum(opt.best_offer_price);
+          return (
+            <div
+              key={`${String(strike)}-${hi}`}
+              className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-xl border border-zinc-200/90 bg-white p-3 text-xs shadow-sm dark:border-zinc-700 dark:bg-zinc-950 sm:min-w-[10.5rem] sm:max-w-[14rem]"
+            >
+              <div className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                Strike{" "}
+                {Number.isFinite(strike)
+                  ? Math.round(strike).toLocaleString("en-IN")
+                  : "—"}
+              </div>
+              <div className="tabular-nums text-zinc-600 dark:text-zinc-400">
+                Hedge qty{" "}
+                {Number.isFinite(hq)
+                  ? Math.round(hq).toLocaleString("en-IN")
+                  : "—"}
+              </div>
+              <div className="tabular-nums text-zinc-600 dark:text-zinc-400">
+                Est. premium{" "}
+                {Number.isFinite(hp)
+                  ? formatIndianMoneyCompact(hp)
+                  : "—"}
+              </div>
+              <div className="tabular-nums text-zinc-600 dark:text-zinc-400">
+                Offer ₹
+                {Number.isFinite(offer)
+                  ? offer.toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })
+                  : "—"}
+              </div>
+              <button
+                type="button"
+                className="app-btn-primary mt-1 w-full px-2 py-1.5 text-xs font-medium"
+                onClick={() => onSelect(opt)}
+              >
+                Select
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PositionActionsTable({
+  row,
+  rowKey,
+  hedgeExpanded,
+  onToggleHedges,
+}: {
+  row: PortfolioPositionRecord;
+  rowKey: string;
+  hedgeExpanded: boolean;
+  onToggleHedges: (key: string) => void;
+}) {
   const { openOrderConfirm } = useOrderConfirm();
   const squarePayload = squareOffToOrderPayload(row);
   return (
@@ -214,15 +378,29 @@ function PositionActionsTable({ row }: { row: PortfolioPositionRecord }) {
         </Link>
       )}
       {isHedgeable(row.hedgeable) ? (
-        <Link href={hedgeHref(row)} className={btnSecondaryTable}>
-          Get Hedges
-        </Link>
+        <button
+          type="button"
+          className={btnSecondaryTable}
+          onClick={() => onToggleHedges(rowKey)}
+        >
+          {hedgeExpanded ? "Hide hedges" : "Get Hedges"}
+        </button>
       ) : null}
     </div>
   );
 }
 
-function PositionActionsCard({ row }: { row: PortfolioPositionRecord }) {
+function PositionActionsCard({
+  row,
+  rowKey,
+  hedgeExpanded,
+  onToggleHedges,
+}: {
+  row: PortfolioPositionRecord;
+  rowKey: string;
+  hedgeExpanded: boolean;
+  onToggleHedges: (key: string) => void;
+}) {
   const { openOrderConfirm } = useOrderConfirm();
   const squarePayload = squareOffToOrderPayload(row);
   return (
@@ -244,12 +422,13 @@ function PositionActionsCard({ row }: { row: PortfolioPositionRecord }) {
         </Link>
       )}
       {isHedgeable(row.hedgeable) ? (
-        <Link
-          href={hedgeHref(row)}
+        <button
+          type="button"
           className={`${btnSecondaryCard} w-full min-h-11 sm:min-h-0 sm:flex-1`}
+          onClick={() => onToggleHedges(rowKey)}
         >
-          Get Hedges
-        </Link>
+          {hedgeExpanded ? "Hide hedges" : "Get Hedges"}
+        </button>
       ) : null}
     </div>
   );
@@ -272,6 +451,62 @@ export function OpenPositionsTable({
   positions,
   emptyMessage = "No positions to display",
 }: OpenPositionsTableProps) {
+  const [hedgeExpandedKey, setHedgeExpandedKey] = useState<string | null>(null);
+  const [hedgeSheet, setHedgeSheet] = useState<{
+    row: PortfolioPositionRecord;
+    opt: Record<string, unknown>;
+  } | null>(null);
+  const [executePreview, setExecutePreview] = useState<{
+    row: PortfolioPositionRecord;
+    strike: number;
+    right: OptionRight;
+    quantity: number;
+    price: string;
+  } | null>(null);
+
+  const onToggleHedges = useCallback((key: string) => {
+    setHedgeExpandedKey((prev) => (prev === key ? null : key));
+    setHedgeSheet(null);
+  }, []);
+
+  const closeHedgeSheet = useCallback(() => setHedgeSheet(null), []);
+
+  const onHedgeSheetBuy = useCallback(
+    (args: {
+      strike: number;
+      right: OptionRight;
+      quantity: number;
+      price: string;
+    }) => {
+      if (!hedgeSheet) return;
+      setExecutePreview({
+        row: hedgeSheet.row,
+        strike: args.strike,
+        right: args.right,
+        quantity: args.quantity,
+        price: args.price,
+      });
+      setHedgeSheet(null);
+    },
+    [hedgeSheet],
+  );
+
+  const closeExecutePreview = useCallback(() => setExecutePreview(null), []);
+
+  const executionLegs = useMemo(() => {
+    if (!executePreview) return [];
+    const prem = parseFloat(executePreview.price.replace(/,/g, ""));
+    return [
+      {
+        strike: executePreview.strike,
+        right: executePreview.right,
+        side: "Buy" as const,
+        quantity: executePreview.quantity,
+        premiumPerUnit: Number.isFinite(prem) ? prem : 0,
+      },
+    ];
+  }, [executePreview]);
+
   return (
     <>
       {/* xl+ desktop table — tablets & phones use cards below */}
@@ -324,6 +559,8 @@ export function OpenPositionsTable({
                 </tr>
               ) : (
                 positions.map((row, i) => {
+                  const rowKey = positionRowKey(row, i);
+                  const hedgeOpen = hedgeExpandedKey === rowKey;
                   const mtm = formatMtmCarry(row.current_profit);
                   const carry = formatMtmCarry(row.carry_profit);
                   const cr = formatCarryRet(row.carry_margin_returns);
@@ -331,8 +568,8 @@ export function OpenPositionsTable({
                   const spot = formatSpot(row.spot_price);
                   const qty = coerceNum(row.quantity);
                   return (
+                    <Fragment key={rowKey}>
                     <tr
-                      key={`${String(row.option)}-${String(row.stock_code)}-${i}`}
                       className="app-table-row"
                     >
                       <td className={`${tdBase} text-center tabular-nums`}>
@@ -383,9 +620,27 @@ export function OpenPositionsTable({
                         {cr.text}
                       </td>
                       <td className={`${tdBase} text-right align-middle`}>
-                        <PositionActionsTable row={row} />
+                        <PositionActionsTable
+                          row={row}
+                          rowKey={rowKey}
+                          hedgeExpanded={hedgeOpen}
+                          onToggleHedges={onToggleHedges}
+                        />
                       </td>
                     </tr>
+                    {hedgeOpen && isHedgeable(row.hedgeable) ? (
+                      <tr className="app-table-row bg-zinc-50/90 dark:bg-zinc-900/35">
+                        <td className="p-0" colSpan={13}>
+                          <PortfolioHedgeExpandPanel
+                            row={row}
+                            onSelect={(opt) =>
+                              setHedgeSheet({ row, opt })
+                            }
+                          />
+                        </td>
+                      </tr>
+                    ) : null}
+                    </Fragment>
                   );
                 })
               )}
@@ -402,6 +657,8 @@ export function OpenPositionsTable({
           </p>
         ) : (
           positions.map((row, i) => {
+            const rowKey = positionRowKey(row, i);
+            const hedgeOpen = hedgeExpandedKey === rowKey;
             const mtm = formatMtmCarry(row.current_profit);
             const carry = formatMtmCarry(row.carry_profit);
             const cr = formatCarryRet(row.carry_margin_returns);
@@ -410,7 +667,7 @@ export function OpenPositionsTable({
             const qty = coerceNum(row.quantity);
             return (
               <div
-                key={`card-${String(row.option)}-${String(row.stock_code)}-${i}`}
+                key={`card-${rowKey}`}
                 className="app-card-muted space-y-2.5 p-4 text-sm sm:p-5"
               >
                 <h3 className="text-base font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
@@ -460,12 +717,46 @@ export function OpenPositionsTable({
                   <span className="app-text-muted">Carry Returns:</span>{" "}
                   <span className={cr.className}>{cr.text}</span>
                 </p>
-                <PositionActionsCard row={row} />
+                <PositionActionsCard
+                  row={row}
+                  rowKey={rowKey}
+                  hedgeExpanded={hedgeOpen}
+                  onToggleHedges={onToggleHedges}
+                />
+                {hedgeOpen && isHedgeable(row.hedgeable) ? (
+                  <PortfolioHedgeExpandPanel
+                    row={row}
+                    onSelect={(opt) => setHedgeSheet({ row, opt })}
+                  />
+                ) : null}
               </div>
             );
           })
         )}
       </div>
+
+      {hedgeSheet ? (
+        <PortfolioHedgeOrderSheet
+          row={hedgeSheet.row}
+          hedgeOption={hedgeSheet.opt}
+          onClose={closeHedgeSheet}
+          onBuy={onHedgeSheetBuy}
+        />
+      ) : null}
+
+      {executePreview ? (
+        <ExecutionPreviewModal
+          open
+          onClose={closeExecutePreview}
+          stockCode={String(executePreview.row.stock_code ?? "").trim()}
+          exchangeCode={
+            String(executePreview.row.exchange_code ?? "NFO").trim() ||
+            "NFO"
+          }
+          expiryDisplay={String(executePreview.row.expiry_date ?? "").trim()}
+          legs={executionLegs}
+        />
+      ) : null}
     </>
   );
 }

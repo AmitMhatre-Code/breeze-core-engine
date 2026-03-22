@@ -35,6 +35,15 @@ def _expiry_display_to_api(expiry: str) -> str:
     return datetime.datetime.strptime(expiry, "%d-%b-%Y").strftime("%Y-%m-%d") + "T06:00:00.000Z"
 
 
+def _icici_option_chain_enums(product_type: str, right: str) -> tuple[str, str]:
+    """ICICI OptionChain expects lowercase product_type and right (matches dashboard_vix / API samples). NFO often accepts Title Case; BFO rejects it."""
+    pt = str(product_type or "").strip().lower()
+    if pt not in ("futures", "options"):
+        pt = "options"
+    rt = str(right or "").strip().lower()
+    return pt, rt
+
+
 def _expiry_api_to_display(expiry: str) -> str:
     """Convert API format (YYYY-MM-DDT06:00:00.000Z or YYYY-MM-DD) to display format (DD-Mon-YYYY)."""
     s = expiry.removesuffix("T06:00:00.000Z")
@@ -433,7 +442,8 @@ class processor():
                 sell_leg = sell_options['Success'][0] # only one sell leg
                 breeze = self.get_session_breeze(user_id)
                 try:
-                    options_chain = breeze.get_option_chain_quotes(stock_code=stock_code,exchange_code=exchange_code,product_type=product_type,expiry_date=expiry_date,right=right)
+                    _pt, _rt = _icici_option_chain_enums(product_type, right)
+                    options_chain = breeze.get_option_chain_quotes(stock_code=stock_code,exchange_code=exchange_code,product_type=_pt,expiry_date=expiry_date,right=_rt)
                 except Exception as e:
                     options_chain = _icici_error(f"Error calling ICICI Breeze API get_option_chain_quotes(stock_code={stock_code},exchange_code={exchange_code},product_type={product_type},expiry_date={expiry_date},right={right}): {e}")
 
@@ -512,7 +522,13 @@ class processor():
             if margin is None:
                 # Fallback to direct API. Use raw session_token from CustomerDetails (avoids encode/decode mismatch)
                 broker_token = self.get_session_token(user_id) or ""
-                raw_session = _fetch_customerdetails_session_token(cred_data["Success"]["broker_api_key"], broker_token) if broker_token else ""
+                raw_session = (
+                    _fetch_customerdetails_session_token(
+                        cred_data["Success"]["broker_api_key"], broker_token, user_id=user_id
+                    )
+                    if broker_token
+                    else ""
+                )
                 session_key = getattr(breeze, "session_key", None) or broker_token or ""
                 margin = _call_icici_api_direct(
                     "https://api.icicidirect.com/breezeapi/api/v1/margin",
@@ -559,7 +575,8 @@ class processor():
         sorted_options = {}
         breeze = self.get_session_breeze(user_id)
         try:
-            options_chain = breeze.get_option_chain_quotes(stock_code=stock_code,exchange_code=exchange_code,product_type=product_type,expiry_date=expiry_date,right=right)
+            _pt, _rt = _icici_option_chain_enums(product_type, right)
+            options_chain = breeze.get_option_chain_quotes(stock_code=stock_code,exchange_code=exchange_code,product_type=_pt,expiry_date=expiry_date,right=_rt)
         except Exception as e:
             options_chain = _icici_error(f"Error calling ICICI Breeze API get_option_chain_quotes(stock_code={stock_code},exchange_code={exchange_code},product_type={product_type},expiry_date={expiry_date},right={right}): {e}")
 
@@ -889,7 +906,13 @@ class processor():
             return {"Status": cred_data.get("Status", 400), "Error": cred_data.get("Error", "Could not fetch credentials"), "Success": None}
         # Use direct CustomerDetails API (like margin) - SDK's get_customer_details may return different structure
         broker_token = self.get_session_token(user_id) or ""
-        session_token = _fetch_customerdetails_session_token(cred_data["Success"]["broker_api_key"], broker_token) if broker_token else ""
+        session_token = (
+            _fetch_customerdetails_session_token(
+                cred_data["Success"]["broker_api_key"], broker_token, user_id=user_id
+            )
+            if broker_token
+            else ""
+        )
         if not session_token:
             return {"Status": 400, "Error": "CustomerDetails did not return session_token", "Success": None}
         try:
@@ -1038,11 +1061,12 @@ class processor():
                 # collect option chain between the current spot and strike
                 breeze = self.get_session_breeze(user_id)
                 product_type = cfg.OPTIONS
+                _pt, _rt = _icici_option_chain_enums(product_type, right)
                 full_chain = breeze.get_option_chain_quotes(stock_code=stock_code,
                                     exchange_code=exchange_code,
-                                    product_type=product_type,
+                                    product_type=_pt,
                                     expiry_date=expiry_date,
-                                    right=right)
+                                    right=_rt)
                 
                 hedge_chain = []
                 for option in full_chain['Success']:
@@ -1106,7 +1130,10 @@ class processor():
                     option['hedge_premium'] = option['hedge_quantity'] * option['best_offer_price']
 
                 hedge_chain = sorted(hedge_chain, key=lambda x: x['hedge_premium'], reverse=False)
-                sorted_hedges['Success'] = hedge_chain[:top]
+                top_chain = hedge_chain[:top]
+                for opt in top_chain:
+                    opt["lot_size"] = int(lot_size)
+                sorted_hedges["Success"] = top_chain
                 sorted_hedges['Status'] = 200
                 sorted_hedges['Error'] = ""
             except Exception as e:  # noqa: BLE001
@@ -1133,7 +1160,8 @@ class processor():
     def get_quote(self, user_id, stock_code, expiry_date, product_type, right, strike_price, exchange_code: str = cfg.NFO):
         breeze = self.get_session_breeze(user_id)
         try:
-            quote = breeze.get_option_chain_quotes(stock_code, exchange_code, expiry_date, product_type, right, strike_price)
+            _pt, _rt = _icici_option_chain_enums(product_type, right)
+            quote = breeze.get_option_chain_quotes(stock_code, exchange_code, expiry_date, _pt, _rt, strike_price)
         except Exception as e:
             quote = {'Status': 400, 'Error': f"Error calling ICICI Breeze API get_option_chain_quotes: {e}"}
         if not isinstance(quote, dict):
@@ -1170,12 +1198,13 @@ class processor():
 
         def fetch_side(right: str):
             try:
+                _pt, _rt = _icici_option_chain_enums(product_type, right)
                 r = breeze.get_option_chain_quotes(
                     stock_code=stock_code,
                     exchange_code=exchange_code,
-                    product_type=product_type,
+                    product_type=_pt,
                     expiry_date=expiry_api,
-                    right=right,
+                    right=_rt,
                 )
             except Exception as e:
                 return _icici_error(f"get_option_chain_quotes({right}): {e}")
@@ -1247,7 +1276,9 @@ class processor():
             p_zero = p is None or (p.get("total_buy_qty", 0) == 0 and p.get("total_sell_qty", 0) == 0)
             return c_zero and p_zero
 
-        chain_rows = [r for r in chain_rows if not _is_illiquid(r)]
+        # BFO: keep strikes with no book on both sides so the full chain is visible (NFO still drops dead strikes).
+        if exchange_code != cfg.BFO:
+            chain_rows = [r for r in chain_rows if not _is_illiquid(r)]
 
         # Spot and ATM from option chain response (no separate get_quote)
         spot_price = None

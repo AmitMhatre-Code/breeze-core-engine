@@ -13,12 +13,12 @@ import {
 } from "@/lib/home-data";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 
+// Hidden from nav (route still works): { href: "/trade-options-chain", label: "Trade Options Chain" },
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/portfolio", label: "Portfolio" },
   { href: "/performance", label: "Performance" },
   { href: "/orders", label: "Orders" },
-  { href: "/trade-options-chain", label: "Trade Options Chain" },
   { href: "/strategy-builder", label: "Strategy Builder" },
   { href: "/settings", label: "Settings" },
 ];

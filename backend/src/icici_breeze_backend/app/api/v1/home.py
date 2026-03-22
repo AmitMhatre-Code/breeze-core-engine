@@ -292,7 +292,11 @@ async def _complete_icici_session(
     from icici_breeze_backend.app.external.icici_api import fetch_customerdetails_session_token, call_icici_api_direct
 
     broker_token = str(apisession or "")
-    raw_session = fetch_customerdetails_session_token(api_key, broker_token) if broker_token else None
+    raw_session = (
+        fetch_customerdetails_session_token(api_key, broker_token, user_id=form.user_id)
+        if broker_token
+        else None
+    )
     if broker_token:
         margin_check = call_icici_api_direct(
             "https://api.icicidirect.com/breezeapi/api/v1/margin",

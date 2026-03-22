@@ -11,17 +11,76 @@ type Props = {
   ysToday?: number[];
   spot: number | null;
   breakevens: number[];
-  strikes: number[];
   minS: number;
   maxS: number;
   height?: number;
 };
 
-/** Left padding: room for y-axis tick labels + vertical axis title. */
-const PAD_L = 46;
+/** Left padding: room for y-axis tick labels. */
+const PAD_L = 40;
 const PAD_R = 16;
 const PAD_T = 12;
-const PAD_B = 28;
+const PAD_B = 22;
+
+const X_AXIS_TICKS = 10;
+
+function formatXAxisPrice(v: number): string {
+  if (!Number.isFinite(v)) return "—";
+  const a = Math.abs(v);
+  if (a >= 1000) return v.toFixed(0);
+  if (a >= 100) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+/** Fills between expiry P&amp;L polyline and y=0: green above zero, red below. */
+function buildPayoffFillPaths(
+  xs: number[],
+  ys: number[],
+  xScale: (s: number) => number,
+  yScale: (y: number) => number,
+): { aboveD: string; belowD: string } {
+  if (xs.length < 2 || ys.length !== xs.length) {
+    return { aboveD: "", belowD: "" };
+  }
+  const yZ = yScale(0);
+  let aboveD = "";
+  let belowD = "";
+
+  for (let i = 0; i < xs.length - 1; i++) {
+    const x0 = xs[i];
+    const x1 = xs[i + 1];
+    const d0 = ys[i];
+    const d1 = ys[i + 1];
+    if (d0 === 0 && d1 === 0) continue;
+
+    const sx0 = xScale(x0);
+    const sx1 = xScale(x1);
+    const sy0 = yScale(d0);
+    const sy1 = yScale(d1);
+
+    if (d0 * d1 < 0) {
+      const xc = x0 + ((x1 - x0) * -d0) / (d1 - d0);
+      const sxc = xScale(xc);
+      if (d0 > 0) {
+        aboveD += `M ${sx0} ${sy0} L ${sxc} ${yZ} L ${sx0} ${yZ} Z `;
+        belowD += `M ${sxc} ${yZ} L ${sx1} ${sy1} L ${sx1} ${yZ} Z `;
+      } else {
+        belowD += `M ${sx0} ${sy0} L ${sxc} ${yZ} L ${sx0} ${yZ} Z `;
+        aboveD += `M ${sxc} ${yZ} L ${sx1} ${sy1} L ${sx1} ${yZ} Z `;
+      }
+      continue;
+    }
+
+    const quad = `M ${sx0} ${sy0} L ${sx1} ${sy1} L ${sx1} ${yZ} L ${sx0} ${yZ} Z `;
+    if (d0 >= 0 && d1 >= 0) {
+      aboveD += quad;
+    } else if (d0 <= 0 && d1 <= 0) {
+      belowD += quad;
+    }
+  }
+
+  return { aboveD, belowD };
+}
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
@@ -35,7 +94,6 @@ export function PayoffChart({
   ysToday,
   spot,
   breakevens,
-  strikes,
   minS,
   maxS,
   height = 220,
@@ -45,10 +103,15 @@ export function PayoffChart({
   const innerW = W - PAD_L - PAD_R;
   const innerH = H - PAD_T - PAD_B;
 
-  const { minY, maxY, pathD, pathTodayD, spotX, breakevenXs, strikeXs } =
+  const { minY, maxY, pathD, pathTodayD, spotX, breakevenXs, xAxisTicks, aboveFillD, belowFillD } =
     useMemo(() => {
-      const xScale = (s: number) =>
-        PAD_L + ((s - minS) / (maxS - minS || 1)) * innerW;
+      const span = maxS - minS || 1;
+      const xScale = (s: number) => PAD_L + ((s - minS) / span) * innerW;
+
+      const xAxisTicksInner = Array.from({ length: X_AXIS_TICKS }, (_, i) => {
+        const price = minS + (span * i) / (X_AXIS_TICKS - 1);
+        return { price, x: xScale(price) };
+      });
 
       if (idle) {
         const minY = -1;
@@ -64,7 +127,9 @@ export function PayoffChart({
           pathTodayD: "",
           spotX: spotX0,
           breakevenXs: [] as number[],
-          strikeXs: [] as { strike: number; x: number }[],
+          xAxisTicks: xAxisTicksInner,
+          aboveFillD: "",
+          belowFillD: "",
         };
       }
 
@@ -81,6 +146,8 @@ export function PayoffChart({
 
       const yScale = (y: number) =>
         PAD_T + innerH - ((y - minY) / (maxY - minY || 1)) * innerH;
+
+      const { aboveD, belowD } = buildPayoffFillPaths(xs, ys, xScale, yScale);
 
       const pts = xs.map((s, i) => `${xScale(s).toFixed(1)},${yScale(ys[i]).toFixed(1)}`);
       const pathD = pts.length ? `M ${pts.join(" L ")}` : "";
@@ -102,12 +169,17 @@ export function PayoffChart({
         .filter((b) => b >= minS && b <= maxS)
         .map((b) => xScale(b));
 
-      const strikeXs = [...new Set(strikes)].map((k) => ({
-        strike: k,
-        x: xScale(clamp(k, minS, maxS)),
-      }));
-
-      return { minY, maxY, pathD, pathTodayD, spotX, breakevenXs, strikeXs };
+      return {
+        minY,
+        maxY,
+        pathD,
+        pathTodayD,
+        spotX,
+        breakevenXs,
+        xAxisTicks: xAxisTicksInner,
+        aboveFillD: aboveD,
+        belowFillD: belowD,
+      };
     }, [
       idle,
       xs,
@@ -116,7 +188,6 @@ export function PayoffChart({
       ysToday,
       spot,
       breakevens,
-      strikes,
       minS,
       maxS,
       innerW,
@@ -198,6 +269,18 @@ export function PayoffChart({
           </text>
         </g>
       ))}
+      {!idle && belowFillD ? (
+        <path
+          d={belowFillD}
+          className="fill-rose-500/22 dark:fill-rose-400/18"
+        />
+      ) : null}
+      {!idle && aboveFillD ? (
+        <path
+          d={aboveFillD}
+          className="fill-emerald-500/24 dark:fill-emerald-400/18"
+        />
+      ) : null}
       {!idle && pathTodayD ? (
         <path
           d={pathTodayD}
@@ -244,8 +327,8 @@ export function PayoffChart({
             strokeDasharray="4 4"
           />
         ))}
-      {strikeXs.map(({ strike, x }) => (
-        <g key={strike}>
+      {xAxisTicks.map(({ price, x }, i) => (
+        <g key={`x-tick-${i}`}>
           <line
             x1={x}
             x2={x}
@@ -261,7 +344,7 @@ export function PayoffChart({
             className="fill-zinc-600 font-normal tabular-nums dark:fill-zinc-400"
             fontSize={5.5}
           >
-            {strike}
+            {formatXAxisPrice(price)}
           </text>
         </g>
       ))}
@@ -276,30 +359,6 @@ export function PayoffChart({
           Pick a readymade strategy or add legs to see payoff
         </text>
       ) : null}
-      <text
-        x={PAD_L + innerW / 2}
-        y={PAD_T + innerH + 3}
-        textAnchor="middle"
-        dominantBaseline="hanging"
-        className={
-          idle
-            ? "fill-zinc-500/70 font-normal dark:fill-zinc-500/60"
-            : "fill-zinc-500 font-normal dark:fill-zinc-500"
-        }
-        fontSize={6.5}
-      >
-        Underlying at expiry
-      </text>
-      <text
-        x={PAD_L - 2}
-        y={PAD_T + innerH / 2}
-        transform={`rotate(-90 ${PAD_L - 2} ${PAD_T + innerH / 2})`}
-        textAnchor="middle"
-        className="fill-zinc-500 font-normal dark:fill-zinc-500"
-        fontSize={6.5}
-      >
-        P&amp;L
-      </text>
     </svg>
   );
 }

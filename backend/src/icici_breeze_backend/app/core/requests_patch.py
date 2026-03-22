@@ -1,9 +1,14 @@
 """Patch requests so GET with data= sends body (breeze_connect uses GET+body).
 Also records each HTTP request to a Breeze REST endpoint as one API call (per ICICI definition).
+
+breeze_connect uses ``import requests`` then ``requests.get`` / ``requests.post`` etc. Those
+functions live in ``requests.api`` and call ``requests.api.request`` by name. Patching only
+``requests.request`` on the top-level package leaves ``requests.api.request`` unchanged, so
+almost no SDK traffic was counted. We patch ``requests.api.request`` (and align
+``requests.request`` / ``requests.get``).
 """
 import requests as _requests
 
-_orig_get = _requests.get
 _orig_request = _requests.request
 
 
@@ -45,39 +50,16 @@ def _record_breeze_call(url):
     """Count one API call per HTTP request to Breeze (lazy import to avoid circular deps)."""
     try:
         from icici_breeze_backend.app.services.api_usage import record_breeze_call_if_in_request
+
         record_breeze_call_if_in_request(str(url) if url else "")
     except Exception:
         pass
 
 
-def _patched_get(url, **kwargs):
-    data = kwargs.pop("data", None)
-    has_data = data is not None and isinstance(data, (str, bytes))
-    if has_data:
-        from requests import PreparedRequest, Session
-        from requests.structures import CaseInsensitiveDict
-        body = data if isinstance(data, bytes) else data.encode("utf-8")
-        prep = PreparedRequest()
-        prep.prepare_method("GET")
-        prep.prepare_url(url, None)
-        hdrs = kwargs.get("headers") or {}
-        prep.headers = CaseInsensitiveDict(hdrs) if hdrs else CaseInsensitiveDict()
-        prep.body = body
-        prep.headers["Content-Length"] = str(len(body))
-        if "Content-Type" not in prep.headers and isinstance(data, str):
-            prep.headers["Content-Type"] = "application/json"
-        out = Session().send(prep, timeout=kwargs.get("timeout"))
-        _record_breeze_call(url)
-        return _SafeBreezeResponse(out) if _is_breeze_url(url) else out
-    if data is not None:
-        kwargs["data"] = data
-    # Don't count here: _orig_get delegates to requests.request, which we also patch, so we count once in _patched_request only.
-    return _orig_get(url, **kwargs)
-
-
 def _patched_request(method, url, **kwargs):
     if method.upper() == "GET" and kwargs.get("data") is not None and isinstance(kwargs["data"], (str, bytes)):
         from requests import PreparedRequest, Session
+
         d = kwargs.pop("data")
         body = d if isinstance(d, bytes) else d.encode("utf-8")
         prep = PreparedRequest()
@@ -95,6 +77,10 @@ def _patched_request(method, url, **kwargs):
 
 
 def apply_requests_patch() -> None:
-    """Apply the GET+body patch to requests. Call before importing breeze_connect."""
-    _requests.get = _patched_get
+    """Apply the GET+body patch and API counting. Call before importing breeze_connect."""
+    import requests.api as _reqapi
+
+    _reqapi.request = _patched_request
     _requests.request = _patched_request
+    # Delegate to standard get (it calls ``request`` → patched ``requests.api.request``).
+    _requests.get = _reqapi.get

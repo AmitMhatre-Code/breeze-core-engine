@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { OptionChainTable } from "@/components/order/OptionChainTable";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
@@ -30,6 +31,7 @@ import {
 } from "@/lib/strategy-builder/templates";
 import type {
   ChainApiResponse,
+  ChainRow,
   ChainSuccess,
   ExecuteApiResponse,
   MarginApiResponse,
@@ -39,9 +41,14 @@ import type {
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
+import { ltpAsOrderPrice } from "@/lib/order-confirm";
 
 /** Readymade card selection (Naked / Covered Shorts are separate from `STRATEGY_TEMPLATES`). */
-type ReadymadeSelection = "naked-shorts" | "covered-shorts" | TemplateId;
+type ReadymadeSelection =
+  | "naked-shorts"
+  | "covered-shorts"
+  | "build-your-own"
+  | TemplateId;
 
 /** Strategy Builder only: caps broker load (standalone uncovered-shorts page may use higher top). */
 const STRATEGY_BUILDER_OPTIONS_TO_LIST_MAX = 5;
@@ -459,6 +466,17 @@ function uncoveredContractKey(
   return `${stock.trim().toUpperCase()}|${expiry.trim()}|${strike}|${right}`;
 }
 
+/** Strike + right + order side — for Build Your Own chain ticks vs duplicate B/S. */
+function buildYourOwnSlotKey(
+  stock: string,
+  expiry: string,
+  strike: number,
+  right: OptionRight,
+  side: OrderSide,
+): string {
+  return `${stock.trim().toUpperCase()}|${expiry.trim()}|${strike}|${right}|${side}`;
+}
+
 function uncoveredScanOptionKey(opt: Record<string, unknown>): string {
   const stock = String(opt.stock_code ?? "").trim();
   const expiry = String(opt.expiry_date ?? "").trim();
@@ -527,7 +545,7 @@ function LegPositionChip({ side }: { side: OrderSide }) {
   );
 }
 
-/** Text-controlled qty so users can clear/edit; snaps to lot multiple on blur. */
+/** Text-controlled qty; empty / 0 lots until user sets size; snaps to lot multiple on blur. */
 function LegQuantityInput({
   legId,
   lots,
@@ -542,15 +560,16 @@ function LegQuantityInput({
   className: string;
 }) {
   const ls = lotSize > 0 ? lotSize : 1;
-  const safeLots = Number.isFinite(lots) && lots > 0 ? lots : 1;
-  const qtyUnits = Math.round(safeLots * ls);
-  const [text, setText] = useState(() => String(qtyUnits));
+  const [text, setText] = useState(() =>
+    Number.isFinite(lots) && lots > 0 ? String(Math.round(lots * ls)) : "",
+  );
 
   useEffect(() => {
-    const q = Math.round(
-      (Number.isFinite(lots) && lots > 0 ? lots : 1) * ls,
-    );
-    setText(String(q));
+    if (Number.isFinite(lots) && lots > 0) {
+      setText(String(Math.round(lots * ls)));
+    } else {
+      setText("");
+    }
   }, [legId, lots, ls]);
 
   return (
@@ -570,12 +589,14 @@ function LegQuantityInput({
       onBlur={() => {
         const t = text.replace(/,/g, "").trim();
         if (t === "") {
-          setText(String(qtyUnits));
+          onLotsChange(0);
+          setText("");
           return;
         }
         const raw = parseInt(t, 10);
-        if (!Number.isFinite(raw)) {
-          setText(String(qtyUnits));
+        if (!Number.isFinite(raw) || raw <= 0) {
+          onLotsChange(0);
+          setText("");
           return;
         }
         const snapped = snapQuantityToLotMultiple(raw, ls);
@@ -887,6 +908,7 @@ export default function StrategyBuilderPage() {
   const [legMarginFetchingId, setLegMarginFetchingId] = useState<string | null>(
     null,
   );
+  const buildOwnChainScrollRef = useRef<HTMLDivElement>(null);
   const onSegmentChange = (ex: "NFO" | "BFO") => {
     if (ex === segmentExchange) return;
     setSegmentExchange(ex);
@@ -996,6 +1018,17 @@ export default function StrategyBuilderPage() {
     [chainSuccess],
   );
 
+  useEffect(() => {
+    if (selectedReadymade !== "build-your-own" || !chainSuccess) return;
+    const t = requestAnimationFrame(() => {
+      const row = buildOwnChainScrollRef.current?.querySelector(
+        "tr[data-atm-strike='true']",
+      );
+      row?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(t);
+  }, [selectedReadymade, chainSuccess]);
+
   const T = expiryDisplayToYears(expiryDate || "01-Jan-2099");
   const baseSigma = chainSuccess ? atmSigmaFromChain(chainSuccess, T) : 0.22;
   const sigma = baseSigma * (1 + ivShockPct / 100);
@@ -1085,11 +1118,16 @@ export default function StrategyBuilderPage() {
     [segmentExchange, stockCode, expiryDate, lotSize, legs],
   );
 
+  const legsWithQtyForMargin = useMemo(
+    () => legs.filter((l) => l.lots > 0),
+    [legs],
+  );
+
   const marginQ = useQuery({
     queryKey: ["strategy-builder", "margin", marginLegKeyStructural],
     queryFn: () =>
       apiClient.post<MarginApiResponse>("/strategy-builder/margin", {
-        legs: legs.map((l) => ({
+        legs: legsWithQtyForMargin.map((l) => ({
           stock_code: stockCode,
           exchange_code: segmentExchange,
           expiry_date: expiryDate,
@@ -1101,7 +1139,9 @@ export default function StrategyBuilderPage() {
           action: l.side,
         })),
       }),
-    enabled: Boolean(stockCode && expiryDate && legs.length),
+    enabled: Boolean(
+      stockCode && expiryDate && legsWithQtyForMargin.length > 0,
+    ),
     staleTime: 5000,
   });
 
@@ -1130,7 +1170,7 @@ export default function StrategyBuilderPage() {
 
   const fetchLegMargin = useCallback(
     async (leg: StrategyLeg) => {
-      if (!stockCode || !expiryDate) return;
+      if (!stockCode || !expiryDate || leg.lots <= 0) return;
       setLegMarginFetchingId(leg.id);
       try {
         const res = await apiClient.post<MarginApiResponse>(
@@ -1192,16 +1232,6 @@ export default function StrategyBuilderPage() {
     [chainSuccess, spot],
   );
 
-  const onPickTemplate = (id: TemplateId) => {
-    setSelectedReadymade(id);
-    const meta = STRATEGY_TEMPLATES.find((t) => t.id === id);
-    if (meta?.naked) {
-      setNakedPrompt(id);
-      return;
-    }
-    applyTemplateId(id);
-  };
-
   const confirmNaked = () => {
     if (nakedPrompt) applyTemplateId(nakedPrompt);
     setNakedPrompt(null);
@@ -1209,21 +1239,23 @@ export default function StrategyBuilderPage() {
 
   const execMut = useMutation({
     mutationFn: async () => {
-      const legsPayload = legs.map((l) => ({
-        stock_code: stockCode,
-        exchange_code: segmentExchange,
-        expiry_date: expiryDate,
-        product_type: "Options",
-        right: l.right,
-        strike_price: String(l.strike),
-        quantity: String(Math.round(l.lots * lotSize)),
-        price: String(l.premiumPerUnit ?? 0),
-        action: l.side,
-        idempotency_key:
-          typeof crypto !== "undefined" && crypto.randomUUID
-            ? crypto.randomUUID()
-            : undefined,
-      }));
+      const legsPayload = legs
+        .filter((l) => l.lots > 0)
+        .map((l) => ({
+          stock_code: stockCode,
+          exchange_code: segmentExchange,
+          expiry_date: expiryDate,
+          product_type: "Options",
+          right: l.right,
+          strike_price: String(l.strike),
+          quantity: String(Math.round(l.lots * lotSize)),
+          price: String(l.premiumPerUnit ?? 0),
+          action: l.side,
+          idempotency_key:
+            typeof crypto !== "undefined" && crypto.randomUUID
+              ? crypto.randomUUID()
+              : undefined,
+        }));
       return apiClient.post<ExecuteApiResponse>(
         "/strategy-builder/execute",
         { legs: legsPayload },
@@ -1346,6 +1378,43 @@ export default function StrategyBuilderPage() {
     return s;
   }, [legs, stockCode, expiryDate]);
 
+  const buildYourOwnAddedSlots = useMemo(() => {
+    const s = new Set<string>();
+    for (const l of legs) {
+      s.add(
+        buildYourOwnSlotKey(
+          stockCode,
+          expiryDate,
+          l.strike,
+          l.right,
+          l.side,
+        ),
+      );
+    }
+    return s;
+  }, [legs, stockCode, expiryDate]);
+
+  const handleStrategyChainBuySell = useCallback(
+    (side: OrderSide, row: ChainRow, right: OptionRight) => {
+      const apiLeg = right === "Call" ? row.call : row.put;
+      if (!apiLeg) return;
+      const premStr = ltpAsOrderPrice(apiLeg.ltp);
+      const premNum = parseFloat(premStr);
+      setLegs((prev) => [
+        ...prev,
+        {
+          id: `leg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          right,
+          side,
+          strike: row.strike_price,
+          lots: 0,
+          premiumPerUnit: Number.isFinite(premNum) ? premNum : undefined,
+        },
+      ]);
+    },
+    [],
+  );
+
   const profitClass =
     "text-emerald-700 dark:text-emerald-400";
   const lossClass = "text-red-700 dark:text-red-400";
@@ -1367,23 +1436,23 @@ export default function StrategyBuilderPage() {
         <section className={`${sb.section} relative z-20 space-y-5`}>
           <h2 className={sb.sectionTitle}>1. Underlying &amp; Expiry</h2>
           <div
-            className="flex min-h-[2.75rem] flex-col overflow-visible rounded-xl bg-[#1b1c1f] sm:flex-row sm:items-center"
+            className="flex min-h-[2.75rem] flex-col overflow-visible rounded-xl border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] dark:shadow-none sm:flex-row sm:items-center"
             role="toolbar"
             aria-label="Underlying and expiry"
           >
             <div
-              className="flex shrink-0 items-center border-b border-zinc-700/70 px-2 py-2 sm:border-b-0 sm:border-r sm:border-zinc-700/70 sm:py-0 sm:ps-2.5 sm:pe-2"
+              className="flex shrink-0 items-center border-b border-zinc-200 dark:border-zinc-700/70 px-2 py-2 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-0 sm:ps-2.5 sm:pe-2"
               role="group"
               aria-label="Exchange segment"
             >
-              <div className="inline-flex rounded-lg bg-black/30 p-0.5 ring-1 ring-zinc-700/70">
+              <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
                 <button
                   type="button"
                   onClick={() => onSegmentChange("NFO")}
                   className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
                     segmentExchange === "NFO"
-                      ? "bg-zinc-700 text-white shadow-sm"
-                      : "text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-200"
+                      ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
+                      : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
                   }`}
                 >
                   NSE
@@ -1393,8 +1462,8 @@ export default function StrategyBuilderPage() {
                   onClick={() => onSegmentChange("BFO")}
                   className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
                     segmentExchange === "BFO"
-                      ? "bg-zinc-700 text-white shadow-sm"
-                      : "text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-200"
+                      ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
+                      : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
                   }`}
                 >
                   BSE
@@ -1402,7 +1471,7 @@ export default function StrategyBuilderPage() {
               </div>
             </div>
 
-            <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center overflow-visible border-b border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-700/70 sm:py-2.5">
+            <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center overflow-visible border-b border-zinc-200 dark:border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-2.5">
               <OptionChainUnderlyingSearch
                 variant="ticker"
                 chainBar
@@ -1441,6 +1510,32 @@ export default function StrategyBuilderPage() {
         <section className={`${sb.section} relative z-10 space-y-4`}>
           <h2 className={sb.sectionTitle}>2. Readymade Strategies</h2>
           <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              disabled={
+                uq.isLoading ||
+                !stockCode.trim() ||
+                !expiryDate.trim() ||
+                !chainSuccess
+              }
+              onClick={() => {
+                setScanError(null);
+                setUncoveredScanResult(null);
+                setLegs([]);
+                setSelectedReadymade("build-your-own");
+              }}
+              className={`${sb.cardTemplate} ${
+                selectedReadymade === "build-your-own"
+                  ? "ring-2 ring-sky-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
+                  : ""
+              }`}
+              aria-pressed={selectedReadymade === "build-your-own"}
+            >
+              <div className="font-semibold">Build Your Own</div>
+              <div className="mt-1 text-zinc-800 dark:text-zinc-200">
+                Pick legs from the full option chain
+              </div>
+            </button>
             <button
               type="button"
               disabled={
@@ -1486,23 +1581,28 @@ export default function StrategyBuilderPage() {
               </div>
             </button>
             {STRATEGY_TEMPLATES.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                disabled={!chainSuccess}
-                onClick={() => onPickTemplate(t.id)}
-                className={`${sb.cardTemplate} ${
-                  selectedReadymade === t.id
-                    ? "ring-2 ring-sky-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
-                    : ""
-                }`}
-                aria-pressed={selectedReadymade === t.id}
-              >
-                <div className="font-semibold">{t.label}</div>
-                <div className="mt-1 text-zinc-800 dark:text-zinc-200">
-                  {t.description}
+              <div key={t.id} className="relative">
+                <button
+                  type="button"
+                  disabled
+                  className={`${sb.cardTemplate} disabled:!opacity-90`}
+                  aria-pressed={false}
+                  aria-label={`${t.label} (coming soon)`}
+                >
+                  <div className="font-semibold">{t.label}</div>
+                  <div className="mt-1 text-zinc-800 dark:text-zinc-200">
+                    {t.description}
+                  </div>
+                </button>
+                <div
+                  className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl bg-zinc-950/40 backdrop-blur-[0.5px] dark:bg-black/45"
+                  aria-hidden
+                >
+                  <span className="bg-transparent px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
+                    Coming soon
+                  </span>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
           {cq.isError ? (
@@ -1624,6 +1724,10 @@ export default function StrategyBuilderPage() {
                 </button>
               </div>
             </div>
+          ) : selectedReadymade === "build-your-own" ? (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Not applicable — use the option chain in Proposed Legs.
+            </p>
           ) : (
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               No additional parameters for this strategy yet. Strategy-specific
@@ -1634,7 +1738,59 @@ export default function StrategyBuilderPage() {
 
         <section className={`${sb.section} space-y-4`}>
           <h2 className={sb.sectionTitle}>4. Proposed Legs</h2>
-          {!uncoveredScanResult ? (
+          {selectedReadymade === "build-your-own" ? (
+            <div className="space-y-3">
+              {cq.isFetching && !chainSuccess ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Loading option chain…
+                </p>
+              ) : null}
+              {cq.isError ? (
+                <div className="app-alert-error text-xs">
+                  {cq.error instanceof Error
+                    ? cq.error.message
+                    : "Chain request failed"}
+                </div>
+              ) : null}
+              {cq.data &&
+              cq.data.Status !== 200 &&
+              (cq.data.Error || "").trim() ? (
+                <div className="app-alert-error text-xs">
+                  {String(cq.data.Error).trim()}
+                </div>
+              ) : null}
+              {chainSuccess?.chain_rows?.length ? (
+                <OptionChainTable
+                  chainSuccess={chainSuccess}
+                  scrollRef={buildOwnChainScrollRef}
+                  mode="strategyBuilder"
+                  onStrategyBuySell={handleStrategyChainBuySell}
+                  isStrategySlotAdded={(strike, right, side) =>
+                    buildYourOwnAddedSlots.has(
+                      buildYourOwnSlotKey(
+                        stockCode,
+                        expiryDate,
+                        strike,
+                        right,
+                        side,
+                      ),
+                    )
+                  }
+                />
+              ) : !cq.isFetching &&
+                stockCode.trim() &&
+                expiryDate.trim() &&
+                cq.data?.Status === 200 ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  No option chain rows for this expiry.
+                </p>
+              ) : !stockCode.trim() || !expiryDate.trim() ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Set underlying and expiry in section 1 to load the chain.
+                </p>
+              ) : null}
+            </div>
+          ) : !uncoveredScanResult ? (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               {selectedReadymade === "naked-shorts" ||
               selectedReadymade === "covered-shorts"
@@ -1789,25 +1945,35 @@ export default function StrategyBuilderPage() {
         <section className={`${sb.section} space-y-4`}>
           <h2 className={sb.sectionTitle}>5. Legs</h2>
           <div className="app-table-wrap">
-            <table className="w-full min-w-[640px] border-collapse text-left text-xs">
+            <table className="w-full min-w-[56rem] border-collapse text-left text-xs">
               <thead className="app-table-head">
                 <tr>
                   <th className="px-2 py-1.5 font-medium">Option</th>
                   <th className="px-2 py-1.5 font-medium">Position</th>
                   <th className="px-2 py-1.5 font-medium">Quantity</th>
+                  <th className="px-2 py-1.5 font-medium">Lot Size</th>
                   <th className="px-2 py-1.5 font-medium">Price</th>
                   <th className="px-2 py-1.5 font-medium">Premium</th>
+                  <th className="px-2 py-1.5 font-medium">Margin / Lot</th>
                   <th className="px-2 py-1.5 font-medium">Margin</th>
                   <th className="px-2 py-1.5 font-medium" />
                 </tr>
               </thead>
               <tbody>
                 {legs.map((l) => {
-                  const qtyU = Math.round(l.lots * lotSize);
-                  const premTotal =
-                    (l.premiumPerUnit ?? 0) * qtyU;
+                  const qtyU =
+                    l.lots > 0 ? Math.round(l.lots * lotSize) : 0;
+                  const premTotal = (l.premiumPerUnit ?? 0) * qtyU;
                   const legEntry = legMarginCache[l.id];
                   const legMarginFresh = legMarginEntryMatches(l, legEntry);
+                  const marginPerLot =
+                    legMarginFresh &&
+                    legEntry != null &&
+                    legEntry.span != null &&
+                    Number.isFinite(legEntry.span) &&
+                    l.lots > 0
+                      ? legEntry.span / l.lots
+                      : null;
                   return (
                     <tr key={l.id} className="app-table-row">
                       <td className="max-w-[14rem] px-2 py-1.5 text-xs text-zinc-800 dark:text-zinc-200">
@@ -1835,6 +2001,9 @@ export default function StrategyBuilderPage() {
                           }
                           className={`${sb.tableInput} w-[7.5rem] tabular-nums`}
                         />
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                        {lotSize.toLocaleString("en-IN")}
                       </td>
                       <td className="px-2 py-1.5">
                         <input
@@ -1868,7 +2037,26 @@ export default function StrategyBuilderPage() {
                         {formatIndianMoneyCompact(premTotal)}
                       </td>
                       <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
-                        {legMarginFetchingId === l.id ? (
+                        {l.lots <= 0 ? (
+                          "—"
+                        ) : legMarginFetchingId === l.id ? (
+                          "…"
+                        ) : marginPerLot != null &&
+                          Number.isFinite(marginPerLot) ? (
+                          formatIndianMoneyCompact(marginPerLot)
+                        ) : legMarginFresh && legEntry?.error ? (
+                          "—"
+                        ) : (
+                          <MarginRefreshIconButton
+                            label="Fetch margin for this leg"
+                            onClick={() => void fetchLegMargin(l)}
+                          />
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                        {l.lots <= 0 ? (
+                          "—"
+                        ) : legMarginFetchingId === l.id ? (
                           "…"
                         ) : legMarginFresh &&
                           legEntry != null &&
@@ -1904,32 +2092,11 @@ export default function StrategyBuilderPage() {
             </table>
           </div>
           <div className="flex flex-wrap gap-2">
-            {selectedReadymade !== "naked-shorts" &&
-            selectedReadymade !== "covered-shorts" ? (
-              <button
-                type="button"
-                className={sb.btnSecondary}
-                disabled={!chainSuccess || strikes.length === 0}
-                onClick={() =>
-                  setLegs((prev) => [
-                    ...prev,
-                    {
-                      id: `leg-${Date.now()}`,
-                      side: "Buy",
-                      right: "Call",
-                      strike: strikes[0]!,
-                      lots: 1,
-                    },
-                  ])
-                }
-              >
-                Add leg
-              </button>
-            ) : null}
             <button
               type="button"
               disabled={
                 !legs.length ||
+                legs.some((x) => x.lots <= 0) ||
                 execMut.isPending ||
                 !stockCode ||
                 !expiryDate
@@ -2063,7 +2230,6 @@ export default function StrategyBuilderPage() {
                 ysToday={showToday ? ysToday : undefined}
                 spot={spot}
                 breakevens={summary.breakevens}
-                strikes={legs.map((l) => l.strike)}
                 minS={minS}
                 maxS={maxS}
               />
@@ -2193,7 +2359,8 @@ export default function StrategyBuilderPage() {
             </div>
             <ul className="max-h-64 divide-y divide-zinc-200/90 overflow-x-auto overflow-y-auto rounded-xl border border-zinc-200/80 dark:divide-zinc-700/90 dark:border-zinc-700/80">
               {legs.map((l) => {
-                const q = Math.round(l.lots * lotSize);
+                const q =
+                  l.lots > 0 ? Math.round(l.lots * lotSize) : 0;
                 const linePrem = (l.premiumPerUnit ?? 0) * q;
                 const label = formatOptionSymbolLabel(
                   stockCode,
@@ -2209,7 +2376,10 @@ export default function StrategyBuilderPage() {
                       </span>
                       <LegPositionChip side={l.side} />
                       <span className="shrink-0 whitespace-nowrap">
-                        Qty {q.toLocaleString("en-IN")}
+                        Qty{" "}
+                        {l.lots <= 0
+                          ? "—"
+                          : q.toLocaleString("en-IN")}
                       </span>
                       <span className="shrink-0 whitespace-nowrap">
                         @ ₹
@@ -2248,7 +2418,8 @@ export default function StrategyBuilderPage() {
                   execMut.isPending ||
                   !stockCode ||
                   !expiryDate ||
-                  !legs.length
+                  !legs.length ||
+                  legs.some((x) => x.lots <= 0)
                 }
                 onClick={() => execMut.mutate()}
               >

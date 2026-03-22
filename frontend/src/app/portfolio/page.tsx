@@ -4,10 +4,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { apiClient } from "@/lib/api-client";
-import {
-  OpenPositionsTable,
-  type PortfolioPositionRecord,
-} from "@/components/portfolio/OpenPositionsTable";
+import { OpenPositionsTable } from "@/components/portfolio/OpenPositionsTable";
+import type { PortfolioPositionRecord } from "@/lib/portfolio";
 
 type IciciApiResponse = {
   Status: number;

@@ -1,0 +1,417 @@
+"use client";
+
+import type { RefObject } from "react";
+import type { ChainRow, ChainSuccess, OrderSide, OptionRight } from "@/lib/strategy-builder/types";
+
+const LAKH = 100_000;
+
+function parseNum(v: unknown): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = parseFloat(v.replace(/,/g, ""));
+    return Number.isFinite(n) ? n : NaN;
+  }
+  return NaN;
+}
+
+function formatOiLakh(oi: number): string {
+  if (!Number.isFinite(oi)) return "—";
+  return `${(oi / LAKH).toLocaleString("en-IN", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  })}L`;
+}
+
+function formatLtpInr(ltp: unknown): string {
+  if (ltp == null || ltp === "") return "—";
+  const s = String(ltp).trim();
+  if (!s) return "—";
+  return `₹${s}`;
+}
+
+export function chainLotSize(rows: ChainRow[]): number {
+  for (const r of rows) {
+    const ls = parseNum(r.call?.lot_size) || parseNum(r.put?.lot_size);
+    if (Number.isFinite(ls) && ls > 0) return Math.round(ls);
+  }
+  return 1;
+}
+
+export function legLotSize(
+  side: Record<string, unknown> | null | undefined,
+  fallback: number,
+): number {
+  const ls = parseNum(side?.lot_size);
+  if (Number.isFinite(ls) && ls > 0) return Math.round(ls);
+  return fallback;
+}
+
+function formatBuySellRatio(ratio: unknown): string {
+  if (typeof ratio === "number" && Number.isFinite(ratio)) {
+    return ratio.toLocaleString("en-IN", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 1,
+    });
+  }
+  if (typeof ratio === "string" && ratio.trim()) {
+    return ratio.trim();
+  }
+  return "—";
+}
+
+function formatBookQtyLakh(q: unknown): string {
+  const v = parseNum(q);
+  return formatOiLakh(v);
+}
+
+function BuySellBookLines({ leg }: { leg: Record<string, unknown> }) {
+  const ratio = formatBuySellRatio(leg.buy_sell_ratio);
+  const buy = formatBookQtyLakh(leg.total_buy_qty);
+  const sell = formatBookQtyLakh(leg.total_sell_qty);
+  return (
+    <div className="w-full min-w-0 space-y-0.5 py-0.5 text-center">
+      <div className="tabular-nums text-zinc-400">{ratio}</div>
+      <div className="text-[9px] leading-tight text-zinc-500 sm:text-[10px]">
+        Buy {buy}
+        <span className="text-zinc-600" aria-hidden>
+          {" · "}
+        </span>
+        Sell {sell}
+      </div>
+    </div>
+  );
+}
+
+const bsBtnClass =
+  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-600/90 bg-zinc-800/80 text-[11px] font-bold text-zinc-100 shadow-sm transition hover:bg-zinc-700 hover:border-zinc-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45";
+
+const bsTickClass =
+  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-emerald-800/60 bg-emerald-950/40 text-sm font-semibold text-emerald-400";
+
+function StrategyBuySellPair({
+  strike,
+  right,
+  isAdded,
+  onBuySell,
+}: {
+  strike: number;
+  right: OptionRight;
+  isAdded: (side: OrderSide) => boolean;
+  onBuySell: (side: OrderSide) => void;
+}) {
+  const strikeLabel = strike.toLocaleString("en-IN");
+  const rightLabel = right === "Call" ? "Call" : "Put";
+  return (
+    <div className="flex items-start justify-center gap-1 py-0.5">
+      {isAdded("Buy") ? (
+        <span
+          className={bsTickClass}
+          aria-label={`Already added — Buy ${rightLabel} ${strikeLabel}`}
+          role="img"
+        >
+          ✓
+        </span>
+      ) : (
+        <button
+          type="button"
+          className={bsBtnClass}
+          aria-label={`Buy ${rightLabel} ${strikeLabel}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onBuySell("Buy");
+          }}
+        >
+          B
+        </button>
+      )}
+      {isAdded("Sell") ? (
+        <span
+          className={bsTickClass}
+          aria-label={`Already added — Sell ${rightLabel} ${strikeLabel}`}
+          role="img"
+        >
+          ✓
+        </span>
+      ) : (
+        <button
+          type="button"
+          className={bsBtnClass}
+          aria-label={`Sell ${rightLabel} ${strikeLabel}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onBuySell("Sell");
+          }}
+        >
+          S
+        </button>
+      )}
+    </div>
+  );
+}
+
+export type OptionChainTableMode = "trade" | "strategyBuilder";
+
+export type OptionChainTableProps = {
+  chainSuccess: ChainSuccess;
+  scrollRef?: RefObject<HTMLDivElement | null>;
+  mode: OptionChainTableMode;
+  /** Trade mode: open sheet / focus row. */
+  onRowClick?: (row: ChainRow) => void;
+  /** Strategy builder: append leg from outer B/S. */
+  onStrategyBuySell?: (
+    side: OrderSide,
+    row: ChainRow,
+    right: OptionRight,
+  ) => void;
+  /** Strategy builder: slot already present in Legs (strike + right + side). */
+  isStrategySlotAdded?: (
+    strike: number,
+    right: OptionRight,
+    side: OrderSide,
+  ) => boolean;
+};
+
+export function OptionChainTable({
+  chainSuccess,
+  scrollRef,
+  mode,
+  onRowClick,
+  onStrategyBuySell,
+  isStrategySlotAdded,
+}: OptionChainTableProps) {
+  const maxCallOi = chainSuccess.max_call_oi ?? 0;
+  const maxPutOi = chainSuccess.max_put_oi ?? 0;
+  const spot = chainSuccess.spot_price ?? null;
+  const atmStrike = chainSuccess.atm_strike ?? null;
+
+  const itmCall = (strike: number) =>
+    spot != null && Number.isFinite(spot) && strike < spot;
+  const itmPut = (strike: number) =>
+    spot != null && Number.isFinite(spot) && strike > spot;
+
+  const outerHeader =
+    mode === "strategyBuilder" ? "B/S" : "Buy/Sell";
+
+  return (
+    <div
+      ref={scrollRef}
+      className="max-h-[min(70vh,42rem)] overflow-auto rounded-xl border border-zinc-800 bg-[#0e0e10] shadow-lg ring-1 ring-black/20 dark:ring-zinc-800/80"
+    >
+      <table className="w-full max-w-full border-collapse text-xs leading-snug tabular-nums text-zinc-300 sm:text-sm">
+        <thead className="sticky top-0 z-20 bg-[#0e0e10]">
+          <tr className="border-b border-zinc-800">
+            <th
+              colSpan={4}
+              className="bg-emerald-950/25 px-1 py-2 text-center text-xs font-semibold uppercase tracking-wide text-emerald-200/95 sm:text-sm"
+            >
+              Calls
+            </th>
+            <th
+              rowSpan={2}
+              className="border-x border-zinc-700/80 bg-zinc-900 px-1 py-2 align-middle text-center text-xs font-medium uppercase tracking-wide text-zinc-300 sm:text-sm"
+            >
+              Strike
+            </th>
+            <th
+              colSpan={4}
+              className="bg-rose-950/25 px-1 py-2 text-center text-xs font-semibold uppercase tracking-wide text-rose-200/95 sm:text-sm"
+            >
+              Puts
+            </th>
+          </tr>
+          <tr className="border-b border-zinc-800 text-[10px] font-semibold uppercase tracking-wide sm:text-xs">
+            <th className="min-w-[3.5rem] bg-emerald-950 px-0.5 py-1.5 text-center text-zinc-500">
+              {outerHeader}
+            </th>
+            <th className="bg-emerald-950 px-0.5 py-1.5 text-end text-zinc-500">
+              OI (L)
+            </th>
+            <th className="min-w-[11rem] bg-emerald-950 px-0 py-1.5 text-center text-zinc-500 sm:min-w-[12.5rem]">
+              <span className="inline-flex items-center justify-center gap-1">
+                <span
+                  className="h-1 w-3.5 shrink-0 rounded-full bg-[#2d4a3c]"
+                  aria-hidden
+                />
+                OI
+              </span>
+            </th>
+            <th className="w-[4.5rem] max-w-[4.5rem] bg-emerald-950 px-0 py-1.5 pe-0.5 text-end text-zinc-500 sm:w-[4.75rem] sm:max-w-[4.75rem]">
+              LTP
+            </th>
+            <th className="w-[4.5rem] max-w-[4.5rem] bg-rose-950 px-0 py-1.5 ps-0.5 text-start text-zinc-500 sm:w-[4.75rem] sm:max-w-[4.75rem]">
+              LTP
+            </th>
+            <th className="min-w-[11rem] bg-rose-950 px-0 py-1.5 text-center text-zinc-500 sm:min-w-[12.5rem]">
+              <span className="inline-flex items-center justify-center gap-1">
+                <span
+                  className="h-1 w-3.5 shrink-0 rounded-full bg-[#5a3d3a]"
+                  aria-hidden
+                />
+                OI
+              </span>
+            </th>
+            <th className="bg-rose-950 px-0.5 py-1.5 text-start text-zinc-500">
+              OI (L)
+            </th>
+            <th className="min-w-[3.5rem] bg-rose-950 px-0.5 py-1.5 text-center text-zinc-500">
+              {outerHeader}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {chainSuccess.chain_rows.map((row) => {
+            const c = row.call ?? null;
+            const p = row.put ?? null;
+            const strike = row.strike_price;
+            const isAtm = atmStrike != null && strike === atmStrike;
+            const callItm = c != null && itmCall(strike);
+            const putItm = p != null && itmPut(strike);
+            const callOi = c ? parseNum(c.open_interest) : NaN;
+            const putOi = p ? parseNum(p.open_interest) : NaN;
+            const callOiPct =
+              maxCallOi > 0 && Number.isFinite(callOi)
+                ? Math.min(100, (callOi / maxCallOi) * 100)
+                : 0;
+            const putOiPct =
+              maxPutOi > 0 && Number.isFinite(putOi)
+                ? Math.min(100, (putOi / maxPutOi) * 100)
+                : 0;
+
+            const itmLegCls = "bg-zinc-500/22";
+            const strikeAtmCls = isAtm
+              ? "bg-sky-950/60 font-normal text-sky-100 ring-1 ring-sky-500/35"
+              : "font-normal text-zinc-300";
+
+            const rowClick =
+              mode === "trade" && onRowClick
+                ? () => onRowClick(row)
+                : undefined;
+            const trCls =
+              mode === "trade"
+                ? "cursor-pointer border-b border-zinc-800/90 transition hover:bg-zinc-800/35"
+                : "border-b border-zinc-800/90";
+
+            return (
+              <tr
+                key={strike}
+                data-atm-strike={isAtm ? "true" : undefined}
+                className={trCls}
+                onClick={rowClick}
+              >
+                {c ? (
+                  <>
+                    <td
+                      className={`px-0.5 py-1 text-center align-top ${callItm ? itmLegCls : ""}`}
+                    >
+                      {mode === "strategyBuilder" &&
+                      onStrategyBuySell &&
+                      isStrategySlotAdded ? (
+                        <StrategyBuySellPair
+                          strike={strike}
+                          right="Call"
+                          isAdded={(side) =>
+                            isStrategySlotAdded(strike, "Call", side)
+                          }
+                          onBuySell={(side) =>
+                            onStrategyBuySell(side, row, "Call")
+                          }
+                        />
+                      ) : (
+                        <BuySellBookLines leg={c} />
+                      )}
+                    </td>
+                    <td
+                      className={`px-0.5 py-1 text-end text-zinc-400 whitespace-nowrap ${callItm ? itmLegCls : ""}`}
+                    >
+                      {formatOiLakh(callOi)}
+                    </td>
+                    <td
+                      className={`overflow-visible px-0 py-1 ${callItm ? itmLegCls : ""}`}
+                    >
+                      <div
+                        className="relative h-2.5 w-full min-w-0 overflow-hidden bg-transparent sm:h-3"
+                        title={`Call OI ${formatOiLakh(callOi)}`}
+                      >
+                        <div
+                          className="absolute top-0 h-full rounded-l-full bg-[#2d4a3c] shadow-none"
+                          style={{
+                            right: 0,
+                            width: `${callOiPct}%`,
+                          }}
+                        />
+                      </div>
+                    </td>
+                    <td
+                      className={`w-[4.5rem] max-w-[4.5rem] truncate px-0.5 py-1 pe-0.5 text-end text-xs whitespace-nowrap text-zinc-400 sm:w-[4.75rem] sm:max-w-[4.75rem] sm:text-sm ${callItm ? itmLegCls : ""}`}
+                    >
+                      {formatLtpInr(c.ltp)}
+                    </td>
+                  </>
+                ) : (
+                  <td colSpan={4} className="bg-zinc-900/40" />
+                )}
+                <td
+                  className={`border-x border-zinc-800/80 bg-zinc-900/50 px-1 py-1 text-center text-xs font-normal tabular-nums whitespace-nowrap sm:text-sm ${strikeAtmCls}`}
+                >
+                  {strike.toLocaleString("en-IN")}
+                </td>
+                {p ? (
+                  <>
+                    <td
+                      className={`w-[4.5rem] max-w-[4.5rem] truncate px-0.5 py-1 ps-0.5 text-start text-xs whitespace-nowrap text-zinc-400 sm:w-[4.75rem] sm:max-w-[4.75rem] sm:text-sm ${putItm ? itmLegCls : ""}`}
+                    >
+                      {formatLtpInr(p.ltp)}
+                    </td>
+                    <td
+                      className={`overflow-visible px-0 py-1 ${putItm ? itmLegCls : ""}`}
+                    >
+                      <div
+                        className="relative h-2.5 w-full min-w-0 overflow-hidden bg-transparent sm:h-3"
+                        title={`Put OI ${formatOiLakh(putOi)}`}
+                      >
+                        <div
+                          className="absolute top-0 h-full rounded-r-full bg-[#5a3d3a] shadow-none"
+                          style={{
+                            left: 0,
+                            width: `${putOiPct}%`,
+                          }}
+                        />
+                      </div>
+                    </td>
+                    <td
+                      className={`px-0.5 py-1 text-start text-zinc-400 whitespace-nowrap ${putItm ? itmLegCls : ""}`}
+                    >
+                      {formatOiLakh(putOi)}
+                    </td>
+                    <td
+                      className={`px-0.5 py-1 text-center align-top ${putItm ? itmLegCls : ""}`}
+                    >
+                      {mode === "strategyBuilder" &&
+                      onStrategyBuySell &&
+                      isStrategySlotAdded ? (
+                        <StrategyBuySellPair
+                          strike={strike}
+                          right="Put"
+                          isAdded={(side) =>
+                            isStrategySlotAdded(strike, "Put", side)
+                          }
+                          onBuySell={(side) =>
+                            onStrategyBuySell(side, row, "Put")
+                          }
+                        />
+                      ) : (
+                        <BuySellBookLines leg={p} />
+                      )}
+                    </td>
+                  </>
+                ) : (
+                  <td colSpan={4} className="bg-zinc-900/40" />
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
