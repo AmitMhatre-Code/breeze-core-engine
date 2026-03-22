@@ -95,8 +95,7 @@ Icon?
 npm-debug.log*
 lerna-debug.log*
 
-# lock files (choose which to commit, most often only one should be tracked)
-package-lock.json
+# lock files (yarn/pnpm if used; npm lockfile is committed for Docker/CI reproducibility)
 yarn.lock
 pnpm-lock.yaml
 
