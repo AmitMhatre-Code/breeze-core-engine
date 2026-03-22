@@ -22,13 +22,16 @@ ENV BACKEND_UPSTREAM_URL=http://127.0.0.1:8000
 RUN npm run build
 
 # 3.12: prebuilt wheels for pinned pydantic; 3.13 + pydantic 2.5 can fail on arm64 (source build).
-FROM python:3.12-bookworm
+# slim-bookworm: much smaller than full bookworm; extra apt packages keep scipy/numpy/pandas + ssl working.
+FROM python:3.12-slim-bookworm
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     gnupg \
+    libgomp1 \
+    libssl3 \
     nginx \
     supervisor \
   && mkdir -p /etc/apt/keyrings \
