@@ -7,9 +7,9 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
+import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
-import { UnderlyingSearchPill } from "@/components/strategy-builder/UnderlyingSearchPill";
 import { apiClient } from "@/lib/api-client";
 import { ltpAsOrderPrice } from "@/lib/order-confirm";
 import { impliedVolatility } from "@/lib/strategy-builder/blackScholes";
@@ -41,6 +41,9 @@ import type {
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
+
+/** Readymade card selection (Naked Shorts is separate from `STRATEGY_TEMPLATES`). */
+type ReadymadeSelection = "naked-shorts" | TemplateId;
 
 type UncoveredSidePayload = {
   Status?: number;
@@ -108,6 +111,7 @@ function UncoveredNumberStepper({
   min,
   max,
   suffix,
+  compact = false,
 }: {
   label: string;
   value: number;
@@ -115,24 +119,46 @@ function UncoveredNumberStepper({
   min: number;
   max: number;
   suffix?: ReactNode;
+  /** Inline / grid layouts (e.g. Naked Shorts parameters). */
+  compact?: boolean;
 }) {
-  const stepBtn =
-    "flex h-11 w-11 shrink-0 items-center justify-center border-0 bg-zinc-100 text-xl font-light leading-none text-zinc-700 transition hover:bg-zinc-200 active:bg-zinc-300 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 dark:active:bg-zinc-600";
+  const stepBtn = compact
+    ? "flex h-8 w-8 shrink-0 items-center justify-center border-0 bg-zinc-100 text-base font-light leading-none text-zinc-700 transition hover:bg-zinc-200 active:bg-zinc-300 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 dark:active:bg-zinc-600"
+    : "flex h-11 w-11 shrink-0 items-center justify-center border-0 bg-zinc-100 text-xl font-light leading-none text-zinc-700 transition hover:bg-zinc-200 active:bg-zinc-300 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 dark:active:bg-zinc-600";
+
+  const round = compact ? "rounded-lg" : "rounded-xl";
+  const roundL = compact ? "rounded-none rounded-l-lg" : "rounded-none rounded-l-xl";
+  const roundR = compact ? "rounded-none rounded-r-lg" : "rounded-none rounded-r-xl";
+  const minH = compact ? "min-h-8" : "min-h-11";
+  const inputPad = compact ? "py-1" : "py-2";
+  const inputText = "text-center text-sm font-semibold tabular-nums";
 
   return (
     <div className="min-w-0">
-      <span className={sb.fieldLabel}>{label}</span>
-      <div className="flex overflow-hidden rounded-xl border border-zinc-200/90 shadow-sm dark:border-zinc-700">
+      <span
+        className={
+          compact
+            ? "mb-1 block text-[11px] font-medium text-zinc-500 dark:text-zinc-400"
+            : sb.fieldLabel
+        }
+      >
+        {label}
+      </span>
+      <div
+        className={`flex overflow-hidden border border-zinc-200/90 shadow-sm dark:border-zinc-700 ${round}`}
+      >
         <button
           type="button"
-          className={`${stepBtn} rounded-none rounded-l-xl`}
+          className={`${stepBtn} ${roundL}`}
           onClick={() => onChange(Math.max(min, value - 1))}
           disabled={value <= min}
           aria-label={`Decrease ${label}`}
         >
           −
         </button>
-        <div className="flex min-h-11 min-w-0 flex-1 items-stretch border-x border-zinc-200/90 bg-white dark:border-zinc-700 dark:bg-zinc-950">
+        <div
+          className={`flex ${minH} min-w-0 flex-1 items-stretch border-x border-zinc-200/90 bg-white dark:border-zinc-700 dark:bg-zinc-950`}
+        >
           <input
             type="number"
             min={min}
@@ -143,18 +169,24 @@ function UncoveredNumberStepper({
               if (!Number.isFinite(n)) return;
               onChange(Math.min(max, Math.max(min, n)));
             }}
-            className="min-w-0 flex-1 border-0 bg-transparent py-2 text-center text-sm font-semibold tabular-nums text-zinc-900 outline-none focus:ring-0 dark:text-zinc-100 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className={`min-w-0 flex-1 border-0 bg-transparent ${inputPad} ${inputText} text-zinc-900 outline-none focus:ring-0 dark:text-zinc-100 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
             aria-label={label}
           />
           {suffix != null ? (
-            <div className="flex shrink-0 items-center border-l border-zinc-200/90 bg-zinc-50/90 px-3 text-xs font-semibold tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400">
+            <div
+              className={
+                compact
+                  ? "flex shrink-0 items-center border-l border-zinc-200/90 bg-zinc-50/90 px-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400"
+                  : "flex shrink-0 items-center border-l border-zinc-200/90 bg-zinc-50/90 px-3 text-xs font-semibold tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400"
+              }
+            >
               {suffix}
             </div>
           ) : null}
         </div>
         <button
           type="button"
-          className={`${stepBtn} rounded-none rounded-r-xl`}
+          className={`${stepBtn} ${roundR}`}
           onClick={() => onChange(Math.min(max, value + 1))}
           disabled={value >= max}
           aria-label={`Increase ${label}`}
@@ -171,14 +203,51 @@ function UncoveredOtmSlider({
   value,
   onChange,
   ariaLabel,
+  compact = false,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
   ariaLabel: string;
+  compact?: boolean;
 }) {
   const pct =
     ((value - OTM_SLIDER_MIN) / (OTM_SLIDER_MAX - OTM_SLIDER_MIN)) * 100;
+
+  const valueAboveKnobClass =
+    "pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-zinc-200/80 bg-white px-2 py-0.5 text-xs font-semibold tabular-nums text-zinc-800 shadow-sm ring-1 ring-zinc-950/[0.04] dark:border-zinc-600/90 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10";
+
+  if (compact) {
+    return (
+      <div className="min-w-0 w-full">
+        <div className="mb-1.5 text-[11px] font-medium leading-snug text-zinc-500 dark:text-zinc-400">
+          {label}
+        </div>
+        <div className="relative pt-6">
+          <div
+            className={valueAboveKnobClass}
+            style={{
+              left: `clamp(0.75rem, ${pct}%, calc(100% - 0.75rem))`,
+            }}
+            aria-hidden
+          >
+            {value}%
+          </div>
+          <input
+            type="range"
+            min={OTM_SLIDER_MIN}
+            max={OTM_SLIDER_MAX}
+            value={value}
+            onChange={(e) => onChange(Number(e.target.value))}
+            className="sb-range-slim relative z-0 w-full min-w-0"
+            aria-label={ariaLabel}
+            aria-valuetext={`${value} percent OTM`}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-w-0">
       <div className="mb-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
@@ -186,7 +255,7 @@ function UncoveredOtmSlider({
       </div>
       <div className="relative pt-6">
         <div
-          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-lg border border-zinc-200/90 bg-white px-2 py-1 text-[11px] font-semibold tabular-nums text-zinc-800 shadow-md ring-1 ring-zinc-950/5 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10"
+          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-zinc-200/90 bg-white px-2 py-1 text-[11px] font-semibold tabular-nums text-zinc-800 shadow-sm ring-1 ring-zinc-950/5 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10"
           style={{
             left: `clamp(1.25rem, ${pct}%, calc(100% - 1.25rem))`,
           }}
@@ -445,8 +514,8 @@ export default function StrategyBuilderPage() {
   const [showToday, setShowToday] = useState(true);
   const [nakedPrompt, setNakedPrompt] = useState<TemplateId | null>(null);
   const [executeSummary, setExecuteSummary] = useState<ExecuteApiResponse | null>(null);
-
-  const [uncoveredModalOpen, setUncoveredModalOpen] = useState(false);
+  const [selectedReadymade, setSelectedReadymade] =
+    useState<ReadymadeSelection | null>(null);
   const [scanLimits, setScanLimits] = useState(5);
   const [scanTop, setScanTop] = useState(10);
   const [scanOtmCall, setScanOtmCall] = useState(10);
@@ -466,6 +535,8 @@ export default function StrategyBuilderPage() {
     setStockCode("");
     setExpiryDate("");
     setLegs([]);
+    setSelectedReadymade(null);
+    setUncoveredScanResult(null);
   };
 
   const uq = useQuery({
@@ -481,11 +552,6 @@ export default function StrategyBuilderPage() {
     const u = raw.find((x) => x.stock_code === stockCode);
     return sortExpiryDatesAsc(u?.expiry_dates ?? []);
   }, [uq.data?.underlyings, stockCode]);
-
-  const openUncoveredModal = useCallback(() => {
-    setScanError(null);
-    setUncoveredModalOpen(true);
-  }, []);
 
   const uncoveredScanMut = useMutation({
     mutationFn: async () => {
@@ -509,7 +575,6 @@ export default function StrategyBuilderPage() {
       setUncoveredScanResult(data);
       setUncoveredResultExchange(exchange);
       setScanError(null);
-      setUncoveredModalOpen(false);
     },
     onError: (e) => {
       setScanError(e instanceof Error ? e.message : "Scan failed");
@@ -705,6 +770,7 @@ export default function StrategyBuilderPage() {
   );
 
   const onPickTemplate = (id: TemplateId) => {
+    setSelectedReadymade(id);
     const meta = STRATEGY_TEMPLATES.find((t) => t.id === id);
     if (meta?.naked) {
       setNakedPrompt(id);
@@ -837,20 +903,24 @@ export default function StrategyBuilderPage() {
 
         <section className={`${sb.section} relative z-20 space-y-5`}>
           <h2 className={sb.sectionTitle}>1. Underlying &amp; expiry</h2>
-          <div className="flex flex-col gap-5 lg:flex-row lg:flex-wrap lg:items-end">
+          <div
+            className="flex min-h-[2.75rem] flex-col overflow-visible rounded-xl bg-[#1b1c1f] sm:flex-row sm:items-center"
+            role="toolbar"
+            aria-label="Underlying and expiry"
+          >
             <div
-              className="flex shrink-0 items-end"
+              className="flex shrink-0 items-center border-b border-zinc-700/70 px-2 py-2 sm:border-b-0 sm:border-r sm:border-zinc-700/70 sm:py-0 sm:ps-2.5 sm:pe-2"
               role="group"
               aria-label="Exchange segment"
             >
-              <div className="inline-flex rounded-xl border border-zinc-200 bg-zinc-100/90 p-0.5 shadow-sm dark:border-zinc-700 dark:bg-zinc-950/80">
+              <div className="inline-flex rounded-lg bg-black/30 p-0.5 ring-1 ring-zinc-700/70">
                 <button
                   type="button"
                   onClick={() => onSegmentChange("NFO")}
-                  className={`rounded-lg px-3.5 py-2.5 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 ${
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
                     segmentExchange === "NFO"
-                      ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-800 dark:text-zinc-50 dark:ring-zinc-600"
-                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                      ? "bg-zinc-700 text-white shadow-sm"
+                      : "text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-200"
                   }`}
                 >
                   NSE
@@ -858,35 +928,50 @@ export default function StrategyBuilderPage() {
                 <button
                   type="button"
                   onClick={() => onSegmentChange("BFO")}
-                  className={`rounded-lg px-3.5 py-2.5 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 ${
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
                     segmentExchange === "BFO"
-                      ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-800 dark:text-zinc-50 dark:ring-zinc-600"
-                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                      ? "bg-zinc-700 text-white shadow-sm"
+                      : "text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-200"
                   }`}
                 >
                   BSE
                 </button>
               </div>
             </div>
-            <UnderlyingSearchPill
-              underlyings={uq.data?.underlyings ?? []}
-              value={stockCode}
-              disabled={uq.isLoading}
-              onChange={(code) => {
-                setStockCode(code);
-                setExpiryDate("");
-                setLegs([]);
-              }}
-            />
-            <ExpirySelectPill
-              dates={expiryOptions}
-              value={expiryDate}
-              disabled={!stockCode}
-              onChange={(d) => {
-                setExpiryDate(d);
-                setLegs([]);
-              }}
-            />
+
+            <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center overflow-visible border-b border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-700/70 sm:py-2.5">
+              <OptionChainUnderlyingSearch
+                variant="ticker"
+                chainBar
+                underlyings={uq.data?.underlyings ?? []}
+                value={stockCode}
+                disabled={uq.isLoading}
+                spot={spot}
+                onChange={(code) => {
+                  setStockCode(code);
+                  setExpiryDate("");
+                  setLegs([]);
+                  setSelectedReadymade(null);
+                  setUncoveredScanResult(null);
+                }}
+              />
+            </div>
+
+            <div className="relative z-20 flex shrink-0 items-center overflow-visible px-3 py-2 sm:py-2.5 sm:pe-3.5">
+              <ExpirySelectPill
+                layout="toolbar"
+                tone="darkToolbar"
+                dates={expiryOptions}
+                value={expiryDate}
+                disabled={!stockCode}
+                onChange={(d) => {
+                  setExpiryDate(d);
+                  setLegs([]);
+                  setSelectedReadymade(null);
+                  setUncoveredScanResult(null);
+                }}
+              />
+            </div>
           </div>
         </section>
 
@@ -898,8 +983,16 @@ export default function StrategyBuilderPage() {
               disabled={
                 uq.isLoading || !stockCode.trim() || !expiryDate.trim()
               }
-              onClick={openUncoveredModal}
-              className={sb.cardTemplateAmber}
+              onClick={() => {
+                setScanError(null);
+                setSelectedReadymade("naked-shorts");
+              }}
+              className={`${sb.cardTemplateAmber} ${
+                selectedReadymade === "naked-shorts"
+                  ? "ring-2 ring-amber-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
+                  : ""
+              }`}
+              aria-pressed={selectedReadymade === "naked-shorts"}
             >
               <div className="font-semibold">Naked Shorts</div>
               <div className="mt-1 text-zinc-800 dark:text-zinc-200">
@@ -912,7 +1005,12 @@ export default function StrategyBuilderPage() {
                 type="button"
                 disabled={!chainSuccess}
                 onClick={() => onPickTemplate(t.id)}
-                className={sb.cardTemplate}
+                className={`${sb.cardTemplate} ${
+                  selectedReadymade === t.id
+                    ? "ring-2 ring-sky-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
+                    : ""
+                }`}
+                aria-pressed={selectedReadymade === t.id}
               >
                 <div className="font-semibold">{t.label}</div>
                 <div className="mt-1 text-zinc-800 dark:text-zinc-200">
@@ -921,8 +1019,133 @@ export default function StrategyBuilderPage() {
               </button>
             ))}
           </div>
-          {uncoveredScanResult ? (
-            <div className="space-y-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+          {cq.isError ? (
+            <div className="app-alert-error text-xs">
+              {cq.error instanceof Error ? cq.error.message : "Chain failed"}
+            </div>
+          ) : null}
+        </section>
+
+        <section
+          className={`${sb.section} ${
+            selectedReadymade == null
+              ? "border-dashed border-zinc-300/90 bg-zinc-50/40 py-6 dark:border-zinc-600/80 dark:bg-zinc-950/30"
+              : "space-y-4"
+          }`}
+        >
+          <h2 className={sb.sectionTitle}>3. Parameters</h2>
+          {selectedReadymade == null ? (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Select a readymade strategy in section 2 to configure parameters.
+            </p>
+          ) : selectedReadymade === "naked-shorts" ? (
+            <div className="flex flex-col gap-3">
+              <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {segmentExchange === "NFO" ? "NSE" : "BSE"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">
+                    ›
+                  </span>
+                  {stockCode || "—"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">
+                    ›
+                  </span>
+                  {expiryDate || "—"}
+                </span>
+              </p>
+
+              <div className="grid w-full min-w-0 grid-cols-4 gap-3 sm:gap-4">
+                <div className="min-w-0">
+                  <UncoveredNumberStepper
+                    compact
+                    label="Margin to deploy"
+                    value={scanLimits}
+                    onChange={setScanLimits}
+                    min={1}
+                    max={MARGIN_LACS_MAX}
+                    suffix="Lacs"
+                  />
+                  <label
+                    className={`${sb.checkboxRow} mt-2 gap-2 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
+                  >
+                    <input
+                      type="checkbox"
+                      className={sb.checkbox}
+                      checked={scanProvisionElm}
+                      onChange={(e) => setScanProvisionElm(e.target.checked)}
+                    />
+                    Provision for ELM
+                  </label>
+                </div>
+                <div className="min-w-0">
+                  <UncoveredNumberStepper
+                    compact
+                    label="Options to list"
+                    value={scanTop}
+                    onChange={setScanTop}
+                    min={1}
+                    max={500}
+                  />
+                </div>
+                <div className="min-w-0">
+                  <UncoveredOtmSlider
+                    compact
+                    label="Call OTM safety"
+                    value={scanOtmCall}
+                    onChange={setScanOtmCall}
+                    ariaLabel="Call OTM safety margin percent"
+                  />
+                </div>
+                <div className="min-w-0">
+                  <UncoveredOtmSlider
+                    compact
+                    label="Put OTM safety"
+                    value={scanOtmPut}
+                    onChange={setScanOtmPut}
+                    ariaLabel="Put OTM safety margin percent"
+                  />
+                </div>
+              </div>
+
+              {scanError ? (
+                <div className="app-alert-error text-xs">{scanError}</div>
+              ) : null}
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  disabled={
+                    !stockCode.trim() ||
+                    !expiryDate.trim() ||
+                    uncoveredScanMut.isPending
+                  }
+                  className={`${sb.btnPrimary} shrink-0 px-4 py-2 text-sm`}
+                  onClick={() => {
+                    setScanError(null);
+                    uncoveredScanMut.mutate();
+                  }}
+                >
+                  {uncoveredScanMut.isPending ? "Loading…" : "Get options"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              No additional parameters for this strategy yet. Strategy-specific
+              inputs will appear here as we add them.
+            </p>
+          )}
+        </section>
+
+        <section className={`${sb.section} space-y-4`}>
+          <h2 className={sb.sectionTitle}>4. Proposed legs</h2>
+          {!uncoveredScanResult ? (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              {selectedReadymade === "naked-shorts"
+                ? "Configure parameters in section 3 and run “Get options” to see uncovered short candidates."
+                : "Proposed legs from readymade strategies will appear here. For Naked Shorts, run a scan in section 3."}
+            </p>
+          ) : (
+            <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Uncovered short candidates
@@ -992,180 +1215,187 @@ export default function StrategyBuilderPage() {
                 );
               })}
             </div>
-          ) : null}
-          {cq.isError ? (
-            <div className="app-alert-error text-xs">
-              {cq.error instanceof Error ? cq.error.message : "Chain failed"}
-            </div>
-          ) : null}
+          )}
         </section>
 
-        {/* Sticky stats */}
-        <div className="sticky top-0 z-10 -mx-0.5 py-1">
-          <div className={`${sb.stickyBar} flex flex-wrap gap-x-6 gap-y-3 text-xs`}>
-            <div>
-              <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                Max profit
+        <section className={`${sb.section} space-y-5`}>
+          <h2 className={sb.sectionTitle}>5. Payoff simulation</h2>
+          <div className="sticky top-0 z-10 -mx-0.5 py-1">
+            <div
+              className={`${sb.stickyBar} flex flex-wrap gap-x-6 gap-y-3 text-xs`}
+            >
+              <div>
+                <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Max profit
+                </div>
+                <div className={`font-semibold tabular-nums ${profitClass}`}>
+                  {hasStrategyLegs
+                    ? formatIndianMoneyCompact(summary.maxProfit)
+                    : "—"}
+                </div>
               </div>
-              <div className={`font-semibold tabular-nums ${profitClass}`}>
-                {hasStrategyLegs
-                  ? formatIndianMoneyCompact(summary.maxProfit)
-                  : "—"}
+              <div>
+                <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Max loss
+                </div>
+                <div className={`font-semibold tabular-nums ${lossClass}`}>
+                  {hasStrategyLegs
+                    ? formatIndianMoneyCompact(summary.maxLoss)
+                    : "—"}
+                </div>
               </div>
-            </div>
-            <div>
-              <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                Max loss
+              <div>
+                <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Breakevens
+                </div>
+                <div className="font-medium text-zinc-800 dark:text-zinc-200">
+                  {hasStrategyLegs && summary.breakevens.length
+                    ? summary.breakevens.map((b) => b.toFixed(0)).join(", ")
+                    : "—"}
+                </div>
               </div>
-              <div className={`font-semibold tabular-nums ${lossClass}`}>
-                {hasStrategyLegs
-                  ? formatIndianMoneyCompact(summary.maxLoss)
-                  : "—"}
+              <div>
+                <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  POP (model)
+                </div>
+                <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+                  {scaledLegs.length ? `${pop.toFixed(1)}%` : "—"}
+                </div>
               </div>
-            </div>
-            <div>
-              <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                Breakevens
+              <div>
+                <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Margin (SPAN)
+                </div>
+                <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+                  {marginQ.isFetching
+                    ? "…"
+                    : spanMargin != null && Number.isFinite(spanMargin)
+                      ? formatIndianMoneyCompact(spanMargin)
+                      : marginState?.Error ??
+                        (marginQ.isError ? "Margin request failed" : "—")}
+                </div>
               </div>
-              <div className="font-medium text-zinc-800 dark:text-zinc-200">
-                {hasStrategyLegs && summary.breakevens.length
-                  ? summary.breakevens.map((b) => b.toFixed(0)).join(", ")
-                  : "—"}
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                POP (model)
-              </div>
-              <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
-                {scaledLegs.length ? `${pop.toFixed(1)}%` : "—"}
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                Margin (SPAN)
-              </div>
-              <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
-                {marginQ.isFetching
-                  ? "…"
-                  : spanMargin != null && Number.isFinite(spanMargin)
-                    ? formatIndianMoneyCompact(spanMargin)
-                    : marginState?.Error ??
-                      (marginQ.isError ? "Margin request failed" : "—")}
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                Spot / IV
-              </div>
-              <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
-                {chainReady && spot != null ? (
-                  <>
-                    {spot.toFixed(2)} · {(sigma * 100).toFixed(1)}%
-                  </>
-                ) : (
-                  "—"
-                )}
+              <div>
+                <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Spot / IV
+                </div>
+                <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+                  {chainReady && spot != null ? (
+                    <>
+                      {spot.toFixed(2)} · {(sigma * 100).toFixed(1)}%
+                    </>
+                  ) : (
+                    "—"
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <section className={`${sb.section} space-y-4`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className={sb.sectionTitle}>3. Payoff chart</h2>
-            <label className={`${sb.checkboxRow} text-xs font-medium text-zinc-700 dark:text-zinc-300`}>
-              <input
-                type="checkbox"
-                className={sb.checkbox}
-                checked={showToday}
-                onChange={(e) => setShowToday(e.target.checked)}
-              />
-              Show today (model)
-            </label>
-          </div>
-          <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-            Solid green = P&amp;L at expiry; dotted violet = mark-to-model now.
-            Amber dashes = breakevens. Drag strike handles to snap to chain
-            strikes.
-          </p>
-          <PayoffChart
-            idle={!hasStrategyLegs}
-            xs={xs}
-            ys={ys}
-            xsToday={showToday ? xsToday : undefined}
-            ysToday={showToday ? ysToday : undefined}
-            spot={spot}
-            breakevens={summary.breakevens}
-            strikes={scaledLegs.map((l) => l.strike)}
-            minS={minS}
-            maxS={maxS}
-            onStrikeCommit={strikes.length ? strikeCommit : undefined}
-          />
-        </section>
-
-        <section className={`${sb.section} space-y-4`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className={sb.sectionTitle}>Greeks &amp; IV shock</h2>
-            <label className={`${sb.checkboxRow} text-xs font-medium text-zinc-700 dark:text-zinc-300`}>
-              <input
-                type="checkbox"
-                className={sb.checkbox}
-                checked={showGreeks}
-                onChange={(e) => setShowGreeks(e.target.checked)}
-              />
-              Show portfolio Greeks
-            </label>
-          </div>
-          <div className="flex min-w-0 max-w-md flex-col gap-2 sm:flex-row sm:items-center">
-            <span className="shrink-0 text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">
-              IV shock: {ivShockPct >= 0 ? "+" : ""}
-              {ivShockPct}%
-            </span>
-            <input
-              type="range"
-              min={-20}
-              max={20}
-              value={ivShockPct}
-              onChange={(e) => setIvShockPct(Number(e.target.value))}
-              className={`${sb.range} min-w-0 flex-1 sm:max-w-xs`}
+          <div className="space-y-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Payoff chart
+              </h3>
+              <label
+                className={`${sb.checkboxRow} text-xs font-medium text-zinc-700 dark:text-zinc-300`}
+              >
+                <input
+                  type="checkbox"
+                  className={sb.checkbox}
+                  checked={showToday}
+                  onChange={(e) => setShowToday(e.target.checked)}
+                />
+                Show today (model)
+              </label>
+            </div>
+            <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+              Solid green = P&amp;L at expiry; dotted violet = mark-to-model now.
+              Amber dashes = breakevens. Drag strike handles to snap to chain
+              strikes.
+            </p>
+            <PayoffChart
+              idle={!hasStrategyLegs}
+              xs={xs}
+              ys={ys}
+              xsToday={showToday ? xsToday : undefined}
+              ysToday={showToday ? ysToday : undefined}
+              spot={spot}
+              breakevens={summary.breakevens}
+              strikes={scaledLegs.map((l) => l.strike)}
+              minS={minS}
+              maxS={maxS}
+              onStrikeCommit={strikes.length ? strikeCommit : undefined}
             />
           </div>
-          {showGreeks && scaledLegs.length ? (
-            <div className="app-table-wrap">
-              <table className="w-full min-w-[280px] border-collapse text-left text-xs">
-                <thead className="app-table-head">
-                  <tr>
-                    <th className="px-2 py-1.5 font-medium">Δ</th>
-                    <th className="px-2 py-1.5 font-medium">Γ</th>
-                    <th className="px-2 py-1.5 font-medium">Vega</th>
-                    <th className="px-2 py-1.5 font-medium">Θ / day</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="app-table-row">
-                    <td className="px-2 py-1.5 tabular-nums">
-                      {greeks.delta.toFixed(4)}
-                    </td>
-                    <td className="px-2 py-1.5 tabular-nums">
-                      {greeks.gamma.toFixed(6)}
-                    </td>
-                    <td className="px-2 py-1.5 tabular-nums">
-                      {greeks.vega.toFixed(4)}
-                    </td>
-                    <td className="px-2 py-1.5 tabular-nums">
-                      {greeks.thetaPerDay.toFixed(4)}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+
+          <div className="space-y-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Greeks &amp; IV shock
+              </h3>
+              <label
+                className={`${sb.checkboxRow} text-xs font-medium text-zinc-700 dark:text-zinc-300`}
+              >
+                <input
+                  type="checkbox"
+                  className={sb.checkbox}
+                  checked={showGreeks}
+                  onChange={(e) => setShowGreeks(e.target.checked)}
+                />
+                Show portfolio Greeks
+              </label>
             </div>
-          ) : null}
+            <div className="flex min-w-0 max-w-md flex-col gap-2 sm:flex-row sm:items-center">
+              <span className="shrink-0 text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">
+                IV shock: {ivShockPct >= 0 ? "+" : ""}
+                {ivShockPct}%
+              </span>
+              <input
+                type="range"
+                min={-20}
+                max={20}
+                value={ivShockPct}
+                onChange={(e) => setIvShockPct(Number(e.target.value))}
+                className={`${sb.range} min-w-0 flex-1 sm:max-w-xs`}
+              />
+            </div>
+            {showGreeks && scaledLegs.length ? (
+              <div className="app-table-wrap">
+                <table className="w-full min-w-[280px] border-collapse text-left text-xs">
+                  <thead className="app-table-head">
+                    <tr>
+                      <th className="px-2 py-1.5 font-medium">Δ</th>
+                      <th className="px-2 py-1.5 font-medium">Γ</th>
+                      <th className="px-2 py-1.5 font-medium">Vega</th>
+                      <th className="px-2 py-1.5 font-medium">Θ / day</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="app-table-row">
+                      <td className="px-2 py-1.5 tabular-nums">
+                        {greeks.delta.toFixed(4)}
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums">
+                        {greeks.gamma.toFixed(6)}
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums">
+                        {greeks.vega.toFixed(4)}
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums">
+                        {greeks.thetaPerDay.toFixed(4)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </div>
         </section>
 
         <section className={`${sb.section} space-y-4`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className={sb.sectionTitle}>4. Legs</h2>
+            <h2 className={sb.sectionTitle}>6. Legs</h2>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
                 Global lots ×{globalMult}
@@ -1379,127 +1609,6 @@ export default function StrategyBuilderPage() {
           ) : null}
         </section>
       </div>
-
-      {uncoveredModalOpen ? (
-        <div
-          className="fixed inset-0 z-[130] flex items-center justify-center bg-black/50 p-4"
-          role="presentation"
-          onClick={() => !uncoveredScanMut.isPending && setUncoveredModalOpen(false)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape" && !uncoveredScanMut.isPending)
-              setUncoveredModalOpen(false);
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="uncovered-scan-title"
-            className={`${sb.modalPanel} max-h-[90vh] !max-w-md`}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <h3
-                id="uncovered-scan-title"
-                className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-50"
-              >
-                Naked Shorts
-              </h3>
-              <button
-                type="button"
-                className="-m-1 shrink-0 rounded-lg p-1.5 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:pointer-events-none disabled:opacity-40 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                onClick={() => setUncoveredModalOpen(false)}
-                disabled={uncoveredScanMut.isPending}
-                aria-label="Close"
-              >
-                <span className="block text-xl leading-none" aria-hidden>
-                  ×
-                </span>
-              </button>
-            </div>
-            <div className="w-full space-y-4">
-              <div
-                className="w-full rounded-xl border border-zinc-200/80 bg-zinc-50/80 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900/50"
-                aria-live="polite"
-              >
-                <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                  Strategy Builder selection
-                </div>
-                <div className="mt-1 font-medium text-zinc-900 dark:text-zinc-100">
-                  {segmentExchange === "NFO" ? "NSE" : "BSE"}{" "}
-                  <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                    {" > "}
-                  </span>
-                  {stockCode || "—"}{" "}
-                  <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                    {" > "}
-                  </span>{" "}
-                  {expiryDate || "—"}
-                </div>
-              </div>
-              <div className="w-full rounded-xl border border-zinc-200/90 bg-zinc-100/50 p-3.5 shadow-[inset_0_1px_0_rgb(255_255_255/0.5)] dark:border-zinc-700/90 dark:bg-zinc-900/45 dark:shadow-[inset_0_1px_0_rgb(255_255_255/0.04)]">
-                <UncoveredNumberStepper
-                  label="Margin to deploy"
-                  value={scanLimits}
-                  onChange={setScanLimits}
-                  min={1}
-                  max={MARGIN_LACS_MAX}
-                  suffix="Lacs"
-                />
-                <label
-                  className={`${sb.checkboxRow} mt-3.5 border-t border-zinc-200/80 pt-3.5 text-xs font-medium text-zinc-700 dark:border-zinc-700/80 dark:text-zinc-300`}
-                >
-                  <input
-                    type="checkbox"
-                    className={sb.checkbox}
-                    checked={scanProvisionElm}
-                    onChange={(e) => setScanProvisionElm(e.target.checked)}
-                  />
-                  Provision for ELM
-                </label>
-              </div>
-              <div className="w-full">
-                <UncoveredNumberStepper
-                  label="Options to list"
-                  value={scanTop}
-                  onChange={setScanTop}
-                  min={1}
-                  max={500}
-                />
-              </div>
-              <div className="w-full space-y-5">
-                <UncoveredOtmSlider
-                  label="Call OTM safety"
-                  value={scanOtmCall}
-                  onChange={setScanOtmCall}
-                  ariaLabel="Call OTM safety margin percent"
-                />
-                <UncoveredOtmSlider
-                  label="Put OTM safety"
-                  value={scanOtmPut}
-                  onChange={setScanOtmPut}
-                  ariaLabel="Put OTM safety margin percent"
-                />
-              </div>
-              {scanError ? (
-                <div className="app-alert-error w-full text-xs">{scanError}</div>
-              ) : null}
-              <button
-                type="button"
-                disabled={
-                  !stockCode.trim() ||
-                  !expiryDate.trim() ||
-                  uncoveredScanMut.isPending
-                }
-                className="w-full rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-amber-500/35 disabled:pointer-events-none disabled:opacity-50 dark:bg-amber-600 dark:hover:bg-amber-500"
-                onClick={() => uncoveredScanMut.mutate()}
-              >
-                {uncoveredScanMut.isPending ? "Loading…" : "Get options"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {nakedPrompt ? (
         <div

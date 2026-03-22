@@ -1230,6 +1230,22 @@ class processor():
         if spot_price is not None and strikes:
             atm_strike = min(strikes, key=lambda s: abs(s - spot_price))
 
+        lot_size_for_series = self.fetch_lot_size(
+            stock_code, expiry_display, exchange_code=exchange_code
+        )
+        freeze_quantity = None
+        try:
+            if lot_size_for_series is not None:
+                ls = int(lot_size_for_series)
+                if ls > 0:
+                    qty_limits = self.fetch_qty_limits(
+                        stock_code, exchange_code=exchange_code
+                    )
+                    if qty_limits is not None:
+                        freeze_quantity = (max(1, int(qty_limits)) // ls) * ls
+        except (TypeError, ValueError):
+            freeze_quantity = None
+
         return {
             "Status": 200,
             "Error": None,
@@ -1242,6 +1258,10 @@ class processor():
                 "exchange_code": exchange_code,
                 "spot_price": spot_price,
                 "atm_strike": atm_strike,
+                "lot_size": int(lot_size_for_series)
+                if lot_size_for_series is not None
+                else None,
+                "freeze_quantity": freeze_quantity,
             },
         }
 

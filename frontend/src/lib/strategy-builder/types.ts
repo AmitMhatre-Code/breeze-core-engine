@@ -31,6 +31,10 @@ export type ChainSuccess = {
   exchange_code: string;
   max_call_oi?: number;
   max_put_oi?: number;
+  /** Contract lot size for this underlying + expiry (from scrip master). */
+  lot_size?: number | null;
+  /** Max order quantity per exchange freeze rule (multiple of lot size). */
+  freeze_quantity?: number | null;
 };
 
 export type ChainApiResponse = {

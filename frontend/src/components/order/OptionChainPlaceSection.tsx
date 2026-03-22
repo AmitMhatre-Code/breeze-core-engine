@@ -6,13 +6,14 @@ import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { apiClient } from "@/lib/api-client";
+import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { ltpAsOrderPrice } from "@/lib/order-confirm";
 import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
-import { sb } from "@/lib/strategy-builder/ui";
 import type {
   ChainApiResponse,
   ChainRow,
   ChainSuccess,
+  MarginApiResponse,
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
 
@@ -76,6 +77,36 @@ function formatBuySellRatio(ratio: unknown): string {
 function formatBookQtyLakh(q: unknown): string {
   const v = parseNum(q);
   return formatOiLakh(v);
+}
+
+/** e.g. `NIFTY-24-MAR-2026-25000` */
+function formatOptionChainSheetTitle(
+  stockCode: string,
+  expiryDisplay: string,
+  strike: number,
+): string {
+  const datePart = expiryDisplay
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/,/g, "")
+    .toUpperCase();
+  const strikePart = String(Math.round(strike));
+  return `${stockCode}-${datePart}-${strikePart}`;
+}
+
+function formatChainMetaInt(n: unknown): string {
+  if (n == null) return "—";
+  const v = typeof n === "number" ? n : parseNum(n);
+  if (!Number.isFinite(v)) return "—";
+  return Math.round(v).toLocaleString("en-IN");
+}
+
+function spanFromMarginResponse(res: MarginApiResponse): number | null {
+  if (res.Status !== 200 || !res.Success) return null;
+  const raw = (res.Success as { span_margin_required?: unknown })
+    .span_margin_required;
+  const v = parseNum(raw);
+  return Number.isFinite(v) ? v : null;
 }
 
 function BuySellBookLines({ leg }: { leg: Record<string, unknown> }) {
@@ -293,6 +324,64 @@ export function OptionChainPlaceSection() {
   const sheetHasCall = Boolean(sheet?.row.call);
   const sheetHasPut = Boolean(sheet?.row.put);
 
+  const sheetLegForMargin = useMemo(() => {
+    if (!sheet) return null;
+    return sheetRight === "Call"
+      ? (sheet.row.call ?? null)
+      : (sheet.row.put ?? null);
+  }, [sheet, sheetRight]);
+
+  const sheetLotUnits = useMemo(() => {
+    if (!sheetLegForMargin) return 0;
+    return legLotSize(sheetLegForMargin, defaultLot);
+  }, [sheetLegForMargin, defaultLot]);
+
+  const marginPerLotQ = useQuery({
+    queryKey: [
+      "orders",
+      "option-chain",
+      "margin-per-lot",
+      chainSuccess?.stock_code,
+      chainSuccess?.exchange_code,
+      chainSuccess?.expiry_display,
+      sheet?.strike,
+      sheetRight,
+      sheetLotUnits,
+    ],
+    queryFn: async () => {
+      const cs = chainSuccess!;
+      const sh = sheet!;
+      const legBody = {
+        stock_code: cs.stock_code,
+        exchange_code: cs.exchange_code,
+        expiry_date: cs.expiry_display,
+        product_type: "Options" as const,
+        right: sheetRight,
+        strike_price: String(sh.strike),
+        quantity: String(sheetLotUnits),
+        price: ltpAsOrderPrice(sheetLegForMargin?.ltp),
+        action: "Sell" as const,
+      };
+      return apiClient.post<MarginApiResponse>("/strategy-builder/margin", {
+        legs: [legBody],
+      });
+    },
+    enabled: Boolean(
+      sheet && chainSuccess && sheetLegForMargin && sheetLotUnits > 0,
+    ),
+    staleTime: 5000,
+  });
+
+  const marginPerLotDisplay = useMemo(() => {
+    const q = marginPerLotQ;
+    if (q.isPending) return "…";
+    if (q.isError) return "—";
+    const d = q.data;
+    if (!d) return "—";
+    const sell = spanFromMarginResponse(d);
+    return sell != null ? formatIndianMoneyCompact(sell) : "—";
+  }, [marginPerLotQ]);
+
   return (
     <section className="space-y-4" aria-label="Option chain">
       <div
@@ -331,7 +420,7 @@ export function OptionChainPlaceSection() {
           </div>
         </div>
 
-        <div className="relative z-30 flex min-w-0 flex-1 items-center overflow-visible border-b border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-700/70 sm:py-2.5">
+        <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center overflow-visible border-b border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-700/70 sm:py-2.5">
           <OptionChainUnderlyingSearch
             variant="ticker"
             chainBar
@@ -375,9 +464,9 @@ export function OptionChainPlaceSection() {
               !expiryDate.trim() ||
               chainMut.isPending
             }
-            className="inline-flex w-full items-center justify-center rounded-lg border border-sky-500/85 bg-transparent px-4 py-2 text-sm font-semibold text-sky-400 shadow-none transition hover:bg-sky-500/10 hover:text-sky-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 disabled:pointer-events-none disabled:opacity-45 sm:w-auto"
+            className="inline-flex w-full min-w-[9.25rem] items-center justify-center rounded-lg border border-sky-500/85 bg-transparent px-4 py-2 text-sm font-semibold text-sky-400 shadow-none transition hover:bg-sky-500/10 hover:text-sky-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 disabled:pointer-events-none disabled:opacity-45 sm:w-auto"
           >
-            {chainMut.isPending ? "…" : "Fetch"}
+            {chainMut.isPending ? "Fetching..." : "Fetch"}
           </button>
         </div>
       </div>
@@ -420,7 +509,7 @@ export function OptionChainPlaceSection() {
                 <th className="bg-emerald-950 px-0.5 py-1.5 text-end text-zinc-500">
                   OI (L)
                 </th>
-                <th className="min-w-[12rem] bg-emerald-950 px-0 py-1.5 text-center text-zinc-500 sm:min-w-[13.5rem]">
+                <th className="min-w-[11rem] bg-emerald-950 px-0 py-1.5 text-center text-zinc-500 sm:min-w-[12.5rem]">
                   <span className="inline-flex items-center justify-center gap-1">
                     <span
                       className="h-1 w-3.5 shrink-0 rounded-full bg-[#2d4a3c]"
@@ -429,13 +518,13 @@ export function OptionChainPlaceSection() {
                     OI
                   </span>
                 </th>
-                <th className="w-[3.5rem] max-w-[3.5rem] bg-emerald-950 px-0 py-1.5 pe-0.5 text-end text-zinc-500 sm:w-[3.75rem] sm:max-w-[3.75rem]">
+                <th className="w-[4.5rem] max-w-[4.5rem] bg-emerald-950 px-0 py-1.5 pe-0.5 text-end text-zinc-500 sm:w-[4.75rem] sm:max-w-[4.75rem]">
                   LTP
                 </th>
-                <th className="w-[3.5rem] max-w-[3.5rem] bg-rose-950 px-0 py-1.5 ps-0.5 text-start text-zinc-500 sm:w-[3.75rem] sm:max-w-[3.75rem]">
+                <th className="w-[4.5rem] max-w-[4.5rem] bg-rose-950 px-0 py-1.5 ps-0.5 text-start text-zinc-500 sm:w-[4.75rem] sm:max-w-[4.75rem]">
                   LTP
                 </th>
-                <th className="min-w-[12rem] bg-rose-950 px-0 py-1.5 text-center text-zinc-500 sm:min-w-[13.5rem]">
+                <th className="min-w-[11rem] bg-rose-950 px-0 py-1.5 text-center text-zinc-500 sm:min-w-[12.5rem]">
                   <span className="inline-flex items-center justify-center gap-1">
                     <span
                       className="h-1 w-3.5 shrink-0 rounded-full bg-[#5a3d3a]"
@@ -498,10 +587,10 @@ export function OptionChainPlaceSection() {
                           {formatOiLakh(callOi)}
                         </td>
                         <td
-                          className={`px-0 py-1 ${callItm ? itmLegCls : ""}`}
+                          className={`overflow-visible px-0 py-1 ${callItm ? itmLegCls : ""}`}
                         >
                           <div
-                            className="relative mx-auto h-2.5 w-full max-w-[12.5rem] overflow-hidden bg-transparent sm:h-3 sm:max-w-[14rem]"
+                            className="relative h-2.5 w-full min-w-0 overflow-hidden bg-transparent sm:h-3"
                             title={`Call OI ${formatOiLakh(callOi)}`}
                           >
                             <div
@@ -514,7 +603,7 @@ export function OptionChainPlaceSection() {
                           </div>
                         </td>
                         <td
-                          className={`w-[3.5rem] max-w-[3.5rem] truncate px-0.5 py-1 pe-0.5 text-end text-xs whitespace-nowrap text-zinc-400 sm:w-[3.75rem] sm:max-w-[3.75rem] sm:text-sm ${callItm ? itmLegCls : ""}`}
+                          className={`w-[4.5rem] max-w-[4.5rem] truncate px-0.5 py-1 pe-0.5 text-end text-xs whitespace-nowrap text-zinc-400 sm:w-[4.75rem] sm:max-w-[4.75rem] sm:text-sm ${callItm ? itmLegCls : ""}`}
                         >
                           {formatLtpInr(c.ltp)}
                         </td>
@@ -533,15 +622,15 @@ export function OptionChainPlaceSection() {
                     {p ? (
                       <>
                         <td
-                          className={`w-[3.5rem] max-w-[3.5rem] truncate px-0.5 py-1 ps-0.5 text-start text-xs whitespace-nowrap text-zinc-400 sm:w-[3.75rem] sm:max-w-[3.75rem] sm:text-sm ${putItm ? itmLegCls : ""}`}
+                          className={`w-[4.5rem] max-w-[4.5rem] truncate px-0.5 py-1 ps-0.5 text-start text-xs whitespace-nowrap text-zinc-400 sm:w-[4.75rem] sm:max-w-[4.75rem] sm:text-sm ${putItm ? itmLegCls : ""}`}
                         >
                           {formatLtpInr(p.ltp)}
                         </td>
                         <td
-                          className={`px-0 py-1 ${putItm ? itmLegCls : ""}`}
+                          className={`overflow-visible px-0 py-1 ${putItm ? itmLegCls : ""}`}
                         >
                           <div
-                            className="relative mx-auto h-2.5 w-full max-w-[12.5rem] overflow-hidden bg-transparent sm:h-3 sm:max-w-[14rem]"
+                            className="relative h-2.5 w-full min-w-0 overflow-hidden bg-transparent sm:h-3"
                             title={`Put OI ${formatOiLakh(putOi)}`}
                           >
                             <div
@@ -587,34 +676,66 @@ export function OptionChainPlaceSection() {
             onClick={closeSheet}
           />
           <div
-            className="fixed inset-x-0 bottom-0 z-[106] max-h-[min(85dvh,28rem)] overflow-y-auto rounded-t-2xl border border-zinc-200 bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900 sm:px-5"
+            className="fixed inset-x-4 bottom-0 z-[106] mx-auto flex max-h-[min(85dvh,28rem)] w-full max-w-[17.5rem] flex-col overflow-y-auto rounded-t-[1.25rem] border border-zinc-200/90 bg-white/95 px-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_12px_48px_-8px_rgba(0,0,0,0.28)] backdrop-blur-xl dark:border-zinc-700/90 dark:bg-zinc-950/95 dark:shadow-[0_12px_48px_-8px_rgba(0,0,0,0.55)] sm:px-4 sm:pt-3.5 lg:inset-x-auto lg:bottom-auto lg:left-1/2 lg:top-1/2 lg:max-h-[min(85dvh,30rem)] lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-2xl lg:px-4 lg:pb-4 lg:pt-4 lg:ring-1 lg:ring-zinc-950/[0.06] lg:dark:ring-white/[0.08]"
             role="dialog"
             aria-modal="true"
             aria-labelledby="option-chain-sheet-title"
           >
-            <div className="mx-auto mb-3 h-1 w-10 shrink-0 rounded-full bg-zinc-300 dark:bg-zinc-600" />
-            <h2
-              id="option-chain-sheet-title"
-              className="text-base font-semibold text-zinc-900 dark:text-zinc-50"
-            >
-              {chainSuccess.stock_code}{" "}
-              <span className="font-normal text-zinc-500 dark:text-zinc-400">
-                {chainSuccess.expiry_display}
-              </span>
-            </h2>
-            <p className="mt-1 text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
-              Strike{" "}
-              <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-                {sheet.strike.toLocaleString("en-IN")}
-              </span>
-            </p>
+            <div className="mx-auto mb-2.5 h-1 w-9 shrink-0 rounded-full bg-zinc-300/90 dark:bg-zinc-600 lg:hidden" />
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <h2
+                  id="option-chain-sheet-title"
+                  className="break-words text-[0.8125rem] font-semibold leading-snug tracking-tight text-zinc-900 tabular-nums dark:text-zinc-50"
+                >
+                  {formatOptionChainSheetTitle(
+                    chainSuccess.stock_code,
+                    chainSuccess.expiry_display,
+                    sheet.strike,
+                  )}
+                </h2>
+                <p className="mt-1.5 leading-snug">
+                  <span className="text-sm text-zinc-400 dark:text-zinc-600">
+                    Lot:
+                  </span>{" "}
+                  <span className="text-sm tabular-nums text-zinc-400 dark:text-zinc-600">
+                    {formatChainMetaInt(chainSuccess.lot_size)}
+                  </span>
+                  <span
+                    className="mx-1.5 text-sm text-zinc-300 dark:text-zinc-700"
+                    aria-hidden
+                  >
+                    ·
+                  </span>
+                  {/* <span className="text-sm text-zinc-400 dark:text-zinc-600">
+                    Max Qty / Order:
+                  </span>{" "}
+                  <span className="text-sm tabular-nums text-zinc-400 dark:text-zinc-600">
+                    {formatChainMetaInt(chainSuccess.freeze_quantity)}
+                  </span> */}
+                  <span className="text-sm text-zinc-400 dark:text-zinc-600">
+                    Margin / Lot:
+                  </span>{" "}
+                  <span className="text-sm tabular-nums text-zinc-400 dark:text-zinc-600">
+                    {marginPerLotDisplay}
+                  </span>                  
+                </p>
+              </div>
+              <button
+                type="button"
+                className="-m-0.5 shrink-0 rounded-full p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                onClick={closeSheet}
+                aria-label="Close"
+              >
+                <span className="block text-lg leading-none" aria-hidden>
+                  ×
+                </span>
+              </button>
+            </div>
 
-            <div className="mt-4">
-              <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                Option type
-              </span>
+            <div className="mt-3">
               <div
-                className="mt-1.5 inline-flex rounded-xl border border-zinc-200 bg-zinc-100/90 p-0.5 dark:border-zinc-700 dark:bg-zinc-950/80"
+                className="flex w-full gap-0.5 rounded-full bg-zinc-100/95 p-0.5 ring-1 ring-zinc-200/80 dark:bg-zinc-900/90 dark:ring-zinc-700/80"
                 role="group"
                 aria-label="Call or Put"
               >
@@ -622,10 +743,10 @@ export function OptionChainPlaceSection() {
                   type="button"
                   disabled={!sheetHasCall}
                   onClick={() => setRightAndSyncFields("Call")}
-                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 disabled:cursor-not-allowed disabled:opacity-40 ${
+                  className={`min-w-0 flex-1 rounded-full px-2.5 py-1.5 text-xs font-semibold tracking-wide transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 disabled:cursor-not-allowed disabled:opacity-40 ${
                     sheetRight === "Call"
-                      ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-800 dark:text-zinc-50 dark:ring-zinc-600"
-                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                      ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/90 dark:bg-zinc-800 dark:text-zinc-50 dark:ring-zinc-600/90"
+                      : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200"
                   }`}
                 >
                   Call
@@ -634,10 +755,10 @@ export function OptionChainPlaceSection() {
                   type="button"
                   disabled={!sheetHasPut}
                   onClick={() => setRightAndSyncFields("Put")}
-                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 disabled:cursor-not-allowed disabled:opacity-40 ${
+                  className={`min-w-0 flex-1 rounded-full px-2.5 py-1.5 text-xs font-semibold tracking-wide transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 disabled:cursor-not-allowed disabled:opacity-40 ${
                     sheetRight === "Put"
-                      ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-800 dark:text-zinc-50 dark:ring-zinc-600"
-                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                      ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/90 dark:bg-zinc-800 dark:text-zinc-50 dark:ring-zinc-600/90"
+                      : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200"
                   }`}
                 >
                   Put
@@ -645,11 +766,11 @@ export function OptionChainPlaceSection() {
               </div>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div>
+            <div className="mt-3 w-full space-y-2.5">
+              <div className="w-full min-w-0">
                 <label
                   htmlFor="chain-sheet-qty"
-                  className="text-xs font-medium text-zinc-500 dark:text-zinc-400"
+                  className="block text-[0.625rem] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500"
                 >
                   Quantity
                 </label>
@@ -657,15 +778,16 @@ export function OptionChainPlaceSection() {
                   id="chain-sheet-qty"
                   type="number"
                   min={1}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-2 text-sm tabular-nums text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  inputMode="numeric"
+                  className="mt-1 block h-8 w-full min-w-0 rounded-lg border border-zinc-200/90 bg-zinc-50/80 px-2.5 py-0 text-sm tabular-nums text-zinc-900 shadow-inner shadow-zinc-900/5 transition placeholder:text-zinc-400 focus:border-sky-500/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-sky-500/25 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-100 dark:shadow-none dark:placeholder:text-zinc-600 dark:focus:border-sky-500/50 dark:focus:bg-zinc-950"
                   value={sheetQty}
                   onChange={(e) => setSheetQty(e.target.value)}
                 />
               </div>
-              <div>
+              <div className="w-full min-w-0">
                 <label
                   htmlFor="chain-sheet-price"
-                  className="text-xs font-medium text-zinc-500 dark:text-zinc-400"
+                  className="block text-[0.625rem] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500"
                 >
                   Price (₹)
                 </label>
@@ -673,7 +795,8 @@ export function OptionChainPlaceSection() {
                   id="chain-sheet-price"
                   type="number"
                   step={0.05}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-2 text-sm tabular-nums text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  inputMode="decimal"
+                  className="mt-1 block h-8 w-full min-w-0 rounded-lg border border-zinc-200/90 bg-zinc-50/80 px-2.5 py-0 text-sm tabular-nums text-zinc-900 shadow-inner shadow-zinc-900/5 transition placeholder:text-zinc-400 focus:border-sky-500/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-sky-500/25 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-100 dark:shadow-none dark:placeholder:text-zinc-600 dark:focus:border-sky-500/50 dark:focus:bg-zinc-950"
                   value={sheetPrice}
                   onChange={(e) => setSheetPrice(e.target.value)}
                 />
@@ -681,29 +804,22 @@ export function OptionChainPlaceSection() {
             </div>
 
             {sheetFormError ? (
-              <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+              <p className="mt-2 text-[0.6875rem] leading-snug text-red-600 dark:text-red-400">
                 {sheetFormError}
               </p>
             ) : null}
 
-            <div className="mt-5 flex flex-wrap gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-700">
+            <div className="mt-4 flex gap-2 border-t border-zinc-200/90 pt-3.5 dark:border-zinc-700/80">
               <button
                 type="button"
-                className={sb.btnSecondary}
-                onClick={closeSheet}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="inline-flex flex-1 min-w-[6rem] items-center justify-center rounded-xl border border-emerald-600 bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-emerald-500 hover:bg-emerald-500 focus:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/35 disabled:opacity-50 dark:border-emerald-500 dark:bg-emerald-600"
+                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-xl border border-emerald-600/95 bg-gradient-to-b from-emerald-500 to-emerald-600 px-2 text-xs font-semibold text-white shadow-sm shadow-emerald-900/20 transition hover:from-emerald-400 hover:to-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 disabled:opacity-50 dark:to-emerald-600"
                 onClick={() => submitFromSheet("Buy")}
               >
                 Buy
               </button>
               <button
                 type="button"
-                className="inline-flex flex-1 min-w-[6rem] items-center justify-center rounded-xl bg-red-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-red-500/30 dark:bg-red-600 dark:hover:bg-red-500"
+                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-xl border border-red-600/90 bg-gradient-to-b from-red-500 to-red-600 px-2 text-xs font-semibold text-white shadow-sm shadow-red-900/25 transition hover:from-red-400 hover:to-red-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/35 dark:to-red-600"
                 onClick={() => submitFromSheet("Sell")}
               >
                 Sell

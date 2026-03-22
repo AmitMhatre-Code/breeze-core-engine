@@ -12,7 +12,7 @@ export default function TradeOptionsChainPage() {
             Trade Options Chain
           </h1>
           <p className="max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-            Fetch the full chain, select an expiry, then buy or sell any strike
+            Fetch the full chain, select an expiry to Buy or Sell
           </p>
         </header>
         <OptionChainPlaceSection />
