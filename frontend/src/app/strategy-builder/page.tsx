@@ -1118,13 +1118,20 @@ export default function StrategyBuilderPage() {
                     !expiryDate.trim() ||
                     uncoveredScanMut.isPending
                   }
-                  className={`${sb.btnPrimary} shrink-0 px-4 py-2 text-sm`}
+                  className={`${sb.btnPrimary} relative inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
                   onClick={() => {
                     setScanError(null);
                     uncoveredScanMut.mutate();
                   }}
                 >
-                  {uncoveredScanMut.isPending ? "Loading…" : "Get options"}
+                  <span className="invisible whitespace-nowrap" aria-hidden>
+                    Fetching...
+                  </span>
+                  <span className="absolute inset-0 flex items-center justify-center whitespace-nowrap">
+                    {uncoveredScanMut.isPending
+                      ? "Fetching..."
+                      : "Fetch Legs"}
+                  </span>
                 </button>
               </div>
             </div>
@@ -1141,7 +1148,7 @@ export default function StrategyBuilderPage() {
           {!uncoveredScanResult ? (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               {selectedReadymade === "naked-shorts"
-                ? "Configure parameters in section 3 and run “Get options” to see uncovered short candidates."
+                ? "Configure parameters in section 3 and run “Fetch Legs” to see uncovered short candidates."
                 : "Proposed legs from readymade strategies will appear here. For Naked Shorts, run a scan in section 3."}
             </p>
           ) : (
