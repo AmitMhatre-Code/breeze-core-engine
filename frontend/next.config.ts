@@ -76,6 +76,10 @@ const nextConfig: NextConfig = {
         destination: `${backendUpstream}/uncovered-shorts/scan`,
       },
       {
+        source: "/uncovered-shorts/covered-shorts-scan",
+        destination: `${backendUpstream}/uncovered-shorts/covered-shorts-scan`,
+      },
+      {
         source: "/performance/data",
         destination: `${backendUpstream}/performance/data`,
       },
@@ -86,6 +90,10 @@ const nextConfig: NextConfig = {
       {
         source: "/strategy-builder/chain",
         destination: `${backendUpstream}/strategy-builder/chain`,
+      },
+      {
+        source: "/strategy-builder/covered-shorts-scan",
+        destination: `${backendUpstream}/strategy-builder/covered-shorts-scan`,
       },
       {
         source: "/strategy-builder/margin",

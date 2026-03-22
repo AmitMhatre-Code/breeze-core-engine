@@ -1,17 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useCallback, useMemo, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
-import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
 import { apiClient } from "@/lib/api-client";
-import { ltpAsOrderPrice } from "@/lib/order-confirm";
 import { impliedVolatility } from "@/lib/strategy-builder/blackScholes";
 import {
   expiryDisplayToYears,
@@ -37,13 +34,17 @@ import type {
   ExecuteApiResponse,
   MarginApiResponse,
   OptionRight,
+  OrderSide,
   StrategyLeg,
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 
-/** Readymade card selection (Naked Shorts is separate from `STRATEGY_TEMPLATES`). */
-type ReadymadeSelection = "naked-shorts" | TemplateId;
+/** Readymade card selection (Naked / Covered Shorts are separate from `STRATEGY_TEMPLATES`). */
+type ReadymadeSelection = "naked-shorts" | "covered-shorts" | TemplateId;
+
+/** Strategy Builder only: caps broker load (standalone uncovered-shorts page may use higher top). */
+const STRATEGY_BUILDER_OPTIONS_TO_LIST_MAX = 5;
 
 type UncoveredSidePayload = {
   Status?: number;
@@ -63,20 +64,6 @@ function parseNum(v: unknown): number {
     return Number.isFinite(n) ? n : NaN;
   }
   return NaN;
-}
-
-function snapToStrike(raw: number, strikes: number[]): number {
-  if (!strikes.length) return raw;
-  let best = strikes[0];
-  let bd = Infinity;
-  for (const s of strikes) {
-    const d = Math.abs(s - raw);
-    if (d < bd) {
-      bd = d;
-      best = s;
-    }
-  }
-  return best;
 }
 
 function atmSigmaFromChain(chain: ChainSuccess, T: number): number {
@@ -104,6 +91,58 @@ const OTM_SLIDER_MIN = 1;
 const OTM_SLIDER_MAX = 20;
 const MARGIN_LACS_MAX = 999_999;
 
+/** Quantity-only signature — price edits keep cached margin valid for refresh UI. */
+function legsQtySignature(legs: StrategyLeg[]): string {
+  return JSON.stringify(legs.map((l) => [l.id, l.lots]));
+}
+
+function legMarginEntryMatches(
+  leg: StrategyLeg,
+  entry: { lots: number; span: number | null } | undefined,
+): boolean {
+  if (!entry) return false;
+  return entry.lots === leg.lots;
+}
+
+function MarginRefreshIconButton({
+  onClick,
+  disabled,
+  label,
+  title: titleProp,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  label: string;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={titleProp ?? label}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 hover:bg-zinc-200/80 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-zinc-700/80 dark:hover:text-zinc-100"
+    >
+      <svg
+        className="h-4 w-4"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M21 21v-5h-5" />
+      </svg>
+    </button>
+  );
+}
+
 function UncoveredNumberStepper({
   label,
   value,
@@ -114,8 +153,9 @@ function UncoveredNumberStepper({
   compact = false,
 }: {
   label: string;
-  value: number;
-  onChange: (v: number) => void;
+  /** `null` = empty (not set). */
+  value: number | null;
+  onChange: (v: number | null) => void;
   min: number;
   max: number;
   suffix?: ReactNode;
@@ -150,8 +190,10 @@ function UncoveredNumberStepper({
         <button
           type="button"
           className={`${stepBtn} ${roundL}`}
-          onClick={() => onChange(Math.max(min, value - 1))}
-          disabled={value <= min}
+          onClick={() =>
+            value != null && onChange(Math.max(min, value - 1))
+          }
+          disabled={value == null || value <= min}
           aria-label={`Decrease ${label}`}
         >
           −
@@ -163,11 +205,20 @@ function UncoveredNumberStepper({
             type="number"
             min={min}
             max={max}
-            value={value}
+            value={value === null ? "" : value}
             onChange={(e) => {
-              const n = parseInt(e.target.value, 10);
+              const raw = e.target.value;
+              if (raw === "") {
+                onChange(null);
+                return;
+              }
+              const n = parseInt(raw, 10);
               if (!Number.isFinite(n)) return;
               onChange(Math.min(max, Math.max(min, n)));
+            }}
+            onBlur={() => {
+              if (value === null) return;
+              onChange(Math.min(max, Math.max(min, value)));
             }}
             className={`min-w-0 flex-1 border-0 bg-transparent ${inputPad} ${inputText} text-zinc-900 outline-none focus:ring-0 dark:text-zinc-100 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
             aria-label={label}
@@ -187,8 +238,11 @@ function UncoveredNumberStepper({
         <button
           type="button"
           className={`${stepBtn} ${roundR}`}
-          onClick={() => onChange(Math.min(max, value + 1))}
-          disabled={value >= max}
+          onClick={() => {
+            if (value === null) onChange(min);
+            else onChange(Math.min(max, value + 1));
+          }}
+          disabled={value != null && value >= max}
           aria-label={`Increase ${label}`}
         >
           +
@@ -278,6 +332,70 @@ function UncoveredOtmSlider({
   );
 }
 
+function IvShockSlider({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const min = -20;
+  const max = 20;
+  const pct = ((value - min) / (max - min)) * 100;
+  const badgeText =
+    value === 0 ? "0%" : `${value >= 0 ? "+" : ""}${value}%`;
+
+  return (
+    <div className="app-card-muted min-w-0 p-4">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold text-zinc-800 dark:text-zinc-100">
+            Implied volatility shock
+          </div>
+          <p className="mt-0.5 max-w-xl text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+            Adjust modeled IV for the chart and Greeks. Range −20% to +20%
+            relative to chain IV.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="shrink-0 rounded-lg border border-zinc-200/90 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 disabled:pointer-events-none disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800"
+          onClick={() => onChange(0)}
+          disabled={value === 0}
+        >
+          Reset
+        </button>
+      </div>
+      <div className="relative pt-7">
+        <div
+          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-sky-200/80 bg-sky-50 px-2.5 py-1 text-xs font-semibold tabular-nums text-sky-900 shadow-sm ring-1 ring-sky-500/10 dark:border-sky-800/80 dark:bg-sky-950/80 dark:text-sky-100 dark:ring-sky-400/15"
+          style={{
+            left: `clamp(1.25rem, ${pct}%, calc(100% - 1.25rem))`,
+          }}
+          aria-hidden
+        >
+          {badgeText}
+        </div>
+        <input
+          type="range"
+          min={min}
+          max={max}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="sb-range-slim relative z-0 w-full"
+          aria-label="IV shock percent"
+          aria-valuetext={`${value >= 0 ? "+" : ""}${value} percent`}
+        />
+        <div className="mt-2 flex justify-between text-[10px] font-medium tabular-nums text-zinc-400 dark:text-zinc-500">
+          <span>−20%</span>
+          <span className="text-zinc-500 dark:text-zinc-400">0</span>
+          <span>+20%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const BOOK_LAKH = 100_000;
 
 function formatBookQtyInL(n: number): string {
@@ -330,6 +448,145 @@ function formatExpiryDdMmm(raw: unknown): string | null {
   return null;
 }
 
+/** e.g. NIFTY-24-Mar-25600-CE (expiry segment DD-Mmm from chain display). */
+/** Key for matching scan-option cards to legs (stock + expiry + strike + right). */
+function uncoveredContractKey(
+  stock: string,
+  expiry: string,
+  strike: number,
+  right: OptionRight,
+): string {
+  return `${stock.trim().toUpperCase()}|${expiry.trim()}|${strike}|${right}`;
+}
+
+function uncoveredScanOptionKey(opt: Record<string, unknown>): string {
+  const stock = String(opt.stock_code ?? "").trim();
+  const expiry = String(opt.expiry_date ?? "").trim();
+  const k = parseNum(opt.strike_price);
+  const rightStr = String(opt.right ?? "Call");
+  const right: OptionRight = /^p/i.test(rightStr) ? "Put" : "Call";
+  return uncoveredContractKey(
+    stock,
+    expiry,
+    Number.isFinite(k) ? k : NaN,
+    right,
+  );
+}
+
+function formatOptionSymbolLabel(
+  stock: string,
+  expiryDisplay: string,
+  strike: number,
+  right: OptionRight,
+): string {
+  const sym = right === "Call" ? "CE" : "PE";
+  const expShort = (() => {
+    const p = expiryDisplay.trim().split("-");
+    if (p.length >= 2 && /^\d{1,2}$/.test(p[0]!) && /^[A-Za-z]{3}/.test(p[1]!)) {
+      const day = p[0]!.padStart(2, "0");
+      const mon =
+        p[1]!.slice(0, 1).toUpperCase() + p[1]!.slice(1, 3).toLowerCase();
+      return `${day}-${mon}`;
+    }
+    return expiryDisplay.trim() || "—";
+  })();
+  const k = Number.isFinite(strike)
+    ? Math.round(strike).toString()
+    : "—";
+  return `${stock || "—"}-${expShort}-${k}-${sym}`;
+}
+
+function snapQuantityToLotMultiple(qty: number, lotSize: number): number {
+  if (!Number.isFinite(qty) || lotSize <= 0) return Math.max(lotSize, 1);
+  const lots = Math.max(1, Math.round(qty / lotSize));
+  return lots * lotSize;
+}
+
+function parseSpanMarginFromResponse(
+  m: MarginApiResponse | undefined,
+): number | null {
+  if (m?.Status !== 200 || !m.Success) return null;
+  const v = parseNum(
+    (m.Success as { span_margin_required?: unknown }).span_margin_required,
+  );
+  return Number.isFinite(v) ? v : null;
+}
+
+function LegPositionChip({ side }: { side: OrderSide }) {
+  const buy = side === "Buy";
+  return (
+    <span
+      className={
+        buy
+          ? "inline-flex shrink-0 rounded-full border border-emerald-600/80 bg-emerald-600/15 px-2 py-0.5 text-sm font-semibold text-emerald-800 dark:border-emerald-500/70 dark:bg-emerald-500/15 dark:text-emerald-200"
+          : "inline-flex shrink-0 rounded-full border border-red-600/80 bg-red-600/15 px-2 py-0.5 text-sm font-semibold text-red-800 dark:border-red-500/70 dark:bg-red-500/15 dark:text-red-200"
+      }
+    >
+      {side}
+    </span>
+  );
+}
+
+/** Text-controlled qty so users can clear/edit; snaps to lot multiple on blur. */
+function LegQuantityInput({
+  legId,
+  lots,
+  lotSize,
+  onLotsChange,
+  className,
+}: {
+  legId: string;
+  lots: number;
+  lotSize: number;
+  onLotsChange: (newLots: number) => void;
+  className: string;
+}) {
+  const ls = lotSize > 0 ? lotSize : 1;
+  const safeLots = Number.isFinite(lots) && lots > 0 ? lots : 1;
+  const qtyUnits = Math.round(safeLots * ls);
+  const [text, setText] = useState(() => String(qtyUnits));
+
+  useEffect(() => {
+    const q = Math.round(
+      (Number.isFinite(lots) && lots > 0 ? lots : 1) * ls,
+    );
+    setText(String(q));
+  }, [legId, lots, ls]);
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      autoComplete="off"
+      aria-label="Quantity"
+      className={className}
+      value={text}
+      onChange={(e) => {
+        const t = e.target.value.replace(/,/g, "");
+        if (t === "" || /^\d+$/.test(t)) {
+          setText(t);
+        }
+      }}
+      onBlur={() => {
+        const t = text.replace(/,/g, "").trim();
+        if (t === "") {
+          setText(String(qtyUnits));
+          return;
+        }
+        const raw = parseInt(t, 10);
+        if (!Number.isFinite(raw)) {
+          setText(String(qtyUnits));
+          return;
+        }
+        const snapped = snapQuantityToLotMultiple(raw, ls);
+        const newLots = Math.max(1, Math.round(snapped / ls));
+        onLotsChange(newLots);
+        setText(String(newLots * ls));
+      }}
+    />
+  );
+}
+
 function formatPremiumIntegerInr(p: number): string {
   if (!Number.isFinite(p)) return "—";
   const r = Math.round(p);
@@ -338,12 +595,15 @@ function formatPremiumIntegerInr(p: number): string {
 
 function UncoveredScanOptionCard({
   opt,
-  onSell,
-  onAddToBasket,
+  legAdded,
+  onAddLeg,
+  omitAddButton = false,
 }: {
   opt: Record<string, unknown>;
-  onSell: () => void;
-  onAddToBasket: () => void;
+  legAdded: boolean;
+  onAddLeg: () => void;
+  /** When true, render metrics only (e.g. Covered Shorts pair row supplies its own Add control). */
+  omitAddButton?: boolean;
 }) {
   const prem = parseNum(opt.premium);
   const cr = parseNum(opt.carry_returns);
@@ -412,8 +672,8 @@ function UncoveredScanOptionCard({
   return (
     <div className="w-fit min-w-0 max-w-[min(100%,25rem)] rounded-xl border border-zinc-200/80 bg-white/90 p-2.5 shadow-sm backdrop-blur-sm dark:border-zinc-700/80 dark:bg-zinc-950/60">
       <div className="space-y-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm leading-snug">
-          <div className="min-w-0 max-w-[18rem] shrink truncate font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+        <div className="flex min-w-0 flex-nowrap items-center gap-x-2 overflow-hidden text-sm leading-snug">
+          <div className="min-w-0 flex-1 shrink truncate font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
             {strikeLine}
           </div>
           {vBar}
@@ -481,54 +741,152 @@ function UncoveredScanOptionCard({
         </div>
       </div>
 
-      <div className="mt-2.5 space-y-2">
-        <button
-          type="button"
-          className="w-full rounded-lg border border-sky-600 bg-transparent py-2.5 text-sm font-semibold text-sky-700 transition hover:bg-sky-600 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 dark:border-sky-500 dark:text-sky-300 dark:hover:bg-sky-600 dark:hover:text-white"
-          onClick={onSell}
-        >
-          Sell
-        </button>
-        <button
-          type="button"
-          className="w-full rounded-lg border border-transparent py-1 text-sm font-medium text-zinc-500 underline-offset-2 transition hover:text-zinc-800 hover:underline dark:text-zinc-400 dark:hover:text-zinc-200"
-          onClick={onAddToBasket}
-        >
-          Add to basket
-        </button>
+      {!omitAddButton ? (
+        <div className="mt-2.5 space-y-2">
+          <button
+            type="button"
+            disabled={legAdded}
+            className={
+              legAdded
+                ? "w-full cursor-not-allowed rounded-lg border border-zinc-200 bg-zinc-100 py-2.5 text-sm font-semibold text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/80 dark:text-zinc-400"
+                : "w-full rounded-lg border border-sky-600 bg-transparent py-2.5 text-sm font-semibold text-sky-700 transition hover:bg-sky-600 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 dark:border-sky-500 dark:text-sky-300 dark:hover:bg-sky-600 dark:hover:text-white"
+            }
+            onClick={onAddLeg}
+          >
+            {legAdded ? "Leg Added" : "Add Leg"}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type HedgeMatchPayload = {
+  Status?: number;
+  Error?: string;
+  best?: Record<string, unknown> | null;
+};
+
+function HedgeSuggestionCard({ best, error }: { best: Record<string, unknown> | null; error?: string }) {
+  if (!best) {
+    return (
+      <div className="flex min-h-[6rem] w-fit min-w-[10rem] max-w-[min(100%,22rem)] flex-1 flex-col justify-center rounded-xl border border-dashed border-zinc-300/90 bg-zinc-50/80 p-2.5 text-xs text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-400">
+        <div className="font-semibold text-zinc-700 dark:text-zinc-300">Hedge unavailable</div>
+        {error ? <p className="mt-1 leading-snug">{error}</p> : null}
+      </div>
+    );
+  }
+  const strike = parseNum(best.strike_price);
+  const hq = parseNum(best.hedge_quantity);
+  const hp = parseNum(best.hedge_premium);
+  const offer = parseNum(best.best_offer_price);
+  const ltp = parseNum(best.ltp);
+  const stock = String(best.stock_code ?? "").trim();
+  const rightRaw = String(best.right ?? "");
+  const abbr = /^p/i.test(rightRaw) ? "PE" : "CE";
+  const expShort = formatExpiryDdMmm(best.expiry_date);
+  const strikeLine = Number.isFinite(strike)
+    ? `${stock ? `${stock} ` : ""}${expShort ? `${expShort} ` : ""}${strike.toLocaleString("en-IN")} ${abbr}`.trim()
+    : "—";
+
+  const fmtPx = (n: number) =>
+    Number.isFinite(n) ? n.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—";
+
+  return (
+    <div className="w-fit min-w-0 max-w-[min(100%,25rem)] flex-1 rounded-xl border border-sky-200/70 bg-sky-50/50 p-2.5 shadow-sm dark:border-sky-900/40 dark:bg-sky-950/25">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-sky-800/90 dark:text-sky-300/90">
+        Buy hedge (lowest hedge cost)
+      </div>
+      <div className="text-sm font-semibold leading-snug text-zinc-900 dark:text-zinc-50">
+        {strikeLine}
+      </div>
+      <div className="mt-2 space-y-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+        <div className="tabular-nums">
+          <span className="font-medium text-zinc-500">Qty</span>{" "}
+          {Number.isFinite(hq) ? hq.toLocaleString("en-IN", { maximumFractionDigits: 0 }) : "—"}
+        </div>
+        <div className="tabular-nums">
+          <span className="font-medium text-zinc-500">Hedge premium</span>{" "}
+          {formatPremiumIntegerInr(hp)}
+        </div>
+        <div className="tabular-nums">
+          <span className="font-medium text-zinc-500">Offer</span> {fmtPx(offer)}{" "}
+          <span className="text-zinc-400">·</span> <span className="font-medium text-zinc-500">LTP</span>{" "}
+          {fmtPx(ltp)}
+        </div>
       </div>
     </div>
   );
 }
 
+function coveredPairNetPremiumLabel(opt: Record<string, unknown>): string {
+  const prem = parseNum(opt.premium);
+  const hm = opt.hedge_match as HedgeMatchPayload | undefined;
+  const best = hm?.best;
+  const hp = best ? parseNum(best.hedge_premium) : NaN;
+  if (!Number.isFinite(prem) || !Number.isFinite(hp)) return "—";
+  const net = prem - hp;
+  if (!Number.isFinite(net)) return "—";
+  return formatIndianMoneyCompact(net);
+}
+
+function isCoveredPairInLegs(
+  opt: Record<string, unknown>,
+  legs: StrategyLeg[],
+): boolean {
+  const k = parseNum(opt.strike_price);
+  const rightStr = String(opt.right ?? "Call");
+  const right: OptionRight = /^p/i.test(rightStr) ? "Put" : "Call";
+  const hm = opt.hedge_match as HedgeMatchPayload | undefined;
+  const hedge = hm?.best;
+  if (!hedge || !Number.isFinite(k)) return false;
+  const hk = parseNum(hedge.strike_price);
+  if (!Number.isFinite(hk)) return false;
+  const hasShort = legs.some(
+    (l) => l.side === "Sell" && l.strike === k && l.right === right,
+  );
+  const hasBuy = legs.some(
+    (l) => l.side === "Buy" && l.strike === hk && l.right === right,
+  );
+  return hasShort && hasBuy;
+}
+
 export default function StrategyBuilderPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { openOrderConfirm } = useOrderConfirm();
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
-  const [globalMult, setGlobalMult] = useState(1);
+  const [executePreviewOpen, setExecutePreviewOpen] = useState(false);
   const [ivShockPct, setIvShockPct] = useState(0);
   const [showGreeks, setShowGreeks] = useState(false);
   const [showToday, setShowToday] = useState(true);
   const [nakedPrompt, setNakedPrompt] = useState<TemplateId | null>(null);
-  const [executeSummary, setExecuteSummary] = useState<ExecuteApiResponse | null>(null);
   const [selectedReadymade, setSelectedReadymade] =
     useState<ReadymadeSelection | null>(null);
-  const [scanLimits, setScanLimits] = useState(5);
-  const [scanTop, setScanTop] = useState(10);
+  const [scanLimits, setScanLimits] = useState<number | null>(null);
+  const [scanTop, setScanTop] = useState<number | null>(null);
   const [scanOtmCall, setScanOtmCall] = useState(10);
   const [scanOtmPut, setScanOtmPut] = useState(10);
   const [scanProvisionElm, setScanProvisionElm] = useState(false);
   const [uncoveredScanResult, setUncoveredScanResult] =
     useState<UncoveredScanResponse | null>(null);
-  const [uncoveredResultExchange, setUncoveredResultExchange] = useState<
-    "NFO" | "BFO"
-  >("NFO");
   const [scanError, setScanError] = useState<string | null>(null);
+  const selectedReadymadeRef = useRef<ReadymadeSelection | null>(null);
+  selectedReadymadeRef.current = selectedReadymade;
   const [segmentExchange, setSegmentExchange] = useState<"NFO" | "BFO">("NFO");
-
+  const [strategyMarginValidSig, setStrategyMarginValidSig] = useState<
+    string | null
+  >(null);
+  const [legMarginCache, setLegMarginCache] = useState<
+    Record<
+      string,
+      { lots: number; span: number | null; error?: string }
+    >
+  >({});
+  const [legMarginFetchingId, setLegMarginFetchingId] = useState<string | null>(
+    null,
+  );
   const onSegmentChange = (ex: "NFO" | "BFO") => {
     if (ex === segmentExchange) return;
     setSegmentExchange(ex);
@@ -538,6 +896,19 @@ export default function StrategyBuilderPage() {
     setSelectedReadymade(null);
     setUncoveredScanResult(null);
   };
+
+  useEffect(() => {
+    if (
+      selectedReadymade === "naked-shorts" ||
+      selectedReadymade === "covered-shorts"
+    ) {
+      setScanTop((t) =>
+        t != null && t > STRATEGY_BUILDER_OPTIONS_TO_LIST_MAX
+          ? STRATEGY_BUILDER_OPTIONS_TO_LIST_MAX
+          : t,
+      );
+    }
+  }, [selectedReadymade]);
 
   const uq = useQuery({
     queryKey: ["strategy-builder", "underlyings", segmentExchange],
@@ -556,6 +927,9 @@ export default function StrategyBuilderPage() {
   const uncoveredScanMut = useMutation({
     mutationFn: async () => {
       const ex = segmentExchange;
+      if (scanLimits == null || scanTop == null) {
+        throw new Error("Margin to deploy and Options to list are required");
+      }
       const q = new URLSearchParams({
         stock_code: stockCode.trim(),
         expiry_date: expiryDate.trim(),
@@ -566,14 +940,17 @@ export default function StrategyBuilderPage() {
         exchange_code: ex,
       });
       if (scanProvisionElm) q.set("provision_elm", "on");
-      const data = await apiClient.get<UncoveredScanResponse>(
-        `/uncovered-shorts/scan?${q.toString()}`,
+      const mode = selectedReadymadeRef.current;
+      const path =
+        mode === "covered-shorts"
+          ? "/uncovered-shorts/covered-shorts-scan"
+          : "/uncovered-shorts/scan";
+      return apiClient.get<UncoveredScanResponse>(
+        `${path}?${q.toString()}`,
       );
-      return { data, exchange: ex };
     },
-    onSuccess: ({ data, exchange }) => {
+    onSuccess: (data) => {
       setUncoveredScanResult(data);
-      setUncoveredResultExchange(exchange);
       setScanError(null);
     },
     onError: (e) => {
@@ -623,15 +1000,6 @@ export default function StrategyBuilderPage() {
   const baseSigma = chainSuccess ? atmSigmaFromChain(chainSuccess, T) : 0.22;
   const sigma = baseSigma * (1 + ivShockPct / 100);
 
-  const scaledLegs = useMemo(
-    () =>
-      legs.map((l) => ({
-        ...l,
-        lots: Math.max(1, Math.round(l.lots * globalMult)),
-      })),
-    [legs, globalMult],
-  );
-
   const spot = chainSuccess?.spot_price ?? null;
   const minS = useMemo(() => {
     if (!strikes.length) return spot != null ? spot * 0.85 : 0;
@@ -649,24 +1017,28 @@ export default function StrategyBuilderPage() {
     return hi + pad;
   }, [strikes, spot]);
 
-  const { xs, ys, summary, xsToday, ysToday, pop, greeks } = useMemo(() => {
+  const { xs, ys, summary, xsToday, ysToday } = useMemo(() => {
     const steps = 80;
-    const { xs: x1, ys: y1 } = scanPayoffCurve(
-      minS,
-      maxS,
-      steps,
-      scaledLegs,
-      lotSize,
-    );
+    const L = legs;
+    if (!L.length) {
+      return {
+        xs: [] as number[],
+        ys: [] as number[],
+        summary: summarizePayoffScan([], []),
+        xsToday: [] as number[],
+        ysToday: [] as number[],
+      };
+    }
+    const { xs: x1, ys: y1 } = scanPayoffCurve(minS, maxS, steps, L, lotSize);
     const sum = summarizePayoffScan(x1, y1);
     let xt: number[] = [];
     let yt: number[] = [];
-    if (showToday && spot != null && T > 0 && scaledLegs.length) {
+    if (showToday && spot != null && T > 0 && L.length) {
       const r = scanMarkToModelCurve(
         minS,
         maxS,
         steps,
-        scaledLegs,
+        L,
         lotSize,
         T,
         sigma,
@@ -674,64 +1046,50 @@ export default function StrategyBuilderPage() {
       xt = r.xs;
       yt = r.ys;
     }
-    const pop =
-      spot != null && scaledLegs.length
-        ? estimateProbabilityOfProfit(
-            spot,
-            T,
-            sigma,
-            scaledLegs,
-            lotSize,
-          )
-        : 0;
-    const greeks =
-      spot != null && T > 0 && scaledLegs.length
-        ? portfolioGreeks(spot, scaledLegs, lotSize, T, sigma)
-        : { delta: 0, gamma: 0, vega: 0, thetaPerDay: 0 };
     return {
       xs: x1,
       ys: y1,
       summary: sum,
       xsToday: xt,
       ysToday: yt,
-      pop,
-      greeks,
     };
-  }, [
-    minS,
-    maxS,
-    scaledLegs,
-    lotSize,
-    showToday,
-    spot,
-    T,
-    sigma,
-  ]);
+  }, [legs, minS, maxS, spot, sigma, T, lotSize, showToday]);
 
-  const marginLegKey = useMemo(
+  const pop = useMemo(() => {
+    if (spot == null || !legs.length) return 0;
+    return estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
+  }, [spot, T, sigma, legs, lotSize]);
+
+  const greeks = useMemo(() => {
+    if (spot == null || T <= 0 || !legs.length) {
+      return { delta: 0, gamma: 0, vega: 0, thetaPerDay: 0 };
+    }
+    return portfolioGreeks(spot, legs, lotSize, T, sigma);
+  }, [spot, T, sigma, legs, lotSize]);
+
+  /** Structural identity only — qty/price edits do not invalidate the query key. */
+  const marginLegKeyStructural = useMemo(
     () =>
       JSON.stringify({
         segmentExchange,
         stockCode,
         expiryDate,
         lotSize,
-        legs: scaledLegs.map((l) => ({
+        legs: legs.map((l) => ({
           id: l.id,
           strike: l.strike,
           right: l.right,
           side: l.side,
-          lots: l.lots,
-          prem: l.premiumPerUnit,
         })),
       }),
-    [segmentExchange, stockCode, expiryDate, lotSize, scaledLegs],
+    [segmentExchange, stockCode, expiryDate, lotSize, legs],
   );
 
   const marginQ = useQuery({
-    queryKey: ["strategy-builder", "margin", marginLegKey],
+    queryKey: ["strategy-builder", "margin", marginLegKeyStructural],
     queryFn: () =>
       apiClient.post<MarginApiResponse>("/strategy-builder/margin", {
-        legs: scaledLegs.map((l) => ({
+        legs: legs.map((l) => ({
           stock_code: stockCode,
           exchange_code: segmentExchange,
           expiry_date: expiryDate,
@@ -743,21 +1101,86 @@ export default function StrategyBuilderPage() {
           action: l.side,
         })),
       }),
-    enabled: Boolean(stockCode && expiryDate && scaledLegs.length),
+    enabled: Boolean(stockCode && expiryDate && legs.length),
     staleTime: 5000,
   });
 
   const marginState = marginQ.data;
-  const spanMargin =
-    marginState?.Status === 200 && marginState.Success
-      ? parseNum(
-          (marginState.Success as { span_margin_required?: unknown })
-            .span_margin_required,
-        )
-      : null;
+  const spanMargin = parseSpanMarginFromResponse(marginState);
+
+  const { refetch: refetchStrategyMargin } = marginQ;
+
+  useEffect(() => {
+    if (marginQ.isFetching || !marginQ.isSuccess || !marginState) return;
+    // `legs` intentionally read from closure when a fetch completes (dataUpdatedAt),
+    // not listed in deps — listing `legs` would incorrectly mark margin fresh on qty edits.
+    setStrategyMarginValidSig(legsQtySignature(legs));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync valid sig only when margin fetch finishes
+  }, [marginQ.isFetching, marginQ.dataUpdatedAt, marginQ.isSuccess, marginState]);
+
+  const strategyMarginQtyStale =
+    marginQ.isSuccess &&
+    strategyMarginValidSig !== null &&
+    strategyMarginValidSig !== legsQtySignature(legs);
+
+  useEffect(() => {
+    if (!executePreviewOpen || legs.length === 0) return;
+    void refetchStrategyMargin();
+  }, [executePreviewOpen, legs.length, refetchStrategyMargin]);
+
+  const fetchLegMargin = useCallback(
+    async (leg: StrategyLeg) => {
+      if (!stockCode || !expiryDate) return;
+      setLegMarginFetchingId(leg.id);
+      try {
+        const res = await apiClient.post<MarginApiResponse>(
+          "/strategy-builder/margin",
+          {
+            legs: [
+              {
+                stock_code: stockCode,
+                exchange_code: segmentExchange,
+                expiry_date: expiryDate,
+                product_type: "Options",
+                right: leg.right,
+                strike_price: String(leg.strike),
+                quantity: String(Math.round(leg.lots * lotSize)),
+                price: String(leg.premiumPerUnit ?? 0),
+                action: leg.side,
+              },
+            ],
+          },
+        );
+        const span = parseSpanMarginFromResponse(res);
+        setLegMarginCache((prev) => ({
+          ...prev,
+          [leg.id]: {
+            lots: leg.lots,
+            span,
+            error:
+              span != null && Number.isFinite(span)
+                ? undefined
+                : String(res.Error ?? "—"),
+          },
+        }));
+      } catch {
+        setLegMarginCache((prev) => ({
+          ...prev,
+          [leg.id]: {
+            lots: leg.lots,
+            span: null,
+            error: "Margin request failed",
+          },
+        }));
+      } finally {
+        setLegMarginFetchingId(null);
+      }
+    },
+    [stockCode, expiryDate, segmentExchange, lotSize],
+  );
 
   const chainReady = Boolean(chainSuccess);
-  const hasStrategyLegs = scaledLegs.length > 0;
+  const hasStrategyLegs = legs.length > 0;
 
   const applyTemplateId = useCallback(
     (id: TemplateId) => {
@@ -784,22 +1207,9 @@ export default function StrategyBuilderPage() {
     setNakedPrompt(null);
   };
 
-  const strikeCommit = useCallback(
-    (fromStrike: number, raw: number) => {
-      const to = snapToStrike(raw, strikes);
-      if (to === fromStrike) return;
-      setLegs((prev) =>
-        prev.map((l) =>
-          l.strike === fromStrike ? { ...l, strike: to } : l,
-        ),
-      );
-    },
-    [strikes],
-  );
-
   const execMut = useMutation({
     mutationFn: async () => {
-      const legsPayload = scaledLegs.map((l) => ({
+      const legsPayload = legs.map((l) => ({
         stock_code: stockCode,
         exchange_code: segmentExchange,
         expiry_date: expiryDate,
@@ -819,33 +1229,14 @@ export default function StrategyBuilderPage() {
         { legs: legsPayload },
       );
     },
-    onSuccess: (data) => {
-      setExecuteSummary(data);
-      if (data.placed_count > 0) {
-        void queryClient.invalidateQueries({ queryKey: ["book"] });
-        router.push("/orders");
-      }
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["book"] });
+      setExecutePreviewOpen(false);
+      router.push("/orders");
     },
   });
 
-  const sellUncoveredOption = useCallback(
-    (opt: Record<string, unknown>, ex: string) => {
-      openOrderConfirm({
-        product_type: "Options",
-        stock_code: String(opt.stock_code ?? "").trim(),
-        exchange_code: ex,
-        expiry_date: String(opt.expiry_date ?? "").trim(),
-        right: String(opt.right ?? "").trim(),
-        strike_price: String(opt.strike_price ?? "").trim(),
-        quantity: String(opt.quantity ?? "").trim(),
-        price: ltpAsOrderPrice(opt.best_bid_price),
-        action: "Sell",
-      });
-    },
-    [openOrderConfirm],
-  );
-
-  const addUncoveredToBasket = useCallback(
+  const addUncoveredLeg = useCallback(
     (opt: Record<string, unknown>) => {
       const k = parseNum(opt.strike_price);
       if (!Number.isFinite(k)) return;
@@ -880,6 +1271,81 @@ export default function StrategyBuilderPage() {
     [lotSize],
   );
 
+  const addCoveredPair = useCallback(
+    (opt: Record<string, unknown>) => {
+      const k = parseNum(opt.strike_price);
+      if (!Number.isFinite(k)) return;
+      const rightStr = String(opt.right ?? "Call");
+      const right: OptionRight = /^p/i.test(rightStr) ? "Put" : "Call";
+      const hm = opt.hedge_match as HedgeMatchPayload | undefined;
+      const hedge = hm?.best;
+      if (!hedge) return;
+      const hk = parseNum(hedge.strike_price);
+      if (!Number.isFinite(hk)) return;
+
+      const qtyShort = parseNum(opt.quantity);
+      const ls = lotSize > 0 ? lotSize : 1;
+      const shortLots =
+        Number.isFinite(qtyShort) && ls > 0
+          ? Math.max(1, Math.round(qtyShort / ls))
+          : 1;
+
+      const hedgeQty = parseNum(hedge.hedge_quantity);
+      const hedgeLots =
+        Number.isFinite(hedgeQty) && ls > 0
+          ? Math.max(1, Math.round(hedgeQty / ls))
+          : 1;
+
+      const ltpV = parseNum(opt.ltp);
+      const bidV = parseNum(opt.best_bid_price);
+      const shortPrem =
+        Number.isFinite(ltpV) && ltpV > 0
+          ? ltpV
+          : Number.isFinite(bidV) && bidV > 0
+            ? bidV
+            : undefined;
+
+      const ho = parseNum(hedge.best_offer_price);
+      const hltp = parseNum(hedge.ltp);
+      const hedgePrem =
+        Number.isFinite(hltp) && hltp > 0
+          ? hltp
+          : Number.isFinite(ho) && ho > 0
+            ? ho
+            : undefined;
+
+      const idBase = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      setLegs((prev) => [
+        ...prev,
+        {
+          id: `leg-${idBase}-s`,
+          side: "Sell",
+          right,
+          strike: k,
+          lots: shortLots,
+          premiumPerUnit: shortPrem,
+        },
+        {
+          id: `leg-${idBase}-h`,
+          side: "Buy",
+          right,
+          strike: hk,
+          lots: hedgeLots,
+          premiumPerUnit: hedgePrem,
+        },
+      ]);
+    },
+    [lotSize],
+  );
+
+  const addedUncoveredContractKeys = useMemo(() => {
+    const s = new Set<string>();
+    for (const l of legs) {
+      s.add(uncoveredContractKey(stockCode, expiryDate, l.strike, l.right));
+    }
+    return s;
+  }, [legs, stockCode, expiryDate]);
+
   const profitClass =
     "text-emerald-700 dark:text-emerald-400";
   const lossClass = "text-red-700 dark:text-red-400";
@@ -896,13 +1362,10 @@ export default function StrategyBuilderPage() {
               Readymade templates and orchestrated multi-leg placement
             </p>
           </div>
-          <Link href="/strategies" className={`${sb.btnSecondary} shrink-0`}>
-            Strategies hub
-          </Link>
         </header>
 
         <section className={`${sb.section} relative z-20 space-y-5`}>
-          <h2 className={sb.sectionTitle}>1. Underlying &amp; expiry</h2>
+          <h2 className={sb.sectionTitle}>1. Underlying &amp; Expiry</h2>
           <div
             className="flex min-h-[2.75rem] flex-col overflow-visible rounded-xl bg-[#1b1c1f] sm:flex-row sm:items-center"
             role="toolbar"
@@ -976,7 +1439,7 @@ export default function StrategyBuilderPage() {
         </section>
 
         <section className={`${sb.section} relative z-10 space-y-4`}>
-          <h2 className={sb.sectionTitle}>2. Readymade strategies</h2>
+          <h2 className={sb.sectionTitle}>2. Readymade Strategies</h2>
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
@@ -985,6 +1448,7 @@ export default function StrategyBuilderPage() {
               }
               onClick={() => {
                 setScanError(null);
+                setUncoveredScanResult(null);
                 setSelectedReadymade("naked-shorts");
               }}
               className={`${sb.cardTemplateAmber} ${
@@ -997,6 +1461,28 @@ export default function StrategyBuilderPage() {
               <div className="font-semibold">Naked Shorts</div>
               <div className="mt-1 text-zinc-800 dark:text-zinc-200">
                 Sell Calls or Puts
+              </div>
+            </button>
+            <button
+              type="button"
+              disabled={
+                uq.isLoading || !stockCode.trim() || !expiryDate.trim()
+              }
+              onClick={() => {
+                setScanError(null);
+                setUncoveredScanResult(null);
+                setSelectedReadymade("covered-shorts");
+              }}
+              className={`${sb.cardTemplateAmber} ${
+                selectedReadymade === "covered-shorts"
+                  ? "ring-2 ring-amber-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
+                  : ""
+              }`}
+              aria-pressed={selectedReadymade === "covered-shorts"}
+            >
+              <div className="font-semibold">Covered Shorts</div>
+              <div className="mt-1 text-zinc-800 dark:text-zinc-200">
+                Short OTM + suggested buy hedge
               </div>
             </button>
             {STRATEGY_TEMPLATES.map((t) => (
@@ -1038,7 +1524,8 @@ export default function StrategyBuilderPage() {
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               Select a readymade strategy in section 2 to configure parameters.
             </p>
-          ) : selectedReadymade === "naked-shorts" ? (
+          ) : selectedReadymade === "naked-shorts" ||
+            selectedReadymade === "covered-shorts" ? (
             <div className="flex flex-col gap-3">
               <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
                 <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
@@ -1084,7 +1571,7 @@ export default function StrategyBuilderPage() {
                     value={scanTop}
                     onChange={setScanTop}
                     min={1}
-                    max={500}
+                    max={STRATEGY_BUILDER_OPTIONS_TO_LIST_MAX}
                   />
                 </div>
                 <div className="min-w-0">
@@ -1116,6 +1603,8 @@ export default function StrategyBuilderPage() {
                   disabled={
                     !stockCode.trim() ||
                     !expiryDate.trim() ||
+                    scanLimits == null ||
+                    scanTop == null ||
                     uncoveredScanMut.isPending
                   }
                   className={`${sb.btnPrimary} relative inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
@@ -1144,18 +1633,21 @@ export default function StrategyBuilderPage() {
         </section>
 
         <section className={`${sb.section} space-y-4`}>
-          <h2 className={sb.sectionTitle}>4. Proposed legs</h2>
+          <h2 className={sb.sectionTitle}>4. Proposed Legs</h2>
           {!uncoveredScanResult ? (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              {selectedReadymade === "naked-shorts"
-                ? "Configure parameters in section 3 and run “Fetch Legs” to see uncovered short candidates."
-                : "Proposed legs from readymade strategies will appear here. For Naked Shorts, run a scan in section 3."}
+              {selectedReadymade === "naked-shorts" ||
+              selectedReadymade === "covered-shorts"
+                ? "Configure parameters in section 3 and run “Fetch Legs” to see candidates."
+                : "Proposed legs from readymade strategies will appear here. For Naked or Covered Shorts, run a scan in section 3."}
             </p>
           ) : (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  Uncovered short candidates
+                  {selectedReadymade === "covered-shorts"
+                    ? "Covered short pairs (sell + buy hedge)"
+                    : "Uncovered short candidates"}
                 </h3>
                 <button
                   type="button"
@@ -1198,6 +1690,78 @@ export default function StrategyBuilderPage() {
                             ? "No candidates returned."
                             : "No data.")}
                       </p>
+                    ) : selectedReadymade === "covered-shorts" ? (
+                      <div className="flex flex-col gap-3">
+                        {rows.map((opt, idx) => {
+                          const cardKey = `${kind}-${String(opt.strike_price)}-${idx}`;
+                          const hm = opt.hedge_match as
+                            | HedgeMatchPayload
+                            | undefined;
+                          const pairAdded = isCoveredPairInLegs(
+                            opt,
+                            legs,
+                          );
+                          const canAdd = Boolean(hm?.best);
+                          return (
+                            <div
+                              key={cardKey}
+                              className="rounded-xl border border-zinc-200/80 bg-white/60 p-3 shadow-sm dark:border-zinc-700/80 dark:bg-zinc-950/40"
+                            >
+                              <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch">
+                                <UncoveredScanOptionCard
+                                  opt={opt}
+                                  legAdded={false}
+                                  onAddLeg={() => addUncoveredLeg(opt)}
+                                  omitAddButton
+                                />
+                                <div className="flex flex-col items-center justify-center gap-1 border-y border-dashed border-zinc-300 px-3 py-2 dark:border-zinc-600 lg:min-w-[7rem] lg:border-x lg:border-y-0">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                                    Net premium
+                                  </span>
+                                  <span className="text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
+                                    {coveredPairNetPremiumLabel(opt)}
+                                  </span>
+                                  <span
+                                    className="text-lg text-sky-600 dark:text-sky-400 lg:hidden"
+                                    aria-hidden
+                                  >
+                                    ↓
+                                  </span>
+                                  <span
+                                    className="hidden text-lg text-sky-600 dark:text-sky-400 lg:block"
+                                    aria-hidden
+                                  >
+                                    →
+                                  </span>
+                                </div>
+                                <HedgeSuggestionCard
+                                  best={hm?.best ?? null}
+                                  error={
+                                    hm?.best
+                                      ? undefined
+                                      : (hm?.Error || "").trim() ||
+                                        "No suitable hedge for this short."
+                                  }
+                                />
+                                <div className="flex flex-col justify-end lg:min-w-[9rem]">
+                                  <button
+                                    type="button"
+                                    disabled={pairAdded || !canAdd}
+                                    className={
+                                      pairAdded || !canAdd
+                                        ? "w-full cursor-not-allowed rounded-lg border border-zinc-200 bg-zinc-100 py-2.5 text-sm font-semibold text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/80 dark:text-zinc-400"
+                                        : "w-full rounded-lg border border-sky-600 bg-transparent py-2.5 text-sm font-semibold text-sky-700 transition hover:bg-sky-600 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 dark:border-sky-500 dark:text-sky-300 dark:hover:bg-sky-600 dark:hover:text-white"
+                                    }
+                                    onClick={() => addCoveredPair(opt)}
+                                  >
+                                    {pairAdded ? "Pair added" : "Add pair"}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     ) : (
                       <div className="flex flex-wrap gap-2">
                         {rows.map((opt, idx) => {
@@ -1206,13 +1770,10 @@ export default function StrategyBuilderPage() {
                             <UncoveredScanOptionCard
                               key={cardKey}
                               opt={opt}
-                              onSell={() =>
-                                sellUncoveredOption(
-                                  opt,
-                                  uncoveredResultExchange,
-                                )
-                              }
-                              onAddToBasket={() => addUncoveredToBasket(opt)}
+                              legAdded={addedUncoveredContractKeys.has(
+                                uncoveredScanOptionKey(opt),
+                              )}
+                              onAddLeg={() => addUncoveredLeg(opt)}
                             />
                           );
                         })}
@@ -1225,13 +1786,178 @@ export default function StrategyBuilderPage() {
           )}
         </section>
 
+        <section className={`${sb.section} space-y-4`}>
+          <h2 className={sb.sectionTitle}>5. Legs</h2>
+          <div className="app-table-wrap">
+            <table className="w-full min-w-[640px] border-collapse text-left text-xs">
+              <thead className="app-table-head">
+                <tr>
+                  <th className="px-2 py-1.5 font-medium">Option</th>
+                  <th className="px-2 py-1.5 font-medium">Position</th>
+                  <th className="px-2 py-1.5 font-medium">Quantity</th>
+                  <th className="px-2 py-1.5 font-medium">Price</th>
+                  <th className="px-2 py-1.5 font-medium">Premium</th>
+                  <th className="px-2 py-1.5 font-medium">Margin</th>
+                  <th className="px-2 py-1.5 font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {legs.map((l) => {
+                  const qtyU = Math.round(l.lots * lotSize);
+                  const premTotal =
+                    (l.premiumPerUnit ?? 0) * qtyU;
+                  const legEntry = legMarginCache[l.id];
+                  const legMarginFresh = legMarginEntryMatches(l, legEntry);
+                  return (
+                    <tr key={l.id} className="app-table-row">
+                      <td className="max-w-[14rem] px-2 py-1.5 text-xs text-zinc-800 dark:text-zinc-200">
+                        {formatOptionSymbolLabel(
+                          stockCode,
+                          expiryDate,
+                          l.strike,
+                          l.right,
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <LegPositionChip side={l.side} />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <LegQuantityInput
+                          legId={l.id}
+                          lots={l.lots}
+                          lotSize={lotSize}
+                          onLotsChange={(newLots) =>
+                            setLegs((prev) =>
+                              prev.map((x) =>
+                                x.id === l.id ? { ...x, lots: newLots } : x,
+                              ),
+                            )
+                          }
+                          className={`${sb.tableInput} w-[7.5rem] tabular-nums`}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.05}
+                          className={`${sb.tableInput} w-[6rem] tabular-nums`}
+                          value={
+                            l.premiumPerUnit != null
+                              ? l.premiumPerUnit
+                              : ""
+                          }
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            setLegs((prev) =>
+                              prev.map((x) =>
+                                x.id === l.id
+                                  ? {
+                                      ...x,
+                                      premiumPerUnit: Number.isFinite(v)
+                                        ? v
+                                        : undefined,
+                                    }
+                                  : x,
+                              ),
+                            );
+                          }}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                        {formatIndianMoneyCompact(premTotal)}
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                        {legMarginFetchingId === l.id ? (
+                          "…"
+                        ) : legMarginFresh &&
+                          legEntry != null &&
+                          legEntry.span != null &&
+                          Number.isFinite(legEntry.span) ? (
+                          formatIndianMoneyCompact(legEntry.span)
+                        ) : legMarginFresh && legEntry?.error ? (
+                          legEntry.error
+                        ) : (
+                          <MarginRefreshIconButton
+                            label="Fetch margin for this leg"
+                            onClick={() => void fetchLegMargin(l)}
+                          />
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <button
+                          type="button"
+                          className="text-red-600 dark:text-red-400"
+                          onClick={() =>
+                            setLegs((prev) =>
+                              prev.filter((x) => x.id !== l.id),
+                            )
+                          }
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {selectedReadymade !== "naked-shorts" &&
+            selectedReadymade !== "covered-shorts" ? (
+              <button
+                type="button"
+                className={sb.btnSecondary}
+                disabled={!chainSuccess || strikes.length === 0}
+                onClick={() =>
+                  setLegs((prev) => [
+                    ...prev,
+                    {
+                      id: `leg-${Date.now()}`,
+                      side: "Buy",
+                      right: "Call",
+                      strike: strikes[0]!,
+                      lots: 1,
+                    },
+                  ])
+                }
+              >
+                Add leg
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled={
+                !legs.length ||
+                execMut.isPending ||
+                !stockCode ||
+                !expiryDate
+              }
+              onClick={() => setExecutePreviewOpen(true)}
+              className={sb.btnPrimary}
+            >
+              Execute Legs
+            </button>
+          </div>
+          {execMut.isError ? (
+            <div className="app-alert-error text-xs">
+              {execMut.error instanceof Error
+                ? execMut.error.message
+                : "Execute failed"}
+            </div>
+          ) : null}
+        </section>
+
         <section className={`${sb.section} space-y-5`}>
-          <h2 className={sb.sectionTitle}>5. Payoff simulation</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className={sb.sectionTitle}>6. Payoff Simulation</h2>
+          </div>
           <div className="sticky top-0 z-10 -mx-0.5 py-1">
             <div
               className={`${sb.stickyBar} flex flex-wrap gap-x-6 gap-y-3 text-xs`}
             >
-              <div>
+              <div className="transition-opacity">
                 <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Max profit
                 </div>
@@ -1241,7 +1967,7 @@ export default function StrategyBuilderPage() {
                     : "—"}
                 </div>
               </div>
-              <div>
+              <div className="transition-opacity">
                 <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Max loss
                 </div>
@@ -1251,7 +1977,7 @@ export default function StrategyBuilderPage() {
                     : "—"}
                 </div>
               </div>
-              <div>
+              <div className="transition-opacity">
                 <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Breakevens
                 </div>
@@ -1266,7 +1992,7 @@ export default function StrategyBuilderPage() {
                   POP (model)
                 </div>
                 <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
-                  {scaledLegs.length ? `${pop.toFixed(1)}%` : "—"}
+                  {legs.length ? `${pop.toFixed(1)}%` : "—"}
                 </div>
               </div>
               <div>
@@ -1274,12 +2000,19 @@ export default function StrategyBuilderPage() {
                   Margin (SPAN)
                 </div>
                 <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
-                  {marginQ.isFetching
-                    ? "…"
-                    : spanMargin != null && Number.isFinite(spanMargin)
-                      ? formatIndianMoneyCompact(spanMargin)
-                      : marginState?.Error ??
-                        (marginQ.isError ? "Margin request failed" : "—")}
+                  {marginQ.isFetching ? (
+                    "…"
+                  ) : strategyMarginQtyStale ? (
+                    <MarginRefreshIconButton
+                      label="Refresh margin (SPAN)"
+                      onClick={() => void refetchStrategyMargin()}
+                    />
+                  ) : spanMargin != null && Number.isFinite(spanMargin) ? (
+                    formatIndianMoneyCompact(spanMargin)
+                  ) : (
+                    marginState?.Error ??
+                    (marginQ.isError ? "Margin request failed" : "—")
+                  )}
                 </div>
               </div>
               <div>
@@ -1318,304 +2051,213 @@ export default function StrategyBuilderPage() {
             </div>
             <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
               Solid green = P&amp;L at expiry; dotted violet = mark-to-model now.
-              Amber dashes = breakevens. Drag strike handles to snap to chain
-              strikes.
+              Amber dashes = breakevens. Max profit, max loss, breakevens, and the
+              chart follow your legs and inputs (premiums, IV shock) as you edit.
             </p>
-            <PayoffChart
-              idle={!hasStrategyLegs}
-              xs={xs}
-              ys={ys}
-              xsToday={showToday ? xsToday : undefined}
-              ysToday={showToday ? ysToday : undefined}
-              spot={spot}
-              breakevens={summary.breakevens}
-              strikes={scaledLegs.map((l) => l.strike)}
-              minS={minS}
-              maxS={maxS}
-              onStrikeCommit={strikes.length ? strikeCommit : undefined}
-            />
+            <div className="transition-opacity">
+              <PayoffChart
+                idle={!hasStrategyLegs}
+                xs={xs}
+                ys={ys}
+                xsToday={showToday ? xsToday : undefined}
+                ysToday={showToday ? ysToday : undefined}
+                spot={spot}
+                breakevens={summary.breakevens}
+                strikes={legs.map((l) => l.strike)}
+                minS={minS}
+                maxS={maxS}
+              />
+            </div>
           </div>
 
           <div className="space-y-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                Greeks &amp; IV shock
-              </h3>
-              <label
-                className={`${sb.checkboxRow} text-xs font-medium text-zinc-700 dark:text-zinc-300`}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Greeks &amp; IV shock
+                </h3>
+                <p className="mt-1 max-w-md text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                  Portfolio sensitivities use the same model as the payoff chart
+                  (Black–Scholes, shocked IV).
+                </p>
+              </div>
+              <div
+                className={`${sb.segmentGroup} shrink-0 self-start`}
+                role="group"
+                aria-label="Portfolio Greeks visibility"
               >
-                <input
-                  type="checkbox"
-                  className={sb.checkbox}
-                  checked={showGreeks}
-                  onChange={(e) => setShowGreeks(e.target.checked)}
-                />
-                Show portfolio Greeks
-              </label>
+                <button
+                  type="button"
+                  className={`${sb.segmentBtn} px-3 py-1.5 text-xs ${
+                    !showGreeks ? sb.segmentBtnActive : sb.segmentBtnInactive
+                  }`}
+                  aria-pressed={!showGreeks}
+                  onClick={() => setShowGreeks(false)}
+                >
+                  Hide
+                </button>
+                <button
+                  type="button"
+                  className={`${sb.segmentBtn} px-3 py-1.5 text-xs ${
+                    showGreeks ? sb.segmentBtnActive : sb.segmentBtnInactive
+                  }`}
+                  aria-pressed={showGreeks}
+                  onClick={() => setShowGreeks(true)}
+                >
+                  Show Greeks
+                </button>
+              </div>
             </div>
-            <div className="flex min-w-0 max-w-md flex-col gap-2 sm:flex-row sm:items-center">
-              <span className="shrink-0 text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">
-                IV shock: {ivShockPct >= 0 ? "+" : ""}
-                {ivShockPct}%
-              </span>
-              <input
-                type="range"
-                min={-20}
-                max={20}
-                value={ivShockPct}
-                onChange={(e) => setIvShockPct(Number(e.target.value))}
-                className={`${sb.range} min-w-0 flex-1 sm:max-w-xs`}
-              />
-            </div>
-            {showGreeks && scaledLegs.length ? (
-              <div className="app-table-wrap">
-                <table className="w-full min-w-[280px] border-collapse text-left text-xs">
-                  <thead className="app-table-head">
-                    <tr>
-                      <th className="px-2 py-1.5 font-medium">Δ</th>
-                      <th className="px-2 py-1.5 font-medium">Γ</th>
-                      <th className="px-2 py-1.5 font-medium">Vega</th>
-                      <th className="px-2 py-1.5 font-medium">Θ / day</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="app-table-row">
-                      <td className="px-2 py-1.5 tabular-nums">
-                        {greeks.delta.toFixed(4)}
-                      </td>
-                      <td className="px-2 py-1.5 tabular-nums">
-                        {greeks.gamma.toFixed(6)}
-                      </td>
-                      <td className="px-2 py-1.5 tabular-nums">
-                        {greeks.vega.toFixed(4)}
-                      </td>
-                      <td className="px-2 py-1.5 tabular-nums">
-                        {greeks.thetaPerDay.toFixed(4)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+            <IvShockSlider value={ivShockPct} onChange={setIvShockPct} />
+            {showGreeks && legs.length ? (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {(
+                  [
+                    { key: "delta", label: "Delta", fmt: greeks.delta.toFixed(4) },
+                    {
+                      key: "gamma",
+                      label: "Gamma",
+                      fmt: greeks.gamma.toFixed(6),
+                    },
+                    { key: "vega", label: "Vega", fmt: greeks.vega.toFixed(4) },
+                    {
+                      key: "theta",
+                      label: "Theta / day",
+                      fmt: greeks.thetaPerDay.toFixed(4),
+                    },
+                  ] as const
+                ).map((g) => (
+                  <div
+                    key={g.key}
+                    className="rounded-xl border border-zinc-200/90 bg-gradient-to-b from-white to-zinc-50/90 px-3 py-2.5 shadow-sm ring-1 ring-zinc-950/[0.03] dark:border-zinc-800 dark:from-zinc-900/90 dark:to-zinc-950/70 dark:ring-white/[0.04]"
+                  >
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                      {g.label}
+                    </div>
+                    <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
+                      {g.fmt}
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : null}
           </div>
         </section>
-
-        <section className={`${sb.section} space-y-4`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className={sb.sectionTitle}>6. Legs</h2>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                Global lots ×{globalMult}
-              </span>
-              {[1, 2, 5, 10].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  className={`${sb.outlookChip} ${globalMult === n ? sb.outlookChipOn : sb.outlookChipOff}`}
-                  onClick={() => setGlobalMult(n)}
-                >
-                  {n}×
-                </button>
-              ))}
-            </div>
-          </div>
-          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-            Lot size from chain: {lotSize}. Order quantity = lots × {lotSize}.
-          </p>
-          <div className="app-table-wrap">
-            <table className="w-full min-w-[520px] border-collapse text-left text-xs">
-              <thead className="app-table-head">
-                <tr>
-                  <th className="px-2 py-1.5 font-medium">Side</th>
-                  <th className="px-2 py-1.5 font-medium">Right</th>
-                  <th className="px-2 py-1.5 font-medium">Strike</th>
-                  <th className="px-2 py-1.5 font-medium">Lots</th>
-                  <th className="px-2 py-1.5 font-medium">Prem.</th>
-                  <th className="px-2 py-1.5 font-medium" />
-                </tr>
-              </thead>
-              <tbody>
-                {legs.map((l) => (
-                  <tr key={l.id} className="app-table-row">
-                    <td className="px-2 py-1.5">
-                      <button
-                        type="button"
-                        className={sb.tableToggle}
-                        onClick={() =>
-                          setLegs((prev) =>
-                            prev.map((x) =>
-                              x.id === l.id
-                                ? {
-                                    ...x,
-                                    side: x.side === "Buy" ? "Sell" : "Buy",
-                                  }
-                                : x,
-                            ),
-                          )
-                        }
-                      >
-                        {l.side}
-                      </button>
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <select
-                        className={sb.tableSelect}
-                        value={l.right}
-                        onChange={(e) =>
-                          setLegs((prev) =>
-                            prev.map((x) =>
-                              x.id === l.id
-                                ? {
-                                    ...x,
-                                    right: e.target.value as "Call" | "Put",
-                                  }
-                                : x,
-                            ),
-                          )
-                        }
-                      >
-                        <option value="Call">Call</option>
-                        <option value="Put">Put</option>
-                      </select>
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <select
-                        className={`${sb.tableSelect} max-w-[7.5rem]`}
-                        value={l.strike}
-                        onChange={(e) =>
-                          setLegs((prev) =>
-                            prev.map((x) =>
-                              x.id === l.id
-                                ? {
-                                    ...x,
-                                    strike: Number(e.target.value),
-                                  }
-                                : x,
-                            ),
-                          )
-                        }
-                      >
-                        {strikes.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <input
-                        type="number"
-                        min={1}
-                        className={sb.tableInput}
-                        value={l.lots}
-                        onChange={(e) =>
-                          setLegs((prev) =>
-                            prev.map((x) =>
-                              x.id === l.id
-                                ? {
-                                    ...x,
-                                    lots: Math.max(
-                                      1,
-                                      parseInt(e.target.value, 10) || 1,
-                                    ),
-                                  }
-                                : x,
-                            ),
-                          )
-                        }
-                      />
-                    </td>
-                    <td className="px-2 py-1.5 tabular-nums">
-                      {l.premiumPerUnit != null
-                        ? l.premiumPerUnit.toFixed(2)
-                        : "—"}
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <button
-                        type="button"
-                        className="text-red-600 dark:text-red-400"
-                        onClick={() =>
-                          setLegs((prev) => prev.filter((x) => x.id !== l.id))
-                        }
-                      >
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className={sb.btnSecondary}
-              disabled={!chainSuccess || strikes.length === 0}
-              onClick={() =>
-                setLegs((prev) => [
-                  ...prev,
-                  {
-                    id: `leg-${Date.now()}`,
-                    side: "Buy",
-                    right: "Call",
-                    strike: strikes[0]!,
-                    lots: 1,
-                  },
-                ])
-              }
-            >
-              Add leg
-            </button>
-            <button
-              type="button"
-              disabled={
-                !scaledLegs.length ||
-                execMut.isPending ||
-                !stockCode ||
-                !expiryDate
-              }
-              onClick={() => execMut.mutate()}
-              className={sb.btnPrimary}
-            >
-              {execMut.isPending ? "Placing…" : "Execute strategy (all legs)"}
-            </button>
-            <Link href="/orders" className={`${sb.btnSecondary} self-center`}>
-              Orders
-            </Link>
-          </div>
-          {execMut.isError ? (
-            <div className="app-alert-error text-xs">
-              {execMut.error instanceof Error
-                ? execMut.error.message
-                : "Execute failed"}
-            </div>
-          ) : null}
-          {executeSummary ? (
-            <div className="app-card-muted space-y-2 p-3 text-xs">
-              <div className="font-medium text-zinc-800 dark:text-zinc-200">
-                Last execution: {executeSummary.placed_count} placed,{" "}
-                {executeSummary.failed_count} failed
-              </div>
-              <ul className="list-inside list-disc space-y-1 text-zinc-600 dark:text-zinc-400">
-                {executeSummary.legs.map((r) => (
-                  <li key={r.index}>
-                    Leg {r.index + 1}:{" "}
-                    {r.success ? (
-                      <span className="text-emerald-700 dark:text-emerald-400">
-                        OK
-                      </span>
-                    ) : (
-                      <span className="text-red-700 dark:text-red-400">
-                        {r.error ?? "Failed"}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </section>
       </div>
+
+      {executePreviewOpen ? (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4"
+          role="presentation"
+          onClick={() => {
+            if (!execMut.isPending) setExecutePreviewOpen(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && !execMut.isPending) {
+              setExecutePreviewOpen(false);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="execute-preview-title"
+            className={`${sb.modalPanel} !w-max max-w-[min(96vw,42rem)] mx-auto`}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h3
+                  id="execute-preview-title"
+                  className="text-base font-semibold text-zinc-900 dark:text-zinc-50"
+                >
+                  Confirm execution
+                </h3>
+                <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+                  The following legs will be sent as orders. Total margin is
+                  computed for the full strategy (single SPAN calculation).
+                </p>
+              </div>
+              <button
+                type="button"
+                className="-m-1 shrink-0 rounded-lg p-1.5 text-xl leading-none text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-40 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                onClick={() => {
+                  if (!execMut.isPending) setExecutePreviewOpen(false);
+                }}
+                disabled={execMut.isPending}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <ul className="max-h-64 divide-y divide-zinc-200/90 overflow-x-auto overflow-y-auto rounded-xl border border-zinc-200/80 dark:divide-zinc-700/90 dark:border-zinc-700/80">
+              {legs.map((l) => {
+                const q = Math.round(l.lots * lotSize);
+                const linePrem = (l.premiumPerUnit ?? 0) * q;
+                const label = formatOptionSymbolLabel(
+                  stockCode,
+                  expiryDate,
+                  l.strike,
+                  l.right,
+                );
+                return (
+                  <li key={l.id} className="px-3 py-2.5">
+                    <div className="flex w-max min-w-full flex-nowrap items-center gap-3 text-sm font-normal tabular-nums text-zinc-800 dark:text-zinc-200">
+                      <span className="shrink-0 whitespace-nowrap" title={label}>
+                        {label}
+                      </span>
+                      <LegPositionChip side={l.side} />
+                      <span className="shrink-0 whitespace-nowrap">
+                        Qty {q.toLocaleString("en-IN")}
+                      </span>
+                      <span className="shrink-0 whitespace-nowrap">
+                        @ ₹
+                        {(l.premiumPerUnit ?? 0).toLocaleString("en-IN", {
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                      <span className="shrink-0 whitespace-nowrap">
+                        Premium {formatIndianMoneyCompact(linePrem)}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="mt-3 rounded-lg bg-zinc-100/90 px-3 py-2 text-sm dark:bg-zinc-800/80">
+              <span className="font-semibold text-zinc-800 dark:text-zinc-100">
+                Total margin required (SPAN):{" "}
+              </span>
+              <span className="tabular-nums text-zinc-900 dark:text-zinc-50">
+                {marginQ.isFetching ? (
+                  "…"
+                ) : spanMargin != null && Number.isFinite(spanMargin) ? (
+                  formatIndianMoneyCompact(spanMargin)
+                ) : (
+                  marginState?.Error ??
+                  (marginQ.isError ? "Margin request failed" : "—")
+                )}
+              </span>
+            </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                className={`${sb.btnPrimary} min-w-[10rem]`}
+                disabled={
+                  execMut.isPending ||
+                  !stockCode ||
+                  !expiryDate ||
+                  !legs.length
+                }
+                onClick={() => execMut.mutate()}
+              >
+                {execMut.isPending ? "Placing…" : "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {nakedPrompt ? (
         <div
@@ -1629,7 +2271,7 @@ export default function StrategyBuilderPage() {
           <div
             role="dialog"
             aria-modal="true"
-            className={`${sb.modalPanel} max-w-md`}
+            className={`${sb.modalPanel} w-full max-w-md`}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
           >

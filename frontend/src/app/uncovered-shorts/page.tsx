@@ -21,8 +21,8 @@ function Inner() {
           <code className="text-zinc-600 dark:text-zinc-400">/uncovered-shorts/data</code>.
         </p>
         {q && <pre className="app-pre mt-4 max-h-40">{q}</pre>}
-        <Link href="/strategies" className="app-link mt-4 inline-block text-xs">
-          Back to strategies
+        <Link href="/strategy-builder" className="app-link mt-4 inline-block text-xs">
+          Back to Strategy Builder
         </Link>
       </section>
     </AppShell>

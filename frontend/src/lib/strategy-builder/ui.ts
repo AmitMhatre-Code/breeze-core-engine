@@ -54,7 +54,7 @@ export const sb = {
   cardTemplateAmber:
     "rounded-xl border border-amber-200/90 bg-gradient-to-b from-amber-50 to-amber-50/30 p-3.5 text-left text-xs text-zinc-950 shadow-sm transition hover:border-amber-300 hover:shadow-md disabled:opacity-50 dark:border-amber-900/40 dark:from-amber-950/50 dark:to-amber-950/20 dark:text-zinc-50 dark:hover:border-amber-800/60",
   modalPanel:
-    "max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl border border-zinc-200/90 bg-white p-5 shadow-2xl ring-1 ring-zinc-950/5 dark:border-zinc-800 dark:bg-zinc-900 dark:ring-white/10",
+    "max-h-[90vh] w-full space-y-4 overflow-y-auto rounded-2xl border border-zinc-200/90 bg-white p-5 shadow-2xl ring-1 ring-zinc-950/5 dark:border-zinc-800 dark:bg-zinc-900 dark:ring-white/10",
   radioRow:
     "flex cursor-pointer items-center gap-2.5 text-xs font-medium text-zinc-700 dark:text-zinc-300",
   radio:

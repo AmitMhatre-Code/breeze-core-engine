@@ -42,6 +42,17 @@ def _expiry_api_to_display(expiry: str) -> str:
     return datetime.datetime.strptime(s, fmt).strftime("%d-%b-%Y")
 
 
+def _expiry_to_breeze_place_order(expiry_date) -> str:
+    """ICICI Breeze place_order expects API expiry; accept DD-Mon-YYYY or YYYY-MM-DD… from callers."""
+    s = str(expiry_date).strip()
+    if not s:
+        return ""
+    try:
+        return _expiry_display_to_api(s)
+    except ValueError:
+        return _expiry_display_to_api(_expiry_api_to_display(s))
+
+
 def _days_to_expiry(expiry_str: str) -> int:
     """Days until expiry (include both start and end). Accepts DD-Mon-YYYY or YYYY-MM-DD or YYYY-MM-DDT06:00:00.000Z."""
     s = expiry_str.removesuffix("T06:00:00.000Z")
@@ -1045,16 +1056,43 @@ class processor():
 
                 # build the ATM premium ratio curve
                 hedge_chain = sorted(hedge_chain, key=lambda x: x['distance_from_spot'], reverse=False)
-                atm_premium  = hedge_chain[0]['best_offer_price']
+                if not hedge_chain:
+                    sorted_hedges['Success'] = None
+                    sorted_hedges['Error'] = (
+                        "No hedge candidates between spot and short strike "
+                        "(liquidity / LTP / hedge rules)"
+                    )
+                    sorted_hedges['Status'] = 400
+                    return sorted_hedges
+                atm_premium = hedge_chain[0]['best_offer_price']
+                try:
+                    atm_pf = float(atm_premium)
+                except (TypeError, ValueError):
+                    atm_pf = 0.0
+                if atm_pf <= 0:
+                    sorted_hedges['Success'] = None
+                    sorted_hedges['Error'] = "ATM premium is zero; cannot size hedge"
+                    sorted_hedges['Status'] = 400
+                    return sorted_hedges
                 premium_curve = []
                 for option in hedge_chain:
                     premium = {}
                     premium['distance_from_spot'] = option['distance_from_spot']
-                    premium['premium_ratio'] = option['best_offer_price'] / atm_premium
+                    premium['premium_ratio'] = float(option['best_offer_price']) / atm_pf
                     premium_curve.append(premium)
 
-                
-                lot_size = self.fetch_lot_size(stock_code=stock_code,expiry_date=expiry_date, exchange_code=exchange_code)
+                # scrip_master uses DD-Mon-YYYY; hedge() often receives API expiry — normalize like get_full_option_chain.
+                lot_expiry = _expiry_api_to_display(str(expiry_date).strip()) if expiry_date else ""
+                lot_size = self.fetch_lot_size(
+                    stock_code=stock_code,
+                    expiry_date=lot_expiry,
+                    exchange_code=exchange_code,
+                )
+                if lot_size is None or int(lot_size) <= 0:
+                    sorted_hedges['Success'] = None
+                    sorted_hedges['Error'] = "Could not resolve lot size for expiry (scrip master)"
+                    sorted_hedges['Status'] = 400
+                    return sorted_hedges
 
                 # calculate hedging quantity and therefore hedging premium across the hedge option chain
                 for option in hedge_chain:
@@ -1071,7 +1109,8 @@ class processor():
                 sorted_hedges['Success'] = hedge_chain[:top]
                 sorted_hedges['Status'] = 200
                 sorted_hedges['Error'] = ""
-            except:
+            except Exception as e:  # noqa: BLE001
+                _logger.warning("hedge(): %s", e, exc_info=True)
                 sorted_hedges['Success'] = None
                 sorted_hedges['Error'] = "Error fetching hedging options"
                 sorted_hedges['Status'] = 400
@@ -1267,26 +1306,55 @@ class processor():
 
     def place_order(self,user_id,product_type,stock_code,action,strike_price,right,price,expiry_date,quantity, exchange_code: str = cfg.NFO):
         breeze = self.get_session_breeze(user_id)
-        expiry_api = _expiry_display_to_api(expiry_date)
+        if breeze is None:
+            return _icici_error(
+                "Unable to connect to broker. Please log out and log back in.",
+            )
+        try:
+            expiry_api = _expiry_to_breeze_place_order(expiry_date)
+        except (ValueError, TypeError) as e:
+            return _icici_error(f"Invalid expiry_date for order: {expiry_date!r} ({e})")
+
+        # Breeze validates with .lower() but forwards the raw strings in JSON; ICICI often expects lowercase enums.
+        prod = str(product_type or "").strip().lower()
+        act = str(action or "").strip().lower()
+        rgt = str(right or "").strip().lower() if right not in (None, "") else ""
+        try:
+            strike = str(int(float(strike_price)))
+        except (TypeError, ValueError):
+            strike = str(strike_price)
+        try:
+            qty_str = str(int(quantity))
+        except (TypeError, ValueError):
+            qty_str = str(quantity)
+        prc = str(price).strip()
+
         try:
             response = breeze.place_order(
                 stock_code=stock_code,
-                action=action,
-                strike_price=strike_price,
-                right=right,
-                price=price,
+                action=act,
+                strike_price=strike,
+                right=rgt,
+                price=prc,
                 expiry_date=expiry_api,
                 validity="day",
-                order_type=cfg.LIMIT,
-                quantity=quantity,
-                validity_date=str(datetime.date.today())+"T06:00:00.000Z",
+                order_type=str(cfg.LIMIT).strip().lower(),
+                quantity=qty_str,
+                validity_date=str(datetime.date.today()) + "T06:00:00.000Z",
                 stoploss="",
                 disclosed_quantity="0",
                 exchange_code=exchange_code,
-                product=product_type,
+                product=prod,
             )
         except Exception as e:
-            response = _icici_error(f"Error calling ICICI Breeze API place_order: {e}")
+            err = str(e)
+            if "Expecting value" in err or "JSONDecodeError" in type(e).__name__:
+                response = _icici_error(
+                    "Broker returned an empty or non-JSON response when placing the order "
+                    "(session may have expired — re-login to ICICI — or the request was rejected upstream).",
+                )
+            else:
+                response = _icici_error(f"Error calling ICICI Breeze API place_order: {e}")
 
         self._maybe_evict_session(user_id, response)
         return response

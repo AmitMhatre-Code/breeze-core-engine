@@ -19,7 +19,6 @@ const navItems = [
   { href: "/performance", label: "Performance" },
   { href: "/orders", label: "Orders" },
   { href: "/trade-options-chain", label: "Trade Options Chain" },
-  { href: "/strategies", label: "Strategies" },
   { href: "/strategy-builder", label: "Strategy Builder" },
   { href: "/settings", label: "Settings" },
 ];
@@ -84,9 +83,7 @@ export function AppShell({
             const active =
               item.href === "/dashboard"
                 ? pathname === "/" || pathname.startsWith("/dashboard")
-                : item.href === "/strategies"
-                  ? pathname === "/strategies"
-                  : pathname.startsWith(item.href);
+                : pathname.startsWith(item.href);
             return (
               <Link
                 key={item.href}

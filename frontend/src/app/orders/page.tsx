@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { AppShell } from "@/components/layout/AppShell";
+import { OrderBookDatePopover } from "@/components/order/OrderBookDatePopover";
 import { PrefilledOrderCard } from "@/components/order/PrefilledOrderCard";
 import { apiClient } from "@/lib/api-client";
 
@@ -71,14 +72,8 @@ type BookDataResponse = {
   orders_failed: boolean;
 };
 
-const ordersLegToggleClass =
-  "inline-flex items-center gap-1.5 rounded-lg border border-zinc-200/90 bg-white px-3 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-sky-300 hover:bg-sky-50/90 hover:text-sky-900 dark:border-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-200 dark:hover:border-sky-500/40 dark:hover:bg-sky-950/50 dark:hover:text-sky-100";
-
 const ordersCancelBarClass =
   "flex flex-wrap items-center justify-end gap-3 rounded-xl border border-zinc-200/80 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur-sm dark:border-zinc-700/80 dark:bg-zinc-900/70";
-
-const ordersCancelSubmitClass =
-  "inline-flex h-10 min-h-10 items-center justify-center rounded-lg bg-red-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 disabled:pointer-events-none dark:bg-red-600 dark:hover:bg-red-500";
 
 function sidePillClass(action: string | undefined): string {
   const a = String(action ?? "")
@@ -149,20 +144,15 @@ function messageClass(type: string | undefined): string {
   return "border-zinc-200 bg-zinc-50 text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-200";
 }
 
-const MONTH_SHORT = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const;
+/** Map derivatives segment codes to parent exchange labels for display only. */
+function formatExchangeDisplay(code: string | undefined): string {
+  const raw = String(code ?? "").trim();
+  if (!raw) return "";
+  const u = raw.toUpperCase();
+  if (u === "NFO") return "NSE";
+  if (u === "BFO") return "BSE";
+  return raw;
+}
 
 /** Integer quantities with Indian-style grouping (e.g. 12,34,567). */
 function formatQtyIndian(raw: unknown): string {
@@ -173,39 +163,6 @@ function formatQtyIndian(raw: unknown): string {
   return Math.trunc(n).toLocaleString("en-IN", {
     maximumFractionDigits: 0,
   });
-}
-
-/** Formats API / input `yyyy-mm-dd` as `dd-mmm-yyyy` for display. */
-function formatIsoDateDdMmmYyyy(iso: string): string {
-  const t = iso.trim();
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
-  if (!m) return t;
-  const y = Number(m[1]);
-  const mo = Number(m[2]);
-  const d = Number(m[3]);
-  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return t;
-  const day = String(d).padStart(2, "0");
-  return `${day}-${MONTH_SHORT[mo - 1]}-${y}`;
-}
-
-function CalendarGlyph({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <rect x="3" y="4" width="18" height="18" rx="2" />
-      <path d="M16 2v4M8 2v4M3 10h18" />
-    </svg>
-  );
 }
 
 function DismissMessageGlyph({ className }: { className?: string }) {
@@ -417,67 +374,25 @@ function OrdersBody() {
 
           <BookMessages key={brokerMessagesKey} messages={messages} />
 
-          <div className="orders-date-surface">
+          <div className="orders-date-surface overflow-visible">
             <p className="orders-date-caption">Date range</p>
             <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
-              <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
-                <div className="relative min-w-0 flex-1">
-                  <label htmlFor="order-book-start" className="sr-only">
-                    Start date
-                  </label>
-                  <CalendarGlyph className="pointer-events-none absolute left-3 top-1/2 z-[2] size-4 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
-                  <div className="orders-date-picker-field">
-                    <div
-                      className="orders-date-field-display tabular-nums"
-                      aria-hidden
-                    >
-                      {inputStart ? (
-                        formatIsoDateDdMmmYyyy(inputStart)
-                      ) : (
-                        <span className="text-zinc-400 dark:text-zinc-500">
-                          Select date
-                        </span>
-                      )}
-                    </div>
-                    <input
-                      id="order-book-start"
-                      type="date"
-                      className="orders-date-input-overlay"
-                      value={inputStart}
-                      onChange={(e) => setDraftStart(e.target.value)}
-                    />
-                  </div>
-                </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-visible sm:flex-row sm:items-center sm:gap-3">
+                <OrderBookDatePopover
+                  id="order-book-start"
+                  label="Start date"
+                  value={inputStart}
+                  onChange={setDraftStart}
+                />
                 <span className="orders-date-sep sm:px-0.5" aria-hidden>
                   to
                 </span>
-                <div className="relative min-w-0 flex-1">
-                  <label htmlFor="order-book-end" className="sr-only">
-                    End date
-                  </label>
-                  <CalendarGlyph className="pointer-events-none absolute left-3 top-1/2 z-[2] size-4 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
-                  <div className="orders-date-picker-field">
-                    <div
-                      className="orders-date-field-display tabular-nums"
-                      aria-hidden
-                    >
-                      {inputEnd ? (
-                        formatIsoDateDdMmmYyyy(inputEnd)
-                      ) : (
-                        <span className="text-zinc-400 dark:text-zinc-500">
-                          Select date
-                        </span>
-                      )}
-                    </div>
-                    <input
-                      id="order-book-end"
-                      type="date"
-                      className="orders-date-input-overlay"
-                      value={inputEnd}
-                      onChange={(e) => setDraftEnd(e.target.value)}
-                    />
-                  </div>
-                </div>
+                <OrderBookDatePopover
+                  id="order-book-end"
+                  label="End date"
+                  value={inputEnd}
+                  onChange={setDraftEnd}
+                />
               </div>
               <button
                 type="button"
@@ -546,15 +461,40 @@ function OrdersBody() {
                         <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
                           Executed
                         </th>
-                        <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400" />
+                        <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                          <span className="sr-only">Expand group</span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/90">
                       {groups.map((g, idx) => {
                         const isOpen = !!expanded[g.group];
+                        const groupLabel = String(g.group_option ?? g.group ?? "Group");
+                        const toggleGroupRow = () =>
+                          setExpanded((prev) => ({
+                            ...prev,
+                            [g.group]: !prev[g.group],
+                          }));
                         return (
                           <Fragment key={g.group}>
-                            <tr className="transition-colors hover:bg-zinc-50/90 dark:hover:bg-zinc-800/35">
+                            <tr
+                              className="cursor-pointer transition-colors hover:bg-zinc-50/90 dark:hover:bg-zinc-800/35"
+                              role="button"
+                              tabIndex={0}
+                              aria-expanded={isOpen}
+                              aria-label={
+                                isOpen
+                                  ? `Collapse orders for ${groupLabel}`
+                                  : `Expand orders for ${groupLabel}`
+                              }
+                              onClick={toggleGroupRow}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  toggleGroupRow();
+                                }
+                              }}
+                            >
                               <td className="px-4 py-3.5 align-middle tabular-nums text-zinc-400 dark:text-zinc-500">
                                 {idx + 1}
                               </td>
@@ -581,20 +521,8 @@ function OrdersBody() {
                               <td className="px-4 py-3.5 align-middle text-center tabular-nums font-medium text-emerald-700 dark:text-emerald-300">
                                 {formatQtyIndian(g.group_executed)}
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-right">
-                                <button
-                                  type="button"
-                                  className={ordersLegToggleClass}
-                                  onClick={() =>
-                                    setExpanded((prev) => ({
-                                      ...prev,
-                                      [g.group]: !prev[g.group],
-                                    }))
-                                  }
-                                >
-                                  <ChevronGlyph expanded={isOpen} />
-                                  {isOpen ? "Hide legs" : "View legs"}
-                                </button>
+                              <td className="px-4 py-3.5 align-middle text-right text-zinc-500 dark:text-zinc-400">
+                                <ChevronGlyph expanded={isOpen} />
                               </td>
                             </tr>
                             {isOpen ? (
@@ -671,7 +599,9 @@ function OrdersBody() {
                                                   {o.option}
                                                 </td>
                                                 <td className="px-4 py-2.5 align-middle text-center text-xs text-zinc-600 dark:text-zinc-400">
-                                                  {o.exchange_code}
+                                                  {formatExchangeDisplay(
+                                                    o.exchange_code,
+                                                  )}
                                                 </td>
                                                 <td className="px-4 py-2.5 align-middle text-center">
                                                   <span
@@ -755,21 +685,21 @@ function OrdersBody() {
                     disabled={cancelMut.isPending || selected.size === 0}
                     aria-busy={cancelMut.isPending}
                     className={[
-                      ordersCancelSubmitClass,
+                      "app-btn-primary h-10 min-h-10 shrink-0 whitespace-nowrap",
                       cancelMut.isPending
-                        ? "cursor-wait"
-                        : "disabled:opacity-50",
+                        ? "cursor-wait disabled:!opacity-100"
+                        : "",
                     ].join(" ")}
                   >
-                    <span className="inline-grid place-items-center">
+                    <span className="inline-grid grid-cols-1 grid-rows-1 place-items-center">
                       <span
-                        className="col-start-1 row-start-1 font-semibold opacity-0"
+                        className="invisible col-start-1 row-start-1 font-semibold"
                         aria-hidden
                       >
                         Cancel selected
                       </span>
                       <span
-                        className="col-start-1 row-start-1 font-semibold opacity-0"
+                        className="invisible col-start-1 row-start-1 font-semibold"
                         aria-hidden
                       >
                         Cancelling…
@@ -816,6 +746,7 @@ function OrdersBody() {
                         ) : null}
                         {(g.group_orders ?? []).map((o, j) => {
                           const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
+                          const exch = formatExchangeDisplay(o.exchange_code);
                           return (
                             <div
                               key={key || j}
@@ -824,6 +755,7 @@ function OrdersBody() {
                               <p className="text-base font-medium text-zinc-900 dark:text-zinc-100">
                                 {o.option}
                               </p>
+                              {exch ? <p>Exchange: {exch}</p> : null}
                               <p>Side: {o.action}</p>
                               <p>Qty: {formatQtyIndian(o.quantity)}</p>
                               <p>Open: {formatQtyIndian(o.open_quantity)}</p>

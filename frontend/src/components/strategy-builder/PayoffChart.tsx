@@ -14,12 +14,11 @@ type Props = {
   strikes: number[];
   minS: number;
   maxS: number;
-  /** Called with old strike and snapped new strike when user finishes dragging a handle. */
-  onStrikeCommit?: (fromStrike: number, toStrike: number) => void;
   height?: number;
 };
 
-const PAD_L = 48;
+/** Left padding: room for y-axis tick labels + vertical axis title. */
+const PAD_L = 46;
 const PAD_R = 16;
 const PAD_T = 12;
 const PAD_B = 28;
@@ -39,14 +38,12 @@ export function PayoffChart({
   strikes,
   minS,
   maxS,
-  onStrikeCommit,
   height = 220,
 }: Props) {
   const W = 640;
   const H = height;
   const innerW = W - PAD_L - PAD_R;
   const innerH = H - PAD_T - PAD_B;
-  const pxPerUnit = innerW / (maxS - minS || 1);
 
   const { minY, maxY, pathD, pathTodayD, spotX, breakevenXs, strikeXs } =
     useMemo(() => {
@@ -141,7 +138,7 @@ export function PayoffChart({
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
-      className="h-auto w-full max-w-full text-zinc-500 dark:text-zinc-400"
+      className="pointer-events-none h-auto w-full max-w-full text-zinc-500 dark:text-zinc-400"
       role="img"
       aria-label="Payoff diagram"
     >
@@ -169,7 +166,7 @@ export function PayoffChart({
             : "stroke-zinc-300 dark:stroke-zinc-600"
         }
         strokeDasharray="4 4"
-        strokeWidth={idle ? 0.75 : 1}
+        strokeWidth={idle ? 0.6 : 0.75}
       />
       {yTicks.map((t, i) => (
         <g key={i}>
@@ -183,18 +180,19 @@ export function PayoffChart({
                 ? "stroke-zinc-200/45 dark:stroke-zinc-800/40"
                 : "stroke-zinc-200/80 dark:stroke-zinc-800/80"
             }
-            strokeWidth={idle ? 0.5 : 1}
+            strokeWidth={idle ? 0.4 : 0.55}
           />
           <text
-            x={PAD_L - 6}
+            x={PAD_L - 4}
             y={yScaleFn(t)}
             textAnchor="end"
             dominantBaseline="middle"
             className={
               idle
-                ? "fill-zinc-400 text-[9px] dark:fill-zinc-600"
-                : "fill-zinc-500 text-[9px] dark:fill-zinc-500"
+                ? "fill-zinc-400 font-normal tabular-nums dark:fill-zinc-600"
+                : "fill-zinc-500 font-normal tabular-nums dark:fill-zinc-500"
             }
+            fontSize={5.5}
           >
             {t >= 1e5 || t <= -1e5 ? `${(t / 1e5).toFixed(1)}L` : t.toFixed(0)}
           </text>
@@ -205,8 +203,8 @@ export function PayoffChart({
           d={pathTodayD}
           fill="none"
           className="stroke-violet-500/85 dark:stroke-violet-400/80"
-          strokeWidth={1.75}
-          strokeDasharray="5 4"
+          strokeWidth={1}
+          strokeDasharray="4 3"
         />
       ) : null}
       {!idle && pathD ? (
@@ -214,7 +212,9 @@ export function PayoffChart({
           d={pathD}
           fill="none"
           className="stroke-emerald-600/92 dark:stroke-emerald-400/88"
-          strokeWidth={2}
+          strokeWidth={1.15}
+          strokeLinecap="round"
+          strokeLinejoin="round"
         />
       ) : null}
       {spotX != null ? (
@@ -228,7 +228,7 @@ export function PayoffChart({
               ? "stroke-sky-500/25 dark:stroke-sky-400/20"
               : "stroke-sky-500/75 dark:stroke-sky-400/70"
           }
-          strokeWidth={idle ? 1 : 1.5}
+          strokeWidth={idle ? 0.75 : 1}
         />
       ) : null}
       {!idle &&
@@ -240,7 +240,7 @@ export function PayoffChart({
             y1={PAD_T}
             y2={PAD_T + innerH}
             className="stroke-amber-500/38 dark:stroke-amber-400/32"
-            strokeWidth={0.85}
+            strokeWidth={0.65}
             strokeDasharray="4 4"
           />
         ))}
@@ -252,47 +252,14 @@ export function PayoffChart({
             y1={PAD_T}
             y2={PAD_T + innerH}
             className="stroke-zinc-400/50 dark:stroke-zinc-500/40"
-            strokeWidth={1}
+            strokeWidth={0.65}
           />
-          {onStrikeCommit ? (
-            <rect
-              x={x - 8}
-              y={PAD_T}
-              width={16}
-              height={innerH}
-              className="cursor-ew-resize fill-transparent hover:fill-sky-500/10"
-              onPointerDown={(e) => {
-                const target = e.currentTarget;
-                target.setPointerCapture(e.pointerId);
-                const startX = e.clientX;
-                const startStrike = strike;
-
-                const onMove = () => {
-                  /* optional live preview */
-                };
-                const onUp = (ev: PointerEvent) => {
-                  window.removeEventListener("pointermove", onMove);
-                  window.removeEventListener("pointerup", onUp);
-                  try {
-                    target.releasePointerCapture(ev.pointerId);
-                  } catch {
-                    /* ignore */
-                  }
-                  const dx = ev.clientX - startX;
-                  const dS = dx / pxPerUnit;
-                  const raw = startStrike + dS;
-                  onStrikeCommit(startStrike, raw);
-                };
-                window.addEventListener("pointermove", onMove);
-                window.addEventListener("pointerup", onUp);
-              }}
-            />
-          ) : null}
           <text
             x={x}
-            y={H - 6}
+            y={H - 5}
             textAnchor="middle"
-            className="fill-zinc-600 text-[9px] dark:fill-zinc-400"
+            className="fill-zinc-600 font-normal tabular-nums dark:fill-zinc-400"
+            fontSize={5.5}
           >
             {strike}
           </text>
@@ -304,29 +271,32 @@ export function PayoffChart({
           y={PAD_T + innerH / 2}
           textAnchor="middle"
           dominantBaseline="middle"
-          className="fill-zinc-400 text-[11px] dark:fill-zinc-500"
+          className="fill-zinc-400 text-[10px] dark:fill-zinc-500"
         >
           Pick a readymade strategy or add legs to see payoff
         </text>
       ) : null}
       <text
         x={PAD_L + innerW / 2}
-        y={H - 2}
+        y={PAD_T + innerH + 3}
         textAnchor="middle"
+        dominantBaseline="hanging"
         className={
           idle
-            ? "fill-zinc-500/70 text-[10px] dark:fill-zinc-500/60"
-            : "fill-zinc-500 text-[10px] dark:fill-zinc-500"
+            ? "fill-zinc-500/70 font-normal dark:fill-zinc-500/60"
+            : "fill-zinc-500 font-normal dark:fill-zinc-500"
         }
+        fontSize={6.5}
       >
         Underlying at expiry
       </text>
       <text
-        x={4}
+        x={PAD_L - 2}
         y={PAD_T + innerH / 2}
-        transform={`rotate(-90 4 ${PAD_T + innerH / 2})`}
+        transform={`rotate(-90 ${PAD_L - 2} ${PAD_T + innerH / 2})`}
         textAnchor="middle"
-        className="fill-zinc-500 text-[10px] dark:fill-zinc-500"
+        className="fill-zinc-500 font-normal dark:fill-zinc-500"
+        fontSize={6.5}
       >
         P&amp;L
       </text>

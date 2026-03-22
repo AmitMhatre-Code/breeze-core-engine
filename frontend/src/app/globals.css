@@ -77,8 +77,8 @@ body {
   }
 
   /**
-   * Order book date range: use html.dark descendant rules so styling survives even if
-   * `dark:*` utilities are missed (dynamic strings) or variant ordering shifts.
+   * Order book date range surface + fetch button: html.dark descendants so styling
+   * survives if `dark:*` utilities are missed or variant ordering shifts.
    */
   .orders-date-surface {
     border-radius: 0.75rem;
@@ -89,80 +89,6 @@ body {
   html.dark .orders-date-surface {
     border-color: rgb(39 39 42);
     background-color: rgb(9 9 11);
-  }
-  .orders-date-picker-field {
-    position: relative;
-    width: 100%;
-    min-width: 11rem;
-    color-scheme: light;
-  }
-  html.dark .orders-date-picker-field {
-    color-scheme: dark;
-  }
-  .orders-date-field-display {
-    box-sizing: border-box;
-    display: flex;
-    height: 2.75rem;
-    width: 100%;
-    min-width: 11rem;
-    align-items: center;
-    border-radius: 0.75rem;
-    border: 1px solid rgb(228 228 231);
-    background-color: #fff;
-    padding: 0 2.25rem 0 2.5rem;
-    font-size: 0.875rem;
-    line-height: 1.25rem;
-    color: rgb(24 24 24);
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
-    outline: none;
-    pointer-events: none;
-    transition:
-      border-color 0.15s ease,
-      box-shadow 0.15s ease;
-    color-scheme: light;
-  }
-  .orders-date-picker-field:hover .orders-date-field-display {
-    border-color: rgb(212 212 216);
-  }
-  .orders-date-picker-field:focus-within .orders-date-field-display {
-    border-color: rgb(14 165 233);
-    box-shadow: 0 0 0 2px rgb(14 165 233 / 0.2);
-  }
-  html.dark .orders-date-field-display {
-    border-color: rgb(82 82 91);
-    background-color: rgb(39 39 42);
-    color: rgb(250 250 250);
-    box-shadow: none;
-    color-scheme: dark;
-  }
-  html.dark .orders-date-picker-field:hover .orders-date-field-display {
-    border-color: rgb(113 113 122);
-  }
-  html.dark .orders-date-picker-field:focus-within .orders-date-field-display {
-    border-color: rgb(56 189 248);
-    box-shadow: 0 0 0 2px rgb(56 189 248 / 0.25);
-  }
-  .orders-date-picker-field input[type="date"].orders-date-input-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 10;
-    box-sizing: border-box;
-    height: 100%;
-    width: 100%;
-    margin: 0;
-    cursor: pointer;
-    border: 0;
-    padding: 0;
-    opacity: 0;
-    color-scheme: inherit;
-  }
-  .orders-date-picker-field
-    input[type="date"].orders-date-input-overlay::-webkit-calendar-picker-indicator {
-    position: absolute;
-    inset: 0;
-    height: 100%;
-    width: 100%;
-    cursor: pointer;
   }
   .orders-fetch-btn {
     display: inline-flex;

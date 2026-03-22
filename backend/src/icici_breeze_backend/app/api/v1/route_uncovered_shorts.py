@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from fastapi import Request, Depends
 from fastapi import HTTPException
 from typing import Optional
+from icici_breeze_backend.app.api.v1.covered_shorts_scan import run_covered_shorts_scan
 from icici_breeze_backend.app.auth.context import get_request_context, get_request_context_or_redirect, RequestContext
 from icici_breeze_backend.app.domain.responses import (
     UncoveredShortsDataResponse,
@@ -103,3 +104,34 @@ async def get_uncovered_shorts_scan(
         ce_options=raw.get("ce_options") or {},
         pe_options=raw.get("pe_options") or {},
     )
+
+
+@router.get("/covered-shorts-scan", response_model=UncoveredShortsScanResponse)
+async def get_covered_shorts_scan(
+    stock_code: str,
+    expiry_date: str,
+    limits: int,
+    top: int,
+    otm_call_distance: int = 10,
+    otm_put_distance: int = 10,
+    provision_elm: Optional[str] = None,
+    exchange_code: str = cfg.NFO,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Same as Strategy Builder covered scan: uncovered shorts (top 1–5) + best hedge per row."""
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    out = run_covered_shorts_scan(
+        breeze,
+        ctx.user_id,
+        stock_code,
+        expiry_date,
+        limits,
+        top,
+        otm_call_distance=otm_call_distance,
+        otm_put_distance=otm_put_distance,
+        provision_elm=provision_elm,
+        exchange_code=exchange_code,
+    )
+    AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "CoveredShortsScan")
+    return out

@@ -1,12 +1,14 @@
 """Strategy Builder JSON API: chain, underlyings, multi-leg margin, orchestrated execution."""
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend
 from icici_breeze_backend.app.auth.context import get_request_context, RequestContext
+from icici_breeze_backend.app.api.v1.covered_shorts_scan import run_covered_shorts_scan
+from icici_breeze_backend.app.domain.responses import UncoveredShortsScanResponse
 from icici_breeze_backend.app.domain.strategy_builder import (
     StrategyBuilderChainResponse,
     StrategyBuilderExecuteRequest,
@@ -68,6 +70,37 @@ async def get_chain(
     data = breeze.get_full_option_chain(ctx.user_id, stock_code.strip(), exchange_code, expiry_date.strip())
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderChain")
     return StrategyBuilderChainResponse(**data)
+
+
+@router.get("/covered-shorts-scan", response_model=UncoveredShortsScanResponse)
+async def get_covered_shorts_scan(
+    stock_code: str,
+    expiry_date: str,
+    limits: int,
+    top: int,
+    otm_call_distance: int = 10,
+    otm_put_distance: int = 10,
+    provision_elm: Optional[str] = None,
+    exchange_code: str = cfg.NFO,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Uncovered short scan (top 1–5) plus best hedge per candidate via processor.hedge."""
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    out = run_covered_shorts_scan(
+        breeze,
+        ctx.user_id,
+        stock_code,
+        expiry_date,
+        limits,
+        top,
+        otm_call_distance=otm_call_distance,
+        otm_put_distance=otm_put_distance,
+        provision_elm=provision_elm,
+        exchange_code=exchange_code,
+    )
+    AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderCoveredShortsScan")
+    return out
 
 
 @router.post("/margin", response_model=StrategyBuilderMarginResponse)
