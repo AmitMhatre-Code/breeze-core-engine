@@ -309,14 +309,33 @@ async def _complete_icici_session(
         )
         margin_status = margin_check.get("Status") or margin_check.get("status")
         err = (margin_check.get("Error") or margin_check.get("error") or "").lower()
+        raw_err = (margin_check.get("Error") or margin_check.get("error") or "").strip()
         if margin_status != 200 or "invalid checksum" in err:
             logger.warning(
-                "login_submit secret_validation_failed user_id=%s status=%s error=%s",
+                "login_submit margin_probe_failed user_id=%s status=%s error=%s",
                 form.user_id,
                 margin_status,
                 err,
             )
-            raise HTTPException(status_code=400, detail="The secret fragment is incorrect. Please try again.")
+            if "invalid checksum" in err:
+                raise HTTPException(status_code=400, detail="The secret fragment is incorrect. Please try again.")
+            if "time out" in err:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "ICICI margin API returned a session timeout while verifying your login. "
+                        "Your secret fragment is often still correct. Try again shortly, complete ICICI login a bit faster, "
+                        "or sync the host clock (NTP). If this keeps happening, contact ICICI support."
+                    ),
+                )
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Broker validation failed after login. "
+                    + (raw_err if raw_err else "Unknown error from ICICI.")
+                    + " This is not necessarily a wrong secret fragment."
+                ),
+            )
 
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         google_id = get_google_id_by_user_id(conn, form.user_id)

@@ -86,6 +86,18 @@ def call_icici_api_direct(
         raw = (time_stamp + "\r\n" + payload).encode("utf-8")
         checksum_hmac = _b64.b64encode(_hmac.new(secret.encode("utf-8"), raw, digestmod=hashlib.sha256).digest()).decode("ascii")
         out = _do_request(checksum_hmac)
+    st = out.get("Status") or out.get("status")
+    err = (out.get("Error") or out.get("error") or "").lower()
+    if st not in (200, None) and "time out" in err:
+        # ICICI sometimes returns spurious "Request Time Out" on margin; fresh timestamp may succeed.
+        time_stamp = datetime.utcnow().isoformat()[:19] + ".000Z"
+        checksum_sha = hashlib.sha256((time_stamp + payload + secret).encode("utf-8")).hexdigest()
+        out = _do_request(checksum_sha)
+        err = (out.get("Error") or out.get("error") or "").lower()
+        if "invalid checksum" in err:
+            raw = (time_stamp + "\r\n" + payload).encode("utf-8")
+            checksum_hmac = _b64.b64encode(_hmac.new(secret.encode("utf-8"), raw, digestmod=hashlib.sha256).digest()).decode("ascii")
+            out = _do_request(checksum_hmac)
     if (out.get("Status") or out.get("status")) not in (200, None):
         _logger.warning(
             "ICICI API direct call failed: endpoint=%s status=%s error=%r",

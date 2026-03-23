@@ -112,6 +112,17 @@ function ChallengeForm() {
             {submitting ? "Signing in…" : "Submit"}
           </button>
         </form>
+        <div className="mt-6 space-y-3 text-center text-[11px] text-zinc-500">
+          <Link href="/login" className="app-link">
+            Back to login
+          </Link>
+          <p>
+            Wrong credentials?{" "}
+            <Link href="/register/correct" className="app-link">
+              Update credentials
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   );
