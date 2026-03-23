@@ -31,6 +31,10 @@ const nextConfig: NextConfig = {
       },
       { source: "/home/data", destination: `${backendUpstream}/home/data` },
       {
+        source: "/dashboard/vix",
+        destination: `${backendUpstream}/dashboard/vix`,
+      },
+      {
         source: "/dashboard/vix/:path*",
         destination: `${backendUpstream}/dashboard/vix/:path*`,
       },

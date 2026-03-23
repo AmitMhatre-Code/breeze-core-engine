@@ -10,6 +10,7 @@ breeze = processor()
 
 
 @router.get("/vix")
+@router.get("/vix/")
 async def get_dashboard_vix(ctx: RequestContext = Depends(get_request_context)):
     """Fast: current VIX, NIFTY spot, ~3m INDVIX history. Use /vix/options for ATM IV, expected range."""
     if not ctx.broker_token:
@@ -18,6 +19,7 @@ async def get_dashboard_vix(ctx: RequestContext = Depends(get_request_context)):
 
 
 @router.get("/vix/options")
+@router.get("/vix/options/")
 async def get_dashboard_vix_options(ctx: RequestContext = Depends(get_request_context)):
     """NIFTY spot, next expiry, ATM IV, expected range (1σ), put:call OI ratio."""
     if not ctx.broker_token:
@@ -26,6 +28,7 @@ async def get_dashboard_vix_options(ctx: RequestContext = Depends(get_request_co
 
 
 @router.get("/vix/options/atm")
+@router.get("/vix/options/atm/")
 async def get_dashboard_vix_options_atm(ctx: RequestContext = Depends(get_request_context)):
     """First expiry only: NIFTY, ATM IV, expected range."""
     if not ctx.broker_token:
