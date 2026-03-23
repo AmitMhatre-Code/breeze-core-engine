@@ -5,10 +5,9 @@ Counted in: requests_patch (SDK via requests.api.request), CustomerDetails + cal
 """
 import sqlite3
 import threading
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.timezone import today_ist_date
 
 API_CALLS_LIMIT_PER_DAY = 5000
 GREEN_MAX = 4000
@@ -20,7 +19,7 @@ _lock = threading.Lock()
 
 def _today_ist() -> str:
     """Return today's date in IST as YYYY-MM-DD."""
-    return datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    return today_ist_date().isoformat()
 
 
 def record_breeze_call_if_in_request(url: str) -> None:

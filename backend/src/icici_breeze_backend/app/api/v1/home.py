@@ -30,6 +30,7 @@ from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend,
 from icici_breeze_backend.app.api.v1.google_icici_redirect import redirect_to_icici_login
 from icici_breeze_backend.app.auth.user_account import get_google_id_by_user_id, user_account_exists_by_user_id
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.timezone import now_ist
 
 
 logger = logging.getLogger(__name__)
@@ -89,12 +90,10 @@ def _login_query_from_request(request: Request) -> str:
 
 
 def _set_auth_cookies(response: Response, icici_token: str, access_token: str, full_secret: str | None) -> None:
-    from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo
+    from datetime import timedelta
 
     def _secs_until_midnight() -> int:
-        ist = ZoneInfo("Asia/Kolkata")
-        now = datetime.now(ist)
+        now = now_ist()
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
         return int((midnight - now).total_seconds())
 

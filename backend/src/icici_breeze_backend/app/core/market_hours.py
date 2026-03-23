@@ -1,8 +1,7 @@
 """India NSE/BSE market hours. Used to block integration tests during trading."""
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
-IST = ZoneInfo("Asia/Kolkata")
+from icici_breeze_backend.app.core.timezone import IST
 # NSE/BSE regular market: 9:15 AM - 3:30 PM IST, Mon-Fri
 MARKET_OPEN_HOUR = 9
 MARKET_OPEN_MINUTE = 15

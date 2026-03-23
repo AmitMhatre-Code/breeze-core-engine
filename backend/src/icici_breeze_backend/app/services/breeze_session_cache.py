@@ -6,14 +6,13 @@ import hashlib
 import logging
 import threading
 import time
-from datetime import datetime
 from typing import Any, Optional
-from zoneinfo import ZoneInfo
+
+from icici_breeze_backend.app.core.timezone import now_ist
 
 _logger = logging.getLogger(__name__)
 
 # Default: use end of day IST as TTL cap. Override with BREEZE_SESSION_CACHE_TTL_SECONDS (e.g. 14400 for 4h).
-IST = ZoneInfo("Asia/Kolkata")
 
 
 def _cache_key(user_id: str, broker_token: str) -> str:
@@ -24,7 +23,7 @@ def _cache_key(user_id: str, broker_token: str) -> str:
 
 def _seconds_until_midnight_ist() -> float:
     """Seconds from now until next midnight IST (capped at 24h)."""
-    now = datetime.now(IST)
+    now = now_ist()
     from datetime import timedelta
     next_midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     delta = (next_midnight - now).total_seconds()

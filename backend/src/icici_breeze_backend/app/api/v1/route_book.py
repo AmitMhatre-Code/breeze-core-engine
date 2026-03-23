@@ -3,6 +3,7 @@ import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.timezone import today_ist_date
 from icici_breeze_backend.app.api.error_utils import raise_route_errors
 from icici_breeze_backend.app.api.frontend_redirect import json_redirect, redirect_to_frontend
 from icici_breeze_backend.app.auth.context import (
@@ -78,7 +79,7 @@ async def get_book_data(
     start = (start or "").strip() or None
     end = (end or "").strip() or None
     if start is None or end is None:
-        start = datetime.datetime.today().strftime("%Y-%m-%d")
+        start = today_ist_date().strftime("%Y-%m-%d")
         start_date = datetime.datetime.strptime(start, "%Y-%m-%d")
         next_day = start_date
         while True:

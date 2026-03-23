@@ -7,6 +7,7 @@ import time
 from breeze_connect import BreezeConnect
 import json
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.timezone import IST, now_ist, today_ist_date
 import requests
 import zipfile
 import os
@@ -14,7 +15,6 @@ from pathlib import Path
 from collections import defaultdict
 import sqlite3
 import csv
-from zoneinfo import ZoneInfo
 import re
 from markupsafe import Markup
 
@@ -67,12 +67,12 @@ def _days_to_expiry(expiry_str: str) -> int:
     s = expiry_str.removesuffix("T06:00:00.000Z")
     try:
         if len(s.split("-")[0]) == 4:  # YYYY-MM-DD
-            future = datetime.datetime.strptime(s, "%Y-%m-%d")
+            future_d = datetime.datetime.strptime(s, "%Y-%m-%d").date()
         else:  # DD-Mon-YYYY
-            future = datetime.datetime.strptime(s, "%d-%b-%Y")
+            future_d = datetime.datetime.strptime(s, "%d-%b-%Y").date()
     except ValueError:
         return 0
-    return (future - datetime.datetime.today()).days + 2
+    return (future_d - today_ist_date()).days + 2
 
 
 def _parse_option_expiry_date(raw) -> datetime.date | None:
@@ -555,8 +555,7 @@ class processor():
                 margin_situation["Success"]["actual_margin_avl"] = cash_limit + actual_margin_ute
                 margin_situation["Success"]["target_margin_free"] = cash_limit * (100 - target_margin_ute) / 100
                 margin_situation["Success"]["limits"] = margin_situation["Success"]["actual_margin_avl"] - margin_situation["Success"]["target_margin_free"]
-                ist = ZoneInfo("Asia/Kolkata")
-                margin_situation["Success"]["last_refresh"] = datetime.datetime.now(ist).strftime("%d-%b-%Y %H:%M:%S")
+                margin_situation["Success"]["last_refresh"] = now_ist().strftime("%d-%b-%Y %H:%M:%S")
             else:
                 margin_situation["Status"] = status if status is not None else 400
                 margin_situation["Error"] = err_msg
@@ -1371,7 +1370,7 @@ class processor():
                 validity="day",
                 order_type=str(cfg.LIMIT).strip().lower(),
                 quantity=qty_str,
-                validity_date=str(datetime.date.today()) + "T06:00:00.000Z",
+                validity_date=str(today_ist_date()) + "T06:00:00.000Z",
                 stoploss="",
                 disclosed_quantity="0",
                 exchange_code=exchange_code,
@@ -1510,11 +1509,13 @@ class processor():
         result = {}
         try:
             creation_timestamp = os.path.getmtime(cfg.DATA_PATH+cfg.SCRIP_DB)
-            creation_date = datetime.datetime.fromtimestamp(creation_timestamp)
+            creation_utc = datetime.datetime.fromtimestamp(
+                creation_timestamp, tz=datetime.timezone.utc
+            )
+            creation_ist = creation_utc.astimezone(IST)
             creation = {}
-            creation['date'] = creation_date.strftime("%d-%b-%Y")
-            today = datetime.datetime.today()
-            creation['age'] = (today - creation_date).days
+            creation['date'] = creation_ist.strftime("%d-%b-%Y")
+            creation['age'] = (today_ist_date() - creation_ist.date()).days
             
             result['Status'] = 200
             result['Error'] = None
@@ -1662,8 +1663,8 @@ class processor():
         return response
 
     def get_financial_years(self):
-        # Get today's date
-        today = datetime.datetime.today()
+        # Get today's date (IST; India FY)
+        today = now_ist()
         
         # Extract the current year
         current_year = today.year
@@ -1692,7 +1693,7 @@ class processor():
         # → full start→end (do not keep growing the denominator after the FY ends).
         start_d = datetime.datetime.strptime(start, "%Y-%m-%d").date()
         end_d = datetime.datetime.strptime(end, "%Y-%m-%d").date()
-        today_d = datetime.date.today()
+        today_d = today_ist_date()
         if today_d > end_d:
             period = max(1, (end_d - start_d).days)
         else:
@@ -2161,7 +2162,7 @@ class processor():
             end_date = kwargs.get('end_date')
             # Default date range: last 90 days if not provided
             if not start_date or not end_date:
-                today = datetime.date.today()
+                today = today_ist_date()
                 end_date = end_date or today.strftime("%Y-%m-%d")
                 start_date = start_date or (today - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
             if user_id:
@@ -2188,8 +2189,8 @@ class processor():
         # fallback: if caller provided a user_id (args or kwargs), use legacy breeze path
         user_id = args[0] if args else kwargs.get('user_id')
         if user_id:
-            start = kwargs.get('start_date') or (datetime.date.today() - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
-            end = kwargs.get('end_date') or datetime.date.today().strftime("%Y-%m-%d")
+            start = kwargs.get('start_date') or (today_ist_date() - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
+            end = kwargs.get('end_date') or today_ist_date().strftime("%Y-%m-%d")
             return self.get_orders(user_id, start, end)
         return {'Status': 400, 'Error': 'broker_token or user_id required for real-time orders'}
 

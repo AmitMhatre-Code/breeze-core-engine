@@ -4,16 +4,15 @@ import datetime
 import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
-from zoneinfo import ZoneInfo
-
-# NSE index options: expiry = last trading at market close on expiry date (3:30 PM IST).
-IST = ZoneInfo("Asia/Kolkata")
-NSE_INDEX_OPTION_LTT_HOUR = 15
-NSE_INDEX_OPTION_LTT_MINUTE = 30
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.market_hours import get_reference_time_for_iv_ist, is_india_market_open
+from icici_breeze_backend.app.core.timezone import IST, now_ist_naive, today_ist_date
 from icici_breeze_backend.app.services.iv_compute import DEFAULT_R, DEFAULT_Q, expected_range_from_atm_iv, implied_volatility
+
+# NSE index options: expiry = last trading at market close on expiry date (3:30 PM IST).
+NSE_INDEX_OPTION_LTT_HOUR = 15
+NSE_INDEX_OPTION_LTT_MINUTE = 30
 
 _logger = logging.getLogger(__name__)
 
@@ -59,6 +58,57 @@ VIX_HISTORY_MONTHS = 3
 # Breeze HIST_CHART often returns ~30 calendar days per call; use smaller chunks and merge.
 VIX_HIST_API_CHUNK_DAYS = 28
 
+_EN_MONTH = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+
+
+def _parse_expiry_raw(raw) -> Optional[datetime.date]:
+    """
+    Parse scrip master / API expiry to a calendar date.
+    Accepts DD-Mon-YYYY (ICICI display) or YYYY-MM-DD (common SQLite DATE form).
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    s = s.removesuffix("T06:00:00.000Z").strip()
+    if len(s) >= 10 and s[4] == "-":
+        try:
+            return datetime.datetime.strptime(s[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    try:
+        return datetime.datetime.strptime(s, "%d-%b-%Y").date()
+    except ValueError:
+        return None
+
+
+def _expiry_date_to_display(d: datetime.date) -> str:
+    """DD-Mon-YYYY for Breeze option-chain APIs (English month abbrev, zero-padded day)."""
+    return f"{d.day:02d}-{_EN_MONTH[d.month - 1]}-{d.year}"
+
+
+def _pick_nifty_expiry_for_iv(expiries_display: List[str]) -> Optional[Tuple[str, float]]:
+    """First listed expiry with strictly positive time to LTT in IST."""
+    for exp in expiries_display:
+        ty = _expiry_to_t_years(exp)
+        if ty > 0:
+            return (exp, ty)
+    return None
+
 
 def _expiry_display_to_api(expiry: str) -> str:
     """DD-Mon-YYYY -> YYYY-MM-DDT06:00:00.000Z."""
@@ -97,21 +147,18 @@ def _expiry_to_t_years(expiry_str: str) -> float:
 def _get_nifty_expiries(processor) -> List[str]:
     """Return sorted list of NIFTY expiry dates (display format DD-Mon-YYYY), next 3."""
     codes = processor.fetch_stock_codes()
+    today_ist = today_ist_date()
     for item in codes:
         if item.get("stock_code") == NIFTY_SYMBOL:
             expiries = item.get("expiry_dates") or []
-            # Sort by date; filter past
-            today = datetime.datetime.now()
-            valid = []
+            by_date: Dict[datetime.date, str] = {}
             for e in expiries:
-                try:
-                    dt = datetime.datetime.strptime(e, "%d-%b-%Y")
-                    if dt.date() >= today.date():
-                        valid.append((dt, e))
-                except ValueError:
+                ed = _parse_expiry_raw(e)
+                if ed is None or ed < today_ist:
                     continue
-            valid.sort(key=lambda x: x[0])
-            return [e for _, e in valid[:3]]
+                by_date[ed] = _expiry_date_to_display(ed)
+            sorted_dates = sorted(by_date.keys())
+            return [by_date[d] for d in sorted_dates[:3]]
     return []
 
 
@@ -614,7 +661,7 @@ def fetch_vix_core(user_id: str, processor) -> Dict[str, Any]:
         except (TypeError, ValueError):
             pass
 
-    end_d = datetime.datetime.now()
+    end_d = now_ist_naive()
     y, m = end_d.year, end_d.month - VIX_HISTORY_MONTHS
     while m < 1:
         m += 12
@@ -660,12 +707,13 @@ def fetch_vix_options(user_id: str, processor) -> Dict[str, Any]:
     if not expiries_display:
         return result
 
-    exp = expiries_display[0]
+    picked = _pick_nifty_expiry_for_iv(expiries_display)
+    if picked is None:
+        return result
+
+    exp, t_years = picked
     result["next_expiry"] = exp
     expiry_api = _expiry_display_to_api(exp)
-    t_years = _expiry_to_t_years(exp)
-    if t_years <= 0:
-        return result
 
     calls = _option_chain(breeze, expiry_api, "call")
     puts = _option_chain(breeze, expiry_api, "put")
@@ -732,13 +780,14 @@ def fetch_vix_options_atm_skew(user_id: str, processor) -> Dict[str, Any]:
         result["error"] = "No option expiries found."
         return result
 
-    exp = expiries_display[0]
-    result["next_expiry"] = exp
-    expiry_api = _expiry_display_to_api(exp)
-    t_years = _expiry_to_t_years(exp)
-    if t_years <= 0:
+    picked = _pick_nifty_expiry_for_iv(expiries_display)
+    if picked is None:
         result["error"] = "Expiry not valid for IV calculation."
         return result
+
+    exp, t_years = picked
+    result["next_expiry"] = exp
+    expiry_api = _expiry_display_to_api(exp)
 
     try:
         t2 = time.perf_counter()
