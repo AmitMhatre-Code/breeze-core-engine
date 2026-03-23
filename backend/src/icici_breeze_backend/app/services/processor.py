@@ -1527,6 +1527,17 @@ class processor():
 
         return result
 
+    @staticmethod
+    def _resolve_extracted_file(output_path: str, extracted_paths: list[str], filename: str) -> str:
+        """Prefer DATA_PATH/filename, else any extracted path with matching basename (ZIP may use subfolders)."""
+        direct = os.path.join(output_path, filename)
+        if os.path.isfile(direct):
+            return direct
+        for p in extracted_paths:
+            if os.path.isfile(p) and os.path.basename(p) == filename:
+                return p
+        return direct
+
     def update_ICICImaster(self):
         url = cfg.ICICI_MASTERFILE_URL
         output_path = cfg.DATA_PATH
@@ -1555,11 +1566,15 @@ class processor():
                 zip_ref.extractall(output_path)
                 _logger.info("Extracted %d items to %s", len(zip_ref.namelist()), output_path)
 
-            # Load quantity limits for both exchanges before inserting scrip rows.
-            # (Quantity limits files are expected under cfg.DATA_PATH.)
+            nse_limits_path = self._resolve_extracted_file(
+                output_path, extracted_paths, cfg.LIMITS_MASTER_NSE
+            )
+            bse_limits_path = self._resolve_extracted_file(
+                output_path, extracted_paths, cfg.LIMITS_MASTER_BSE
+            )
             self.load_qty_limits([
-                (os.path.join(cfg.DATA_PATH, cfg.LIMITS_MASTER_NSE), cfg.NFO),
-                (os.path.join(cfg.DATA_PATH, cfg.LIMITS_MASTER_BSE), cfg.BFO),
+                (nse_limits_path, cfg.NFO),
+                (bse_limits_path, cfg.BFO),
             ])
 
             scrip_targets = [
@@ -1625,9 +1640,10 @@ class processor():
 
             rows = []
             for limits_path, segment_code in limits_specs:
-                if not limits_path or not os.path.exists(limits_path):
-                    _logger.warning("Quantity limits file not found: %s", limits_path)
-                    continue
+                if not limits_path or not os.path.isfile(limits_path):
+                    raise FileNotFoundError(
+                        f"Quantity limits file missing (master load aborted): {limits_path}"
+                    )
                 with open(limits_path, newline='') as limitsfile:
                     reader = csv.DictReader(limitsfile)
                     for row in reader:
@@ -1640,10 +1656,12 @@ class processor():
                         ))
 
             if not rows:
-                raise FileNotFoundError("No quantity limits rows loaded from NSEFreezeLimits/BSEFreezeLimits.")
+                raise ValueError(
+                    "No quantity limits rows loaded from NSE/BSE freeze limits (files empty or invalid)."
+                )
 
             cursor.executemany(
-                'INSERT OR REPLACE INTO raw_limits_data (InstrumentName, ShortName, ExchangeCode, SegmentCode, QtyLimit) VALUES (?,?,?,?,?)',
+                "INSERT OR REPLACE INTO raw_limits_data (InstrumentName, ShortName, ExchangeCode, SegmentCode, QtyLimit) VALUES (?,?,?,?,?)",
                 rows,
             )
             conn.commit()
@@ -2011,8 +2029,9 @@ class processor():
                 cursor.executemany('INSERT INTO raw_scrip_data VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', rows)
             _logger.info("Loaded raw_scrip_data from CSV (%d rows)", len(rows))
 
-            # Insert filtered and joined data into scrip_master (limits from persistent raw_limits_data)
-            cursor.execute('''
+            # Requires raw_limits_data populated by load_qty_limits (master load fails if limits missing).
+            cursor.execute(
+                """
             INSERT INTO scrip_master (ShortName, ExpiryDate, StrikePrice, OptionType, LotSize, QuantityLimit, CompanyName, ExchangeCode, SegmentCode)
             SELECT 
                 scrips.ShortName, 
@@ -2030,7 +2049,9 @@ class processor():
              AND scrips.ExchangeCode = limits.ExchangeCode
              AND limits.SegmentCode = ?
             WHERE scrips.Series = "OPTION"
-            ''', (exchange_code,))
+            """,
+                (exchange_code,),
+            )
             _logger.info("Inserted filtered data into scrip_master")
 
             # Drop temp table (raw_limits_data is persistent)

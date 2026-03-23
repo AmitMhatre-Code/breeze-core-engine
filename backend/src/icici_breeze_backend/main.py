@@ -171,6 +171,35 @@ def _ensure_app_database() -> None:
             _logger.exception("user_account schema migration failed")
 
 
+def _ensure_freeze_limit_files() -> None:
+    """Copy NSE/BSE freeze limits from db-templates into DATA_PATH when missing.
+
+    Production often bind-mounts host data over /app/backend/data, which hides files
+    baked into the image; templates live under db-templates/ (see Dockerfile).
+    """
+    import shutil
+
+    from icici_breeze_backend.core import config as cfg
+
+    tpl = getattr(cfg, "DB_TEMPLATE_PATH", "") or ""
+    if not tpl or not os.path.isdir(tpl.rstrip(os.sep)):
+        return
+    for name in (cfg.LIMITS_MASTER_NSE, cfg.LIMITS_MASTER_BSE):
+        dest = cfg.DATA_PATH + name
+        if os.path.isfile(dest):
+            continue
+        src = tpl + name
+        if os.path.isfile(src):
+            try:
+                shutil.copy2(src, dest)
+                _logger.info(
+                    "Seeded %s into data dir from db-templates (volume had no copy).",
+                    name,
+                )
+            except OSError as e:
+                _logger.warning("Could not copy %s to data dir: %s", name, e)
+
+
 def _ensure_scrips_database() -> None:
     """Create scrips.sqlite3 from template when missing or empty."""
     import shutil
@@ -202,6 +231,7 @@ def _ensure_scrips_database() -> None:
 def start_application():
     _ensure_app_database()
     _ensure_scrips_database()
+    _ensure_freeze_limit_files()
     import icici_breeze_backend.app.core.config as cfg
     has_secret = bool(cfg.JWT_SECRET and cfg.JWT_SECRET.strip())
     if has_secret:

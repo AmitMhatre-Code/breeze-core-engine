@@ -47,6 +47,8 @@ COPY backend/ ./
 RUN mkdir -p db-templates \
  && cp data/users.empty.sqlite3 db-templates/ \
  && cp data/scrips.empty.sqlite3 db-templates/ \
+ && cp data/NSEFreezeLimits.txt db-templates/ \
+ && cp data/BSEFreezeLimits.txt db-templates/ \
  && cp data/users.empty.sqlite3 data/users.sqlite3 \
  && cp data/scrips.empty.sqlite3 data/scrips.sqlite3
 
