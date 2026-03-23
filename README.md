@@ -69,7 +69,7 @@ This sources the root `.env`, runs uvicorn on port **8000** and Next on **3000**
 
 If **`ICICI_BREEZE_INSECURE_SSL`** is unset, `dev.sh` sets it to **`1`** so `breeze_connect`’s import-time HTTPS download can succeed when verification fails (common behind corporate TLS inspection or on some macOS Python installs). To keep strict verification, set `ICICI_BREEZE_INSECURE_SSL=false` in `.env` or run `ICICI_BREEZE_INSECURE_SSL=0 ./dev.sh`.
 
-ICICI master downloads, `scrip_master.db`, and quantity-limit text files use **`backend/data/`**, resolved from the installed package layout (not the process cwd), same as Docker’s `/app/backend/data`.
+ICICI master downloads, `scrips.sqlite3`, and quantity-limit text files use **`backend/data/`**, resolved from the installed package layout (not the process cwd), same as Docker’s `/app/backend/data`.
 
 Manual steps (equivalent to what `dev.sh` does):
 

@@ -26,7 +26,7 @@ async def redirect_to_icici_login(request: Request) -> RedirectResponse:
     if not data:
         return RedirectResponse(url=frontend_url("/login?error=oauth_invalid"), status_code=302)
     google_id, _ = data
-    with sqlite3.connect(cfg.DATA_PATH + "db.sqlite3") as conn:
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         user_id = get_user_id_by_google_id(conn, google_id)
     if not user_id:
         return RedirectResponse(url=frontend_url("/login?error=no_account"), status_code=302)

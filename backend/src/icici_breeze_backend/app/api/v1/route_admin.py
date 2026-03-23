@@ -32,7 +32,7 @@ _harness_running = False
 
 def get_user_is_admin(user_id: str) -> bool:
     """Check if user has is_admin=1 in user_account."""
-    db_path = cfg.DATA_PATH + "db.sqlite3"
+    db_path = cfg.DATA_PATH + cfg.USERS_DB
     if not os.path.isfile(db_path):
         return False
     try:

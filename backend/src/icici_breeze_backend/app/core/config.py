@@ -3,7 +3,10 @@ from icici_breeze_backend.core import config as _cfg
 
 # Re-export all for app usage
 DATA_PATH = _cfg.DATA_PATH
+USERS_DB = _cfg.USERS_DB
 SCRIP_DB = _cfg.SCRIP_DB
+USERS_EMPTY_DB = _cfg.USERS_EMPTY_DB
+SCRIPS_EMPTY_DB = _cfg.SCRIPS_EMPTY_DB
 ICICI_MASTERFILE_URL = _cfg.ICICI_MASTERFILE_URL
 SCRIP_MASTER = _cfg.SCRIP_MASTER
 SCRIP_MASTER_BSE = getattr(_cfg, "SCRIP_MASTER_BSE", "")

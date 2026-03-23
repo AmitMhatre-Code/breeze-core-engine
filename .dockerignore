@@ -9,3 +9,8 @@ legacy
 **/.env
 **/.env.*
 .DS_Store
+
+# Local app DB — image seeds from db.empty.sqlite3 in Dockerfile.
+backend/data/users.sqlite3
+backend/data/users.sqlite3-wal
+backend/data/users.sqlite3-shm

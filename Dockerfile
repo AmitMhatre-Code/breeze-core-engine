@@ -47,6 +47,8 @@ WORKDIR /app/backend
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./
+RUN cp data/db.empty.sqlite3 data/users.sqlite3 \
+ && cp data/scrips.empty.sqlite3 data/scrips.sqlite3
 
 WORKDIR /app/frontend
 COPY --from=frontend-builder /app/package.json /app/package-lock.json ./

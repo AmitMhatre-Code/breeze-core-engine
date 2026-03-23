@@ -318,7 +318,7 @@ async def _complete_icici_session(
             )
             raise HTTPException(status_code=400, detail="The secret fragment is incorrect. Please try again.")
 
-    with sqlite3.connect(cfg.DATA_PATH + "db.sqlite3") as conn:
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         google_id = get_google_id_by_user_id(conn, form.user_id)
     if not google_id:
         logger.warning("login_submit no google_id for user_id=%s", form.user_id)

@@ -119,7 +119,7 @@ logs/
 *.log
 
 # Database files
-data/db.sqlite3
-data/scrip_master.db
+data/users.sqlite3
+data/scrips.sqlite3
 
 legacy/

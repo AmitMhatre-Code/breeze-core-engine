@@ -9,6 +9,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend source + static/data/logs.
 COPY . ./
 
+# App DBs are gitignored locally; ship empty schemas from committed templates.
+RUN cp data/db.empty.sqlite3 data/users.sqlite3 \
+ && cp data/scrips.empty.sqlite3 data/scrips.sqlite3
+
 # Ensure `icici_breeze_backend` (under `src/`) is importable.
 ENV PYTHONPATH=/app/backend/src
 

@@ -7,7 +7,7 @@ import icici_breeze_backend.app.core.config as cfg
 
 def get_sync_db_path() -> str:
     """Path to main SQLite database."""
-    return cfg.DATA_PATH + "db.sqlite3"
+    return cfg.DATA_PATH + cfg.USERS_DB
 
 
 def get_scrip_db_path() -> str:

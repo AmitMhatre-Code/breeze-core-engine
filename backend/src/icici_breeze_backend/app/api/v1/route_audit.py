@@ -25,7 +25,7 @@ async def get_audit_logs(
     operation_type: str | None = None,
 ) -> AuditLogListResponse:
     """Return audit log entries for compliance (admin only). 30-day retention."""
-    db_path = cfg.DATA_PATH + "db.sqlite3"
+    db_path = cfg.DATA_PATH + cfg.USERS_DB
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()

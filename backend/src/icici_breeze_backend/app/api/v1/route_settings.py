@@ -68,11 +68,11 @@ async def settings_credentials_post(
         raise HTTPException(status_code=400, detail="Could not save credentials")
     google_id = getattr(ctx, "google_id", None)
     if not google_id:
-        with sqlite3.connect(cfg.DATA_PATH + "db.sqlite3") as conn:
+        with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
             google_id = get_google_id_by_user_id(conn, ctx.user_id)
     if not google_id:
         raise HTTPException(status_code=400, detail="No account linked")
-    with sqlite3.connect(cfg.DATA_PATH + "db.sqlite3") as conn:
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         row = conn.execute(
             "SELECT roles FROM user_account WHERE google_id = ?",
             (google_id,),
@@ -81,7 +81,7 @@ async def settings_credentials_post(
         raise HTTPException(status_code=400, detail="No account linked")
     roles = row[0] or '["trader"]'
     try:
-        with sqlite3.connect(cfg.DATA_PATH + "db.sqlite3") as conn:
+        with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
             if change_user_id(
                 conn,
                 ctx.user_id,

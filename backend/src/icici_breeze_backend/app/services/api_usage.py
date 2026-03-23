@@ -14,7 +14,7 @@ API_CALLS_LIMIT_PER_DAY = 5000
 GREEN_MAX = 4000
 AMBER_MAX = 4500
 
-_DB_PATH = cfg.DATA_PATH + "db.sqlite3"
+_DB_PATH = cfg.DATA_PATH + cfg.USERS_DB
 _lock = threading.Lock()
 
 

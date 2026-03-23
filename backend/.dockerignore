@@ -1,0 +1,5 @@
+# Build context is ./backend — exclude local app DB; Dockerfile copies db.empty.sqlite3 → users.sqlite3.
+data/users.sqlite3
+data/users.sqlite3-wal
+data/users.sqlite3-shm
+data/scrips.sqlite3

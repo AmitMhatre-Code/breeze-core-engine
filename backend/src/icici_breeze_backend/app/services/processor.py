@@ -219,7 +219,7 @@ class processor():
         """
         result = {}
         try:
-            with sqlite3.connect(cfg.DATA_PATH + "db.sqlite3") as conn:
+            with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT broker_api_key, secret_fragment, encryption_salt, fragment_position "

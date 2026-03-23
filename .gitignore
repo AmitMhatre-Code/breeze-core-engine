@@ -47,8 +47,12 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# --- Backend runtime (Docker volumes / local downloads & DBs) ---
-backend/data/
+# --- Backend runtime ---
+# Version-control backend/data except the local app DBs (clone from db.empty.sqlite3 / scrips.empty.sqlite3 at runtime / image build).
+backend/data/users.sqlite3
+backend/data/users.sqlite3-wal
+backend/data/users.sqlite3-shm
+backend/data/scrips.sqlite3
 backend/logs/
 
 # --- OS & editors ---

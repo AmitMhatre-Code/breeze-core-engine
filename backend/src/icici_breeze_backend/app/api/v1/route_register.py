@@ -14,7 +14,7 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/register", tags=["register"])
 cred_manager = CredentialManager(encryption_key=(cfg.JWT_SECRET or "").strip())
-DB_PATH = cfg.DATA_PATH + "db.sqlite3"
+DB_PATH = cfg.DATA_PATH + cfg.USERS_DB
 
 
 def _get_google_data_from_cookie(request: Request) -> tuple[str | None, str | None]:

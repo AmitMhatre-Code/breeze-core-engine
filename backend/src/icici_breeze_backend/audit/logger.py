@@ -88,7 +88,7 @@ class AuditLogger:
             import sqlite3
             import icici_breeze_backend.app.core.config as cfg
 
-            db_path = cfg.DATA_PATH + "db.sqlite3"
+            db_path = cfg.DATA_PATH + cfg.USERS_DB
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
                 cur.execute(

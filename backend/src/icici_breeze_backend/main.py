@@ -126,7 +126,51 @@ def include_router(app):
     app.include_router(app_router)
 
 
+def _ensure_app_database() -> None:
+    """Create users.sqlite3 from db.empty.sqlite3 when missing (fresh clone, empty bind mount)."""
+    import shutil
+
+    from icici_breeze_backend.core import config as cfg
+
+    db_path = cfg.DATA_PATH + cfg.USERS_DB
+    template = cfg.DATA_PATH + cfg.USERS_EMPTY_DB
+    if os.path.isfile(db_path):
+        return
+    if os.path.isfile(template):
+        shutil.copy2(template, db_path)
+        _logger.info("Initialized app database at %s from %s.", db_path, cfg.USERS_EMPTY_DB)
+    else:
+        _logger.warning(
+            "App database missing at %s and no template at %s.",
+            db_path,
+            template,
+        )
+
+
+def _ensure_scrips_database() -> None:
+    """Create scrips.sqlite3 from scrips.empty.sqlite3 when missing (same schema, no rows)."""
+    import shutil
+
+    from icici_breeze_backend.core import config as cfg
+
+    db_path = cfg.DATA_PATH + cfg.SCRIP_DB
+    template = cfg.DATA_PATH + cfg.SCRIPS_EMPTY_DB
+    if os.path.isfile(db_path):
+        return
+    if os.path.isfile(template):
+        shutil.copy2(template, db_path)
+        _logger.info("Initialized scrips database at %s from %s.", db_path, cfg.SCRIPS_EMPTY_DB)
+    else:
+        _logger.warning(
+            "Scrips database missing at %s and no template at %s.",
+            db_path,
+            template,
+        )
+
+
 def start_application():
+    _ensure_app_database()
+    _ensure_scrips_database()
     import icici_breeze_backend.app.core.config as cfg
     has_secret = bool(cfg.JWT_SECRET and cfg.JWT_SECRET.strip())
     if has_secret:

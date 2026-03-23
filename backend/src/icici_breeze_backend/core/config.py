@@ -4,7 +4,10 @@ import os
 _core_dir = os.path.dirname(os.path.abspath(__file__))
 _BACKEND_ROOT = os.path.abspath(os.path.join(_core_dir, "..", "..", ".."))
 DATA_PATH = os.path.join(_BACKEND_ROOT, "data") + os.sep
-SCRIP_DB = "scrip_master.db"
+USERS_DB = "users.sqlite3"
+SCRIP_DB = "scrips.sqlite3"
+SCRIPS_EMPTY_DB = "scrips.empty.sqlite3"
+USERS_EMPTY_DB = "users.empty.sqlite3"
 ICICI_MASTERFILE_URL = "https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip"
 SCRIP_MASTER = "FONSEScripMaster.txt"  # legacy alias for NSE scrip master
 LIMITS_MASTER = "NSEFreezeLimits.txt"  # legacy alias for NSE quantity limits

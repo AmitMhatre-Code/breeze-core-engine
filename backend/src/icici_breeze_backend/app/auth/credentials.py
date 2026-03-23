@@ -6,7 +6,7 @@ from cryptography.fernet import Fernet
 from base64 import urlsafe_b64encode
 import hashlib
 
-from icici_breeze_backend.app.core.config import JWT_SECRET, DATA_PATH
+from icici_breeze_backend.app.core.config import JWT_SECRET, DATA_PATH, USERS_DB
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ class CredentialManager:
             cipher = Fernet(key)
         try:
             import sqlite3
-            db_path = DATA_PATH + "db.sqlite3"
+            db_path = DATA_PATH + USERS_DB
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
                 cur.execute(
@@ -158,7 +158,7 @@ class CredentialManager:
             import sqlite3
             import uuid
             from icici_breeze_backend.app.core.config import DATA_PATH
-            db_path = DATA_PATH + "db.sqlite3"
+            db_path = DATA_PATH + USERS_DB
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
                 cur.execute(
@@ -192,7 +192,7 @@ class CredentialManager:
         try:
             import sqlite3
             import uuid
-            db_path = DATA_PATH + "db.sqlite3"
+            db_path = DATA_PATH + USERS_DB
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
                 cur.execute(
@@ -224,7 +224,7 @@ class CredentialManager:
         try:
             import sqlite3
             from icici_breeze_backend.app.core.config import DATA_PATH
-            db_path = DATA_PATH + "db.sqlite3"
+            db_path = DATA_PATH + USERS_DB
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
                 cur.execute(

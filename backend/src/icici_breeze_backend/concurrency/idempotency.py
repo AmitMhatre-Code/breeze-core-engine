@@ -23,7 +23,7 @@ class IdempotencyResult:
 
 
 def _db_path() -> str:
-    return cfg.DATA_PATH + "db.sqlite3"
+    return cfg.DATA_PATH + cfg.USERS_DB
 
 
 class IdempotencyKeyStore:
