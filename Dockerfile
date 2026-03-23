@@ -43,7 +43,11 @@ WORKDIR /app/backend
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./
-RUN cp data/db.empty.sqlite3 data/users.sqlite3 \
+# Templates outside data/ survive `docker run -v ...:/app/backend/data` (bind mount hides data/*.empty.sqlite3).
+RUN mkdir -p db-templates \
+ && cp data/users.empty.sqlite3 db-templates/ \
+ && cp data/scrips.empty.sqlite3 db-templates/ \
+ && cp data/db.empty.sqlite3 data/users.sqlite3 \
  && cp data/scrips.empty.sqlite3 data/scrips.sqlite3
 
 WORKDIR /app/frontend

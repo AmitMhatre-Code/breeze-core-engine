@@ -126,25 +126,42 @@ def include_router(app):
     app.include_router(app_router)
 
 
+def _resolve_sqlite_template(cfg, empty_filename: str) -> str | None:
+    """Prefer template under DATA_PATH; fall back to DB_TEMPLATE_PATH (not hidden by data bind mounts)."""
+    for base in (cfg.DATA_PATH, getattr(cfg, "DB_TEMPLATE_PATH", "") or ""):
+        if not base:
+            continue
+        p = base + empty_filename
+        if os.path.isfile(p):
+            return p
+    return None
+
+
 def _ensure_app_database() -> None:
-    """Create users.sqlite3 from db.empty.sqlite3 when missing (fresh clone, empty bind mount)."""
+    """Create users.sqlite3 from template when missing, empty, or unreadable (e.g. bind-mounted data dir)."""
     import shutil
 
     from icici_breeze_backend.core import config as cfg
 
     db_path = cfg.DATA_PATH + cfg.USERS_DB
-    template = cfg.DATA_PATH + cfg.USERS_EMPTY_DB
-    if os.path.isfile(db_path):
-        pass
-    elif os.path.isfile(template):
-        shutil.copy2(template, db_path)
-        _logger.info("Initialized app database at %s from %s.", db_path, cfg.USERS_EMPTY_DB)
-    else:
-        _logger.warning(
-            "App database missing at %s and no template at %s.",
-            db_path,
-            template,
-        )
+    template = _resolve_sqlite_template(cfg, cfg.USERS_EMPTY_DB)
+
+    if os.path.isfile(db_path) and os.path.getsize(db_path) == 0:
+        _logger.warning("Removing empty users DB file so it can be re-seeded: %s", db_path)
+        try:
+            os.remove(db_path)
+        except OSError as e:
+            _logger.warning("Could not remove empty users DB: %s", e)
+
+    if not os.path.isfile(db_path):
+        if template:
+            shutil.copy2(template, db_path)
+            _logger.info("Initialized app database at %s from %s.", db_path, template)
+        else:
+            _logger.warning(
+                "App database missing at %s and no template (checked DATA_PATH and DB_TEMPLATE_PATH).",
+                db_path,
+            )
     if os.path.isfile(db_path):
         try:
             from icici_breeze_backend.app.db.user_account_migrate import migrate_user_account_if_needed
@@ -155,23 +172,30 @@ def _ensure_app_database() -> None:
 
 
 def _ensure_scrips_database() -> None:
-    """Create scrips.sqlite3 from scrips.empty.sqlite3 when missing (same schema, no rows)."""
+    """Create scrips.sqlite3 from template when missing or empty."""
     import shutil
 
     from icici_breeze_backend.core import config as cfg
 
     db_path = cfg.DATA_PATH + cfg.SCRIP_DB
-    template = cfg.DATA_PATH + cfg.SCRIPS_EMPTY_DB
+    template = _resolve_sqlite_template(cfg, cfg.SCRIPS_EMPTY_DB)
+
+    if os.path.isfile(db_path) and os.path.getsize(db_path) == 0:
+        _logger.warning("Removing empty scrips DB file so it can be re-seeded: %s", db_path)
+        try:
+            os.remove(db_path)
+        except OSError as e:
+            _logger.warning("Could not remove empty scrips DB: %s", e)
+
     if os.path.isfile(db_path):
         return
-    if os.path.isfile(template):
+    if template:
         shutil.copy2(template, db_path)
-        _logger.info("Initialized scrips database at %s from %s.", db_path, cfg.SCRIPS_EMPTY_DB)
+        _logger.info("Initialized scrips database at %s from %s.", db_path, template)
     else:
         _logger.warning(
-            "Scrips database missing at %s and no template at %s.",
+            "Scrips database missing at %s and no template (checked DATA_PATH and DB_TEMPLATE_PATH).",
             db_path,
-            template,
         )
 
 

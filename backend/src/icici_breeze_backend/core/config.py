@@ -4,6 +4,9 @@ import os
 _core_dir = os.path.dirname(os.path.abspath(__file__))
 _BACKEND_ROOT = os.path.abspath(os.path.join(_core_dir, "..", "..", ".."))
 DATA_PATH = os.path.join(_BACKEND_ROOT, "data") + os.sep
+# Empty DB templates live here (Dockerfile copies from data/). Not under DATA_PATH so a bind mount
+# on .../data does not hide templates (common in production with -v host:/app/backend/data).
+DB_TEMPLATE_PATH = os.path.join(_BACKEND_ROOT, "db-templates") + os.sep
 USERS_DB = "users.sqlite3"
 SCRIP_DB = "scrips.sqlite3"
 SCRIPS_EMPTY_DB = "scrips.empty.sqlite3"
