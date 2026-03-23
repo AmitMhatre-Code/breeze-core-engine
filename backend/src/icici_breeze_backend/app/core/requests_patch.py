@@ -30,6 +30,12 @@ class _SafeBreezeResponse:
     def text(self):
         return getattr(self._raw, "text", None) or ""
 
+    def raise_for_status(self):
+        return self._raw.raise_for_status()
+
+    def iter_content(self, chunk_size=1024, decode_unicode=False):
+        return self._raw.iter_content(chunk_size=chunk_size, decode_unicode=decode_unicode)
+
     def json(self):
         if self._raw.status_code != 200:
             return {
