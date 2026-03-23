@@ -135,8 +135,8 @@ def _ensure_app_database() -> None:
     db_path = cfg.DATA_PATH + cfg.USERS_DB
     template = cfg.DATA_PATH + cfg.USERS_EMPTY_DB
     if os.path.isfile(db_path):
-        return
-    if os.path.isfile(template):
+        pass
+    elif os.path.isfile(template):
         shutil.copy2(template, db_path)
         _logger.info("Initialized app database at %s from %s.", db_path, cfg.USERS_EMPTY_DB)
     else:
@@ -145,6 +145,13 @@ def _ensure_app_database() -> None:
             db_path,
             template,
         )
+    if os.path.isfile(db_path):
+        try:
+            from icici_breeze_backend.app.db.user_account_migrate import migrate_user_account_if_needed
+
+            migrate_user_account_if_needed(db_path)
+        except Exception:
+            _logger.exception("user_account schema migration failed")
 
 
 def _ensure_scrips_database() -> None:

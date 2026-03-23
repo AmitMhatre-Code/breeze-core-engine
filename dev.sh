@@ -31,6 +31,11 @@ if [[ ! -x "$VENV/bin/uvicorn" ]]; then
   exit 1
 fi
 
+# Keep venv aligned with requirements.txt (e.g. new deps like bcrypt after git pull).
+if [[ -z "${SKIP_DEV_PIP_SYNC:-}" ]]; then
+  "$VENV/bin/pip" install -q -r "$ROOT/backend/requirements.txt"
+fi
+
 if [[ ! -d "$ROOT/frontend/node_modules" ]]; then
   echo "Installing frontend dependencies (first run)..." >&2
   (cd "$ROOT/frontend" && npm install)

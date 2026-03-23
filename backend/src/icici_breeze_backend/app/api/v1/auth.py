@@ -1,11 +1,17 @@
 """Authentication API routes."""
+import sqlite3
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from icici_breeze_backend.app.api.deps import get_current_user, get_optional_user, RequestContext, ICICI_BROKER_TOKEN_COOKIE, ACCESS_TOKEN_COOKIE, CREDENTIAL_FULL_SECRET_COOKIE
+from icici_breeze_backend.app.api.v1.route_google_auth import COOKIE_MAX_AGE, DIRECT_ICICI_COOKIE
+from icici_breeze_backend.app.auth.credentials import encrypt_direct_icici_cookie
+from icici_breeze_backend.app.auth.user_account import verify_direct_account_password
 from icici_breeze_backend.app.domain.auth import (
     AdminRotateRequest,
     AdminRevokeRequest,
+    DirectLoginRequest,
 )
 from icici_breeze_backend.app.domain.responses import AdminRevokeResponse, AdminRotateResponse, LogoutResponse
 from icici_breeze_backend.app.services.auth_service import rotate_credentials, revoke_credentials
@@ -36,8 +42,38 @@ async def login_endpoint_disabled():
     """ICICI token + user id login removed; use Google OAuth then ICICI (see /auth/google, /auth/icici-redirect)."""
     raise HTTPException(
         status_code=410,
-        detail="Login with ICICI token is disabled. Sign in with Google, then complete ICICI login.",
+        detail="Login with ICICI token is disabled. Use Google or app password sign-in, then complete ICICI login.",
     )
+
+
+@router.post("/auth/direct-login", include_in_schema=False)
+async def auth_direct_login(request: Request, body: DirectLoginRequest):
+    """Validate ICICI user id + app password; set short-lived cookie and continue ICICI broker login."""
+    uid = (body.user_id or "").strip()
+    pwd = body.password or ""
+    if not uid or not pwd:
+        raise HTTPException(status_code=400, detail="user_id and password are required")
+    enc_key = (cfg.JWT_SECRET or "").strip()
+    if not enc_key:
+        raise HTTPException(status_code=503, detail="Server misconfiguration")
+    db_path = cfg.DATA_PATH + cfg.USERS_DB
+    with sqlite3.connect(db_path) as conn:
+        if not verify_direct_account_password(conn, uid, pwd):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+    cookie_val = encrypt_direct_icici_cookie(uid, enc_key)
+    if not cookie_val:
+        raise HTTPException(status_code=500, detail="Could not create session")
+    response = JSONResponse({"ok": True, "redirect": "/auth/icici-redirect"})
+    response.set_cookie(
+        key=DIRECT_ICICI_COOKIE,
+        value=cookie_val,
+        max_age=COOKIE_MAX_AGE,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        path="/",
+    )
+    return response
 
 
 @router.post("/auth/logout", response_model=LogoutResponse)

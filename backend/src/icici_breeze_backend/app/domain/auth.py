@@ -70,3 +70,10 @@ class IciciSessionRequest(BaseModel):
 class ChallengeContextResponse(BaseModel):
     """Non-secret context for the challenge page (user id from pre-ICICI cookie)."""
     user_id: Optional[str] = None
+
+
+class DirectLoginRequest(BaseModel):
+    """App password + ICICI user id before broker redirect."""
+
+    user_id: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)

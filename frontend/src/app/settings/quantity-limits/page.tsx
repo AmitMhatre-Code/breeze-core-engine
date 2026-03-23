@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { apiClient } from "@/lib/api-client";
@@ -95,6 +96,9 @@ export default function QuantityLimitsPage() {
             Save all
           </button>
         </header>
+        <Link href="/settings" className="app-link mt-1 inline-block text-xs">
+          Back to Settings
+        </Link>
         {q.data.message && (
           <p className="text-xs text-amber-800 dark:text-amber-300">{q.data.message}</p>
         )}

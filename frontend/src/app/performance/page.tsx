@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { FinancialYearDropdown } from "@/components/performance/FinancialYearDropdown";
 import { apiClient } from "@/lib/api-client";
-import { formatIndianMoneyCompact } from "@/lib/format-money-in";
+import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import {
   buildPerformanceDataPath,
   iciciSuccess,
@@ -214,7 +214,12 @@ function PerformancePageInner() {
                   <dl className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
                     <div className="flex justify-between gap-2">
                       <dt>Equity</dt>
-                      <dd className="tabular-nums text-zinc-900 dark:text-zinc-200">
+                      <dd
+                        className={`tabular-nums ${moneyToneClass(
+                          num(funds.allocated_equity) +
+                            num(funds.block_by_trade_equity),
+                        )}`}
+                      >
                         {formatIndianMoneyCompact(
                           num(funds.allocated_equity) +
                             num(funds.block_by_trade_equity),
@@ -223,7 +228,12 @@ function PerformancePageInner() {
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>F&amp;O</dt>
-                      <dd className="tabular-nums text-zinc-900 dark:text-zinc-200">
+                      <dd
+                        className={`tabular-nums ${moneyToneClass(
+                          num(funds.allocated_fno) +
+                            num(funds.block_by_trade_fno),
+                        )}`}
+                      >
                         {formatIndianMoneyCompact(
                           num(funds.allocated_fno) +
                             num(funds.block_by_trade_fno),
@@ -232,7 +242,12 @@ function PerformancePageInner() {
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>Commodity</dt>
-                      <dd className="tabular-nums text-zinc-900 dark:text-zinc-200">
+                      <dd
+                        className={`tabular-nums ${moneyToneClass(
+                          num(funds.allocated_commodity) +
+                            num(funds.block_by_trade_commodity),
+                        )}`}
+                      >
                         {formatIndianMoneyCompact(
                           num(funds.allocated_commodity) +
                             num(funds.block_by_trade_commodity),
@@ -241,7 +256,12 @@ function PerformancePageInner() {
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>Currency</dt>
-                      <dd className="tabular-nums text-zinc-900 dark:text-zinc-200">
+                      <dd
+                        className={`tabular-nums ${moneyToneClass(
+                          num(funds.allocated_currency) +
+                            num(funds.block_by_trade_currency),
+                        )}`}
+                      >
                         {formatIndianMoneyCompact(
                           num(funds.allocated_currency) +
                             num(funds.block_by_trade_currency),
@@ -250,7 +270,11 @@ function PerformancePageInner() {
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>Unallocated</dt>
-                      <dd className="tabular-nums text-zinc-900 dark:text-zinc-200">
+                      <dd
+                        className={`tabular-nums ${moneyToneClass(
+                          num(funds.unallocated_balance),
+                        )}`}
+                      >
                         {formatIndianMoneyCompact(
                           num(funds.unallocated_balance),
                         )}
@@ -278,7 +302,11 @@ function PerformancePageInner() {
                   <dl className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
                     <div className="flex justify-between gap-2">
                       <dt>Utilised</dt>
-                      <dd className="tabular-nums text-zinc-900 dark:text-zinc-200">
+                      <dd
+                        className={`tabular-nums ${moneyToneClass(
+                          -num(margin.actual_margin_ute),
+                        )}`}
+                      >
                         {formatIndianMoneyCompact(
                           -num(margin.actual_margin_ute),
                         )}
@@ -286,7 +314,11 @@ function PerformancePageInner() {
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>Available</dt>
-                      <dd className="tabular-nums text-zinc-900 dark:text-zinc-200">
+                      <dd
+                        className={`tabular-nums ${moneyToneClass(
+                          num(margin.actual_margin_avl),
+                        )}`}
+                      >
                         {formatIndianMoneyCompact(
                           num(margin.actual_margin_avl),
                         )}
@@ -325,7 +357,11 @@ function PerformancePageInner() {
                   <dl className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
                     <div className="flex justify-between gap-2">
                       <dt>Premium earned</dt>
-                      <dd className="tabular-nums text-zinc-900 dark:text-zinc-200">
+                      <dd
+                        className={`tabular-nums ${moneyToneClass(
+                          num(performance.premium_earned),
+                        )}`}
+                      >
                         {formatIndianMoneyCompact(
                           num(performance.premium_earned),
                         )}
@@ -333,7 +369,11 @@ function PerformancePageInner() {
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>Premium paid</dt>
-                      <dd className="tabular-nums text-zinc-900 dark:text-zinc-200">
+                      <dd
+                        className={`tabular-nums ${moneyToneClass(
+                          num(performance.premium_paid),
+                        )}`}
+                      >
                         {formatIndianMoneyCompact(
                           num(performance.premium_paid),
                         )}
@@ -341,7 +381,11 @@ function PerformancePageInner() {
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>Brokerage</dt>
-                      <dd className="tabular-nums text-zinc-900 dark:text-zinc-200">
+                      <dd
+                        className={`tabular-nums ${moneyToneClass(
+                          num(performance.brokerage),
+                        )}`}
+                      >
                         {formatIndianMoneyCompact(
                           num(performance.brokerage),
                         )}
@@ -349,7 +393,11 @@ function PerformancePageInner() {
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>Taxes</dt>
-                      <dd className="tabular-nums text-zinc-900 dark:text-zinc-200">
+                      <dd
+                        className={`tabular-nums ${moneyToneClass(
+                          num(performance.taxes),
+                        )}`}
+                      >
                         {formatIndianMoneyCompact(num(performance.taxes))}
                       </dd>
                     </div>

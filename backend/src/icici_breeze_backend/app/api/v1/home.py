@@ -28,7 +28,7 @@ from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.api.error_utils import raise_route_errors
 from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend, frontend_url
 from icici_breeze_backend.app.api.v1.google_icici_redirect import redirect_to_icici_login
-from icici_breeze_backend.app.auth.user_account import get_google_id_by_user_id
+from icici_breeze_backend.app.auth.user_account import get_google_id_by_user_id, user_account_exists_by_user_id
 import icici_breeze_backend.app.core.config as cfg
 
 
@@ -244,7 +244,7 @@ async def _complete_icici_session(
     if not apisession:
         raise HTTPException(
             status_code=400,
-            detail="Session token is missing. Log in with Google, then complete ICICI login again.",
+            detail="Session token is missing. Sign in again, then complete ICICI login.",
         )
 
     if not form.user_id:
@@ -338,17 +338,17 @@ async def _complete_icici_session(
             )
 
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        if not user_account_exists_by_user_id(conn, form.user_id):
+            logger.warning("login_submit no user_account for user_id=%s", form.user_id)
+            breeze.store_error(
+                {
+                    "location": "route_home.initiate_session no account",
+                    "contents": "Account not found. Please register first.",
+                }
+            )
+            errors = breeze.retrieve_errors()
+            raise_route_errors(errors, log_context="route_home.initiate_session no_account")
         google_id = get_google_id_by_user_id(conn, form.user_id)
-    if not google_id:
-        logger.warning("login_submit no google_id for user_id=%s", form.user_id)
-        breeze.store_error(
-            {
-                "location": "route_home.initiate_session no account",
-                "contents": "Account not found. Please register with Google.",
-            }
-        )
-        errors = breeze.retrieve_errors()
-        raise_route_errors(errors, log_context="route_home.initiate_session no_google_id")
 
     handler = JWTHandler(
         secret_key=cfg.JWT_SECRET,

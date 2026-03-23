@@ -1,0 +1,183 @@
+name: Manual AWS Deploy (EC2 + Elastic IP)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    name: Provision and deploy production
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    env:
+      AWS_REGION: ap-south-1
+      INSTANCE_TYPE: t4g.small
+      IMAGE_TAG: latest
+      REPO_NAME: icici-breeze-modern
+      EC2_USER: ubuntu
+      APP_NAME: icici-breeze-web
+      EC2_TAG: ICICI-Breeze-Web-EC2
+      EC2_KEY_NAME: ICICI-Breeze-Web-KP
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve image name
+        id: image
+        run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Build startup script
+        env:
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          APP_ENV_FILE_B64: ${{ secrets.APP_ENV_FILE_B64 }}
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+        run: |
+          cat > user-data.sh <<EOF
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y ca-certificates curl gnupg lsb-release
+
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
+
+          echo \
+            "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+            \$(. /etc/os-release && echo "\$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+
+          apt-get update
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+          systemctl enable docker
+          systemctl start docker
+
+          mkdir -p /opt/icici/data
+
+          # Write runtime env file from GitHub secret (base64-encoded .env content)
+          printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/icici/.env
+          chmod 600 /opt/icici/.env
+
+          # Login and pull from GHCR
+          echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+          docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
+
+          # Run app container
+          docker rm -f icici-app || true
+          docker run -d \
+            --name icici-app \
+            --restart unless-stopped \
+            --env-file /opt/icici/.env \
+            -v /opt/icici/data:/app/backend/data \
+            -p 80:3000 \
+            "${IMAGE_NAME}:${IMAGE_TAG}"
+          EOF
+          chmod +x user-data.sh
+
+      - name: Find VPC and subnet
+        id: network
+        run: |
+          VPC_ID=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
+          SUBNET_ID=$(aws ec2 describe-subnets --filters Name=vpc-id,Values="$VPC_ID" Name=default-for-az,Values=true --query 'Subnets[0].SubnetId' --output text)
+          echo "vpc_id=$VPC_ID" >> "$GITHUB_OUTPUT"
+          echo "subnet_id=$SUBNET_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure security group exists
+        id: sg
+        run: |
+          SG_ID=$(aws ec2 describe-security-groups \
+            --filters Name=vpc-id,Values=${{ steps.network.outputs.vpc_id }} Name=group-name,Values=${EC2_TAG}-sg \
+            --query 'SecurityGroups[0].GroupId' --output text)
+
+          if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
+            SG_ID=$(aws ec2 create-security-group \
+              --group-name ${EC2_TAG}-sg \
+              --description "Security group for ${APP_NAME}" \
+              --vpc-id ${{ steps.network.outputs.vpc_id }} \
+              --query 'GroupId' --output text)
+          fi
+
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --ip-permissions \
+            '[{"IpProtocol":"tcp","FromPort":22,"ToPort":22,"IpRanges":[{"CidrIp":"0.0.0.0/0","Description":"SSH"}]},{"IpProtocol":"tcp","FromPort":80,"ToPort":80,"IpRanges":[{"CidrIp":"0.0.0.0/0","Description":"HTTP"}]}]' || true
+
+          echo "sg_id=$SG_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Ubuntu AMI
+        id: ami
+        run: |
+          AMI_ID=$(aws ssm get-parameter \
+            --name /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id \
+            --query 'Parameter.Value' --output text)
+          echo "ami_id=$AMI_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Launch EC2 instance
+        id: ec2
+        run: |
+          INSTANCE_ID=$(aws ec2 run-instances \
+            --image-id "${{ steps.ami.outputs.ami_id }}" \
+            --instance-type "${INSTANCE_TYPE}" \
+            --key-name "${EC2_KEY_NAME}" \
+            --subnet-id "${{ steps.network.outputs.subnet_id }}" \
+            --security-group-ids "${{ steps.sg.outputs.sg_id }}" \
+            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${EC2_TAG}}]" \
+            --user-data file://user-data.sh \
+            --query 'Instances[0].InstanceId' \
+            --output text)
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for instance running
+        run: aws ec2 wait instance-running --instance-ids "${{ steps.ec2.outputs.instance_id }}"
+
+      # Terminate old tagged instances first so an Elastic IP attached to them becomes unassociated.
+      - name: Terminate older app instances
+        run: |
+          OLD_INSTANCE_IDS=$(aws ec2 describe-instances \
+            --filters Name=tag:Name,Values=${EC2_TAG} Name=instance-state-name,Values=pending,running,stopping,stopped \
+            --query "Reservations[].Instances[?InstanceId!='${{ steps.ec2.outputs.instance_id }}'].InstanceId" \
+            --output text)
+
+          if [ -n "${OLD_INSTANCE_IDS}" ] && [ "${OLD_INSTANCE_IDS}" != "None" ]; then
+            aws ec2 terminate-instances --instance-ids ${OLD_INSTANCE_IDS}
+            echo "Waiting for EIP disassociation after instance termination..."
+            sleep 20
+          fi
+
+      # Use an existing unallocated (unassociated) EIP only — never allocate a new one.
+      - name: Associate existing unassociated Elastic IP
+        id: eip
+        run: |
+          ALLOCATION_ID=$(aws ec2 describe-addresses \
+            --query 'Addresses[?AssociationId==null] | [0].AllocationId' \
+            --output text)
+
+          if [ "$ALLOCATION_ID" = "None" ] || [ -z "$ALLOCATION_ID" ]; then
+            echo "::error::No unassociated Elastic IP in this account/region. Create one in EC2 (or disassociate yours), then re-run. New EIPs are not allocated automatically."
+            exit 1
+          fi
+
+          aws ec2 associate-address \
+            --instance-id "${{ steps.ec2.outputs.instance_id }}" \
+            --allocation-id "$ALLOCATION_ID"
+
+          PUBLIC_IP=$(aws ec2 describe-addresses --allocation-ids "$ALLOCATION_ID" --query 'Addresses[0].PublicIp' --output text)
+          echo "allocation_id=$ALLOCATION_ID" >> "$GITHUB_OUTPUT"
+          echo "public_ip=$PUBLIC_IP" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for cloud-init bootstrap
+        run: sleep 120
+
+      - name: Deployment summary
+        run: |
+          echo "Instance ID: ${{ steps.ec2.outputs.instance_id }}"
+          echo "Elastic IP:   ${{ steps.eip.outputs.public_ip }}"
+          echo "URL:          http://${{ steps.eip.outputs.public_ip }}"

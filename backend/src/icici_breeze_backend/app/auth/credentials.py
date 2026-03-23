@@ -66,6 +66,30 @@ def decrypt_google_oauth_cookie(encrypted: str, encryption_key: str) -> Optional
         return None
 
 
+def _direct_icici_cipher(encryption_key: str):
+    """Fernet for short-lived direct-login → ICICI redirect cookie (user_id only)."""
+    key_material = hashlib.sha256(((encryption_key or "") + "direct_icici_prelogin").encode()).digest()
+    return Fernet(urlsafe_b64encode(key_material[:32]))
+
+
+def encrypt_direct_icici_cookie(user_id: str, encryption_key: str) -> str:
+    if not encryption_key or not user_id:
+        return ""
+    try:
+        return _direct_icici_cipher(encryption_key).encrypt(user_id.encode()).decode("ascii")
+    except Exception:
+        return ""
+
+
+def decrypt_direct_icici_cookie(encrypted: str, encryption_key: str) -> Optional[str]:
+    if not encrypted or not encryption_key:
+        return None
+    try:
+        return _direct_icici_cipher(encryption_key).decrypt(encrypted.encode()).decode()
+    except Exception:
+        return None
+
+
 @dataclass
 class UserCredentials:
     """Represents a user's broker API credentials."""

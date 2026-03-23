@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["google-auth"])
 
 GOOGLE_OAUTH_COOKIE = "google_oauth_data"
+DIRECT_ICICI_COOKIE = "direct_icici_bootstrap"
 COOKIE_MAX_AGE = 300  # 5 minutes
 
 

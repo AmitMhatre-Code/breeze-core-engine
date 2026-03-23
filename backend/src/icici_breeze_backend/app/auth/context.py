@@ -87,9 +87,6 @@ def extract_user_context(request: Request) -> Optional[RequestContext]:
         return None
     if not payload:
         return None
-    if not getattr(payload, "google_id", None):
-        _logger.debug("Token missing google_id; legacy token rejected")
-        return None
     broker_token = request.cookies.get(ICICI_BROKER_TOKEN_COOKIE)
     set_broker_token_for_request(broker_token)
     enc_key = (secret or "").strip()

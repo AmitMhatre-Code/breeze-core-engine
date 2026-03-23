@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { apiClient } from "@/lib/api-client";
@@ -89,6 +90,9 @@ function CredentialsFormLoaded(props: {
   return (
     <AppShell>
       <section className="app-card max-w-lg space-y-4 p-4">
+        <Link href="/settings" className="app-link text-xs inline-block">
+          Back to Settings
+        </Link>
         <h2 className="app-text-heading">Broker credentials</h2>
         <p className="app-text-muted">Session user: {props.userId}</p>
         <form

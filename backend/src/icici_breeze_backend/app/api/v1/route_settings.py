@@ -9,7 +9,7 @@ import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.auth.context import get_request_context, RequestContext
 from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.auth.credentials import CredentialManager
-from icici_breeze_backend.app.auth.user_account import change_user_id, get_google_id_by_user_id
+from icici_breeze_backend.app.auth.user_account import change_user_id
 from icici_breeze_backend.app.domain.settings_api import (
     CredentialsStateResponse,
     CredentialsUpdateBody,
@@ -66,16 +66,10 @@ async def settings_credentials_post(
         if cred_manager.update_credentials(ctx.user_id, api_key, secret_fragment):
             return JSONResponse({"ok": True, "message": "Credentials saved. Log out and log in again via ICICI to use the new API key."})
         raise HTTPException(status_code=400, detail="Could not save credentials")
-    google_id = getattr(ctx, "google_id", None)
-    if not google_id:
-        with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
-            google_id = get_google_id_by_user_id(conn, ctx.user_id)
-    if not google_id:
-        raise HTTPException(status_code=400, detail="No account linked")
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         row = conn.execute(
-            "SELECT roles FROM user_account WHERE google_id = ?",
-            (google_id,),
+            "SELECT roles FROM user_account WHERE user_id = ?",
+            (ctx.user_id,),
         ).fetchone()
     if not row:
         raise HTTPException(status_code=400, detail="No account linked")
@@ -86,7 +80,6 @@ async def settings_credentials_post(
                 conn,
                 ctx.user_id,
                 user_id,
-                google_id,
                 roles,
                 cred_manager,
                 api_key,

@@ -11,7 +11,7 @@ import {
   getCustomerDisplayName,
   type HomeDataResponse,
 } from "@/lib/home-data";
-import { formatIndianMoneyCompact } from "@/lib/format-money-in";
+import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 
 // Hidden from nav (route still works): { href: "/trade-options-chain", label: "Trade Options Chain" },
 const navItems = [
@@ -57,15 +57,9 @@ export function AppShell({
 
   const freeMarginDisplay = useMemo(() => {
     if (freeMargin == null || !Number.isFinite(freeMargin)) return null;
-    if (freeMargin < 0) {
-      return {
-        text: `(${formatIndianMoneyCompact(Math.abs(freeMargin))})`,
-        tone: "negative" as const,
-      };
-    }
     return {
       text: formatIndianMoneyCompact(freeMargin),
-      tone: "positive" as const,
+      className: moneyToneClass(freeMargin),
     };
   }, [freeMargin]);
 
@@ -134,11 +128,8 @@ export function AppShell({
                   <span
                     className={[
                       "truncate text-sm font-medium tabular-nums",
-                      freeMarginDisplay?.tone === "negative"
-                        ? "text-red-600 dark:text-red-400"
-                        : freeMarginDisplay?.tone === "positive"
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-zinc-900 dark:text-zinc-100",
+                      freeMarginDisplay?.className ??
+                        "text-zinc-900 dark:text-zinc-100",
                     ].join(" ")}
                   >
                     {freeMarginDisplay?.text ?? "—"}

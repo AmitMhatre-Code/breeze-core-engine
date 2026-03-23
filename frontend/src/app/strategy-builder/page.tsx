@@ -40,7 +40,7 @@ import type {
   StrategyLeg,
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
-import { formatIndianMoneyCompact } from "@/lib/format-money-in";
+import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import { ltpAsOrderPrice } from "@/lib/order-confirm";
 
 /** Readymade card selection (Naked / Covered Shorts are separate from `STRATEGY_TEMPLATES`). */
@@ -840,15 +840,22 @@ function HedgeSuggestionCard({ best, error }: { best: Record<string, unknown> | 
   );
 }
 
-function coveredPairNetPremiumLabel(opt: Record<string, unknown>): string {
+function coveredPairNetPremiumLabel(opt: Record<string, unknown>): {
+  text: string;
+  className: string;
+} {
   const prem = parseNum(opt.premium);
   const hm = opt.hedge_match as HedgeMatchPayload | undefined;
   const best = hm?.best;
   const hp = best ? parseNum(best.hedge_premium) : NaN;
-  if (!Number.isFinite(prem) || !Number.isFinite(hp)) return "—";
+  if (!Number.isFinite(prem) || !Number.isFinite(hp)) {
+    return { text: "—", className: "text-zinc-900 dark:text-zinc-50" };
+  }
   const net = prem - hp;
-  if (!Number.isFinite(net)) return "—";
-  return formatIndianMoneyCompact(net);
+  if (!Number.isFinite(net)) {
+    return { text: "—", className: "text-zinc-900 dark:text-zinc-50" };
+  }
+  return { text: formatIndianMoneyCompact(net), className: moneyToneClass(net) };
 }
 
 function isCoveredPairInLegs(
@@ -1857,6 +1864,7 @@ export default function StrategyBuilderPage() {
                             opt,
                             legs,
                           );
+                          const netPremium = coveredPairNetPremiumLabel(opt);
                           const canAdd = Boolean(hm?.best);
                           return (
                             <div
@@ -1874,8 +1882,10 @@ export default function StrategyBuilderPage() {
                                   <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                                     Net premium
                                   </span>
-                                  <span className="text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
-                                    {coveredPairNetPremiumLabel(opt)}
+                                  <span
+                                    className={`text-sm font-bold tabular-nums ${netPremium.className}`}
+                                  >
+                                    {netPremium.text}
                                   </span>
                                   <span
                                     className="text-lg text-sky-600 dark:text-sky-400 lg:hidden"

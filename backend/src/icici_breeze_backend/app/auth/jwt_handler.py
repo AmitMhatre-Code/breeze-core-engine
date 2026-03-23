@@ -6,8 +6,8 @@ from pydantic import BaseModel
 
 
 class TokenPayload(BaseModel):
-    """JWT token payload structure. google_id = identity (PK); user_id = ICICI username for API calls."""
-    google_id: Optional[str] = None  # Required for Google-only; legacy tokens lack this
+    """JWT token payload. user_id = ICICI username; google_id optional (OAuth-linked users)."""
+    google_id: Optional[str] = None
     user_id: str
     username: str
     exp: int
