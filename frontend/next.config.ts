@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   async rewrites() {
     const backendUpstream =
       process.env.BACKEND_UPSTREAM_URL ??

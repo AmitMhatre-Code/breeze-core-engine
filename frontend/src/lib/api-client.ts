@@ -1,4 +1,4 @@
-import { BACKEND_BASE_URL } from "@/lib/config";
+import { getBackendBaseUrl } from "@/lib/config";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -34,7 +34,7 @@ async function request<TResponse, TBody = unknown>(
     headers?: Record<string, string>;
   } = {},
 ): Promise<TResponse> {
-  const url = new URL(path, BACKEND_BASE_URL);
+  const url = new URL(path, getBackendBaseUrl());
   const {
     method = "GET",
     body,
