@@ -78,8 +78,10 @@ async def get_covered_shorts_scan(
     expiry_date: str,
     limits: int,
     top: int,
-    otm_call_distance: int = 10,
-    otm_put_distance: int = 10,
+    otm_call_min: int = 10,
+    otm_call_max: int = 10,
+    otm_put_min: int = 10,
+    otm_put_max: int = 10,
     provision_elm: Optional[str] = None,
     exchange_code: str = cfg.NFO,
     ctx: RequestContext = Depends(get_request_context),
@@ -94,10 +96,13 @@ async def get_covered_shorts_scan(
         expiry_date,
         limits,
         top,
-        otm_call_distance=otm_call_distance,
-        otm_put_distance=otm_put_distance,
+        otm_call_min=otm_call_min,
+        otm_call_max=otm_call_max,
+        otm_put_min=otm_put_min,
+        otm_put_max=otm_put_max,
         provision_elm=provision_elm,
         exchange_code=exchange_code,
+        margin_source=breeze.get_strategy_builder_margin_source(ctx.user_id),
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderCoveredShortsScan")
     return out
@@ -116,6 +121,10 @@ async def post_margin(
         if leg.get("exchange_code") != ex0:
             raise HTTPException(status_code=400, detail="All legs must use the same exchange_code")
     data = breeze.strategy_builder_margin(ctx.user_id, ex0, legs)
+    if data.get("Status") == 200 and "Success" in data and isinstance(data.get("Success"), dict):
+        data["Success"]["margin_source"] = breeze.get_strategy_builder_margin_source(ctx.user_id)
+    elif data.get("Status") != 200:
+        data["margin_source"] = breeze.get_strategy_builder_margin_source(ctx.user_id)
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderMargin")
     return StrategyBuilderMarginResponse(**data)
 

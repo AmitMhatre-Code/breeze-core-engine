@@ -4,6 +4,7 @@ import logging
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+from icici_breeze_backend.app.auth.context import set_current_route_id
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
 logger = logging.getLogger("app.middleware")
@@ -13,6 +14,7 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
     """Log incoming requests and append to audit trail."""
 
     async def dispatch(self, request: Request, call_next):
+        set_current_route_id(f"{request.method} {request.url.path}")
         # request.state.user_id is set by auth dependencies; middleware runs before them.
         state_user_id_before = getattr(request.state, "user_id", None)
         client_ip = request.client.host if request.client else "unknown"

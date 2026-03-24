@@ -86,7 +86,7 @@ export default function QuantityLimitsPage() {
     <AppShell>
       <section className="app-card space-y-4 p-4">
         <header className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="app-text-heading">Quantity limits</h2>
+          <h2 className="text-xl app-text-heading">Quantity Limits</h2>
           <button
             type="button"
             disabled={m.isPending || merged.length === 0}
@@ -102,6 +102,36 @@ export default function QuantityLimitsPage() {
         {q.data.message && (
           <p className="text-xs text-amber-800 dark:text-amber-300">{q.data.message}</p>
         )}
+        <div className="space-y-1.5 text-xs text-zinc-700 dark:text-zinc-300">
+          <p className="font-medium text-zinc-900 dark:text-zinc-100">
+            Original source of the Freeze Quantity Limits:
+          </p>
+          <p>
+            For BSE:{" "}
+            <a
+              href="https://www.bseindia.com/members/index.aspx"
+              target="_blank"
+              rel="noreferrer"
+              className="app-link"
+            >
+              https://www.bseindia.com/members/index.aspx
+            </a>
+            ; look for the file called Abridged_CO.ZIP (col MaxTradQty in file
+            BSE_EQD_CONTRACT_abr_ddmmyyyy)
+          </p>
+          <p>
+            For NSE:{" "}
+            <a
+              href="https://www.nseindia.com/all-reports-derivatives"
+              target="_blank"
+              rel="noreferrer"
+              className="app-link"
+            >
+              https://www.nseindia.com/all-reports-derivatives
+            </a>
+            ; look for the file called NSE_FO_contract_ddmmyyyy.csv.gz (col MaxTadQty)
+          </p>
+        </div>
         <div className="max-h-[70vh] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
           <table className="min-w-full text-left text-[11px]">
             <thead className="sticky top-0 bg-zinc-100 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-500">

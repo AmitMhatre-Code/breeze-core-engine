@@ -34,6 +34,9 @@ jobs:
         id: image
         run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
+      # Optional: set GitHub secret EBS_DATA_VOLUME_ID (vol-...) to a gp3 volume in the same AZ as
+      # the default VPC subnet, with DeleteOnTermination=false. Workflow attaches it as /dev/sdf;
+      # cloud-init waits, formats if empty (ext4, label icici-data), mounts /opt/icici/data.
       - name: Build startup script
         env:
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
@@ -41,6 +44,10 @@ jobs:
           APP_ENV_FILE_B64: ${{ secrets.APP_ENV_FILE_B64 }}
           IMAGE_NAME: ${{ steps.image.outputs.name }}
         run: |
+          EXPECT_DATA_VOLUME=0
+          if [ -n "${{ secrets.EBS_DATA_VOLUME_ID }}" ]; then
+            EXPECT_DATA_VOLUME=1
+          fi
           cat > user-data.sh <<EOF
           #!/usr/bin/env bash
           set -euo pipefail
@@ -62,7 +69,29 @@ jobs:
           systemctl enable docker
           systemctl start docker
 
-          mkdir -p /opt/icici/data
+          if [ "${EXPECT_DATA_VOLUME}" = "1" ]; then
+            DATA_DEV=""
+            for _ in \$(seq 1 90); do
+              if [ -b /dev/nvme1n1 ]; then DATA_DEV=/dev/nvme1n1; break; fi
+              if [ -b /dev/xvdf ]; then DATA_DEV=/dev/xvdf; break; fi
+              if [ -b /dev/sdf ]; then DATA_DEV=/dev/sdf; break; fi
+              sleep 2
+            done
+            if [ -z "\${DATA_DEV}" ]; then
+              echo "ERROR: Persistent data volume not visible (attach as /dev/sdf; expect nvme1n1 on Nitro)."
+              exit 1
+            fi
+            if ! blkid "\${DATA_DEV}" >/dev/null 2>&1; then
+              mkfs.ext4 -L icici-data -E discard "\${DATA_DEV}"
+            fi
+            mkdir -p /opt/icici/data
+            mount "\${DATA_DEV}" /opt/icici/data
+            if ! grep -q 'LABEL=icici-data /opt/icici/data' /etc/fstab; then
+              echo 'LABEL=icici-data /opt/icici/data ext4 defaults,nofail 0 2' >> /etc/fstab
+            fi
+          else
+            mkdir -p /opt/icici/data
+          fi
 
           # Write runtime env file from GitHub secret (base64-encoded .env content)
           printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/icici/.env
@@ -91,6 +120,26 @@ jobs:
           SUBNET_ID=$(aws ec2 describe-subnets --filters Name=vpc-id,Values="$VPC_ID" Name=default-for-az,Values=true --query 'Subnets[0].SubnetId' --output text)
           echo "vpc_id=$VPC_ID" >> "$GITHUB_OUTPUT"
           echo "subnet_id=$SUBNET_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Check data volume AZ matches subnet AZ
+        if: ${{ secrets.EBS_DATA_VOLUME_ID != '' }}
+        env:
+          VOLUME_ID: ${{ secrets.EBS_DATA_VOLUME_ID }}
+        run: |
+          SUBNET_ID="${{ steps.network.outputs.subnet_id }}"
+          SUBNET_AZ=$(aws ec2 describe-subnets \
+            --subnet-ids "$SUBNET_ID" \
+            --query 'Subnets[0].AvailabilityZone' \
+            --output text)
+          VOL_AZ=$(aws ec2 describe-volumes \
+            --volume-ids "$VOLUME_ID" \
+            --query 'Volumes[0].AvailabilityZone' \
+            --output text)
+          echo "Subnet $SUBNET_AZ (subnet $SUBNET_ID) vs volume $VOL_AZ ($VOLUME_ID)"
+          if [ "$SUBNET_AZ" != "$VOL_AZ" ]; then
+            echo "::error::EBS_DATA_VOLUME_ID must live in the same AZ as the launch subnet. Move or recreate the volume (or subnet). Subnet AZ: $SUBNET_AZ. Volume AZ: $VOL_AZ."
+            exit 1
+          fi
 
       - name: Ensure security group exists
         id: sg
@@ -166,6 +215,17 @@ jobs:
 
       - name: Wait for instance running
         run: aws ec2 wait instance-running --instance-ids "${{ steps.ec2.outputs.instance_id }}"
+
+      - name: Attach persistent data volume
+        if: ${{ secrets.EBS_DATA_VOLUME_ID != '' }}
+        env:
+          VOLUME_ID: ${{ secrets.EBS_DATA_VOLUME_ID }}
+        run: |
+          aws ec2 attach-volume \
+            --volume-id "${VOLUME_ID}" \
+            --instance-id "${{ steps.ec2.outputs.instance_id }}" \
+            --device /dev/sdf
+          aws ec2 wait volume-in-use --volume-ids "${VOLUME_ID}"
 
       # Never allocate a new EIP. Prefer secret EIP_ALLOCATION_ID (disassociate if busy), else first unassociated EIP.
       - name: Associate Elastic IP

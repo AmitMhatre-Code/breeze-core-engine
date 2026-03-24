@@ -203,6 +203,7 @@ def _ensure_freeze_limit_files() -> None:
 def _ensure_scrips_database() -> None:
     """Create scrips.sqlite3 from template when missing or empty."""
     import shutil
+    import sqlite3
 
     from icici_breeze_backend.core import config as cfg
 
@@ -217,7 +218,23 @@ def _ensure_scrips_database() -> None:
             _logger.warning("Could not remove empty scrips DB: %s", e)
 
     if os.path.isfile(db_path):
-        return
+        try:
+            with sqlite3.connect(db_path) as conn:
+                row = conn.execute("PRAGMA quick_check").fetchone()
+                qc = str(row[0]) if row and row[0] is not None else ""
+            if qc.lower() == "ok":
+                return
+            _logger.warning("scrips DB quick_check failed (%s). Re-seeding from template.", qc[:200])
+            try:
+                os.remove(db_path)
+            except OSError as e:
+                _logger.warning("Could not remove malformed scrips DB: %s", e)
+        except Exception as e:
+            _logger.warning("scrips DB integrity check failed; re-seeding from template: %s", e)
+            try:
+                os.remove(db_path)
+            except OSError:
+                pass
     if template:
         shutil.copy2(template, db_path)
         _logger.info("Initialized scrips database at %s from %s.", db_path, template)

@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from icici_breeze_backend.app.domain.responses import UncoveredShortsScanResponse
 from icici_breeze_backend.app.services.processor import _expiry_display_to_api
+from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_BREEZE
 import icici_breeze_backend.app.core.config as cfg
 
 logger = logging.getLogger(__name__)
@@ -87,18 +88,23 @@ def run_covered_shorts_scan(
     expiry_date: str,
     limits: int,
     top: int,
-    otm_call_distance: int = 10,
-    otm_put_distance: int = 10,
+    otm_call_min: int = 10,
+    otm_call_max: int = 10,
+    otm_put_min: int = 10,
+    otm_put_max: int = 10,
     provision_elm: Optional[str] = None,
     exchange_code: str = cfg.NFO,
+    margin_source: str = MARGIN_SOURCE_BREEZE,
 ) -> UncoveredShortsScanResponse:
     """Uncovered short scan (top 1–5) plus best hedge per candidate."""
     if limits <= 0:
         raise HTTPException(status_code=400, detail="limits (margin lacs) must be positive")
     if top < 1 or top > 5:
         raise HTTPException(status_code=400, detail="top must be between 1 and 5")
-    if otm_call_distance < 1 or otm_call_distance > 50 or otm_put_distance < 1 or otm_put_distance > 50:
-        raise HTTPException(status_code=400, detail="OTM distance must be between 1 and 50")
+    if min(otm_call_min, otm_call_max, otm_put_min, otm_put_max) < 0 or max(otm_call_min, otm_call_max, otm_put_min, otm_put_max) > 20:
+        raise HTTPException(status_code=400, detail="OTM range values must be between 0 and 20")
+    if otm_call_min > otm_call_max or otm_put_min > otm_put_max:
+        raise HTTPException(status_code=400, detail="OTM min must be <= OTM max")
     elm = cfg.CHECKED if provision_elm in (cfg.CHECKED, "on", "true", "1") else None
     ex = exchange_code or cfg.NFO
     raw = breeze.uncovered_shorts(
@@ -107,10 +113,13 @@ def run_covered_shorts_scan(
         expiry_date=expiry_date.strip(),
         limits=limits,
         elm=elm,
-        otm_call_distance=otm_call_distance,
-        otm_put_distance=otm_put_distance,
+        otm_call_min=otm_call_min,
+        otm_call_max=otm_call_max,
+        otm_put_min=otm_put_min,
+        otm_put_max=otm_put_max,
         top=top,
         exchange_code=ex,
+        margin_source=margin_source,
     )
     ce = raw.get("ce_options") or {}
     pe = raw.get("pe_options") or {}

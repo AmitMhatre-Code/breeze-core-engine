@@ -19,6 +19,7 @@ _broker_token_ctx: ContextVar[Optional[str]] = ContextVar("broker_token", defaul
 _full_secret_ctx: ContextVar[Optional[str]] = ContextVar("full_secret", default=None)
 _breeze_session_ctx: ContextVar[Optional[object]] = ContextVar("breeze_session", default=None)
 _user_id_ctx: ContextVar[Optional[str]] = ContextVar("user_id", default=None)
+_route_id_ctx: ContextVar[Optional[str]] = ContextVar("route_id", default=None)
 
 
 def set_breeze_session_for_request(session: Optional[object]) -> None:
@@ -48,6 +49,15 @@ def get_full_secret_for_request() -> Optional[str]:
 def get_current_user_id() -> Optional[str]:
     """Return the current request's user_id (ICICI) for API call counting. None if not in an authenticated request."""
     return _user_id_ctx.get()
+
+
+def set_current_route_id(route_id: Optional[str]) -> None:
+    _route_id_ctx.set(route_id)
+
+
+def get_current_route_id() -> Optional[str]:
+    """Return current request route id as 'METHOD /path' for API attribution."""
+    return _route_id_ctx.get()
 
 
 @dataclass

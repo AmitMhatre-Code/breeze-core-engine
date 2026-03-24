@@ -715,8 +715,11 @@ def fetch_vix_options(user_id: str, processor) -> Dict[str, Any]:
     result["next_expiry"] = exp
     expiry_api = _expiry_display_to_api(exp)
 
-    calls = _option_chain(breeze, expiry_api, "call")
-    puts = _option_chain(breeze, expiry_api, "put")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        fut_call = executor.submit(_option_chain, breeze, expiry_api, "call")
+        fut_put = executor.submit(_option_chain, breeze, expiry_api, "put")
+        calls = fut_call.result()
+        puts = fut_put.result()
     pcr, strike_call_oi, strike_put_oi = _option_chain_oi_metrics(calls, puts)
     if pcr is not None:
         result["put_call_ratio"] = round(pcr, 2)

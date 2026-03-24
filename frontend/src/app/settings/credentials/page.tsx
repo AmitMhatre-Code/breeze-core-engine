@@ -85,33 +85,30 @@ function CredentialsFormLoaded(props: {
   onSubmit: (uid: string) => void;
   busy: boolean;
 }) {
-  const [uid, setUid] = useState(props.userId);
-
   return (
     <AppShell>
       <section className="app-card max-w-lg space-y-4 p-4">
         <Link href="/settings" className="app-link text-xs inline-block">
           Back to Settings
         </Link>
-        <h2 className="app-text-heading">Broker credentials</h2>
-        <p className="app-text-muted">Session user: {props.userId}</p>
+        <h2 className="text-xl app-text-heading">Broker Credentials</h2>
         <form
           className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault();
-            props.onSubmit(uid);
+            props.onSubmit(props.userId);
           }}
         >
           <label className="block text-xs text-zinc-600 dark:text-zinc-400">
-            ICICI user id
+            ICICI User ID
             <input
-              className={inputCls}
-              value={uid}
-              onChange={(e) => setUid(e.target.value)}
+              className={`${inputCls} cursor-not-allowed bg-zinc-100 text-zinc-500 border-dashed border-zinc-300 dark:bg-zinc-800/70 dark:text-zinc-400 dark:border-zinc-600`}
+              value={props.userId}
+              readOnly
             />
           </label>
           <label className="block text-xs text-zinc-600 dark:text-zinc-400">
-            API key
+            API Key
             <input
               required
               className={inputCls}
@@ -120,7 +117,7 @@ function CredentialsFormLoaded(props: {
             />
           </label>
           <label className="block text-xs text-zinc-600 dark:text-zinc-400">
-            Secret fragment
+            Secret Fragment
             <input
               required
               className={inputCls}

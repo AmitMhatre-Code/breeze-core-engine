@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Rewrites proxy API traffic to the backend; default body buffer is 10MB and truncates large SPAN uploads.
+  experimental: {
+    proxyClientMaxBodySize: "128mb",
+  },
   async rewrites() {
     const backendUpstream =
       process.env.BACKEND_UPSTREAM_URL ??

@@ -6,34 +6,63 @@ export default function SettingsPage() {
     <AppShell>
       <section className="app-card space-y-3 p-4">
         <header className="flex items-center justify-between">
-          <h2 className="app-text-heading">Settings</h2>
+          <h2 className="text-xl app-text-heading">Settings</h2>
         </header>
         <div className="grid gap-4 md:grid-cols-2">
           <div className="app-card-muted space-y-2 p-4 text-sm">
-            <div className="font-medium text-zinc-900 dark:text-zinc-100">
-              Broker credentials
+            <div className="font-bold text-zinc-900 dark:text-zinc-100">
+              Broker Credentials
             </div>
             <p className="app-text-muted">
-              Update ICICI API key and secret fragment.
+              Update your ICICI API key and secret fragment.
             </p>
             <Link href="/settings/credentials" className="app-btn-outline">
-              Open credentials
+              Update credentials
             </Link>
           </div>
           <div className="app-card-muted space-y-2 p-4 text-sm">
-            <div className="font-medium text-zinc-900 dark:text-zinc-100">
-              Quantity limits
+            <div className="font-bold text-zinc-900 dark:text-zinc-100">
+              Quantity Limits
             </div>
             <p className="app-text-muted">
-              Per-instrument caps from master data.
+              Update the scrip wise freeze quantities / max order quantities.
             </p>
             <Link href="/settings/quantity-limits" className="app-btn-outline">
-              Open quantity limits
+              Update quantity limits
+            </Link>
+          </div>
+          <div className="app-card-muted space-y-2 p-4 text-sm">
+            <div className="font-bold text-zinc-900 dark:text-zinc-100">
+              API Usage
+            </div>
+            <p className="app-text-muted">
+              Review API call volumes to stay within ICICI's daily usage limits.
+            </p>
+            <Link href="/settings/api-usage" className="app-btn-outline">
+              Open API usage
+            </Link>
+          </div>
+          <div className="app-card-muted space-y-2 p-4 text-sm">
+            <div className="font-bold text-zinc-900 dark:text-zinc-100">
+              Margin Calculation Source
+            </div>
+            <p className="app-text-muted">
+              Choose between Breeze API and Exchange Risk Baseline for margin calculations in Strategy Builder. Refresh the Baseline from NSE to get the latest data.
+            </p>
+            <Link href="/settings/margin-source" className="app-btn-outline">
+              Update margin source
+            </Link>
+          </div>
+          <div className="app-card-muted space-y-2 p-4 text-sm">
+            <div className="font-bold text-zinc-900 dark:text-zinc-100">Scrip Master</div>
+            <p className="app-text-muted">Inspect scrip data age/expiry health and load latest scrip master from ICICI.</p>
+            <Link href="/settings/scrip-master" className="app-btn-outline">
+              Update scrip master
             </Link>
           </div>
           <div className="md:col-span-2 rounded-xl border border-red-200 bg-red-50/50 p-4 text-sm dark:border-red-900/40 dark:bg-red-950/15">
-            <div className="font-medium text-red-900 dark:text-red-200">
-              Delete account
+            <div className="font-bold text-red-900 dark:text-red-200">
+              Delete Account
             </div>
             <p className="mt-1 text-zinc-700 dark:text-zinc-400">
               Permanently remove your account and stored credentials. Works for both

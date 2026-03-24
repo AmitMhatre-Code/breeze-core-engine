@@ -94,7 +94,7 @@ function atmSigmaFromChain(chain: ChainSuccess, T: number): number {
   return ivs.reduce((a, b) => a + b, 0) / ivs.length;
 }
 
-const OTM_SLIDER_MIN = 1;
+const OTM_SLIDER_MIN = 0;
 const OTM_SLIDER_MAX = 20;
 const MARGIN_LACS_MAX = 999_999;
 
@@ -259,24 +259,31 @@ function UncoveredNumberStepper({
   );
 }
 
-function UncoveredOtmSlider({
+function UncoveredOtmRangeSlider({
   label,
-  value,
-  onChange,
-  ariaLabel,
+  minValue,
+  maxValue,
+  onMinChange,
+  onMaxChange,
+  minAriaLabel,
+  maxAriaLabel,
   compact = false,
 }: {
   label: string;
-  value: number;
-  onChange: (v: number) => void;
-  ariaLabel: string;
+  minValue: number;
+  maxValue: number;
+  onMinChange: (v: number) => void;
+  onMaxChange: (v: number) => void;
+  minAriaLabel: string;
+  maxAriaLabel: string;
   compact?: boolean;
 }) {
-  const pct =
-    ((value - OTM_SLIDER_MIN) / (OTM_SLIDER_MAX - OTM_SLIDER_MIN)) * 100;
-
-  const valueAboveKnobClass =
-    "pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-zinc-200/80 bg-white px-2 py-0.5 text-xs font-semibold tabular-nums text-zinc-800 shadow-sm ring-1 ring-zinc-950/[0.04] dark:border-zinc-600/90 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10";
+  const minPct =
+    ((minValue - OTM_SLIDER_MIN) / (OTM_SLIDER_MAX - OTM_SLIDER_MIN)) * 100;
+  const maxPct =
+    ((maxValue - OTM_SLIDER_MIN) / (OTM_SLIDER_MAX - OTM_SLIDER_MIN)) * 100;
+  const thumbInteractiveCls =
+    "[&::-webkit-slider-thumb]:pointer-events-auto [&::-moz-range-thumb]:pointer-events-auto";
 
   if (compact) {
     return (
@@ -284,26 +291,48 @@ function UncoveredOtmSlider({
         <div className="mb-1.5 text-[11px] font-medium leading-snug text-zinc-500 dark:text-zinc-400">
           {label}
         </div>
-        <div className="relative pt-6">
+        <div className="relative pt-7">
           <div
-            className={valueAboveKnobClass}
-            style={{
-              left: `clamp(0.75rem, ${pct}%, calc(100% - 0.75rem))`,
-            }}
+            className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-zinc-200/80 bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-800 shadow-sm ring-1 ring-zinc-950/[0.04] dark:border-zinc-600/90 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10"
+            style={{ left: `clamp(0.625rem, ${minPct}%, calc(100% - 0.625rem))` }}
             aria-hidden
           >
-            {value}%
+            {minValue}%
           </div>
-          <input
-            type="range"
-            min={OTM_SLIDER_MIN}
-            max={OTM_SLIDER_MAX}
-            value={value}
-            onChange={(e) => onChange(Number(e.target.value))}
-            className="sb-range-slim relative z-0 w-full min-w-0"
-            aria-label={ariaLabel}
-            aria-valuetext={`${value} percent OTM`}
-          />
+          <div
+            className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-zinc-200/80 bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-800 shadow-sm ring-1 ring-zinc-950/[0.04] dark:border-zinc-600/90 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10"
+            style={{ left: `clamp(0.625rem, ${maxPct}%, calc(100% - 0.625rem))` }}
+            aria-hidden
+          >
+            {maxValue}%
+          </div>
+          <div className="relative h-6">
+            <div className="pointer-events-none absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
+            <div
+              className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
+              style={{ left: `${minPct}%`, width: `${Math.max(0, maxPct - minPct)}%` }}
+            />
+            <input
+              type="range"
+              min={OTM_SLIDER_MIN}
+              max={OTM_SLIDER_MAX}
+              value={minValue}
+              onChange={(e) => onMinChange(Math.min(Number(e.target.value), maxValue))}
+              className={`sb-range-slim pointer-events-none absolute inset-0 z-20 w-full min-w-0 bg-transparent ${thumbInteractiveCls}`}
+              aria-label={minAriaLabel}
+              aria-valuetext={`${minValue} percent OTM minimum`}
+            />
+            <input
+              type="range"
+              min={OTM_SLIDER_MIN}
+              max={OTM_SLIDER_MAX}
+              value={maxValue}
+              onChange={(e) => onMaxChange(Math.max(Number(e.target.value), minValue))}
+              className={`sb-range-slim pointer-events-none absolute inset-0 z-30 w-full min-w-0 bg-transparent ${thumbInteractiveCls}`}
+              aria-label={maxAriaLabel}
+              aria-valuetext={`${maxValue} percent OTM maximum`}
+            />
+          </div>
         </div>
       </div>
     );
@@ -314,26 +343,48 @@ function UncoveredOtmSlider({
       <div className="mb-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
         {label}
       </div>
-      <div className="relative pt-6">
+      <div className="relative pt-7">
         <div
           className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-zinc-200/90 bg-white px-2 py-1 text-[11px] font-semibold tabular-nums text-zinc-800 shadow-sm ring-1 ring-zinc-950/5 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10"
-          style={{
-            left: `clamp(1.25rem, ${pct}%, calc(100% - 1.25rem))`,
-          }}
+          style={{ left: `clamp(0.625rem, ${minPct}%, calc(100% - 0.625rem))` }}
           aria-hidden
         >
-          {value}%
+          {minValue}%
         </div>
-        <input
-          type="range"
-          min={OTM_SLIDER_MIN}
-          max={OTM_SLIDER_MAX}
-          value={value}
-          onChange={(e) => onChange(Number(e.target.value))}
-          className="sb-range-slim relative z-0 w-full"
-          aria-label={ariaLabel}
-          aria-valuetext={`${value} percent OTM`}
-        />
+        <div
+          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-zinc-200/90 bg-white px-2 py-1 text-[11px] font-semibold tabular-nums text-zinc-800 shadow-sm ring-1 ring-zinc-950/5 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10"
+          style={{ left: `clamp(0.625rem, ${maxPct}%, calc(100% - 0.625rem))` }}
+          aria-hidden
+        >
+          {maxValue}%
+        </div>
+        <div className="relative h-6">
+          <div className="pointer-events-none absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
+          <div
+            className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
+            style={{ left: `${minPct}%`, width: `${Math.max(0, maxPct - minPct)}%` }}
+          />
+          <input
+            type="range"
+            min={OTM_SLIDER_MIN}
+            max={OTM_SLIDER_MAX}
+            value={minValue}
+            onChange={(e) => onMinChange(Math.min(Number(e.target.value), maxValue))}
+            className={`sb-range-slim pointer-events-none absolute inset-0 z-20 w-full bg-transparent ${thumbInteractiveCls}`}
+            aria-label={minAriaLabel}
+            aria-valuetext={`${minValue} percent OTM minimum`}
+          />
+          <input
+            type="range"
+            min={OTM_SLIDER_MIN}
+            max={OTM_SLIDER_MAX}
+            value={maxValue}
+            onChange={(e) => onMaxChange(Math.max(Number(e.target.value), minValue))}
+            className={`sb-range-slim pointer-events-none absolute inset-0 z-30 w-full bg-transparent ${thumbInteractiveCls}`}
+            aria-label={maxAriaLabel}
+            aria-valuetext={`${maxValue} percent OTM maximum`}
+          />
+        </div>
       </div>
     </div>
   );
@@ -383,6 +434,12 @@ function IvShockSlider({
         >
           {badgeText}
         </div>
+        <div className="pointer-events-none absolute top-1/2 left-0 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
+        <div
+          className="pointer-events-none absolute top-1/2 left-0 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
+          style={{ width: `${pct}%` }}
+          aria-hidden
+        />
         <input
           type="range"
           min={min}
@@ -894,8 +951,10 @@ export default function StrategyBuilderPage() {
     useState<ReadymadeSelection | null>(null);
   const [scanLimits, setScanLimits] = useState<number | null>(null);
   const [scanTop, setScanTop] = useState<number | null>(null);
-  const [scanOtmCall, setScanOtmCall] = useState(10);
-  const [scanOtmPut, setScanOtmPut] = useState(10);
+  const [scanOtmCallMin, setScanOtmCallMin] = useState(6);
+  const [scanOtmCallMax, setScanOtmCallMax] = useState(12);
+  const [scanOtmPutMin, setScanOtmPutMin] = useState(6);
+  const [scanOtmPutMax, setScanOtmPutMax] = useState(12);
   const [scanProvisionElm, setScanProvisionElm] = useState(false);
   const [uncoveredScanResult, setUncoveredScanResult] =
     useState<UncoveredScanResponse | null>(null);
@@ -959,14 +1018,20 @@ export default function StrategyBuilderPage() {
       if (scanLimits == null || scanTop == null) {
         throw new Error("Margin to deploy and Options to list are required");
       }
+      if (scanOtmCallMin > scanOtmCallMax || scanOtmPutMin > scanOtmPutMax) {
+        throw new Error("OTM range invalid: min must be less than or equal to max");
+      }
       const q = new URLSearchParams({
         stock_code: stockCode.trim(),
         expiry_date: expiryDate.trim(),
         limits: String(scanLimits),
         top: String(scanTop),
-        otm_call_distance: String(scanOtmCall),
-        otm_put_distance: String(scanOtmPut),
+        otm_call_min: String(scanOtmCallMin),
+        otm_call_max: String(scanOtmCallMax),
+        otm_put_min: String(scanOtmPutMin),
+        otm_put_max: String(scanOtmPutMax),
         exchange_code: ex,
+        strategy_builder: "true",
       });
       if (scanProvisionElm) q.set("provision_elm", "on");
       const mode = selectedReadymadeRef.current;
@@ -979,6 +1044,22 @@ export default function StrategyBuilderPage() {
       );
     },
     onSuccess: (data) => {
+      const ceStatus = Number(data.ce_options?.Status ?? 0);
+      const peStatus = Number(data.pe_options?.Status ?? 0);
+      const ceErr = String(data.ce_options?.Error ?? "");
+      const peErr = String(data.pe_options?.Error ?? "");
+      const mergedErr = [ceErr, peErr].filter(Boolean).join(" ");
+      if (
+        ceStatus === 429 ||
+        peStatus === 429 ||
+        /limit exceed|api call per minute|daily limit|5000/i.test(mergedErr)
+      ) {
+        setUncoveredScanResult(null);
+        setScanError(
+          "Breeze API rate/daily limit reached. Please slow down scan activity and retry after some time.",
+        );
+        return;
+      }
       setUncoveredScanResult(data);
       setScanError(null);
     },
@@ -1154,6 +1235,31 @@ export default function StrategyBuilderPage() {
 
   const marginState = marginQ.data;
   const spanMargin = parseSpanMarginFromResponse(marginState);
+  const strategyBuilderMarginWarnings = useMemo(() => {
+    const raw = (marginState?.Success as { warnings?: unknown } | undefined)?.warnings;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((w) => {
+        if (!w || typeof w !== "object") return "";
+        return String((w as Record<string, unknown>).message ?? "").trim();
+      })
+      .filter(Boolean);
+  }, [marginState]);
+  const scanFallbackWarnings = useMemo(() => {
+    const out: string[] = [];
+    const collect = (side: UncoveredSidePayload | undefined) => {
+      const warnings = (side as { Warnings?: unknown } | undefined)?.Warnings;
+      if (!Array.isArray(warnings)) return;
+      for (const w of warnings) {
+        if (!w || typeof w !== "object") continue;
+        const msg = String((w as Record<string, unknown>).message ?? "").trim();
+        if (msg) out.push(msg);
+      }
+    };
+    collect(uncoveredScanResult?.ce_options);
+    collect(uncoveredScanResult?.pe_options);
+    return out;
+  }, [uncoveredScanResult]);
 
   const { refetch: refetchStrategyMargin } = marginQ;
 
@@ -1659,17 +1765,27 @@ export default function StrategyBuilderPage() {
                     max={MARGIN_LACS_MAX}
                     suffix="Lacs"
                   />
-                  <label
+                  <div
                     className={`${sb.checkboxRow} mt-2 gap-2 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
                   >
-                    <input
-                      type="checkbox"
-                      className={sb.checkbox}
-                      checked={scanProvisionElm}
-                      onChange={(e) => setScanProvisionElm(e.target.checked)}
-                    />
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={scanProvisionElm}
+                      aria-label="Toggle Provision for ELM"
+                      onClick={() => setScanProvisionElm(!scanProvisionElm)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${
+                        scanProvisionElm ? "bg-sky-600" : "bg-zinc-300 dark:bg-zinc-700"
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                          scanProvisionElm ? "translate-x-4" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
                     Provision for ELM
-                  </label>
+                  </div>
                 </div>
                 <div className="min-w-0">
                   <UncoveredNumberStepper
@@ -1681,28 +1797,37 @@ export default function StrategyBuilderPage() {
                     max={STRATEGY_BUILDER_OPTIONS_TO_LIST_MAX}
                   />
                 </div>
-                <div className="min-w-0">
-                  <UncoveredOtmSlider
+                <div className="min-w-0 space-y-2">
+                  <UncoveredOtmRangeSlider
                     compact
-                    label="Call OTM safety"
-                    value={scanOtmCall}
-                    onChange={setScanOtmCall}
-                    ariaLabel="Call OTM safety margin percent"
+                    label="Call OTM range %"
+                    minValue={scanOtmCallMin}
+                    maxValue={scanOtmCallMax}
+                    onMinChange={setScanOtmCallMin}
+                    onMaxChange={setScanOtmCallMax}
+                    minAriaLabel="Call OTM minimum percent"
+                    maxAriaLabel="Call OTM maximum percent"
                   />
                 </div>
-                <div className="min-w-0">
-                  <UncoveredOtmSlider
+                <div className="min-w-0 space-y-2">
+                  <UncoveredOtmRangeSlider
                     compact
-                    label="Put OTM safety"
-                    value={scanOtmPut}
-                    onChange={setScanOtmPut}
-                    ariaLabel="Put OTM safety margin percent"
+                    label="Put OTM range %"
+                    minValue={scanOtmPutMin}
+                    maxValue={scanOtmPutMax}
+                    onMinChange={setScanOtmPutMin}
+                    onMaxChange={setScanOtmPutMax}
+                    minAriaLabel="Put OTM minimum percent"
+                    maxAriaLabel="Put OTM maximum percent"
                   />
                 </div>
               </div>
 
               {scanError ? (
                 <div className="app-alert-error text-xs">{scanError}</div>
+              ) : null}
+              {!scanError && scanFallbackWarnings.length > 0 ? (
+                <div className="app-alert-error text-xs">{scanFallbackWarnings[0]}</div>
               ) : null}
               <div className="flex justify-start">
                 <button
@@ -1712,6 +1837,8 @@ export default function StrategyBuilderPage() {
                     !expiryDate.trim() ||
                     scanLimits == null ||
                     scanTop == null ||
+                    scanOtmCallMin > scanOtmCallMax ||
+                    scanOtmPutMin > scanOtmPutMax ||
                     uncoveredScanMut.isPending
                   }
                   className={`${sb.btnPrimary} relative inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
@@ -2191,6 +2318,11 @@ export default function StrategyBuilderPage() {
                     (marginQ.isError ? "Margin request failed" : "—")
                   )}
                 </div>
+                {strategyBuilderMarginWarnings.length > 0 ? (
+                  <div className="mt-1 app-alert-error text-[11px]">
+                    {strategyBuilderMarginWarnings[0]}
+                  </div>
+                ) : null}
               </div>
               <div>
                 <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
@@ -2214,16 +2346,15 @@ export default function StrategyBuilderPage() {
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                 Payoff chart
               </h3>
-              <label
-                className={`${sb.checkboxRow} text-xs font-medium text-zinc-700 dark:text-zinc-300`}
-              >
+              <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-700 dark:text-zinc-300">
                 <input
                   type="checkbox"
-                  className={sb.checkbox}
+                  className="peer sr-only"
                   checked={showToday}
                   onChange={(e) => setShowToday(e.target.checked)}
                 />
-                Show today (model)
+                <span className="relative h-5 w-9 rounded-full bg-zinc-300 transition-colors duration-200 after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform after:duration-200 peer-checked:bg-sky-600 peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-sky-500 dark:bg-zinc-700 dark:peer-checked:bg-sky-500" />
+                <span>Show today (model)</span>
               </label>
             </div>
             <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">

@@ -227,11 +227,12 @@ export default function DashboardPage() {
       ? (portQ.data.Success?.positions?.length ?? 0)
       : null;
 
+  // Prefer spot from /dashboard/vix (same request as VIX) so NIFTY shows immediately; opts may trail.
   const niftySpot =
-    typeof opts?.nifty_spot === "number"
-      ? opts.nifty_spot
-      : typeof core?.nifty_spot === "number"
-        ? core.nifty_spot
+    typeof core?.nifty_spot === "number"
+      ? core.nifty_spot
+      : typeof opts?.nifty_spot === "number"
+        ? opts.nifty_spot
         : null;
 
   const vixInterp =
@@ -245,8 +246,10 @@ export default function DashboardPage() {
       ? interpretPcrOi(opts.put_call_ratio)
       : null;
 
-  const loading = homeQ.isPending || coreQ.isPending || optsQ.isPending;
+  // IV / OI / PCR come from /dashboard/vix/options (slow); do not block VIX chart or NIFTY spot from core.
+  const loading = homeQ.isPending || coreQ.isPending;
   const blockingError = homeQ.error ?? coreQ.error;
+  const optsLoading = optsQ.isPending;
 
   const volatilityFetching = coreQ.isFetching || optsQ.isFetching;
   const refreshVolatility = useCallback(() => {
@@ -364,7 +367,11 @@ export default function DashboardPage() {
               <h2 className="app-text-heading">NIFTY Volatility</h2>
               <div className="flex min-w-0 shrink-0 items-center gap-2">
                 <span className="app-text-muted max-w-[9.5rem] truncate text-right sm:max-w-none">
-                  {opts?.next_expiry ? `Exp ${opts.next_expiry}` : "NIFTY"}
+                  {optsLoading
+                    ? "…"
+                    : opts?.next_expiry
+                      ? `Exp ${opts.next_expiry}`
+                      : "NIFTY"}
                 </span>
                 <button
                   type="button"
@@ -405,10 +412,12 @@ export default function DashboardPage() {
               <div className="flex items-start justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
                 <span className="shrink-0 pt-0.5">ATM IV</span>
                 <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-0.5 text-right font-medium text-zinc-900 dark:text-zinc-100">
-                  {typeof opts?.atm_iv === "number"
-                    ? `${opts.atm_iv.toFixed(2)}%`
-                    : "—"}
-                  {ivInterp ? (
+                  {optsLoading
+                    ? "…"
+                    : typeof opts?.atm_iv === "number"
+                      ? `${opts.atm_iv.toFixed(2)}%`
+                      : "—"}
+                  {!optsLoading && ivInterp ? (
                     <InterpretationBadge
                       label={ivInterp.label}
                       tooltip={ivInterp.tooltip}
@@ -420,7 +429,9 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400">
                 <span>1σ range (ATM)</span>
                 <span className="max-w-[58%] text-right font-medium text-zinc-900 dark:text-zinc-100">
-                  {Array.isArray(opts?.expected_range) &&
+                  {optsLoading ? (
+                    "…"
+                  ) : Array.isArray(opts?.expected_range) &&
                   opts.expected_range.length === 2 ? (
                     <>
                       {formatNiftyIndexInt(opts.expected_range[0])} -{" "}
@@ -444,19 +455,23 @@ export default function DashboardPage() {
                   Range based on highest OI
                 </span>
                 <span className="max-w-[45%] text-right font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
-                  {formatHighestOiStrikeRange(
-                    opts?.strike_highest_call_oi,
-                    opts?.strike_highest_put_oi,
-                  )}
+                  {optsLoading
+                    ? "…"
+                    : formatHighestOiStrikeRange(
+                        opts?.strike_highest_call_oi,
+                        opts?.strike_highest_put_oi,
+                      )}
                 </span>
               </div>
               <div className="flex items-start justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                <span className="shrink-0 pt-0.5">Put:call (OI)</span>
+                <span className="shrink-0 pt-0.5">Put:Call (OI)</span>
                 <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-0.5 text-right font-medium text-zinc-900 dark:text-zinc-100">
-                  {typeof opts?.put_call_ratio === "number"
-                    ? opts.put_call_ratio.toFixed(2)
-                    : "—"}
-                  {pcrInterp ? (
+                  {optsLoading
+                    ? "…"
+                    : typeof opts?.put_call_ratio === "number"
+                      ? opts.put_call_ratio.toFixed(2)
+                      : "—"}
+                  {!optsLoading && pcrInterp ? (
                     <InterpretationBadge
                       label={pcrInterp.label}
                       tooltip={pcrInterp.tooltip}

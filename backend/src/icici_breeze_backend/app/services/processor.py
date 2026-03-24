@@ -22,6 +22,11 @@ import logging
 
 # Import ICICI client for real-time portfolio/orders fetch (Phase 5 US3)
 from icici_breeze_backend.core.icici_client import icici_client  # tests patch app.services.processor.icici_client
+from icici_breeze_backend.app.services.nsccl_baseline import (
+    MARGIN_SOURCE_BREEZE,
+    MARGIN_SOURCE_EXCHANGE,
+    resolve_exchange_baseline_margin,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -42,6 +47,28 @@ def _icici_option_chain_enums(product_type: str, right: str) -> tuple[str, str]:
         pt = "options"
     rt = str(right or "").strip().lower()
     return pt, rt
+
+
+def _uncovered_scan_row_has_bid_side(i: dict, exchange_code: str) -> bool:
+    """Selling needs bid-side interest; BFO often returns total_buy_qty=0 in chain while LTP/bid exist (see get_full_option_chain BFO note)."""
+    try:
+        if int(i.get("total_buy_qty") or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    if exchange_code != cfg.BFO:
+        return False
+    try:
+        if float(i.get("best_bid_price") or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    try:
+        if float(i.get("ltp") or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return False
 
 
 def _expiry_api_to_display(expiry: str) -> str:
@@ -143,6 +170,12 @@ def _icici_error(error_msg: str, status: int = 400) -> dict:
     return {"Status": status, "Error": error_msg}
 
 
+def _single_line_preview(text: str, max_len: int = 400) -> str:
+    """Collapse whitespace for compact log lines."""
+    one = " ".join(str(text).split())
+    return one if len(one) <= max_len else one[: max_len - 3] + "..."
+
+
 def _format_indian_integer_digits(n: int) -> str:
     """Format integer with Indian-style grouping (e.g. 1234567 → 12,34,567)."""
     n = int(n)
@@ -181,6 +214,23 @@ def _normalize_icici_response(data: dict) -> tuple:
     success = data.get("Success") or data.get("success") or {}
     err_msg = data.get("Error") or data.get("error") or "Unknown error"
     return status, success, err_msg
+
+
+def _is_icici_limit_exceeded(error_text: str) -> bool:
+    e = str(error_text or "").lower()
+    return (
+        "limit exceed" in e
+        or "api call per minute" in e
+        or ("5000" in e and "call" in e)
+        or ("daily" in e and "limit" in e)
+    )
+
+
+def _breeze_limit_error() -> dict:
+    return {
+        "Status": 429,
+        "Error": "Breeze API rate/daily limit reached. Please slow down scan activity and retry after some time.",
+    }
 
 
 from icici_breeze_backend.app.external.icici_api import fetch_customerdetails_session_token as _fetch_customerdetails_session_token
@@ -244,6 +294,84 @@ class processor():
             result['Status'] = 400
             result['Error'] = "Unable to load credentials. Please try again later."
         return result
+
+    def get_strategy_builder_margin_source(self, user_id: str) -> str:
+        try:
+            with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+                row = conn.execute(
+                    "SELECT strategy_builder_margin_source FROM user_account WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone()
+            source = str(row[0]).strip().lower() if row and row[0] else MARGIN_SOURCE_BREEZE
+            if source not in (MARGIN_SOURCE_BREEZE, MARGIN_SOURCE_EXCHANGE):
+                return MARGIN_SOURCE_BREEZE
+            return source
+        except Exception:
+            return MARGIN_SOURCE_BREEZE
+
+    def _resolve_leg_margin_with_source(
+        self,
+        user_id: str,
+        exchange_code: str,
+        stock_code: str,
+        expiry_display: str,
+        strike_price: int,
+        right: str,
+        quantity: int,
+        margin_source: str,
+        action: str = cfg.SELL,
+        product: str = cfg.OPTIONS,
+    ) -> tuple[dict, list[dict]]:
+        warnings: list[dict] = []
+        if margin_source == MARGIN_SOURCE_EXCHANGE:
+            baseline = resolve_exchange_baseline_margin(
+                exchange_code=exchange_code,
+                stock_code=stock_code,
+                expiry_display=expiry_display,
+                strike_price=int(strike_price),
+                right=right,
+                quantity=int(quantity),
+            )
+            if baseline.get("found"):
+                return (
+                    {
+                        "Status": 200,
+                        "Success": {"span_margin_required": baseline["span_margin_required"]},
+                        "Error": "",
+                    },
+                    warnings,
+                )
+            warnings.append(
+                {
+                    "type": "baseline_missing_contract",
+                    "stock_code": stock_code,
+                    "expiry_date": expiry_display,
+                    "strike_price": int(strike_price),
+                    "right": right,
+                    "message": "Contract missing in Exchange Risk Baseline; Breeze fallback used.",
+                }
+            )
+
+        breeze = self.get_session_breeze(user_id)
+        expiry_api = _expiry_display_to_api(expiry_display)
+        try:
+            out = breeze.margin_calculator(
+                [
+                    {
+                        "strike_price": int(strike_price),
+                        "quantity": int(quantity),
+                        "product": product,
+                        "action": action,
+                        "expiry_date": expiry_api,
+                        "stock_code": stock_code,
+                        "right": right,
+                    }
+                ],
+                exchange_code=exchange_code,
+            )
+        except Exception as e:
+            out = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
+        return out, warnings
 
     def _get_full_secret_for_user(self, user_id: str, user_fragment: str = ""):
         """Reconstruct full API secret for user. Returns (full_secret, cred_data) or (None, error_result)."""
@@ -401,7 +529,21 @@ class processor():
                     return {"Status": 400, "Error": "Unable to fetch account details. Please try again or re-login."}
         return {"Status": 400, "Error": "Unable to fetch account details. Please try again or re-login."}
 
-    def uncovered_shorts(self, user_id, stock_code=None, expiry_date=None, limits=None, elm=None, otm_call_distance=10, otm_put_distance=10, top=10, exchange_code: str = cfg.NFO):
+    def uncovered_shorts(
+        self,
+        user_id,
+        stock_code=None,
+        expiry_date=None,
+        limits=None,
+        elm=None,
+        otm_call_min=10,
+        otm_call_max=10,
+        otm_put_min=10,
+        otm_put_max=10,
+        top=10,
+        exchange_code: str = cfg.NFO,
+        margin_source: str = MARGIN_SOURCE_BREEZE,
+    ):
         uncovered_shorts_result = {}
         uncovered_shorts_result['ce_options'] = {}
         uncovered_shorts_result['pe_options'] = {}
@@ -412,13 +554,43 @@ class processor():
 
         # Getting OTM CALL chain
         right = cfg.CALL
-        otm_distance = otm_call_distance
-        uncovered_shorts_result['ce_options'] = self.get_options(user_id,right,stock_code,lot_size,expiry_date,limits,elm,otm_distance,top, exchange_code=exchange_code)
+        uncovered_shorts_result['ce_options'] = self.get_options(
+            user_id,
+            right,
+            stock_code,
+            lot_size,
+            expiry_date,
+            limits,
+            elm,
+            otm_call_min,
+            otm_call_max,
+            top,
+            exchange_code=exchange_code,
+            margin_source=margin_source,
+        )
+        if _is_icici_limit_exceeded(uncovered_shorts_result['ce_options'].get("Error")):
+            uncovered_shorts_result['ce_options'] = _breeze_limit_error()
+            uncovered_shorts_result['pe_options'] = _breeze_limit_error()
+            return uncovered_shorts_result
 
         # Getting OTM PUT chain
         right = cfg.PUT
-        otm_distance = otm_put_distance
-        uncovered_shorts_result['pe_options'] = self.get_options(user_id,right,stock_code,lot_size,expiry_date,limits,elm,otm_distance,top, exchange_code=exchange_code)
+        uncovered_shorts_result['pe_options'] = self.get_options(
+            user_id,
+            right,
+            stock_code,
+            lot_size,
+            expiry_date,
+            limits,
+            elm,
+            otm_put_min,
+            otm_put_max,
+            top,
+            exchange_code=exchange_code,
+            margin_source=margin_source,
+        )
+        if _is_icici_limit_exceeded(uncovered_shorts_result['pe_options'].get("Error")):
+            uncovered_shorts_result['pe_options'] = _breeze_limit_error()
 
         return uncovered_shorts_result
 
@@ -568,7 +740,21 @@ class processor():
         self._maybe_evict_session(user_id, margin_situation)
         return margin_situation
 
-    def get_options(self,user_id,right,stock_code,lot_size,expiry_date,limits,elm,otm_distance,top, exchange_code: str = cfg.NFO):
+    def get_options(
+        self,
+        user_id,
+        right,
+        stock_code,
+        lot_size,
+        expiry_date,
+        limits,
+        elm,
+        otm_min,
+        otm_max,
+        top,
+        exchange_code: str = cfg.NFO,
+        margin_source: str = MARGIN_SOURCE_BREEZE,
+    ):
         product_type = cfg.OPTIONS
         action = cfg.SELL
         sorted_options = {}
@@ -582,12 +768,36 @@ class processor():
         if options_chain.get('Status') == 200:
             # Calculating the premium that can be collected for every Liquid OTM CE option
             options = []
+            total_chain_rows = len(options_chain.get('Success') or [])
+            range_eligible_rows = 0
+            margin_calls_made = 0
+            min_pct = max(0.0, float(otm_min))
+            max_pct = max(min_pct, float(otm_max))
             for i in options_chain.get('Success') or []:
-                if int(i["total_buy_qty"]) > 0 and ((right == cfg.CALL and int(i["strike_price"]) > int(float(i["spot_price"]) * (1 + otm_distance / 100))) or (right == cfg.PUT and int(i["strike_price"]) < int(float(i["spot_price"]) * (1 - otm_distance / 100))) ):
-                    try:
-                        option_margin = breeze.margin_calculator([{"strike_price": int(i["strike_price"]),"quantity": lot_size,"product": product_type,"action": action,"expiry_date": expiry_date,"stock_code": stock_code,"right": right}],exchange_code = exchange_code)
-                    except Exception as e:
-                        option_margin = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
+                spot = float(i["spot_price"])
+                strike = int(i["strike_price"])
+                in_range = (
+                    (right == cfg.CALL and strike >= int(spot * (1 + min_pct / 100)) and strike <= int(spot * (1 + max_pct / 100)))
+                    or (right == cfg.PUT and strike <= int(spot * (1 - min_pct / 100)) and strike >= int(spot * (1 - max_pct / 100)))
+                )
+                if _uncovered_scan_row_has_bid_side(i, exchange_code) and in_range:
+                    range_eligible_rows += 1
+                    margin_calls_made += 1
+                    option_margin, _warnings = self._resolve_leg_margin_with_source(
+                        user_id=user_id,
+                        exchange_code=exchange_code,
+                        stock_code=stock_code,
+                        expiry_display=_expiry_api_to_display(expiry_date),
+                        strike_price=int(i["strike_price"]),
+                        right=right,
+                        quantity=int(lot_size),
+                        margin_source=margin_source,
+                        action=action,
+                        product=product_type,
+                    )
+                    if _warnings:
+                        sorted_options.setdefault("Warnings", [])
+                        sorted_options["Warnings"].extend(_warnings)
 
                     temp = {}
                     temp['stock_code'] = stock_code
@@ -605,9 +815,16 @@ class processor():
                         if elm == cfg.CHECKED:
                             margin = margin + (float(temp['spot_price']) * float(lot_size) * cfg.ELM)
                         temp['quantity'] = math.floor(limits * 100000 / margin) * lot_size
-                        if temp['quantity'] <= int(i['total_buy_qty']):
+                        buy_cap = int(i.get("total_buy_qty") or 0)
+                        book_ok = buy_cap > 0 and temp["quantity"] <= buy_cap
+                        if exchange_code == cfg.BFO and buy_cap == 0 and temp["quantity"] > 0:
+                            book_ok = True
+                        if book_ok:
+                            bid_for_prem = float(i.get("best_bid_price") or 0)
+                            if bid_for_prem <= 0 and exchange_code == cfg.BFO:
+                                bid_for_prem = float(i.get("ltp") or 0)
                             temp['best_bid_price'] = i["best_bid_price"]
-                            temp['premium'] = temp['quantity'] * i["best_bid_price"]
+                            temp['premium'] = temp['quantity'] * bid_for_prem
                             # Annualised carry on SPAN: (premium / DTE) * 365 / span for this line.
                             num_lots = (
                                 (temp["quantity"] // lot_size)
@@ -630,7 +847,14 @@ class processor():
                                 temp["carry_returns"] = 0.0
                             options.append(copy.deepcopy(temp))
                     else:
-                        sorted_options['Error'] = "Error calling margin_calculator : " + option_margin.get('Error', '')
+                        err = option_margin.get('Error', '')
+                        if _is_icici_limit_exceeded(err):
+                            _logger.warning(
+                                "uncovered_shorts_scan_limit side=%s stock=%s exchange=%s expiry=%s chain_rows=%s range_rows=%s margin_calls=%s",
+                                right, stock_code, exchange_code, expiry_date, total_chain_rows, range_eligible_rows, margin_calls_made,
+                            )
+                            return _breeze_limit_error()
+                        sorted_options['Error'] = "Error calling margin_calculator : " + err
                         sorted_options['Status'] = option_margin.get('Status', 400)
 
             # Sort the top call options by premium
@@ -639,8 +863,13 @@ class processor():
                 sorted_options['Success'] = options[:top]
                 sorted_options['Status'] = 200
             else:
-                sorted_options['Error'] = "No suitable options found to SELL beyond the defined OTM distance"
+                sorted_options['Error'] = "No suitable options found to SELL within the selected OTM range"
                 sorted_options['Status'] = 400
+            _logger.info(
+                "uncovered_shorts_scan_diag side=%s stock=%s exchange=%s expiry=%s otm_min=%s otm_max=%s chain_rows=%s range_rows=%s margin_calls=%s shortlisted=%s status=%s",
+                right, stock_code, exchange_code, expiry_date, min_pct, max_pct,
+                total_chain_rows, range_eligible_rows, margin_calls_made, len(options), sorted_options.get("Status"),
+            )
         else:
             sorted_options['Error'] = right + " : " + options_chain.get('Error', '')
             sorted_options['Status'] = options_chain.get('Status', 400)
@@ -1359,6 +1588,7 @@ class processor():
             qty_str = str(quantity)
         prc = str(price).strip()
 
+        place_order_sdk_exception = False
         try:
             response = breeze.place_order(
                 stock_code=stock_code,
@@ -1377,7 +1607,24 @@ class processor():
                 product=prod,
             )
         except Exception as e:
+            place_order_sdk_exception = True
             err = str(e)
+            _logger.warning(
+                "place_order: Breeze SDK exception user_id=%s stock_code=%s exchange=%s action=%s "
+                "qty=%s strike=%s right=%r price=%r expiry_api=%r exc_type=%s err=%s",
+                user_id,
+                stock_code,
+                exchange_code,
+                act,
+                qty_str,
+                strike,
+                rgt,
+                prc,
+                expiry_api,
+                type(e).__name__,
+                err,
+                exc_info=True,
+            )
             if "Expecting value" in err or "JSONDecodeError" in type(e).__name__:
                 response = _icici_error(
                     "Broker returned an empty or non-JSON response when placing the order "
@@ -1385,6 +1632,37 @@ class processor():
                 )
             else:
                 response = _icici_error(f"Error calling ICICI Breeze API place_order: {e}")
+
+        api_st = (response or {}).get("Status")
+        if api_st != 200 and not place_order_sdk_exception:
+            _succ = (response or {}).get("Success")
+            _succ_hint = (
+                "none"
+                if _succ is None
+                else (
+                    f"dict_keys={list(_succ.keys())[:10]}"
+                    if isinstance(_succ, dict)
+                    else f"{type(_succ).__name__}_len={len(_succ)}"
+                    if hasattr(_succ, "__len__") and not isinstance(_succ, (str, bytes))
+                    else type(_succ).__name__
+                )
+            )
+            _logger.warning(
+                "place_order: broker returned non-success user_id=%s stock_code=%s exchange=%s action=%s "
+                "qty=%s strike=%s right=%r price=%r expiry_api=%s api_status=%s api_error=%r success=%s",
+                user_id,
+                stock_code,
+                exchange_code,
+                act,
+                qty_str,
+                strike,
+                rgt,
+                prc,
+                expiry_api,
+                api_st,
+                (response or {}).get("Error"),
+                _succ_hint,
+            )
 
         self._maybe_evict_session(user_id, response)
         return response
@@ -1491,6 +1769,20 @@ class processor():
                     f" (+{_format_indian_integer_digits(k - 4)} more)"
                     if k > 4
                     else ""
+                )
+                _logger.warning(
+                    "break_order: failed_chunks user_id=%s contract=%s failed_count=%s "
+                    "total_qty_requested=%s qty_per_order=%s remainder=%s lot_size=%s freeze_limit=%s "
+                    "preview=%r",
+                    user_id,
+                    contract_label,
+                    k,
+                    total_qty,
+                    qty_per_order,
+                    remainder,
+                    lot_size,
+                    qty_limits,
+                    _single_line_preview(preview + tail, 400),
                 )
                 messages.append(
                     {
@@ -2098,7 +2390,7 @@ class processor():
             return Markup(f'<span>{formatted}</span>')
 
     def strategy_builder_margin(self, user_id: str, exchange_code: str, legs: list):
-        """Compute SPAN margin for multiple fresh option legs via ICICI margin_calculator."""
+        """Compute SPAN margin for strategy-builder legs using selected source."""
         breeze = self.get_session_breeze(user_id)
         if breeze is None:
             return {
@@ -2106,7 +2398,11 @@ class processor():
                 "Error": "Unable to connect to broker. Please check your credentials and re-login.",
                 "Success": None,
             }
+        margin_source = self.get_strategy_builder_margin_source(user_id)
         margin_input = []
+        baseline_total = 0.0
+        warnings: list[dict] = []
+        can_use_baseline = margin_source == MARGIN_SOURCE_EXCHANGE
         for leg in legs:
             ed = (leg.get("expiry_date") or "").strip()
             if len(ed) >= 10 and ed[4] == "-" and "T" not in ed:
@@ -2119,24 +2415,69 @@ class processor():
                 except Exception:
                     return {"Status": 400, "Error": f"Invalid expiry_date: {ed}", "Success": None}
             try:
-                margin_input.append(
-                    {
-                        "strike_price": int(float(leg["strike_price"])),
-                        "quantity": int(leg["quantity"]),
-                        "product": leg.get("product_type") or cfg.OPTIONS,
-                        "action": leg["action"],
-                        "expiry_date": expiry_api,
-                        "stock_code": leg["stock_code"],
-                        "right": leg["right"],
-                    }
-                )
+                strike_price = int(float(leg["strike_price"]))
+                quantity = int(leg["quantity"])
+                action = leg["action"]
+                product = leg.get("product_type") or cfg.OPTIONS
+                stock_code = leg["stock_code"]
+                right = leg["right"]
             except (TypeError, ValueError) as e:
                 return {"Status": 400, "Error": f"Invalid leg fields: {e}", "Success": None}
+            if can_use_baseline:
+                baseline_margin = resolve_exchange_baseline_margin(
+                    exchange_code=exchange_code,
+                    stock_code=stock_code,
+                    expiry_display=_expiry_api_to_display(expiry_api),
+                    strike_price=strike_price,
+                    right=right,
+                    quantity=quantity,
+                )
+                if baseline_margin.get("found"):
+                    baseline_total += float(baseline_margin.get("span_margin_required") or 0.0)
+                    continue
+                warnings.append(
+                    {
+                        "type": "baseline_missing_contract",
+                        "stock_code": stock_code,
+                        "expiry_date": _expiry_api_to_display(expiry_api),
+                        "strike_price": strike_price,
+                        "right": right,
+                        "message": "Contract missing in Exchange Risk Baseline; Breeze fallback used.",
+                    }
+                )
+            margin_input.append(
+                {
+                    "strike_price": strike_price,
+                    "quantity": quantity,
+                    "product": product,
+                    "action": action,
+                    "expiry_date": expiry_api,
+                    "stock_code": stock_code,
+                    "right": right,
+                }
+            )
+        if can_use_baseline and not margin_input:
+            return {
+                "Status": 200,
+                "Error": "",
+                "Success": {
+                    "span_margin_required": baseline_total,
+                    "margin_source": MARGIN_SOURCE_EXCHANGE,
+                    "warnings": warnings,
+                },
+            }
         try:
             margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
         except Exception as e:
             return _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
         self._maybe_evict_session(user_id, margins)
+        if margins.get("Status") == 200:
+            base_span = float((margins.get("Success") or {}).get("span_margin_required") or 0.0)
+            margins.setdefault("Success", {})
+            margins["Success"]["span_margin_required"] = base_span + baseline_total
+            margins["Success"]["margin_source"] = margin_source
+            if warnings:
+                margins["Success"]["warnings"] = warnings
         return margins
 
     # Real-time portfolio fetch for US3 (called by tests)

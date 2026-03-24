@@ -34,3 +34,42 @@ class QuantityLimitUpdateItem(BaseModel):
 
 class QuantityLimitsUpdateBody(BaseModel):
     rows: list[QuantityLimitUpdateItem]
+
+
+class ApiUsageByApiItem(BaseModel):
+    usage_date: str
+    api_name: str
+    call_count: int
+
+
+class ApiUsageByRouteItem(BaseModel):
+    usage_date: str
+    route_id: str
+    call_count: int
+
+
+class ApiUsageStateResponse(BaseModel):
+    user_id: str = ""
+    days: int = 30
+    by_api: list[ApiUsageByApiItem] = Field(default_factory=list)
+    by_route: list[ApiUsageByRouteItem] = Field(default_factory=list)
+
+
+class MarginSourceStateResponse(BaseModel):
+    user_id: str = ""
+    margin_source: str = "breeze_api"
+    latest_baseline: dict[str, Any] = Field(default_factory=dict)
+    message: Optional[str] = None
+
+
+class MarginSourceUpdateBody(BaseModel):
+    margin_source: str
+
+
+class ScripMasterStateResponse(BaseModel):
+    user_id: str = ""
+    master_date: Optional[str] = None
+    master_age_days: Optional[int] = None
+    has_past_expiries: bool = False
+    past_expiries_count: int = 0
+    message: Optional[str] = None

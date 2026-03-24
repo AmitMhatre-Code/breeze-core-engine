@@ -14,11 +14,12 @@ _CUSTOMER_DETAILS_URL = "https://api.icicidirect.com/breezeapi/api/v1/customerde
 
 def _record_after_httpx_breeze(url: str, user_id: Optional[str]) -> None:
     try:
-        from icici_breeze_backend.app.services.api_usage import record_breeze_call_if_in_request, record_call
+        from icici_breeze_backend.app.auth.context import get_current_route_id
+        from icici_breeze_backend.app.services.api_usage import record_breeze_call, record_breeze_call_if_in_request
 
         uid = (user_id or "").strip()
         if uid:
-            record_call(uid)
+            record_breeze_call(user_id=uid, url=url, route_id=get_current_route_id())
         else:
             record_breeze_call_if_in_request(url)
     except Exception:

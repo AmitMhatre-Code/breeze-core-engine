@@ -83,7 +83,7 @@ export function AppShell({
                 key={item.href}
                 href={item.href}
                 className={[
-                  "flex items-center gap-2 rounded-lg px-3 py-2 transition",
+                  "flex items-center gap-2 rounded-none px-3 py-2 transition",
                   active
                     ? "bg-sky-100 text-sky-950 dark:bg-sky-950/45 dark:text-sky-50"
                     : "text-zinc-600 hover:bg-sky-50 hover:text-sky-900 dark:text-zinc-400 dark:hover:bg-sky-950/35 dark:hover:text-sky-100",

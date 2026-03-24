@@ -5,6 +5,8 @@ Counted in: requests_patch (SDK via requests.api.request), CustomerDetails + cal
 """
 import sqlite3
 import threading
+from datetime import timedelta
+from urllib.parse import urlparse
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import today_ist_date
@@ -22,27 +24,77 @@ def _today_ist() -> str:
     return today_ist_date().isoformat()
 
 
-def record_breeze_call_if_in_request(url: str) -> None:
-    """If url is a Breeze REST endpoint and we have user_id in request context, count one API call (per ICICI: one call = one HTTP request)."""
-    if not url or "api.icicidirect.com" not in url or "breezeapi" not in url:
-        return
+def _is_breeze_url(url: str) -> bool:
+    u = (url or "").strip()
+    return bool(u and "api.icicidirect.com" in u and "breezeapi" in u)
+
+
+def _extract_api_name(url: str) -> str:
+    """Map Breeze URL to endpoint name used for API-wise aggregates."""
     try:
-        from icici_breeze_backend.app.auth.context import get_current_user_id
-        user_id = get_current_user_id()
-        if user_id:
-            record_call(user_id)
+        parsed = urlparse(url or "")
+        parts = [p for p in (parsed.path or "").split("/") if p]
+        if not parts:
+            return "unknown"
+        if "api" in parts:
+            idx = parts.index("api")
+            if idx + 2 < len(parts):
+                return (parts[idx + 2] or "unknown").lower()
+        return (parts[-1] or "unknown").lower()
     except Exception:
-        pass
+        return "unknown"
 
 
-def record_call(user_id: str) -> None:
-    """Increment today's API call count for user_id. Thread-safe."""
-    if not user_id or not user_id.strip():
+def _ensure_usage_tables(conn: sqlite3.Connection) -> None:
+    """Create usage aggregate tables when missing (for compatibility)."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS api_usage_daily (
+            user_id TEXT NOT NULL,
+            usage_date TEXT NOT NULL,
+            call_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(user_id, usage_date)
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_usage_date ON api_usage_daily(usage_date);
+
+        CREATE TABLE IF NOT EXISTS api_usage_daily_by_api (
+            user_id TEXT NOT NULL,
+            usage_date TEXT NOT NULL,
+            api_name TEXT NOT NULL,
+            call_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(user_id, usage_date, api_name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_usage_by_api_user_date
+            ON api_usage_daily_by_api(user_id, usage_date);
+
+        CREATE TABLE IF NOT EXISTS api_usage_daily_by_route (
+            user_id TEXT NOT NULL,
+            usage_date TEXT NOT NULL,
+            route_id TEXT NOT NULL,
+            call_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(user_id, usage_date, route_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_usage_by_route_user_date
+            ON api_usage_daily_by_route(user_id, usage_date);
+        """
+    )
+
+
+def record_breeze_call(user_id: str, url: str, route_id: str | None = None) -> None:
+    """Increment daily total + api-wise + route-wise usage for one Breeze HTTP call."""
+    uid = (user_id or "").strip()
+    if not uid:
         return
     usage_date = _today_ist()
+    api_name = _extract_api_name(url)
+    route = (route_id or "").strip() or "unknown"
     with _lock:
         try:
             with sqlite3.connect(_DB_PATH) as conn:
+                _ensure_usage_tables(conn)
                 conn.execute(
                     """
                     INSERT INTO api_usage_daily (user_id, usage_date, call_count, updated_at)
@@ -51,10 +103,49 @@ def record_call(user_id: str) -> None:
                         call_count = call_count + 1,
                         updated_at = datetime('now')
                     """,
-                    (user_id.strip(), usage_date),
+                    (uid, usage_date),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO api_usage_daily_by_api (user_id, usage_date, api_name, call_count, updated_at)
+                    VALUES (?, ?, ?, 1, datetime('now'))
+                    ON CONFLICT(user_id, usage_date, api_name) DO UPDATE SET
+                        call_count = call_count + 1,
+                        updated_at = datetime('now')
+                    """,
+                    (uid, usage_date, api_name),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO api_usage_daily_by_route (user_id, usage_date, route_id, call_count, updated_at)
+                    VALUES (?, ?, ?, 1, datetime('now'))
+                    ON CONFLICT(user_id, usage_date, route_id) DO UPDATE SET
+                        call_count = call_count + 1,
+                        updated_at = datetime('now')
+                    """,
+                    (uid, usage_date, route),
                 )
         except sqlite3.OperationalError:
             pass
+
+
+def record_breeze_call_if_in_request(url: str) -> None:
+    """If url is a Breeze REST endpoint and we have user_id in request context, count one API call (per ICICI: one call = one HTTP request)."""
+    if not _is_breeze_url(url):
+        return
+    try:
+        from icici_breeze_backend.app.auth.context import get_current_route_id, get_current_user_id
+
+        user_id = get_current_user_id()
+        if user_id:
+            record_breeze_call(user_id=user_id, url=url, route_id=get_current_route_id())
+    except Exception:
+        pass
+
+
+def record_call(user_id: str) -> None:
+    """Backward-compatible daily counter increment without API/route dimensions."""
+    record_breeze_call(user_id=user_id, url="https://api.icicidirect.com/breezeapi/api/v1/unknown", route_id="unknown")
 
 
 def get_today_count(user_id: str) -> int:
@@ -87,3 +178,47 @@ def get_usage_for_display(user_id: str) -> dict:
         "api_calls_limit": API_CALLS_LIMIT_PER_DAY,
         "api_usage_band": band,
     }
+
+
+def get_daily_usage_by_api(user_id: str, days: int = 30) -> list[dict]:
+    uid = (user_id or "").strip()
+    if not uid:
+        return []
+    span = max(1, min(int(days or 30), 120))
+    cutoff = (today_ist_date() - timedelta(days=span - 1)).isoformat()
+    try:
+        with sqlite3.connect(_DB_PATH) as conn:
+            rows = conn.execute(
+                """
+                SELECT usage_date, api_name, call_count
+                FROM api_usage_daily_by_api
+                WHERE user_id = ? AND usage_date >= ?
+                ORDER BY usage_date DESC, call_count DESC, api_name ASC
+                """,
+                (uid, cutoff),
+            ).fetchall()
+            return [{"usage_date": r[0], "api_name": r[1], "call_count": int(r[2] or 0)} for r in rows]
+    except sqlite3.OperationalError:
+        return []
+
+
+def get_daily_usage_by_route(user_id: str, days: int = 30) -> list[dict]:
+    uid = (user_id or "").strip()
+    if not uid:
+        return []
+    span = max(1, min(int(days or 30), 120))
+    cutoff = (today_ist_date() - timedelta(days=span - 1)).isoformat()
+    try:
+        with sqlite3.connect(_DB_PATH) as conn:
+            rows = conn.execute(
+                """
+                SELECT usage_date, route_id, call_count
+                FROM api_usage_daily_by_route
+                WHERE user_id = ? AND usage_date >= ?
+                ORDER BY usage_date DESC, call_count DESC, route_id ASC
+                """,
+                (uid, cutoff),
+            ).fetchall()
+            return [{"usage_date": r[0], "route_id": r[1], "call_count": int(r[2] or 0)} for r in rows]
+    except sqlite3.OperationalError:
+        return []

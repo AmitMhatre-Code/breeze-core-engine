@@ -1,8 +1,9 @@
 """Settings JSON API under /api/settings."""
+import datetime
 import sqlite3
 from typing import Any, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 
 import icici_breeze_backend.app.core.config as cfg
@@ -11,15 +12,142 @@ from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.auth.credentials import CredentialManager
 from icici_breeze_backend.app.auth.user_account import change_user_id
 from icici_breeze_backend.app.domain.settings_api import (
+    ApiUsageStateResponse,
     CredentialsStateResponse,
     CredentialsUpdateBody,
+    MarginSourceStateResponse,
+    MarginSourceUpdateBody,
     QuantityLimitsStateResponse,
     QuantityLimitsUpdateBody,
+    ScripMasterStateResponse,
+)
+from icici_breeze_backend.app.services.api_usage import get_daily_usage_by_api, get_daily_usage_by_route
+from icici_breeze_backend.app.core.timezone import today_ist_date
+from icici_breeze_backend.app.services.nsccl_baseline import (
+    MARGIN_SOURCE_BREEZE,
+    MARGIN_SOURCE_EXCHANGE,
+    ensure_exchange_margin_baseline_table,
+    ingest_exchange_baseline_upload,
+    refresh_exchange_risk_baseline,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 breeze = processor()
 cred_manager = CredentialManager(encryption_key=(cfg.JWT_SECRET or "").strip())
+
+
+def _ensure_user_margin_source_column() -> None:
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        try:
+            conn.execute(
+                "ALTER TABLE user_account ADD COLUMN strategy_builder_margin_source TEXT NOT NULL DEFAULT 'breeze_api'"
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+
+def _get_user_margin_source(user_id: str) -> str:
+    _ensure_user_margin_source_column()
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        row = conn.execute(
+            "SELECT strategy_builder_margin_source FROM user_account WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    source = (row[0] if row and row[0] else MARGIN_SOURCE_BREEZE).strip().lower()
+    if source not in (MARGIN_SOURCE_BREEZE, MARGIN_SOURCE_EXCHANGE):
+        return MARGIN_SOURCE_BREEZE
+    return source
+
+
+def _set_user_margin_source(user_id: str, source: str) -> None:
+    _ensure_user_margin_source_column()
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        conn.execute(
+            "UPDATE user_account SET strategy_builder_margin_source = ? WHERE user_id = ?",
+            (source, user_id),
+        )
+        conn.commit()
+
+
+def _latest_baseline_meta() -> dict[str, Any]:
+    ensure_exchange_margin_baseline_table()
+    out: dict[str, Any] = {"exchanges": {}}
+    with sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB) as conn:
+        for ex in (cfg.NFO, cfg.BFO):
+            row = conn.execute(
+                """
+                SELECT source_file, source_date, source_version, refreshed_at, COUNT(*)
+                FROM exchange_margin_baseline
+                WHERE exchange_code = ?
+                GROUP BY source_file, source_date, source_version, refreshed_at
+                ORDER BY source_date DESC, source_version DESC
+                LIMIT 1
+                """,
+                (ex,),
+            ).fetchone()
+            if row:
+                out["exchanges"][ex] = {
+                    "source_file": row[0],
+                    "source_date": row[1],
+                    "source_version": row[2],
+                    "refreshed_at": row[3],
+                    "rows": row[4],
+                }
+    primary = out["exchanges"].get(cfg.NFO) or out["exchanges"].get(cfg.BFO)
+    if primary:
+        out.update(primary)
+    return out
+
+
+def _scrip_master_meta() -> dict[str, Any]:
+    master = breeze.get_ICICImaster_date()
+    if master.get("Status") != 200 or not master.get("Success"):
+        return {
+            "master_date": None,
+            "master_age_days": None,
+            "has_past_expiries": False,
+            "past_expiries_count": 0,
+            "message": master.get("Error") or "Scrip master not loaded.",
+        }
+
+    success = master.get("Success") or {}
+    master_date = success.get("date")
+    master_age_days = success.get("age")
+    past_expiries_count = 0
+    parse_errors = 0
+    today = today_ist_date()
+
+    with sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB) as conn:
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT ExpiryDate FROM scrip_master WHERE ExpiryDate IS NOT NULL AND TRIM(ExpiryDate) != ''"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+
+    for (raw_expiry,) in rows:
+        expiry = str(raw_expiry or "").strip()
+        if not expiry:
+            continue
+        try:
+            exp_date = datetime.datetime.strptime(expiry, "%d-%b-%Y").date()
+            if exp_date < today:
+                past_expiries_count += 1
+        except ValueError:
+            parse_errors += 1
+
+    message = None
+    if parse_errors > 0:
+        message = f"Could not parse {parse_errors} expiry date value(s)."
+
+    return {
+        "master_date": master_date,
+        "master_age_days": int(master_age_days) if master_age_days is not None else None,
+        "has_past_expiries": past_expiries_count > 0,
+        "past_expiries_count": past_expiries_count,
+        "message": message,
+    }
 
 
 def _customer_margin_defaults(user_id: str) -> tuple[dict, dict]:
@@ -142,6 +270,19 @@ async def settings_quantity_limits_data(ctx: RequestContext = Depends(get_reques
     )
 
 
+@router.get("/api-usage/data", response_model=ApiUsageStateResponse)
+async def settings_api_usage_data(
+    days: int = Query(default=30, ge=1, le=120),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    return ApiUsageStateResponse(
+        user_id=ctx.user_id,
+        days=days,
+        by_api=get_daily_usage_by_api(ctx.user_id, days=days),
+        by_route=get_daily_usage_by_route(ctx.user_id, days=days),
+    )
+
+
 @router.post("/quantity-limits")
 async def settings_quantity_limits_post(
     body: QuantityLimitsUpdateBody,
@@ -171,3 +312,65 @@ async def settings_quantity_limits_post(
             )
         conn.commit()
     return JSONResponse({"ok": True, "message": "Quantity limits updated."})
+
+
+@router.get("/margin-source/data", response_model=MarginSourceStateResponse)
+async def settings_margin_source_data(ctx: RequestContext = Depends(get_request_context)):
+    return MarginSourceStateResponse(
+        user_id=ctx.user_id,
+        margin_source=_get_user_margin_source(ctx.user_id),
+        latest_baseline=_latest_baseline_meta(),
+    )
+
+
+@router.post("/margin-source")
+async def settings_margin_source_post(
+    body: MarginSourceUpdateBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    source = (body.margin_source or "").strip().lower()
+    if source not in (MARGIN_SOURCE_BREEZE, MARGIN_SOURCE_EXCHANGE):
+        raise HTTPException(status_code=400, detail="margin_source must be breeze_api or exchange_baseline")
+    _set_user_margin_source(ctx.user_id, source)
+    return JSONResponse({"ok": True, "message": "Strategy Builder margin source updated."})
+
+
+@router.post("/margin-source/refresh-baseline")
+async def settings_margin_source_refresh_baseline(ctx: RequestContext = Depends(get_request_context)):
+    out = refresh_exchange_risk_baseline()
+    if out.get("Status") != 200:
+        raise HTTPException(status_code=400, detail=out.get("Error") or "Baseline refresh failed")
+    return JSONResponse({"ok": True, "message": "Exchange Risk Baseline refreshed.", "result": out.get("Success")})
+
+
+@router.post("/margin-source/upload-baseline")
+async def settings_margin_source_upload_baseline(
+    ctx: RequestContext = Depends(get_request_context),
+    file: UploadFile = File(...),
+    market: str = Form(...),
+):
+    """Upload NSE or BSE SPAN XML (or ZIP containing XML). BSE ingests BSXOPT/BKXOPT (BSESEN/BANKEX on BFO) only."""
+    body = await file.read()
+    out = ingest_exchange_baseline_upload(
+        body,
+        file.filename or "upload.xml",
+        market=market,
+    )
+    if out.get("Status") != 200:
+        raise HTTPException(status_code=400, detail=out.get("Error") or "Baseline upload failed")
+    return JSONResponse({"ok": True, "message": "Exchange Risk Baseline updated from file.", "result": out.get("Success")})
+
+
+@router.get("/scrip-master/data", response_model=ScripMasterStateResponse)
+async def settings_scrip_master_data(ctx: RequestContext = Depends(get_request_context)):
+    meta = _scrip_master_meta()
+    return ScripMasterStateResponse(user_id=ctx.user_id, **meta)
+
+
+@router.post("/scrip-master/refresh")
+async def settings_scrip_master_refresh(ctx: RequestContext = Depends(get_request_context)):
+    breeze.update_ICICImaster()
+    meta = _scrip_master_meta()
+    if meta.get("master_date") is None:
+        raise HTTPException(status_code=400, detail=meta.get("message") or "Scrip master refresh failed")
+    return JSONResponse({"ok": True, "message": "Scrip master refreshed.", "result": meta})

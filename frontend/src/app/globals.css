@@ -29,10 +29,10 @@ body {
 
 @layer components {
   .app-card {
-    @apply rounded-2xl border border-zinc-200 bg-white/95 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/70 dark:shadow-none;
+    @apply rounded-xl border border-zinc-200 bg-white/95 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/70 dark:shadow-none;
   }
   .app-card-muted {
-    @apply rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/60;
+    @apply rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/60;
   }
   .app-table-wrap {
     @apply overflow-x-auto rounded-xl border border-zinc-200 bg-zinc-50/90 dark:border-zinc-800 dark:bg-zinc-950/40;
@@ -51,11 +51,11 @@ body {
   }
   /** Primary actions (matches sidebar “Breeze Web” sky brand). */
   .app-btn-primary {
-    @apply inline-flex items-center justify-center rounded-lg border border-sky-600 bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-sky-500 hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 disabled:pointer-events-none disabled:opacity-50 dark:border-sky-500 dark:bg-sky-500 dark:hover:border-sky-400 dark:hover:bg-sky-400;
+    @apply inline-flex items-center justify-center rounded-md border border-sky-600 bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-sky-500 hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 disabled:pointer-events-none disabled:opacity-50 dark:border-sky-500 dark:bg-sky-500 dark:hover:border-sky-400 dark:hover:bg-sky-400;
   }
   /** Secondary / navigation actions — sky outline. */
   .app-btn-outline {
-    @apply inline-flex items-center justify-center rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-800 shadow-sm transition hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 dark:border-sky-800/70 dark:bg-zinc-900 dark:text-sky-200 dark:hover:border-sky-600 dark:hover:bg-sky-950/40;
+    @apply inline-flex items-center justify-center rounded-md border border-sky-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-800 shadow-sm transition hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 dark:border-sky-800/70 dark:bg-zinc-900 dark:text-sky-200 dark:hover:border-sky-600 dark:hover:bg-sky-950/40;
   }
   /** Inline & text links (same brand blue as Breeze Web). */
   .app-link {
@@ -63,7 +63,7 @@ body {
   }
   /** Neutral — Cancel / dismiss only. */
   .app-btn-secondary {
-    @apply inline-flex items-center justify-center rounded-lg border border-zinc-200 bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-200 dark:border-transparent dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700;
+    @apply inline-flex items-center justify-center rounded-md border border-zinc-200 bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-200 dark:border-transparent dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700;
   }
   .app-text-heading {
     @apply text-sm font-semibold text-zinc-900 dark:text-zinc-100;
@@ -81,7 +81,7 @@ body {
    * survives if `dark:*` utilities are missed or variant ordering shifts.
    */
   .orders-date-surface {
-    border-radius: 0.75rem;
+    border-radius: 0.5rem;
     border: 1px solid rgb(228 228 231 / 0.9);
     background-color: rgb(244 244 245 / 0.45);
     padding: 0.75rem 1rem;
@@ -97,7 +97,7 @@ body {
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    border-radius: 0.75rem;
+    border-radius: 0.5rem;
     border: 1px solid rgb(2 132 199 / 0.45);
     background-color: rgb(2 132 199);
     padding: 0 1.25rem;
@@ -159,20 +159,20 @@ body {
     color: rgb(212 212 216);
   }
   .app-alert-error {
-    @apply rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-200;
+    @apply rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-200;
   }
   .app-pre {
-    @apply overflow-auto rounded-lg border border-zinc-200 bg-zinc-100 p-3 text-[11px] text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400;
+    @apply overflow-auto rounded-md border border-zinc-200 bg-zinc-100 p-3 text-[11px] text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400;
   }
 
   /**
-   * Slim strategy-builder range (modal OTM sliders): thin track, small thumb, consistent WebKit/Firefox.
+   * Strategy-builder range sliders: slim rail + compact thumb.
    */
   .sb-range-slim {
     -webkit-appearance: none;
     appearance: none;
     width: 100%;
-    height: 1.125rem;
+    height: 1.25rem;
     background: transparent;
     cursor: pointer;
   }
@@ -180,64 +180,58 @@ body {
     outline: none;
   }
   .sb-range-slim::-webkit-slider-runnable-track {
-    height: 3px;
+    height: 6px;
     border-radius: 9999px;
-    background: rgb(228 228 231);
-  }
-  .dark .sb-range-slim::-webkit-slider-runnable-track {
-    background: rgb(63 63 70 / 0.85);
+    background: transparent;
   }
   .sb-range-slim::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 13px;
-    height: 13px;
-    margin-top: -5px;
+    width: 18px;
+    height: 18px;
+    margin-top: -6px;
     border-radius: 9999px;
-    border: 2px solid rgb(255 255 255);
-    background: rgb(2 132 199);
+    border: 3px solid rgb(37 99 235);
+    background: rgb(255 255 255);
     box-shadow:
-      0 0 0 1px rgb(24 24 27 / 0.06),
-      0 1px 2px rgb(0 0 0 / 0.08);
+      0 0 0 1px rgb(37 99 235 / 0.12),
+      0 3px 8px rgb(15 23 42 / 0.16);
   }
   .dark .sb-range-slim::-webkit-slider-thumb {
-    border-color: rgb(24 24 27);
-    background: rgb(56 189 248);
+    border-color: rgb(59 130 246);
+    background: rgb(250 250 250);
     box-shadow:
-      0 0 0 1px rgb(255 255 255 / 0.08),
-      0 1px 2px rgb(0 0 0 / 0.35);
+      0 0 0 1px rgb(59 130 246 / 0.2),
+      0 3px 8px rgb(0 0 0 / 0.35);
   }
   .sb-range-slim:focus-visible::-webkit-slider-thumb {
     box-shadow:
-      0 0 0 3px rgb(14 165 233 / 0.35),
-      0 1px 2px rgb(0 0 0 / 0.08);
+      0 0 0 4px rgb(37 99 235 / 0.18),
+      0 3px 8px rgb(15 23 42 / 0.16);
   }
   .sb-range-slim::-moz-range-track {
-    height: 3px;
+    height: 6px;
     border-radius: 9999px;
     border: none;
-    background: rgb(228 228 231);
-  }
-  .dark .sb-range-slim::-moz-range-track {
-    background: rgb(63 63 70 / 0.85);
+    background: transparent;
   }
   .sb-range-slim::-moz-range-thumb {
-    width: 13px;
-    height: 13px;
-    border: 2px solid rgb(255 255 255);
+    width: 18px;
+    height: 18px;
+    border: 3px solid rgb(37 99 235);
     border-radius: 9999px;
-    background: rgb(2 132 199);
+    background: rgb(255 255 255);
     box-shadow:
-      0 0 0 1px rgb(24 24 27 / 0.06),
-      0 1px 2px rgb(0 0 0 / 0.08);
+      0 0 0 1px rgb(37 99 235 / 0.12),
+      0 3px 8px rgb(15 23 42 / 0.16);
   }
   .dark .sb-range-slim::-moz-range-thumb {
-    border-color: rgb(24 24 27);
-    background: rgb(56 189 248);
+    border-color: rgb(59 130 246);
+    background: rgb(250 250 250);
   }
   .sb-range-slim:focus-visible::-moz-range-thumb {
     box-shadow:
-      0 0 0 3px rgb(14 165 233 / 0.35),
-      0 1px 2px rgb(0 0 0 / 0.08);
+      0 0 0 4px rgb(37 99 235 / 0.18),
+      0 3px 8px rgb(15 23 42 / 0.16);
   }
 }

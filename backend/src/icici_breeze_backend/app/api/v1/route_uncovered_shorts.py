@@ -14,6 +14,7 @@ from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.api.error_utils import raise_route_errors
 from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend, json_redirect
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_BREEZE
 
 router = APIRouter()
 breeze = processor()
@@ -72,9 +73,12 @@ async def get_uncovered_shorts_scan(
     expiry_date: str,
     limits: int,
     top: int = 10,
-    otm_call_distance: int = 10,
-    otm_put_distance: int = 10,
+    otm_call_min: int = 10,
+    otm_call_max: int = 10,
+    otm_put_min: int = 10,
+    otm_put_max: int = 10,
     provision_elm: Optional[str] = None,
+    strategy_builder: bool = False,
     exchange_code: str = cfg.NFO,
     ctx: RequestContext = Depends(get_request_context),
 ):
@@ -85,8 +89,10 @@ async def get_uncovered_shorts_scan(
         raise HTTPException(status_code=400, detail="limits (margin lacs) must be positive")
     if top < 1 or top > 500:
         raise HTTPException(status_code=400, detail="top must be between 1 and 500")
-    if otm_call_distance < 1 or otm_call_distance > 50 or otm_put_distance < 1 or otm_put_distance > 50:
-        raise HTTPException(status_code=400, detail="OTM distance must be between 1 and 50")
+    if min(otm_call_min, otm_call_max, otm_put_min, otm_put_max) < 0 or max(otm_call_min, otm_call_max, otm_put_min, otm_put_max) > 20:
+        raise HTTPException(status_code=400, detail="OTM range values must be between 0 and 20")
+    if otm_call_min > otm_call_max or otm_put_min > otm_put_max:
+        raise HTTPException(status_code=400, detail="OTM min must be <= OTM max")
     elm = cfg.CHECKED if provision_elm in (cfg.CHECKED, "on", "true", "1") else None
     raw = breeze.uncovered_shorts(
         ctx.user_id,
@@ -94,10 +100,17 @@ async def get_uncovered_shorts_scan(
         expiry_date=expiry_date.strip(),
         limits=limits,
         elm=elm,
-        otm_call_distance=otm_call_distance,
-        otm_put_distance=otm_put_distance,
+        otm_call_min=otm_call_min,
+        otm_call_max=otm_call_max,
+        otm_put_min=otm_put_min,
+        otm_put_max=otm_put_max,
         top=top,
         exchange_code=exchange_code or cfg.NFO,
+        margin_source=(
+            breeze.get_strategy_builder_margin_source(ctx.user_id)
+            if strategy_builder
+            else MARGIN_SOURCE_BREEZE
+        ),
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "UncoveredShortsScan")
     return UncoveredShortsScanResponse(
@@ -112,9 +125,12 @@ async def get_covered_shorts_scan(
     expiry_date: str,
     limits: int,
     top: int,
-    otm_call_distance: int = 10,
-    otm_put_distance: int = 10,
+    otm_call_min: int = 10,
+    otm_call_max: int = 10,
+    otm_put_min: int = 10,
+    otm_put_max: int = 10,
     provision_elm: Optional[str] = None,
+    strategy_builder: bool = False,
     exchange_code: str = cfg.NFO,
     ctx: RequestContext = Depends(get_request_context),
 ):
@@ -128,10 +144,17 @@ async def get_covered_shorts_scan(
         expiry_date,
         limits,
         top,
-        otm_call_distance=otm_call_distance,
-        otm_put_distance=otm_put_distance,
+        otm_call_min=otm_call_min,
+        otm_call_max=otm_call_max,
+        otm_put_min=otm_put_min,
+        otm_put_max=otm_put_max,
         provision_elm=provision_elm,
         exchange_code=exchange_code,
+        margin_source=(
+            breeze.get_strategy_builder_margin_source(ctx.user_id)
+            if strategy_builder
+            else MARGIN_SOURCE_BREEZE
+        ),
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "CoveredShortsScan")
     return out

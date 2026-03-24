@@ -78,4 +78,23 @@ export const apiClient = {
       signal: opts?.signal,
       headers: opts?.headers,
     }),
+  postForm: async <TResponse>(
+    path: string,
+    form: FormData,
+    opts?: { signal?: AbortSignal },
+  ): Promise<TResponse> => {
+    const url = new URL(path, getBackendBaseUrl());
+    const res = await fetch(url.toString(), {
+      method: "POST",
+      credentials: "include",
+      signal: opts?.signal,
+      body: form,
+    });
+    const isJson = res.headers.get("content-type")?.includes("application/json");
+    const payload = isJson ? await res.json() : await res.text();
+    if (!res.ok) {
+      throw new Error(formatErrorPayload(payload));
+    }
+    return payload as TResponse;
+  },
 };
