@@ -122,10 +122,13 @@ jobs:
           echo "subnet_id=$SUBNET_ID" >> "$GITHUB_OUTPUT"
 
       - name: Check data volume AZ matches subnet AZ
-        if: ${{ secrets.EBS_DATA_VOLUME_ID != '' }}
         env:
           VOLUME_ID: ${{ secrets.EBS_DATA_VOLUME_ID }}
         run: |
+          if [ -z "$VOLUME_ID" ]; then
+            echo "No EBS_DATA_VOLUME_ID secret; skipping AZ check."
+            exit 0
+          fi
           SUBNET_ID="${{ steps.network.outputs.subnet_id }}"
           SUBNET_AZ=$(aws ec2 describe-subnets \
             --subnet-ids "$SUBNET_ID" \
@@ -217,10 +220,13 @@ jobs:
         run: aws ec2 wait instance-running --instance-ids "${{ steps.ec2.outputs.instance_id }}"
 
       - name: Attach persistent data volume
-        if: ${{ secrets.EBS_DATA_VOLUME_ID != '' }}
         env:
           VOLUME_ID: ${{ secrets.EBS_DATA_VOLUME_ID }}
         run: |
+          if [ -z "$VOLUME_ID" ]; then
+            echo "No EBS_DATA_VOLUME_ID secret; skipping attach."
+            exit 0
+          fi
           aws ec2 attach-volume \
             --volume-id "${VOLUME_ID}" \
             --instance-id "${{ steps.ec2.outputs.instance_id }}" \
