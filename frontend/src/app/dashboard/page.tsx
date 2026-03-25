@@ -300,7 +300,7 @@ export default function DashboardPage() {
                 Intraday
               </span>
             </header>
-            <div className="space-y-3">
+            <div className="space-y-3 p-3 gap-3">
               <div className="app-card-muted p-3">
                 <div className="text-[11px] uppercase tracking-wide text-zinc-500">
                   Open positions P&amp;L
@@ -560,7 +560,7 @@ function TrendChip({ pct }: { pct: number | null | undefined }) {
     return (
       <span
         className={[
-          "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-semibold tabular-nums text-[10px] leading-none ring-1",
+          "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-semibold tabular-nums text-xs leading-none ring-1",
           "bg-zinc-500/[0.12] text-zinc-200 ring-zinc-500/20 dark:bg-zinc-500/[0.08] dark:text-zinc-200 dark:ring-zinc-500/20",
         ].join(" ")}
         title="Trend unavailable"
@@ -585,7 +585,7 @@ function TrendChip({ pct }: { pct: number | null | undefined }) {
   return (
     <span
       className={[
-        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-semibold tabular-nums text-[10px] leading-none ring-1",
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-semibold tabular-nums text-sm leading-none ring-1",
         classes,
       ].join(" ")}
       title={`Trend: ${label}`}
