@@ -15,12 +15,12 @@ import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in"
 
 // Hidden from nav (route still works): { href: "/trade-options-chain", label: "Trade Options Chain" },
 const navItems = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/portfolio", label: "Portfolio" },
-  { href: "/performance", label: "Performance" },
-  { href: "/orders", label: "Orders" },
-  { href: "/strategy-builder", label: "Strategy Builder" },
-  { href: "/settings", label: "Settings" },
+  { href: "/dashboard", label: "Dashboard", icon: DashboardIcon },
+  { href: "/portfolio", label: "Portfolio", icon: PortfolioIcon },
+  { href: "/performance", label: "Performance", icon: PerformanceIcon },
+  { href: "/orders", label: "Orders", icon: OrdersIcon },
+  { href: "/strategy-builder", label: "Strategy Builder", icon: StrategyIcon },
+  { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
 export function AppShell({
@@ -78,6 +78,7 @@ export function AppShell({
               item.href === "/dashboard"
                 ? pathname === "/" || pathname.startsWith("/dashboard")
                 : pathname.startsWith(item.href);
+            const Icon = item.icon;
             return (
               <Link
                 key={item.href}
@@ -89,6 +90,7 @@ export function AppShell({
                     : "text-zinc-600 hover:bg-sky-50 hover:text-sky-900 dark:text-zinc-400 dark:hover:bg-sky-950/35 dark:hover:text-sky-100",
                 ].join(" ")}
               >
+                <Icon />
                 <span>{item.label}</span>
               </Link>
             );
@@ -114,9 +116,6 @@ export function AppShell({
                   title={displayName ?? undefined}
                 >
                   {displayName ?? "—"}
-                </span>
-                <span className="hidden text-zinc-300 dark:text-zinc-600 sm:inline">
-                  ·
                 </span>
                 <span
                   className="flex min-w-0 shrink-0 items-baseline gap-1"
@@ -167,7 +166,7 @@ export function AppShell({
               className="inline-flex rounded-lg border border-zinc-200 bg-zinc-100 p-1.5 text-zinc-700 transition hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
             >
               <LogOutIcon />
-            </Link>            
+            </Link>
           </div>
         </header>
         <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-gradient-to-b from-zinc-100 via-zinc-50 to-white dark:from-zinc-950 dark:via-zinc-950 dark:to-zinc-900/80 px-4 py-4 md:px-6 md:py-6">
@@ -203,6 +202,132 @@ function LogOutIcon() {
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
       <polyline points="16 17 21 12 16 7" />
       <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  );
+}
+
+function DashboardIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="3" y="3" width="7" height="9" rx="1" />
+      <rect x="14" y="3" width="7" height="9" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+    </svg>
+  );
+}
+
+function PortfolioIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M10 6h4" />
+      <path d="M8 6H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-1" />
+      <path d="M8 6V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1" />
+      <rect x="4" y="13" width="16" height="8" rx="1" />
+    </svg>
+  );
+}
+
+function PerformanceIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 3v18h18" />
+      <path d="M7 14l3-3 3 2 4-6" />
+      <path d="M7 14v3h3" />
+    </svg>
+  );
+}
+
+function OrdersIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M8 6h13" />
+      <path d="M8 12h13" />
+      <path d="M8 18h13" />
+      <path d="M3 6h.01" />
+      <path d="M3 12h.01" />
+      <path d="M3 18h.01" />
+    </svg>
+  );
+}
+
+function StrategyIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="18" cy="6" r="2" />
+      <circle cx="12" cy="18" r="2" />
+      <path d="M8 8l4 8" />
+      <path d="M16 8l-4 8" />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 8 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
 }

@@ -85,6 +85,9 @@ export default function QuantityLimitsPage() {
   return (
     <AppShell>
       <section className="app-card space-y-4 p-4">
+        <Link href="/settings" className="app-link mt-1 inline-block text-xs">
+          Back to Settings
+        </Link>        
         <header className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-xl app-text-heading">Quantity Limits</h2>
           <button
@@ -96,9 +99,6 @@ export default function QuantityLimitsPage() {
             Save all
           </button>
         </header>
-        <Link href="/settings" className="app-link mt-1 inline-block text-xs">
-          Back to Settings
-        </Link>
         {q.data.message && (
           <p className="text-xs text-amber-800 dark:text-amber-300">{q.data.message}</p>
         )}

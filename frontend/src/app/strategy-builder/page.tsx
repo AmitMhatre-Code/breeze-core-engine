@@ -8,6 +8,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { OptionChainTable } from "@/components/order/OptionChainTable";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
+import { OptionStrategyIcon } from "@/components/strategy-builder/OptionStrategyIcon";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
 import { apiClient } from "@/lib/api-client";
 import { impliedVolatility } from "@/lib/strategy-builder/blackScholes";
@@ -949,6 +950,9 @@ export default function StrategyBuilderPage() {
   const [nakedPrompt, setNakedPrompt] = useState<TemplateId | null>(null);
   const [selectedReadymade, setSelectedReadymade] =
     useState<ReadymadeSelection | null>(null);
+  const [comingSoonTooltipId, setComingSoonTooltipId] = useState<
+    TemplateId | null
+  >(null);
   const [scanLimits, setScanLimits] = useState<number | null>(null);
   const [scanTop, setScanTop] = useState<number | null>(null);
   const [scanOtmCallMin, setScanOtmCallMin] = useState(6);
@@ -959,6 +963,11 @@ export default function StrategyBuilderPage() {
   const [uncoveredScanResult, setUncoveredScanResult] =
     useState<UncoveredScanResponse | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!comingSoonTooltipId) return;
+    const t = window.setTimeout(() => setComingSoonTooltipId(null), 2400);
+    return () => window.clearTimeout(t);
+  }, [comingSoonTooltipId]);
   const selectedReadymadeRef = useRef<ReadymadeSelection | null>(null);
   selectedReadymadeRef.current = selectedReadymade;
   const [segmentExchange, setSegmentExchange] = useState<"NFO" | "BFO">("NFO");
@@ -1637,16 +1646,18 @@ export default function StrategyBuilderPage() {
                 setLegs([]);
                 setSelectedReadymade("build-your-own");
               }}
-              className={`${sb.cardTemplate} ${
+              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden disabled:opacity-100 ${
                 selectedReadymade === "build-your-own"
                   ? "ring-2 ring-sky-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
                   : ""
               }`}
               aria-pressed={selectedReadymade === "build-your-own"}
             >
-              <div className="font-semibold">Build Your Own</div>
-              <div className="mt-1 text-zinc-800 dark:text-zinc-200">
-                Pick legs from the full option chain
+              <div className="w-full flex-1">
+                <OptionStrategyIcon templateId="build-your-own" />
+              </div>
+              <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
+                Build Your Own
               </div>
             </button>
             <button
@@ -1659,16 +1670,18 @@ export default function StrategyBuilderPage() {
                 setUncoveredScanResult(null);
                 setSelectedReadymade("naked-shorts");
               }}
-              className={`${sb.cardTemplateAmber} ${
+              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden disabled:opacity-100 ${
                 selectedReadymade === "naked-shorts"
                   ? "ring-2 ring-amber-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
                   : ""
               }`}
               aria-pressed={selectedReadymade === "naked-shorts"}
             >
-              <div className="font-semibold">Naked Shorts</div>
-              <div className="mt-1 text-zinc-800 dark:text-zinc-200">
-                Sell Calls or Puts
+              <div className="w-full flex-1">
+                <OptionStrategyIcon templateId="naked-shorts" />
+              </div>
+              <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
+                Naked Shorts
               </div>
             </button>
             <button
@@ -1681,40 +1694,45 @@ export default function StrategyBuilderPage() {
                 setUncoveredScanResult(null);
                 setSelectedReadymade("covered-shorts");
               }}
-              className={`${sb.cardTemplateAmber} ${
+              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden disabled:opacity-100 ${
                 selectedReadymade === "covered-shorts"
                   ? "ring-2 ring-amber-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
                   : ""
               }`}
               aria-pressed={selectedReadymade === "covered-shorts"}
             >
-              <div className="font-semibold">Covered Shorts</div>
-              <div className="mt-1 text-zinc-800 dark:text-zinc-200">
-                Short OTM + suggested buy hedge
+              <div className="w-full flex-1">
+                <OptionStrategyIcon templateId="covered-shorts" />
+              </div>
+              <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
+                Covered Shorts
               </div>
             </button>
             {STRATEGY_TEMPLATES.map((t) => (
-              <div key={t.id} className="relative">
+              <div
+                key={t.id}
+                className="relative"
+                onMouseLeave={() => setComingSoonTooltipId(null)}
+              >
                 <button
                   type="button"
-                  disabled
-                  className={`${sb.cardTemplate} disabled:!opacity-90`}
+                  className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden opacity-90 border-dotted hover:border-zinc-200/90 hover:shadow-sm`}
                   aria-pressed={false}
-                  aria-label={`${t.label} (coming soon)`}
+                  aria-label={`${t.label} - Coming soon`}
+                  onClick={() => setComingSoonTooltipId(t.id)}
                 >
-                  <div className="font-semibold">{t.label}</div>
-                  <div className="mt-1 text-zinc-800 dark:text-zinc-200">
-                    {t.description}
+                  <div className="w-full flex-1">
+                    <OptionStrategyIcon templateId={t.id} />
+                  </div>
+                  <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
+                    {t.label}
                   </div>
                 </button>
-                <div
-                  className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl bg-zinc-950/40 backdrop-blur-[0.5px] dark:bg-black/45"
-                  aria-hidden
-                >
-                  <span className="bg-transparent px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
+                {comingSoonTooltipId === t.id ? (
+                  <div className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-[0.35rem] whitespace-nowrap rounded-lg bg-zinc-950/90 px-2 py-1 text-[10px] font-medium text-white shadow-lg dark:bg-black/80">
                     Coming soon
-                  </span>
-                </div>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

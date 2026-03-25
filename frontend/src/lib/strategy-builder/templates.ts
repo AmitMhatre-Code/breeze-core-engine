@@ -5,6 +5,7 @@ export type TemplateId =
   | "bear_put_spread"
   | "long_straddle"
   | "long_strangle"
+  | "long_call_butterfly"
   | "iron_condor"
   | "iron_butterfly";
 
@@ -19,13 +20,13 @@ export type StrategyTemplateMeta = {
 export const STRATEGY_TEMPLATES: StrategyTemplateMeta[] = [
   {
     id: "bull_call_spread",
-    label: "Bull CE Spread",
+    label: "Bull Call Spread",
     outlook: ["bullish"],
     description: "Buy lower CE, sell higher CE",
   },
   {
     id: "bear_put_spread",
-    label: "Bear PE Spread",
+    label: "Bear Put Spread",
     outlook: ["bearish"],
     description: "Buy higher PE, sell lower PE",
   },
@@ -40,6 +41,12 @@ export const STRATEGY_TEMPLATES: StrategyTemplateMeta[] = [
     label: "Long Strangle",
     outlook: ["volatile"],
     description: "Buy OTM CE and PE",
+  },
+  {
+    id: "long_call_butterfly",
+    label: "Long Call Butterfly",
+    outlook: ["neutral"],
+    description: "Long outer calls + short mid calls",
   },
   {
     id: "iron_condor",

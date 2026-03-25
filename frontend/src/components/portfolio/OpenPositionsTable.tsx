@@ -336,7 +336,7 @@ function PortfolioHedgeExpandPanel({
               </div>
               <button
                 type="button"
-                className="app-btn-primary mt-1 w-full px-2 py-1.5 text-xs font-medium"
+                className="app-btn-outline mt-1 w-full px-2 py-1.5 text-xs font-medium"
                 onClick={() => onSelect(opt)}
               >
                 Select

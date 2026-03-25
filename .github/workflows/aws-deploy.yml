@@ -147,6 +147,20 @@ jobs:
       - name: Ensure security group exists
         id: sg
         run: |
+          authorize_ingress_or_duplicate_ok() {
+            local out ec=0
+            out=$(aws ec2 authorize-security-group-ingress "$@" 2>&1) || ec=$?
+            if [ "$ec" -eq 0 ]; then
+              return 0
+            fi
+            if echo "$out" | grep -q 'InvalidPermission\.Duplicate'; then
+              echo "Ingress already present (ok): $*"
+              return 0
+            fi
+            printf '%s\n' "$out" >&2
+            return "$ec"
+          }
+
           SG_ID=$(aws ec2 describe-security-groups \
             --filters Name=vpc-id,Values=${{ steps.network.outputs.vpc_id }} Name=group-name,Values=${EC2_TAG}-sg \
             --query 'SecurityGroups[0].GroupId' --output text)
@@ -159,8 +173,8 @@ jobs:
               --query 'GroupId' --output text)
           fi
 
-          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0 || true
-          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 || true
+          authorize_ingress_or_duplicate_ok --group-id "$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0
+          authorize_ingress_or_duplicate_ok --group-id "$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0
 
           echo "sg_id=$SG_ID" >> "$GITHUB_OUTPUT"
 

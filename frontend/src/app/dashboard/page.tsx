@@ -19,6 +19,8 @@ type Vix30Point = { date: string; value: number };
 type DashboardVixCore = {
   current_vix: number | null;
   nifty_spot: number | null;
+  vix_trend_pct: number | null;
+  nifty_spot_trend_pct: number | null;
   vix_30d: Vix30Point[];
   error?: string | null;
 };
@@ -291,14 +293,14 @@ export default function DashboardPage() {
               and logging back in.
             </div>
           ) : null}
-          <section className="app-card col-span-2 min-w-0 space-y-3 p-4">
+          <section className="app-card min-w-0 space-y-3 p-4 md:col-start-3 md:col-span-1 md:row-start-2">
             <header className="flex items-center justify-between">
               <h2 className="app-text-heading">Account Overview</h2>
               <span className="app-text-muted uppercase tracking-wide">
                 Intraday
               </span>
             </header>
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="space-y-3">
               <div className="app-card-muted p-3">
                 <div className="text-[11px] uppercase tracking-wide text-zinc-500">
                   Open positions P&amp;L
@@ -331,38 +333,40 @@ export default function DashboardPage() {
                   </div>
                 ) : null}
               </div>
-              <div className="app-card-muted p-3">
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500">
-                  Margin used
+              <div className="grid gap-3 min-w-0 grid-cols-2">
+                <div className="app-card-muted p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-zinc-500">
+                    Margin used
+                  </div>
+                  <div
+                    className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums dark:text-zinc-100"
+                    title={
+                      marginUsedFromHome != null && marginUsedFromHome > 0
+                        ? "From ICICI margin situation (actual_margin_avl / cash / utilization)"
+                        : portQ.data?.Status === 200
+                          ? "Sum of span_margin_required across open NFO/BFO options (ELM not included)"
+                          : undefined
+                    }
+                  >
+                    {marginUsedPending
+                      ? "…"
+                      : marginUsedDisplay != null
+                        ? formatIndianMoneyCompact(marginUsedDisplay)
+                        : "—"}
+                  </div>
                 </div>
-                <div
-                  className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums dark:text-zinc-100"
-                  title={
-                    marginUsedFromHome != null && marginUsedFromHome > 0
-                      ? "From ICICI margin situation (actual_margin_avl / cash / utilization)"
-                      : portQ.data?.Status === 200
-                        ? "Sum of span_margin_required across open NFO/BFO options (ELM not included)"
-                        : undefined
-                  }
-                >
-                  {marginUsedPending
-                    ? "…"
-                    : marginUsedDisplay != null
-                      ? formatIndianMoneyCompact(marginUsedDisplay)
-                      : "—"}
-                </div>
-              </div>
-              <div className="app-card-muted p-3">
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500">
-                  Funds available
-                </div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums dark:text-zinc-100">
-                  {funds != null ? formatIndianMoneyCompact(funds) : "—"}
+                <div className="app-card-muted p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-zinc-500">
+                    Funds available
+                  </div>
+                  <div className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums dark:text-zinc-100">
+                    {funds != null ? formatIndianMoneyCompact(funds) : "—"}
+                  </div>
                 </div>
               </div>
             </div>
           </section>
-          <section className="app-card min-w-0 space-y-3 p-4">
+          <section className="app-card min-w-0 space-y-3 p-4 md:col-start-1 md:col-span-2 md:row-start-2">
             <header className="flex items-center justify-between gap-2">
               <h2 className="app-text-heading">NIFTY Volatility</h2>
               <div className="flex min-w-0 shrink-0 items-center gap-2">
@@ -385,38 +389,54 @@ export default function DashboardPage() {
                 </button>
               </div>
             </header>
-            <div className="app-card-muted space-y-2 p-3 text-sm">
-              <div className="flex items-start justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                <span className="shrink-0 pt-0.5">VIX</span>
-                <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-0.5 text-right">
-                  <span className="font-medium text-zinc-900 dark:text-zinc-100">
+            <div className="grid gap-3 p-3 text-sm md:grid-cols-3">
+              <div className="app-card-muted p-3">
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  VIX
+                </div>
+                <div className="mt-1 flex items-baseline justify-between gap-2">
+                  <div className="text-lg font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
                     {typeof core?.current_vix === "number"
                       ? core.current_vix.toFixed(2)
                       : "—"}
-                  </span>
-                  {vixInterp ? (
-                    <InterpretationBadge
-                      label={vixInterp.label}
-                      tooltip={vixInterp.tooltip}
-                      tone={vixInterp.tone}
-                    />
-                  ) : null}
-                </span>
+                  </div>
+                  <div className="flex items-center justify-end gap-1">
+                    {vixInterp ? (
+                      <InterpretationBadge
+                        label={vixInterp.label}
+                        tooltip={vixInterp.tooltip}
+                        tone={vixInterp.tone}
+                      />
+                    ) : null}
+                    <TrendChip pct={core?.vix_trend_pct} />
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400">
-                <span>NIFTY spot</span>
-                <span className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
-                  {formatNiftyIndexInt(niftySpot)}
-                </span>
+
+              <div className="app-card-muted p-3">
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  NIFTY spot
+                </div>
+                <div className="mt-1 flex items-baseline justify-between gap-2">
+                  <div className="text-lg font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                    {formatNiftyIndexInt(niftySpot)}
+                  </div>
+                  <TrendChip pct={core?.nifty_spot_trend_pct} />
+                </div>
               </div>
-              <div className="flex items-start justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                <span className="shrink-0 pt-0.5">ATM IV</span>
-                <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-0.5 text-right font-medium text-zinc-900 dark:text-zinc-100">
-                  {optsLoading
-                    ? "…"
-                    : typeof opts?.atm_iv === "number"
-                      ? `${opts.atm_iv.toFixed(2)}%`
-                      : "—"}
+
+              <div className="app-card-muted p-3">
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  ATM IV
+                </div>
+                <div className="mt-1 flex items-baseline justify-between gap-2">
+                  <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                    {optsLoading
+                      ? "…"
+                      : typeof opts?.atm_iv === "number"
+                        ? `${opts.atm_iv.toFixed(2)}%`
+                        : "—"}
+                  </div>
                   {!optsLoading && ivInterp ? (
                     <InterpretationBadge
                       label={ivInterp.label}
@@ -424,20 +444,23 @@ export default function DashboardPage() {
                       tone={ivInterp.tone}
                     />
                   ) : null}
-                </span>
+                </div>
               </div>
-              <div className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400">
-                <span>1σ range (ATM)</span>
-                <span className="max-w-[58%] text-right font-medium text-zinc-900 dark:text-zinc-100">
+
+              <div className="app-card-muted p-3">
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  1σ range (ATM)
+                </div>
+                <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
                   {optsLoading ? (
                     "…"
                   ) : Array.isArray(opts?.expected_range) &&
-                  opts.expected_range.length === 2 ? (
+                    opts.expected_range.length === 2 ? (
                     <>
                       {formatNiftyIndexInt(opts.expected_range[0])} -{" "}
                       {formatNiftyIndexInt(opts.expected_range[1])}
                       {typeof opts.expected_move_pct === "number" ? (
-                        <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
+                        <span className="mt-0.5 block text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
                           ±{opts.expected_move_pct.toFixed(2)}% to expiry
                         </span>
                       ) : null}
@@ -445,32 +468,38 @@ export default function DashboardPage() {
                   ) : (
                     "—"
                   )}
-                </span>
+                </div>
               </div>
-              <div className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400">
-                <span
-                  className="max-w-[55%] shrink-0"
+
+              <div className="app-card-muted p-3">
+                <div
+                  className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
                   title="From lowest to highest of the strikes with max call OI and max put OI (nearest expiry)"
                 >
                   Range based on highest OI
-                </span>
-                <span className="max-w-[45%] text-right font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+                </div>
+                <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
                   {optsLoading
                     ? "…"
                     : formatHighestOiStrikeRange(
                         opts?.strike_highest_call_oi,
                         opts?.strike_highest_put_oi,
                       )}
-                </span>
+                </div>
               </div>
-              <div className="flex items-start justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                <span className="shrink-0 pt-0.5">Put:Call (OI)</span>
-                <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-0.5 text-right font-medium text-zinc-900 dark:text-zinc-100">
-                  {optsLoading
-                    ? "…"
-                    : typeof opts?.put_call_ratio === "number"
-                      ? opts.put_call_ratio.toFixed(2)
-                      : "—"}
+
+              <div className="app-card-muted p-3">
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Put:Call (OI)
+                </div>
+                <div className="mt-1 flex items-baseline justify-between gap-2">
+                  <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                    {optsLoading
+                      ? "…"
+                      : typeof opts?.put_call_ratio === "number"
+                        ? opts.put_call_ratio.toFixed(2)
+                        : "—"}
+                  </div>
                   {!optsLoading && pcrInterp ? (
                     <InterpretationBadge
                       label={pcrInterp.label}
@@ -478,9 +507,8 @@ export default function DashboardPage() {
                       tone={pcrInterp.tone}
                     />
                   ) : null}
-                </span>
+                </div>
               </div>
-
             </div>
             {opts?.error ? (
               <p className="text-[11px] text-amber-800 dark:text-amber-200/90">
@@ -493,7 +521,7 @@ export default function DashboardPage() {
               </p>
             ) : null}
           </section>
-          <section className="app-card col-span-full min-w-0 p-4">
+          <section className="app-card col-span-full min-w-0 p-4 md:row-start-3">
             <header className="mb-3 flex items-center justify-between">
               <h2 className="app-text-heading">India VIX — 3 months</h2>
             </header>
@@ -524,5 +552,46 @@ function VolatilityRefreshIcon({ spinning }: { spinning: boolean }) {
       <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
       <path d="M16 16h5v5" />
     </svg>
+  );
+}
+
+function TrendChip({ pct }: { pct: number | null | undefined }) {
+  if (typeof pct !== "number" || !Number.isFinite(pct)) {
+    return (
+      <span
+        className={[
+          "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-semibold tabular-nums text-[10px] leading-none ring-1",
+          "bg-zinc-500/[0.12] text-zinc-200 ring-zinc-500/20 dark:bg-zinc-500/[0.08] dark:text-zinc-200 dark:ring-zinc-500/20",
+        ].join(" ")}
+        title="Trend unavailable"
+      >
+        <span aria-hidden>→</span>
+        <span>—</span>
+      </span>
+    );
+  }
+
+  const isUp = pct > 0;
+  const isDown = pct < 0;
+  const arrow = isUp ? "↑" : isDown ? "↓" : "→";
+  const label = `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`;
+
+  const classes = isUp
+    ? "bg-emerald-500/[0.12] text-emerald-800 ring-emerald-600/15 dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-400/20"
+    : isDown
+      ? "bg-red-500/[0.12] text-red-800 ring-red-600/15 dark:bg-red-400/10 dark:text-red-300 dark:ring-red-400/20"
+      : "bg-zinc-500/[0.12] text-zinc-700 ring-zinc-500/15 dark:bg-zinc-500/[0.08] dark:text-zinc-200 dark:ring-zinc-500/20";
+
+  return (
+    <span
+      className={[
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-semibold tabular-nums text-[10px] leading-none ring-1",
+        classes,
+      ].join(" ")}
+      title={`Trend: ${label}`}
+    >
+      <span aria-hidden>{arrow}</span>
+      <span>{label}</span>
+    </span>
   );
 }

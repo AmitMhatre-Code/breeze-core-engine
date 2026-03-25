@@ -70,10 +70,10 @@ function BuySellBookLines({ leg }: { leg: Record<string, unknown> }) {
   const sell = formatBookQtyLakh(leg.total_sell_qty);
   return (
     <div className="w-full min-w-0 space-y-0.5 py-0.5 text-center">
-      <div className="tabular-nums text-zinc-400">{ratio}</div>
-      <div className="text-[9px] leading-tight text-zinc-500 sm:text-[10px]">
+      <div className="tabular-nums text-zinc-600 dark:text-zinc-400">{ratio}</div>
+      <div className="text-[9px] leading-tight text-zinc-500 dark:text-zinc-500 sm:text-[10px]">
         Buy {buy}
-        <span className="text-zinc-600" aria-hidden>
+        <span className="text-zinc-600 dark:text-zinc-500" aria-hidden>
           {" · "}
         </span>
         Sell {sell}
@@ -83,10 +83,10 @@ function BuySellBookLines({ leg }: { leg: Record<string, unknown> }) {
 }
 
 const bsBtnClass =
-  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-600/90 bg-zinc-800/80 text-[11px] font-bold text-zinc-100 shadow-sm transition hover:bg-zinc-700 hover:border-zinc-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45";
+  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-zinc-200 bg-white/80 text-[11px] font-bold text-zinc-900 shadow-sm transition hover:bg-zinc-50 hover:border-sky-500/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/30 dark:border-zinc-600/90 dark:bg-zinc-800/80 dark:text-zinc-100 dark:hover:bg-zinc-700 dark:hover:border-zinc-500 dark:focus-visible:ring-sky-500/45";
 
 const bsTickClass =
-  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-emerald-800/60 bg-emerald-950/40 text-sm font-semibold text-emerald-400";
+  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-emerald-200/80 bg-emerald-50 text-sm font-semibold text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-400";
 
 function StrategyBuySellPair({
   strike,
@@ -195,65 +195,65 @@ export function OptionChainTable({
   return (
     <div
       ref={scrollRef}
-      className="max-h-[min(70vh,42rem)] overflow-auto rounded-xl border border-zinc-800 bg-[#0e0e10] shadow-lg ring-1 ring-black/20 dark:ring-zinc-800/80"
+      className="max-h-[min(70vh,42rem)] overflow-auto rounded-xl border border-zinc-200 bg-white shadow-lg ring-1 ring-black/5 dark:border-zinc-800 dark:bg-[#0e0e10] dark:ring-black/20 dark:ring-zinc-800/80"
     >
-      <table className="w-full max-w-full border-collapse text-xs leading-snug tabular-nums text-zinc-300 sm:text-sm">
-        <thead className="sticky top-0 z-20 bg-[#0e0e10]">
-          <tr className="border-b border-zinc-800">
+      <table className="w-full max-w-full border-collapse text-xs leading-snug tabular-nums text-zinc-700 dark:text-zinc-300 sm:text-sm">
+        <thead className="sticky top-0 z-20 bg-white dark:bg-[#0e0e10]">
+          <tr className="border-b border-zinc-200/90 dark:border-zinc-800">
             <th
               colSpan={4}
-              className="bg-emerald-950/25 px-1 py-2 text-center text-xs font-semibold uppercase tracking-wide text-emerald-200/95 sm:text-sm"
+              className="bg-emerald-600 px-1 py-2 text-center text-xs font-semibold uppercase tracking-wide text-emerald-50 dark:bg-emerald-950/25 dark:text-emerald-200/95 sm:text-sm"
             >
               Calls
             </th>
             <th
               rowSpan={2}
-              className="border-x border-zinc-700/80 bg-zinc-900 px-1 py-2 align-middle text-center text-xs font-medium uppercase tracking-wide text-zinc-300 sm:text-sm"
+              className="border-x border-zinc-200/80 bg-zinc-50 px-1 py-2 align-middle text-center text-xs font-medium uppercase tracking-wide text-zinc-600 dark:border-zinc-700/80 dark:bg-zinc-900 dark:text-zinc-300 sm:text-sm"
             >
               Strike
             </th>
             <th
               colSpan={4}
-              className="bg-rose-950/25 px-1 py-2 text-center text-xs font-semibold uppercase tracking-wide text-rose-200/95 sm:text-sm"
+              className="bg-red-800/90 px-1 py-2 text-center text-xs font-semibold uppercase tracking-wide text-rose-50 dark:bg-red-950/25 dark:text-rose-200/95 sm:text-sm"
             >
               Puts
             </th>
           </tr>
-          <tr className="border-b border-zinc-800 text-[10px] font-semibold uppercase tracking-wide sm:text-xs">
-            <th className="min-w-[3.5rem] bg-emerald-950 px-0.5 py-1.5 text-center text-zinc-500">
+          <tr className="border-b border-zinc-200/90 text-[10px] font-semibold uppercase tracking-wide sm:text-xs dark:border-zinc-800">
+            <th className="min-w-[3.5rem] bg-emerald-500/50 px-0.5 py-1.5 text-center text-zinc-700 dark:bg-emerald-950 dark:text-zinc-500">
               {outerHeader}
             </th>
-            <th className="bg-emerald-950 px-0.5 py-1.5 text-end text-zinc-500">
+            <th className="bg-emerald-500/50 px-0.5 py-1.5 text-end text-zinc-700 dark:bg-emerald-950 dark:text-zinc-500">
               OI (L)
             </th>
-            <th className="min-w-[11rem] bg-emerald-950 px-0 py-1.5 text-center text-zinc-500 sm:min-w-[12.5rem]">
+            <th className="min-w-[11rem] bg-emerald-500/50 px-0 py-1.5 text-center text-zinc-700 dark:bg-emerald-950 dark:text-zinc-500 sm:min-w-[12.5rem]">
               <span className="inline-flex items-center justify-center gap-1">
                 <span
-                  className="h-1 w-3.5 shrink-0 rounded-full bg-[#2d4a3c]"
+                  className="h-1 w-3.5 shrink-0 rounded-full bg-[#00a63e]"
                   aria-hidden
                 />
                 OI
               </span>
             </th>
-            <th className="w-[4.5rem] max-w-[4.5rem] bg-emerald-950 px-0 py-1.5 pe-0.5 text-end text-zinc-500 sm:w-[4.75rem] sm:max-w-[4.75rem]">
+            <th className="w-[4.5rem] max-w-[4.5rem] bg-emerald-500/50 px-0 py-1.5 pe-0.5 text-end text-zinc-700 dark:bg-emerald-950 dark:text-zinc-500 sm:w-[4.75rem] sm:max-w-[4.75rem]">
               LTP
             </th>
-            <th className="w-[4.5rem] max-w-[4.5rem] bg-rose-950 px-0 py-1.5 ps-0.5 text-start text-zinc-500 sm:w-[4.75rem] sm:max-w-[4.75rem]">
+            <th className="w-[4.5rem] max-w-[4.5rem] bg-rose-100 px-0 py-1.5 ps-0.5 text-start text-zinc-700 dark:bg-rose-950 dark:text-zinc-500 sm:w-[4.75rem] sm:max-w-[4.75rem]">
               LTP
             </th>
-            <th className="min-w-[11rem] bg-rose-950 px-0 py-1.5 text-center text-zinc-500 sm:min-w-[12.5rem]">
+            <th className="min-w-[11rem] bg-rose-100 px-0 py-1.5 text-center text-zinc-700 dark:bg-rose-950 dark:text-zinc-500 sm:min-w-[12.5rem]">
               <span className="inline-flex items-center justify-center gap-1">
                 <span
-                  className="h-1 w-3.5 shrink-0 rounded-full bg-[#5a3d3a]"
+                  className="h-1 w-3.5 shrink-0 rounded-full bg-red-700/60 dark:bg-[#5a3d3a]"
                   aria-hidden
                 />
                 OI
               </span>
             </th>
-            <th className="bg-rose-950 px-0.5 py-1.5 text-start text-zinc-500">
+            <th className="bg-rose-100 px-0.5 py-1.5 text-start text-zinc-700 dark:bg-rose-950 dark:text-zinc-500">
               OI (L)
             </th>
-            <th className="min-w-[3.5rem] bg-rose-950 px-0.5 py-1.5 text-center text-zinc-500">
+            <th className="min-w-[3.5rem] bg-rose-100 px-0.5 py-1.5 text-center text-zinc-700 dark:bg-rose-950 dark:text-zinc-500">
               {outerHeader}
             </th>
           </tr>
@@ -277,10 +277,10 @@ export function OptionChainTable({
                 ? Math.min(100, (putOi / maxPutOi) * 100)
                 : 0;
 
-            const itmLegCls = "bg-zinc-500/22";
+            const itmLegCls = "bg-zinc-900/5 dark:bg-zinc-500/22";
             const strikeAtmCls = isAtm
-              ? "bg-sky-950/60 font-normal text-sky-100 ring-1 ring-sky-500/35"
-              : "font-normal text-zinc-300";
+              ? "bg-sky-100/80 font-normal text-sky-900 ring-1 ring-sky-500/20 dark:bg-sky-950/60 dark:text-sky-100 dark:ring-sky-500/35"
+              : "font-normal text-zinc-700 dark:text-zinc-300";
 
             const rowClick =
               mode === "trade" && onRowClick
@@ -288,8 +288,8 @@ export function OptionChainTable({
                 : undefined;
             const trCls =
               mode === "trade"
-                ? "cursor-pointer border-b border-zinc-800/90 transition hover:bg-zinc-800/35"
-                : "border-b border-zinc-800/90";
+                ? "cursor-pointer border-b border-zinc-200/90 transition hover:bg-zinc-100/70 dark:border-zinc-800/90 dark:hover:bg-zinc-800/35"
+                : "border-b border-zinc-200/90 dark:border-zinc-800/90";
 
             return (
               <tr
@@ -321,7 +321,7 @@ export function OptionChainTable({
                       )}
                     </td>
                     <td
-                      className={`px-0.5 py-1 text-end text-zinc-400 whitespace-nowrap ${callItm ? itmLegCls : ""}`}
+                      className={`px-0.5 py-1 text-end text-zinc-600 dark:text-zinc-400 whitespace-nowrap ${callItm ? itmLegCls : ""}`}
                     >
                       {formatOiLakh(callOi)}
                     </td>
@@ -333,7 +333,7 @@ export function OptionChainTable({
                         title={`Call OI ${formatOiLakh(callOi)}`}
                       >
                         <div
-                          className="absolute top-0 h-full rounded-l-full bg-[#2d4a3c] shadow-none"
+                          className="absolute top-0 h-full rounded-l-full bg-emerald-600/60 dark:bg-[#2d4a3c] shadow-none"
                           style={{
                             right: 0,
                             width: `${callOiPct}%`,
@@ -342,23 +342,23 @@ export function OptionChainTable({
                       </div>
                     </td>
                     <td
-                      className={`w-[4.5rem] max-w-[4.5rem] truncate px-0.5 py-1 pe-0.5 text-end text-xs whitespace-nowrap text-zinc-400 sm:w-[4.75rem] sm:max-w-[4.75rem] sm:text-sm ${callItm ? itmLegCls : ""}`}
+                      className={`w-[4.5rem] max-w-[4.5rem] truncate px-0.5 py-1 pe-0.5 text-end text-xs whitespace-nowrap text-zinc-600 dark:text-zinc-400 sm:w-[4.75rem] sm:max-w-[4.75rem] sm:text-sm ${callItm ? itmLegCls : ""}`}
                     >
                       {formatLtpInr(c.ltp)}
                     </td>
                   </>
                 ) : (
-                  <td colSpan={4} className="bg-zinc-900/40" />
+                  <td colSpan={4} className="bg-zinc-100/70 dark:bg-zinc-900/40" />
                 )}
                 <td
-                  className={`border-x border-zinc-800/80 bg-zinc-900/50 px-1 py-1 text-center text-xs font-normal tabular-nums whitespace-nowrap sm:text-sm ${strikeAtmCls}`}
+                  className={`border-x border-zinc-200/80 bg-zinc-50/90 px-1 py-1 text-center text-xs font-normal tabular-nums whitespace-nowrap sm:text-sm ${strikeAtmCls} dark:border-zinc-800/80 dark:bg-zinc-900/50`}
                 >
                   {strike.toLocaleString("en-IN")}
                 </td>
                 {p ? (
                   <>
                     <td
-                      className={`w-[4.5rem] max-w-[4.5rem] truncate px-0.5 py-1 ps-0.5 text-start text-xs whitespace-nowrap text-zinc-400 sm:w-[4.75rem] sm:max-w-[4.75rem] sm:text-sm ${putItm ? itmLegCls : ""}`}
+                      className={`w-[4.5rem] max-w-[4.5rem] truncate px-0.5 py-1 ps-0.5 text-start text-xs whitespace-nowrap text-zinc-600 dark:text-zinc-400 sm:w-[4.75rem] sm:max-w-[4.75rem] sm:text-sm ${putItm ? itmLegCls : ""}`}
                     >
                       {formatLtpInr(p.ltp)}
                     </td>
@@ -370,7 +370,7 @@ export function OptionChainTable({
                         title={`Put OI ${formatOiLakh(putOi)}`}
                       >
                         <div
-                          className="absolute top-0 h-full rounded-r-full bg-[#5a3d3a] shadow-none"
+                          className="absolute top-0 h-full rounded-r-full bg-red-700/60 dark:bg-[#5a3d3a] shadow-none"
                           style={{
                             left: 0,
                             width: `${putOiPct}%`,
@@ -379,7 +379,7 @@ export function OptionChainTable({
                       </div>
                     </td>
                     <td
-                      className={`px-0.5 py-1 text-start text-zinc-400 whitespace-nowrap ${putItm ? itmLegCls : ""}`}
+                      className={`px-0.5 py-1 text-start text-zinc-600 dark:text-zinc-400 whitespace-nowrap ${putItm ? itmLegCls : ""}`}
                     >
                       {formatOiLakh(putOi)}
                     </td>
@@ -405,7 +405,7 @@ export function OptionChainTable({
                     </td>
                   </>
                 ) : (
-                  <td colSpan={4} className="bg-zinc-900/40" />
+                  <td colSpan={4} className="bg-zinc-100/70 dark:bg-zinc-900/40" />
                 )}
               </tr>
             );

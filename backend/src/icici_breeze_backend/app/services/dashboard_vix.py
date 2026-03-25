@@ -21,6 +21,24 @@ VIX_TIMING_PREFIX = "[vix-timing]"
 # ATM IV calculation step-by-step trace with real ICICI data (grep for this prefix).
 ATM_IV_TRACE_PREFIX = "[atm-iv-trace]"
 
+# Cache last successful volatility payloads so the UI doesn't intermittently
+# render dashes when the upstream NIFTY cash quote endpoint returns transient 503s.
+_CACHE_TTL_SECONDS = 5 * 60
+_OPTIONS_PAYLOAD_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_CORE_NIFTY_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+
+def _cache_get(cache: Dict[str, Tuple[float, Dict[str, Any]]], key: str) -> Optional[Dict[str, Any]]:
+    v = cache.get(key)
+    if not v:
+        return None
+    ts, payload = v
+    if (time.time() - ts) > _CACHE_TTL_SECONDS:
+        return None
+    return payload
+
+def _cache_set(cache: Dict[str, Tuple[float, Dict[str, Any]]], key: str, payload: Dict[str, Any]) -> None:
+    cache[key] = (time.time(), payload)
+
 
 def _log_timing(step: str, elapsed_ms: float, detail: str = "") -> None:
     msg = f"{VIX_TIMING_PREFIX} {step}: {elapsed_ms:.0f} ms"
@@ -640,6 +658,10 @@ def fetch_vix_core(user_id: str, processor) -> Dict[str, Any]:
     result = {
         "current_vix": None,
         "nifty_spot": None,
+        # Daily % change vs previous_close (used for dashboard “trend %”).
+        # Computed when `previous_close` is available in NSE cash quote.
+        "vix_trend_pct": None,
+        "nifty_spot_trend_pct": None,
         "vix_30d": [],
         "error": None,
     }
@@ -650,16 +672,71 @@ def fetch_vix_core(user_id: str, processor) -> Dict[str, Any]:
 
     vix_quote = _quote_nse_cash(breeze, INDVIX_SYMBOL)
     if vix_quote:
+        _logger.info(
+            "[vix-trend-debug] INDVIX quote keys=%s ltp=%r previous_close=%r",
+            list(vix_quote.keys()),
+            vix_quote.get("ltp"),
+            vix_quote.get("previous_close"),
+        )
         vix_ltp = _india_vix_ltp_from_quote(vix_quote)
         if vix_ltp is not None:
             result["current_vix"] = round(vix_ltp, 2)
+            try:
+                prev = float(vix_quote.get("previous_close") or 0)
+            except (TypeError, ValueError):
+                prev = 0.0
+            if prev and prev > 0:
+                result["vix_trend_pct"] = round(((vix_ltp - prev) / prev) * 100, 2)
+                _logger.info(
+                    "[vix-trend-debug] INDVIX ltp=%s prev=%s trend_pct=%s",
+                    vix_ltp,
+                    prev,
+                    result["vix_trend_pct"],
+                )
 
     nifty_quote = _quote_nse_cash(breeze, NIFTY_SYMBOL)
     if nifty_quote:
+        _logger.info(
+            "[vix-trend-debug] NIFTY quote keys=%s ltp=%r previous_close=%r",
+            list(nifty_quote.keys()),
+            nifty_quote.get("ltp"),
+            nifty_quote.get("previous_close"),
+        )
         try:
-            result["nifty_spot"] = round(float(nifty_quote.get("ltp") or nifty_quote.get("spot_price") or 0), 2)
+            spot = float(nifty_quote.get("ltp") or nifty_quote.get("spot_price") or nifty_quote.get("last") or 0)
+            result["nifty_spot"] = round(spot, 2)
         except (TypeError, ValueError):
-            pass
+            spot = None
+        if spot is not None:
+            try:
+                prev = float(nifty_quote.get("previous_close") or 0)
+            except (TypeError, ValueError):
+                prev = 0.0
+            if prev and prev > 0:
+                result["nifty_spot_trend_pct"] = round(((spot - prev) / prev) * 100, 2)
+                _logger.info(
+                    "[vix-trend-debug] NIFTY spot=%s prev=%s trend_pct=%s",
+                    spot,
+                    prev,
+                    result["nifty_spot_trend_pct"],
+                )
+    # If NIFTY cash quote is temporarily unavailable, reuse last successful spot.
+    if result.get("nifty_spot") is None:
+        cached = _cache_get(_CORE_NIFTY_CACHE, user_id)
+        if cached and isinstance(cached.get("nifty_spot"), (int, float)):
+            result["nifty_spot"] = cached.get("nifty_spot")
+            result["nifty_spot_trend_pct"] = cached.get("nifty_spot_trend_pct")
+
+    # Cache last successful NIFTY core values for short TTL.
+    if isinstance(result.get("nifty_spot"), (int, float)) and result.get("nifty_spot") is not None:
+        _cache_set(
+            _CORE_NIFTY_CACHE,
+            user_id,
+            {
+                "nifty_spot": result.get("nifty_spot"),
+                "nifty_spot_trend_pct": result.get("nifty_spot_trend_pct"),
+            },
+        )
 
     end_d = now_ist_naive()
     y, m = end_d.year, end_d.month - VIX_HISTORY_MONTHS
@@ -701,6 +778,21 @@ def fetch_vix_options(user_id: str, processor) -> Dict[str, Any]:
             pass
 
     if spot is None or spot <= 0:
+        # Fallback: reuse the last successful options payload while upstream quote recovers.
+        cached_opts = _cache_get(_OPTIONS_PAYLOAD_CACHE, user_id)
+        if cached_opts:
+            result.update(
+                {
+                    "nifty_spot": cached_opts.get("nifty_spot"),
+                    "next_expiry": cached_opts.get("next_expiry"),
+                    "atm_iv": cached_opts.get("atm_iv"),
+                    "expected_range": cached_opts.get("expected_range"),
+                    "expected_move_pct": cached_opts.get("expected_move_pct"),
+                    "put_call_ratio": cached_opts.get("put_call_ratio"),
+                    "strike_highest_call_oi": cached_opts.get("strike_highest_call_oi"),
+                    "strike_highest_put_oi": cached_opts.get("strike_highest_put_oi"),
+                }
+            )
         return result
 
     expiries_display = _get_nifty_expiries(processor)
@@ -737,6 +829,22 @@ def fetch_vix_options(user_id: str, processor) -> Dict[str, Any]:
             lower, upper, move_pct = expected_range_from_atm_iv(spot, atm_iv, t_years)
             result["expected_range"] = [lower, upper]
             result["expected_move_pct"] = round(move_pct * 100, 2)
+
+            # Cache the last successful IV/OI payload for short TTL.
+            _cache_set(
+                _OPTIONS_PAYLOAD_CACHE,
+                user_id,
+                {
+                    "nifty_spot": result.get("nifty_spot"),
+                    "next_expiry": result.get("next_expiry"),
+                    "atm_iv": result.get("atm_iv"),
+                    "expected_range": result.get("expected_range"),
+                    "expected_move_pct": result.get("expected_move_pct"),
+                    "put_call_ratio": result.get("put_call_ratio"),
+                    "strike_highest_call_oi": result.get("strike_highest_call_oi"),
+                    "strike_highest_put_oi": result.get("strike_highest_put_oi"),
+                },
+            )
     return result
 
 
