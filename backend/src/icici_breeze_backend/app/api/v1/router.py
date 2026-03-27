@@ -11,6 +11,7 @@ from icici_breeze_backend.app.api.v1 import route_hedge
 from icici_breeze_backend.app.api.v1 import route_settings
 from icici_breeze_backend.app.api.v1 import route_google_auth
 from icici_breeze_backend.app.api.v1 import route_dashboard
+from icici_breeze_backend.app.api.v1 import route_outlook
 from icici_breeze_backend.app.api.v1 import route_register
 from icici_breeze_backend.app.api.v1 import route_book
 from icici_breeze_backend.app.api.v1 import route_performance
@@ -31,6 +32,7 @@ v1_router.include_router(route_vertical_spread.router, prefix="/vertical-spread"
 v1_router.include_router(route_hedge.router, prefix="/hedge", tags=[""], include_in_schema=False)
 v1_router.include_router(route_settings.router, prefix="", include_in_schema=False)
 v1_router.include_router(route_dashboard.router, prefix="/dashboard", tags=["dashboard"], include_in_schema=False)
+v1_router.include_router(route_outlook.router, prefix="", tags=["outlook"], include_in_schema=False)
 v1_router.include_router(route_performance.router, prefix="/performance", tags=[""], include_in_schema=False)
 v1_router.include_router(route_admin.router, prefix="/admin", tags=[""], include_in_schema=False)
 v1_router.include_router(

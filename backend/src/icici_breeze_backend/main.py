@@ -165,8 +165,12 @@ def _ensure_app_database() -> None:
     if os.path.isfile(db_path):
         try:
             from icici_breeze_backend.app.db.user_account_migrate import migrate_user_account_if_needed
+            from icici_breeze_backend.app.db.ai_provider_migrate import ensure_ai_provider_table
+            from icici_breeze_backend.app.db.outlook_preferences_migrate import ensure_outlook_preferences_table
 
             migrate_user_account_if_needed(db_path)
+            ensure_ai_provider_table(db_path)
+            ensure_outlook_preferences_table(db_path)
         except Exception:
             _logger.exception("user_account schema migration failed")
 

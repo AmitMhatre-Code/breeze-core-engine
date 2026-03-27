@@ -10,6 +10,10 @@ function formatErrorPayload(payload: unknown): string {
     if (typeof detail === "string") return detail;
     if (detail && typeof detail === "object") {
       const d = detail as Record<string, unknown>;
+      if (typeof d.message === "string") return d.message;
+      if (typeof d.error_code === "string" && typeof d.message === "string") {
+        return `${d.error_code}: ${d.message}`;
+      }
       if (Array.isArray(d.errors) && d.errors.length) {
         const first = d.errors[0] as Record<string, unknown>;
         return (
@@ -78,6 +82,19 @@ export const apiClient = {
       signal: opts?.signal,
       headers: opts?.headers,
     }),
+  put: <TResponse, TBody = unknown>(
+    path: string,
+    body: TBody,
+    opts?: { signal?: AbortSignal; headers?: Record<string, string> },
+  ) =>
+    request<TResponse, TBody>(path, {
+      method: "PUT",
+      body,
+      signal: opts?.signal,
+      headers: opts?.headers,
+    }),
+  delete: <TResponse>(path: string, signal?: AbortSignal) =>
+    request<TResponse>(path, { method: "DELETE", signal }),
   postForm: async <TResponse>(
     path: string,
     form: FormData,

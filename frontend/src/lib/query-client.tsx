@@ -7,7 +7,15 @@ let queryClientSingleton: QueryClient | null = null;
 
 function getQueryClient() {
   if (!queryClientSingleton) {
-    queryClientSingleton = new QueryClient();
+    queryClientSingleton = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: 0,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
   }
   return queryClientSingleton;
 }

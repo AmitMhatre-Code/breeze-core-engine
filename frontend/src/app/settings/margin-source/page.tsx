@@ -50,6 +50,9 @@ export default function MarginSourceSettingsPage() {
 
   const refreshMut = useMutation({
     mutationFn: () => apiClient.post("/api/settings/margin-source/refresh-baseline", {}),
+    onMutate: () => {
+      setRefreshProgress(8);
+    },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["settings", "margin-source"] }),
   });
 
@@ -66,7 +69,7 @@ export default function MarginSourceSettingsPage() {
     onMutate: () => {
       setUploadError(null);
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["settings", "margin-source"] });
       setUploadFile(null);
     },
@@ -80,7 +83,6 @@ export default function MarginSourceSettingsPage() {
     let doneTimer: ReturnType<typeof setTimeout> | undefined;
 
     if (refreshMut.isPending) {
-      setRefreshProgress((prev) => (prev > 0 ? prev : 8));
       tickTimer = setInterval(() => {
         setRefreshProgress((prev) => {
           const step = Math.max(1, Math.round((95 - prev) / 9));
@@ -88,13 +90,17 @@ export default function MarginSourceSettingsPage() {
         });
       }, 350);
     } else if (refreshMut.isSuccess) {
-      setRefreshProgress(100);
+      doneTimer = setTimeout(() => {
+        setRefreshProgress(100);
+        setTimeout(() => {
+          setRefreshProgress(0);
+          refreshMut.reset();
+        }, 900);
+      }, 0);
+    } else if (refreshMut.isError) {
       doneTimer = setTimeout(() => {
         setRefreshProgress(0);
-        refreshMut.reset();
-      }, 900);
-    } else if (refreshMut.isError) {
-      setRefreshProgress(0);
+      }, 0);
     }
 
     return () => {
@@ -108,7 +114,6 @@ export default function MarginSourceSettingsPage() {
     let doneTimer: ReturnType<typeof setTimeout> | undefined;
 
     if (uploadMut.isPending) {
-      setUploadProgress((prev) => (prev > 0 ? prev : 8));
       tickTimer = setInterval(() => {
         setUploadProgress((prev) => {
           const step = Math.max(1, Math.round((95 - prev) / 9));
@@ -116,14 +121,18 @@ export default function MarginSourceSettingsPage() {
         });
       }, 350);
     } else if (uploadMut.isSuccess) {
-      setUploadProgress(100);
+      doneTimer = setTimeout(() => {
+        setUploadProgress(100);
+        setTimeout(() => {
+          setUploadProgress(0);
+          setUploadPanel(null);
+          uploadMut.reset();
+        }, 900);
+      }, 0);
+    } else if (uploadMut.isError) {
       doneTimer = setTimeout(() => {
         setUploadProgress(0);
-        setUploadPanel(null);
-        uploadMut.reset();
-      }, 900);
-    } else if (uploadMut.isError) {
-      setUploadProgress(0);
+      }, 0);
     }
 
     return () => {
@@ -212,7 +221,8 @@ export default function MarginSourceSettingsPage() {
                 contracts.
               </p>
               <p>
-                Note that ICICI's calculation of SPAN margins will differ from the Exchange Risk Baseline and will likely be higher.
+                Note that ICICI&apos;s calculation of SPAN margins will differ from the Exchange Risk Baseline and
+                will likely be higher.
               </p>
             </div>
             <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
