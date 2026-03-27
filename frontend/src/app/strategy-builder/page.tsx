@@ -11,7 +11,7 @@ import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill
 import { OptionStrategyIcon } from "@/components/strategy-builder/OptionStrategyIcon";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
 import { apiClient } from "@/lib/api-client";
-import { impliedVolatility } from "@/lib/strategy-builder/blackScholes";
+import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
 import {
   expiryDisplayToYears,
   sortExpiryDatesAsc,
@@ -22,7 +22,7 @@ import {
   portfolioGreeks,
   scanMarkToModelCurve,
   scanPayoffCurve,
-  summarizePayoffScan,
+  summarizePayoffExact,
 } from "@/lib/strategy-builder/payoff";
 import {
   applyTemplate,
@@ -72,27 +72,6 @@ function parseNum(v: unknown): number {
     return Number.isFinite(n) ? n : NaN;
   }
   return NaN;
-}
-
-function atmSigmaFromChain(chain: ChainSuccess, T: number): number {
-  const spot = chain.spot_price;
-  const atm = chain.atm_strike;
-  if (spot == null || atm == null) return 0.22;
-  const row = chain.chain_rows.find((r) => r.strike_price === atm);
-  if (!row) return 0.22;
-  const ivs: number[] = [];
-  const c = parseNum(row.call?.ltp);
-  const p = parseNum(row.put?.ltp);
-  if (c > 0) {
-    const iv = impliedVolatility("call", c, spot, atm, T);
-    if (iv != null) ivs.push(iv);
-  }
-  if (p > 0) {
-    const iv = impliedVolatility("put", p, spot, atm, T);
-    if (iv != null) ivs.push(iv);
-  }
-  if (!ivs.length) return 0.22;
-  return ivs.reduce((a, b) => a + b, 0) / ivs.length;
 }
 
 const OTM_SLIDER_MIN = 0;
@@ -1154,13 +1133,13 @@ export default function StrategyBuilderPage() {
       return {
         xs: [] as number[],
         ys: [] as number[],
-        summary: summarizePayoffScan([], []),
+        summary: summarizePayoffExact([], lotSize, spot),
         xsToday: [] as number[],
         ysToday: [] as number[],
       };
     }
     const { xs: x1, ys: y1 } = scanPayoffCurve(minS, maxS, steps, L, lotSize);
-    const sum = summarizePayoffScan(x1, y1);
+    const sum = summarizePayoffExact(L, lotSize, spot);
     let xt: number[] = [];
     let yt: number[] = [];
     if (showToday && spot != null && T > 0 && L.length) {

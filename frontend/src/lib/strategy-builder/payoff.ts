@@ -98,6 +98,70 @@ export function summarizePayoffScan(xs: number[], ys: number[]): PayoffSummary {
   };
 }
 
+function uniqueSorted(values: number[]): number[] {
+  const sorted = [...values].filter(Number.isFinite).sort((a, b) => a - b);
+  const out: number[] = [];
+  for (const v of sorted) {
+    const prev = out[out.length - 1];
+    if (prev == null || Math.abs(v - prev) > 1e-9) out.push(v);
+  }
+  return out;
+}
+
+function normalizeBreakevens(values: number[]): number[] {
+  if (!values.length) return [];
+  const sorted = [...values].filter(Number.isFinite).sort((a, b) => a - b);
+  const out: number[] = [];
+  for (const v of sorted) {
+    const prev = out[out.length - 1];
+    if (prev == null || Math.abs(v - prev) > 0.5) out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Exact expiry summary from piecewise-linear option payoff.
+ * Uses strike breakpoints (plus wide anchors) so breakevens/max P&L are not grid-approximate.
+ */
+export function summarizePayoffExact(
+  legs: StrategyLeg[],
+  lotSize: number,
+  spot: number | null = null,
+): PayoffSummary {
+  if (!legs.length) return { maxProfit: 0, maxLoss: 0, breakevens: [] };
+  const strikes = uniqueSorted(legs.map((l) => l.strike));
+  const maxStrike = strikes.length ? strikes[strikes.length - 1] : 0;
+  const ref = Math.max(maxStrike, spot ?? 0, 1);
+  const left = 0;
+  const right = ref * 4;
+  const nodes = uniqueSorted([left, ...strikes, right]);
+  const ys = nodes.map((s) => portfolioPayoffAtExpiry(s, legs, lotSize));
+  let maxProfit = -Infinity;
+  let maxLoss = Infinity;
+  for (const y of ys) {
+    if (y > maxProfit) maxProfit = y;
+    if (y < maxLoss) maxLoss = y;
+  }
+  const breakevens: number[] = [];
+  for (let i = 1; i < nodes.length; i++) {
+    const x0 = nodes[i - 1];
+    const x1 = nodes[i];
+    const y0 = ys[i - 1];
+    const y1 = ys[i];
+    if (Math.abs(y0) <= 1e-9) breakevens.push(x0);
+    if (y0 * y1 < 0) {
+      const t = y0 / (y0 - y1);
+      breakevens.push(x0 + t * (x1 - x0));
+    }
+  }
+  if (Math.abs(ys[ys.length - 1]) <= 1e-9) breakevens.push(nodes[nodes.length - 1]);
+  return {
+    maxProfit: Number.isFinite(maxProfit) ? maxProfit : 0,
+    maxLoss: Number.isFinite(maxLoss) ? maxLoss : 0,
+    breakevens: normalizeBreakevens(breakevens),
+  };
+}
+
 export function portfolioMarkToModel(
   S: number,
   legs: StrategyLeg[],
