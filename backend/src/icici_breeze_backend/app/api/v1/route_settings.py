@@ -3,20 +3,35 @@ import datetime
 import sqlite3
 from typing import Any, List
 
+import httpx
+import time
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.auth.ai_provider_keys import AiProviderKeyManager
+from icici_breeze_backend.app.auth.outlook_preferences import OutlookPreferencesManager
 from icici_breeze_backend.app.auth.context import get_request_context, RequestContext
 from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.auth.credentials import CredentialManager
 from icici_breeze_backend.app.auth.user_account import change_user_id
+from icici_breeze_backend.app.domain.outlook_defaults import (
+    DEFAULT_OUTLOOK_FEEDS,
+    DEFAULT_OUTLOOK_PROMPT_TEMPLATE,
+    DEFAULT_OUTLOOK_SYSTEM_PROMPT,
+)
 from icici_breeze_backend.app.domain.settings_api import (
+    AiProviderStateResponse,
+    AiProviderTestBody,
+    AiProviderUpdateBody,
     ApiUsageStateResponse,
     CredentialsStateResponse,
     CredentialsUpdateBody,
     MarginSourceStateResponse,
     MarginSourceUpdateBody,
+    OutlookConfigResetBody,
+    OutlookConfigStateResponse,
+    OutlookConfigUpdateBody,
     QuantityLimitsStateResponse,
     QuantityLimitsUpdateBody,
     ScripMasterStateResponse,
@@ -34,6 +49,10 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 breeze = processor()
 cred_manager = CredentialManager(encryption_key=(cfg.JWT_SECRET or "").strip())
+ai_key_manager = AiProviderKeyManager(encryption_key=(cfg.JWT_SECRET or "").strip())
+outlook_preferences_manager = OutlookPreferencesManager()
+_GEMINI_DEFAULT_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest")
+_AI_PROVIDER_TEST_LAST_TS_BY_USER: dict[str, float] = {}
 
 
 def _ensure_user_margin_source_column() -> None:
@@ -374,3 +393,188 @@ async def settings_scrip_master_refresh(ctx: RequestContext = Depends(get_reques
     if meta.get("master_date") is None:
         raise HTTPException(status_code=400, detail=meta.get("message") or "Scrip master refresh failed")
     return JSONResponse({"ok": True, "message": "Scrip master refreshed.", "result": meta})
+
+
+@router.get("/ai-provider", response_model=AiProviderStateResponse)
+async def settings_ai_provider_data(ctx: RequestContext = Depends(get_request_context)):
+    row = ai_key_manager.get_masked(ctx.user_id)
+    if not row:
+        return AiProviderStateResponse(user_id=ctx.user_id)
+    return AiProviderStateResponse(
+        user_id=ctx.user_id,
+        configured=True,
+        enabled=bool(row.get("enabled")),
+        provider=row.get("provider"),
+        model=row.get("model"),
+        masked_api_key=row.get("masked_api_key"),
+    )
+
+
+@router.put("/ai-provider", response_model=AiProviderStateResponse)
+async def settings_ai_provider_update(
+    body: AiProviderUpdateBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    provider = (body.provider or "").strip().lower()
+    if provider not in {"gemini", "openai"}:
+        raise HTTPException(status_code=400, detail="provider must be gemini or openai")
+    api_key = (body.api_key or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="api_key is required")
+    ai_key_manager.upsert(
+        user_id=ctx.user_id,
+        provider=provider,
+        api_key=api_key,
+        model=body.model,
+        enabled=bool(body.enabled),
+    )
+    row = ai_key_manager.get_masked(ctx.user_id)
+    if not row:
+        raise HTTPException(status_code=400, detail="Could not persist AI provider settings")
+    return AiProviderStateResponse(
+        user_id=ctx.user_id,
+        configured=True,
+        enabled=bool(row.get("enabled")),
+        provider=row.get("provider"),
+        model=row.get("model"),
+        masked_api_key=row.get("masked_api_key"),
+        message="AI provider settings saved.",
+    )
+
+
+@router.post("/ai-provider/test")
+async def settings_ai_provider_test(
+    body: AiProviderTestBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    last = _AI_PROVIDER_TEST_LAST_TS_BY_USER.get(ctx.user_id)
+    now = time.time()
+    if last is not None and now - last < 3.0:
+        raise HTTPException(status_code=429, detail="Please wait a moment before testing again.")
+    _AI_PROVIDER_TEST_LAST_TS_BY_USER[ctx.user_id] = now
+    provider = (body.provider or "").strip().lower()
+    api_key = (body.api_key or "").strip()
+    if provider not in {"gemini", "openai"}:
+        raise HTTPException(status_code=400, detail="provider must be gemini or openai")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="api_key is required")
+    try:
+        if provider == "openai":
+            model = (body.model or "").strip() or "gpt-4o-mini"
+            payload = {
+                "model": model,
+                "max_tokens": 5,
+                "messages": [{"role": "user", "content": "Ping"}],
+            }
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            url = "https://api.openai.com/v1/chat/completions"
+        else:
+            payload = {"contents": [{"parts": [{"text": "Ping"}]}]}
+            headers = {"Content-Type": "application/json"}
+            configured = (body.model or "").strip()
+            models = (configured,) if configured else _GEMINI_DEFAULT_MODELS
+            res = None
+            for model in models:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+                with httpx.Client(timeout=20.0) as client:
+                    res = client.post(url, headers=headers, json=payload)
+                if res.status_code != 404:
+                    break
+            if res is None:
+                raise HTTPException(status_code=400, detail="Gemini provider test failed with no response")
+        if res.status_code in (401, 403):
+            raise HTTPException(status_code=400, detail="Invalid API key or unauthorized provider access")
+        if res.status_code == 429:
+            raise HTTPException(status_code=400, detail="Provider quota or rate limit reached")
+        if res.status_code == 404 and provider == "gemini":
+            raise HTTPException(
+                status_code=400,
+                detail="Selected Gemini model unavailable for this key/project. Try gemini-2.5-flash or gemini-2.0-flash.",
+            )
+        if res.status_code >= 400:
+            raise HTTPException(status_code=400, detail=f"Provider returned {res.status_code}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Provider test failed: {exc}") from exc
+    return JSONResponse({"ok": True, "message": "Provider key test successful.", "user_id": ctx.user_id})
+
+
+@router.delete("/ai-provider")
+async def settings_ai_provider_delete(ctx: RequestContext = Depends(get_request_context)):
+    if not ai_key_manager.revoke(ctx.user_id):
+        raise HTTPException(status_code=404, detail="No AI provider settings found")
+    return JSONResponse({"ok": True, "message": "AI provider key revoked."})
+
+
+@router.get("/outlook-config", response_model=OutlookConfigStateResponse)
+async def settings_outlook_config_data(ctx: RequestContext = Depends(get_request_context)):
+    prefs = outlook_preferences_manager.get(ctx.user_id)
+    return OutlookConfigStateResponse(
+        user_id=ctx.user_id,
+        feeds=[{"name": f.name, "url": f.url} for f in prefs.feeds],
+        prompt_template=prefs.prompt_template,
+        system_prompt=prefs.system_prompt,
+        using_default_feeds=prefs.using_default_feeds,
+        using_default_prompt=prefs.using_default_prompt,
+        using_default_system_prompt=prefs.using_default_system_prompt,
+    )
+
+
+@router.put("/outlook-config", response_model=OutlookConfigStateResponse)
+async def settings_outlook_config_update(
+    body: OutlookConfigUpdateBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    feeds = [
+        {"name": (f.name or "").strip(), "url": (f.url or "").strip()}
+        for f in body.feeds
+        if (f.name or "").strip() and (f.url or "").strip()
+    ]
+    if not feeds:
+        feeds = [{"name": n, "url": u} for n, u in DEFAULT_OUTLOOK_FEEDS]
+    prompt_template = (body.prompt_template or "").strip() or DEFAULT_OUTLOOK_PROMPT_TEMPLATE
+    system_prompt = (body.system_prompt or "").strip() or DEFAULT_OUTLOOK_SYSTEM_PROMPT
+    outlook_preferences_manager.upsert(
+        user_id=ctx.user_id,
+        feeds=feeds,
+        prompt_template=prompt_template,
+        system_prompt=system_prompt,
+    )
+    prefs = outlook_preferences_manager.get(ctx.user_id)
+    return OutlookConfigStateResponse(
+        user_id=ctx.user_id,
+        feeds=[{"name": f.name, "url": f.url} for f in prefs.feeds],
+        prompt_template=prefs.prompt_template,
+        system_prompt=prefs.system_prompt,
+        using_default_feeds=prefs.using_default_feeds,
+        using_default_prompt=prefs.using_default_prompt,
+        using_default_system_prompt=prefs.using_default_system_prompt,
+        message="Outlook configuration saved.",
+    )
+
+
+@router.post("/outlook-config/reset", response_model=OutlookConfigStateResponse)
+async def settings_outlook_config_reset(
+    body: OutlookConfigResetBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not body.reset_feeds and not body.reset_prompt and not body.reset_system_prompt:
+        raise HTTPException(status_code=400, detail="Select at least one setting to reset")
+    outlook_preferences_manager.reset(
+        user_id=ctx.user_id,
+        reset_feeds=bool(body.reset_feeds),
+        reset_prompt=bool(body.reset_prompt),
+        reset_system_prompt=bool(body.reset_system_prompt),
+    )
+    prefs = outlook_preferences_manager.get(ctx.user_id)
+    return OutlookConfigStateResponse(
+        user_id=ctx.user_id,
+        feeds=[{"name": f.name, "url": f.url} for f in prefs.feeds],
+        prompt_template=prefs.prompt_template,
+        system_prompt=prefs.system_prompt,
+        using_default_feeds=prefs.using_default_feeds,
+        using_default_prompt=prefs.using_default_prompt,
+        using_default_system_prompt=prefs.using_default_system_prompt,
+        message="Outlook configuration reset to defaults.",
+    )

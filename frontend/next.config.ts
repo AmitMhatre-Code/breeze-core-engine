@@ -33,6 +33,10 @@ const nextConfig: NextConfig = {
         source: "/api/settings/:path*",
         destination: `${backendUpstream}/api/settings/:path*`,
       },
+      {
+        source: "/api/outlook/:path*",
+        destination: `${backendUpstream}/api/outlook/:path*`,
+      },
       { source: "/home/data", destination: `${backendUpstream}/home/data` },
       {
         source: "/dashboard/vix",

@@ -623,11 +623,11 @@ function LegQuantityInput({
   );
 
   useEffect(() => {
-    if (Number.isFinite(lots) && lots > 0) {
-      setText(String(Math.round(lots * ls)));
-    } else {
-      setText("");
-    }
+    const next = Number.isFinite(lots) && lots > 0 ? String(Math.round(lots * ls)) : "";
+    const timer = setTimeout(() => {
+      setText(next);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [legId, lots, ls]);
 
   return (

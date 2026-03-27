@@ -73,3 +73,58 @@ class ScripMasterStateResponse(BaseModel):
     has_past_expiries: bool = False
     past_expiries_count: int = 0
     message: Optional[str] = None
+
+
+class AiProviderStateResponse(BaseModel):
+    user_id: str = ""
+    configured: bool = False
+    enabled: bool = False
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    masked_api_key: Optional[str] = None
+    english_only: bool = True
+    disclaimer: str = (
+        "AI-generated outlook. Informational only. Not investment advice. Verify with primary sources."
+    )
+    message: Optional[str] = None
+
+
+class AiProviderUpdateBody(BaseModel):
+    provider: str
+    api_key: str
+    model: Optional[str] = None
+    enabled: bool = True
+
+
+class AiProviderTestBody(BaseModel):
+    provider: str
+    api_key: str
+    model: Optional[str] = None
+
+
+class OutlookFeedInput(BaseModel):
+    name: str
+    url: str
+
+
+class OutlookConfigStateResponse(BaseModel):
+    user_id: str = ""
+    feeds: list[OutlookFeedInput] = Field(default_factory=list)
+    prompt_template: str = ""
+    system_prompt: str = ""
+    using_default_feeds: bool = True
+    using_default_prompt: bool = True
+    using_default_system_prompt: bool = True
+    message: Optional[str] = None
+
+
+class OutlookConfigUpdateBody(BaseModel):
+    feeds: list[OutlookFeedInput] = Field(default_factory=list)
+    prompt_template: str = ""
+    system_prompt: str = ""
+
+
+class OutlookConfigResetBody(BaseModel):
+    reset_feeds: bool = True
+    reset_prompt: bool = True
+    reset_system_prompt: bool = False

@@ -26,6 +26,9 @@ export default function ScripMasterSettingsPage() {
 
   const refreshMut = useMutation({
     mutationFn: () => apiClient.post("/api/settings/scrip-master/refresh", {}),
+    onMutate: () => {
+      setRefreshProgress(8);
+    },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["settings", "scrip-master"] }),
   });
 
@@ -34,7 +37,6 @@ export default function ScripMasterSettingsPage() {
     let doneTimer: ReturnType<typeof setTimeout> | undefined;
 
     if (refreshMut.isPending) {
-      setRefreshProgress((prev) => (prev > 0 ? prev : 8));
       tickTimer = setInterval(() => {
         setRefreshProgress((prev) => {
           const step = Math.max(1, Math.round((95 - prev) / 9));
@@ -42,13 +44,17 @@ export default function ScripMasterSettingsPage() {
         });
       }, 350);
     } else if (refreshMut.isSuccess) {
-      setRefreshProgress(100);
+      doneTimer = setTimeout(() => {
+        setRefreshProgress(100);
+        setTimeout(() => {
+          setRefreshProgress(0);
+          refreshMut.reset();
+        }, 900);
+      }, 0);
+    } else if (refreshMut.isError) {
       doneTimer = setTimeout(() => {
         setRefreshProgress(0);
-        refreshMut.reset();
-      }, 900);
-    } else if (refreshMut.isError) {
-      setRefreshProgress(0);
+      }, 0);
     }
 
     return () => {

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { InterpretationBadge } from "@/components/dashboard/InterpretationBadge";
 import { Vix30dChart } from "@/components/dashboard/Vix30dChart";
@@ -13,6 +13,10 @@ import {
 import { getHomeMarginTiles, type HomeDataResponse } from "@/lib/home-data";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { apiClient } from "@/lib/api-client";
+import { getMarketOutlook, type OutlookResponse } from "@/lib/outlook-api";
+
+const STATIC_OUTLOOK_DISCLAIMER =
+  "AI-generated outlook. Informational only. Not investment advice. Verify with primary sources.";
 
 type Vix30Point = { date: string; value: number };
 
@@ -142,24 +146,63 @@ function sumOpenPositionsPnl(data: PortfolioApiResponse | undefined): number | n
   return t;
 }
 
+function useLazySection(rootMargin = "200px"): [boolean, (node: Element | null) => void] {
+  const [enabled, setEnabled] = useState(false);
+
+  const setRef = useCallback(
+    (node: Element | null) => {
+      if (!node || enabled) return;
+      if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") {
+        setEnabled(true);
+        return;
+      }
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            setEnabled(true);
+            observer.disconnect();
+          }
+        },
+        { rootMargin },
+      );
+      observer.observe(node);
+    },
+    [enabled, rootMargin],
+  );
+
+  return [enabled, setRef];
+}
+
 export default function DashboardPage() {
   const queryClient = useQueryClient();
+  const accountSectionRef = useRef<HTMLElement | null>(null);
+  const niftySectionRef = useRef<HTMLElement | null>(null);
+  const [marketCardHeightPx, setMarketCardHeightPx] = useState<number | undefined>(
+    undefined,
+  );
+  const [marketEnabled, marketTriggerRef] = useLazySection("300px");
+  const [accountEnabled, accountTriggerRef] = useLazySection("200px");
+  const [niftyEnabled, niftyTriggerRef] = useLazySection("250px");
+  const [chartEnabled, chartTriggerRef] = useLazySection("350px");
 
   const homeQ = useQuery({
     queryKey: ["home", "data"],
     queryFn: () => apiClient.get<HomeDataResponse>("/home/data"),
     staleTime: 30_000,
+    enabled: accountEnabled,
   });
 
   const portQ = useQuery({
     queryKey: ["portfolio", "positions"],
     queryFn: () => apiClient.get<PortfolioApiResponse>("/portfolio/data"),
     staleTime: 30_000,
+    enabled: accountEnabled,
   });
 
   const coreQ = useQuery({
     queryKey: ["dashboard", "vix"],
     queryFn: () => apiClient.get<DashboardVixCore>("/dashboard/vix"),
+    enabled: niftyEnabled || chartEnabled,
   });
 
   const optsQ = useQuery({
@@ -178,6 +221,23 @@ export default function DashboardPage() {
               : "Could not load options / IV metrics.",
         };
       }
+    },
+    enabled: niftyEnabled,
+  });
+  const marketOutlookQ = useQuery({
+    queryKey: ["outlook", "market"],
+    queryFn: () => getMarketOutlook(false),
+    retry: 0,
+    enabled: marketEnabled,
+  });
+
+  const refreshOutlookM = useMutation({
+    mutationFn: async () => {
+      const market = await getMarketOutlook(true);
+      return { market };
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["outlook", "market"], data.market);
     },
   });
 
@@ -249,8 +309,6 @@ export default function DashboardPage() {
       : null;
 
   // IV / OI / PCR come from /dashboard/vix/options (slow); do not block VIX chart or NIFTY spot from core.
-  const loading = homeQ.isPending || coreQ.isPending;
-  const blockingError = homeQ.error ?? coreQ.error;
   const optsLoading = optsQ.isPending;
 
   const volatilityFetching = coreQ.isFetching || optsQ.isFetching;
@@ -261,19 +319,71 @@ export default function DashboardPage() {
     ]);
   }, [queryClient]);
 
+  useEffect(() => {
+    const recompute = () => {
+      const a = accountSectionRef.current;
+      const n = niftySectionRef.current;
+      if (!a || !n) return;
+      const accountRect = a.getBoundingClientRect();
+      const niftyRect = n.getBoundingClientRect();
+      const gapPx = Math.max(0, niftyRect.top - accountRect.bottom);
+      const h = a.offsetHeight + n.offsetHeight + gapPx;
+      setMarketCardHeightPx(h > 0 ? h : undefined);
+    };
+
+    recompute();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => recompute());
+    if (accountSectionRef.current) ro.observe(accountSectionRef.current);
+    if (niftySectionRef.current) ro.observe(niftySectionRef.current);
+    window.addEventListener("resize", recompute);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", recompute);
+    };
+  }, [accountEnabled, niftyEnabled, homeQ.isPending, coreQ.isPending, optsLoading]);
+
   return (
     <AppShell contentWidth="wide">
-      {loading ? (
-        <div className="app-card p-4">Loading dashboard...</div>
-      ) : blockingError ? (
-        <div className="app-alert-error">
-          Unable to load dashboard:{" "}
-          {blockingError instanceof Error
-            ? blockingError.message
-            : "Unknown error"}
-        </div>
-      ) : (
-        <div className="grid min-w-0 gap-4 md:grid-cols-3">
+      <div className="grid min-w-0 gap-4 md:grid-cols-3">
+          <div ref={marketTriggerRef} aria-hidden className="h-px w-full md:col-start-3" />
+          <section
+            className="app-card min-w-0 p-4 md:col-start-3 md:col-span-1 md:row-start-1 md:row-span-2 md:flex md:h-full md:flex-col md:overflow-hidden"
+            style={
+              marketCardHeightPx && marketCardHeightPx > 0
+                ? { height: `${marketCardHeightPx}px` }
+                : undefined
+            }
+          >
+            <header className="flex items-center justify-between gap-2">
+              <h2 className="app-text-heading">Market Outlook (AI)</h2>
+              <button
+                type="button"
+                title="Refresh market outlook"
+                aria-label="Refresh outlook"
+                disabled={refreshOutlookM.isPending}
+                className="inline-flex shrink-0 rounded-md p-0.5 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200"
+                onClick={() => refreshOutlookM.mutate()}
+              >
+                <OutlookRefreshIcon />
+              </button>
+            </header>
+            <div className="py-1 text-xs text-red-700 dark:text-red-300">
+                {STATIC_OUTLOOK_DISCLAIMER}
+            </div>
+            <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+              {!marketEnabled ? (
+                <div className="text-xs app-text-muted">Load when visible...</div>
+              ) : (
+                <OutlookBlock
+                  title="market outlook"
+                  data={marketOutlookQ.data}
+                  pending={marketOutlookQ.isPending || refreshOutlookM.isPending}
+                  error={marketOutlookQ.error as Error | null}
+                />
+              )}
+            </div>
+          </section>
           {dashboardWarnings.length > 0 ? (
             <div
               className="app-card col-span-full border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/25 dark:text-amber-100"
@@ -293,15 +403,27 @@ export default function DashboardPage() {
               and logging back in.
             </div>
           ) : null}
-          <section className="app-card min-w-0 space-y-3 p-4 md:col-start-3 md:col-span-1 md:row-start-2">
+          <div ref={accountTriggerRef} aria-hidden className="h-px w-full md:col-span-2" />
+          <section
+            ref={accountSectionRef}
+            className="app-card min-w-0 space-y-2 p-3 md:col-start-1 md:col-span-2 md:row-start-1"
+          >
             <header className="flex items-center justify-between">
               <h2 className="app-text-heading">Account Overview</h2>
               <span className="app-text-muted uppercase tracking-wide">
                 Intraday
               </span>
             </header>
-            <div className="space-y-3 p-3 gap-3">
-              <div className="app-card-muted p-3">
+            {!accountEnabled ? (
+              <div className="p-2 text-sm app-text-muted">Load when visible...</div>
+            ) : homeQ.error ? (
+              <div className="app-alert-error text-sm">
+                Unable to load account data:{" "}
+                {homeQ.error instanceof Error ? homeQ.error.message : "Unknown error"}
+              </div>
+            ) : (
+            <div className="grid gap-2 p-2 md:grid-cols-3">
+              <div className="app-card-muted p-2.5">
                 <div className="text-[11px] uppercase tracking-wide text-zinc-500">
                   Open positions P&amp;L
                 </div>
@@ -333,40 +455,43 @@ export default function DashboardPage() {
                   </div>
                 ) : null}
               </div>
-              <div className="grid gap-3 min-w-0 grid-cols-2">
-                <div className="app-card-muted p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-zinc-500">
-                    Margin used
-                  </div>
-                  <div
-                    className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums dark:text-zinc-100"
-                    title={
-                      marginUsedFromHome != null && marginUsedFromHome > 0
-                        ? "From ICICI margin situation (actual_margin_avl / cash / utilization)"
-                        : portQ.data?.Status === 200
-                          ? "Sum of span_margin_required across open NFO/BFO options (ELM not included)"
-                          : undefined
-                    }
-                  >
-                    {marginUsedPending
-                      ? "…"
-                      : marginUsedDisplay != null
-                        ? formatIndianMoneyCompact(marginUsedDisplay)
-                        : "—"}
-                  </div>
+              <div className="app-card-muted p-2.5">
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500">
+                  Margin used
                 </div>
-                <div className="app-card-muted p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-zinc-500">
-                    Funds available
-                  </div>
-                  <div className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums dark:text-zinc-100">
-                    {funds != null ? formatIndianMoneyCompact(funds) : "—"}
-                  </div>
+                <div
+                  className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums dark:text-zinc-100"
+                  title={
+                    marginUsedFromHome != null && marginUsedFromHome > 0
+                      ? "From ICICI margin situation (actual_margin_avl / cash / utilization)"
+                      : portQ.data?.Status === 200
+                        ? "Sum of span_margin_required across open NFO/BFO options (ELM not included)"
+                        : undefined
+                  }
+                >
+                  {marginUsedPending
+                    ? "…"
+                    : marginUsedDisplay != null
+                      ? formatIndianMoneyCompact(marginUsedDisplay)
+                      : "—"}
+                </div>
+              </div>
+              <div className="app-card-muted p-2.5">
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500">
+                  Funds available
+                </div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums dark:text-zinc-100">
+                  {funds != null ? formatIndianMoneyCompact(funds) : "—"}
                 </div>
               </div>
             </div>
+            )}
           </section>
-          <section className="app-card min-w-0 space-y-3 p-4 md:col-start-1 md:col-span-2 md:row-start-2">
+          <div ref={niftyTriggerRef} aria-hidden className="h-px w-full md:col-span-2" />
+          <section
+            ref={niftySectionRef}
+            className="app-card min-w-0 space-y-2 p-3 md:col-start-1 md:col-span-2 md:row-start-2"
+          >
             <header className="flex items-center justify-between gap-2">
               <h2 className="app-text-heading">NIFTY Volatility</h2>
               <div className="flex min-w-0 shrink-0 items-center gap-2">
@@ -389,8 +514,16 @@ export default function DashboardPage() {
                 </button>
               </div>
             </header>
-            <div className="grid gap-3 p-3 text-sm md:grid-cols-3">
-              <div className="app-card-muted p-3">
+            {!niftyEnabled ? (
+              <div className="p-2 text-sm app-text-muted">Load when visible...</div>
+            ) : coreQ.error ? (
+              <div className="app-alert-error text-sm">
+                Unable to load volatility data:{" "}
+                {coreQ.error instanceof Error ? coreQ.error.message : "Unknown error"}
+              </div>
+            ) : (
+            <div className="grid gap-2 p-2 text-sm md:grid-cols-3">
+              <div className="app-card-muted p-2.5">
                 <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   VIX
                 </div>
@@ -413,7 +546,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="app-card-muted p-3">
+              <div className="app-card-muted p-2.5">
                 <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   NIFTY spot
                 </div>
@@ -425,7 +558,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="app-card-muted p-3">
+              <div className="app-card-muted p-2.5">
                 <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   ATM IV
                 </div>
@@ -447,7 +580,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="app-card-muted p-3">
+              <div className="app-card-muted p-2.5">
                 <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   1σ range (ATM)
                 </div>
@@ -471,7 +604,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="app-card-muted p-3">
+              <div className="app-card-muted p-2.5">
                 <div
                   className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
                   title="From lowest to highest of the strikes with max call OI and max put OI (nearest expiry)"
@@ -488,7 +621,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="app-card-muted p-3">
+              <div className="app-card-muted p-2.5">
                 <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Put:Call (OI)
                 </div>
@@ -510,6 +643,7 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
+            )}
             {opts?.error ? (
               <p className="text-[11px] text-amber-800 dark:text-amber-200/90">
                 IV / PCR: {opts.error}
@@ -521,14 +655,18 @@ export default function DashboardPage() {
               </p>
             ) : null}
           </section>
+          <div ref={chartTriggerRef} aria-hidden className="h-px w-full col-span-full" />
           <section className="app-card col-span-full min-w-0 p-4 md:row-start-3">
             <header className="mb-3 flex items-center justify-between">
               <h2 className="app-text-heading">India VIX — 3 months</h2>
             </header>
-            <Vix30dChart series={core?.vix_30d ?? []} />
+            {!chartEnabled ? (
+              <div className="text-sm app-text-muted">Load chart when visible...</div>
+            ) : (
+              <Vix30dChart series={core?.vix_30d ?? []} />
+            )}
           </section>
-        </div>
-      )}
+      </div>
     </AppShell>
   );
 }
@@ -552,6 +690,96 @@ function VolatilityRefreshIcon({ spinning }: { spinning: boolean }) {
       <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
       <path d="M16 16h5v5" />
     </svg>
+  );
+}
+
+function OutlookRefreshIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.25"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+      <path d="M16 16h5v5" />
+    </svg>
+  );
+}
+
+function OutlookBlock({
+  title,
+  data,
+  pending,
+  error,
+}: {
+  title: string;
+  data?: OutlookResponse;
+  pending: boolean;
+  error?: Error | null;
+}) {
+  if (pending) return <div className="text-xs app-text-muted">Loading {title}...</div>;
+  if (error)
+    return <div className="text-xs text-red-700 dark:text-red-300">{error.message}</div>;
+  if (!data) return <div className="text-xs app-text-muted">No outlook available.</div>;
+  return (
+    <div className="space-y-2 text-xs">
+      <ul className="list-disc space-y-1 pl-4">
+        {data.summary.slice(0, 3).map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+      <div>
+        <span className="font-medium">Volatility:</span> {data.inference.volatility_view}
+      </div>
+      <div>
+        <span className="font-medium">Confidence:</span> {data.inference.confidence}
+      </div>
+      {data.strategy_ideas.length > 0 ? (
+        <div>
+          <div className="font-medium">Strategy ideas</div>
+          <ul className="list-disc space-y-1 pl-4">
+            {data.strategy_ideas.slice(0, 2).map((item) => (
+              <li key={`${item.tag}-${item.rationale}`}>
+                {item.tag}: {item.rationale}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className="space-y-1">
+        <div className="font-medium">Sources</div>
+        <ul className="space-y-1">
+          {data.sources.slice(0, 3).map((src) => (
+            <li key={src.url} className="truncate">
+              <a
+                href={src.url}
+                target="_blank"
+                rel="noreferrer"
+                className="app-link text-[11px]"
+              >
+                {src.title}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="app-text-muted text-[10px]">
+        As of {new Date(data.as_of).toLocaleString("en-IN")}
+      </div>
+      {data.warning ? (
+        <div className="text-[10px] text-amber-700 dark:text-amber-200">
+          {data.warning.message}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

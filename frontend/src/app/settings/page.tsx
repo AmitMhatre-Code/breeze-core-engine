@@ -36,10 +36,22 @@ export default function SettingsPage() {
               API Usage
             </div>
             <p className="app-text-muted">
-              Review API call volumes to stay within ICICI's daily usage limits.
+              Review API call volumes to stay within ICICI&apos;s daily usage limits.
             </p>
             <Link href="/settings/api-usage" className="app-btn-outline">
               Open API usage
+            </Link>
+          </div>
+          <div className="app-card-muted space-y-2 p-4 text-sm">
+            <div className="font-bold text-zinc-900 dark:text-zinc-100">
+              GenAI Settings
+            </div>
+            <p className="app-text-muted">
+              Configure your own Gemini or OpenAI API key for GenAI market
+              outlooks.
+            </p>
+            <Link href="/settings/ai-provider" className="app-btn-outline">
+              Configure AI provider
             </Link>
           </div>
           <div className="app-card-muted space-y-2 p-4 text-sm">
