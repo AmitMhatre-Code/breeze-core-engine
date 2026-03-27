@@ -151,18 +151,18 @@ def _annualized_carry_percent_on_span(
 
 
 def _annualized_roi_fraction_on_span(
-    premium: float, days_to_expiry: int, span_margin: float
+    pnl: float, elapsed_days: int, total_margin: float
 ) -> float:
-    """Same as _annualized_carry_percent_on_span but without *100 (performance API / FY UI)."""
-    dte = max(1, int(days_to_expiry))
+    """(P&L / Total margin) * (365 / elapsed days), returned as a fraction (without *100)."""
+    days = max(1, int(elapsed_days))
     try:
-        sm = float(span_margin)
-        pr = float(premium)
+        margin = float(total_margin)
+        net = float(pnl)
     except (TypeError, ValueError):
         return 0.0
-    if sm <= 0 or not math.isfinite(sm) or not math.isfinite(pr):
+    if margin <= 0 or not math.isfinite(margin) or not math.isfinite(net):
         return 0.0
-    return (pr / dte) * (365.0 / sm)
+    return (net / margin) * (365.0 / days)
 
 
 def _icici_error(error_msg: str, status: int = 400) -> dict:
@@ -2069,35 +2069,20 @@ class processor():
                 per_month[trade_month_name]['taxes'] += float(trade['total_taxes'])
                 per_month[trade_month_name]['pnl'] = per_month[trade_month_name]['pnl'] - float(trade['brokerage_amount']) - float(trade['total_taxes'])
 
-            premium_earned = performance["Success"]["premium_earned"]
-            weighted_dte = 0.0
-            prem_for_dte = 0.0
-            for trade in trades["Success"]:
-                if str(trade.get("action", "")).strip() != cfg.SELL:
-                    continue
-                prem = float(trade["quantity"]) * float(trade["average_cost"])
-                d_fill = _trade_days_to_expiry_at_fill(trade)
-                if d_fill is not None:
-                    weighted_dte += prem * float(d_fill)
-                    prem_for_dte += prem
-            if prem_for_dte > 0 and weighted_dte > 0:
-                avg_dte = max(1.0, weighted_dte / prem_for_dte)
-            else:
-                avg_dte = float(period)
-
+            net_pnl = float(performance["Success"]["net_pnl"])
             margin_denom = margin if margin and float(margin) > 0 else None
-            avg_dte_i = int(round(avg_dte))
+            elapsed_days = max(1, int(period))
             if margin_denom:
                 performance["Success"]["annualised_roi_breakdown"] = {
-                    "premium_earned": float(premium_earned),
-                    "days_to_expiry": max(1, avg_dte_i),
-                    "span_margin": float(margin_denom),
+                    "net_pnl": net_pnl,
+                    "elapsed_days": elapsed_days,
+                    "total_margin": float(margin_denom),
                 }
-            if margin_denom and premium_earned > 0:
+            if margin_denom:
                 performance["Success"]["annualised_roi"] = (
                     _annualized_roi_fraction_on_span(
-                        premium_earned,
-                        max(1, avg_dte_i),
+                        net_pnl,
+                        elapsed_days,
                         float(margin_denom),
                     )
                 )

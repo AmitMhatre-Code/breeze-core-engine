@@ -57,8 +57,14 @@ async def get_performance_api(
 
     margin = breeze.get_margin_situation(user_id, target_margin_ute=100)
     if margin.get("Status") == 200 and margin.get("Success"):
-        cash_limit = margin["Success"].get("cash_limit", 0) or 0
-        performance = breeze.get_performance(user_id, cash_limit, start_d, end_d)
+        m_success = margin["Success"]
+        actual_margin_ute = float(m_success.get("actual_margin_ute", 0) or 0)
+        actual_margin_avl = float(m_success.get("actual_margin_avl", 0) or 0)
+        cash_limit = float(m_success.get("cash_limit", 0) or 0)
+        total_margin = actual_margin_avl + abs(actual_margin_ute)
+        if total_margin <= 0:
+            total_margin = cash_limit
+        performance = breeze.get_performance(user_id, total_margin, start_d, end_d)
     else:
         performance = {
             "Status": margin.get("Status", 500),

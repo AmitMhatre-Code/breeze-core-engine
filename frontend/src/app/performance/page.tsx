@@ -49,9 +49,9 @@ type MarginSuccess = {
 };
 
 type AnnualisedRoiBreakdown = {
-  premium_earned?: number;
-  days_to_expiry?: number;
-  span_margin?: number;
+  net_pnl?: number;
+  elapsed_days?: number;
+  total_margin?: number;
 };
 
 type PerformanceSuccess = {
@@ -76,31 +76,31 @@ function buildPerformanceRoiTooltip(
 ): string {
   if (
     breakdown == null ||
-    breakdown.span_margin == null ||
-    breakdown.days_to_expiry == null
+    breakdown.total_margin == null ||
+    breakdown.elapsed_days == null
   ) {
     return [
-      "Annualised ROI (FY): (premium earned ÷ DTE) × 365 ÷ span margin.",
+      "Annualised ROI (FY): (P&L ÷ total margin) × (365 ÷ elapsed FY days).",
       "The value is shown as a percentage (×100).",
-      "Span margin uses your cash limit from the broker.",
-      "DTE is premium-weighted from sell-trade date to expiry when the ticket includes expiry; otherwise FY elapsed days.",
+      "Total margin = deployed + free margin.",
+      "Elapsed FY days are counted from 1-Apr to today for in-progress FY.",
     ].join("\n");
   }
-  const pe = num(breakdown.premium_earned);
-  const dte = Math.max(1, Math.round(num(breakdown.days_to_expiry, 1)));
-  const sm = num(breakdown.span_margin);
-  const peS = `₹${pe.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const smS = `₹${sm.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const pnl = num(breakdown.net_pnl);
+  const days = Math.max(1, Math.round(num(breakdown.elapsed_days, 1)));
+  const margin = num(breakdown.total_margin);
+  const pnlS = `₹${pnl.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const marginS = `₹${margin.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const pct = roiFraction * 100;
   return [
     "Annualised ROI (FY):",
-    "(premium earned ÷ DTE) × 365 ÷ span margin",
+    "(P&L ÷ total margin) × (365 ÷ elapsed FY days)",
     "",
-    `premium earned (option sells in window) = ${peS}`,
-    `DTE = ${dte} days`,
-    `span margin (cash limit) = ${smS}`,
+    `P&L = ${pnlS}`,
+    `elapsed FY days = ${days}`,
+    `total margin (deployed + free) = ${marginS}`,
     "",
-    `= (${pe.toLocaleString("en-IN", { maximumFractionDigits: 2 })} ÷ ${dte}) × 365 ÷ ${sm.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`,
+    `= (${pnl.toLocaleString("en-IN", { maximumFractionDigits: 2 })} ÷ ${margin.toLocaleString("en-IN", { maximumFractionDigits: 2 })}) × (365 ÷ ${days})`,
     `× 100 on screen ≈ ${pct.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`,
   ].join("\n");
 }

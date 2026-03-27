@@ -5,8 +5,10 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { ExecutionPreviewModal } from "@/components/order/ExecutionPreviewModal";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
+import { PortfolioGroupPayoffPanel } from "@/components/portfolio/PortfolioGroupPayoffPanel";
 import { PortfolioHedgeOrderSheet } from "@/components/portfolio/PortfolioHedgeOrderSheet";
 import { apiClient } from "@/lib/api-client";
+import { buildPortfolioPositionGroups } from "@/lib/portfolio/groupPositions";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import {
   ltpAsOrderPrice,
@@ -203,8 +205,24 @@ const btnPrimaryCard =
 const btnSecondaryCard =
   "app-btn-outline px-3 py-2.5 text-sm font-medium";
 
-function positionRowKey(row: PortfolioPositionRecord, index: number): string {
-  return `${String(row.option)}-${String(row.stock_code)}-${index}`;
+function childRowKey(groupKey: string, localIdx: number): string {
+  return `${groupKey}-${localIdx}`;
+}
+
+function sumNumericField(
+  rows: PortfolioPositionRecord[],
+  field: string,
+): number | null {
+  let sum = 0;
+  let any = false;
+  for (const row of rows) {
+    const v = coerceNum(row[field]);
+    if (v != null) {
+      sum += v;
+      any = true;
+    }
+  }
+  return any ? sum : null;
 }
 
 type HedgeCandidatesApiResponse = {
@@ -451,6 +469,34 @@ export function OpenPositionsTable({
   positions,
   emptyMessage = "No positions to display",
 }: OpenPositionsTableProps) {
+  const groups = useMemo(
+    () => buildPortfolioPositionGroups(positions),
+    [positions],
+  );
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleGroup = useCallback((key: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const childRowNumber = useMemo(() => {
+    const m = new Map<string, number>();
+    let n = 0;
+    for (const g of groups) {
+      for (let i = 0; i < g.rows.length; i++) {
+        n += 1;
+        m.set(childRowKey(g.key, i), n);
+      }
+    }
+    return m;
+  }, [groups]);
+
   const [hedgeExpandedKey, setHedgeExpandedKey] = useState<string | null>(null);
   const [hedgeSheet, setHedgeSheet] = useState<{
     row: PortfolioPositionRecord;
@@ -558,88 +604,181 @@ export function OpenPositionsTable({
                   </td>
                 </tr>
               ) : (
-                positions.map((row, i) => {
-                  const rowKey = positionRowKey(row, i);
-                  const hedgeOpen = hedgeExpandedKey === rowKey;
-                  const mtm = formatMtmCarry(row.current_profit);
-                  const carry = formatMtmCarry(row.carry_profit);
-                  const cr = formatCarryRet(row.carry_margin_returns);
-                  const carryRoiTitle = carryMarginRoiTitle(row);
-                  const spot = formatSpot(row.spot_price);
-                  const qty = coerceNum(row.quantity);
+                groups.map((g) => {
+                  const isOpen = expandedGroups.has(g.key);
+                  const spotAgg = formatSpot(g.rows[0]?.spot_price);
+                  const mtmSum = sumNumericField(g.rows, "current_profit");
+                  const carrySum = sumNumericField(g.rows, "carry_profit");
+                  const spanSum = sumNumericField(
+                    g.rows,
+                    "span_margin_required",
+                  );
+                  const elmSum = sumNumericField(g.rows, "elm_margin_required");
+                  const gMtm = formatMtmCarry(mtmSum);
+                  const gCarry = formatMtmCarry(carrySum);
+                  const groupTitle = `${g.stockCode} · ${g.expiryDate} · ${g.rows.length} leg${g.rows.length === 1 ? "" : "s"}`;
                   return (
-                    <Fragment key={rowKey}>
-                    <tr
-                      className="app-table-row"
-                    >
-                      <td className={`${tdBase} text-center tabular-nums`}>
-                        {i + 1}
-                      </td>
-                      <td className={tdBase}>{String(row.option ?? "—")}</td>
-                      <td className={tdBase}>{String(row.action ?? "—")}</td>
-                      <td className={`${tdBase} text-right tabular-nums`}>
-                        {qty != null
-                          ? qty.toLocaleString("en-IN", {
-                              maximumFractionDigits: Number.isInteger(qty)
-                                ? 0
-                                : 4,
-                            })
-                          : "—"}
-                      </td>
-                      <td className={`${tdBase} text-right tabular-nums`}>
-                        {formatPriceCell(row.average_price)}
-                      </td>
-                      <td className={`${tdBase} text-right tabular-nums`}>
-                        {formatPriceCell(row.ltp)}
-                      </td>
-                      <td
-                        className={`${tdBase} text-right tabular-nums ${spot.className}`}
+                    <Fragment key={g.key}>
+                      <tr
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={isOpen}
+                        title={isOpen ? "Collapse group" : "Expand group"}
+                        className="app-table-row cursor-pointer select-none hover:bg-zinc-100/80 dark:hover:bg-zinc-900/50"
+                        onClick={() => toggleGroup(g.key)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            toggleGroup(g.key);
+                          }
+                        }}
                       >
-                        {spot.text}
-                      </td>
-                      <td
-                        className={`${tdShell} text-right tabular-nums ${mtm.className}`}
-                      >
-                        {mtm.text}
-                      </td>
-                      <td
-                        className={`${tdShell} text-right tabular-nums ${carry.className}`}
-                      >
-                        {carry.text}
-                      </td>
-                      <td className={`${tdBase} text-right tabular-nums`}>
-                        {formatSpanElmLakhs(row.span_margin_required)}
-                      </td>
-                      <td className={`${tdBase} text-right tabular-nums`}>
-                        {formatSpanElmLakhs(row.elm_margin_required)}
-                      </td>
-                      <td
-                        className={`${tdShell} text-right tabular-nums ${cr.className}`}
-                        title={carryRoiTitle}
-                      >
-                        {cr.text}
-                      </td>
-                      <td className={`${tdBase} text-right align-middle`}>
-                        <PositionActionsTable
-                          row={row}
-                          rowKey={rowKey}
-                          hedgeExpanded={hedgeOpen}
-                          onToggleHedges={onToggleHedges}
-                        />
-                      </td>
-                    </tr>
-                    {hedgeOpen && isHedgeable(row.hedgeable) ? (
-                      <tr className="app-table-row bg-zinc-50/90 dark:bg-zinc-900/35">
-                        <td className="p-0" colSpan={13}>
-                          <PortfolioHedgeExpandPanel
-                            row={row}
-                            onSelect={(opt) =>
-                              setHedgeSheet({ row, opt })
-                            }
-                          />
+                        <td
+                          className={`${tdBase} text-center tabular-nums text-zinc-500 dark:text-zinc-400`}
+                        >
+                          {isOpen ? "▼" : "▶"}
                         </td>
+                        <td className={`${tdBase} font-medium`}>
+                          {groupTitle}
+                        </td>
+                        <td className={tdBase}>—</td>
+                        <td className={`${tdBase} text-right`}>—</td>
+                        <td className={`${tdBase} text-right`}>—</td>
+                        <td className={`${tdBase} text-right`}>—</td>
+                        <td
+                          className={`${tdBase} text-right tabular-nums ${spotAgg.className}`}
+                        >
+                          {spotAgg.text}
+                        </td>
+                        <td
+                          className={`${tdShell} text-right tabular-nums ${gMtm.className}`}
+                        >
+                          {gMtm.text}
+                        </td>
+                        <td
+                          className={`${tdShell} text-right tabular-nums ${gCarry.className}`}
+                        >
+                          {gCarry.text}
+                        </td>
+                        <td className={`${tdBase} text-right tabular-nums`}>
+                          {spanSum != null
+                            ? formatSpanElmLakhs(spanSum)
+                            : "—"}
+                        </td>
+                        <td className={`${tdBase} text-right tabular-nums`}>
+                          {elmSum != null ? formatSpanElmLakhs(elmSum) : "—"}
+                        </td>
+                        <td
+                          className={`${tdShell} text-right tabular-nums app-text-muted`}
+                        >
+                          —
+                        </td>
+                        <td className={`${tdBase} text-right align-middle`} />
                       </tr>
-                    ) : null}
+                      {isOpen
+                        ? g.rows.map((row, localIdx) => {
+                            const rowKey = childRowKey(g.key, localIdx);
+                            const hedgeOpen = hedgeExpandedKey === rowKey;
+                            const mtm = formatMtmCarry(row.current_profit);
+                            const carry = formatMtmCarry(row.carry_profit);
+                            const cr = formatCarryRet(row.carry_margin_returns);
+                            const carryRoiTitle = carryMarginRoiTitle(row);
+                            const spot = formatSpot(row.spot_price);
+                            const qty = coerceNum(row.quantity);
+                            const num =
+                              childRowNumber.get(rowKey) ?? localIdx + 1;
+                            return (
+                              <Fragment key={rowKey}>
+                                <tr className="app-table-row bg-zinc-50/40 dark:bg-zinc-950/25">
+                                  <td
+                                    className={`${tdBase} text-center tabular-nums`}
+                                  >
+                                    {num}
+                                  </td>
+                                  <td className={tdBase}>
+                                    {String(row.option ?? "—")}
+                                  </td>
+                                  <td className={tdBase}>
+                                    {String(row.action ?? "—")}
+                                  </td>
+                                  <td className={`${tdBase} text-right tabular-nums`}>
+                                    {qty != null
+                                      ? qty.toLocaleString("en-IN", {
+                                          maximumFractionDigits:
+                                            Number.isInteger(qty) ? 0 : 4,
+                                        })
+                                      : "—"}
+                                  </td>
+                                  <td className={`${tdBase} text-right tabular-nums`}>
+                                    {formatPriceCell(row.average_price)}
+                                  </td>
+                                  <td className={`${tdBase} text-right tabular-nums`}>
+                                    {formatPriceCell(row.ltp)}
+                                  </td>
+                                  <td
+                                    className={`${tdBase} text-right tabular-nums ${spot.className}`}
+                                  >
+                                    {spot.text}
+                                  </td>
+                                  <td
+                                    className={`${tdShell} text-right tabular-nums ${mtm.className}`}
+                                  >
+                                    {mtm.text}
+                                  </td>
+                                  <td
+                                    className={`${tdShell} text-right tabular-nums ${carry.className}`}
+                                  >
+                                    {carry.text}
+                                  </td>
+                                  <td className={`${tdBase} text-right tabular-nums`}>
+                                    {formatSpanElmLakhs(row.span_margin_required)}
+                                  </td>
+                                  <td className={`${tdBase} text-right tabular-nums`}>
+                                    {formatSpanElmLakhs(row.elm_margin_required)}
+                                  </td>
+                                  <td
+                                    className={`${tdShell} text-right tabular-nums ${cr.className}`}
+                                    title={carryRoiTitle}
+                                  >
+                                    {cr.text}
+                                  </td>
+                                  <td className={`${tdBase} text-right align-middle`}>
+                                    <PositionActionsTable
+                                      row={row}
+                                      rowKey={rowKey}
+                                      hedgeExpanded={hedgeOpen}
+                                      onToggleHedges={onToggleHedges}
+                                    />
+                                  </td>
+                                </tr>
+                                {hedgeOpen && isHedgeable(row.hedgeable) ? (
+                                  <tr className="app-table-row bg-zinc-50/90 dark:bg-zinc-900/35">
+                                    <td className="p-0" colSpan={13}>
+                                      <PortfolioHedgeExpandPanel
+                                        row={row}
+                                        onSelect={(opt) =>
+                                          setHedgeSheet({ row, opt })
+                                        }
+                                      />
+                                    </td>
+                                  </tr>
+                                ) : null}
+                              </Fragment>
+                            );
+                          })
+                        : null}
+                      {isOpen ? (
+                        <tr className="app-table-row">
+                          <td className="p-0 align-top" colSpan={13}>
+                            <PortfolioGroupPayoffPanel
+                              stockCode={g.stockCode}
+                              exchangeCode={g.exchangeCode}
+                              expiryDisplay={g.expiryDate}
+                              rows={g.rows}
+                            />
+                          </td>
+                        </tr>
+                      ) : null}
                     </Fragment>
                   );
                 })
@@ -649,85 +788,163 @@ export function OpenPositionsTable({
         </div>
       </div>
 
-      {/* Phones & tablets: stacked cards, comfortable tap targets */}
+      {/* Phones & tablets: grouped cards — header expands to legs + payoff */}
       <div className="space-y-3 xl:hidden">
         {positions.length === 0 ? (
           <p className="py-6 text-center text-base app-text-muted">
             {emptyMessage}
           </p>
         ) : (
-          positions.map((row, i) => {
-            const rowKey = positionRowKey(row, i);
-            const hedgeOpen = hedgeExpandedKey === rowKey;
-            const mtm = formatMtmCarry(row.current_profit);
-            const carry = formatMtmCarry(row.carry_profit);
-            const cr = formatCarryRet(row.carry_margin_returns);
-            const carryRoiTitle = carryMarginRoiTitle(row);
-            const spot = formatSpot(row.spot_price);
-            const qty = coerceNum(row.quantity);
+          groups.map((g) => {
+            const isOpen = expandedGroups.has(g.key);
+            const spotAgg = formatSpot(g.rows[0]?.spot_price);
+            const mtmSum = sumNumericField(g.rows, "current_profit");
+            const carrySum = sumNumericField(g.rows, "carry_profit");
+            const spanSum = sumNumericField(g.rows, "span_margin_required");
+            const elmSum = sumNumericField(g.rows, "elm_margin_required");
+            const gMtm = formatMtmCarry(mtmSum);
+            const gCarry = formatMtmCarry(carrySum);
+            const groupTitle = `${g.stockCode} · ${g.expiryDate} · ${g.rows.length} leg${g.rows.length === 1 ? "" : "s"}`;
             return (
               <div
-                key={`card-${rowKey}`}
-                className="app-card-muted space-y-2.5 p-4 text-sm sm:p-5"
+                key={`card-group-${g.key}`}
+                className="app-card-muted overflow-hidden text-sm"
               >
-                <h3 className="text-base font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
-                  {String(row.option ?? "—")}
-                </h3>
-                <p>
-                  <span className="app-text-muted">Position:</span>{" "}
-                  {String(row.action ?? "—")}
-                </p>
-                <p>
-                  <span className="app-text-muted">Qty:</span>{" "}
-                  {qty != null
-                    ? qty.toLocaleString("en-IN", {
-                        maximumFractionDigits: Number.isInteger(qty) ? 0 : 4,
-                      })
-                    : "—"}
-                </p>
-                <p>
-                  <span className="app-text-muted">Avg Price:</span>{" "}
-                  {formatPriceCell(row.average_price)}
-                </p>
-                <p>
-                  <span className="app-text-muted">LTP:</span>{" "}
-                  {formatPriceCell(row.ltp)}
-                </p>
-                <p>
-                  <span className="app-text-muted">Spot:</span>{" "}
-                  <span className={spot.className}>{spot.text}</span>
-                </p>
-                <p>
-                  <span className="app-text-muted">MTM:</span>{" "}
-                  <span className={mtm.className}>{mtm.text}</span>
-                </p>
-                <p>
-                  <span className="app-text-muted">Carry:</span>{" "}
-                  <span className={carry.className}>{carry.text}</span>
-                </p>
-                <p>
-                  <span className="app-text-muted">Span Margin:</span>{" "}
-                  {formatSpanElmLakhs(row.span_margin_required)}
-                </p>
-                <p>
-                  <span className="app-text-muted">ELM @2%:</span>{" "}
-                  {formatSpanElmLakhs(row.elm_margin_required)}
-                </p>
-                <p title={carryRoiTitle}>
-                  <span className="app-text-muted">Carry Returns:</span>{" "}
-                  <span className={cr.className}>{cr.text}</span>
-                </p>
-                <PositionActionsCard
-                  row={row}
-                  rowKey={rowKey}
-                  hedgeExpanded={hedgeOpen}
-                  onToggleHedges={onToggleHedges}
-                />
-                {hedgeOpen && isHedgeable(row.hedgeable) ? (
-                  <PortfolioHedgeExpandPanel
-                    row={row}
-                    onSelect={(opt) => setHedgeSheet({ row, opt })}
-                  />
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  className="flex w-full items-start gap-3 p-4 text-left sm:p-5"
+                  onClick={() => toggleGroup(g.key)}
+                >
+                  <span
+                    className="mt-0.5 shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400"
+                    aria-hidden
+                  >
+                    {isOpen ? "▼" : "▶"}
+                  </span>
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <h3 className="text-base font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
+                      {groupTitle}
+                    </h3>
+                    <p>
+                      <span className="app-text-muted">Spot:</span>{" "}
+                      <span className={spotAgg.className}>{spotAgg.text}</span>
+                    </p>
+                    <p>
+                      <span className="app-text-muted">MTM (sum):</span>{" "}
+                      <span className={gMtm.className}>{gMtm.text}</span>
+                    </p>
+                    <p>
+                      <span className="app-text-muted">Carry (sum):</span>{" "}
+                      <span className={gCarry.className}>{gCarry.text}</span>
+                    </p>
+                    <p>
+                      <span className="app-text-muted">Span Margin (sum):</span>{" "}
+                      {spanSum != null
+                        ? formatSpanElmLakhs(spanSum)
+                        : "—"}
+                    </p>
+                    <p>
+                      <span className="app-text-muted">ELM (sum):</span>{" "}
+                      {elmSum != null ? formatSpanElmLakhs(elmSum) : "—"}
+                    </p>
+                  </div>
+                </button>
+                {isOpen ? (
+                  <div className="border-t border-zinc-200/80 dark:border-zinc-700/80">
+                    <div className="space-y-3 p-4 sm:space-y-4 sm:p-5">
+                      {g.rows.map((row, localIdx) => {
+                        const rowKey = childRowKey(g.key, localIdx);
+                        const hedgeOpen = hedgeExpandedKey === rowKey;
+                        const mtm = formatMtmCarry(row.current_profit);
+                        const carryTitle = formatMtmCarry(row.carry_profit);
+                        const cr = formatCarryRet(row.carry_margin_returns);
+                        const carryRoiTitle = carryMarginRoiTitle(row);
+                        const spot = formatSpot(row.spot_price);
+                        const qty = coerceNum(row.quantity);
+                        return (
+                          <div
+                            key={`card-${rowKey}`}
+                            className="space-y-2.5 rounded-xl border border-zinc-200/90 bg-white/80 p-4 dark:border-zinc-700 dark:bg-zinc-950/40"
+                          >
+                            <h4 className="text-sm font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
+                              {String(row.option ?? "—")}
+                            </h4>
+                            <p>
+                              <span className="app-text-muted">Position:</span>{" "}
+                              {String(row.action ?? "—")}
+                            </p>
+                            <p>
+                              <span className="app-text-muted">Qty:</span>{" "}
+                              {qty != null
+                                ? qty.toLocaleString("en-IN", {
+                                    maximumFractionDigits: Number.isInteger(qty)
+                                      ? 0
+                                      : 4,
+                                  })
+                                : "—"}
+                            </p>
+                            <p>
+                              <span className="app-text-muted">Avg Price:</span>{" "}
+                              {formatPriceCell(row.average_price)}
+                            </p>
+                            <p>
+                              <span className="app-text-muted">LTP:</span>{" "}
+                              {formatPriceCell(row.ltp)}
+                            </p>
+                            <p>
+                              <span className="app-text-muted">Spot:</span>{" "}
+                              <span className={spot.className}>{spot.text}</span>
+                            </p>
+                            <p>
+                              <span className="app-text-muted">MTM:</span>{" "}
+                              <span className={mtm.className}>{mtm.text}</span>
+                            </p>
+                            <p>
+                              <span className="app-text-muted">Carry:</span>{" "}
+                              <span className={carryTitle.className}>
+                                {carryTitle.text}
+                              </span>
+                            </p>
+                            <p>
+                              <span className="app-text-muted">Span Margin:</span>{" "}
+                              {formatSpanElmLakhs(row.span_margin_required)}
+                            </p>
+                            <p>
+                              <span className="app-text-muted">ELM @2%:</span>{" "}
+                              {formatSpanElmLakhs(row.elm_margin_required)}
+                            </p>
+                            <p title={carryRoiTitle}>
+                              <span className="app-text-muted">
+                                Carry Returns:
+                              </span>{" "}
+                              <span className={cr.className}>{cr.text}</span>
+                            </p>
+                            <PositionActionsCard
+                              row={row}
+                              rowKey={rowKey}
+                              hedgeExpanded={hedgeOpen}
+                              onToggleHedges={onToggleHedges}
+                            />
+                            {hedgeOpen && isHedgeable(row.hedgeable) ? (
+                              <PortfolioHedgeExpandPanel
+                                row={row}
+                                onSelect={(opt) =>
+                                  setHedgeSheet({ row, opt })
+                                }
+                              />
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <PortfolioGroupPayoffPanel
+                      stockCode={g.stockCode}
+                      exchangeCode={g.exchangeCode}
+                      expiryDisplay={g.expiryDate}
+                      rows={g.rows}
+                    />
+                  </div>
                 ) : null}
               </div>
             );
