@@ -25,7 +25,7 @@ export default function LogoutPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-50">
-      <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/80 p-8 text-sm text-zinc-300">
+      <div className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900/80 p-8 text-sm text-zinc-300">
         Logging out...
       </div>
     </div>

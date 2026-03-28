@@ -153,7 +153,7 @@ function UncoveredNumberStepper({
     ? "flex h-8 w-8 shrink-0 items-center justify-center border-0 bg-zinc-100 text-base font-light leading-none text-zinc-700 transition hover:bg-zinc-200 active:bg-zinc-300 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 dark:active:bg-zinc-600"
     : "flex h-11 w-11 shrink-0 items-center justify-center border-0 bg-zinc-100 text-xl font-light leading-none text-zinc-700 transition hover:bg-zinc-200 active:bg-zinc-300 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 dark:active:bg-zinc-600";
 
-  const round = compact ? "rounded-lg" : "rounded-xl";
+  const round = compact ? "rounded-lg" : "rounded-md";
   const roundL = compact ? "rounded-none rounded-l-lg" : "rounded-none rounded-l-xl";
   const roundR = compact ? "rounded-none rounded-r-lg" : "rounded-none rounded-r-xl";
   const minH = compact ? "min-h-8" : "min-h-11";
@@ -728,7 +728,7 @@ function UncoveredScanOptionCard({
   );
 
   return (
-    <div className="w-fit min-w-0 max-w-[min(100%,25rem)] rounded-xl border border-zinc-200/80 bg-white/90 p-2.5 shadow-sm backdrop-blur-sm dark:border-zinc-700/80 dark:bg-zinc-950/60">
+    <div className="w-fit min-w-0 max-w-[min(100%,25rem)] rounded-md border border-zinc-200/80 bg-white/90 p-2.5 shadow-sm backdrop-blur-sm dark:border-zinc-700/80 dark:bg-zinc-950/60">
       <div className="space-y-2">
         <div className="flex min-w-0 flex-nowrap items-center gap-x-2 overflow-hidden text-sm leading-snug">
           <div className="min-w-0 flex-1 shrink truncate font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
@@ -828,7 +828,7 @@ type HedgeMatchPayload = {
 function HedgeSuggestionCard({ best, error }: { best: Record<string, unknown> | null; error?: string }) {
   if (!best) {
     return (
-      <div className="flex min-h-[6rem] w-fit min-w-[10rem] max-w-[min(100%,22rem)] flex-1 flex-col justify-center rounded-xl border border-dashed border-zinc-300/90 bg-zinc-50/80 p-2.5 text-xs text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-400">
+      <div className="flex min-h-[6rem] w-fit min-w-[10rem] max-w-[min(100%,22rem)] flex-1 flex-col justify-center rounded-md border border-dashed border-zinc-300/90 bg-zinc-50/80 p-2.5 text-xs text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-400">
         <div className="font-semibold text-zinc-700 dark:text-zinc-300">Hedge unavailable</div>
         {error ? <p className="mt-1 leading-snug">{error}</p> : null}
       </div>
@@ -851,7 +851,7 @@ function HedgeSuggestionCard({ best, error }: { best: Record<string, unknown> | 
     Number.isFinite(n) ? n.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—";
 
   return (
-    <div className="w-fit min-w-0 max-w-[min(100%,25rem)] flex-1 rounded-xl border border-sky-200/70 bg-sky-50/50 p-2.5 shadow-sm dark:border-sky-900/40 dark:bg-sky-950/25">
+    <div className="w-fit min-w-0 max-w-[min(100%,25rem)] flex-1 rounded-md border border-sky-200/70 bg-sky-50/50 p-2.5 shadow-sm dark:border-sky-900/40 dark:bg-sky-950/25">
       <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-sky-800/90 dark:text-sky-300/90">
         Buy hedge (lowest hedge cost)
       </div>
@@ -1508,7 +1508,7 @@ export default function StrategyBuilderPage() {
           right,
           side,
           strike: row.strike_price,
-          lots: 0,
+          lots: 1,
           premiumPerUnit: Number.isFinite(premNum) ? premNum : undefined,
         },
       ]);
@@ -1537,7 +1537,7 @@ export default function StrategyBuilderPage() {
         <section className={`${sb.section} relative z-20 space-y-5`}>
           <h2 className={sb.sectionTitle}>1. Underlying &amp; Expiry</h2>
           <div
-            className="flex min-h-[2.75rem] flex-col overflow-visible rounded-xl border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] dark:shadow-none sm:flex-row sm:items-center"
+            className="flex min-h-[2.75rem] flex-col overflow-visible rounded-md border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] dark:shadow-none sm:flex-row sm:items-center"
             role="toolbar"
             aria-label="Underlying and expiry"
           >
@@ -1956,8 +1956,8 @@ export default function StrategyBuilderPage() {
                 const ok = side?.Status === 200 && rows.length > 0;
                 const groupShell =
                   kind === "CALL"
-                    ? "rounded-xl border border-emerald-200/60 bg-emerald-50/50 p-3 dark:border-emerald-900/35 dark:bg-emerald-950/25"
-                    : "rounded-xl border border-red-200/60 bg-red-50/45 p-3 dark:border-red-900/35 dark:bg-red-950/20";
+                    ? "rounded-md border border-emerald-200/60 bg-emerald-50/50 p-3 dark:border-emerald-900/35 dark:bg-emerald-950/25"
+                    : "rounded-md border border-red-200/60 bg-red-50/45 p-3 dark:border-red-900/35 dark:bg-red-950/20";
 
                 return (
                   <div key={kind} className={groupShell}>
@@ -1993,7 +1993,7 @@ export default function StrategyBuilderPage() {
                           return (
                             <div
                               key={cardKey}
-                              className="rounded-xl border border-zinc-200/80 bg-white/60 p-3 shadow-sm dark:border-zinc-700/80 dark:bg-zinc-950/40"
+                              className="rounded-md border border-zinc-200/80 bg-white/60 p-3 shadow-sm dark:border-zinc-700/80 dark:bg-zinc-950/40"
                             >
                               <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch">
                                 <UncoveredScanOptionCard
@@ -2361,6 +2361,7 @@ export default function StrategyBuilderPage() {
             </p>
             <div className="transition-opacity">
               <PayoffChart
+                key={`${minS}-${maxS}`}
                 idle={!hasStrategyLegs}
                 xs={xs}
                 ys={ys}
@@ -2433,7 +2434,7 @@ export default function StrategyBuilderPage() {
                 ).map((g) => (
                   <div
                     key={g.key}
-                    className="rounded-xl border border-zinc-200/90 bg-gradient-to-b from-white to-zinc-50/90 px-3 py-2.5 shadow-sm ring-1 ring-zinc-950/[0.03] dark:border-zinc-800 dark:from-zinc-900/90 dark:to-zinc-950/70 dark:ring-white/[0.04]"
+                    className="rounded-md border border-zinc-200/90 bg-gradient-to-b from-white to-zinc-50/90 px-3 py-2.5 shadow-sm ring-1 ring-zinc-950/[0.03] dark:border-zinc-800 dark:from-zinc-900/90 dark:to-zinc-950/70 dark:ring-white/[0.04]"
                   >
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                       {g.label}
@@ -2495,7 +2496,7 @@ export default function StrategyBuilderPage() {
                 ×
               </button>
             </div>
-            <ul className="max-h-64 divide-y divide-zinc-200/90 overflow-x-auto overflow-y-auto rounded-xl border border-zinc-200/80 dark:divide-zinc-700/90 dark:border-zinc-700/80">
+            <ul className="max-h-64 divide-y divide-zinc-200/90 overflow-x-auto overflow-y-auto rounded-md border border-zinc-200/80 dark:divide-zinc-700/90 dark:border-zinc-700/80">
               {legs.map((l) => {
                 const q =
                   l.lots > 0 ? Math.round(l.lots * lotSize) : 0;

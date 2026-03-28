@@ -132,7 +132,7 @@ export default function QuantityLimitsPage() {
             ; look for the file called NSE_FO_contract_ddmmyyyy.csv.gz (col MaxTadQty)
           </p>
         </div>
-        <div className="max-h-[70vh] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <div className="max-h-[70vh] overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">
           <table className="min-w-full text-left text-[11px]">
             <thead className="sticky top-0 bg-zinc-100 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-500">
               <tr>

@@ -323,7 +323,7 @@ function PortfolioHedgeExpandPanel({
           return (
             <div
               key={`${String(strike)}-${hi}`}
-              className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-xl border border-zinc-200/90 bg-white p-3 text-xs shadow-sm dark:border-zinc-700 dark:bg-zinc-950 sm:min-w-[10.5rem] sm:max-w-[14rem]"
+              className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-md border border-zinc-200/90 bg-white p-3 text-xs shadow-sm dark:border-zinc-700 dark:bg-zinc-950 sm:min-w-[10.5rem] sm:max-w-[14rem]"
             >
               <div className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
                 Strike{" "}
@@ -865,7 +865,7 @@ export function OpenPositionsTable({
                         return (
                           <div
                             key={`card-${rowKey}`}
-                            className="space-y-2.5 rounded-xl border border-zinc-200/90 bg-white/80 p-4 dark:border-zinc-700 dark:bg-zinc-950/40"
+                            className="space-y-2.5 rounded-md border border-zinc-200/90 bg-white/80 p-4 dark:border-zinc-700 dark:bg-zinc-950/40"
                           >
                             <h4 className="text-sm font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
                               {String(row.option ?? "—")}

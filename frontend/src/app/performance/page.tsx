@@ -24,7 +24,7 @@ const PerformanceMonthlyChart = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="app-card-muted min-h-[300px] animate-pulse rounded-xl" />
+      <div className="app-card-muted min-h-[300px] animate-pulse rounded-md" />
     ),
   },
 );
@@ -189,9 +189,7 @@ function PerformancePageInner() {
         <div className="grid min-w-0 gap-4">
           <header className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h1 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-                Performance
-              </h1>
+              <h1 className="app-text-title">Performance</h1>
               <p className="text-xs text-zinc-500 dark:text-zinc-400">
                 Bank balance, margins, and options P&amp;L
               </p>

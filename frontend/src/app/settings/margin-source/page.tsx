@@ -225,7 +225,7 @@ export default function MarginSourceSettingsPage() {
                 will likely be higher.
               </p>
             </div>
-            <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+            <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
               <div className="flex items-center justify-between gap-3">
                 <div className="space-y-1">
                   <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
@@ -294,7 +294,7 @@ export default function MarginSourceSettingsPage() {
             </div>
 
             {uploadPanel ? (
-              <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 space-y-3">
+              <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800 space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
                     {uploadPanel === "nse" ? "NSE margin file" : "BSE margin file"}

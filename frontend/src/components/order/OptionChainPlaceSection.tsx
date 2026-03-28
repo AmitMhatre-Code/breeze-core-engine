@@ -307,7 +307,7 @@ export function OptionChainPlaceSection() {
   return (
     <section className="space-y-4" aria-label="Option chain">
       <div
-        className="flex min-h-[2.75rem] flex-col overflow-visible rounded-xl border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] dark:shadow-none sm:flex-row sm:items-center"
+        className="flex min-h-[2.75rem] flex-col overflow-visible rounded-md border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] dark:shadow-none sm:flex-row sm:items-center"
         role="toolbar"
         aria-label="Underlying, expiry, and fetch"
       >
@@ -415,7 +415,7 @@ export function OptionChainPlaceSection() {
             onClick={closeSheet}
           />
           <div
-            className="fixed inset-x-4 bottom-0 z-[106] mx-auto flex max-h-[min(85dvh,28rem)] w-full max-w-[17.5rem] flex-col overflow-y-auto rounded-t-[1.25rem] border border-zinc-200/90 bg-white/95 px-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_12px_48px_-8px_rgba(0,0,0,0.28)] backdrop-blur-xl dark:border-zinc-700/90 dark:bg-zinc-950/95 dark:shadow-[0_12px_48px_-8px_rgba(0,0,0,0.55)] sm:px-4 sm:pt-3.5 lg:inset-x-auto lg:bottom-auto lg:left-1/2 lg:top-1/2 lg:max-h-[min(85dvh,30rem)] lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-2xl lg:px-4 lg:pb-4 lg:pt-4 lg:ring-1 lg:ring-zinc-950/[0.06] lg:dark:ring-white/[0.08]"
+            className="fixed inset-x-4 bottom-0 z-[106] mx-auto flex max-h-[min(85dvh,28rem)] w-full max-w-[17.5rem] flex-col overflow-y-auto rounded-t-[1.25rem] border border-zinc-200/90 bg-white/95 px-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_12px_48px_-8px_rgba(0,0,0,0.28)] backdrop-blur-xl dark:border-zinc-700/90 dark:bg-zinc-950/95 dark:shadow-[0_12px_48px_-8px_rgba(0,0,0,0.55)] sm:px-4 sm:pt-3.5 lg:inset-x-auto lg:bottom-auto lg:left-1/2 lg:top-1/2 lg:max-h-[min(85dvh,30rem)] lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-lg lg:px-4 lg:pb-4 lg:pt-4 lg:ring-1 lg:ring-zinc-950/[0.06] lg:dark:ring-white/[0.08]"
             role="dialog"
             aria-modal="true"
             aria-labelledby="option-chain-sheet-title"
@@ -551,14 +551,14 @@ export function OptionChainPlaceSection() {
             <div className="mt-4 flex gap-2 border-t border-zinc-200/90 pt-3.5 dark:border-zinc-700/80">
               <button
                 type="button"
-                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-xl border border-emerald-600/95 bg-gradient-to-b from-emerald-500 to-emerald-600 px-2 text-xs font-semibold text-white shadow-sm shadow-emerald-900/20 transition hover:from-emerald-400 hover:to-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 disabled:opacity-50 dark:to-emerald-600"
+                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-md border border-emerald-600/95 bg-gradient-to-b from-emerald-500 to-emerald-600 px-2 text-xs font-semibold text-white shadow-sm shadow-emerald-900/20 transition hover:from-emerald-400 hover:to-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 disabled:opacity-50 dark:to-emerald-600"
                 onClick={() => submitFromSheet("Buy")}
               >
                 Buy
               </button>
               <button
                 type="button"
-                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-xl border border-red-600/90 bg-gradient-to-b from-red-500 to-red-600 px-2 text-xs font-semibold text-white shadow-sm shadow-red-900/25 transition hover:from-red-400 hover:to-red-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/35 dark:to-red-600"
+                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-md border border-red-600/90 bg-gradient-to-b from-red-500 to-red-600 px-2 text-xs font-semibold text-white shadow-sm shadow-red-900/25 transition hover:from-red-400 hover:to-red-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/35 dark:to-red-600"
                 onClick={() => submitFromSheet("Sell")}
               >
                 Sell

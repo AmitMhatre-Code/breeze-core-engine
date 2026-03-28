@@ -73,7 +73,7 @@ type BookDataResponse = {
 };
 
 const ordersCancelBarClass =
-  "flex flex-wrap items-center justify-end gap-3 rounded-xl border border-zinc-200/80 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur-sm dark:border-zinc-700/80 dark:bg-zinc-900/70";
+  "flex flex-wrap items-center justify-end gap-3 rounded-md border border-zinc-200/80 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur-sm dark:border-zinc-700/80 dark:bg-zinc-900/70";
 
 function sidePillClass(action: string | undefined): string {
   const a = String(action ?? "")
@@ -432,7 +432,7 @@ function OrdersBody() {
                 });
               }}
             >
-              <div className="hidden overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm ring-1 ring-zinc-950/[0.04] dark:border-zinc-800 dark:bg-zinc-900/40 dark:shadow-none dark:ring-white/[0.06] md:block">
+              <div className="hidden overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-sm ring-1 ring-zinc-950/[0.04] dark:border-zinc-800 dark:bg-zinc-900/40 dark:shadow-none dark:ring-white/[0.06] md:block">
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-left text-sm text-zinc-800 dark:text-zinc-200">
                     <thead className="sticky top-0 z-[1] border-b border-zinc-200/90 bg-zinc-50/95 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-900/95">
@@ -529,7 +529,7 @@ function OrdersBody() {
                               <tr className="bg-zinc-50/50 dark:bg-zinc-950/40">
                                 <td colSpan={9} className="p-0">
                                   <div className="border-t border-zinc-200/80 p-3 dark:border-zinc-800/80">
-                                    <div className="overflow-hidden rounded-xl border border-zinc-200/90 bg-white shadow-inner dark:border-zinc-700/90 dark:bg-zinc-950/60">
+                                    <div className="overflow-hidden rounded-md border border-zinc-200/90 bg-white shadow-inner dark:border-zinc-700/90 dark:bg-zinc-950/60">
                                       <table className="min-w-full text-left text-sm">
                                         <thead>
                                           <tr className="border-b border-zinc-100 bg-zinc-50/90 dark:border-zinc-800 dark:bg-zinc-900/80">

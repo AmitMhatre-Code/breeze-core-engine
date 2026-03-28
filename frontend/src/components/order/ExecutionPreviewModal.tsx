@@ -223,7 +223,7 @@ export function ExecutionPreviewModal({
             ×
           </button>
         </div>
-        <ul className="max-h-64 divide-y divide-zinc-200/90 overflow-x-auto overflow-y-auto rounded-xl border border-zinc-200/80 dark:divide-zinc-700/90 dark:border-zinc-700/80">
+        <ul className="max-h-64 divide-y divide-zinc-200/90 overflow-x-auto overflow-y-auto rounded-md border border-zinc-200/80 dark:divide-zinc-700/90 dark:border-zinc-700/80">
           {legs.map((l, idx) => {
             const q = Math.round(l.quantity);
             const linePrem = l.premiumPerUnit * q;

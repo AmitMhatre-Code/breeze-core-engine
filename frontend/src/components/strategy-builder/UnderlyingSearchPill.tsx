@@ -94,7 +94,7 @@ export function UnderlyingSearchPill({
         aria-expanded={open}
         aria-haspopup="listbox"
         onClick={() => !disabled && setOpen((o) => !o)}
-        className="flex w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus-visible:border-sky-500 focus-visible:ring-4 focus-visible:ring-sky-500/15 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus-visible:border-sky-400 dark:focus-visible:ring-sky-400/20"
+        className="flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus-visible:border-sky-500 focus-visible:ring-4 focus-visible:ring-sky-500/15 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus-visible:border-sky-400 dark:focus-visible:ring-sky-400/20"
       >
         <span className="min-w-0 flex-1 truncate">
           {value ? (
@@ -126,7 +126,7 @@ export function UnderlyingSearchPill({
             onClick={() => setOpen(false)}
           />
           <div
-            className="fixed inset-0 z-[300] flex flex-col bg-zinc-50 dark:bg-zinc-950 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-1.5 lg:max-h-[min(22rem,70vh)] lg:w-full lg:min-w-[18rem] lg:max-w-lg lg:rounded-xl lg:border lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-700 lg:dark:bg-zinc-900"
+            className="fixed inset-0 z-[300] flex flex-col bg-zinc-50 dark:bg-zinc-950 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-1.5 lg:max-h-[min(22rem,70vh)] lg:w-full lg:min-w-[18rem] lg:max-w-lg lg:rounded-md lg:border lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-700 lg:dark:bg-zinc-900"
             role="listbox"
             aria-label="Search underlyings"
           >
@@ -136,7 +136,7 @@ export function UnderlyingSearchPill({
               </span>
               <button
                 type="button"
-                className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:hover:bg-zinc-800"
+                className="rounded-md p-2 text-zinc-500 hover:bg-zinc-200/80 dark:hover:bg-zinc-800"
                 aria-label="Close"
                 onClick={() => setOpen(false)}
               >
@@ -153,7 +153,7 @@ export function UnderlyingSearchPill({
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search name or symbol…"
                 autoComplete="off"
-                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500"
               />
             </div>
 
@@ -189,7 +189,7 @@ export function UnderlyingSearchPill({
                       type="button"
                       role="option"
                       aria-selected={u.stock_code === value}
-                      className={`flex w-full flex-col items-start rounded-lg px-3 py-2 text-left text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800/80 ${u.stock_code === value ? "bg-sky-50 text-sky-900 dark:bg-sky-950/40 dark:text-sky-100" : "text-zinc-900 dark:text-zinc-100"}`}
+                      className={`flex w-full flex-col items-start rounded-md px-3 py-2 text-left text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800/80 ${u.stock_code === value ? "bg-sky-50 text-sky-900 dark:bg-sky-950/40 dark:text-sky-100" : "text-zinc-900 dark:text-zinc-100"}`}
                       onClick={() => select(u.stock_code)}
                     >
                       <span className="font-semibold">{u.stock_code}</span>

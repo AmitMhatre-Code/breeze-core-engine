@@ -195,7 +195,7 @@ export function OptionChainTable({
   return (
     <div
       ref={scrollRef}
-      className="max-h-[min(70vh,42rem)] overflow-auto rounded-xl border border-zinc-200 bg-white shadow-lg ring-1 ring-black/5 dark:border-zinc-800 dark:bg-[#0e0e10] dark:ring-black/20 dark:ring-zinc-800/80"
+      className="max-h-[min(70vh,42rem)] overflow-auto rounded-md border border-zinc-200 bg-white shadow-lg ring-1 ring-black/5 dark:border-zinc-800 dark:bg-[#0e0e10] dark:ring-black/20 dark:ring-zinc-800/80"
     >
       <table className="w-full max-w-full border-collapse text-xs leading-snug tabular-nums text-zinc-700 dark:text-zinc-300 sm:text-sm">
         <thead className="sticky top-0 z-20 bg-white dark:bg-[#0e0e10]">

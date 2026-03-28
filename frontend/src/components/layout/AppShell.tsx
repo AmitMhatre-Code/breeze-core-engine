@@ -1,9 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ReactNode, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import breezeMark from "@/app/android-chrome-192x192.png";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -65,14 +67,27 @@ export function AppShell({
 
   return (
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
-      <aside className="hidden w-64 border-r border-zinc-200 bg-white/90 dark:border-zinc-800 dark:bg-zinc-950/80 md:flex md:flex-col">
-        <div className="mb-6 px-2">
-          <div className="text-lg font-semibold tracking-tight text-sky-500 dark:text-sky-500">
-            Breeze Web
+      <aside className="hidden w-60 border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 md:flex md:flex-col">
+        <div className="mb-4 flex items-stretch gap-3 px-3 pt-1">
+          <div className="flex w-11 shrink-0 flex-col items-center justify-center">
+            <Image
+              src={breezeMark}
+              alt="Breeze"
+              width={192}
+              height={192}
+              className="max-h-full w-full object-contain object-left"
+            />
           </div>
-          <div className="app-text-muted">Enabled by ICICI Direct Breeze API</div>
+          <div className="min-w-0 flex flex-col justify-center py-0.5">
+            <div className="text-base font-semibold tracking-tight text-sky-600 dark:text-sky-500">
+              Breeze Web
+            </div>
+            <div className="app-text-muted mt-0.5">
+              Enabled by Breeze API
+            </div>
+          </div>
         </div>
-        <nav className="space-y-1 text-sm">
+        <nav className="space-y-0.5 px-2 text-sm">
           {navItems.map((item) => {
             const active =
               item.href === "/dashboard"
@@ -84,10 +99,10 @@ export function AppShell({
                 key={item.href}
                 href={item.href}
                 className={[
-                  "flex items-center gap-2 rounded-none px-3 py-2 transition",
+                  "flex items-center gap-2 rounded-sm px-2.5 py-2 transition",
                   active
-                    ? "bg-sky-100 text-sky-950 dark:bg-sky-950/45 dark:text-sky-50"
-                    : "text-zinc-600 hover:bg-sky-50 hover:text-sky-900 dark:text-zinc-400 dark:hover:bg-sky-950/35 dark:hover:text-sky-100",
+                    ? "bg-sky-100 text-sky-950 dark:bg-sky-950/50 dark:text-sky-50"
+                    : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100",
                 ].join(" ")}
               >
                 <Icon />
@@ -98,10 +113,10 @@ export function AppShell({
         </nav>
       </aside>
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="flex h-14 min-h-14 items-center justify-between gap-3 border-b border-zinc-200 bg-white/95 px-3 dark:border-zinc-800 dark:bg-zinc-950/90 sm:px-4">
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
-            <span className="hidden truncate text-sm text-zinc-600 dark:text-zinc-400 md:inline">
-              Trading dashboard
+        <header className="flex h-12 min-h-12 items-center justify-between gap-3 border-b border-zinc-200 bg-white px-3 dark:border-zinc-800 dark:bg-zinc-950 sm:px-4">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-4">
+            <span className="hidden truncate text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 md:inline">
+              Trading
             </span>
             {homeQ.isLoading ? (
               <span className="text-xs text-zinc-500">Loading account…</span>
@@ -112,21 +127,21 @@ export function AppShell({
             ) : (
               <>
                 <span
-                  className="truncate text-sm font-medium text-emerald-600 dark:text-emerald-400"
+                  className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100"
                   title={displayName ?? undefined}
                 >
                   {displayName ?? "—"}
                 </span>
                 <span
-                  className="flex min-w-0 shrink-0 items-baseline gap-1"
+                  className="flex min-w-0 shrink-0 items-baseline gap-1.5"
                   title="Available margin (cash + limits from ICICI margin API)"
                 >
-                  <span className="hidden truncate text-sm text-zinc-600 dark:text-zinc-400 md:inline">
+                  <span className="hidden truncate text-xs text-zinc-500 dark:text-zinc-400 md:inline">
                     Free margin
                   </span>
                   <span
                     className={[
-                      "truncate text-sm font-medium tabular-nums",
+                      "truncate text-sm font-semibold tabular-nums",
                       freeMarginDisplay?.className ??
                         "text-zinc-900 dark:text-zinc-100",
                     ].join(" ")}
@@ -140,17 +155,17 @@ export function AppShell({
           <div className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-3">
             {homeDataReady && (
               <span
-                className="min-w-0 max-w-[9rem] shrink-0 whitespace-nowrap text-[10px] font-normal tabular-nums leading-tight text-zinc-400 dark:text-zinc-500 sm:max-w-none sm:text-[11px]"
+                className="min-w-0 max-w-[9rem] shrink-0 whitespace-nowrap text-xs tabular-nums text-zinc-500 dark:text-zinc-400 sm:max-w-none"
                 title="Breeze REST calls from this app today (IST calendar day, ICICI daily cap 5,000)"
               >
-                <span className="hidden sm:inline">API calls </span>
+                <span className="hidden sm:inline">API </span>
                 <span>
                   {apiCallsToday.toLocaleString("en-IN")} /{" "}
                   {apiCallsLimit.toLocaleString("en-IN")}
                 </span>
               </span>
             )}
-            <span className="hidden text-[10px] font-normal text-zinc-400 dark:text-zinc-500 lg:inline">
+            <span className="hidden text-xs text-zinc-400 dark:text-zinc-500 lg:inline">
               ICICI
             </span>
             <span
@@ -163,13 +178,13 @@ export function AppShell({
               href="/logout"
               title="Log out"
               aria-label="Log out"
-              className="inline-flex rounded-lg border border-zinc-200 bg-zinc-100 p-1.5 text-zinc-700 transition hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+              className="inline-flex rounded-sm border border-zinc-200 bg-zinc-50 p-1.5 text-zinc-600 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
             >
               <LogOutIcon />
             </Link>
           </div>
         </header>
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-gradient-to-b from-zinc-100 via-zinc-50 to-white dark:from-zinc-950 dark:via-zinc-950 dark:to-zinc-900/80 px-4 py-4 md:px-6 md:py-6">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-50 px-4 py-4 dark:bg-zinc-950 md:px-5 md:py-5">
           <div
             className={[
               "mx-auto w-full min-w-0",

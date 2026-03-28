@@ -210,7 +210,7 @@ export function OrderBookDatePopover({
         aria-expanded={open}
         aria-controls={listboxId}
         className={[
-          "flex h-11 w-full min-w-[11rem] items-center rounded-xl border border-zinc-200 bg-white py-0 pl-10 pr-3 text-left text-sm tabular-nums text-zinc-900 shadow-sm transition",
+          "flex h-11 w-full min-w-[11rem] items-center rounded-md border border-zinc-200 bg-white py-0 pl-10 pr-3 text-left text-sm tabular-nums text-zinc-900 shadow-sm transition",
           "hover:border-zinc-300 focus:outline-none focus-visible:border-sky-500 focus-visible:ring-2 focus-visible:ring-sky-500/25",
           "dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:border-zinc-500 dark:focus-visible:border-sky-400 dark:focus-visible:ring-sky-400/25",
         ].join(" ")}
@@ -234,7 +234,7 @@ export function OrderBookDatePopover({
           id={listboxId}
           role="dialog"
           aria-label="Choose date"
-          className="absolute left-0 top-[calc(100%+0.25rem)] z-50 w-[min(100%,18rem)] rounded-xl border border-zinc-200/90 bg-white p-3 shadow-lg ring-1 ring-zinc-950/[0.04] dark:border-zinc-700 dark:bg-zinc-900 dark:ring-white/[0.06]"
+          className="absolute left-0 top-[calc(100%+0.25rem)] z-50 w-[min(100%,18rem)] rounded-md border border-zinc-200/90 bg-white p-3 shadow-lg ring-1 ring-zinc-950/[0.04] dark:border-zinc-700 dark:bg-zinc-900 dark:ring-white/[0.06]"
         >
           <div className="mb-2 flex items-center justify-between gap-1">
             <button

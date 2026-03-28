@@ -213,7 +213,7 @@ export function PerformanceMonthlyChart({
   }
 
   return (
-    <div className="min-h-[min(420px,max(300px,42vh))] w-full min-w-0 rounded-2xl border border-zinc-200/90 bg-gradient-to-b from-zinc-50/90 to-white/40 px-3 pb-2 pt-1 dark:border-zinc-800/90 dark:from-zinc-950/50 dark:to-zinc-900/20">
+    <div className="min-h-[min(420px,max(300px,42vh))] w-full min-w-0 rounded-lg border border-zinc-200/90 bg-gradient-to-b from-zinc-50/90 to-white/40 px-3 pb-2 pt-1 dark:border-zinc-800/90 dark:from-zinc-950/50 dark:to-zinc-900/20">
       <Bar key={isDark ? "dark" : "light"} data={data} options={options} />
     </div>
   );

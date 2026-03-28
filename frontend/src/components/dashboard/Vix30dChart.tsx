@@ -89,6 +89,47 @@ const MONTHS = [
   "Dec",
 ] as const;
 
+/**
+ * WebKit/Safari often reports `getBoundingClientRect().width === 0` on `<svg>` on the
+ * first layout pass even when the chart paints. Prefer the block wrapper’s
+ * `clientWidth` / `offsetWidth`, then SVG rect, then parent.
+ */
+function readChartLayoutWidthPx(
+  container: HTMLElement | null,
+  svg: SVGSVGElement | null,
+): number {
+  let w = 0;
+  if (container) {
+    w = Math.max(
+      w,
+      container.clientWidth,
+      container.offsetWidth,
+      container.getBoundingClientRect().width,
+    );
+  }
+  if (svg) {
+    w = Math.max(w, svg.getBoundingClientRect().width);
+    const sw = svg.width?.baseVal?.value;
+    if (typeof sw === "number" && sw > 0) w = Math.max(w, sw);
+  }
+  const parent = container?.parentElement;
+  if (parent) {
+    w = Math.max(
+      w,
+      parent.clientWidth,
+      (parent as HTMLElement).offsetWidth,
+      parent.getBoundingClientRect().width,
+    );
+  }
+  return w;
+}
+
+/** When layout width is still 0 (Safari first paint), cap by viewport so label font is never oversized. */
+function viewportWidthFallbackPx(): number {
+  if (typeof window === "undefined") return W;
+  return Math.min(window.innerWidth, 2000);
+}
+
 function monthStartTickIndices(series: Point[]): { i: number; label: string }[] {
   const out: { i: number; label: string }[] = [];
   let prevKey = "";
@@ -109,18 +150,78 @@ function monthStartTickIndices(series: Point[]): { i: number; label: string }[] 
 export function Vix30dChart({ series }: { series: Point[] }) {
   const [hoverI, setHoverI] = useState<number | null>(null);
   const gradId = useId().replace(/:/g, "");
+  const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  /**
+   * CSS width for scaling SVG label font. Starts at `W` for stable SSR/hydration;
+   * refined from layout, with `innerWidth` fallback when Safari reports 0 until
+   * a later pass (avoids invisible labels and avoids oversized text).
+   */
   const [svgClientW, setSvgClientW] = useState(W);
 
   useLayoutEffect(() => {
-    const el = svgRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => {
-      const w = el.getBoundingClientRect().width;
-      setSvgClientW(w > 0 ? w : W);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
+    const applyWidth = () => {
+      const m = readChartLayoutWidthPx(containerRef.current, svgRef.current);
+      const cap = viewportWidthFallbackPx();
+      const next = m > 0 ? m : cap;
+      setSvgClientW((prev) =>
+        Math.abs(prev - next) < 0.25 ? prev : next,
+      );
+    };
+
+    applyWidth();
+    const t0 = window.setTimeout(applyWidth, 0);
+    const t1 = window.setTimeout(applyWidth, 50);
+    const t2 = window.setTimeout(applyWidth, 150);
+
+    let raf = 0;
+    let n = 0;
+    const retry = () => {
+      applyWidth();
+      if (readChartLayoutWidthPx(containerRef.current, svgRef.current) > 0)
+        return;
+      if (n++ < 48) raf = requestAnimationFrame(retry);
+    };
+    if (readChartLayoutWidthPx(containerRef.current, svgRef.current) <= 0) {
+      raf = requestAnimationFrame(retry);
+    }
+
+    const onWinResize = () => applyWidth();
+    window.addEventListener("resize", onWinResize);
+
+    let io: IntersectionObserver | undefined;
+    const wrap = containerRef.current;
+    if (wrap && typeof IntersectionObserver !== "undefined") {
+      io = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) applyWidth();
+        },
+        { rootMargin: "80px", threshold: 0 },
+      );
+      io.observe(wrap);
+    }
+
+    const targets: Element[] = [];
+    if (wrap) targets.push(wrap);
+    const svg = svgRef.current;
+    if (svg) targets.push(svg);
+
+    const ros: ResizeObserver[] = [];
+    if (typeof ResizeObserver !== "undefined" && targets.length) {
+      const ro = new ResizeObserver(applyWidth);
+      for (const t of targets) ro.observe(t);
+      ros.push(ro);
+    }
+
+    return () => {
+      window.removeEventListener("resize", onWinResize);
+      window.clearTimeout(t0);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      cancelAnimationFrame(raf);
+      io?.disconnect();
+      for (const ro of ros) ro.disconnect();
+    };
   }, []);
 
   const pxPerViewUnit = Math.max(svgClientW, 1) / W;
@@ -236,151 +337,153 @@ export function Vix30dChart({ series }: { series: Point[] }) {
 
   return (
     <div className="space-y-2">
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${W} ${H}`}
-        className="block w-full cursor-crosshair touch-none overflow-visible"
-        style={{ aspectRatio: `${W} / ${H}` }}
-        role="img"
-        aria-label="India VIX last three months; hover for date and value"
-        onPointerMove={onPointerMove}
-        onPointerLeave={onPointerLeave}
-        onPointerCancel={onPointerLeave}
-      >
-        <defs>
-          <linearGradient
-            id={`vix-area-${gradId}`}
-            gradientUnits="userSpaceOnUse"
-            x1={0}
-            y1={PAD_T}
-            x2={0}
-            y2={yBase}
-          >
-            <stop
-              offset="0%"
-              stopColor={LINE_BLUE}
-              stopOpacity={AREA_TOP_OPACITY}
-            />
-            <stop
-              offset="100%"
-              stopColor={LINE_BLUE}
-              stopOpacity={AREA_BOTTOM_OPACITY}
-            />
-          </linearGradient>
-        </defs>
-        {yTicks.map((tick) => {
-          const y = PAD_T + innerH - ((tick - minV) / spread) * innerH;
-          return (
-            <g key={tick}>
+      <div ref={containerRef} className="w-full min-w-0">
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${W} ${H}`}
+          className="block w-full min-w-0 cursor-crosshair touch-none overflow-visible"
+          style={{ aspectRatio: `${W} / ${H}` }}
+          role="img"
+          aria-label="India VIX last three months; hover for date and value"
+          onPointerMove={onPointerMove}
+          onPointerLeave={onPointerLeave}
+          onPointerCancel={onPointerLeave}
+        >
+          <defs>
+            <linearGradient
+              id={`vix-area-${gradId}`}
+              gradientUnits="userSpaceOnUse"
+              x1={0}
+              y1={PAD_T}
+              x2={0}
+              y2={yBase}
+            >
+              <stop
+                offset="0%"
+                stopColor={LINE_BLUE}
+                stopOpacity={AREA_TOP_OPACITY}
+              />
+              <stop
+                offset="100%"
+                stopColor={LINE_BLUE}
+                stopOpacity={AREA_BOTTOM_OPACITY}
+              />
+            </linearGradient>
+          </defs>
+          {yTicks.map((tick) => {
+            const y = PAD_T + innerH - ((tick - minV) / spread) * innerH;
+            return (
+              <g key={tick}>
+                <line
+                  x1={PAD_L}
+                  y1={y}
+                  x2={W - PAD_R}
+                  y2={y}
+                  className="stroke-zinc-200 dark:stroke-zinc-700/90"
+                  strokeWidth={0.45}
+                />
+                <text
+                  x={PAD_L - 5}
+                  y={y}
+                  textAnchor="end"
+                  dominantBaseline="middle"
+                  className="fill-zinc-500 font-sans dark:fill-zinc-500"
+                  fontSize={axisFontUser}
+                >
+                  {tick.toFixed(1)}
+                </text>
+              </g>
+            );
+          })}
+          <path
+            d={areaD}
+            fill={`url(#vix-area-${gradId})`}
+            stroke="none"
+          />
+          <path
+            d={smoothTop}
+            fill="none"
+            stroke={LINE_BLUE}
+            strokeWidth={LINE_WIDTH}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          {hi != null ? (
+            <>
+              <circle
+                cx={pts[hi][0]}
+                cy={pts[hi][1]}
+                r={2.75}
+                fill={LINE_BLUE}
+                stroke="white"
+                strokeWidth={0.75}
+                className="dark:stroke-zinc-900"
+              />
               <line
-                x1={PAD_L}
-                y1={y}
-                x2={W - PAD_R}
-                y2={y}
-                className="stroke-zinc-200 dark:stroke-zinc-700/90"
-                strokeWidth={0.45}
+                x1={pts[hi][0]}
+                y1={PAD_T}
+                x2={pts[hi][0]}
+                y2={H - PAD_B}
+                stroke={LINE_BLUE}
+                strokeOpacity={0.35}
+                strokeWidth={0.5}
+                strokeDasharray="3 2"
+                pointerEvents="none"
+              />
+            </>
+          ) : null}
+          {hoverLabel ? (
+            <g pointerEvents="none">
+              <rect
+                x={hoverLabel.x}
+                y={hoverLabel.y}
+                width={92}
+                height={36}
+                rx={4}
+                className="fill-zinc-900/90 stroke-zinc-600/35 dark:fill-zinc-950/94 dark:stroke-zinc-500/35"
+                strokeWidth={0.5}
               />
               <text
-                x={PAD_L - 5}
-                y={y}
-                textAnchor="end"
+                x={hoverLabel.x + 46}
+                y={hoverLabel.y + 15}
+                textAnchor="middle"
                 dominantBaseline="middle"
-                className="fill-zinc-500 font-sans dark:fill-zinc-500"
-                fontSize={axisFontUser}
+                fill="rgb(244 244 245)"
+                className="font-sans"
+                fontSize={hoverFontUser}
+                fontWeight={500}
               >
-                {tick.toFixed(1)}
+                {hoverLabel.date}
+              </text>
+              <text
+                x={hoverLabel.x + 46}
+                y={hoverLabel.y + 29}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill={LINE_BLUE}
+                className="font-mono"
+                fontSize={hoverFontUser}
+                fontWeight={600}
+              >
+                {`VIX ${hoverLabel.val}`}
               </text>
             </g>
-          );
-        })}
-        <path
-          d={areaD}
-          fill={`url(#vix-area-${gradId})`}
-          stroke="none"
-        />
-        <path
-          d={smoothTop}
-          fill="none"
-          stroke={LINE_BLUE}
-          strokeWidth={LINE_WIDTH}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        {hi != null ? (
-          <>
-            <circle
-              cx={pts[hi][0]}
-              cy={pts[hi][1]}
-              r={2.75}
-              fill={LINE_BLUE}
-              stroke="white"
-              strokeWidth={0.75}
-              className="dark:stroke-zinc-900"
-            />
-            <line
-              x1={pts[hi][0]}
-              y1={PAD_T}
-              x2={pts[hi][0]}
-              y2={H - PAD_B}
-              stroke={LINE_BLUE}
-              strokeOpacity={0.35}
-              strokeWidth={0.5}
-              strokeDasharray="3 2"
-              pointerEvents="none"
-            />
-          </>
-        ) : null}
-        {hoverLabel ? (
-          <g pointerEvents="none">
-            <rect
-              x={hoverLabel.x}
-              y={hoverLabel.y}
-              width={92}
-              height={36}
-              rx={4}
-              className="fill-zinc-900/90 stroke-zinc-600/35 dark:fill-zinc-950/94 dark:stroke-zinc-500/35"
-              strokeWidth={0.5}
-            />
+          ) : null}
+          {xTicks.map(({ x, label }) => (
             <text
-              x={hoverLabel.x + 46}
-              y={hoverLabel.y + 15}
+              key={label + x}
+              x={Math.min(Math.max(x, PAD_L + 14), W - 14)}
+              y={H - 6}
               textAnchor="middle"
-              dominantBaseline="middle"
-              fill="rgb(244 244 245)"
-              className="font-sans"
-              fontSize={hoverFontUser}
-              fontWeight={500}
+              dominantBaseline="auto"
+              className="fill-zinc-600 font-sans dark:fill-zinc-500"
+              fontSize={axisFontUser}
             >
-              {hoverLabel.date}
+              {label}
             </text>
-            <text
-              x={hoverLabel.x + 46}
-              y={hoverLabel.y + 29}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fill={LINE_BLUE}
-              className="font-mono"
-              fontSize={hoverFontUser}
-              fontWeight={600}
-            >
-              {`VIX ${hoverLabel.val}`}
-            </text>
-          </g>
-        ) : null}
-        {xTicks.map(({ x, label }) => (
-          <text
-            key={label + x}
-            x={Math.min(Math.max(x, PAD_L + 14), W - 14)}
-            y={H - 6}
-            textAnchor="middle"
-            dominantBaseline="auto"
-            className="fill-zinc-600 font-sans dark:fill-zinc-500"
-            fontSize={axisFontUser}
-          >
-            {label}
-          </text>
-        ))}
-      </svg>
+          ))}
+        </svg>
+      </div>
       <p className="app-text-muted">
         India VIX (INDVIX), daily close — last ~3 months · hover for date
         &amp; value on chart

@@ -86,7 +86,7 @@ export default function RegisterCorrectPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 text-zinc-50">
-      <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/80 p-8">
+      <div className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900/80 p-8">
         <h1 className="text-xl font-semibold">Update credentials</h1>
         <p className="mt-1 text-xs text-zinc-500">User id: {session.user_id}</p>
         {err && (

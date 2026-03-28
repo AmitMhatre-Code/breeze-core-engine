@@ -6,11 +6,11 @@ export default function SettingsPage() {
     <AppShell>
       <section className="app-card space-y-3 p-4">
         <header className="flex items-center justify-between">
-          <h2 className="text-xl app-text-heading">Settings</h2>
+          <h2 className="app-text-title">Settings</h2>
         </header>
         <div className="grid gap-4 md:grid-cols-2">
           <div className="app-card-muted space-y-2 p-4 text-sm">
-            <div className="font-bold text-zinc-900 dark:text-zinc-100">
+            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               Broker Credentials
             </div>
             <p className="app-text-muted">
@@ -21,7 +21,7 @@ export default function SettingsPage() {
             </Link>
           </div>
           <div className="app-card-muted space-y-2 p-4 text-sm">
-            <div className="font-bold text-zinc-900 dark:text-zinc-100">
+            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               Quantity Limits
             </div>
             <p className="app-text-muted">
@@ -32,7 +32,7 @@ export default function SettingsPage() {
             </Link>
           </div>
           <div className="app-card-muted space-y-2 p-4 text-sm">
-            <div className="font-bold text-zinc-900 dark:text-zinc-100">
+            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               API Usage
             </div>
             <p className="app-text-muted">
@@ -43,7 +43,7 @@ export default function SettingsPage() {
             </Link>
           </div>
           <div className="app-card-muted space-y-2 p-4 text-sm">
-            <div className="font-bold text-zinc-900 dark:text-zinc-100">
+            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               GenAI Settings
             </div>
             <p className="app-text-muted">
@@ -55,7 +55,7 @@ export default function SettingsPage() {
             </Link>
           </div>
           <div className="app-card-muted space-y-2 p-4 text-sm">
-            <div className="font-bold text-zinc-900 dark:text-zinc-100">
+            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               Margin Calculation Source
             </div>
             <p className="app-text-muted">
@@ -66,13 +66,13 @@ export default function SettingsPage() {
             </Link>
           </div>
           <div className="app-card-muted space-y-2 p-4 text-sm">
-            <div className="font-bold text-zinc-900 dark:text-zinc-100">Scrip Master</div>
+            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Scrip Master</div>
             <p className="app-text-muted">Inspect scrip data age/expiry health and load latest scrip master from ICICI.</p>
             <Link href="/settings/scrip-master" className="app-btn-outline">
               Update scrip master
             </Link>
           </div>
-          <div className="md:col-span-2 rounded-xl border border-red-200 bg-red-50/50 p-4 text-sm dark:border-red-900/40 dark:bg-red-950/15">
+          <div className="md:col-span-2 rounded-md border border-red-200 bg-red-50/50 p-4 text-sm dark:border-red-900/40 dark:bg-red-950/15">
             <div className="font-bold text-red-900 dark:text-red-200">
               Delete Account
             </div>
@@ -82,7 +82,7 @@ export default function SettingsPage() {
             </p>
             <Link
               href="/settings/delete-account"
-              className="mt-3 inline-flex rounded-lg border border-red-800 bg-white px-3 py-2 text-sm font-medium text-red-900 hover:bg-red-50 dark:border-red-700 dark:bg-red-950/40 dark:text-red-100 dark:hover:bg-red-950/70"
+              className="mt-3 inline-flex rounded-sm border border-red-800 bg-white px-3 py-2 text-sm font-medium text-red-900 hover:bg-red-50 dark:border-red-700 dark:bg-red-950/40 dark:text-red-100 dark:hover:bg-red-950/70"
             >
               Delete account…
             </Link>

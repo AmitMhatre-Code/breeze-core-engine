@@ -82,7 +82,7 @@ export default function RegisterPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 py-10 text-zinc-50">
-      <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/80 p-8">
+      <div className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900/80 p-8">
         <h1 className="text-xl font-semibold">Register</h1>
         <p className="mt-2 text-xs text-zinc-400">
           Link your ICICI Breeze API credentials and choose how you sign in.

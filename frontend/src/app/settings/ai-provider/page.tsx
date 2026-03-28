@@ -16,7 +16,7 @@ import {
 } from "@/lib/outlook-api";
 
 const fieldCls =
-  "mt-1 h-10 w-full rounded-xl border border-zinc-300/80 bg-white/95 px-3 text-sm text-zinc-900 shadow-sm outline-none transition-all hover:border-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-blue-400 dark:focus:ring-blue-400/20";
+  "mt-1 h-10 w-full rounded-md border border-zinc-300/80 bg-white/95 px-3 text-sm text-zinc-900 shadow-sm outline-none transition-all hover:border-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-blue-400 dark:focus:ring-blue-400/20";
 
 const modelOptions: Record<"gemini" | "openai", string[]> = {
   gemini: ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest"],
@@ -50,7 +50,7 @@ function ProviderRow({
         }
       }}
       className={[
-        "group w-full rounded-xl px-1 py-2 text-left transition-all",
+        "group w-full rounded-md px-1 py-2 text-left transition-all",
         "hover:bg-zinc-50 dark:hover:bg-zinc-900/40",
       ].join(" ")}
     >
@@ -89,7 +89,7 @@ function ProviderRow({
             onRevoke();
           }}
           className={[
-            "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all",
+            "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md transition-all",
             revokeDisabled
               ? "cursor-not-allowed text-zinc-400 dark:text-zinc-600"
               : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
@@ -164,7 +164,7 @@ function KeyModal({
         aria-label="Close modal"
         onClick={onClose}
       />
-      <div className="relative w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="relative w-full max-w-lg rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
@@ -510,7 +510,7 @@ export default function AiProviderSettingsPage() {
             <div className="flex items-center justify-between">
               <label className="text-xs text-zinc-600 dark:text-zinc-400">RSS / News Sources</label>
             </div>
-            <div className="space-y-2 rounded-xl bg-transparent">
+            <div className="space-y-2 rounded-md bg-transparent">
               {feeds.length ? (
                 feeds.map((feed, idx) => {
                   const isEditing = editingFeedIdx === idx || !feed.url.trim();
@@ -546,7 +546,7 @@ export default function AiProviderSettingsPage() {
                       <div className="flex items-center justify-end gap-2">
                         <button
                           type="button"
-                          className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-zinc-600 transition-all hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-md text-zinc-600 transition-all hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
                           onClick={() => setEditingFeedIdx((curIdx) => (curIdx === idx ? null : idx))}
                           aria-label={isEditing ? "Done editing" : "Edit source"}
                           title={isEditing ? "Done" : "Edit"}
@@ -584,7 +584,7 @@ export default function AiProviderSettingsPage() {
                         </button>
                         <button
                           type="button"
-                          className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-zinc-600 transition-all hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-md text-zinc-600 transition-all hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
                           onClick={() => {
                             setFeeds((prev) => prev.filter((_, i) => i !== idx));
                             setEditingFeedIdx((curIdx) => (curIdx === idx ? null : curIdx));
@@ -628,7 +628,7 @@ export default function AiProviderSettingsPage() {
                 <div className="flex items-center justify-end">
                   <button
                     type="button"
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-base font-semibold text-zinc-700 transition-all hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-md text-base font-semibold text-zinc-700 transition-all hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-900"
                     onClick={() => {
                       setFeeds((prev) => [...prev, { name: "", url: "" }]);
                       setEditingFeedIdx(feeds.length);

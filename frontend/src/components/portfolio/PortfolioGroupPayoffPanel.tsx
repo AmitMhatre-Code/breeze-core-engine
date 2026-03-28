@@ -352,6 +352,7 @@ export function PortfolioGroupPayoffPanel({
             Amber dashes = breakevens. Uses average entry and chain IV.
           </p>
           <PayoffChart
+            key={`${stockCode}-${expiryDisplay}-${minS}-${maxS}`}
             idle={!hasLegs}
             xs={xs}
             ys={ys}

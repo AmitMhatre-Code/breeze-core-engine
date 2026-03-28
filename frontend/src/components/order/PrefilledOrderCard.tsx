@@ -19,7 +19,7 @@ export function PrefilledOrderCard() {
   const summary = `${payload.action} ${payload.quantity} × ${payload.stock_code} ${payload.expiry_date} ${payload.right} ${payload.strike_price}`;
 
   return (
-    <div className="app-card-muted mb-4 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+    <div className="app-card-muted mb-4 rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
         Order from link
       </h3>
