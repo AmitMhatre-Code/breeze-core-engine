@@ -12,6 +12,7 @@ function LoginContent() {
   const corrected = sp.get("corrected");
   const deleted = sp.get("deleted");
   const err = sp.get("error");
+  const reason = sp.get("reason");
 
   const [directUserId, setDirectUserId] = useState("");
   const [directPassword, setDirectPassword] = useState("");
@@ -37,6 +38,10 @@ function LoginContent() {
     tone = "warn";
   } else if (err === "oauth_invalid" || err?.startsWith("oauth_")) {
     banner = "Sign-in session invalid or expired. Try again.";
+    tone = "err";
+  } else if (reason === "session") {
+    banner =
+      "Please sign in again. Your session ended because your authentication token was missing, invalid, or expired.";
     tone = "err";
   }
 

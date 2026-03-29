@@ -1,6 +1,20 @@
 import { getBackendBaseUrl } from "@/lib/config";
+import { handleUnauthorizedApiResponse } from "@/lib/auth-session-expired";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+/** Thrown when the backend returns a non-OK status; includes HTTP status when available. */
+export class ApiHttpError extends Error {
+  readonly status: number;
+  readonly payload: unknown;
+
+  constructor(status: number, message: string, payload: unknown) {
+    super(message);
+    this.name = "ApiHttpError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
 
 function formatErrorPayload(payload: unknown): string {
   if (typeof payload === "string") return payload;
@@ -62,7 +76,11 @@ async function request<TResponse, TBody = unknown>(
   const payload = isJson ? await res.json() : await res.text();
 
   if (!res.ok) {
-    throw new Error(formatErrorPayload(payload));
+    const message = formatErrorPayload(payload);
+    if (res.status === 401) {
+      await handleUnauthorizedApiResponse(path, res.status, message);
+    }
+    throw new ApiHttpError(res.status, message, payload);
   }
 
   return payload as TResponse;
@@ -110,7 +128,11 @@ export const apiClient = {
     const isJson = res.headers.get("content-type")?.includes("application/json");
     const payload = isJson ? await res.json() : await res.text();
     if (!res.ok) {
-      throw new Error(formatErrorPayload(payload));
+      const message = formatErrorPayload(payload);
+      if (res.status === 401) {
+        await handleUnauthorizedApiResponse(path, res.status, message);
+      }
+      throw new ApiHttpError(res.status, message, payload);
     }
     return payload as TResponse;
   },

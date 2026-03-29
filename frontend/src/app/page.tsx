@@ -3,6 +3,7 @@
 import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
+import { isSessionExpiredRedirectPending } from "@/lib/auth-session-expired";
 import { getIciciSessionFromSearchParams } from "@/lib/icici-session-query";
 
 function HomeRedirect() {
@@ -29,7 +30,7 @@ function HomeRedirect() {
         if (!cancelled) router.replace("/dashboard");
       })
       .catch(() => {
-        if (!cancelled) router.replace("/login");
+        if (!cancelled && !isSessionExpiredRedirectPending()) router.replace("/login");
       });
 
     return () => {
