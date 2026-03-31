@@ -199,14 +199,14 @@ export default function MarginSourceSettingsPage() {
 
             <div className="space-y-2 text-xs text-zinc-700 dark:text-zinc-300">
               <p>
-                NSE publishes SPAN margin (exchange risk baseline) files for all contracts multiple times a day at{" "}
+                NSE publishes SPAN margin (exchange risk baseline) files for all contracts multiple times a day {" "}
                 <a
                   href="https://www.nseindia.com/all-reports-derivatives"
                   target="_blank"
                   rel="noreferrer"
                   className="app-link"
                 >
-                  https://www.nseindia.com/all-reports-derivatives
+                  here
                 </a>
                 . To avoid consuming a lot of Breeze API calls and to speed up strategy building, you can override use of
                 Breeze APIs for margin calculations and instead rely on the approximation provided by the Exchange Risk
@@ -218,7 +218,16 @@ export default function MarginSourceSettingsPage() {
                 <strong>BSESEN</strong>) and <strong>BANKEX</strong> margins are loaded (SPAN{" "}
                 <strong>BSXOPT</strong> / <strong>BKXOPT</strong>); NSE
                 refresh continues to cover all NFO
-                contracts.
+                contracts. The BSE Margin XML can be downloaded{" "} 
+                <a
+                  href="https://www.bseindia.com/markets/Derivatives/DeriReports/Riskparameternew.aspx"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="app-link"
+                >
+                  here
+                </a>
+                .
               </p>
               <p>
                 Note that ICICI&apos;s calculation of SPAN margins will differ from the Exchange Risk Baseline and
