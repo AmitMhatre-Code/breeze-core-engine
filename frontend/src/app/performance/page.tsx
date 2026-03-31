@@ -324,7 +324,7 @@ function PerformancePageInner() {
                     </div>
                   </dl>
                   <p className="mt-3 text-[11px] italic text-zinc-500 dark:text-zinc-500">
-                    *Margin may be under-calculated (ICICI API)
+                    *Margin may be under-calculated (ICICI API does not return upstreamed amount)
                   </p>
                 </>
               ) : (

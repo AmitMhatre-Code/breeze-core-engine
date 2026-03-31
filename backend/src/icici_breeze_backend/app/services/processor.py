@@ -715,7 +715,7 @@ class processor():
                 margin = {}
             status, success, err_msg = _normalize_icici_response(margin)
             if status == 200 and success:
-                _logger.info("get_margin_situation: success=%s", json.dumps(success, indent=4))
+                _logger.info("get_margin_situation: success=%s", success)
                 margin_situation["Status"] = 200
                 margin_situation["Success"] = {}
                 limit_list = success.get("limit_list") or []
@@ -729,7 +729,7 @@ class processor():
                 margin_situation["Success"]["target_margin_free"] = cash_limit * (100 - target_margin_ute) / 100
                 margin_situation["Success"]["limits"] = margin_situation["Success"]["actual_margin_avl"] - margin_situation["Success"]["target_margin_free"]
                 margin_situation["Success"]["last_refresh"] = now_ist().strftime("%d-%b-%Y %H:%M:%S")
-                _logger.info("get_margin_situation: margin_situation=%s", json.dumps(margin_situation, indent=4))
+                _logger.info("get_margin_situation: margin_situation=%s", margin_situation)
             else:
                 margin_situation["Status"] = status if status is not None else 400
                 margin_situation["Error"] = err_msg
