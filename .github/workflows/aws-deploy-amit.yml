@@ -1,4 +1,4 @@
-name: Manual AWS Deploy (EC2 + Elastic IP)
+name: Manual AWS Deploy for Amit M (EC2 + Elastic IP)
 
 on:
   workflow_dispatch:
