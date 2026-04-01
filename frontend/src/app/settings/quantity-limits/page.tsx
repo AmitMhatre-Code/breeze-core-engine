@@ -107,29 +107,29 @@ export default function QuantityLimitsPage() {
             Original source of the Freeze Quantity Limits:
           </p>
           <p>
-            For BSE:{" "}
+            For BSE: Look for the file called Abridged_CO.ZIP (col MaxTradQty in file
+            BSE_EQD_CONTRACT_abr_ddmmyyyy){" "}
             <a
               href="https://www.bseindia.com/members/index.aspx"
               target="_blank"
               rel="noreferrer"
               className="app-link"
             >
-              https://www.bseindia.com/members/index.aspx
+              here
             </a>
-            ; look for the file called Abridged_CO.ZIP (col MaxTradQty in file
-            BSE_EQD_CONTRACT_abr_ddmmyyyy)
+            .
           </p>
           <p>
-            For NSE:{" "}
+            For NSE: Look for the file called NSE_FO_contract_ddmmyyyy.csv.gz (col MaxTadQty){" "}
             <a
               href="https://www.nseindia.com/all-reports-derivatives"
               target="_blank"
               rel="noreferrer"
               className="app-link"
             >
-              https://www.nseindia.com/all-reports-derivatives
-            </a>
-            ; look for the file called NSE_FO_contract_ddmmyyyy.csv.gz (col MaxTadQty)
+              here
+            </a>     
+            .       
           </p>
         </div>
         <div className="max-h-[70vh] overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">

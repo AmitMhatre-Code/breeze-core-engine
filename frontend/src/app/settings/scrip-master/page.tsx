@@ -89,15 +89,16 @@ export default function ScripMasterSettingsPage() {
             <div className="space-y-2 text-xs text-zinc-700 dark:text-zinc-300">
               <p>
                 Refresh information for all NSE &amp; BSE scrips (stock codes, expiries, lot sizes and more) from the
-                ICICI provided master data at:{" "}
+                Master Data file provided by ICICI{" "}
                 <a
                   href="https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip"
                   target="_blank"
                   rel="noreferrer"
                   className="app-link"
                 >
-                  https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip
+                  here
                 </a>
+                .
               </p>
             </div>
 
