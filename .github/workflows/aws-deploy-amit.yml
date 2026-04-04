@@ -285,6 +285,11 @@ jobs:
       - name: Wait for cloud-init bootstrap
         run: sleep 60
 
+      # Requires IAM on the GitHub OIDC role (e.g. github-actions-icici-breeze-deploy):
+      #   scheduler:CreateSchedule, UpdateSchedule, DeleteSchedule, GetSchedule on
+      #   arn:aws:scheduler:ap-south-1:<account-id>:schedule/default/*
+      #   iam:PassRole on arn:aws:iam::<account-id>:role/Scheduler-EC2-Role
+      #   Condition: iam:PassedToService = scheduler.amazonaws.com
       - name: Configure Auto Start/Stop Schedules
         env:
           INSTANCE_ID: ${{ steps.ec2.outputs.instance_id }}
