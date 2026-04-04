@@ -372,7 +372,7 @@ function OrdersBody() {
           <header className="space-y-1">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-                Order book
+                Order Book
               </h2>
               <span className="app-text-muted hidden text-right uppercase tracking-wide sm:block sm:max-w-[14rem]">
                 Broker messages

@@ -471,6 +471,8 @@ class processor():
         try:
             from icici_breeze_backend.app.auth.context import get_broker_token_for_request, get_breeze_session_for_request, set_breeze_session_for_request
             from icici_breeze_backend.app.services.breeze_session_cache import get as cache_get, set as cache_set
+            from icici_breeze_backend.dev.mock_broker import MockBreezeSdk
+
             # Reuse session created earlier in this request
             cached = get_breeze_session_for_request()
             if cached is not None:
@@ -479,6 +481,16 @@ class processor():
             if not broker_token:
                 _logger.warning("get_session_breeze: no broker token in request (cookie missing or empty) user_id=%s", user_id)
                 return None
+            if getattr(cfg, "ICICI_BROKER_MODE", "live") == "mock":
+                breeze = cache_get(user_id, broker_token)
+                if breeze is not None:
+                    set_breeze_session_for_request(breeze)
+                    return breeze
+                breeze = MockBreezeSdk()
+                breeze.user_id = user_id
+                set_breeze_session_for_request(breeze)
+                cache_set(user_id, broker_token, breeze)
+                return breeze
             # Cross-request cache: reuse session for same user+token within TTL
             breeze = cache_get(user_id, broker_token)
             if breeze is not None:
@@ -700,6 +712,17 @@ class processor():
         try:
             full_secret, cred_data = self._get_full_secret_for_user(user_id)
             if full_secret is None:
+                if getattr(cfg, "ICICI_BROKER_MODE", "live") == "mock":
+                    margin_situation["Status"] = 200
+                    margin_situation["Success"] = {
+                        "actual_margin_ute": 500000,
+                        "cash_limit": 1_000_000.0,
+                        "actual_margin_avl": 1_500_000.0,
+                        "target_margin_free": 900_000.0,
+                        "limits": 600_000.0,
+                        "last_refresh": now_ist().strftime("%d-%b-%Y %H:%M:%S"),
+                    }
+                    return margin_situation
                 margin_situation["Status"] = cred_data.get("Status", 400)
                 margin_situation["Error"] = cred_data.get("Error", "Could not fetch credentials")
                 return margin_situation
@@ -1177,32 +1200,43 @@ class processor():
             _logger.warning("get_positions: no session for user_id=%s", user_id)
             return {"Status": 400, "Error": "Unable to connect to broker. Please log out and log back in.", "Success": None}
         full_secret, cred_data = self._get_full_secret_for_user(user_id)
+        positions = None
         if full_secret is None:
-            return {"Status": cred_data.get("Status", 400), "Error": cred_data.get("Error", "Could not fetch credentials"), "Success": None}
-        # Use direct CustomerDetails API (like margin) - SDK's get_customer_details may return different structure
-        broker_token = self.get_session_token(user_id) or ""
-        session_token = (
-            _fetch_customerdetails_session_token(
-                cred_data["Success"]["broker_api_key"], broker_token, user_id=user_id
+            if getattr(cfg, "ICICI_BROKER_MODE", "live") == "mock":
+                from icici_breeze_backend.dev.fixtures import responses as _fx
+
+                positions = {
+                    "Status": 200,
+                    "Success": [dict(r) for r in _fx.MOCK_PORTFOLIO_POSITION_ROWS],
+                    "Error": None,
+                }
+            else:
+                return {"Status": cred_data.get("Status", 400), "Error": cred_data.get("Error", "Could not fetch credentials"), "Success": None}
+        else:
+            # Use direct CustomerDetails API (like margin) - SDK's get_customer_details may return different structure
+            broker_token = self.get_session_token(user_id) or ""
+            session_token = (
+                _fetch_customerdetails_session_token(
+                    cred_data["Success"]["broker_api_key"], broker_token, user_id=user_id
+                )
+                if broker_token
+                else ""
             )
-            if broker_token
-            else ""
-        )
-        if not session_token:
-            return {"Status": 400, "Error": "CustomerDetails did not return session_token", "Success": None}
-        try:
-            positions = _call_icici_api_direct(
-                "https://api.icicidirect.com/breezeapi/api/v1/portfoliopositions",
-                {},
-                cred_data["Success"]["broker_api_key"],
-                full_secret,
-                session_token,
-                user_id=user_id,
-                x_session_token=session_token,
-            )
-        except Exception as e:
-            _logger.warning("get_positions: exception user_id=%s: %s", user_id, e, exc_info=True)
-            positions = {"Status": 400, "Error": "Unable to fetch positions. Please try again or re-login.", "Success": None}
+            if not session_token:
+                return {"Status": 400, "Error": "CustomerDetails did not return session_token", "Success": None}
+            try:
+                positions = _call_icici_api_direct(
+                    "https://api.icicidirect.com/breezeapi/api/v1/portfoliopositions",
+                    {},
+                    cred_data["Success"]["broker_api_key"],
+                    full_secret,
+                    session_token,
+                    user_id=user_id,
+                    x_session_token=session_token,
+                )
+            except Exception as e:
+                _logger.warning("get_positions: exception user_id=%s: %s", user_id, e, exc_info=True)
+                positions = {"Status": 400, "Error": "Unable to fetch positions. Please try again or re-login.", "Success": None}
 
         self._maybe_evict_session(user_id, positions)
         if positions is not None:

@@ -242,6 +242,35 @@ function UncoveredNumberStepper({
   );
 }
 
+function OtmRangeValueKnob({
+  value,
+  pct,
+  compact,
+  variant,
+}: {
+  value: number;
+  pct: number;
+  compact: boolean;
+  variant: "min" | "max";
+}) {
+  const z = variant === "max" ? "z-[45]" : "z-[40]";
+  const inset = compact ? "0.875rem" : "1rem";
+  const sizeCls = compact
+    ? "h-7 min-w-[1.75rem] px-0.5 text-[9px]"
+    : "h-8 min-w-[2rem] px-1 text-[10px]";
+  return (
+    <div
+      className={`pointer-events-none absolute top-1/2 ${z} flex ${sizeCls} -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-[3px] border-blue-600 bg-white font-bold tabular-nums leading-none text-zinc-900 shadow-[0_0_0_1px_rgb(37_99_235/0.12),0_3px_8px_rgb(15_23_42/0.16)] dark:border-blue-500 dark:bg-zinc-50 dark:text-zinc-950 dark:shadow-[0_0_0_1px_rgb(59_130_246/0.2),0_3px_8px_rgb(0_0_0/0.35)]`}
+      style={{
+        left: `clamp(${inset}, ${pct}%, calc(100% - ${inset}))`,
+      }}
+      aria-hidden
+    >
+      {value}%
+    </div>
+  );
+}
+
 function UncoveredOtmRangeSlider({
   label,
   minValue,
@@ -271,25 +300,11 @@ function UncoveredOtmRangeSlider({
   if (compact) {
     return (
       <div className="min-w-0 w-full">
-        <div className="mb-1.5 text-[11px] font-medium leading-snug text-zinc-500 dark:text-zinc-400">
+        <span className="mb-1 block text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
           {label}
-        </div>
-        <div className="relative pt-7">
-          <div
-            className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-zinc-200/80 bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-800 shadow-sm ring-1 ring-zinc-950/[0.04] dark:border-zinc-600/90 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10"
-            style={{ left: `clamp(0.625rem, ${minPct}%, calc(100% - 0.625rem))` }}
-            aria-hidden
-          >
-            {minValue}%
-          </div>
-          <div
-            className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-zinc-200/80 bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-800 shadow-sm ring-1 ring-zinc-950/[0.04] dark:border-zinc-600/90 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10"
-            style={{ left: `clamp(0.625rem, ${maxPct}%, calc(100% - 0.625rem))` }}
-            aria-hidden
-          >
-            {maxValue}%
-          </div>
-          <div className="relative h-6">
+        </span>
+        <div className="relative flex h-8 w-full shrink-0 items-center">
+          <div className="relative h-6 w-full overflow-visible">
             <div className="pointer-events-none absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
             <div
               className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
@@ -301,7 +316,7 @@ function UncoveredOtmRangeSlider({
               max={OTM_SLIDER_MAX}
               value={minValue}
               onChange={(e) => onMinChange(Math.min(Number(e.target.value), maxValue))}
-              className={`sb-range-slim pointer-events-none absolute inset-0 z-20 w-full min-w-0 bg-transparent ${thumbInteractiveCls}`}
+              className={`sb-range-slim sb-range-otm pointer-events-none absolute inset-0 z-20 w-full min-w-0 bg-transparent ${thumbInteractiveCls}`}
               aria-label={minAriaLabel}
               aria-valuetext={`${minValue} percent OTM minimum`}
             />
@@ -311,9 +326,21 @@ function UncoveredOtmRangeSlider({
               max={OTM_SLIDER_MAX}
               value={maxValue}
               onChange={(e) => onMaxChange(Math.max(Number(e.target.value), minValue))}
-              className={`sb-range-slim pointer-events-none absolute inset-0 z-30 w-full min-w-0 bg-transparent ${thumbInteractiveCls}`}
+              className={`sb-range-slim sb-range-otm pointer-events-none absolute inset-0 z-30 w-full min-w-0 bg-transparent ${thumbInteractiveCls}`}
               aria-label={maxAriaLabel}
               aria-valuetext={`${maxValue} percent OTM maximum`}
+            />
+            <OtmRangeValueKnob
+              value={minValue}
+              pct={minPct}
+              compact
+              variant="min"
+            />
+            <OtmRangeValueKnob
+              value={maxValue}
+              pct={maxPct}
+              compact
+              variant="max"
             />
           </div>
         </div>
@@ -326,48 +353,44 @@ function UncoveredOtmRangeSlider({
       <div className="mb-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
         {label}
       </div>
-      <div className="relative pt-7">
+      <div className="relative h-6 w-full overflow-visible">
+        <div className="pointer-events-none absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
         <div
-          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-zinc-200/90 bg-white px-2 py-1 text-[11px] font-semibold tabular-nums text-zinc-800 shadow-sm ring-1 ring-zinc-950/5 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10"
-          style={{ left: `clamp(0.625rem, ${minPct}%, calc(100% - 0.625rem))` }}
-          aria-hidden
-        >
-          {minValue}%
-        </div>
-        <div
-          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-zinc-200/90 bg-white px-2 py-1 text-[11px] font-semibold tabular-nums text-zinc-800 shadow-sm ring-1 ring-zinc-950/5 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-white/10"
-          style={{ left: `clamp(0.625rem, ${maxPct}%, calc(100% - 0.625rem))` }}
-          aria-hidden
-        >
-          {maxValue}%
-        </div>
-        <div className="relative h-6">
-          <div className="pointer-events-none absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
-          <div
-            className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
-            style={{ left: `${minPct}%`, width: `${Math.max(0, maxPct - minPct)}%` }}
-          />
-          <input
-            type="range"
-            min={OTM_SLIDER_MIN}
-            max={OTM_SLIDER_MAX}
-            value={minValue}
-            onChange={(e) => onMinChange(Math.min(Number(e.target.value), maxValue))}
-            className={`sb-range-slim pointer-events-none absolute inset-0 z-20 w-full bg-transparent ${thumbInteractiveCls}`}
-            aria-label={minAriaLabel}
-            aria-valuetext={`${minValue} percent OTM minimum`}
-          />
-          <input
-            type="range"
-            min={OTM_SLIDER_MIN}
-            max={OTM_SLIDER_MAX}
-            value={maxValue}
-            onChange={(e) => onMaxChange(Math.max(Number(e.target.value), minValue))}
-            className={`sb-range-slim pointer-events-none absolute inset-0 z-30 w-full bg-transparent ${thumbInteractiveCls}`}
-            aria-label={maxAriaLabel}
-            aria-valuetext={`${maxValue} percent OTM maximum`}
-          />
-        </div>
+          className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
+          style={{ left: `${minPct}%`, width: `${Math.max(0, maxPct - minPct)}%` }}
+        />
+        <input
+          type="range"
+          min={OTM_SLIDER_MIN}
+          max={OTM_SLIDER_MAX}
+          value={minValue}
+          onChange={(e) => onMinChange(Math.min(Number(e.target.value), maxValue))}
+          className={`sb-range-slim sb-range-otm pointer-events-none absolute inset-0 z-20 w-full bg-transparent ${thumbInteractiveCls}`}
+          aria-label={minAriaLabel}
+          aria-valuetext={`${minValue} percent OTM minimum`}
+        />
+        <input
+          type="range"
+          min={OTM_SLIDER_MIN}
+          max={OTM_SLIDER_MAX}
+          value={maxValue}
+          onChange={(e) => onMaxChange(Math.max(Number(e.target.value), minValue))}
+          className={`sb-range-slim sb-range-otm pointer-events-none absolute inset-0 z-30 w-full bg-transparent ${thumbInteractiveCls}`}
+          aria-label={maxAriaLabel}
+          aria-valuetext={`${maxValue} percent OTM maximum`}
+        />
+        <OtmRangeValueKnob
+          value={minValue}
+          pct={minPct}
+          compact={false}
+          variant="min"
+        />
+        <OtmRangeValueKnob
+          value={maxValue}
+          pct={maxPct}
+          compact={false}
+          variant="max"
+        />
       </div>
     </div>
   );

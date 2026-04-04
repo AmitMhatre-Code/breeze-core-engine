@@ -30,6 +30,13 @@ def fetch_customerdetails_session_token(
     api_key: str, broker_token: str, user_id: Optional[str] = None
 ) -> str:
     """Fetch raw session_token from CustomerDetails API. Returns base64 token for X-SessionToken."""
+    from icici_breeze_backend.core import config as _cfg
+
+    if getattr(_cfg, "ICICI_BROKER_MODE", "live") == "mock":
+        from icici_breeze_backend.dev.fixtures import responses as _fx
+
+        return _fx.MOCK_CUSTOMER_DETAILS_SESSION_TOKEN
+
     import httpx
 
     body = json.dumps({"SessionToken": broker_token, "AppKey": api_key}, separators=(",", ":"))
@@ -58,6 +65,13 @@ def call_icici_api_direct(
     x_session_token: str = None,
 ) -> dict:
     """Call ICICI Breeze API directly with documented checksum."""
+    from icici_breeze_backend.core import config as _cfg
+
+    if getattr(_cfg, "ICICI_BROKER_MODE", "live") == "mock":
+        from icici_breeze_backend.dev.fixtures import responses as _fx
+
+        return _fx.mock_response_for_icici_url(url)
+
     time_stamp = datetime.utcnow().isoformat()[:19] + ".000Z"
     payload = json.dumps(payload_dict, separators=(",", ":"))
     body_bytes = payload.encode("utf-8")

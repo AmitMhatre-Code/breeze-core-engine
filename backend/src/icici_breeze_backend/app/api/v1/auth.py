@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from icici_breeze_backend.app.api.deps import get_current_user, get_optional_user, RequestContext, ICICI_BROKER_TOKEN_COOKIE, ACCESS_TOKEN_COOKIE, CREDENTIAL_FULL_SECRET_COOKIE
 from icici_breeze_backend.app.api.v1.route_google_auth import COOKIE_MAX_AGE, DIRECT_ICICI_COOKIE
 from icici_breeze_backend.app.auth.credentials import encrypt_direct_icici_cookie
-from icici_breeze_backend.app.auth.user_account import verify_direct_account_password
+from icici_breeze_backend.app.auth.user_account import verify_direct_account_password, get_google_id_by_user_id
 from icici_breeze_backend.app.domain.auth import (
     AdminRotateRequest,
     AdminRevokeRequest,
@@ -60,6 +60,28 @@ async def auth_direct_login(request: Request, body: DirectLoginRequest):
     with sqlite3.connect(db_path) as conn:
         if not verify_direct_account_password(conn, uid, pwd):
             raise HTTPException(status_code=401, detail="Invalid credentials")
+    if getattr(cfg, "ICICI_BROKER_MODE", "live") == "mock":
+        from icici_breeze_backend.app.auth.jwt_handler import JWTHandler
+        from icici_breeze_backend.app.api.v1 import home as home_module
+        from icici_breeze_backend.app.auth.credentials import CredentialManager
+
+        with sqlite3.connect(db_path) as conn:
+            google_id = get_google_id_by_user_id(conn, uid)
+        handler = JWTHandler(
+            secret_key=cfg.JWT_SECRET,
+            access_token_expire_minutes=cfg.JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
+        )
+        access_token = handler.create_access_token(uid, uid, google_id=google_id)
+        mgr = CredentialManager(encryption_key=enc_key)
+        full_secret = (mgr.reconstruct_full_api_secret(uid, "") or "").strip() or None
+        response = JSONResponse({"ok": True, "redirect": "/dashboard"})
+        home_module._set_auth_cookies(
+            response,
+            getattr(cfg, "ICICI_MOCK_BROKER_COOKIE_VALUE", "mock"),
+            access_token,
+            full_secret,
+        )
+        return response
     cookie_val = encrypt_direct_icici_cookie(uid, enc_key)
     if not cookie_val:
         raise HTTPException(status_code=500, detail="Could not create session")

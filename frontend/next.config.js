@@ -1,8 +1,12 @@
-import type { NextConfig } from "next";
+const path = require("node:path");
+const { loadEnvConfig } = require("@next/env");
 
-const nextConfig: NextConfig = {
+// Merge repo-root `.env` so rewrites see BACKEND_UPSTREAM_URL / NEXT_PUBLIC_* without `frontend/.env.local`.
+loadEnvConfig(path.join(__dirname, ".."));
+
+/** @type {import("next").NextConfig} */
+const nextConfig = {
   output: "standalone",
-  // Rewrites proxy API traffic to the backend; default body buffer is 10MB and truncates large SPAN uploads.
   experimental: {
     proxyClientMaxBodySize: "128mb",
   },
@@ -144,8 +148,12 @@ const nextConfig: NextConfig = {
         source: "/admin/tests/:path*",
         destination: `${backendUpstream}/admin/tests/:path*`,
       },
+      {
+        source: "/dev/mock-broker-cookie",
+        destination: `${backendUpstream}/dev/mock-broker-cookie`,
+      },
     ];
   },
 };
 
-export default nextConfig;
+module.exports = nextConfig;
