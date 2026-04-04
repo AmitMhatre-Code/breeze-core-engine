@@ -6,6 +6,7 @@ import {
   THEME_STORAGE_KEY,
   ThemeProvider,
 } from "@/components/theme/ThemeProvider";
+import { MockBrokerBanner } from "@/components/dev/MockBrokerBanner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -40,6 +41,7 @@ export default function RootLayout({
           }}
         />
         <ThemeProvider>
+          <MockBrokerBanner />
           <AppProviders>{children}</AppProviders>
         </ThemeProvider>
       </body>

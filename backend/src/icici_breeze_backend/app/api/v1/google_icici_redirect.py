@@ -1,4 +1,5 @@
 """After Google OAuth: DB lookup → ICICI Breeze login URL (shared by /login and /auth/icici-redirect)."""
+import logging
 import sqlite3
 import urllib.parse
 
@@ -12,8 +13,15 @@ from icici_breeze_backend.app.auth.credentials import (
     decrypt_direct_icici_cookie,
     decrypt_google_oauth_cookie,
 )
-from icici_breeze_backend.app.auth.user_account import get_account_auth_row, get_user_id_by_google_id
+from icici_breeze_backend.app.auth.jwt_handler import JWTHandler
+from icici_breeze_backend.app.auth.user_account import (
+    get_account_auth_row,
+    get_google_id_by_user_id,
+    get_user_id_by_google_id,
+)
 import icici_breeze_backend.app.core.config as cfg
+
+logger = logging.getLogger(__name__)
 
 
 async def redirect_to_icici_login(request: Request) -> RedirectResponse:
@@ -47,6 +55,26 @@ async def redirect_to_icici_login(request: Request) -> RedirectResponse:
     login_url = breeze.get_login_url(user_id)
     if not login_url:
         return RedirectResponse(url=frontend_url("/login?error=no_credentials"), status_code=302)
+
+    if getattr(cfg, "ICICI_BROKER_MODE", "live") == "mock":
+        # Local / dev: broker login is IP-restricted; complete app session without hitting ICICI.
+        from icici_breeze_backend.app.api.v1.home import _set_auth_cookies
+
+        with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+            google_id = get_google_id_by_user_id(conn, user_id)
+        handler = JWTHandler(
+            secret_key=cfg.JWT_SECRET,
+            access_token_expire_minutes=cfg.JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
+        )
+        access_token = handler.create_access_token(user_id, user_id, google_id=google_id)
+        mock_broker = getattr(cfg, "ICICI_MOCK_BROKER_COOKIE_VALUE", "mock") or "mock"
+        response = RedirectResponse(url=frontend_url("/dashboard"), status_code=302)
+        _set_auth_cookies(response, mock_broker, access_token, None)
+        response.delete_cookie(key=GOOGLE_OAUTH_COOKIE, path="/")
+        response.delete_cookie(key=DIRECT_ICICI_COOKIE, path="/")
+        logger.info("ICICI_BROKER_MODE=mock: completed login without ICICI redirect user_id=%s", user_id)
+        return response
+
     response = RedirectResponse(urllib.parse.quote(login_url, safe=":/?=&"), status_code=307)
     response.delete_cookie(key=GOOGLE_OAUTH_COOKIE, path="/")
     response.delete_cookie(key=DIRECT_ICICI_COOKIE, path="/")

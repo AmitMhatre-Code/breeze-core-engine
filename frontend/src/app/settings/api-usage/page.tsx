@@ -128,48 +128,55 @@ export default function ApiUsageSettingsPage() {
             pauses and shows a countdown for this many seconds before retrying the same request. No
             pacing is applied until a 429 occurs.
           </p>
-          <div className="mt-3 flex flex-wrap items-end gap-3">
-            <label className="text-xs text-zinc-600 dark:text-zinc-400">
+          <div className="mt-4">
+            <label
+              htmlFor="rate-limit-pause-seconds"
+              className="mb-1.5 block text-xs font-medium text-zinc-700 dark:text-zinc-300"
+            >
               Seconds to wait
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
               <input
+                id="rate-limit-pause-seconds"
                 type="number"
                 min={1}
                 max={300}
                 step={1}
-                className="ml-2 mt-1 block w-24 rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                inputMode="numeric"
+                className="min-h-[2.25rem] w-[6.5rem] rounded-lg border border-zinc-300/80 bg-white/95 px-3 py-2 text-sm font-medium tabular-nums text-zinc-900 shadow-sm outline-none transition-[border-color,box-shadow] [-moz-appearance:textfield] [appearance:textfield] hover:border-zinc-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/25 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-sky-400 dark:focus:ring-sky-400/20 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 value={pauseDraft}
                 onChange={(e) => setPauseDraft(e.target.value)}
                 disabled={prefQ.isLoading || savePause.isPending}
               />
-            </label>
-            <button
-              type="button"
-              className="app-btn-primary px-3 py-1.5 text-xs font-medium"
-              disabled={
-                prefQ.isLoading ||
-                savePause.isPending ||
-                pauseDraft.trim() === ""
-              }
-              aria-busy={savePause.isPending}
-              onClick={() => {
-                const n = parseInt(pauseDraft.trim(), 10);
-                if (!Number.isFinite(n) || n < 1 || n > 300) {
-                  alert("Enter a whole number between 1 and 300.");
-                  return;
+              <button
+                type="button"
+                className="app-btn-primary inline-flex min-h-[2.25rem] items-center rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition-shadow hover:shadow-md disabled:shadow-none"
+                disabled={
+                  prefQ.isLoading ||
+                  savePause.isPending ||
+                  pauseDraft.trim() === ""
                 }
-                savePause.mutate(n, {
-                  onError: (e) =>
-                    alert(e instanceof Error ? e.message : "Save failed"),
-                  onSuccess: () => alert("Saved."),
-                });
-              }}
-            >
-              <AsyncLabelSpan
-                busy={savePause.isPending}
-                idleLabel="Save"
-                busyLabel="Saving…"
-              />
-            </button>
+                aria-busy={savePause.isPending}
+                onClick={() => {
+                  const n = parseInt(pauseDraft.trim(), 10);
+                  if (!Number.isFinite(n) || n < 1 || n > 300) {
+                    alert("Enter a whole number between 1 and 300.");
+                    return;
+                  }
+                  savePause.mutate(n, {
+                    onError: (e) =>
+                      alert(e instanceof Error ? e.message : "Save failed"),
+                    onSuccess: () => alert("Saved."),
+                  });
+                }}
+              >
+                <AsyncLabelSpan
+                  busy={savePause.isPending}
+                  idleLabel="Save"
+                  busyLabel="Saving…"
+                />
+              </button>
+            </div>
           </div>
           {prefQ.error ? (
             <p className="mt-2 text-xs text-red-600 dark:text-red-400">

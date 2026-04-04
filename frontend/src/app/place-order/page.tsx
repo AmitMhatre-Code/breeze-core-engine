@@ -313,8 +313,7 @@ export default function PlaceOrderPage() {
               Place order
             </h1>
             <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              F&amp;O (NFO / BFO): pick contract, fetch chain snapshot, then
-              quantity and limit price.
+              F&amp;O (NFO / BFO): select contract and fetch details before placing order.
             </p>
           </div>
         </header>

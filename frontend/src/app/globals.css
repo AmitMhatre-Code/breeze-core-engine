@@ -252,4 +252,46 @@
       0 0 0 4px rgb(37 99 235 / 0.18),
       0 3px 8px rgb(15 23 42 / 0.16);
   }
+
+  /**
+   * OTM dual range: native thumbs are invisible; labels sit in overlay knobs.
+   * 32px hit target matches on-knob display size (compact uses ~28px visual).
+   */
+  .sb-range-slim.sb-range-otm::-webkit-slider-thumb {
+    width: 32px;
+    height: 32px;
+    margin-top: -13px;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+  .dark .sb-range-slim.sb-range-otm::-webkit-slider-thumb {
+    background: transparent;
+    box-shadow: none;
+  }
+  .sb-range-slim.sb-range-otm:focus-visible::-webkit-slider-thumb {
+    box-shadow: none;
+  }
+  .sb-range-slim.sb-range-otm:focus-visible {
+    outline: 2px solid rgb(37 99 235);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  .dark .sb-range-slim.sb-range-otm:focus-visible {
+    outline-color: rgb(96 165 250);
+  }
+  .sb-range-slim.sb-range-otm::-moz-range-thumb {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+  .dark .sb-range-slim.sb-range-otm::-moz-range-thumb {
+    background: transparent;
+    box-shadow: none;
+  }
+  .sb-range-slim.sb-range-otm:focus-visible::-moz-range-thumb {
+    box-shadow: none;
+  }
 }

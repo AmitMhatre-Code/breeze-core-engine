@@ -20,7 +20,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: DashboardIcon },
   { href: "/portfolio", label: "Portfolio", icon: PortfolioIcon },
   { href: "/performance", label: "Performance", icon: PerformanceIcon },
-  { href: "/orders", label: "Orders", icon: OrdersIcon },
+  { href: "/orders", label: "Order Book", icon: OrdersIcon },
   { href: "/place-order", label: "Place Order", icon: PlaceOrderIcon },
   { href: "/strategy-builder", label: "Strategy Builder", icon: StrategyIcon },
   { href: "/settings", label: "Settings", icon: SettingsIcon },

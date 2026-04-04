@@ -254,6 +254,17 @@ def start_application():
     _ensure_scrips_database()
     _ensure_freeze_limit_files()
     import icici_breeze_backend.app.core.config as cfg
+    from icici_breeze_backend.core import config as core_cfg
+
+    if getattr(core_cfg, "ICICI_BROKER_MODE", "live") == "mock":
+        _logger.warning(
+            "ICICI_BROKER_MODE=mock: outbound ICICI Breeze calls are stubbed. Do not use in production."
+        )
+        if core_cfg.COOKIE_SECURE:
+            _logger.error(
+                "ICICI_BROKER_MODE=mock with COOKIE_SECURE=true is unsafe for a real deployment; "
+                "fix environment before going live."
+            )
     has_secret = bool(cfg.JWT_SECRET and cfg.JWT_SECRET.strip())
     if has_secret:
         _logger.info("JWT_SECRET loaded (length=%d). Login and credential decryption will use it.", len(cfg.JWT_SECRET))
@@ -264,14 +275,17 @@ def start_application():
             _env_paths_tried or "none",
         )
     breeze = processor()
-    try:
-        breeze.update_ICICImaster()
-    except Exception as e:
-        _logger.warning(
-            "ICICI master update failed at startup: %s",
-            e,
-            exc_info=_logger.isEnabledFor(logging.DEBUG),
-        )
+    if getattr(core_cfg, "ICICI_BROKER_MODE", "live") != "mock":
+        try:
+            breeze.update_ICICImaster()
+        except Exception as e:
+            _logger.warning(
+                "ICICI master update failed at startup: %s",
+                e,
+                exc_info=_logger.isEnabledFor(logging.DEBUG),
+            )
+    else:
+        _logger.info("Skipping ICICI master download (ICICI_BROKER_MODE=mock).")
 
     app = FastAPI(trust_env=True)
     # Session for Google OAuth (Authlib stores state here)

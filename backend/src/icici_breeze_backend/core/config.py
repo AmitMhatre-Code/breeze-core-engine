@@ -112,6 +112,17 @@ try:
 except ValueError:
     BREEZE_SESSION_CACHE_TTL_SECONDS = 0
 
+# Broker: `live` (default) uses ICICI Breeze; `mock` uses local fixtures (no outbound ICICI).
+_ICICI_BROKER_MODE_RAW = (os.environ.get("ICICI_BROKER_MODE") or "live").strip().lower()
+ICICI_BROKER_MODE = "mock" if _ICICI_BROKER_MODE_RAW == "mock" else "live"
+# When mock + JWT valid but broker cookie missing, treat broker token as this value (opt-in).
+ICICI_MOCK_SYNTHETIC_BROKER_TOKEN = os.environ.get("ICICI_MOCK_SYNTHETIC_BROKER_TOKEN", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+ICICI_MOCK_BROKER_COOKIE_VALUE = (os.environ.get("ICICI_MOCK_BROKER_COOKIE_VALUE") or "mock").strip() or "mock"
+
 EXPIRED = "Expired"
 CANCELLED = "Cancelled"
 EXECUTED = "Executed"

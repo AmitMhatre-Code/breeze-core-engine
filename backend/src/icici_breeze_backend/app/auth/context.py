@@ -97,7 +97,15 @@ def extract_user_context(request: Request) -> Optional[RequestContext]:
         return None
     if not payload:
         return None
+    import icici_breeze_backend.app.core.config as _app_cfg
+
     broker_token = request.cookies.get(ICICI_BROKER_TOKEN_COOKIE)
+    if (
+        getattr(_app_cfg, "ICICI_BROKER_MODE", "live") == "mock"
+        and getattr(_app_cfg, "ICICI_MOCK_SYNTHETIC_BROKER_TOKEN", False)
+        and not (broker_token or "").strip()
+    ):
+        broker_token = getattr(_app_cfg, "ICICI_MOCK_BROKER_COOKIE_VALUE", "mock") or "mock"
     set_broker_token_for_request(broker_token)
     enc_key = (secret or "").strip()
     enc_cookie = request.cookies.get(CREDENTIAL_FULL_SECRET_COOKIE)
