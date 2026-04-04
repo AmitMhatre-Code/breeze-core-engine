@@ -286,22 +286,47 @@ jobs:
         run: sleep 60
 
       - name: Configure Auto Start/Stop Schedules
+        env:
+          INSTANCE_ID: ${{ steps.ec2.outputs.instance_id }}
         run: |
-          # 9:00 AM IST Start (3:30 AM UTC)
-          aws scheduler create-schedule \
-            --name "Start-Breeze-App-${{ steps.ec2.outputs.instance_id }}" \
-            --schedule-expression "cron(30 3 ? * MON-FRI *)" \
-            --target '{"Arn": "arn:aws:scheduler:::aws-sdk:ec2:startInstances", "Input": "{\"InstanceIds\": [\"${{ env.INSTANCE_ID }}\"]}", "RoleArn": "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Scheduler-EC2-Role"}' \
-            --flexible-time-window '{"Mode": "OFF"}' \
-            --action-after-completion DELETE
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/Scheduler-EC2-Role"
 
-          # 5:00 PM IST Stop (11:30 AM UTC)
+          START_TARGET=$(jq -nc \
+            --arg role "$ROLE_ARN" \
+            --arg id "$INSTANCE_ID" \
+            '{
+              Arn: "arn:aws:scheduler:::aws-sdk:ec2:startInstances",
+              RoleArn: $role,
+              Input: ({InstanceIds: [$id]} | tojson)
+            }')
+
+          # Weekdays 9:00 IST
           aws scheduler create-schedule \
-            --name "Stop-Breeze-App-${{ steps.ec2.outputs.instance_id }}" \
-            --schedule-expression "cron(30 11 ? * MON-FRI *)" \
-            --target '{"Arn": "arn:aws:scheduler:::aws-sdk:ec2:stopInstances", "Input": "{\"InstanceIds\": [\"${{ env.INSTANCE_ID }}\"]}", "RoleArn": "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Scheduler-EC2-Role"}' \
+            --name "Start-Breeze-App-${INSTANCE_ID}" \
+            --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+            --schedule-expression-timezone "Asia/Kolkata" \
+            --target "$START_TARGET" \
             --flexible-time-window '{"Mode": "OFF"}' \
-            --action-after-completion DELETE        
+            --action-after-completion NONE
+
+          STOP_TARGET=$(jq -nc \
+            --arg role "$ROLE_ARN" \
+            --arg id "$INSTANCE_ID" \
+            '{
+              Arn: "arn:aws:scheduler:::aws-sdk:ec2:stopInstances",
+              RoleArn: $role,
+              Input: ({InstanceIds: [$id]} | tojson)
+            }')
+
+          # Weekdays 17:00 IST
+          aws scheduler create-schedule \
+            --name "Stop-Breeze-App-${INSTANCE_ID}" \
+            --schedule-expression "cron(0 17 ? * MON-FRI *)" \
+            --schedule-expression-timezone "Asia/Kolkata" \
+            --target "$STOP_TARGET" \
+            --flexible-time-window '{"Mode": "OFF"}' \
+            --action-after-completion NONE
 
       - name: Deployment summary
         run: |
