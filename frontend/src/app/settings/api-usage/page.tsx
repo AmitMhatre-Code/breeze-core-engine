@@ -133,7 +133,7 @@ export default function ApiUsageSettingsPage() {
               Seconds to wait
               <input
                 type="number"
-                min={5}
+                min={1}
                 max={300}
                 step={1}
                 className="ml-2 mt-1 block w-24 rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
@@ -153,8 +153,8 @@ export default function ApiUsageSettingsPage() {
               aria-busy={savePause.isPending}
               onClick={() => {
                 const n = parseInt(pauseDraft.trim(), 10);
-                if (!Number.isFinite(n) || n < 5 || n > 300) {
-                  alert("Enter a whole number between 5 and 300.");
+                if (!Number.isFinite(n) || n < 1 || n > 300) {
+                  alert("Enter a whole number between 1 and 300.");
                   return;
                 }
                 savePause.mutate(n, {

@@ -6,6 +6,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { ExecutionPreviewModal } from "@/components/order/ExecutionPreviewModal";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
+import { StrikeSelectPill } from "@/components/strategy-builder/StrikeSelectPill";
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
@@ -248,6 +249,8 @@ export default function PlaceOrderPage() {
     Boolean(stockCode.trim() && expiryDate.trim() && effectiveStrike != null) &&
     !fetchDetailsMut.isPending;
 
+  const pillStretch = "!max-w-none w-full min-w-0";
+
   const qtyNum = Math.round(parseNum(quantity));
   const priceNum = parseNum(price);
   const lotSizeForHints = scripDetails?.lotSize ?? chainSuccess?.lot_size ?? null;
@@ -302,36 +305,31 @@ export default function PlaceOrderPage() {
   const spot = chainSuccess?.spot_price ?? null;
 
   return (
-    <AppShell contentWidth="wide">
-      <div className="space-y-5">
-        <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <AppShell contentWidth="default">
+      <div className="mx-auto max-w-md space-y-5">
+        <header className="flex flex-col gap-3">
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
               Place order
             </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              NSE and BSE match Strategy Builder: F&amp;O segment (NFO / BFO).
-              Choose underlying and expiry, pick Call or Put and strike, fetch
-              live chain fields, then enter quantity and price.
+            <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+              F&amp;O (NFO / BFO): pick contract, fetch chain snapshot, then
+              quantity and limit price.
             </p>
           </div>
         </header>
 
         <section
           className={`${sb.section} relative z-20 space-y-4`}
-          aria-label="Contract selection"
+          aria-label="Options order entry"
         >
-          <h2 className={sb.sectionTitle}>1. Exchange &amp; contract</h2>
-          <div
-            className="flex min-h-[2.75rem] flex-col overflow-visible rounded-md border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] dark:shadow-none sm:flex-row sm:items-center"
-            role="toolbar"
-            aria-label="Underlying and expiry"
-          >
+          <div className="space-y-4">
             <div
-              className="flex shrink-0 items-center border-b border-zinc-200 px-2 py-2 dark:border-zinc-700/70 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-0 sm:ps-2.5 sm:pe-2"
+              className="flex flex-wrap items-center gap-2"
               role="group"
               aria-label="Exchange segment"
             >
+              <span className={`${sb.fieldLabel} mb-0`}>Exchange</span>
               <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
                 <button
                   type="button"
@@ -366,7 +364,8 @@ export default function PlaceOrderPage() {
               </div>
             </div>
 
-            <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center overflow-visible border-b border-zinc-200 px-3 py-2 dark:border-zinc-700/70 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-2.5">
+            <div className="w-full min-w-0">
+              <span className={sb.fieldLabel}>Scrip</span>
               <OptionChainUnderlyingSearch
                 variant="ticker"
                 chainBar
@@ -385,10 +384,13 @@ export default function PlaceOrderPage() {
               />
             </div>
 
-            <div className="relative z-20 flex shrink-0 items-center overflow-visible px-3 py-2 sm:py-2.5 sm:pe-3.5">
+            <div className="w-full min-w-0">
+              <span className={sb.fieldLabel}>Expiry</span>
               <ExpirySelectPill
-                layout="toolbar"
+                layout="default"
                 tone="darkToolbar"
+                hideLabel
+                rootClassName={pillStretch}
                 dates={expiryOptions}
                 value={expiryDate}
                 disabled={!stockCode}
@@ -401,25 +403,42 @@ export default function PlaceOrderPage() {
                 }}
               />
             </div>
-          </div>
 
-          <div
-            className="flex min-h-[2.75rem] flex-col overflow-visible rounded-md border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] dark:shadow-none sm:flex-row sm:items-center"
-            role="toolbar"
-            aria-label="Option type, strike, and fetch"
-          >
+            <div className="w-full min-w-0">
+              <span className={sb.fieldLabel}>Strike</span>
+              <StrikeSelectPill
+                layout="default"
+                tone="darkToolbar"
+                hideLabel
+                rootClassName={pillStretch}
+                strikes={strikes}
+                value={effectiveStrike}
+                busy={Boolean(
+                  stockCode && expiryDate && chainQ.isFetching && !strikes.length,
+                )}
+                disabled={
+                  !stockCode ||
+                  !expiryDate ||
+                  (chainQ.isFetching && !strikes.length) ||
+                  !strikes.length
+                }
+                onChange={(k) => {
+                  setStrikeSelection(k);
+                  setScripDetails(null);
+                }}
+              />
+            </div>
+
             <div
-              className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-200 px-2 py-2 dark:border-zinc-700/70 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-0 sm:ps-2.5 sm:pe-3"
+              className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
               role="group"
               aria-label="Call or Put"
             >
-              <span className="hidden text-sm font-medium text-zinc-600 dark:text-zinc-500 sm:inline">
-                Option
-              </span>
-              <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
+              <span className={`${sb.fieldLabel} mb-0`}>Option</span>
+              <div className="inline-flex w-full rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70 sm:w-auto">
                 <button
                   type="button"
-                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
+                  className={`min-w-0 flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:flex-initial sm:text-sm ${
                     right === "Call"
                       ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
                       : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
@@ -434,7 +453,7 @@ export default function PlaceOrderPage() {
                 </button>
                 <button
                   type="button"
-                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
+                  className={`min-w-0 flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:flex-initial sm:text-sm ${
                     right === "Put"
                       ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
                       : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
@@ -450,49 +469,181 @@ export default function PlaceOrderPage() {
               </div>
             </div>
 
-            <div className="flex min-w-0 flex-1 items-center gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-700/70 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-2.5">
-              <label className={`${sb.fieldLabel} mb-0 shrink-0 sm:mb-0`}>
-                Strike
-              </label>
-              <select
-                className={`${sb.select} min-w-[8rem] max-w-[14rem] flex-1`}
-                value={effectiveStrike != null ? String(effectiveStrike) : ""}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setStrikeSelection(v === "" ? null : Number(v));
-                  setScripDetails(null);
-                }}
-                disabled={
-                  !stockCode ||
-                  !expiryDate ||
-                  chainQ.isLoading ||
-                  !strikes.length
-                }
-              >
-                {!strikes.length ? (
-                  <option value="">
-                    {chainQ.isFetching ? "Loading strikes…" : "—"}
-                  </option>
-                ) : null}
-                {strikes.map((k) => (
-                  <option key={k} value={k}>
-                    {k.toLocaleString("en-IN")}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <button
+              type="button"
+              className={`${sb.btnPrimary} relative w-full min-h-[2.75rem] px-4 py-2.5 text-sm`}
+              disabled={!canFetchDetails}
+              aria-busy={fetchDetailsMut.isPending}
+              onClick={() => void fetchDetailsMut.mutate()}
+            >
+              <span className="grid place-items-center">
+                <span
+                  className="col-start-1 row-start-1 invisible select-none"
+                  aria-hidden
+                >
+                  Fetch scrip details
+                </span>
+                <span className="col-start-1 row-start-1">
+                  {fetchDetailsMut.isPending
+                    ? "Fetching…"
+                    : "Fetch scrip details"}
+                </span>
+              </span>
+            </button>
+          </div>
 
-            <div className="flex shrink-0 items-center justify-end px-3 py-2 sm:py-2.5 sm:pe-3.5">
+          {scripDetails ? (
+            <div
+              className="rounded-lg border border-zinc-200/85 bg-zinc-50/90 p-3 shadow-sm dark:border-zinc-700/80 dark:bg-zinc-950/55"
+              aria-label="Scrip details from fetch"
+            >
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Scrip details
+              </p>
+              <div className="grid grid-cols-3 gap-2 gap-y-2.5">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                    LTP (₹)
+                  </div>
+                  <div className="mt-0.5 font-mono text-xs font-medium tabular-nums text-zinc-900 dark:text-zinc-50">
+                    {scripDetails.ltp != null &&
+                    Number.isFinite(scripDetails.ltp)
+                      ? scripDetails.ltp.toLocaleString("en-IN", {
+                          maximumFractionDigits: 2,
+                        })
+                      : "—"}
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                    Buy qty
+                  </div>
+                  <div className="mt-0.5 font-mono text-xs font-medium tabular-nums text-zinc-900 dark:text-zinc-50">
+                    {scripDetails.totalBuyQty.toLocaleString("en-IN")}
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                    Sell qty
+                  </div>
+                  <div className="mt-0.5 font-mono text-xs font-medium tabular-nums text-zinc-900 dark:text-zinc-50">
+                    {scripDetails.totalSellQty.toLocaleString("en-IN")}
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                    B:S ratio
+                  </div>
+                  <div className="mt-0.5 font-mono text-xs font-medium tabular-nums text-zinc-900 dark:text-zinc-50">
+                    {scripDetails.buySellRatioLabel}
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                    Lot
+                  </div>
+                  <div className="mt-0.5 font-mono text-xs font-medium tabular-nums text-zinc-900 dark:text-zinc-50">
+                    {scripDetails.lotSize != null
+                      ? scripDetails.lotSize.toLocaleString("en-IN")
+                      : "—"}
+                  </div>
+                </div>
+                <div className="min-w-0" />
+                <div className="col-span-3 grid min-w-0 grid-cols-2 gap-2 border-t border-zinc-200/80 pt-2.5 dark:border-zinc-700/60">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                      Margin / lot · Buy
+                    </div>
+                    <div className="mt-0.5 font-mono text-xs font-medium tabular-nums text-zinc-900 dark:text-zinc-50">
+                      {scripDetails.marginPerLotBuy != null
+                        ? formatIndianMoneyCompact(scripDetails.marginPerLotBuy)
+                        : "—"}
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                      Margin / lot · Sell
+                    </div>
+                    <div className="mt-0.5 font-mono text-xs font-medium tabular-nums text-zinc-900 dark:text-zinc-50">
+                      {scripDetails.marginPerLotSell != null
+                        ? formatIndianMoneyCompact(
+                            scripDetails.marginPerLotSell,
+                          )
+                        : "—"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {scripDetails.marginError ? (
+                <p className="mt-2 text-[11px] leading-snug text-amber-800 dark:text-amber-200/90">
+                  {scripDetails.marginError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="space-y-4 border-t border-zinc-200/80 pt-4 dark:border-zinc-700/60">
+            <h2 className={sb.sectionTitle}>Quantity &amp; price</h2>
+            <div className="grid grid-cols-1 gap-4">
+              <label className={sb.fieldLabel}>
+                Quantity (units)
+                {lotSizeForHints != null &&
+                typeof lotSizeForHints === "number" &&
+                Number.isFinite(lotSizeForHints) ? (
+                  <span className="font-normal text-zinc-500 dark:text-zinc-400">
+                    {" "}
+                    · lot {lotSizeForHints.toLocaleString("en-IN")}
+                  </span>
+                ) : null}
+                <input
+                  type="number"
+                  min={1}
+                  className={sb.input}
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  placeholder="e.g. 65"
+                />
+              </label>
+              <label className={sb.fieldLabel}>
+                Limit price (₹)
+                <input
+                  type="number"
+                  min={0}
+                  step={0.05}
+                  className={sb.input}
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  placeholder="0"
+                />
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
-                disabled={!canFetchDetails}
-                aria-busy={fetchDetailsMut.isPending}
-                onClick={() => void fetchDetailsMut.mutate()}
+                className="inline-flex w-full items-center justify-center rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-emerald-500 hover:bg-emerald-500 focus:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-emerald-800 disabled:bg-emerald-800 dark:border-emerald-600 dark:bg-emerald-600 dark:hover:border-emerald-500 dark:hover:bg-emerald-500 dark:disabled:border-emerald-900 dark:disabled:bg-emerald-900"
+                disabled={!previewLeg}
+                onClick={() => openPreview("Buy")}
               >
-                {fetchDetailsMut.isPending ? "Fetching…" : "Fetch scrip details"}
+                Buy
+              </button>
+              <button
+                type="button"
+                className={`${sb.btnDanger} w-full px-4 py-2.5 text-sm`}
+                disabled={!previewLeg}
+                onClick={() => openPreview("Sell")}
+              >
+                Sell
               </button>
             </div>
+            {!previewLeg &&
+            stockCode &&
+            expiryDate &&
+            effectiveStrike != null ? (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                Enter a positive quantity and valid price to enable the
+                execution preview.
+              </p>
+            ) : null}
           </div>
 
           {chainError ? (
@@ -504,172 +655,6 @@ export default function PlaceOrderPage() {
                 ? fetchDetailsMut.error.message
                 : "Request failed"}
             </div>
-          ) : null}
-        </section>
-
-        {scripDetails ? (
-          <section
-            className={`${sb.section} space-y-4`}
-            aria-label="Scrip details"
-          >
-            <h2 className={sb.sectionTitle}>2. Scrip details</h2>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              Live chain snapshot for your selection (refreshed on fetch).
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div
-                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04]`}
-              >
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  LTP (₹)
-                </div>
-                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
-                  {scripDetails.ltp != null && Number.isFinite(scripDetails.ltp)
-                    ? scripDetails.ltp.toLocaleString("en-IN", {
-                        maximumFractionDigits: 2,
-                      })
-                    : "—"}
-                </div>
-              </div>
-              <div
-                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04]`}
-              >
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  Total buy qty
-                </div>
-                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
-                  {scripDetails.totalBuyQty.toLocaleString("en-IN")}
-                </div>
-              </div>
-              <div
-                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04]`}
-              >
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  Total sell qty
-                </div>
-                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
-                  {scripDetails.totalSellQty.toLocaleString("en-IN")}
-                </div>
-              </div>
-              <div
-                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04]`}
-              >
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  Buy : sell ratio
-                </div>
-                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
-                  {scripDetails.buySellRatioLabel}
-                </div>
-              </div>
-              <div
-                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04]`}
-              >
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  Lot size
-                </div>
-                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
-                  {scripDetails.lotSize != null
-                    ? scripDetails.lotSize.toLocaleString("en-IN")
-                    : "—"}
-                </div>
-              </div>
-              <div
-                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04] sm:col-span-2 lg:col-span-1`}
-              >
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  Margin / lot (SPAN)
-                </div>
-                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm font-medium tabular-nums text-zinc-900 dark:text-zinc-50">
-                  <span>
-                    <span className="text-zinc-500 dark:text-zinc-400">
-                      Buy:{" "}
-                    </span>
-                    {scripDetails.marginPerLotBuy != null
-                      ? formatIndianMoneyCompact(scripDetails.marginPerLotBuy)
-                      : "—"}
-                  </span>
-                  <span>
-                    <span className="text-zinc-500 dark:text-zinc-400">
-                      Sell:{" "}
-                    </span>
-                    {scripDetails.marginPerLotSell != null
-                      ? formatIndianMoneyCompact(scripDetails.marginPerLotSell)
-                      : "—"}
-                  </span>
-                </div>
-                {scripDetails.marginError ? (
-                  <p className="mt-2 text-[11px] leading-snug text-amber-800 dark:text-amber-200/90">
-                    {scripDetails.marginError}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-        <section className={`${sb.section} space-y-4`} aria-label="Order entry">
-          <h2 className={sb.sectionTitle}>
-            {scripDetails ? "3. " : "2. "}Quantity &amp; price
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className={sb.fieldLabel}>
-              Quantity (units)
-              {lotSizeForHints != null &&
-              typeof lotSizeForHints === "number" &&
-              Number.isFinite(lotSizeForHints) ? (
-                <span className="font-normal text-zinc-500 dark:text-zinc-400">
-                  {" "}
-                  · lot {lotSizeForHints.toLocaleString("en-IN")}
-                </span>
-              ) : null}
-              <input
-                type="number"
-                min={1}
-                className={sb.input}
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
-                placeholder="e.g. 65"
-              />
-            </label>
-            <label className={sb.fieldLabel}>
-              Limit price (₹)
-              <input
-                type="number"
-                min={0}
-                step={0.05}
-                className={sb.input}
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                placeholder="0"
-              />
-            </label>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-emerald-500 hover:bg-emerald-500 focus:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-emerald-800 disabled:bg-emerald-800 dark:border-emerald-600 dark:bg-emerald-600 dark:hover:border-emerald-500 dark:hover:bg-emerald-500 dark:disabled:border-emerald-900 dark:disabled:bg-emerald-900"
-              disabled={!previewLeg}
-              onClick={() => openPreview("Buy")}
-            >
-              Buy
-            </button>
-            <button
-              type="button"
-              className={`${sb.btnDanger} px-4 py-2.5 text-sm`}
-              disabled={!previewLeg}
-              onClick={() => openPreview("Sell")}
-            >
-              Sell
-            </button>
-          </div>
-          {!previewLeg &&
-          stockCode &&
-          expiryDate &&
-          effectiveStrike != null ? (
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              Enter a positive quantity and valid price to enable the execution
-              preview.
-            </p>
           ) : null}
         </section>
       </div>

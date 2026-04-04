@@ -4,8 +4,8 @@ import sqlite3
 
 import icici_breeze_backend.app.core.config as cfg
 
-_DEFAULT_PAUSE = 20
-_MIN = 5
+_DEFAULT_PAUSE = 5
+_MIN = 1
 _MAX = 300
 
 
@@ -14,7 +14,7 @@ def ensure_icici_rate_limit_pause_column() -> None:
         try:
             conn.execute(
                 "ALTER TABLE user_account ADD COLUMN icici_rate_limit_pause_seconds "
-                "INTEGER NOT NULL DEFAULT 20"
+                "INTEGER NOT NULL DEFAULT 5"
             )
             conn.commit()
         except sqlite3.OperationalError:
