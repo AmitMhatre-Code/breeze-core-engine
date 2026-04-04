@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { ExecutionPreviewModal } from "@/components/order/ExecutionPreviewModal";
+import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
+import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
@@ -297,123 +299,130 @@ export default function PlaceOrderPage() {
         ? "Could not load chain"
         : null;
 
+  const spot = chainSuccess?.spot_price ?? null;
+
   return (
-    <AppShell>
-      <div className="space-y-6">
-        <header>
-          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-            Place order
-          </h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            NSE and BSE labels refer to the F&amp;O segment (NFO and BFO). Pick an
-            underlying, expiry, and strike, then fetch scrip details before
-            trading.
-          </p>
+    <AppShell contentWidth="wide">
+      <div className="space-y-5">
+        <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+              Place order
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+              NSE and BSE match Strategy Builder: F&amp;O segment (NFO / BFO).
+              Choose underlying and expiry, pick Call or Put and strike, fetch
+              live chain fields, then enter quantity and price.
+            </p>
+          </div>
         </header>
 
         <section
-          className={`${sb.section} space-y-4`}
+          className={`${sb.section} relative z-20 space-y-4`}
           aria-label="Contract selection"
         >
           <h2 className={sb.sectionTitle}>1. Exchange &amp; contract</h2>
           <div
-            className={`${sb.segmentGroup} flex flex-wrap`}
-            role="group"
-            aria-label="Exchange"
+            className="flex min-h-[2.75rem] flex-col overflow-visible rounded-md border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] dark:shadow-none sm:flex-row sm:items-center"
+            role="toolbar"
+            aria-label="Underlying and expiry"
           >
-            <button
-              type="button"
-              className={`${sb.segmentBtn} px-3 py-1.5 text-xs ${
-                segment === "NFO" ? sb.segmentBtnActive : sb.segmentBtnInactive
-              }`}
-              aria-pressed={segment === "NFO"}
-              onClick={() => {
-                setSegment("NFO");
-                resetOrderForm();
-              }}
+            <div
+              className="flex shrink-0 items-center border-b border-zinc-200 px-2 py-2 dark:border-zinc-700/70 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-0 sm:ps-2.5 sm:pe-2"
+              role="group"
+              aria-label="Exchange segment"
             >
-              NSE (F&amp;O)
-            </button>
-            <button
-              type="button"
-              className={`${sb.segmentBtn} px-3 py-1.5 text-xs ${
-                segment === "BFO" ? sb.segmentBtnActive : sb.segmentBtnInactive
-              }`}
-              aria-pressed={segment === "BFO"}
-              onClick={() => {
-                setSegment("BFO");
-                resetOrderForm();
-              }}
-            >
-              BSE (F&amp;O)
-            </button>
-          </div>
+              <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSegment("NFO");
+                    resetOrderForm();
+                  }}
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
+                    segment === "NFO"
+                      ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
+                      : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
+                  }`}
+                  aria-pressed={segment === "NFO"}
+                >
+                  NSE
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSegment("BFO");
+                    resetOrderForm();
+                  }}
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
+                    segment === "BFO"
+                      ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
+                      : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
+                  }`}
+                  aria-pressed={segment === "BFO"}
+                >
+                  BSE
+                </button>
+              </div>
+            </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              Stock code
-              <select
-                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center overflow-visible border-b border-zinc-200 px-3 py-2 dark:border-zinc-700/70 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-2.5">
+              <OptionChainUnderlyingSearch
+                variant="ticker"
+                chainBar
+                underlyings={uq.data?.underlyings ?? []}
                 value={stockCode}
-                onChange={(e) => {
-                  setStockCode(e.target.value);
+                disabled={uq.isLoading}
+                spot={spot}
+                onChange={(code) => {
+                  setStockCode(code);
                   setExpiryDate("");
                   setStrikeSelection(null);
                   setScripDetails(null);
                   setQuantity("");
                   setPrice("");
                 }}
-                disabled={uq.isLoading}
-              >
-                <option value="">Select underlying…</option>
-                {(uq.data?.underlyings ?? []).map((u) => (
-                  <option key={u.stock_code} value={u.stock_code}>
-                    {u.stock_code}
-                    {u.long_name ? ` — ${u.long_name}` : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              Expiry
-              <select
-                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+              />
+            </div>
+
+            <div className="relative z-20 flex shrink-0 items-center overflow-visible px-3 py-2 sm:py-2.5 sm:pe-3.5">
+              <ExpirySelectPill
+                layout="toolbar"
+                tone="darkToolbar"
+                dates={expiryOptions}
                 value={expiryDate}
-                onChange={(e) => {
-                  setExpiryDate(e.target.value);
+                disabled={!stockCode}
+                onChange={(d) => {
+                  setExpiryDate(d);
                   setStrikeSelection(null);
                   setScripDetails(null);
                   setQuantity("");
                   setPrice("");
                 }}
-                disabled={!stockCode}
-              >
-                <option value="">Select expiry…</option>
-                {expiryOptions.map((ex) => (
-                  <option key={ex} value={ex}>
-                    {ex}
-                  </option>
-                ))}
-              </select>
-            </label>
+              />
+            </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <span className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                Option type
+          <div
+            className="flex min-h-[2.75rem] flex-col overflow-visible rounded-md border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] dark:shadow-none sm:flex-row sm:items-center"
+            role="toolbar"
+            aria-label="Option type, strike, and fetch"
+          >
+            <div
+              className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-200 px-2 py-2 dark:border-zinc-700/70 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-0 sm:ps-2.5 sm:pe-3"
+              role="group"
+              aria-label="Call or Put"
+            >
+              <span className="hidden text-sm font-medium text-zinc-600 dark:text-zinc-500 sm:inline">
+                Option
               </span>
-              <div
-                className={`${sb.segmentGroup} mt-1 inline-flex`}
-                role="group"
-                aria-label="Call or Put"
-              >
+              <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
                 <button
                   type="button"
-                  className={`${sb.segmentBtn} px-3 py-1.5 text-xs ${
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
                     right === "Call"
-                      ? sb.segmentBtnActive
-                      : sb.segmentBtnInactive
+                      ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
+                      : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
                   }`}
                   aria-pressed={right === "Call"}
                   onClick={() => {
@@ -425,10 +434,10 @@ export default function PlaceOrderPage() {
                 </button>
                 <button
                   type="button"
-                  className={`${sb.segmentBtn} px-3 py-1.5 text-xs ${
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
                     right === "Put"
-                      ? sb.segmentBtnActive
-                      : sb.segmentBtnInactive
+                      ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
+                      : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
                   }`}
                   aria-pressed={right === "Put"}
                   onClick={() => {
@@ -440,20 +449,24 @@ export default function PlaceOrderPage() {
                 </button>
               </div>
             </div>
-            <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              Strike
+
+            <div className="flex min-w-0 flex-1 items-center gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-700/70 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-2.5">
+              <label className={`${sb.fieldLabel} mb-0 shrink-0 sm:mb-0`}>
+                Strike
+              </label>
               <select
-                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                value={
-                  effectiveStrike != null ? String(effectiveStrike) : ""
-                }
+                className={`${sb.select} min-w-[8rem] max-w-[14rem] flex-1`}
+                value={effectiveStrike != null ? String(effectiveStrike) : ""}
                 onChange={(e) => {
                   const v = e.target.value;
                   setStrikeSelection(v === "" ? null : Number(v));
                   setScripDetails(null);
                 }}
                 disabled={
-                  !stockCode || !expiryDate || chainQ.isLoading || !strikes.length
+                  !stockCode ||
+                  !expiryDate ||
+                  chainQ.isLoading ||
+                  !strikes.length
                 }
               >
                 {!strikes.length ? (
@@ -467,46 +480,50 @@ export default function PlaceOrderPage() {
                   </option>
                 ))}
               </select>
-            </label>
+            </div>
+
+            <div className="flex shrink-0 items-center justify-end px-3 py-2 sm:py-2.5 sm:pe-3.5">
+              <button
+                type="button"
+                className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                disabled={!canFetchDetails}
+                aria-busy={fetchDetailsMut.isPending}
+                onClick={() => void fetchDetailsMut.mutate()}
+              >
+                {fetchDetailsMut.isPending ? "Fetching…" : "Fetch scrip details"}
+              </button>
+            </div>
           </div>
 
           {chainError ? (
-            <p className="text-xs text-amber-700 dark:text-amber-200">
-              {chainError}
-            </p>
+            <div className="app-alert-error text-xs">{chainError}</div>
           ) : null}
-
-          <div>
-            <button
-              type="button"
-              className={sb.btnPrimary}
-              disabled={!canFetchDetails}
-              onClick={() => void fetchDetailsMut.mutate()}
-            >
-              {fetchDetailsMut.isPending ? "Fetching…" : "Fetch scrip details"}
-            </button>
-            {fetchDetailsMut.isError ? (
-              <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-                {fetchDetailsMut.error instanceof Error
-                  ? fetchDetailsMut.error.message
-                  : "Request failed"}
-              </p>
-            ) : null}
-          </div>
+          {fetchDetailsMut.isError ? (
+            <div className="app-alert-error text-xs">
+              {fetchDetailsMut.error instanceof Error
+                ? fetchDetailsMut.error.message
+                : "Request failed"}
+            </div>
+          ) : null}
         </section>
 
         {scripDetails ? (
           <section
-            className={`${sb.section} space-y-3`}
+            className={`${sb.section} space-y-4`}
             aria-label="Scrip details"
           >
             <h2 className={sb.sectionTitle}>2. Scrip details</h2>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Live chain snapshot for your selection (refreshed on fetch).
+            </p>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/80 px-3 py-2 dark:border-zinc-700/80 dark:bg-zinc-900/50">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              <div
+                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04]`}
+              >
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   LTP (₹)
                 </div>
-                <div className="mt-0.5 font-mono text-sm tabular-nums text-zinc-900 dark:text-zinc-50">
+                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
                   {scripDetails.ltp != null && Number.isFinite(scripDetails.ltp)
                     ? scripDetails.ltp.toLocaleString("en-IN", {
                         maximumFractionDigits: 2,
@@ -514,60 +531,74 @@ export default function PlaceOrderPage() {
                     : "—"}
                 </div>
               </div>
-              <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/80 px-3 py-2 dark:border-zinc-700/80 dark:bg-zinc-900/50">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              <div
+                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04]`}
+              >
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Total buy qty
                 </div>
-                <div className="mt-0.5 font-mono text-sm tabular-nums text-zinc-900 dark:text-zinc-50">
+                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
                   {scripDetails.totalBuyQty.toLocaleString("en-IN")}
                 </div>
               </div>
-              <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/80 px-3 py-2 dark:border-zinc-700/80 dark:bg-zinc-900/50">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              <div
+                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04]`}
+              >
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Total sell qty
                 </div>
-                <div className="mt-0.5 font-mono text-sm tabular-nums text-zinc-900 dark:text-zinc-50">
+                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
                   {scripDetails.totalSellQty.toLocaleString("en-IN")}
                 </div>
               </div>
-              <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/80 px-3 py-2 dark:border-zinc-700/80 dark:bg-zinc-900/50">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              <div
+                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04]`}
+              >
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Buy : sell ratio
                 </div>
-                <div className="mt-0.5 font-mono text-sm tabular-nums text-zinc-900 dark:text-zinc-50">
+                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
                   {scripDetails.buySellRatioLabel}
                 </div>
               </div>
-              <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/80 px-3 py-2 dark:border-zinc-700/80 dark:bg-zinc-900/50">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              <div
+                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04]`}
+              >
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Lot size
                 </div>
-                <div className="mt-0.5 font-mono text-sm tabular-nums text-zinc-900 dark:text-zinc-50">
+                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
                   {scripDetails.lotSize != null
                     ? scripDetails.lotSize.toLocaleString("en-IN")
                     : "—"}
                 </div>
               </div>
-              <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/80 px-3 py-2 dark:border-zinc-700/80 dark:bg-zinc-900/50 sm:col-span-2 lg:col-span-1">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              <div
+                className={`${sb.cardTemplate} !p-3.5 ring-1 ring-zinc-950/[0.03] dark:ring-white/[0.04] sm:col-span-2 lg:col-span-1`}
+              >
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                   Margin / lot (SPAN)
                 </div>
-                <div className="mt-0.5 text-sm tabular-nums text-zinc-900 dark:text-zinc-50">
-                  <span className="mr-3 inline-block">
-                    <span className="text-zinc-500">Buy: </span>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm font-medium tabular-nums text-zinc-900 dark:text-zinc-50">
+                  <span>
+                    <span className="text-zinc-500 dark:text-zinc-400">
+                      Buy:{" "}
+                    </span>
                     {scripDetails.marginPerLotBuy != null
                       ? formatIndianMoneyCompact(scripDetails.marginPerLotBuy)
                       : "—"}
                   </span>
-                  <span className="inline-block">
-                    <span className="text-zinc-500">Sell: </span>
+                  <span>
+                    <span className="text-zinc-500 dark:text-zinc-400">
+                      Sell:{" "}
+                    </span>
                     {scripDetails.marginPerLotSell != null
                       ? formatIndianMoneyCompact(scripDetails.marginPerLotSell)
                       : "—"}
                   </span>
                 </div>
                 {scripDetails.marginError ? (
-                  <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-200">
+                  <p className="mt-2 text-[11px] leading-snug text-amber-800 dark:text-amber-200/90">
                     {scripDetails.marginError}
                   </p>
                 ) : null}
@@ -580,13 +611,13 @@ export default function PlaceOrderPage() {
           <h2 className={sb.sectionTitle}>
             {scripDetails ? "3. " : "2. "}Quantity &amp; price
           </h2>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className={sb.fieldLabel}>
               Quantity (units)
               {lotSizeForHints != null &&
               typeof lotSizeForHints === "number" &&
               Number.isFinite(lotSizeForHints) ? (
-                <span className="font-normal text-zinc-500">
+                <span className="font-normal text-zinc-500 dark:text-zinc-400">
                   {" "}
                   · lot {lotSizeForHints.toLocaleString("en-IN")}
                 </span>
@@ -594,29 +625,29 @@ export default function PlaceOrderPage() {
               <input
                 type="number"
                 min={1}
-                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                className={sb.input}
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
                 placeholder="e.g. 65"
               />
             </label>
-            <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <label className={sb.fieldLabel}>
               Limit price (₹)
               <input
                 type="number"
                 min={0}
                 step={0.05}
-                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                className={sb.input}
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
                 placeholder="0"
               />
             </label>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              className="rounded-lg border border-emerald-600/80 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:border-emerald-900 disabled:bg-emerald-900 dark:border-emerald-500/80 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:disabled:border-emerald-900 dark:disabled:bg-emerald-950"
+              className="inline-flex items-center justify-center rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-emerald-500 hover:bg-emerald-500 focus:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-emerald-800 disabled:bg-emerald-800 dark:border-emerald-600 dark:bg-emerald-600 dark:hover:border-emerald-500 dark:hover:bg-emerald-500 dark:disabled:border-emerald-900 dark:disabled:bg-emerald-900"
               disabled={!previewLeg}
               onClick={() => openPreview("Buy")}
             >
@@ -624,7 +655,7 @@ export default function PlaceOrderPage() {
             </button>
             <button
               type="button"
-              className="rounded-lg border border-red-600/80 bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:border-red-900 disabled:bg-red-900 dark:border-red-500/80 dark:bg-red-600 dark:hover:bg-red-500 dark:disabled:border-red-900 dark:disabled:bg-red-950"
+              className={`${sb.btnDanger} px-4 py-2.5 text-sm`}
               disabled={!previewLeg}
               onClick={() => openPreview("Sell")}
             >
@@ -635,8 +666,9 @@ export default function PlaceOrderPage() {
           stockCode &&
           expiryDate &&
           effectiveStrike != null ? (
-            <p className="text-xs text-zinc-500">
-              Enter a positive quantity and valid price to enable review.
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Enter a positive quantity and valid price to enable the execution
+              preview.
             </p>
           ) : null}
         </section>
