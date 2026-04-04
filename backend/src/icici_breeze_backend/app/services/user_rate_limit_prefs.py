@@ -4,7 +4,7 @@ import sqlite3
 
 import icici_breeze_backend.app.core.config as cfg
 
-_DEFAULT_PAUSE = 5
+_DEFAULT_PAUSE = 1
 _MIN = 1
 _MAX = 300
 
