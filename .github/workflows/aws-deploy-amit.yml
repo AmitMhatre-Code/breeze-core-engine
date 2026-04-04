@@ -285,17 +285,21 @@ jobs:
       - name: Wait for cloud-init bootstrap
         run: sleep 60
 
-      # Requires IAM on the GitHub OIDC role (e.g. github-actions-icici-breeze-deploy):
-      #   scheduler:CreateSchedule, UpdateSchedule, DeleteSchedule, GetSchedule on
-      #   arn:aws:scheduler:ap-south-1:<account-id>:schedule/default/*
-      #   iam:PassRole on arn:aws:iam::<account-id>:role/Scheduler-EC2-Role
-      #   Condition: iam:PassedToService = scheduler.amazonaws.com
+      # Scheduler target uses the same IAM role as this workflow (OIDC). That role's trust policy must include
+      # BOTH: GitHub OIDC (token.actions.githubusercontent.com) AND scheduler.amazonaws.com. It also needs
+      # iam:PassRole on its own role ARN with iam:PassedToService = scheduler.amazonaws.com (often already
+      # covered by AmazonEventBridgeSchedulerFullAccess). EC2 start/stop must be allowed on the instance.
       - name: Configure Auto Start/Stop Schedules
         env:
           INSTANCE_ID: ${{ steps.ec2.outputs.instance_id }}
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/Scheduler-EC2-Role"
+          CALLER_ARN=$(aws sts get-caller-identity --query Arn --output text)
+          if [[ ! "$CALLER_ARN" =~ assumed-role/([^/]+)/ ]]; then
+            echo "::error::Expected OIDC assumed-role session; got: $CALLER_ARN"
+            exit 1
+          fi
+          ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${BASH_REMATCH[1]}"
 
           START_TARGET=$(jq -nc \
             --arg role "$ROLE_ARN" \
