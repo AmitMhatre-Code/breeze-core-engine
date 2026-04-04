@@ -75,6 +75,55 @@ class BookActionRequest(BaseModel):
         return list(v) if v else []
 
 
+class BreakOrderChunkRequest(BaseModel):
+    """Place one slice of a quantity-split order (see processor.break_order_place_chunk)."""
+
+    product_type: str
+    stock_code: str
+    exchange_code: str = "NFO"
+    expiry_date: str
+    right: str
+    strike_price: str
+    total_qty: str
+    price: str = "0"
+    action: Literal["Buy", "Sell"]
+    chunk_index: int = Field(ge=0)
+
+
+class BreakOrderFinalizeRequest(BaseModel):
+    """Build the same user messages as break_order after chunked placement on the client."""
+
+    stock_code: str
+    expiry_date: str
+    right: str
+    strike_price: str
+    product_type: str = "Options"
+    exchange_code: str = "NFO"
+    price: str = "0"
+    action: Literal["Buy", "Sell"]
+    success_quantities: list[int] = Field(default_factory=list)
+    danger_lines: list[str] = Field(default_factory=list)
+
+
+class BookCancelOneRequest(BaseModel):
+    """Single order book line: order_id or \"order_id|EXCHANGE\"."""
+
+    order_id: str
+
+
+class BookCancelResultItem(BaseModel):
+    order_ref: str
+    success: bool
+    error: Optional[str] = None
+
+
+class BookCancelCommitRequest(BaseModel):
+    """Persist cancel outcome messages after per-order cancel API calls from the client."""
+
+    results: list[BookCancelResultItem]
+    cancel_details: Optional[List[CancelOrderDetail]] = None
+
+
 class OrderFormRequest(BaseModel):
     """Full order form request (all actions: BUY, SELL, QUOTE, CLEAR)."""
     product_type: Optional[str] = None

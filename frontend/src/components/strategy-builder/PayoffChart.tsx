@@ -340,7 +340,7 @@ export function PayoffChart({
           disabled={!canZoomIn}
           title="Zoom in (narrower price range)"
           aria-label="Zoom in on price axis"
-          className="rounded p-1 text-zinc-600 transition-colors hover:bg-zinc-100 disabled:pointer-events-none disabled:opacity-35 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          className="inline-flex size-7 items-center justify-center rounded text-zinc-600 transition-colors hover:bg-zinc-100 disabled:pointer-events-none disabled:text-zinc-300 disabled:hover:bg-transparent dark:text-zinc-300 dark:hover:bg-zinc-800 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
         >
           <ZoomInIcon className="block" />
         </button>
@@ -350,7 +350,7 @@ export function PayoffChart({
           disabled={!canZoomOut}
           title="Zoom out (wider price range)"
           aria-label="Zoom out on price axis"
-          className="rounded p-1 text-zinc-600 transition-colors hover:bg-zinc-100 disabled:pointer-events-none disabled:opacity-35 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          className="inline-flex size-7 items-center justify-center rounded text-zinc-600 transition-colors hover:bg-zinc-100 disabled:pointer-events-none disabled:text-zinc-300 disabled:hover:bg-transparent dark:text-zinc-300 dark:hover:bg-zinc-800 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
         >
           <ZoomOutIcon className="block" />
         </button>

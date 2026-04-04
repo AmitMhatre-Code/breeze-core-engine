@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
 
 type ScripMasterData = {
@@ -132,8 +133,13 @@ export default function ScripMasterSettingsPage() {
                 className="app-btn-outline"
                 onClick={() => refreshMut.mutate()}
                 disabled={refreshMut.isPending}
+                aria-busy={refreshMut.isPending}
               >
-                {refreshMut.isPending ? "Refreshing..." : "Load Scrip Master"}
+                <AsyncLabelSpan
+                  busy={refreshMut.isPending}
+                  idleLabel="Refresh Scrip Master"
+                  busyLabel="Refreshing..."
+                />
               </button>
             </div>
 

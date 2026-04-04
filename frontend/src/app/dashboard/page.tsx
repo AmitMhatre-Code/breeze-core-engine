@@ -362,7 +362,7 @@ export default function DashboardPage() {
                 title="Refresh market outlook"
                 aria-label="Refresh outlook"
                 disabled={refreshOutlookM.isPending}
-                className="inline-flex shrink-0 rounded-md p-0.5 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200"
+                className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
                 onClick={() => refreshOutlookM.mutate()}
               >
                 <OutlookRefreshIcon />
@@ -508,7 +508,7 @@ export default function DashboardPage() {
                   disabled={volatilityFetching}
                   title="Refresh VIX, IV, and range"
                   aria-label="Refresh volatility data"
-                  className="inline-flex shrink-0 rounded-md p-0.5 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200"
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
                 >
                   <VolatilityRefreshIcon spinning={volatilityFetching} />
                 </button>

@@ -1,6 +1,7 @@
 import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import today_ist_date
@@ -11,7 +12,14 @@ from icici_breeze_backend.app.auth.context import (
     get_request_context,
     get_request_context_or_redirect,
 )
-from icici_breeze_backend.app.domain.order import BookActionRequest
+from icici_breeze_backend.app.domain.order import (
+    BookActionRequest,
+    BookCancelCommitRequest,
+    BookCancelOneRequest,
+)
+from icici_breeze_backend.app.services.user_rate_limit_prefs import (
+    get_icici_rate_limit_pause_seconds,
+)
 from icici_breeze_backend.app.domain.responses import BookDataResponse
 from icici_breeze_backend.app.services.processor import processor
 
@@ -144,3 +152,39 @@ async def process_post(
         breeze.store_messages(user_id, messages)
         return json_redirect("/orders")
     return json_redirect(f"/orders?start={body.start or ''}&end={body.end or ''}")
+
+
+@router.post("/cancel-one")
+async def post_cancel_one(
+    body: BookCancelOneRequest,
+    context: RequestContext = Depends(get_request_context),
+):
+    if not context.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    r = breeze.cancel_order_single(context.user_id, body.order_id.strip())
+    pause = get_icici_rate_limit_pause_seconds(context.user_id)
+    return JSONResponse({**r, "rate_limit_pause_seconds": pause})
+
+
+@router.post("/cancel-commit")
+async def post_cancel_commit(
+    body: BookCancelCommitRequest,
+    context: RequestContext = Depends(get_request_context),
+):
+    if not context.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    orders = [r.order_ref for r in body.results]
+    success_idx = [i for i, r in enumerate(body.results) if r.success]
+    failures = [
+        (r.order_ref, r.error or "Unknown error")
+        for r in body.results
+        if not r.success
+    ]
+    details = None
+    if body.cancel_details is not None and len(body.cancel_details) == len(orders):
+        details = [d.model_dump() for d in body.cancel_details]
+    messages = breeze.build_cancel_order_messages(
+        success_idx, failures, orders, details
+    )
+    breeze.store_messages(context.user_id, messages)
+    return json_redirect("/orders")

@@ -3,11 +3,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useMemo } from "react";
+import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
+import { runBreakOrderChunks } from "@/lib/icici-rate-limit-flow";
+import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
-  ExecuteApiResponse,
   MarginApiResponse,
   OptionRight,
   OrderSide,
@@ -100,6 +103,7 @@ export function ExecutionPreviewModal({
 }: ExecutionPreviewModalProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { secondsRemaining, wait } = useRateLimitCountdown();
 
   const marginLegKey = useMemo(
     () =>
@@ -150,24 +154,25 @@ export function ExecutionPreviewModal({
 
   const execMut = useMutation({
     mutationFn: async () => {
-      const legsPayload = legs.map((l) => ({
-        stock_code: stockCode,
-        exchange_code: exchangeCode,
-        expiry_date: expiryDisplay,
-        product_type: "Options",
-        right: l.right,
-        strike_price: String(l.strike),
-        quantity: String(Math.round(l.quantity)),
-        price: String(l.premiumPerUnit),
-        action: l.side,
-        idempotency_key:
-          typeof crypto !== "undefined" && crypto.randomUUID
-            ? crypto.randomUUID()
-            : undefined,
-      }));
-      return apiClient.post<ExecuteApiResponse>("/strategy-builder/execute", {
-        legs: legsPayload,
-      });
+      for (const l of legs) {
+        const qn = Math.round(l.quantity);
+        if (qn <= 0) continue;
+        const out = await runBreakOrderChunks({
+          product_type: "Options",
+          stock_code: stockCode,
+          exchange_code: exchangeCode,
+          expiry_date: expiryDisplay,
+          right: l.right,
+          strike_price: String(l.strike),
+          total_qty: String(qn),
+          price: String(l.premiumPerUnit),
+          action: l.side,
+          onRateLimitWait: wait,
+        });
+        if (!out.ok) {
+          throw new Error(out.terminalError ?? "Order leg failed");
+        }
+      }
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["book"] });
@@ -180,6 +185,10 @@ export function ExecutionPreviewModal({
   if (!open) return null;
 
   return (
+    <>
+      {secondsRemaining !== null ? (
+        <RateLimitPauseOverlay secondsRemaining={secondsRemaining} />
+      ) : null}
     <div
       className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4"
       role="presentation"
@@ -213,7 +222,7 @@ export function ExecutionPreviewModal({
           </div>
           <button
             type="button"
-            className="-m-1 shrink-0 rounded-lg p-1.5 text-xl leading-none text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-40 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            className="-m-1 size-9 shrink-0 rounded-lg text-xl leading-none text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
             onClick={() => {
               if (!execMut.isPending) onClose();
             }}
@@ -290,12 +299,18 @@ export function ExecutionPreviewModal({
               !legs.length ||
               legs.some((x) => x.quantity <= 0)
             }
+            aria-busy={execMut.isPending}
             onClick={() => execMut.mutate()}
           >
-            {execMut.isPending ? "Placing…" : "Confirm"}
+            <AsyncLabelSpan
+              busy={execMut.isPending}
+              idleLabel="Confirm"
+              busyLabel="Placing…"
+            />
           </button>
         </div>
       </div>
     </div>
+    </>
   );
 }

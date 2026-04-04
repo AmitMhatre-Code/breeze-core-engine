@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiClient } from "@/lib/api-client";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 
 type ChallengeCtx = { user_id: string | null };
 
@@ -107,9 +108,14 @@ function ChallengeForm() {
           <button
             type="submit"
             disabled={submitting || !userId}
+            aria-busy={submitting}
             className="app-btn-primary w-full py-2.5"
           >
-            {submitting ? "Signing in…" : "Submit"}
+            <AsyncLabelSpan
+              busy={submitting}
+              idleLabel="Submit"
+              busyLabel="Signing in…"
+            />
           </button>
         </form>
         <div className="mt-6 space-y-3 text-center text-[11px] text-zinc-500">

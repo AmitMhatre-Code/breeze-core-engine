@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
 
 type ApiUsageByApiItem = {
@@ -24,17 +25,48 @@ type ApiUsageData = {
   days: number;
   by_api: ApiUsageByApiItem[];
   by_route: ApiUsageByRouteItem[];
+  rate_limit_pause_seconds?: number;
+};
+
+type ApiUsagePreferences = {
+  user_id: string;
+  rate_limit_pause_seconds: number;
 };
 
 type Mode = "api" | "route";
 
 export default function ApiUsageSettingsPage() {
+  const qc = useQueryClient();
   const [mode, setMode] = useState<Mode>("api");
   const [days, setDays] = useState<number>(30);
+  const [pauseDraft, setPauseDraft] = useState<string>("");
 
   const q = useQuery({
     queryKey: ["settings", "api-usage", days],
     queryFn: () => apiClient.get<ApiUsageData>(`/api/settings/api-usage/data?days=${days}`),
+  });
+
+  const prefQ = useQuery({
+    queryKey: ["settings", "api-usage-preferences"],
+    queryFn: () =>
+      apiClient.get<ApiUsagePreferences>("/api/settings/api-usage/preferences"),
+  });
+
+  useEffect(() => {
+    if (prefQ.data) {
+      setPauseDraft(String(prefQ.data.rate_limit_pause_seconds));
+    }
+  }, [prefQ.data?.rate_limit_pause_seconds]);
+
+  const savePause = useMutation({
+    mutationFn: (seconds: number) =>
+      apiClient.post<ApiUsagePreferences>("/api/settings/api-usage/preferences", {
+        rate_limit_pause_seconds: seconds,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["settings", "api-usage-preferences"] });
+      void qc.invalidateQueries({ queryKey: ["settings", "api-usage"] });
+    },
   });
 
   const grouped = useMemo(() => {
@@ -85,6 +117,65 @@ export default function ApiUsageSettingsPage() {
               </svg>
             </div>
           </label>
+        </div>
+
+        <div className="rounded-lg border border-zinc-200/90 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            Rate limit backoff
+          </h3>
+          <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+            If ICICI returns HTTP 429 (too many requests) while placing or cancelling orders, the app
+            pauses and shows a countdown for this many seconds before retrying the same request. No
+            pacing is applied until a 429 occurs.
+          </p>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <label className="text-xs text-zinc-600 dark:text-zinc-400">
+              Seconds to wait
+              <input
+                type="number"
+                min={5}
+                max={300}
+                step={1}
+                className="ml-2 mt-1 block w-24 rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                value={pauseDraft}
+                onChange={(e) => setPauseDraft(e.target.value)}
+                disabled={prefQ.isLoading || savePause.isPending}
+              />
+            </label>
+            <button
+              type="button"
+              className="app-btn-primary px-3 py-1.5 text-xs font-medium"
+              disabled={
+                prefQ.isLoading ||
+                savePause.isPending ||
+                pauseDraft.trim() === ""
+              }
+              aria-busy={savePause.isPending}
+              onClick={() => {
+                const n = parseInt(pauseDraft.trim(), 10);
+                if (!Number.isFinite(n) || n < 5 || n > 300) {
+                  alert("Enter a whole number between 5 and 300.");
+                  return;
+                }
+                savePause.mutate(n, {
+                  onError: (e) =>
+                    alert(e instanceof Error ? e.message : "Save failed"),
+                  onSuccess: () => alert("Saved."),
+                });
+              }}
+            >
+              <AsyncLabelSpan
+                busy={savePause.isPending}
+                idleLabel="Save"
+                busyLabel="Saving…"
+              />
+            </button>
+          </div>
+          {prefQ.error ? (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+              {prefQ.error instanceof Error ? prefQ.error.message : "Could not load preference"}
+            </p>
+          ) : null}
         </div>
 
         <div

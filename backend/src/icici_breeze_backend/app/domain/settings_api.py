@@ -53,6 +53,16 @@ class ApiUsageStateResponse(BaseModel):
     days: int = 30
     by_api: list[ApiUsageByApiItem] = Field(default_factory=list)
     by_route: list[ApiUsageByRouteItem] = Field(default_factory=list)
+    rate_limit_pause_seconds: int = 20
+
+
+class ApiUsagePreferencesResponse(BaseModel):
+    user_id: str = ""
+    rate_limit_pause_seconds: int = 20
+
+
+class ApiUsagePreferencesUpdateBody(BaseModel):
+    rate_limit_pause_seconds: int = Field(ge=5, le=300)
 
 
 class MarginSourceStateResponse(BaseModel):

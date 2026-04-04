@@ -283,7 +283,25 @@ jobs:
           echo "public_ip=$PUBLIC_IP" >> "$GITHUB_OUTPUT"
 
       - name: Wait for cloud-init bootstrap
-        run: sleep 120
+        run: sleep 60
+
+      - name: Configure Auto Start/Stop Schedules
+        run: |
+          # 9:00 AM IST Start (3:30 AM UTC)
+          aws scheduler create-schedule \
+            --name "Start-Breeze-App-${{ steps.ec2.outputs.instance_id }}" \
+            --schedule-expression "cron(30 3 ? * MON-FRI *)" \
+            --target '{"Arn": "arn:aws:scheduler:::aws-sdk:ec2:startInstances", "Input": "{\"InstanceIds\": [\"${{ env.INSTANCE_ID }}\"]}", "RoleArn": "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Scheduler-EC2-Role"}' \
+            --flexible-time-window '{"Mode": "OFF"}' \
+            --action-after-completion DELETE
+
+          # 5:00 PM IST Stop (11:30 AM UTC)
+          aws scheduler create-schedule \
+            --name "Stop-Breeze-App-${{ steps.ec2.outputs.instance_id }}" \
+            --schedule-expression "cron(30 11 ? * MON-FRI *)" \
+            --target '{"Arn": "arn:aws:scheduler:::aws-sdk:ec2:stopInstances", "Input": "{\"InstanceIds\": [\"${{ env.INSTANCE_ID }}\"]}", "RoleArn": "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Scheduler-EC2-Role"}' \
+            --flexible-time-window '{"Mode": "OFF"}' \
+            --action-after-completion DELETE        
 
       - name: Deployment summary
         run: |

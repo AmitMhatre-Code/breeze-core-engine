@@ -316,8 +316,8 @@ export function OptionChainUnderlyingSearch({
             onClick={openPicker}
             className={
               chainBar
-                ? "flex min-w-0 max-w-full items-center gap-x-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-100 disabled:opacity-50 dark:focus-visible:ring-offset-[#1b1c1f] sm:gap-x-3"
-                : "flex min-w-0 max-w-full items-center gap-x-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:opacity-50 sm:gap-x-3"
+                ? "flex min-w-0 max-w-full items-center gap-x-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-400 dark:focus-visible:ring-offset-[#1b1c1f] dark:disabled:text-zinc-500 sm:gap-x-3"
+                : "flex min-w-0 max-w-full items-center gap-x-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:cursor-not-allowed disabled:text-zinc-400 dark:disabled:text-zinc-500 sm:gap-x-3"
             }
           >
             <SearchIcon
@@ -453,7 +453,7 @@ export function OptionChainUnderlyingSearch({
               setQ(value);
             }}
             placeholder="Type stock name: SBIN, TCS etc."
-            className="w-full border-0 bg-transparent py-2.5 pl-10 pr-3 text-sm text-zinc-100 outline-none ring-0 placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full border-0 bg-transparent py-2.5 pl-10 pr-3 text-sm text-zinc-100 outline-none ring-0 placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-500"
           />
         </div>
       </div>

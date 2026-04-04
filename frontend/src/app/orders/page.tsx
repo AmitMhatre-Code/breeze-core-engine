@@ -12,7 +12,11 @@ import {
 import { AppShell } from "@/components/layout/AppShell";
 import { OrderBookDatePopover } from "@/components/order/OrderBookDatePopover";
 import { PrefilledOrderCard } from "@/components/order/PrefilledOrderCard";
+import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
+import { runCancelOrdersWithPacing } from "@/lib/icici-rate-limit-flow";
+import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 
 type BookMessage = { type?: string; message?: string };
 
@@ -223,6 +227,7 @@ function BookMessages({ messages }: { messages: BookMessage[] }) {
 
 function OrdersBody() {
   const queryClient = useQueryClient();
+  const { secondsRemaining, wait } = useRateLimitCountdown();
   /** When null, backend applies the same default range as legacy book (today → next weekday). */
   const [appliedRange, setAppliedRange] = useState<{
     start: string;
@@ -262,10 +267,10 @@ function OrdersBody() {
       order_ids: string[];
       cancel_details: { option: string; open_quantity: number }[];
     }) =>
-      apiClient.post<{ redirect?: string }>("/book", {
-        action: "Cancel",
-        order_ids: payload.order_ids,
+      runCancelOrdersWithPacing({
+        orderIds: payload.order_ids,
         cancel_details: payload.cancel_details,
+        onRateLimitWait: wait,
       }),
     onSuccess: async () => {
       setSelected(new Set());
@@ -346,6 +351,9 @@ function OrdersBody() {
 
   return (
     <>
+      {secondsRemaining !== null ? (
+        <RateLimitPauseOverlay secondsRemaining={secondsRemaining} />
+      ) : null}
       <Suspense fallback={null}>
         <PrefilledOrderCard />
       </Suspense>
@@ -686,28 +694,15 @@ function OrdersBody() {
                     aria-busy={cancelMut.isPending}
                     className={[
                       "app-btn-primary h-10 min-h-10 shrink-0 whitespace-nowrap",
-                      cancelMut.isPending
-                        ? "cursor-wait disabled:!opacity-100"
-                        : "",
+                      cancelMut.isPending ? "cursor-wait" : "",
                     ].join(" ")}
                   >
-                    <span className="inline-grid grid-cols-1 grid-rows-1 place-items-center">
-                      <span
-                        className="invisible col-start-1 row-start-1 font-semibold"
-                        aria-hidden
-                      >
-                        Cancel selected
-                      </span>
-                      <span
-                        className="invisible col-start-1 row-start-1 font-semibold"
-                        aria-hidden
-                      >
-                        Cancelling…
-                      </span>
-                      <span className="col-start-1 row-start-1 font-semibold">
-                        {cancelMut.isPending ? "Cancelling…" : "Cancel selected"}
-                      </span>
-                    </span>
+                    <AsyncLabelSpan
+                      busy={cancelMut.isPending}
+                      idleLabel="Cancel selected"
+                      busyLabel="Cancelling…"
+                      className="font-semibold"
+                    />
                   </button>
                 </div>
               ) : null}

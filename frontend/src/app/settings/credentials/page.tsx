@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
 
 type CredData = {
@@ -129,9 +130,10 @@ function CredentialsFormLoaded(props: {
           <button
             type="submit"
             disabled={props.busy}
+            aria-busy={props.busy}
             className="app-btn-primary"
           >
-            {props.busy ? "Saving…" : "Save"}
+            <AsyncLabelSpan busy={props.busy} idleLabel="Save" busyLabel="Saving…" />
           </button>
         </form>
       </section>

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import {
   getAiProviderState,
   getOutlookConfig,
@@ -245,18 +246,28 @@ function KeyModal({
             <button
               type="button"
               disabled={isTesting || !apiKey.trim()}
+              aria-busy={isTesting}
               className="app-btn-outline"
               onClick={onTest}
             >
-              {isTesting ? "Testing…" : "Test key"}
+              <AsyncLabelSpan
+                busy={isTesting}
+                idleLabel="Test key"
+                busyLabel="Testing…"
+              />
             </button>
             <button
               type="button"
               disabled={isSaving || !canSave}
+              aria-busy={isSaving}
               className="app-btn-primary"
               onClick={onSave}
             >
-              {isSaving ? "Saving…" : "Save Key"}
+              <AsyncLabelSpan
+                busy={isSaving}
+                idleLabel="Save Key"
+                busyLabel="Saving…"
+              />
             </button>
           </div>
 
@@ -648,9 +659,14 @@ export default function AiProviderSettingsPage() {
               type="button"
               className="app-link text-xs"
               disabled={resetFeedsM.isPending}
+              aria-busy={resetFeedsM.isPending}
               onClick={() => resetFeedsM.mutate()}
             >
-              {resetFeedsM.isPending ? "Resetting feeds..." : "Reset feeds to default"}
+              <AsyncLabelSpan
+                busy={resetFeedsM.isPending}
+                idleLabel="Reset feeds to default"
+                busyLabel="Resetting feeds..."
+              />
             </button>
           </div>
 
@@ -671,9 +687,14 @@ export default function AiProviderSettingsPage() {
               type="button"
               className="app-link text-xs"
               disabled={resetSystemPromptM.isPending}
+              aria-busy={resetSystemPromptM.isPending}
               onClick={() => resetSystemPromptM.mutate()}
             >
-              {resetSystemPromptM.isPending ? "Resetting system prompt..." : "Reset system prompt to default"}
+              <AsyncLabelSpan
+                busy={resetSystemPromptM.isPending}
+                idleLabel="Reset system prompt to default"
+                busyLabel="Resetting system prompt..."
+              />
             </button>
           </div>
 
@@ -693,9 +714,14 @@ export default function AiProviderSettingsPage() {
               type="button"
               className="app-link text-xs"
               disabled={resetPromptM.isPending}
+              aria-busy={resetPromptM.isPending}
               onClick={() => resetPromptM.mutate()}
             >
-              {resetPromptM.isPending ? "Resetting prompt..." : "Reset prompt to default"}
+              <AsyncLabelSpan
+                busy={resetPromptM.isPending}
+                idleLabel="Reset prompt to default"
+                busyLabel="Resetting prompt..."
+              />
             </button>
           </div>
           <div>
@@ -703,9 +729,14 @@ export default function AiProviderSettingsPage() {
               type="button"
               className="app-btn-primary"
               disabled={saveOutlookM.isPending}
+              aria-busy={saveOutlookM.isPending}
               onClick={() => saveOutlookM.mutate()}
             >
-              {saveOutlookM.isPending ? "Saving..." : "Save Prompt"}
+              <AsyncLabelSpan
+                busy={saveOutlookM.isPending}
+                idleLabel="Save Prompt"
+                busyLabel="Saving..."
+              />
             </button>
           </div>
         </section>

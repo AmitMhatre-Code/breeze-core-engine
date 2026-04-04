@@ -61,12 +61,28 @@ const nextConfig: NextConfig = {
         destination: `${backendUpstream}/order/data/:path*`,
       },
       {
+        source: "/order/break-chunk",
+        destination: `${backendUpstream}/order/break-chunk`,
+      },
+      {
+        source: "/order/break-finalize",
+        destination: `${backendUpstream}/order/break-finalize`,
+      },
+      {
         source: "/order",
         destination: `${backendUpstream}/order`,
       },
       {
         source: "/book/data",
         destination: `${backendUpstream}/book/data`,
+      },
+      {
+        source: "/book/cancel-one",
+        destination: `${backendUpstream}/book/cancel-one`,
+      },
+      {
+        source: "/book/cancel-commit",
+        destination: `${backendUpstream}/book/cancel-commit`,
       },
       {
         source: "/book/:path*",

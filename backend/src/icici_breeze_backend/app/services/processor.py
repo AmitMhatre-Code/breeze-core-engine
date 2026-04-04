@@ -233,6 +233,26 @@ def _breeze_limit_error() -> dict:
     }
 
 
+def _is_broker_rate_limited(response: dict | None) -> bool:
+    """True when ICICI / Breeze indicates HTTP 429 or equivalent HTML body in Error text."""
+    if not response:
+        return False
+    try:
+        st = int(response.get("Status") or response.get("status") or 0)
+    except (TypeError, ValueError):
+        st = 0
+    if st == 429:
+        return True
+    err = str(response.get("Error") or response.get("error") or "")
+    el = err.lower()
+    if "too many requests" in el and ("429" in el or "rate" in el):
+        return True
+    compact = "".join(el.split())
+    if "429toomanyrequests" in compact or "<title>429toomanyrequests</title>" in compact:
+        return True
+    return False
+
+
 from icici_breeze_backend.app.external.icici_api import fetch_customerdetails_session_token as _fetch_customerdetails_session_token
 from icici_breeze_backend.app.external.icici_api import call_icici_api_direct as _call_icici_api_direct
 
@@ -1043,38 +1063,18 @@ class processor():
 
         return grouped_orders
 
-    def cancel_orders(self, user_id, orders, cancel_details: list | None = None):
-        breeze = self.get_session_breeze(user_id)
+    def build_cancel_order_messages(
+        self,
+        success_idx: list[int],
+        failures: list[tuple[str, str]],
+        orders: list,
+        cancel_details: list | None,
+    ) -> list[dict]:
         messages: list[dict] = []
         meta_ok = (
             cancel_details is not None
             and len(cancel_details) == len(orders)
         )
-        success_idx: list[int] = []
-        failures: list[tuple[str, str]] = []
-
-        for i, order in enumerate(orders):
-            order_id = order
-            exchange_code = cfg.NFO
-            if isinstance(order, str) and "|" in order:
-                # Book UI passes: "<order_id>|<exchange_code>"
-                order_id, exchange_code = order.split("|", 1)
-            try:
-                response = breeze.cancel_order(
-                    exchange_code=exchange_code, order_id=order_id
-                )
-            except Exception as e:
-                response = _icici_error(
-                    f"Error calling ICICI Breeze API cancel_order(exchange_code={exchange_code},order_id={order_id}): {e}"
-                )
-
-            self._maybe_evict_session(user_id, response)
-            if response.get("Status") == 200:
-                success_idx.append(i)
-            else:
-                err = str(response.get("Error") or "Unknown error")
-                failures.append((str(order), err))
-
         if success_idx:
             n = len(success_idx)
             if meta_ok:
@@ -1125,6 +1125,51 @@ class processor():
             )
 
         return messages
+
+    def cancel_order_single(self, user_id, order_ref: str) -> dict:
+        """Cancel one order; used for client-paced cancels on 429."""
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return {
+                "success": False,
+                "rate_limited": False,
+                "error": "Unable to connect to broker. Please log out and log back in.",
+            }
+        order_id = order_ref
+        exchange_code = cfg.NFO
+        if isinstance(order_ref, str) and "|" in order_ref:
+            order_id, exchange_code = order_ref.split("|", 1)
+        try:
+            response = breeze.cancel_order(
+                exchange_code=exchange_code, order_id=order_id
+            )
+        except Exception as e:
+            response = _icici_error(
+                f"Error calling ICICI Breeze API cancel_order(exchange_code={exchange_code},order_id={order_id}): {e}"
+            )
+
+        self._maybe_evict_session(user_id, response)
+        if response.get("Status") == 200:
+            return {"success": True, "rate_limited": False, "error": None}
+        err = str(response.get("Error") or "Unknown error")
+        return {
+            "success": False,
+            "rate_limited": _is_broker_rate_limited(response),
+            "error": err,
+        }
+
+    def cancel_orders(self, user_id, orders, cancel_details: list | None = None):
+        success_idx: list[int] = []
+        failures: list[tuple[str, str]] = []
+        for i, order in enumerate(orders):
+            one = self.cancel_order_single(user_id, str(order))
+            if one["success"]:
+                success_idx.append(i)
+            else:
+                failures.append((str(order), str(one.get("error") or "Unknown error")))
+        return self.build_cancel_order_messages(
+            success_idx, failures, list(orders), cancel_details
+        )
 
     def get_positions(self, user_id):
         breeze = self.get_session_breeze(user_id)
@@ -1669,6 +1714,154 @@ class processor():
         self._maybe_evict_session(user_id, response)
         return response
 
+    def break_order_finalize_user_messages(
+        self,
+        contract_label: str,
+        price_f: float,
+        success_qty_chunks: list[int],
+        danger_messages: list[str],
+    ) -> list[dict]:
+        """Success + failure toasts matching break_order (used by /order/break-finalize)."""
+        messages: list[dict] = []
+        if success_qty_chunks:
+            n_orders = len(success_qty_chunks)
+            total_q = sum(success_qty_chunks)
+            total_prem = total_q * price_f
+            prem_s = _format_inr_integer_indian(total_prem)
+            messages.append(
+                {
+                    "type": cfg.SUCCESS,
+                    "message": (
+                        f"Successfully placed {_format_indian_integer_digits(n_orders)} orders "
+                        f"for {contract_label} totaling "
+                        f"{_format_indian_integer_digits(total_q)} quantity for a total "
+                        f"premium of {prem_s}"
+                    ),
+                }
+            )
+        if danger_messages:
+            k = len(danger_messages)
+            preview = "; ".join(danger_messages[:4])
+            tail = (
+                f" (+{_format_indian_integer_digits(k - 4)} more)"
+                if k > 4
+                else ""
+            )
+            messages.append(
+                {
+                    "type": cfg.DANGER,
+                    "message": (
+                        f"Failed to place {_format_indian_integer_digits(k)} order(s): "
+                        f"{preview}{tail}"
+                    ),
+                }
+            )
+        return messages
+
+    def break_order_place_chunk(
+        self,
+        user_id,
+        stock_code,
+        expiry_date,
+        product_type,
+        right,
+        strike_price,
+        total_qty,
+        price,
+        action,
+        exchange_code: str,
+        chunk_index: int,
+    ) -> dict:
+        """Place a single slice of a split order for client-driven pacing on 429."""
+        contract_label = f"{stock_code}-{expiry_date}-{strike_price}-{right}"
+        try:
+            price_f = float(str(price).strip() or 0)
+        except (TypeError, ValueError):
+            price_f = 0.0
+
+        def _terminal(msg: str) -> dict:
+            return {
+                "terminal_messages": [
+                    {"type": cfg.DANGER, "message": msg},
+                ],
+                "chunk_index": chunk_index,
+                "total_chunks": 0,
+                "contract_label": contract_label,
+                "price_f": price_f,
+                "rate_limited": False,
+                "success": False,
+                "placed_quantity": 0,
+                "danger_line": None,
+            }
+
+        try:
+            total_i = int(str(total_qty).strip())
+        except (TypeError, ValueError):
+            return _terminal("Invalid total quantity.")
+
+        if total_i <= 0:
+            return _terminal("Quantity must be a positive integer.")
+
+        qty_limits = self.fetch_qty_limits(stock_code, exchange_code=exchange_code)
+        if qty_limits is None:
+            return _terminal(
+                "No entries for stock code "
+                + stock_code
+                + " in the Options Quantity Limits file"
+            )
+
+        lot_size = self.fetch_lot_size(stock_code, expiry_date, exchange_code=exchange_code)
+        qty_per_order = (max(1, int(qty_limits)) // lot_size) * lot_size
+        iterations = int(total_i / qty_per_order)
+        remainder = int(total_i) % int(qty_per_order)
+        total_chunks = iterations + (1 if remainder > 0 else 0)
+
+        if chunk_index < 0 or chunk_index >= total_chunks:
+            return _terminal("Invalid chunk index for this order size.")
+
+        if chunk_index < iterations:
+            qty_this = qty_per_order
+        else:
+            qty_this = remainder
+
+        response = self.place_order(
+            user_id=user_id,
+            product_type=product_type,
+            stock_code=stock_code,
+            action=action,
+            strike_price=strike_price,
+            right=right,
+            price=price,
+            expiry_date=expiry_date,
+            quantity=qty_this,
+            exchange_code=exchange_code,
+        )
+        rl = _is_broker_rate_limited(response)
+        ok = bool(response and response.get("Status") == 200)
+        danger_line = None
+        if not ok and not rl:
+            err = (response or {}).get("Error") or "Unknown error"
+            danger_line = (
+                str(err)
+                + contract_label
+                + " | Qty = "
+                + _format_indian_integer_digits(int(qty_this))
+                + " | Price = "
+                + _format_inr_integer_indian(price_f)
+            )
+
+        return {
+            "terminal_messages": [],
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+            "contract_label": contract_label,
+            "price_f": price_f,
+            "rate_limited": rl,
+            "success": ok,
+            "placed_quantity": int(qty_this) if ok else 0,
+            "danger_line": danger_line,
+        }
+
     def break_order(self,user_id,stock_code,expiry_date,product_type,right,strike_price,total_qty,price,action, exchange_code: str = cfg.NFO):
         messages: list[dict] = []
         contract_label = f"{stock_code}-{expiry_date}-{strike_price}-{right}"
@@ -1748,22 +1941,6 @@ class processor():
                         + _format_inr_integer_indian(price_f)
                     )
 
-            if success_qty_chunks:
-                n_orders = len(success_qty_chunks)
-                total_q = sum(success_qty_chunks)
-                total_prem = total_q * price_f
-                prem_s = _format_inr_integer_indian(total_prem)
-                messages.append(
-                    {
-                        "type": cfg.SUCCESS,
-                        "message": (
-                            f"Successfully placed {_format_indian_integer_digits(n_orders)} orders "
-                            f"for {contract_label} totaling "
-                            f"{_format_indian_integer_digits(total_q)} quantity for a total "
-                            f"premium of {prem_s}"
-                        ),
-                    }
-                )
             if danger_messages:
                 k = len(danger_messages)
                 preview = "; ".join(danger_messages[:4])
@@ -1786,15 +1963,11 @@ class processor():
                     qty_limits,
                     _single_line_preview(preview + tail, 400),
                 )
-                messages.append(
-                    {
-                        "type": cfg.DANGER,
-                        "message": (
-                            f"Failed to place {_format_indian_integer_digits(k)} order(s): "
-                            f"{preview}{tail}"
-                        ),
-                    }
+            messages.extend(
+                self.break_order_finalize_user_messages(
+                    contract_label, price_f, success_qty_chunks, danger_messages
                 )
+            )
 
         return messages
 

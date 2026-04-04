@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
 
 type BaselineExchangeMeta = {
@@ -252,8 +253,14 @@ export default function MarginSourceSettingsPage() {
                   disabled={toggleDisabled}
                   onClick={() => handleToggle(!useExchangeBaseline)}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                    useExchangeBaseline ? "bg-sky-600" : "bg-zinc-300 dark:bg-zinc-700"
-                  } ${toggleDisabled ? "cursor-not-allowed opacity-60" : ""}`}
+                    toggleDisabled
+                      ? useExchangeBaseline
+                        ? "cursor-not-allowed bg-sky-800"
+                        : "cursor-not-allowed bg-zinc-400 dark:bg-zinc-600"
+                      : useExchangeBaseline
+                        ? "bg-sky-600"
+                        : "bg-zinc-300 dark:bg-zinc-700"
+                  }`}
                 >
                   <span
                     className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
@@ -275,8 +282,13 @@ export default function MarginSourceSettingsPage() {
                   refreshMut.mutate();
                 }}
                 disabled={refreshMut.isPending || uploadMut.isPending}
+                aria-busy={refreshMut.isPending}
               >
-                {refreshMut.isPending ? "Refreshing…" : "Refresh Exchange Risk Baseline (NSE)"}
+                <AsyncLabelSpan
+                  busy={refreshMut.isPending}
+                  idleLabel="Refresh Exchange Risk Baseline (NSE)"
+                  busyLabel="Refreshing…"
+                />
               </button>
               <button
                 type="button"
@@ -340,12 +352,17 @@ export default function MarginSourceSettingsPage() {
                     type="button"
                     className="app-btn-outline"
                     disabled={uploadMut.isPending || !uploadFile}
+                    aria-busy={uploadMut.isPending}
                     onClick={() => {
                       if (!uploadFile || !uploadPanel) return;
                       uploadMut.mutate({ file: uploadFile, market: uploadPanel });
                     }}
                   >
-                    {uploadMut.isPending ? "Uploading…" : "Upload file"}
+                    <AsyncLabelSpan
+                      busy={uploadMut.isPending}
+                      idleLabel="Upload file"
+                      busyLabel="Uploading…"
+                    />
                   </button>
                   <button
                     type="button"

@@ -3,6 +3,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { apiClient } from "@/lib/api-client";
@@ -386,9 +387,14 @@ export function OptionChainPlaceSection() {
               !expiryDate.trim() ||
               chainMut.isPending
             }
-            className="inline-flex w-full min-w-[9.25rem] items-center justify-center rounded-lg border border-sky-600/70 bg-transparent px-4 py-2 text-sm font-semibold text-sky-700 shadow-none transition hover:bg-sky-500/15 hover:text-sky-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 disabled:pointer-events-none disabled:opacity-45 dark:border-sky-500/85 dark:text-sky-400 dark:hover:bg-sky-500/10 dark:hover:text-sky-300 sm:w-auto"
+            className="inline-flex w-full min-w-[9.25rem] items-center justify-center rounded-lg border border-sky-600/70 bg-transparent px-4 py-2 text-sm font-semibold text-sky-700 shadow-none transition hover:bg-sky-500/15 hover:text-sky-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-300 disabled:bg-zinc-100 disabled:text-zinc-400 dark:border-sky-500/85 dark:text-sky-400 dark:hover:bg-sky-500/10 dark:hover:text-sky-300 dark:disabled:border-zinc-600 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500 sm:w-auto"
+            aria-busy={chainMut.isPending}
           >
-            {chainMut.isPending ? "Fetching..." : "Fetch"}
+            <AsyncLabelSpan
+              busy={chainMut.isPending}
+              idleLabel="Fetch"
+              busyLabel="Fetching..."
+            />
           </button>
         </div>
       </div>
@@ -482,7 +488,7 @@ export function OptionChainPlaceSection() {
                   type="button"
                   disabled={!sheetHasCall}
                   onClick={() => setRightAndSyncFields("Call")}
-                  className={`min-w-0 flex-1 rounded-full px-2.5 py-1.5 text-xs font-semibold tracking-wide transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 disabled:cursor-not-allowed disabled:opacity-40 ${
+                  className={`min-w-0 flex-1 rounded-full px-2.5 py-1.5 text-xs font-semibold tracking-wide transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:ring-0 dark:disabled:text-zinc-600 ${
                     sheetRight === "Call"
                       ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/90 dark:bg-zinc-800 dark:text-zinc-50 dark:ring-zinc-600/90"
                       : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200"
@@ -494,7 +500,7 @@ export function OptionChainPlaceSection() {
                   type="button"
                   disabled={!sheetHasPut}
                   onClick={() => setRightAndSyncFields("Put")}
-                  className={`min-w-0 flex-1 rounded-full px-2.5 py-1.5 text-xs font-semibold tracking-wide transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 disabled:cursor-not-allowed disabled:opacity-40 ${
+                  className={`min-w-0 flex-1 rounded-full px-2.5 py-1.5 text-xs font-semibold tracking-wide transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:ring-0 dark:disabled:text-zinc-600 ${
                     sheetRight === "Put"
                       ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/90 dark:bg-zinc-800 dark:text-zinc-50 dark:ring-zinc-600/90"
                       : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200"
@@ -551,14 +557,14 @@ export function OptionChainPlaceSection() {
             <div className="mt-4 flex gap-2 border-t border-zinc-200/90 pt-3.5 dark:border-zinc-700/80">
               <button
                 type="button"
-                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-md border border-emerald-600/95 bg-gradient-to-b from-emerald-500 to-emerald-600 px-2 text-xs font-semibold text-white shadow-sm shadow-emerald-900/20 transition hover:from-emerald-400 hover:to-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 disabled:opacity-50 dark:to-emerald-600"
+                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-md border border-emerald-600/95 bg-gradient-to-b from-emerald-500 to-emerald-600 px-2 text-xs font-semibold text-white shadow-sm shadow-emerald-900/20 transition hover:from-emerald-400 hover:to-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 disabled:cursor-not-allowed disabled:from-emerald-800 disabled:to-emerald-900 dark:to-emerald-600"
                 onClick={() => submitFromSheet("Buy")}
               >
                 Buy
               </button>
               <button
                 type="button"
-                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-md border border-red-600/90 bg-gradient-to-b from-red-500 to-red-600 px-2 text-xs font-semibold text-white shadow-sm shadow-red-900/25 transition hover:from-red-400 hover:to-red-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/35 dark:to-red-600"
+                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-md border border-red-600/90 bg-gradient-to-b from-red-500 to-red-600 px-2 text-xs font-semibold text-white shadow-sm shadow-red-900/25 transition hover:from-red-400 hover:to-red-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/35 disabled:cursor-not-allowed disabled:from-red-800 disabled:to-red-900 dark:to-red-600"
                 onClick={() => submitFromSheet("Sell")}
               >
                 Sell

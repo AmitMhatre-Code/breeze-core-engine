@@ -337,7 +337,7 @@ function PerformancePageInner() {
 
             <section className="app-card flex flex-col p-4 md:col-span-2 xl:col-span-1">
               <h2 className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                FY {data.fy || selectedFy || "—"} P&amp;L statement
+                FY {data.fy || selectedFy || "—"}{" "}P&amp;L statement
               </h2>
               {performance ? (
                 <>

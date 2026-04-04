@@ -57,19 +57,22 @@
   }
   /** Primary actions (matches sidebar “Breeze Web” sky brand). */
   .app-btn-primary {
-    @apply inline-flex items-center justify-center rounded-sm border border-sky-600 bg-sky-600 px-3.5 py-1.5 text-sm font-medium text-white transition hover:border-sky-500 hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 dark:border-sky-500 dark:bg-sky-500 dark:hover:border-sky-400 dark:hover:bg-sky-400;
+    @apply inline-flex items-center justify-center rounded-sm border border-sky-600 bg-sky-600 px-3.5 py-1.5 text-sm font-medium text-white transition hover:border-sky-500 hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-sky-800 disabled:bg-sky-800 disabled:text-white dark:border-sky-500 dark:bg-sky-500 dark:hover:border-sky-400 dark:hover:bg-sky-400 dark:disabled:border-sky-800 dark:disabled:bg-sky-800;
   }
   /** Secondary / navigation actions — sky outline. */
   .app-btn-outline {
-    @apply inline-flex items-center justify-center rounded-sm border border-sky-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-800 transition hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:border-sky-800/70 dark:bg-zinc-900 dark:text-sky-200 dark:hover:border-sky-600 dark:hover:bg-sky-950/40;
+    @apply inline-flex items-center justify-center rounded-sm border border-sky-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-800 transition hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:border-sky-800/70 dark:bg-zinc-900 dark:text-sky-200 dark:hover:border-sky-600 dark:hover:bg-sky-950/40 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500;
   }
   /** Inline & text links (same brand blue as Breeze Web). */
   .app-link {
     @apply font-medium text-sky-600 underline-offset-2 transition-colors hover:text-sky-500 hover:underline dark:text-sky-400 dark:hover:text-sky-300;
   }
+  button.app-link:disabled {
+    @apply cursor-not-allowed text-zinc-400 no-underline hover:text-zinc-400 dark:text-zinc-500 dark:hover:text-zinc-500;
+  }
   /** Neutral — Cancel / dismiss only. */
   .app-btn-secondary {
-    @apply inline-flex items-center justify-center rounded-sm border border-zinc-200 bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700;
+    @apply inline-flex items-center justify-center rounded-sm border border-zinc-200 bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-200 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-200 disabled:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500;
   }
   /** Section titles inside cards */
   .app-text-heading {
@@ -116,10 +119,7 @@
     font-weight: 500;
     color: #fff;
     box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
-    transition:
-      background-color 0.15s ease,
-      border-color 0.15s ease,
-      opacity 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
   .orders-fetch-btn:hover:not(:disabled) {
     background-color: rgb(14 165 233);
@@ -136,7 +136,14 @@
   }
   .orders-fetch-btn:disabled {
     pointer-events: none;
-    opacity: 0.4;
+    cursor: not-allowed;
+    background-color: rgb(21 94 117);
+    border-color: rgb(21 94 117);
+    color: rgb(255 255 255 / 0.92);
+  }
+  html.dark .orders-fetch-btn:disabled {
+    background-color: rgb(12 74 110);
+    border-color: rgb(12 74 110);
   }
   @media (min-width: 640px) {
     .orders-fetch-btn {

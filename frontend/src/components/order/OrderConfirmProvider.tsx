@@ -10,8 +10,11 @@ import {
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { apiClient } from "@/lib/api-client";
+import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { runBreakOrderChunks } from "@/lib/icici-rate-limit-flow";
 import type { OrderConfirmPayload } from "@/lib/order-confirm";
+import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 
 type OrderConfirmContextValue = {
   openOrderConfirm: (payload: OrderConfirmPayload) => void;
@@ -36,6 +39,7 @@ type ModalState =
 export function OrderConfirmProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { secondsRemaining, wait } = useRateLimitCountdown();
   const [state, setState] = useState<ModalState>({ open: false, base: null });
   const [qty, setQty] = useState("");
   const [price, setPrice] = useState("");
@@ -72,29 +76,26 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
     setError(null);
     setSubmitting(true);
     try {
-      const idem =
-        typeof crypto !== "undefined" && crypto.randomUUID
-          ? crypto.randomUUID()
-          : undefined;
-      const res = await apiClient.post<{ redirect: string }>(
-        "/order",
-        {
-          product_type: base.product_type || "Options",
-          stock_code: base.stock_code,
-          exchange_code: base.exchange_code || "NFO",
-          expiry_date: base.expiry_date,
-          right: base.right,
-          strike_price: base.strike_price,
-          quantity: String(qn),
-          price: (price.trim() || "0") as string,
-          action: base.action,
-        },
-        idem ? { headers: { "Idempotency-Key": idem } } : undefined,
-      );
+      const out = await runBreakOrderChunks({
+        product_type: base.product_type || "Options",
+        stock_code: base.stock_code,
+        exchange_code: base.exchange_code || "NFO",
+        expiry_date: base.expiry_date,
+        right: base.right,
+        strike_price: String(base.strike_price),
+        total_qty: String(qn),
+        price: (price.trim() || "0") as string,
+        action: base.action,
+        onRateLimitWait: wait,
+      });
+      if (!out.ok) {
+        setError(out.terminalError ?? "Order failed");
+        return;
+      }
       setState({ open: false, base: null });
       void queryClient.invalidateQueries({ queryKey: ["orders", "list"] });
       void queryClient.invalidateQueries({ queryKey: ["book"] });
-      const dest = res.redirect || "/orders";
+      const dest = out.redirect || "/orders";
       router.push(dest);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Order failed");
@@ -105,6 +106,9 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
 
   return (
     <OrderConfirmContext.Provider value={value}>
+      {secondsRemaining !== null ? (
+        <RateLimitPauseOverlay secondsRemaining={secondsRemaining} />
+      ) : null}
       {children}
       {base ? (
         <div
@@ -131,7 +135,7 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
               </h2>
               <button
                 type="button"
-                className="rounded-lg p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                className="size-8 shrink-0 rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
                 onClick={close}
                 disabled={submitting}
                 aria-label="Close"
@@ -204,11 +208,16 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
               </button>
               <button
                 type="button"
-                className="app-btn-primary px-3 py-1.5 text-xs font-medium disabled:opacity-60"
+                className="app-btn-primary px-3 py-1.5 text-xs font-medium"
                 onClick={() => void onConfirm()}
                 disabled={submitting}
+                aria-busy={submitting}
               >
-                {submitting ? "Placing…" : "Confirm order"}
+                <AsyncLabelSpan
+                  busy={submitting}
+                  idleLabel="Confirm order"
+                  busyLabel="Placing…"
+                />
               </button>
             </div>
           </div>

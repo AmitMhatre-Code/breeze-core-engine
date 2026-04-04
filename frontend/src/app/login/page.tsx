@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
 
 function LoginContent() {
@@ -144,9 +145,14 @@ function LoginContent() {
           <button
             type="submit"
             disabled={directBusy}
+            aria-busy={directBusy}
             className="app-btn-primary w-full py-2.5 text-sm"
           >
-            {directBusy ? "Signing in…" : "Continue to ICICI login"}
+            <AsyncLabelSpan
+              busy={directBusy}
+              idleLabel="Continue to ICICI login"
+              busyLabel="Signing in…"
+            />
           </button>
         </form>
       </div>

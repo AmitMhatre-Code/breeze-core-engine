@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
 
 type Session = {
@@ -171,9 +172,14 @@ export default function RegisterPage() {
               <button
                 type="submit"
                 disabled={busy}
+                aria-busy={busy}
                 className="app-btn-primary w-full py-2.5"
               >
-                {busy ? "Saving…" : "Complete registration"}
+                <AsyncLabelSpan
+                  busy={busy}
+                  idleLabel="Complete registration"
+                  busyLabel="Saving…"
+                />
               </button>
             </form>
           </>
@@ -230,9 +236,14 @@ export default function RegisterPage() {
               <button
                 type="submit"
                 disabled={busy}
+                aria-busy={busy}
                 className="app-btn-primary w-full py-2.5"
               >
-                {busy ? "Saving…" : "Create account"}
+                <AsyncLabelSpan
+                  busy={busy}
+                  idleLabel="Create account"
+                  busyLabel="Saving…"
+                />
               </button>
             </form>
           </>

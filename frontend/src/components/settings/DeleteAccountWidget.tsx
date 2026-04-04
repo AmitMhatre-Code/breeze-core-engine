@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiClient } from "@/lib/api-client";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 
 type Session = {
   google_authenticated: boolean;
@@ -158,14 +159,19 @@ export function DeleteAccountWidget({
             <button
               type="button"
               disabled={busy}
+              aria-busy={busy}
               onClick={onDeleteGoogle}
               className={
                 variant === "standalone"
-                  ? "mt-6 w-full rounded-md border border-red-800 bg-red-950/40 py-2 text-sm font-medium text-red-200 hover:bg-red-950/60 disabled:opacity-50"
-                  : "mt-4 w-full rounded-lg border border-red-800 bg-red-600 py-2.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50 dark:border-red-700 dark:bg-red-900 dark:hover:bg-red-800"
+                  ? "mt-6 w-full rounded-md border border-red-800 bg-red-950/40 py-2 text-sm font-medium text-red-200 hover:bg-red-950/60 disabled:cursor-not-allowed disabled:border-red-900 disabled:bg-red-900 disabled:text-red-400"
+                  : "mt-4 w-full rounded-lg border border-red-800 bg-red-600 py-2.5 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-800 disabled:text-white dark:border-red-700 dark:bg-red-900 dark:hover:bg-red-800 dark:disabled:bg-red-950"
               }
             >
-              {busy ? "Working…" : "Confirm delete account"}
+              <AsyncLabelSpan
+                busy={busy}
+                idleLabel="Confirm delete account"
+                busyLabel="Working…"
+              />
             </button>
           </div>
         )}
@@ -248,13 +254,18 @@ export function DeleteAccountWidget({
                   <button
                     type="submit"
                     disabled={busy}
+                    aria-busy={busy}
                     className={
                       variant === "standalone"
-                        ? "w-full rounded-md border border-red-800 bg-red-950/40 py-2 text-sm font-medium text-red-200 hover:bg-red-950/60 disabled:opacity-50"
-                        : "w-full rounded-lg border border-red-800 py-2 text-sm font-medium text-red-900 hover:bg-red-100 disabled:opacity-50 dark:border-red-700 dark:text-red-200 dark:hover:bg-red-950/40"
+                        ? "w-full rounded-md border border-red-800 bg-red-950/40 py-2 text-sm font-medium text-red-200 hover:bg-red-950/60 disabled:cursor-not-allowed disabled:border-red-900 disabled:bg-red-900 disabled:text-red-400"
+                        : "w-full rounded-lg border border-red-800 py-2 text-sm font-medium text-red-900 hover:bg-red-100 disabled:cursor-not-allowed disabled:bg-red-50 disabled:text-red-400 dark:border-red-700 dark:text-red-200 dark:hover:bg-red-950/40 dark:disabled:bg-red-950 dark:disabled:text-red-500"
                     }
                   >
-                    {busy ? "Working…" : "Delete direct account"}
+                    <AsyncLabelSpan
+                      busy={busy}
+                      idleLabel="Delete direct account"
+                      busyLabel="Working…"
+                    />
                   </button>
                 </form>
               </>

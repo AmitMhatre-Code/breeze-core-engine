@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiClient } from "@/lib/api-client";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 
 type Session = {
   google_authenticated: boolean;
@@ -113,9 +114,10 @@ export default function RegisterCorrectPage() {
           <button
             type="submit"
             disabled={busy}
+            aria-busy={busy}
             className="app-btn-primary w-full py-2.5"
           >
-            {busy ? "Saving…" : "Save"}
+            <AsyncLabelSpan busy={busy} idleLabel="Save" busyLabel="Saving…" />
           </button>
         </form>
       </div>

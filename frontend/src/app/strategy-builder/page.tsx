@@ -5,12 +5,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { OptionChainTable } from "@/components/order/OptionChainTable";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
+import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { OptionStrategyIcon } from "@/components/strategy-builder/OptionStrategyIcon";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
 import { apiClient } from "@/lib/api-client";
+import { runBreakOrderChunks } from "@/lib/icici-rate-limit-flow";
+import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
 import {
   expiryDisplayToYears,
@@ -34,7 +38,6 @@ import type {
   ChainApiResponse,
   ChainRow,
   ChainSuccess,
-  ExecuteApiResponse,
   MarginApiResponse,
   OptionRight,
   OrderSide,
@@ -109,7 +112,7 @@ function MarginRefreshIconButton({
       disabled={disabled}
       aria-label={label}
       title={titleProp ?? label}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 hover:bg-zinc-200/80 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-zinc-700/80 dark:hover:text-zinc-100"
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 hover:bg-zinc-200/80 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:text-zinc-400 dark:hover:bg-zinc-700/80 dark:hover:text-zinc-100 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
     >
       <svg
         className="h-4 w-4"
@@ -150,8 +153,8 @@ function UncoveredNumberStepper({
   compact?: boolean;
 }) {
   const stepBtn = compact
-    ? "flex h-8 w-8 shrink-0 items-center justify-center border-0 bg-zinc-100 text-base font-light leading-none text-zinc-700 transition hover:bg-zinc-200 active:bg-zinc-300 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 dark:active:bg-zinc-600"
-    : "flex h-11 w-11 shrink-0 items-center justify-center border-0 bg-zinc-100 text-xl font-light leading-none text-zinc-700 transition hover:bg-zinc-200 active:bg-zinc-300 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 dark:active:bg-zinc-600";
+    ? "flex h-8 w-8 shrink-0 items-center justify-center border-0 bg-zinc-100 text-base font-light leading-none text-zinc-700 transition hover:bg-zinc-200 active:bg-zinc-300 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-zinc-100 disabled:active:bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 dark:active:bg-zinc-600 dark:disabled:text-zinc-600 dark:disabled:hover:bg-zinc-800 dark:disabled:active:bg-zinc-800"
+    : "flex h-11 w-11 shrink-0 items-center justify-center border-0 bg-zinc-100 text-xl font-light leading-none text-zinc-700 transition hover:bg-zinc-200 active:bg-zinc-300 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-zinc-100 disabled:active:bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 dark:active:bg-zinc-600 dark:disabled:text-zinc-600 dark:disabled:hover:bg-zinc-800 dark:disabled:active:bg-zinc-800";
 
   const round = compact ? "rounded-lg" : "rounded-md";
   const roundL = compact ? "rounded-none rounded-l-lg" : "rounded-none rounded-l-xl";
@@ -397,7 +400,7 @@ function IvShockSlider({
         </div>
         <button
           type="button"
-          className="shrink-0 rounded-lg border border-zinc-200/90 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 disabled:pointer-events-none disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800"
+          className="shrink-0 rounded-lg border border-zinc-200/90 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
           onClick={() => onChange(0)}
           disabled={value === 0}
         >
@@ -919,6 +922,7 @@ function isCoveredPairInLegs(
 export default function StrategyBuilderPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { secondsRemaining, wait } = useRateLimitCountdown();
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
@@ -1340,27 +1344,26 @@ export default function StrategyBuilderPage() {
 
   const execMut = useMutation({
     mutationFn: async () => {
-      const legsPayload = legs
-        .filter((l) => l.lots > 0)
-        .map((l) => ({
+      const toPlace = legs.filter((l) => l.lots > 0);
+      for (const l of toPlace) {
+        const qty = Math.round(l.lots * lotSize);
+        if (qty <= 0) continue;
+        const out = await runBreakOrderChunks({
+          product_type: "Options",
           stock_code: stockCode,
           exchange_code: segmentExchange,
           expiry_date: expiryDate,
-          product_type: "Options",
           right: l.right,
           strike_price: String(l.strike),
-          quantity: String(Math.round(l.lots * lotSize)),
+          total_qty: String(qty),
           price: String(l.premiumPerUnit ?? 0),
           action: l.side,
-          idempotency_key:
-            typeof crypto !== "undefined" && crypto.randomUUID
-              ? crypto.randomUUID()
-              : undefined,
-        }));
-      return apiClient.post<ExecuteApiResponse>(
-        "/strategy-builder/execute",
-        { legs: legsPayload },
-      );
+          onRateLimitWait: wait,
+        });
+        if (!out.ok) {
+          throw new Error(out.terminalError ?? "Order leg failed");
+        }
+      }
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["book"] });
@@ -1522,6 +1525,9 @@ export default function StrategyBuilderPage() {
 
   return (
     <AppShell contentWidth="wide">
+      {secondsRemaining !== null ? (
+        <RateLimitPauseOverlay secondsRemaining={secondsRemaining} />
+      ) : null}
       <div className="space-y-5">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -1625,7 +1631,7 @@ export default function StrategyBuilderPage() {
                 setLegs([]);
                 setSelectedReadymade("build-your-own");
               }}
-              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden disabled:opacity-100 ${
+              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden ${
                 selectedReadymade === "build-your-own"
                   ? "ring-2 ring-sky-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
                   : ""
@@ -1649,7 +1655,7 @@ export default function StrategyBuilderPage() {
                 setUncoveredScanResult(null);
                 setSelectedReadymade("naked-shorts");
               }}
-              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden disabled:opacity-100 ${
+              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden ${
                 selectedReadymade === "naked-shorts"
                   ? "ring-2 ring-amber-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
                   : ""
@@ -1673,7 +1679,7 @@ export default function StrategyBuilderPage() {
                 setUncoveredScanResult(null);
                 setSelectedReadymade("covered-shorts");
               }}
-              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden disabled:opacity-100 ${
+              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden ${
                 selectedReadymade === "covered-shorts"
                   ? "ring-2 ring-amber-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
                   : ""
@@ -1838,20 +1844,18 @@ export default function StrategyBuilderPage() {
                     scanOtmPutMin > scanOtmPutMax ||
                     uncoveredScanMut.isPending
                   }
-                  className={`${sb.btnPrimary} relative inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                  className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                  aria-busy={uncoveredScanMut.isPending}
                   onClick={() => {
                     setScanError(null);
                     uncoveredScanMut.mutate();
                   }}
                 >
-                  <span className="invisible whitespace-nowrap" aria-hidden>
-                    Fetching...
-                  </span>
-                  <span className="absolute inset-0 flex items-center justify-center whitespace-nowrap">
-                    {uncoveredScanMut.isPending
-                      ? "Fetching..."
-                      : "Fetch Legs"}
-                  </span>
+                  <AsyncLabelSpan
+                    busy={uncoveredScanMut.isPending}
+                    idleLabel="Fetch Legs"
+                    busyLabel="Fetching..."
+                  />
                 </button>
               </div>
             </div>
@@ -2235,6 +2239,7 @@ export default function StrategyBuilderPage() {
                 !stockCode ||
                 !expiryDate
               }
+              aria-busy={execMut.isPending}
               onClick={() => setExecutePreviewOpen(true)}
               className={sb.btnPrimary}
             >
@@ -2486,7 +2491,7 @@ export default function StrategyBuilderPage() {
               </div>
               <button
                 type="button"
-                className="-m-1 shrink-0 rounded-lg p-1.5 text-xl leading-none text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-40 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                className="-m-1 size-9 shrink-0 rounded-lg text-xl leading-none text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
                 onClick={() => {
                   if (!execMut.isPending) setExecutePreviewOpen(false);
                 }}
@@ -2560,9 +2565,14 @@ export default function StrategyBuilderPage() {
                   !legs.length ||
                   legs.some((x) => x.lots <= 0)
                 }
+                aria-busy={execMut.isPending}
                 onClick={() => execMut.mutate()}
               >
-                {execMut.isPending ? "Placing…" : "Confirm"}
+                <AsyncLabelSpan
+                  busy={execMut.isPending}
+                  idleLabel="Confirm"
+                  busyLabel="Placing…"
+                />
               </button>
             </div>
           </div>

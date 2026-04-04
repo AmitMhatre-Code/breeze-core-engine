@@ -201,7 +201,7 @@ export function PortfolioHedgeOrderSheet({
         <div className="mt-4 flex gap-2 border-t border-zinc-200/90 pt-3.5 dark:border-zinc-700/80">
           <button
             type="button"
-            className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-md border border-emerald-600/95 bg-gradient-to-b from-emerald-500 to-emerald-600 px-2 text-xs font-semibold text-white shadow-sm shadow-emerald-900/20 transition hover:from-emerald-400 hover:to-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 disabled:opacity-50 dark:to-emerald-600"
+            className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-md border border-emerald-600/95 bg-gradient-to-b from-emerald-500 to-emerald-600 px-2 text-xs font-semibold text-white shadow-sm shadow-emerald-900/20 transition hover:from-emerald-400 hover:to-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 disabled:cursor-not-allowed disabled:from-emerald-800 disabled:to-emerald-900 dark:to-emerald-600"
             onClick={submitBuy}
           >
             Buy

@@ -24,6 +24,8 @@ from icici_breeze_backend.app.domain.settings_api import (
     AiProviderStateResponse,
     AiProviderTestBody,
     AiProviderUpdateBody,
+    ApiUsagePreferencesResponse,
+    ApiUsagePreferencesUpdateBody,
     ApiUsageStateResponse,
     CredentialsStateResponse,
     CredentialsUpdateBody,
@@ -37,6 +39,10 @@ from icici_breeze_backend.app.domain.settings_api import (
     ScripMasterStateResponse,
 )
 from icici_breeze_backend.app.services.api_usage import get_daily_usage_by_api, get_daily_usage_by_route
+from icici_breeze_backend.app.services.user_rate_limit_prefs import (
+    get_icici_rate_limit_pause_seconds,
+    set_icici_rate_limit_pause_seconds,
+)
 from icici_breeze_backend.app.core.timezone import today_ist_date
 from icici_breeze_backend.app.services.nsccl_baseline import (
     MARGIN_SOURCE_BREEZE,
@@ -299,7 +305,25 @@ async def settings_api_usage_data(
         days=days,
         by_api=get_daily_usage_by_api(ctx.user_id, days=days),
         by_route=get_daily_usage_by_route(ctx.user_id, days=days),
+        rate_limit_pause_seconds=get_icici_rate_limit_pause_seconds(ctx.user_id),
     )
+
+
+@router.get("/api-usage/preferences", response_model=ApiUsagePreferencesResponse)
+async def settings_api_usage_preferences_get(ctx: RequestContext = Depends(get_request_context)):
+    return ApiUsagePreferencesResponse(
+        user_id=ctx.user_id,
+        rate_limit_pause_seconds=get_icici_rate_limit_pause_seconds(ctx.user_id),
+    )
+
+
+@router.post("/api-usage/preferences", response_model=ApiUsagePreferencesResponse)
+async def settings_api_usage_preferences_post(
+    body: ApiUsagePreferencesUpdateBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    v = set_icici_rate_limit_pause_seconds(ctx.user_id, body.rate_limit_pause_seconds)
+    return ApiUsagePreferencesResponse(user_id=ctx.user_id, rate_limit_pause_seconds=v)
 
 
 @router.post("/quantity-limits")

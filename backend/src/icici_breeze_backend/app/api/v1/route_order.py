@@ -5,8 +5,19 @@ import logging
 from icici_breeze_backend.app.services.processor import processor
 import icici_breeze_backend.app.core.config as cfg
 import json
-from icici_breeze_backend.app.auth.context import get_request_context, get_request_context_or_redirect, RequestContext
-from icici_breeze_backend.app.domain.order import OrderFormRequest
+from icici_breeze_backend.app.auth.context import (
+    get_request_context,
+    get_request_context_or_redirect,
+    RequestContext,
+)
+from icici_breeze_backend.app.domain.order import (
+    BreakOrderChunkRequest,
+    BreakOrderFinalizeRequest,
+    OrderFormRequest,
+)
+from icici_breeze_backend.app.services.user_rate_limit_prefs import (
+    get_icici_rate_limit_pause_seconds,
+)
 from icici_breeze_backend.app.domain.responses import IciciApiResponse, OrderDetailResponse
 from icici_breeze_backend.audit.logger import AuditLogger
 from icici_breeze_backend.concurrency.idempotency import idempotency_store, IdempotencyResult
@@ -17,6 +28,51 @@ from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend,
 logger = logging.getLogger(__name__)
 router = APIRouter()
 breeze = processor()
+
+
+def _order_buy_sell_gate_errors(user_id: str) -> list[dict]:
+    """Pre-flight checks for placing orders (matches legacy /order POST gate)."""
+    errors: list[dict] = []
+    customer = breeze.get_customer_details(user_id)
+    if customer is None:
+        errors.append(
+            {
+                "location": "route_order gate get_customer_details",
+                "contents": "get_customer_details() returned None",
+            }
+        )
+    elif customer["Status"] != 200:
+        errors.append(
+            {
+                "location": "route_order gate get_customer_details",
+                "contents": "customer['status'] = "
+                + str(customer["Status"])
+                + " and customer['error'] = "
+                + customer.get("Error", ""),
+            }
+        )
+
+    margin = breeze.get_margin_situation(user_id, target_margin_ute=100)
+    if margin["Status"] != 200:
+        errors.append(
+            {
+                "location": "route_order gate get_margin_situation",
+                "contents": "margin['status'] = "
+                + str(margin["Status"])
+                + " and margin['error'] = "
+                + margin.get("Error", ""),
+            }
+        )
+
+    stock_codes = breeze.fetch_stock_codes()
+    if len(stock_codes) == 0:
+        errors.append(
+            {
+                "location": "route_order gate fetch_stock_codes",
+                "contents": "stock_codes = " + json.dumps(stock_codes),
+            }
+        )
+    return errors
 
 
 @router.get("")
@@ -109,6 +165,59 @@ async def process_post(
                 idempotency_store.store_result(idempotency_key, user_id, "place_order", body, 302)
             return json_redirect(redirect_url)
     raise_route_errors(errors, log_context="route_order.process_post")
+
+
+@router.post("/break-chunk")
+async def post_break_chunk(
+    body: BreakOrderChunkRequest,
+    context: RequestContext = Depends(get_request_context),
+):
+    if not context.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    if body.chunk_index == 0:
+        gate = _order_buy_sell_gate_errors(context.user_id)
+        if gate:
+            raise_route_errors(gate, log_context="route_order.post_break_chunk")
+    pause = get_icici_rate_limit_pause_seconds(context.user_id)
+    out = breeze.break_order_place_chunk(
+        context.user_id,
+        body.stock_code,
+        body.expiry_date,
+        body.product_type,
+        body.right,
+        body.strike_price,
+        body.total_qty,
+        body.price,
+        body.action,
+        body.exchange_code or cfg.NFO,
+        body.chunk_index,
+    )
+    out["rate_limit_pause_seconds"] = pause
+    return JSONResponse(out)
+
+
+@router.post("/break-finalize")
+async def post_break_finalize(
+    body: BreakOrderFinalizeRequest,
+    context: RequestContext = Depends(get_request_context),
+):
+    if not context.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    try:
+        price_f = float(str(body.price).strip() or 0)
+    except (TypeError, ValueError):
+        price_f = 0.0
+    contract_label = (
+        f"{body.stock_code}-{body.expiry_date}-{body.strike_price}-{body.right}"
+    )
+    messages = breeze.break_order_finalize_user_messages(
+        contract_label,
+        price_f,
+        list(body.success_quantities),
+        list(body.danger_lines),
+    )
+    breeze.store_messages(context.user_id, messages)
+    return json_redirect("/book")
 
 
 @router.get("/data", response_model=IciciApiResponse)
