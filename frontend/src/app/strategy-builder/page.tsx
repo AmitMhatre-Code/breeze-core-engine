@@ -2,18 +2,19 @@
 
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { ChunkSizeOrderField } from "@/components/order/ChunkSizeOrderField";
 import { OptionChainTable } from "@/components/order/OptionChainTable";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
+import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionConfirmDialog";
 import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { OptionStrategyIcon } from "@/components/strategy-builder/OptionStrategyIcon";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
 import { apiClient } from "@/lib/api-client";
-import { runBreakOrderChunks } from "@/lib/icici-rate-limit-flow";
+import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
 import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
 import {
@@ -37,7 +38,6 @@ import {
 import type {
   ChainApiResponse,
   ChainRow,
-  ChainSuccess,
   MarginApiResponse,
   OptionRight,
   OrderSide,
@@ -943,9 +943,7 @@ function isCoveredPairInLegs(
 }
 
 export default function StrategyBuilderPage() {
-  const router = useRouter();
-  const queryClient = useQueryClient();
-  const { secondsRemaining, wait } = useRateLimitCountdown();
+  const { secondsRemaining } = useRateLimitCountdown();
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
@@ -977,6 +975,13 @@ export default function StrategyBuilderPage() {
   const selectedReadymadeRef = useRef<ReadymadeSelection | null>(null);
   selectedReadymadeRef.current = selectedReadymade;
   const [segmentExchange, setSegmentExchange] = useState<"NFO" | "BFO">("NFO");
+  const { chunkQty, setChunkQty, defaultsQuery: chunkDefaultsQ, chunkReady } =
+    useBreakChunkQty({
+      stockCode,
+      exchangeCode: segmentExchange,
+      expiryDisplay: expiryDate,
+      enabled: executePreviewOpen,
+    });
   const [strategyMarginValidSig, setStrategyMarginValidSig] = useState<
     string | null
   >(null);
@@ -1112,6 +1117,20 @@ export default function StrategyBuilderPage() {
     const ls = parseNum(row.call?.lot_size) || parseNum(row.put?.lot_size);
     return Number.isFinite(ls) && ls > 0 ? Math.round(ls) : 1;
   }, [chainSuccess]);
+
+  const strategyExecuteLegs = useMemo(
+    () =>
+      legs
+        .filter((l) => l.lots > 0)
+        .map((l) => ({
+          strike: l.strike,
+          right: l.right,
+          side: l.side,
+          quantity: Math.round(l.lots * lotSize),
+          premiumPerUnit: l.premiumPerUnit ?? 0,
+        })),
+    [legs, lotSize],
+  );
 
   const strikes = useMemo(
     () =>
@@ -1364,36 +1383,6 @@ export default function StrategyBuilderPage() {
     if (nakedPrompt) applyTemplateId(nakedPrompt);
     setNakedPrompt(null);
   };
-
-  const execMut = useMutation({
-    mutationFn: async () => {
-      const toPlace = legs.filter((l) => l.lots > 0);
-      for (const l of toPlace) {
-        const qty = Math.round(l.lots * lotSize);
-        if (qty <= 0) continue;
-        const out = await runBreakOrderChunks({
-          product_type: "Options",
-          stock_code: stockCode,
-          exchange_code: segmentExchange,
-          expiry_date: expiryDate,
-          right: l.right,
-          strike_price: String(l.strike),
-          total_qty: String(qty),
-          price: String(l.premiumPerUnit ?? 0),
-          action: l.side,
-          onRateLimitWait: wait,
-        });
-        if (!out.ok) {
-          throw new Error(out.terminalError ?? "Order leg failed");
-        }
-      }
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["book"] });
-      setExecutePreviewOpen(false);
-      router.push("/orders");
-    },
-  });
 
   const addUncoveredLeg = useCallback(
     (opt: Record<string, unknown>) => {
@@ -2258,24 +2247,15 @@ export default function StrategyBuilderPage() {
               disabled={
                 !legs.length ||
                 legs.some((x) => x.lots <= 0) ||
-                execMut.isPending ||
                 !stockCode ||
                 !expiryDate
               }
-              aria-busy={execMut.isPending}
               onClick={() => setExecutePreviewOpen(true)}
               className={sb.btnPrimary}
             >
               Execute Legs
             </button>
           </div>
-          {execMut.isError ? (
-            <div className="app-alert-error text-xs">
-              {execMut.error instanceof Error
-                ? execMut.error.message
-                : "Execute failed"}
-            </div>
-          ) : null}
         </section>
 
         <section className={`${sb.section} space-y-5`}>
@@ -2478,129 +2458,20 @@ export default function StrategyBuilderPage() {
         </section>
       </div>
 
-      {executePreviewOpen ? (
-        <div
-          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4"
-          role="presentation"
-          onClick={() => {
-            if (!execMut.isPending) setExecutePreviewOpen(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape" && !execMut.isPending) {
-              setExecutePreviewOpen(false);
-            }
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="execute-preview-title"
-            className={`${sb.modalPanel} !w-max max-w-[min(96vw,42rem)] mx-auto`}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <h3
-                  id="execute-preview-title"
-                  className="text-base font-semibold text-zinc-900 dark:text-zinc-50"
-                >
-                  Confirm execution
-                </h3>
-                <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-                  The following legs will be sent as orders. Total margin is
-                  computed for the full strategy (single SPAN calculation).
-                </p>
-              </div>
-              <button
-                type="button"
-                className="-m-1 size-9 shrink-0 rounded-lg text-xl leading-none text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
-                onClick={() => {
-                  if (!execMut.isPending) setExecutePreviewOpen(false);
-                }}
-                disabled={execMut.isPending}
-                aria-label="Close"
-              >
-                ×
-              </button>
-            </div>
-            <ul className="max-h-64 divide-y divide-zinc-200/90 overflow-x-auto overflow-y-auto rounded-md border border-zinc-200/80 dark:divide-zinc-700/90 dark:border-zinc-700/80">
-              {legs.map((l) => {
-                const q =
-                  l.lots > 0 ? Math.round(l.lots * lotSize) : 0;
-                const linePrem = (l.premiumPerUnit ?? 0) * q;
-                const label = formatOptionSymbolLabel(
-                  stockCode,
-                  expiryDate,
-                  l.strike,
-                  l.right,
-                );
-                return (
-                  <li key={l.id} className="px-3 py-2.5">
-                    <div className="flex w-max min-w-full flex-nowrap items-center gap-3 text-sm font-normal tabular-nums text-zinc-800 dark:text-zinc-200">
-                      <span className="shrink-0 whitespace-nowrap" title={label}>
-                        {label}
-                      </span>
-                      <LegPositionChip side={l.side} />
-                      <span className="shrink-0 whitespace-nowrap">
-                        Qty{" "}
-                        {l.lots <= 0
-                          ? "—"
-                          : q.toLocaleString("en-IN")}
-                      </span>
-                      <span className="shrink-0 whitespace-nowrap">
-                        @ ₹
-                        {(l.premiumPerUnit ?? 0).toLocaleString("en-IN", {
-                          maximumFractionDigits: 2,
-                        })}
-                      </span>
-                      <span className="shrink-0 whitespace-nowrap">
-                        Premium {formatIndianMoneyCompact(linePrem)}
-                      </span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="mt-3 rounded-lg bg-zinc-100/90 px-3 py-2 text-sm dark:bg-zinc-800/80">
-              <span className="font-semibold text-zinc-800 dark:text-zinc-100">
-                Total margin required (SPAN):{" "}
-              </span>
-              <span className="tabular-nums text-zinc-900 dark:text-zinc-50">
-                {marginQ.isFetching ? (
-                  "…"
-                ) : spanMargin != null && Number.isFinite(spanMargin) ? (
-                  formatIndianMoneyCompact(spanMargin)
-                ) : (
-                  marginState?.Error ??
-                  (marginQ.isError ? "Margin request failed" : "—")
-                )}
-              </span>
-            </div>
-            <div className="flex justify-end pt-1">
-              <button
-                type="button"
-                className={`${sb.btnPrimary} min-w-[10rem]`}
-                disabled={
-                  execMut.isPending ||
-                  !stockCode ||
-                  !expiryDate ||
-                  !legs.length ||
-                  legs.some((x) => x.lots <= 0)
-                }
-                aria-busy={execMut.isPending}
-                onClick={() => execMut.mutate()}
-              >
-                <AsyncLabelSpan
-                  busy={execMut.isPending}
-                  idleLabel="Confirm"
-                  busyLabel="Placing…"
-                />
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <OrderExecutionConfirmDialog
+        open={executePreviewOpen}
+        onClose={() => setExecutePreviewOpen(false)}
+        stockCode={stockCode}
+        exchangeCode={segmentExchange}
+        expiryDisplay={expiryDate}
+        legs={strategyExecuteLegs}
+        controlledChunk={{
+          chunkQty,
+          onChunkQtyChange: setChunkQty,
+          defaultsQuery: chunkDefaultsQ,
+          chunkReady,
+        }}
+      />
 
       {nakedPrompt ? (
         <div

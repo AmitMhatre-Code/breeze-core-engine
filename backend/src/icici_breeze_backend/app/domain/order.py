@@ -88,6 +88,18 @@ class BreakOrderChunkRequest(BaseModel):
     price: str = "0"
     action: Literal["Buy", "Sell"]
     chunk_index: int = Field(ge=0)
+    chunk_qty: Optional[str] = Field(
+        default=None,
+        description="Optional max units per child order; lot-rounded, capped at exchange freeze.",
+    )
+
+
+class BreakChunkDefaultsRequest(BaseModel):
+    """Resolve default chunk size (freeze-aligned) and lot size for confirm UIs."""
+
+    stock_code: str
+    exchange_code: str = "NFO"
+    expiry_date: str
 
 
 class BreakOrderFinalizeRequest(BaseModel):
@@ -160,3 +172,106 @@ class OrderFormRequest(BaseModel):
             expiry_date=self.expiry_date or "",
             quantity=self.quantity or "0",
         )
+
+
+class ParkedOrderItem(BaseModel):
+    """One leg stored as a parked order (create / replace)."""
+
+    product_type: str = "Options"
+    stock_code: str
+    exchange_code: str = "NFO"
+    expiry_date: str
+    right: str
+    strike_price: str
+    quantity: str
+    price: str = "0"
+    action: Literal["Buy", "Sell"]
+    chunk_qty: Optional[str] = Field(
+        default=None,
+        description="Optional max units per child order when executing later.",
+    )
+    batch_group_id: Optional[str] = Field(
+        default=None,
+        description="Correlate multiple legs parked together (e.g. strategy preview).",
+    )
+
+    @field_validator("quantity")
+    @classmethod
+    def quantity_positive(cls, v: str) -> str:
+        if v and int(v) <= 0:
+            raise ValueError("quantity must be positive")
+        return v
+
+
+class ParkedOrderCreateRequest(BaseModel):
+    """Create one or more parked rows; optionally remove existing rows first (re-park)."""
+
+    items: List[ParkedOrderItem]
+    replace_ids: Optional[List[str]] = None
+
+    @model_validator(mode="after")
+    def require_items(self):
+        if not self.items:
+            raise ValueError("items must not be empty")
+        return self
+
+
+class ParkedOrderPatchRequest(BaseModel):
+    """Partial update for qty / price / chunk on Order Book."""
+
+    quantity: Optional[str] = None
+    price: Optional[str] = None
+    chunk_qty: Optional[str] = None
+
+    @model_validator(mode="after")
+    def require_some_field(self):
+        if not self.model_fields_set:
+            raise ValueError("at least one of quantity, price, chunk_qty is required")
+        return self
+
+    @field_validator("quantity")
+    @classmethod
+    def quantity_if_set(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return v
+        if int(v) <= 0:
+            raise ValueError("quantity must be positive")
+        return v
+
+
+class ParkedOrderIdsRequest(BaseModel):
+    """Bulk delete parked ids (same user scope enforced in route)."""
+
+    ids: List[str] = Field(default_factory=list)
+
+    @field_validator("ids", mode="before")
+    @classmethod
+    def coerce_ids(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v] if v else []
+        return list(v) if v else []
+
+
+class ParkedOrderListItem(BaseModel):
+    """Parked order as returned to clients (no user_id)."""
+
+    id: str
+    product_type: str
+    stock_code: str
+    exchange_code: str
+    expiry_date: str
+    right: str
+    strike_price: str
+    quantity: str
+    price: str
+    action: Literal["Buy", "Sell"]
+    chunk_qty: Optional[str] = None
+    batch_group_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class ParkedOrderListResponse(BaseModel):
+    orders: List[ParkedOrderListItem]

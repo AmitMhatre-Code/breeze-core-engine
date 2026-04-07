@@ -11,6 +11,8 @@ export type BreakOrderChunkResponse = {
   placed_quantity: number;
   danger_line: string | null;
   rate_limit_pause_seconds: number;
+  default_chunk_qty?: number;
+  effective_chunk_qty?: number;
 };
 
 export type PlaceBreakOrderArgs = {
@@ -24,6 +26,8 @@ export type PlaceBreakOrderArgs = {
   price: string;
   action: "Buy" | "Sell";
   onRateLimitWait: (seconds: number) => Promise<void>;
+  /** Max units per exchange order; server lot-rounds and caps at freeze. Omit for backend default. */
+  chunk_qty?: string;
 };
 
 /**
@@ -47,6 +51,9 @@ export async function runBreakOrderChunks(
     total_qty: args.total_qty,
     price: args.price,
     action: args.action,
+    ...(args.chunk_qty != null && String(args.chunk_qty).trim() !== ""
+      ? { chunk_qty: String(args.chunk_qty).trim() }
+      : {}),
   };
 
   for (;;) {

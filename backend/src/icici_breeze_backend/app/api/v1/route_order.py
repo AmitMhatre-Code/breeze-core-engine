@@ -11,6 +11,7 @@ from icici_breeze_backend.app.auth.context import (
     RequestContext,
 )
 from icici_breeze_backend.app.domain.order import (
+    BreakChunkDefaultsRequest,
     BreakOrderChunkRequest,
     BreakOrderFinalizeRequest,
     OrderFormRequest,
@@ -167,6 +168,20 @@ async def process_post(
     raise_route_errors(errors, log_context="route_order.process_post")
 
 
+@router.post("/break-chunk-defaults")
+async def post_break_chunk_defaults(
+    body: BreakChunkDefaultsRequest,
+    _context: RequestContext = Depends(get_request_context),
+):
+    """Return freeze-aligned default chunk size and lot size (static limits + lot table)."""
+    out = breeze.break_order_chunk_defaults(
+        body.stock_code,
+        body.expiry_date,
+        body.exchange_code or cfg.NFO,
+    )
+    return JSONResponse(out)
+
+
 @router.post("/break-chunk")
 async def post_break_chunk(
     body: BreakOrderChunkRequest,
@@ -191,6 +206,7 @@ async def post_break_chunk(
         body.action,
         body.exchange_code or cfg.NFO,
         body.chunk_index,
+        body.chunk_qty,
     )
     out["rate_limit_pause_seconds"] = pause
     return JSONResponse(out)

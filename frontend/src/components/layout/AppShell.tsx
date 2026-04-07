@@ -3,9 +3,10 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ReactNode, useMemo } from "react";
+import { ReactNode, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import breezeMark from "@/app/android-chrome-192x192.png";
+import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -35,6 +36,7 @@ export function AppShell({
   contentWidth?: "default" | "wide";
 }) {
   const pathname = usePathname();
+  const [changelogOpen, setChangelogOpen] = useState(false);
 
   const homeQ = useQuery({
     queryKey: ["home", "data"],
@@ -174,6 +176,14 @@ export function AppShell({
               title="Session active"
               aria-hidden
             />
+            <button
+              type="button"
+              onClick={() => setChangelogOpen(true)}
+              className="shrink-0 truncate rounded-sm px-1.5 py-1 text-xs font-medium text-sky-700 underline-offset-2 hover:underline sm:px-2 dark:text-sky-400"
+              aria-haspopup="dialog"
+            >
+              What&apos;s new
+            </button>
             <ThemeToggle />
             <Link
               href="/logout"
@@ -185,6 +195,10 @@ export function AppShell({
             </Link>
           </div>
         </header>
+        <ChangelogDialog
+          open={changelogOpen}
+          onClose={() => setChangelogOpen(false)}
+        />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-50 px-4 py-4 dark:bg-zinc-950 md:px-5 md:py-5">
           <div
             className={[

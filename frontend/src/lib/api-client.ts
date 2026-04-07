@@ -111,6 +111,17 @@ export const apiClient = {
       signal: opts?.signal,
       headers: opts?.headers,
     }),
+  patch: <TResponse, TBody = unknown>(
+    path: string,
+    body: TBody,
+    opts?: { signal?: AbortSignal; headers?: Record<string, string> },
+  ) =>
+    request<TResponse, TBody>(path, {
+      method: "PATCH",
+      body,
+      signal: opts?.signal,
+      headers: opts?.headers,
+    }),
   delete: <TResponse>(path: string, signal?: AbortSignal) =>
     request<TResponse>(path, { method: "DELETE", signal }),
   postForm: async <TResponse>(

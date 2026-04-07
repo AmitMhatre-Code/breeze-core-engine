@@ -3,7 +3,6 @@
 import { Fragment, useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { ExecutionPreviewModal } from "@/components/order/ExecutionPreviewModal";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
 import { PortfolioGroupPayoffPanel } from "@/components/portfolio/PortfolioGroupPayoffPanel";
 import { PortfolioHedgeOrderSheet } from "@/components/portfolio/PortfolioHedgeOrderSheet";
@@ -469,6 +468,7 @@ export function OpenPositionsTable({
   positions,
   emptyMessage = "No positions to display",
 }: OpenPositionsTableProps) {
+  const { openExecutionConfirm } = useOrderConfirm();
   const groups = useMemo(
     () => buildPortfolioPositionGroups(positions),
     [positions],
@@ -502,14 +502,6 @@ export function OpenPositionsTable({
     row: PortfolioPositionRecord;
     opt: Record<string, unknown>;
   } | null>(null);
-  const [executePreview, setExecutePreview] = useState<{
-    row: PortfolioPositionRecord;
-    strike: number;
-    right: OptionRight;
-    quantity: number;
-    price: string;
-  } | null>(null);
-
   const onToggleHedges = useCallback((key: string) => {
     setHedgeExpandedKey((prev) => (prev === key ? null : key));
     setHedgeSheet(null);
@@ -525,33 +517,27 @@ export function OpenPositionsTable({
       price: string;
     }) => {
       if (!hedgeSheet) return;
-      setExecutePreview({
-        row: hedgeSheet.row,
-        strike: args.strike,
-        right: args.right,
-        quantity: args.quantity,
-        price: args.price,
+      const row = hedgeSheet.row;
+      const prem = parseFloat(args.price.replace(/,/g, ""));
+      openExecutionConfirm({
+        stockCode: String(row.stock_code ?? "").trim(),
+        exchangeCode:
+          String(row.exchange_code ?? "NFO").trim() || "NFO",
+        expiryDisplay: String(row.expiry_date ?? "").trim(),
+        legs: [
+          {
+            strike: args.strike,
+            right: args.right,
+            side: "Buy",
+            quantity: args.quantity,
+            premiumPerUnit: Number.isFinite(prem) ? prem : 0,
+          },
+        ],
       });
       setHedgeSheet(null);
     },
-    [hedgeSheet],
+    [hedgeSheet, openExecutionConfirm],
   );
-
-  const closeExecutePreview = useCallback(() => setExecutePreview(null), []);
-
-  const executionLegs = useMemo(() => {
-    if (!executePreview) return [];
-    const prem = parseFloat(executePreview.price.replace(/,/g, ""));
-    return [
-      {
-        strike: executePreview.strike,
-        right: executePreview.right,
-        side: "Buy" as const,
-        quantity: executePreview.quantity,
-        premiumPerUnit: Number.isFinite(prem) ? prem : 0,
-      },
-    ];
-  }, [executePreview]);
 
   return (
     <>
@@ -961,19 +947,6 @@ export function OpenPositionsTable({
         />
       ) : null}
 
-      {executePreview ? (
-        <ExecutionPreviewModal
-          open
-          onClose={closeExecutePreview}
-          stockCode={String(executePreview.row.stock_code ?? "").trim()}
-          exchangeCode={
-            String(executePreview.row.exchange_code ?? "NFO").trim() ||
-            "NFO"
-          }
-          expiryDisplay={String(executePreview.row.expiry_date ?? "").trim()}
-          legs={executionLegs}
-        />
-      ) : null}
     </>
   );
 }

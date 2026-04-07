@@ -16,6 +16,10 @@ from icici_breeze_backend.app.domain.order import (
     BookActionRequest,
     BookCancelCommitRequest,
     BookCancelOneRequest,
+    ParkedOrderCreateRequest,
+    ParkedOrderIdsRequest,
+    ParkedOrderListResponse,
+    ParkedOrderPatchRequest,
 )
 from icici_breeze_backend.app.services.user_rate_limit_prefs import (
     get_icici_rate_limit_pause_seconds,
@@ -188,3 +192,72 @@ async def post_cancel_commit(
     )
     breeze.store_messages(context.user_id, messages)
     return json_redirect("/orders")
+
+
+@router.get("/parked-orders", response_model=ParkedOrderListResponse)
+async def list_parked_orders(
+    context: RequestContext = Depends(get_request_context),
+):
+    """User-scoped parked (draft) orders for Order Book."""
+    rows = breeze.list_parked_orders(context.user_id)
+    return ParkedOrderListResponse(orders=rows)
+
+
+@router.post("/parked-orders", response_model=ParkedOrderListResponse)
+async def create_parked_orders(
+    body: ParkedOrderCreateRequest,
+    context: RequestContext = Depends(get_request_context),
+):
+    breeze.create_parked_orders(
+        context.user_id,
+        body.items,
+        body.replace_ids,
+    )
+    return ParkedOrderListResponse(
+        orders=breeze.list_parked_orders(context.user_id)
+    )
+
+
+@router.patch("/parked-orders/{order_id}")
+async def patch_parked_order(
+    order_id: str,
+    body: ParkedOrderPatchRequest,
+    context: RequestContext = Depends(get_request_context),
+):
+    patch = body.model_dump(exclude_unset=True)
+    kw: dict = {}
+    if "quantity" in patch and patch["quantity"] is not None:
+        kw["quantity"] = patch["quantity"]
+    if "price" in patch and patch["price"] is not None:
+        kw["price"] = patch["price"]
+    if "chunk_qty" in patch:
+        v = patch["chunk_qty"]
+        kw["chunk_qty"] = "" if v is None else str(v)
+    row = breeze.update_parked_order(
+        context.user_id,
+        order_id.strip(),
+        **kw,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Parked order not found or not owned")
+    return row
+
+
+@router.delete("/parked-orders/{order_id}")
+async def delete_parked_order_route(
+    order_id: str,
+    context: RequestContext = Depends(get_request_context),
+):
+    ok = breeze.delete_parked_order(context.user_id, order_id.strip())
+    if not ok:
+        raise HTTPException(status_code=404, detail="Parked order not found or not owned")
+    return JSONResponse({"ok": True})
+
+
+@router.post("/parked-orders/delete-many")
+async def delete_parked_orders_many(
+    body: ParkedOrderIdsRequest,
+    context: RequestContext = Depends(get_request_context),
+):
+    n = breeze.delete_parked_orders(context.user_id, body.ids)
+    return JSONResponse({"deleted": n})

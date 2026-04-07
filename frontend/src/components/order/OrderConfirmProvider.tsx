@@ -8,16 +8,35 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
 import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
-import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
-import { runBreakOrderChunks } from "@/lib/icici-rate-limit-flow";
+import {
+  OrderExecutionConfirmDialog,
+  type ExecutionPreviewLeg,
+} from "@/components/order/OrderExecutionConfirmDialog";
 import type { OrderConfirmPayload } from "@/lib/order-confirm";
 import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
+import type { OptionRight } from "@/lib/strategy-builder/types";
+
+export type OpenOrderConfirmOptions = {
+  /** When executing from parked rows, remove them after successful place */
+  sourceParkedIds?: string[];
+};
+
+export type OpenExecutionConfirmArgs = {
+  stockCode: string;
+  exchangeCode: string;
+  expiryDisplay: string;
+  legs: ExecutionPreviewLeg[];
+  sourceParkedIds?: string[];
+  productType?: string;
+};
 
 type OrderConfirmContextValue = {
-  openOrderConfirm: (payload: OrderConfirmPayload) => void;
+  openOrderConfirm: (
+    payload: OrderConfirmPayload,
+    opts?: OpenOrderConfirmOptions,
+  ) => void;
+  openExecutionConfirm: (args: OpenExecutionConfirmArgs) => void;
 };
 
 const OrderConfirmContext = createContext<OrderConfirmContextValue | null>(
@@ -32,77 +51,83 @@ export function useOrderConfirm(): OrderConfirmContextValue {
   return ctx;
 }
 
-type ModalState =
-  | { open: false; base: null }
-  | { open: true; base: OrderConfirmPayload };
+type ConfirmModalState =
+  | { open: false }
+  | {
+      open: true;
+      mode: "single";
+      base: OrderConfirmPayload;
+      sourceParkedIds: string[];
+    }
+  | {
+      open: true;
+      mode: "multi";
+      stockCode: string;
+      exchangeCode: string;
+      expiryDisplay: string;
+      legs: ExecutionPreviewLeg[];
+      sourceParkedIds: string[];
+      productType: string;
+    };
+
+function orderPayloadToLeg(base: OrderConfirmPayload): ExecutionPreviewLeg {
+  const strike = parseFloat(String(base.strike_price).replace(/,/g, ""));
+  const q = parseInt(String(base.quantity).replace(/,/g, ""), 10);
+  const prem = parseFloat(String(base.price).replace(/,/g, ""));
+  const r = base.right.trim();
+  const right: OptionRight =
+    r.toLowerCase().startsWith("p") || r.toUpperCase() === "PE"
+      ? "Put"
+      : "Call";
+  return {
+    strike: Number.isFinite(strike) ? Math.round(strike) : 0,
+    right,
+    side: base.action,
+    quantity: Number.isFinite(q) && q > 0 ? q : 0,
+    premiumPerUnit: Number.isFinite(prem) && prem >= 0 ? prem : 0,
+  };
+}
 
 export function OrderConfirmProvider({ children }: { children: ReactNode }) {
-  const router = useRouter();
-  const queryClient = useQueryClient();
-  const { secondsRemaining, wait } = useRateLimitCountdown();
-  const [state, setState] = useState<ModalState>({ open: false, base: null });
-  const [qty, setQty] = useState("");
-  const [price, setPrice] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const openOrderConfirm = useCallback((payload: OrderConfirmPayload) => {
-    setError(null);
-    setQty(payload.quantity ?? "");
-    setPrice(payload.price ?? "0");
-    setState({ open: true, base: payload });
-  }, []);
+  const { secondsRemaining } = useRateLimitCountdown();
+  const [modal, setModal] = useState<ConfirmModalState>({ open: false });
 
   const close = useCallback(() => {
-    if (submitting) return;
-    setState({ open: false, base: null });
-    setError(null);
-  }, [submitting]);
+    setModal({ open: false });
+  }, []);
 
-  const value = useMemo(
-    () => ({ openOrderConfirm }),
-    [openOrderConfirm],
+  const openOrderConfirm = useCallback(
+    (payload: OrderConfirmPayload, opts?: OpenOrderConfirmOptions) => {
+      setModal({
+        open: true,
+        mode: "single",
+        base: payload,
+        sourceParkedIds: [...(opts?.sourceParkedIds ?? [])],
+      });
+    },
+    [],
   );
 
-  const base = state.open ? state.base : null;
-
-  async function onConfirm() {
-    if (!base) return;
-    const qn = parseInt(qty.trim(), 10);
-    if (!Number.isFinite(qn) || qn <= 0) {
-      setError("Enter a valid quantity (positive integer).");
-      return;
-    }
-    setError(null);
-    setSubmitting(true);
-    try {
-      const out = await runBreakOrderChunks({
-        product_type: base.product_type || "Options",
-        stock_code: base.stock_code,
-        exchange_code: base.exchange_code || "NFO",
-        expiry_date: base.expiry_date,
-        right: base.right,
-        strike_price: String(base.strike_price),
-        total_qty: String(qn),
-        price: (price.trim() || "0") as string,
-        action: base.action,
-        onRateLimitWait: wait,
+  const openExecutionConfirm = useCallback(
+    (args: OpenExecutionConfirmArgs) => {
+      setModal({
+        open: true,
+        mode: "multi",
+        stockCode: args.stockCode,
+        exchangeCode: args.exchangeCode,
+        expiryDisplay: args.expiryDisplay,
+        legs: args.legs,
+        sourceParkedIds: [...(args.sourceParkedIds ?? [])],
+        productType: args.productType ?? "Options",
       });
-      if (!out.ok) {
-        setError(out.terminalError ?? "Order failed");
-        return;
-      }
-      setState({ open: false, base: null });
-      void queryClient.invalidateQueries({ queryKey: ["orders", "list"] });
-      void queryClient.invalidateQueries({ queryKey: ["book"] });
-      const dest = out.redirect || "/orders";
-      router.push(dest);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Order failed");
-    } finally {
-      setSubmitting(false);
-    }
-  }
+    },
+    [],
+  );
+
+  const value = useMemo(
+    () => ({ openOrderConfirm, openExecutionConfirm }),
+    [openOrderConfirm, openExecutionConfirm],
+  );
 
   return (
     <OrderConfirmContext.Provider value={value}>
@@ -110,118 +135,28 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
         <RateLimitPauseOverlay secondsRemaining={secondsRemaining} />
       ) : null}
       {children}
-      {base ? (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4 dark:bg-black/60"
-          role="presentation"
-          onClick={close}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") close();
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="order-confirm-title"
-            className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg border border-zinc-200 bg-white p-5 shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <h2
-                id="order-confirm-title"
-                className="text-base font-semibold text-zinc-900 dark:text-zinc-100"
-              >
-                Confirm order
-              </h2>
-              <button
-                type="button"
-                className="size-8 shrink-0 rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
-                onClick={close}
-                disabled={submitting}
-                aria-label="Close"
-              >
-                ×
-              </button>
-            </div>
-            <p className="mt-3 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
-              <span
-                className={
-                  base.action === "Sell"
-                    ? "mr-1 inline-block rounded px-1.5 py-0.5 text-xs font-semibold text-white bg-red-600"
-                    : "mr-1 inline-block rounded px-1.5 py-0.5 text-xs font-semibold text-white bg-emerald-600"
-                }
-              >
-                {base.action}
-              </span>
-              {base.stock_code} {base.expiry_date} {base.right}{" "}
-              {base.strike_price}
-            </p>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div>
-                <label
-                  htmlFor="order-confirm-qty"
-                  className="block text-xs font-medium text-zinc-500 dark:text-zinc-400"
-                >
-                  Quantity
-                </label>
-                <input
-                  id="order-confirm-qty"
-                  type="number"
-                  min={1}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                  value={qty}
-                  onChange={(e) => setQty(e.target.value)}
-                  disabled={submitting}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="order-confirm-price"
-                  className="block text-xs font-medium text-zinc-500 dark:text-zinc-400"
-                >
-                  Price (₹)
-                </label>
-                <input
-                  id="order-confirm-price"
-                  type="number"
-                  step={0.05}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  disabled={submitting}
-                />
-              </div>
-            </div>
-            {error ? (
-              <p className="mt-3 text-xs text-red-600 dark:text-red-400">
-                {error}
-              </p>
-            ) : null}
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                className="app-btn-secondary"
-                onClick={close}
-                disabled={submitting}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="app-btn-primary px-3 py-1.5 text-xs font-medium"
-                onClick={() => void onConfirm()}
-                disabled={submitting}
-                aria-busy={submitting}
-              >
-                <AsyncLabelSpan
-                  busy={submitting}
-                  idleLabel="Confirm order"
-                  busyLabel="Placing…"
-                />
-              </button>
-            </div>
-          </div>
-        </div>
+      {modal.open && modal.mode === "single" ? (
+        <OrderExecutionConfirmDialog
+          open
+          onClose={close}
+          stockCode={modal.base.stock_code}
+          exchangeCode={modal.base.exchange_code || "NFO"}
+          expiryDisplay={modal.base.expiry_date}
+          legs={[orderPayloadToLeg(modal.base)]}
+          sourceParkedIds={modal.sourceParkedIds}
+          productType={modal.base.product_type || "Options"}
+        />
+      ) : modal.open && modal.mode === "multi" ? (
+        <OrderExecutionConfirmDialog
+          open
+          onClose={close}
+          stockCode={modal.stockCode}
+          exchangeCode={modal.exchangeCode}
+          expiryDisplay={modal.expiryDisplay}
+          legs={modal.legs}
+          sourceParkedIds={modal.sourceParkedIds}
+          productType={modal.productType}
+        />
       ) : null}
     </OrderConfirmContext.Provider>
   );

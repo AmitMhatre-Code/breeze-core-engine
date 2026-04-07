@@ -19,6 +19,8 @@ import re
 from markupsafe import Markup
 
 import logging
+from icici_breeze_backend.app.repositories import parked_orders as parked_orders_repo
+from icici_breeze_backend.app.domain.order import ParkedOrderItem, ParkedOrderListItem
 
 # Import ICICI client for real-time portfolio/orders fetch (Phase 5 US3)
 from icici_breeze_backend.core.icici_client import icici_client  # tests patch app.services.processor.icici_client
@@ -1194,6 +1196,40 @@ class processor():
             success_idx, failures, list(orders), cancel_details
         )
 
+    def list_parked_orders(self, user_id: str) -> list[ParkedOrderListItem]:
+        return parked_orders_repo.list_parked_orders(user_id)
+
+    def create_parked_orders(
+        self,
+        user_id: str,
+        items: list[ParkedOrderItem],
+        replace_ids: list[str] | None = None,
+    ) -> list[ParkedOrderListItem]:
+        return parked_orders_repo.create_parked_orders(user_id, items, replace_ids)
+
+    def update_parked_order(
+        self,
+        user_id: str,
+        order_id: str,
+        *,
+        quantity: str | None = None,
+        price: str | None = None,
+        chunk_qty: str | None = None,
+    ) -> ParkedOrderListItem | None:
+        return parked_orders_repo.update_parked_order(
+            user_id,
+            order_id,
+            quantity=quantity,
+            price=price,
+            chunk_qty=chunk_qty,
+        )
+
+    def delete_parked_orders(self, user_id: str, ids: list[str]) -> int:
+        return parked_orders_repo.delete_parked_orders(user_id, ids)
+
+    def delete_parked_order(self, user_id: str, order_id: str) -> bool:
+        return parked_orders_repo.delete_parked_order(user_id, order_id)
+
     def get_positions(self, user_id):
         breeze = self.get_session_breeze(user_id)
         if breeze is None:
@@ -1792,6 +1828,43 @@ class processor():
             )
         return messages
 
+    def break_order_chunk_defaults(
+        self, stock_code: str, expiry_date: str, exchange_code: str
+    ) -> dict:
+        """Lot size and freeze-aligned max units per order (for confirm UIs)."""
+        sym = str(stock_code or "").strip()
+        exp = str(expiry_date or "").strip()
+        ex = str(exchange_code or cfg.NFO).strip() or cfg.NFO
+        if not sym or not exp:
+            return {
+                "ok": False,
+                "error": "stock_code and expiry_date are required.",
+            }
+        qty_limits = self.fetch_qty_limits(sym, exchange_code=ex)
+        if qty_limits is None:
+            return {
+                "ok": False,
+                "error": (
+                    "No entries for stock code "
+                    + sym
+                    + " in the Options Quantity Limits file"
+                ),
+            }
+        lot_size = self.fetch_lot_size(sym, exp, exchange_code=ex)
+        try:
+            ls = int(lot_size)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Could not resolve lot size for this contract."}
+        if ls <= 0:
+            return {"ok": False, "error": "Invalid lot size for this contract."}
+        freeze_aligned = (max(1, int(qty_limits)) // ls) * ls
+        return {
+            "ok": True,
+            "lot_size": ls,
+            "default_chunk_qty": int(freeze_aligned),
+            "max_chunk_qty": int(freeze_aligned),
+        }
+
     def break_order_place_chunk(
         self,
         user_id,
@@ -1805,6 +1878,7 @@ class processor():
         action,
         exchange_code: str,
         chunk_index: int,
+        chunk_qty: str | None = None,
     ) -> dict:
         """Place a single slice of a split order for client-driven pacing on 429."""
         contract_label = f"{stock_code}-{expiry_date}-{strike_price}-{right}"
@@ -1845,7 +1919,27 @@ class processor():
             )
 
         lot_size = self.fetch_lot_size(stock_code, expiry_date, exchange_code=exchange_code)
-        qty_per_order = (max(1, int(qty_limits)) // lot_size) * lot_size
+        default_per = (max(1, int(qty_limits)) // lot_size) * lot_size
+        qty_per_order = default_per
+
+        raw_chunk = str(chunk_qty).strip() if chunk_qty is not None else ""
+        if raw_chunk:
+            try:
+                want = int(raw_chunk)
+            except (TypeError, ValueError):
+                return _terminal("Invalid chunk quantity.")
+            if want <= 0:
+                return _terminal("Chunk quantity must be a positive integer.")
+            qty_per_order = (want // lot_size) * lot_size
+            if qty_per_order < lot_size:
+                qty_per_order = lot_size
+            if qty_per_order > default_per:
+                return _terminal(
+                    "Chunk size cannot exceed "
+                    + _format_indian_integer_digits(int(default_per))
+                    + " (exchange freeze for this contract)."
+                )
+
         iterations = int(total_i / qty_per_order)
         remainder = int(total_i) % int(qty_per_order)
         total_chunks = iterations + (1 if remainder > 0 else 0)
@@ -1894,6 +1988,8 @@ class processor():
             "success": ok,
             "placed_quantity": int(qty_this) if ok else 0,
             "danger_line": danger_line,
+            "default_chunk_qty": int(default_per),
+            "effective_chunk_qty": int(qty_per_order),
         }
 
     def break_order(self,user_id,stock_code,expiry_date,product_type,right,strike_price,total_qty,price,action, exchange_code: str = cfg.NFO):

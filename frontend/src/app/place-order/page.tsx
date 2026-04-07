@@ -1,15 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import {
+  startTransition,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
-import { ExecutionPreviewModal } from "@/components/order/ExecutionPreviewModal";
+import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { StrikeSelectPill } from "@/components/strategy-builder/StrikeSelectPill";
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import { consumePlaceOrderClonePayload } from "@/lib/place-order-clone";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   ChainApiResponse,
@@ -69,7 +76,10 @@ function formatRatio(raw: unknown): string {
 }
 
 export default function PlaceOrderPage() {
+  const { openExecutionConfirm } = useOrderConfirm();
   const queryClient = useQueryClient();
+  const cloneConsumedRef = useRef(false);
+  const cloneAutoFetchDoneRef = useRef(false);
   const [segment, setSegment] = useState<Segment>("NFO");
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
@@ -79,8 +89,26 @@ export default function PlaceOrderPage() {
   const [scripDetails, setScripDetails] = useState<ScripDetailsState | null>(null);
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [previewSide, setPreviewSide] = useState<OrderSide>("Buy");
+  /** When set, the opposite side button is disabled (order book clone). */
+  const [lockedOrderSide, setLockedOrderSide] = useState<OrderSide | null>(null);
+
+  useEffect(() => {
+    const p = consumePlaceOrderClonePayload();
+    if (!p) return;
+    cloneConsumedRef.current = true;
+    startTransition(() => {
+      setSegment(p.segment);
+      setStockCode(p.stock_code);
+      setExpiryDate(p.expiry_date);
+      setRight(p.right);
+      setStrikeSelection(p.strike_price);
+      setQuantity(p.quantity);
+      setPrice(p.price);
+      setScripDetails(null);
+      setLockedOrderSide(p.action);
+    });
+  }, []);
 
   const uq = useQuery({
     queryKey: ["place-order", "underlyings", segment],
@@ -141,6 +169,7 @@ export default function PlaceOrderPage() {
     setScripDetails(null);
     setQuantity("");
     setPrice("");
+    setLockedOrderSide(null);
   }
 
   const fetchDetailsMut = useMutation({
@@ -291,8 +320,33 @@ export default function PlaceOrderPage() {
   ]);
 
   function openPreview(side: OrderSide) {
+    if (
+      effectiveStrike == null ||
+      !stockCode.trim() ||
+      !expiryDate.trim() ||
+      qtyNum <= 0 ||
+      !Number.isFinite(priceNum) ||
+      priceNum < 0
+    ) {
+      return;
+    }
     setPreviewSide(side);
-    setPreviewOpen(true);
+    const expDisplay =
+      chainSuccess?.expiry_display?.trim() || expiryDate.trim();
+    openExecutionConfirm({
+      stockCode: stockCode.trim(),
+      exchangeCode: segment,
+      expiryDisplay: expDisplay,
+      legs: [
+        {
+          strike: effectiveStrike,
+          right,
+          side,
+          quantity: qtyNum,
+          premiumPerUnit: priceNum,
+        },
+      ],
+    });
   }
 
   const chainError =
@@ -303,6 +357,27 @@ export default function PlaceOrderPage() {
         : null;
 
   const spot = chainSuccess?.spot_price ?? null;
+
+  useEffect(() => {
+    if (!cloneConsumedRef.current || cloneAutoFetchDoneRef.current) return;
+    if (!stockCode.trim() || !expiryDate.trim() || effectiveStrike == null)
+      return;
+    if (fetchDetailsMut.isPending) return;
+    if (!chainSuccess?.chain_rows?.length) return;
+    const row = chainSuccess.chain_rows.find(
+      (r) => Math.round(r.strike_price) === Math.round(effectiveStrike),
+    );
+    if (!row || !pickOptionCell(row, right)) return;
+    cloneAutoFetchDoneRef.current = true;
+    void fetchDetailsMut.mutate();
+  }, [
+    stockCode,
+    expiryDate,
+    effectiveStrike,
+    right,
+    chainSuccess,
+    fetchDetailsMut,
+  ]);
 
   return (
     <AppShell contentWidth="default">
@@ -379,6 +454,7 @@ export default function PlaceOrderPage() {
                   setScripDetails(null);
                   setQuantity("");
                   setPrice("");
+                  setLockedOrderSide(null);
                 }}
               />
             </div>
@@ -399,6 +475,7 @@ export default function PlaceOrderPage() {
                   setScripDetails(null);
                   setQuantity("");
                   setPrice("");
+                  setLockedOrderSide(null);
                 }}
               />
             </div>
@@ -620,7 +697,7 @@ export default function PlaceOrderPage() {
               <button
                 type="button"
                 className="inline-flex w-full items-center justify-center rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-emerald-500 hover:bg-emerald-500 focus:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-emerald-800 disabled:bg-emerald-800 dark:border-emerald-600 dark:bg-emerald-600 dark:hover:border-emerald-500 dark:hover:bg-emerald-500 dark:disabled:border-emerald-900 dark:disabled:bg-emerald-900"
-                disabled={!previewLeg}
+                disabled={!previewLeg || lockedOrderSide === "Sell"}
                 onClick={() => openPreview("Buy")}
               >
                 Buy
@@ -628,7 +705,7 @@ export default function PlaceOrderPage() {
               <button
                 type="button"
                 className={`${sb.btnDanger} w-full px-4 py-2.5 text-sm`}
-                disabled={!previewLeg}
+                disabled={!previewLeg || lockedOrderSide === "Buy"}
                 onClick={() => openPreview("Sell")}
               >
                 Sell
@@ -658,24 +735,6 @@ export default function PlaceOrderPage() {
         </section>
       </div>
 
-      {previewLeg ? (
-        <ExecutionPreviewModal
-          open={previewOpen}
-          onClose={() => setPreviewOpen(false)}
-          stockCode={previewLeg.stockCode}
-          exchangeCode={previewLeg.exchangeCode}
-          expiryDisplay={previewLeg.expiryDisplay}
-          legs={[
-            {
-              strike: previewLeg.strike,
-              right: previewLeg.right,
-              side: previewLeg.side,
-              quantity: previewLeg.quantity,
-              premiumPerUnit: previewLeg.premiumPerUnit,
-            },
-          ]}
-        />
-      ) : null}
     </AppShell>
   );
 }

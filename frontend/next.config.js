@@ -65,6 +65,10 @@ const nextConfig = {
         destination: `${backendUpstream}/order/data/:path*`,
       },
       {
+        source: "/order/break-chunk-defaults",
+        destination: `${backendUpstream}/order/break-chunk-defaults`,
+      },
+      {
         source: "/order/break-chunk",
         destination: `${backendUpstream}/order/break-chunk`,
       },
