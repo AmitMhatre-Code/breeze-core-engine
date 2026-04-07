@@ -11,6 +11,7 @@ import type { BreakChunkDefaultsResponse } from "@/lib/break-chunk-defaults";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { runBreakOrderChunks } from "@/lib/icici-rate-limit-flow";
 import { createParkedOrders, deleteParkedOrdersMany, patchParkedOrder } from "@/lib/parked-orders";
+import { randomUuid } from "@/lib/random-uuid";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   MarginApiResponse,
@@ -239,7 +240,7 @@ export function OrderExecutionConfirmDialog({
         });
         return;
       }
-      const batchId = crypto.randomUUID();
+      const batchId = randomUuid();
       const items = legs.map((l) => ({
         product_type: productType as "Options",
         stock_code: stockCode,
