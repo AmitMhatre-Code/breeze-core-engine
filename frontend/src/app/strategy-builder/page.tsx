@@ -12,6 +12,7 @@ import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionCo
 import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { OptionStrategyIcon } from "@/components/strategy-builder/OptionStrategyIcon";
+import { ReadymadeSetupTooltip } from "@/components/strategy-builder/ReadymadeSetupTooltip";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
 import { apiClient } from "@/lib/api-client";
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
@@ -24,6 +25,7 @@ import {
 import { sb } from "@/lib/strategy-builder/ui";
 import {
   estimateProbabilityOfProfit,
+  payoffChartSpotDomain,
   portfolioGreeks,
   scanMarkToModelCurve,
   scanPayoffCurve,
@@ -32,6 +34,8 @@ import {
 import {
   applyTemplate,
   buildTemplateContext,
+  outlookPillClassName,
+  outlookPillLabel,
   type TemplateId,
   STRATEGY_TEMPLATES,
 } from "@/lib/strategy-builder/templates";
@@ -41,6 +45,7 @@ import type {
   MarginApiResponse,
   OptionRight,
   OrderSide,
+  Outlook,
   StrategyLeg,
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
@@ -56,6 +61,24 @@ type ReadymadeSelection =
 
 /** Strategy Builder only: caps broker load (standalone uncovered-shorts page may use higher top). */
 const STRATEGY_BUILDER_OPTIONS_TO_LIST_MAX = 5;
+
+/** Shrinks payoff glyphs so outlook pills can sit in the top-right without crowding. */
+const READYMADE_GRAPH_AREA =
+  "flex min-h-0 w-full flex-1 items-center justify-center px-0.5 pt-0.5";
+const READYMADE_GRAPH_BOX =
+  "flex h-[100%] w-[100%] max-h-full min-h-0 items-center justify-center [&_svg]:max-h-full";
+
+function ReadymadeOutlookPill({ outlook }: { outlook: Outlook | undefined }) {
+  if (!outlook) return null;
+  return (
+    <span
+      className={`pointer-events-none absolute right-1.5 top-1.5 z-10 rounded-full px-[5px] py-px text-[10px] font-semibold leading-none tracking-tight ${outlookPillClassName(outlook)}`}
+      aria-hidden
+    >
+      {outlookPillLabel(outlook)}
+    </span>
+  );
+}
 
 type UncoveredSidePayload = {
   Status?: number;
@@ -77,8 +100,25 @@ function parseNum(v: unknown): number {
   return NaN;
 }
 
+function optionMidFromApiLeg(
+  side: Record<string, unknown> | null | undefined,
+): number | undefined {
+  if (!side) return undefined;
+  const ltp = parseNum(side.ltp);
+  if (Number.isFinite(ltp) && ltp > 0) return ltp;
+  const bid = parseNum(side.best_bid_price);
+  const ask = parseNum(side.best_offer_price);
+  if (Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0) {
+    return 0.5 * (bid + ask);
+  }
+  return undefined;
+}
+
 const OTM_SLIDER_MIN = 0;
 const OTM_SLIDER_MAX = 20;
+/** Long strangle: expected spot move targets (negative = down, positive = up). */
+const STRANGLE_MOVE_MIN = -30;
+const STRANGLE_MOVE_MAX = 30;
 const MARGIN_LACS_MAX = 999_999;
 
 /** Quantity-only signature — price edits keep cached margin valid for refresh UI. */
@@ -260,7 +300,7 @@ function OtmRangeValueKnob({
     : "h-8 min-w-[2rem] px-1 text-[10px]";
   return (
     <div
-      className={`pointer-events-none absolute top-1/2 ${z} flex ${sizeCls} -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-[3px] border-blue-600 bg-white font-bold tabular-nums leading-none text-zinc-900 shadow-[0_0_0_1px_rgb(37_99_235/0.12),0_3px_8px_rgb(15_23_42/0.16)] dark:border-blue-500 dark:bg-zinc-50 dark:text-zinc-950 dark:shadow-[0_0_0_1px_rgb(59_130_246/0.2),0_3px_8px_rgb(0_0_0/0.35)]`}
+      className={`pointer-events-none absolute top-1/2 ${z} flex ${sizeCls} -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-[3px] border-blue-600 bg-white font-bold tabular-nums leading-none text-zinc-900 shadow-[0_0_0_1px_rgb(37_99_235/0.12),0_3px_8px_rgb(15_23_42/0.16)] dark:border-blue-500 dark:bg-zinc-900 dark:text-zinc-50 dark:shadow-[0_0_0_1px_rgb(59_130_246/0.2),0_3px_8px_rgb(0_0_0/0.35)]`}
       style={{
         left: `clamp(${inset}, ${pct}%, calc(100% - ${inset}))`,
       }}
@@ -396,6 +436,271 @@ function UncoveredOtmRangeSlider({
   );
 }
 
+function StrangleMovePctKnob({
+  value,
+  pct,
+  compact,
+  variant,
+}: {
+  value: number;
+  pct: number;
+  compact: boolean;
+  variant: "down" | "up";
+}) {
+  const z = variant === "up" ? "z-[45]" : "z-[40]";
+  const inset = compact ? "0.875rem" : "1rem";
+  const sizeCls = compact
+    ? "h-7 min-w-[1.75rem] px-0.5 text-[9px]"
+    : "h-8 min-w-[2rem] px-1 text-[10px]";
+  const label = value === 0 ? "0%" : `${value > 0 ? "+" : ""}${value}%`;
+  return (
+    <div
+      className={`pointer-events-none absolute top-1/2 ${z} flex ${sizeCls} -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-[3px] border-blue-600 bg-white font-bold tabular-nums leading-none text-zinc-900 shadow-[0_0_0_1px_rgb(37_99_235/0.12),0_3px_8px_rgb(15_23_42/0.16)] dark:border-blue-500 dark:bg-zinc-900 dark:text-zinc-50 dark:shadow-[0_0_0_1px_rgb(59_130_246/0.2),0_3px_8px_rgb(0_0_0/0.35)]`}
+      style={{
+        left: `clamp(${inset}, ${pct}%, calc(100% - ${inset}))`,
+      }}
+      aria-hidden
+    >
+      {label}
+    </div>
+  );
+}
+
+function StrangleMoveRangeSlider({
+  label,
+  downPct,
+  upPct,
+  onDownChange,
+  onUpChange,
+  compact = false,
+}: {
+  label: string;
+  downPct: number;
+  upPct: number;
+  onDownChange: (v: number) => void;
+  onUpChange: (v: number) => void;
+  compact?: boolean;
+}) {
+  const span = STRANGLE_MOVE_MAX - STRANGLE_MOVE_MIN;
+  const downClamped = Math.min(
+    -1,
+    Math.max(STRANGLE_MOVE_MIN, downPct),
+  );
+  const upClamped = Math.min(
+    STRANGLE_MOVE_MAX,
+    Math.max(1, upPct),
+  );
+  const minPct = ((downClamped - STRANGLE_MOVE_MIN) / span) * 100;
+  const maxPct = ((upClamped - STRANGLE_MOVE_MIN) / span) * 100;
+  const thumbInteractiveCls =
+    "[&::-webkit-slider-thumb]:pointer-events-auto [&::-moz-range-thumb]:pointer-events-auto";
+
+  if (compact) {
+    return (
+      <div className="min-w-0 w-full">
+        <span className="mb-1 block text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+          {label}
+        </span>
+        <div className="relative flex h-8 w-full shrink-0 items-center">
+          <div className="relative h-6 w-full overflow-visible">
+            <div className="pointer-events-none absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
+            <div
+              className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
+              style={{
+                left: `${minPct}%`,
+                width: `${Math.max(0, maxPct - minPct)}%`,
+              }}
+            />
+            <input
+              type="range"
+              min={STRANGLE_MOVE_MIN}
+              max={STRANGLE_MOVE_MAX}
+              step={1}
+              value={downClamped}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                onDownChange(
+                  Math.min(-1, Math.max(STRANGLE_MOVE_MIN, v)),
+                );
+              }}
+              className={`sb-range-slim sb-range-otm pointer-events-none absolute inset-0 z-20 w-full min-w-0 bg-transparent ${thumbInteractiveCls}`}
+              aria-label="Expected move to the downside (negative percent)"
+              aria-valuetext={`${downClamped} percent from spot`}
+            />
+            <input
+              type="range"
+              min={STRANGLE_MOVE_MIN}
+              max={STRANGLE_MOVE_MAX}
+              step={1}
+              value={upClamped}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                onUpChange(Math.max(1, Math.min(STRANGLE_MOVE_MAX, v)));
+              }}
+              className={`sb-range-slim sb-range-otm pointer-events-none absolute inset-0 z-30 w-full min-w-0 bg-transparent ${thumbInteractiveCls}`}
+              aria-label="Expected move to the upside (positive percent)"
+              aria-valuetext={`+${upClamped} percent from spot`}
+            />
+            <StrangleMovePctKnob
+              value={downClamped}
+              pct={minPct}
+              compact
+              variant="down"
+            />
+            <StrangleMovePctKnob
+              value={upClamped}
+              pct={maxPct}
+              compact
+              variant="up"
+            />
+          </div>
+        </div>
+        <div className="mt-1 flex justify-between text-[10px] font-medium tabular-nums text-zinc-400 dark:text-zinc-500">
+          <span>−30%</span>
+          <span className="text-zinc-500 dark:text-zinc-400">0</span>
+          <span>+30%</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-w-0">
+      <div className="mb-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+        {label}
+      </div>
+      <div className="relative h-6 w-full overflow-visible">
+        <div className="pointer-events-none absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
+        <div
+          className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
+          style={{
+            left: `${minPct}%`,
+            width: `${Math.max(0, maxPct - minPct)}%`,
+          }}
+        />
+        <input
+          type="range"
+          min={STRANGLE_MOVE_MIN}
+          max={STRANGLE_MOVE_MAX}
+          step={1}
+          value={downClamped}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            onDownChange(
+              Math.min(-1, Math.max(STRANGLE_MOVE_MIN, v)),
+            );
+          }}
+          className={`sb-range-slim sb-range-otm pointer-events-none absolute inset-0 z-20 w-full bg-transparent ${thumbInteractiveCls}`}
+          aria-label="Expected move to the downside (negative percent)"
+        />
+        <input
+          type="range"
+          min={STRANGLE_MOVE_MIN}
+          max={STRANGLE_MOVE_MAX}
+          step={1}
+          value={upClamped}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            onUpChange(Math.max(1, Math.min(STRANGLE_MOVE_MAX, v)));
+          }}
+          className={`sb-range-slim sb-range-otm pointer-events-none absolute inset-0 z-30 w-full bg-transparent ${thumbInteractiveCls}`}
+          aria-label="Expected move to the upside (positive percent)"
+        />
+        <StrangleMovePctKnob
+          value={downClamped}
+          pct={minPct}
+          compact={false}
+          variant="down"
+        />
+        <StrangleMovePctKnob
+          value={upClamped}
+          pct={maxPct}
+          compact={false}
+          variant="up"
+        />
+      </div>
+      <div className="mt-1 flex justify-between text-[10px] font-medium tabular-nums text-zinc-400 dark:text-zinc-500">
+        <span>−30%</span>
+        <span className="text-zinc-500 dark:text-zinc-400">0</span>
+        <span>+30%</span>
+      </div>
+    </div>
+  );
+}
+
+/** Wing distance for long call butterfly — same 0–20% band as Naked Shorts OTM sliders. */
+function ButterflyWingDistanceSlider({
+  label,
+  value,
+  onChange,
+  compact = false,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  compact?: boolean;
+}) {
+  const min = OTM_SLIDER_MIN;
+  const max = OTM_SLIDER_MAX;
+  const clamped = Math.min(max, Math.max(min, Math.round(value)));
+  const pct = ((clamped - min) / (max - min)) * 100;
+
+  const track = (
+    <>
+      <div className="pointer-events-none absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
+      <div
+        className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
+        style={{ left: 0, width: `${pct}%` }}
+      />
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={1}
+        value={clamped}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="sb-range-slim sb-range-otm relative z-[25] w-full min-w-0"
+        aria-label={label}
+        aria-valuetext={`${clamped} percent wing distance`}
+      />
+      <OtmRangeValueKnob
+        value={clamped}
+        pct={pct}
+        compact={compact}
+        variant="min"
+      />
+    </>
+  );
+
+  if (compact) {
+    return (
+      <div className="min-w-0 w-full max-w-xl">
+        <span className="mb-1 block text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+          {label}
+        </span>
+        <div className="relative h-6 w-full overflow-visible">{track}</div>
+        <div className="mt-1 flex justify-between text-[10px] font-medium tabular-nums text-zinc-400 dark:text-zinc-500">
+          <span>0%</span>
+          <span>20%</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-w-0">
+      <div className="mb-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+        {label}
+      </div>
+      <div className="relative h-6 w-full overflow-visible">{track}</div>
+      <div className="mt-1 flex justify-between text-[10px] font-medium tabular-nums text-zinc-400 dark:text-zinc-500">
+        <span>0%</span>
+        <span>20%</span>
+      </div>
+    </div>
+  );
+}
+
 function IvShockSlider({
   value,
   onChange,
@@ -423,11 +728,25 @@ function IvShockSlider({
         </div>
         <button
           type="button"
-          className="shrink-0 rounded-lg border border-zinc-200/90 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-zinc-200/90 bg-white text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
           onClick={() => onChange(0)}
           disabled={value === 0}
+          aria-label="Reset IV shock"
+          title="Reset IV shock"
         >
-          Reset
+          <svg
+            className="h-3.5 w-3.5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M3 12a9 9 0 1 0 2.64-6.36" />
+            <path d="M3 3v6h6" />
+          </svg>
         </button>
       </div>
       <div className="relative pt-7">
@@ -675,6 +994,12 @@ function formatPremiumIntegerInr(p: number): string {
   if (!Number.isFinite(p)) return "—";
   const r = Math.round(p);
   return `₹${r.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+}
+
+function formatNetPremiumCompactInr(v: number): string {
+  if (!Number.isFinite(v)) return "—";
+  const abs = formatIndianMoneyCompact(Math.abs(v));
+  return v < 0 ? `(${abs})` : abs;
 }
 
 function UncoveredScanOptionCard({
@@ -964,6 +1289,99 @@ export default function StrategyBuilderPage() {
   const [scanOtmPutMin, setScanOtmPutMin] = useState(6);
   const [scanOtmPutMax, setScanOtmPutMax] = useState(12);
   const [scanProvisionElm, setScanProvisionElm] = useState(false);
+  const [bullCallMinPop, setBullCallMinPop] = useState<number | null>(65);
+  const [bearCallMinPop, setBearCallMinPop] = useState<number | null>(65);
+  const [bearPutMinPop, setBearPutMinPop] = useState<number | null>(65);
+  const [bullPutMinPop, setBullPutMinPop] = useState<number | null>(65);
+  const [longStrangleDownPct, setLongStrangleDownPct] = useState(-3);
+  const [longStrangleUpPct, setLongStrangleUpPct] = useState(3);
+  const [longStrangleFetched, setLongStrangleFetched] = useState(false);
+  const [longStrangleApplied, setLongStrangleApplied] = useState<{
+    downPct: number;
+    upPct: number;
+    upTarget: number;
+    downTarget: number;
+    callStrike: number;
+    putStrike: number;
+    callPremium: number | undefined;
+    putPremium: number | undefined;
+    atmIvPct: number;
+    ivRangeLow: number;
+    ivRangeHigh: number;
+    maxCallOiStrike: number | null;
+    maxPutOiStrike: number | null;
+  } | null>(null);
+  const [shortStrangleDownPct, setShortStrangleDownPct] = useState(-3);
+  const [shortStrangleUpPct, setShortStrangleUpPct] = useState(3);
+  const [shortStrangleFetched, setShortStrangleFetched] = useState(false);
+  const [shortStrangleApplied, setShortStrangleApplied] = useState<{
+    downPct: number;
+    upPct: number;
+    upTarget: number;
+    downTarget: number;
+    callStrike: number;
+    putStrike: number;
+    callPremium: number | undefined;
+    putPremium: number | undefined;
+    atmIvPct: number;
+    ivRangeLow: number;
+    ivRangeHigh: number;
+    maxCallOiStrike: number | null;
+    maxPutOiStrike: number | null;
+  } | null>(null);
+  const [ironCondorDownPct, setIronCondorDownPct] = useState(-3);
+  const [ironCondorUpPct, setIronCondorUpPct] = useState(3);
+  const [ironCondorFetched, setIronCondorFetched] = useState(false);
+  const [ironCondorApplied, setIronCondorApplied] = useState<{
+    downPct: number;
+    upPct: number;
+    longPutStrike: number;
+    shortPutStrike: number;
+    shortCallStrike: number;
+    longCallStrike: number;
+    longPutPremium: number | undefined;
+    shortPutPremium: number | undefined;
+    shortCallPremium: number | undefined;
+    longCallPremium: number | undefined;
+    atmIvPct: number;
+    ivRangeLow: number;
+    ivRangeHigh: number;
+    maxCallOiStrike: number | null;
+    maxPutOiStrike: number | null;
+  } | null>(null);
+  const [ironButterflyWingPct, setIronButterflyWingPct] = useState(5);
+  const [ironButterflyFetched, setIronButterflyFetched] = useState(false);
+  const [ironButterflyApplied, setIronButterflyApplied] = useState<{
+    wingPct: number;
+    lowStrike: number;
+    midStrike: number;
+    highStrike: number;
+    longPutPremium: number | undefined;
+    midPutPremium: number | undefined;
+    midCallPremium: number | undefined;
+    longCallPremium: number | undefined;
+    atmIvPct: number;
+    ivRangeLow: number;
+    ivRangeHigh: number;
+    maxCallOiStrike: number | null;
+    maxPutOiStrike: number | null;
+  } | null>(null);
+  const [butterflyWingPct, setButterflyWingPct] = useState(5);
+  const [butterflyFetched, setButterflyFetched] = useState(false);
+  const [butterflyApplied, setButterflyApplied] = useState<{
+    wingPct: number;
+    lowStrike: number;
+    midStrike: number;
+    highStrike: number;
+    lowPremium: number | undefined;
+    midPremium: number | undefined;
+    highPremium: number | undefined;
+    atmIvPct: number;
+    ivRangeLow: number;
+    ivRangeHigh: number;
+    maxCallOiStrike: number | null;
+    maxPutOiStrike: number | null;
+  } | null>(null);
   const [uncoveredScanResult, setUncoveredScanResult] =
     useState<UncoveredScanResponse | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -1141,7 +1559,28 @@ export default function StrategyBuilderPage() {
   );
 
   useEffect(() => {
-    if (selectedReadymade !== "build-your-own" || !chainSuccess) return;
+    if (
+      (selectedReadymade !== "build-your-own" &&
+        selectedReadymade !== "bull_call_spread" &&
+        selectedReadymade !== "bear_call_spread" &&
+        selectedReadymade !== "bear_put_spread" &&
+        selectedReadymade !== "bull_put_spread" &&
+        selectedReadymade !== "long_straddle" &&
+        selectedReadymade !== "short_straddle" &&
+        selectedReadymade !== "long_strangle" &&
+        selectedReadymade !== "short_strangle" &&
+        selectedReadymade !== "iron_condor" &&
+        selectedReadymade !== "iron_butterfly" &&
+        selectedReadymade !== "long_call_butterfly") ||
+      !chainSuccess
+    ) {
+      return;
+    }
+    if (selectedReadymade === "long_strangle" && !longStrangleFetched) return;
+    if (selectedReadymade === "short_strangle" && !shortStrangleFetched) return;
+    if (selectedReadymade === "iron_condor" && !ironCondorFetched) return;
+    if (selectedReadymade === "iron_butterfly" && !ironButterflyFetched) return;
+    if (selectedReadymade === "long_call_butterfly" && !butterflyFetched) return;
     const t = requestAnimationFrame(() => {
       const row = buildOwnChainScrollRef.current?.querySelector(
         "tr[data-atm-strike='true']",
@@ -1149,27 +1588,32 @@ export default function StrategyBuilderPage() {
       row?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
     return () => cancelAnimationFrame(t);
-  }, [selectedReadymade, chainSuccess]);
+  }, [
+    selectedReadymade,
+    chainSuccess,
+    longStrangleFetched,
+    shortStrangleFetched,
+    ironCondorFetched,
+    ironButterflyFetched,
+    butterflyFetched,
+  ]);
 
   const T = expiryDisplayToYears(expiryDate || "01-Jan-2099");
   const baseSigma = chainSuccess ? atmSigmaFromChain(chainSuccess, T) : 0.22;
   const sigma = baseSigma * (1 + ivShockPct / 100);
 
   const spot = chainSuccess?.spot_price ?? null;
-  const minS = useMemo(() => {
-    if (!strikes.length) return spot != null ? spot * 0.85 : 0;
+  const { minS, maxS } = useMemo(() => {
+    if (spot != null && Number.isFinite(spot) && spot > 0) {
+      return payoffChartSpotDomain(spot);
+    }
+    if (!strikes.length) {
+      return { minS: 0, maxS: 1 };
+    }
     const lo = Math.min(...strikes);
     const hi = Math.max(...strikes);
     const pad = (hi - lo) * 0.15;
-    return Math.max(0, lo - pad);
-  }, [strikes, spot]);
-
-  const maxS = useMemo(() => {
-    if (!strikes.length) return spot != null ? spot * 1.15 : 1;
-    const lo = Math.min(...strikes);
-    const hi = Math.max(...strikes);
-    const pad = (hi - lo) * 0.15;
-    return hi + pad;
+    return { minS: Math.max(0, lo - pad), maxS: hi + pad };
   }, [strikes, spot]);
 
   const { xs, ys, summary, xsToday, ysToday } = useMemo(() => {
@@ -1368,6 +1812,1322 @@ export default function StrategyBuilderPage() {
 
   const chainReady = Boolean(chainSuccess);
   const hasStrategyLegs = legs.length > 0;
+  const bullCallSuggestion = useMemo(() => {
+    if (
+      selectedReadymade !== "bull_call_spread" ||
+      !chainSuccess ||
+      spot == null ||
+      T <= 0
+    ) {
+      return null;
+    }
+
+    const minPop = Math.min(99, Math.max(1, bullCallMinPop ?? 65));
+    const stdMove = spot * baseSigma * Math.sqrt(T);
+    const rangeLow = Math.max(0, spot - stdMove);
+    const rangeHigh = spot + stdMove;
+    const rows = [...chainSuccess.chain_rows].sort(
+      (a, b) => a.strike_price - b.strike_price,
+    );
+    const callRows = rows.filter((r) => r.call);
+    if (!callRows.length) return null;
+
+    const sellRow =
+      callRows.find((r) => r.strike_price > rangeHigh) ??
+      callRows[callRows.length - 1];
+    if (!sellRow?.call) return null;
+    const sellStrike = sellRow.strike_price;
+    const sellPremium = optionMidFromApiLeg(sellRow.call);
+    if (sellPremium == null) return null;
+
+    const buyCandidates = callRows.filter((r) => r.strike_price < sellStrike);
+    if (!buyCandidates.length) return null;
+
+    let chosen:
+      | { strike: number; premium: number; pop: number }
+      | null = null;
+    let bestPopCandidate:
+      | { strike: number; premium: number; pop: number }
+      | null = null;
+
+    for (let i = buyCandidates.length - 1; i >= 0; i -= 1) {
+      const row = buyCandidates[i];
+      const premium = optionMidFromApiLeg(row.call);
+      if (premium == null) continue;
+      const legsForPop: StrategyLeg[] = [
+        {
+          id: "auto-bull-call-buy",
+          side: "Buy",
+          right: "Call",
+          strike: row.strike_price,
+          lots: 1,
+          premiumPerUnit: premium,
+        },
+        {
+          id: "auto-bull-call-sell",
+          side: "Sell",
+          right: "Call",
+          strike: sellStrike,
+          lots: 1,
+          premiumPerUnit: sellPremium,
+        },
+      ];
+      const candidatePop = estimateProbabilityOfProfit(
+        spot,
+        T,
+        baseSigma,
+        legsForPop,
+        lotSize,
+      );
+      const candidate = { strike: row.strike_price, premium, pop: candidatePop };
+      if (!bestPopCandidate || candidate.pop > bestPopCandidate.pop) {
+        bestPopCandidate = candidate;
+      }
+      if (candidatePop >= minPop) {
+        chosen = candidate;
+        break;
+      }
+    }
+
+    const buy = chosen ?? bestPopCandidate;
+    if (!buy) return null;
+
+    let maxCallOi = -Infinity;
+    let maxPutOi = -Infinity;
+    let maxCallOiStrike: number | null = null;
+    let maxPutOiStrike: number | null = null;
+    for (const r of rows) {
+      const cOi = parseNum(r.call?.open_interest);
+      if (Number.isFinite(cOi) && cOi > maxCallOi) {
+        maxCallOi = cOi;
+        maxCallOiStrike = r.strike_price;
+      }
+      const pOi = parseNum(r.put?.open_interest);
+      if (Number.isFinite(pOi) && pOi > maxPutOi) {
+        maxPutOi = pOi;
+        maxPutOiStrike = r.strike_price;
+      }
+    }
+
+    return {
+      minPop,
+      atmIvPct: baseSigma * 100,
+      ivRangeLow: rangeLow,
+      ivRangeHigh: rangeHigh,
+      buyStrike: buy.strike,
+      sellStrike,
+      buyPremium: buy.premium,
+      sellPremium,
+      modelPop: buy.pop,
+      maxCallOiStrike,
+      maxPutOiStrike,
+    };
+  }, [selectedReadymade, chainSuccess, spot, T, bullCallMinPop, baseSigma, lotSize]);
+
+  const fetchBullCallTrades = useCallback(() => {
+    if (!bullCallSuggestion) return;
+    setLegs([
+      {
+        id: "auto-bull-call-buy",
+        side: "Buy",
+        right: "Call",
+        strike: bullCallSuggestion.buyStrike,
+        lots: 1,
+        premiumPerUnit: bullCallSuggestion.buyPremium,
+      },
+      {
+        id: "auto-bull-call-sell",
+        side: "Sell",
+        right: "Call",
+        strike: bullCallSuggestion.sellStrike,
+        lots: 1,
+        premiumPerUnit: bullCallSuggestion.sellPremium,
+      },
+    ]);
+  }, [bullCallSuggestion]);
+
+  const bearCallSuggestion = useMemo(() => {
+    if (
+      selectedReadymade !== "bear_call_spread" ||
+      !chainSuccess ||
+      spot == null ||
+      T <= 0
+    ) {
+      return null;
+    }
+
+    const minPop = Math.min(99, Math.max(1, bearCallMinPop ?? 65));
+    const stdMove = spot * baseSigma * Math.sqrt(T);
+    const rangeLow = Math.max(0, spot - stdMove);
+    const rangeHigh = spot + stdMove;
+    const rows = [...chainSuccess.chain_rows].sort(
+      (a, b) => a.strike_price - b.strike_price,
+    );
+    const callRows = rows.filter((r) => r.call);
+    if (!callRows.length) return null;
+
+    const buyRow =
+      callRows.find((r) => r.strike_price > rangeHigh) ??
+      callRows[callRows.length - 1];
+    if (!buyRow?.call) return null;
+    const buyStrike = buyRow.strike_price;
+    const buyPremium = optionMidFromApiLeg(buyRow.call);
+    if (buyPremium == null) return null;
+
+    const sellCandidates = callRows.filter((r) => r.strike_price < buyStrike);
+    if (!sellCandidates.length) return null;
+
+    let chosen:
+      | { strike: number; premium: number; pop: number }
+      | null = null;
+    let bestPopCandidate:
+      | { strike: number; premium: number; pop: number }
+      | null = null;
+
+    for (let i = sellCandidates.length - 1; i >= 0; i -= 1) {
+      const row = sellCandidates[i];
+      const premium = optionMidFromApiLeg(row.call);
+      if (premium == null) continue;
+      const legsForPop: StrategyLeg[] = [
+        {
+          id: "auto-bear-call-sell",
+          side: "Sell",
+          right: "Call",
+          strike: row.strike_price,
+          lots: 1,
+          premiumPerUnit: premium,
+        },
+        {
+          id: "auto-bear-call-buy",
+          side: "Buy",
+          right: "Call",
+          strike: buyStrike,
+          lots: 1,
+          premiumPerUnit: buyPremium,
+        },
+      ];
+      const candidatePop = estimateProbabilityOfProfit(
+        spot,
+        T,
+        baseSigma,
+        legsForPop,
+        lotSize,
+      );
+      const candidate = { strike: row.strike_price, premium, pop: candidatePop };
+      if (!bestPopCandidate || candidate.pop > bestPopCandidate.pop) {
+        bestPopCandidate = candidate;
+      }
+      if (candidatePop >= minPop) {
+        chosen = candidate;
+        break;
+      }
+    }
+
+    const sell = chosen ?? bestPopCandidate;
+    if (!sell) return null;
+
+    let maxCallOi = -Infinity;
+    let maxPutOi = -Infinity;
+    let maxCallOiStrike: number | null = null;
+    let maxPutOiStrike: number | null = null;
+    for (const r of rows) {
+      const cOi = parseNum(r.call?.open_interest);
+      if (Number.isFinite(cOi) && cOi > maxCallOi) {
+        maxCallOi = cOi;
+        maxCallOiStrike = r.strike_price;
+      }
+      const pOi = parseNum(r.put?.open_interest);
+      if (Number.isFinite(pOi) && pOi > maxPutOi) {
+        maxPutOi = pOi;
+        maxPutOiStrike = r.strike_price;
+      }
+    }
+
+    return {
+      minPop,
+      atmIvPct: baseSigma * 100,
+      ivRangeLow: rangeLow,
+      ivRangeHigh: rangeHigh,
+      buyStrike,
+      sellStrike: sell.strike,
+      buyPremium,
+      sellPremium: sell.premium,
+      modelPop: sell.pop,
+      maxCallOiStrike,
+      maxPutOiStrike,
+    };
+  }, [selectedReadymade, chainSuccess, spot, T, bearCallMinPop, baseSigma, lotSize]);
+
+  const fetchBearCallTrades = useCallback(() => {
+    if (!bearCallSuggestion) return;
+    setLegs([
+      {
+        id: "auto-bear-call-sell",
+        side: "Sell",
+        right: "Call",
+        strike: bearCallSuggestion.sellStrike,
+        lots: 1,
+        premiumPerUnit: bearCallSuggestion.sellPremium,
+      },
+      {
+        id: "auto-bear-call-buy",
+        side: "Buy",
+        right: "Call",
+        strike: bearCallSuggestion.buyStrike,
+        lots: 1,
+        premiumPerUnit: bearCallSuggestion.buyPremium,
+      },
+    ]);
+  }, [bearCallSuggestion]);
+
+  const bearPutSuggestion = useMemo(() => {
+    if (
+      selectedReadymade !== "bear_put_spread" ||
+      !chainSuccess ||
+      spot == null ||
+      T <= 0
+    ) {
+      return null;
+    }
+
+    const minPop = Math.min(99, Math.max(1, bearPutMinPop ?? 65));
+    const stdMove = spot * baseSigma * Math.sqrt(T);
+    const rangeLow = Math.max(0, spot - stdMove);
+    const rangeHigh = spot + stdMove;
+    const rows = [...chainSuccess.chain_rows].sort(
+      (a, b) => a.strike_price - b.strike_price,
+    );
+    const putRows = rows.filter((r) => r.put);
+    if (!putRows.length) return null;
+
+    const sellRow =
+      [...putRows].reverse().find((r) => r.strike_price < rangeLow) ??
+      putRows[0];
+    if (!sellRow?.put) return null;
+    const sellStrike = sellRow.strike_price;
+    const sellPremium = optionMidFromApiLeg(sellRow.put);
+    if (sellPremium == null) return null;
+
+    const buyCandidates = putRows.filter((r) => r.strike_price > sellStrike);
+    if (!buyCandidates.length) return null;
+
+    let chosen:
+      | { strike: number; premium: number; pop: number }
+      | null = null;
+    let bestPopCandidate:
+      | { strike: number; premium: number; pop: number }
+      | null = null;
+
+    for (let i = 0; i < buyCandidates.length; i += 1) {
+      const row = buyCandidates[i];
+      const premium = optionMidFromApiLeg(row.put);
+      if (premium == null) continue;
+      const legsForPop: StrategyLeg[] = [
+        {
+          id: "auto-bear-put-buy",
+          side: "Buy",
+          right: "Put",
+          strike: row.strike_price,
+          lots: 1,
+          premiumPerUnit: premium,
+        },
+        {
+          id: "auto-bear-put-sell",
+          side: "Sell",
+          right: "Put",
+          strike: sellStrike,
+          lots: 1,
+          premiumPerUnit: sellPremium,
+        },
+      ];
+      const candidatePop = estimateProbabilityOfProfit(
+        spot,
+        T,
+        baseSigma,
+        legsForPop,
+        lotSize,
+      );
+      const candidate = { strike: row.strike_price, premium, pop: candidatePop };
+      if (!bestPopCandidate || candidate.pop > bestPopCandidate.pop) {
+        bestPopCandidate = candidate;
+      }
+      if (candidatePop >= minPop) {
+        chosen = candidate;
+        break;
+      }
+    }
+
+    const buy = chosen ?? bestPopCandidate;
+    if (!buy) return null;
+
+    let maxCallOi = -Infinity;
+    let maxPutOi = -Infinity;
+    let maxCallOiStrike: number | null = null;
+    let maxPutOiStrike: number | null = null;
+    for (const r of rows) {
+      const cOi = parseNum(r.call?.open_interest);
+      if (Number.isFinite(cOi) && cOi > maxCallOi) {
+        maxCallOi = cOi;
+        maxCallOiStrike = r.strike_price;
+      }
+      const pOi = parseNum(r.put?.open_interest);
+      if (Number.isFinite(pOi) && pOi > maxPutOi) {
+        maxPutOi = pOi;
+        maxPutOiStrike = r.strike_price;
+      }
+    }
+
+    return {
+      minPop,
+      atmIvPct: baseSigma * 100,
+      ivRangeLow: rangeLow,
+      ivRangeHigh: rangeHigh,
+      buyStrike: buy.strike,
+      sellStrike,
+      buyPremium: buy.premium,
+      sellPremium,
+      modelPop: buy.pop,
+      maxCallOiStrike,
+      maxPutOiStrike,
+    };
+  }, [selectedReadymade, chainSuccess, spot, T, bearPutMinPop, baseSigma, lotSize]);
+
+  const fetchBearPutTrades = useCallback(() => {
+    if (!bearPutSuggestion) return;
+    setLegs([
+      {
+        id: "auto-bear-put-buy",
+        side: "Buy",
+        right: "Put",
+        strike: bearPutSuggestion.buyStrike,
+        lots: 1,
+        premiumPerUnit: bearPutSuggestion.buyPremium,
+      },
+      {
+        id: "auto-bear-put-sell",
+        side: "Sell",
+        right: "Put",
+        strike: bearPutSuggestion.sellStrike,
+        lots: 1,
+        premiumPerUnit: bearPutSuggestion.sellPremium,
+      },
+    ]);
+  }, [bearPutSuggestion]);
+
+  const bullPutSuggestion = useMemo(() => {
+    if (
+      selectedReadymade !== "bull_put_spread" ||
+      !chainSuccess ||
+      spot == null ||
+      T <= 0
+    ) {
+      return null;
+    }
+
+    const minPop = Math.min(99, Math.max(1, bullPutMinPop ?? 65));
+    const stdMove = spot * baseSigma * Math.sqrt(T);
+    const rangeLow = Math.max(0, spot - stdMove);
+    const rangeHigh = spot + stdMove;
+    const rows = [...chainSuccess.chain_rows].sort(
+      (a, b) => a.strike_price - b.strike_price,
+    );
+    const putRows = rows.filter((r) => r.put);
+    if (!putRows.length) return null;
+
+    const sellRow =
+      [...putRows].reverse().find((r) => r.strike_price < rangeLow) ??
+      putRows[putRows.length - 1];
+    if (!sellRow?.put) return null;
+    const sellStrike = sellRow.strike_price;
+    const sellPremium = optionMidFromApiLeg(sellRow.put);
+    if (sellPremium == null) return null;
+
+    const buyCandidates = putRows.filter((r) => r.strike_price < sellStrike);
+    if (!buyCandidates.length) return null;
+
+    let chosen:
+      | { strike: number; premium: number; pop: number }
+      | null = null;
+    let bestPopCandidate:
+      | { strike: number; premium: number; pop: number }
+      | null = null;
+
+    for (let i = buyCandidates.length - 1; i >= 0; i -= 1) {
+      const row = buyCandidates[i];
+      const premium = optionMidFromApiLeg(row.put);
+      if (premium == null) continue;
+      const legsForPop: StrategyLeg[] = [
+        {
+          id: "auto-bull-put-sell",
+          side: "Sell",
+          right: "Put",
+          strike: sellStrike,
+          lots: 1,
+          premiumPerUnit: sellPremium,
+        },
+        {
+          id: "auto-bull-put-buy",
+          side: "Buy",
+          right: "Put",
+          strike: row.strike_price,
+          lots: 1,
+          premiumPerUnit: premium,
+        },
+      ];
+      const candidatePop = estimateProbabilityOfProfit(
+        spot,
+        T,
+        baseSigma,
+        legsForPop,
+        lotSize,
+      );
+      const candidate = { strike: row.strike_price, premium, pop: candidatePop };
+      if (!bestPopCandidate || candidate.pop > bestPopCandidate.pop) {
+        bestPopCandidate = candidate;
+      }
+      if (candidatePop >= minPop) {
+        chosen = candidate;
+        break;
+      }
+    }
+
+    const buy = chosen ?? bestPopCandidate;
+    if (!buy) return null;
+
+    let maxCallOi = -Infinity;
+    let maxPutOi = -Infinity;
+    let maxCallOiStrike: number | null = null;
+    let maxPutOiStrike: number | null = null;
+    for (const r of rows) {
+      const cOi = parseNum(r.call?.open_interest);
+      if (Number.isFinite(cOi) && cOi > maxCallOi) {
+        maxCallOi = cOi;
+        maxCallOiStrike = r.strike_price;
+      }
+      const pOi = parseNum(r.put?.open_interest);
+      if (Number.isFinite(pOi) && pOi > maxPutOi) {
+        maxPutOi = pOi;
+        maxPutOiStrike = r.strike_price;
+      }
+    }
+
+    return {
+      minPop,
+      atmIvPct: baseSigma * 100,
+      ivRangeLow: rangeLow,
+      ivRangeHigh: rangeHigh,
+      buyStrike: buy.strike,
+      sellStrike,
+      buyPremium: buy.premium,
+      sellPremium,
+      modelPop: buy.pop,
+      maxCallOiStrike,
+      maxPutOiStrike,
+    };
+  }, [selectedReadymade, chainSuccess, spot, T, bullPutMinPop, baseSigma, lotSize]);
+
+  const fetchBullPutTrades = useCallback(() => {
+    if (!bullPutSuggestion) return;
+    setLegs([
+      {
+        id: "auto-bull-put-sell",
+        side: "Sell",
+        right: "Put",
+        strike: bullPutSuggestion.sellStrike,
+        lots: 1,
+        premiumPerUnit: bullPutSuggestion.sellPremium,
+      },
+      {
+        id: "auto-bull-put-buy",
+        side: "Buy",
+        right: "Put",
+        strike: bullPutSuggestion.buyStrike,
+        lots: 1,
+        premiumPerUnit: bullPutSuggestion.buyPremium,
+      },
+    ]);
+  }, [bullPutSuggestion]);
+
+  const atmStraddleProposedSummary = useMemo(() => {
+    if (
+      (selectedReadymade !== "long_straddle" &&
+        selectedReadymade !== "short_straddle") ||
+      !chainSuccess?.chain_rows?.length ||
+      spot == null ||
+      spot <= 0 ||
+      T <= 0
+    ) {
+      return null;
+    }
+    const rows = [...chainSuccess.chain_rows].sort(
+      (a, b) => a.strike_price - b.strike_price,
+    );
+    const stdMove = spot * baseSigma * Math.sqrt(T);
+    const ivRangeLow = Math.max(0, spot - stdMove);
+    const ivRangeHigh = spot + stdMove;
+
+    let maxCallOi = -Infinity;
+    let maxPutOi = -Infinity;
+    let maxCallOiStrike: number | null = null;
+    let maxPutOiStrike: number | null = null;
+    for (const r of rows) {
+      const cOi = parseNum(r.call?.open_interest);
+      if (Number.isFinite(cOi) && cOi > maxCallOi) {
+        maxCallOi = cOi;
+        maxCallOiStrike = r.strike_price;
+      }
+      const pOi = parseNum(r.put?.open_interest);
+      if (Number.isFinite(pOi) && pOi > maxPutOi) {
+        maxPutOi = pOi;
+        maxPutOiStrike = r.strike_price;
+      }
+    }
+
+    const ctx = buildTemplateContext(chainSuccess.chain_rows, spot);
+    const atmStrike =
+      chainSuccess.atm_strike ??
+      (ctx != null ? ctx.strikes[ctx.atmIdx] : null);
+    if (atmStrike == null) return null;
+
+    return {
+      atmIvPct: baseSigma * 100,
+      ivRangeLow,
+      ivRangeHigh,
+      maxCallOiStrike,
+      maxPutOiStrike,
+      atmStrike,
+    };
+  }, [selectedReadymade, chainSuccess, spot, T, baseSigma]);
+
+  const longStrangleSuggestion = useMemo(() => {
+    if (selectedReadymade !== "long_strangle") return null;
+    if (
+      !chainSuccess?.chain_rows?.length ||
+      spot == null ||
+      spot <= 0 ||
+      T <= 0
+    ) {
+      return null;
+    }
+
+    const rows = [...chainSuccess.chain_rows].sort(
+      (a, b) => a.strike_price - b.strike_price,
+    );
+    if (!rows.length) return null;
+
+    const downPct = Math.min(
+      -1,
+      Math.max(STRANGLE_MOVE_MIN, longStrangleDownPct),
+    );
+    const upPct = Math.min(
+      STRANGLE_MOVE_MAX,
+      Math.max(1, longStrangleUpPct),
+    );
+    const upTarget = spot * (1 + upPct / 100);
+    const downTarget = spot * (1 + downPct / 100);
+
+    const callRow =
+      rows.find((r) => r.strike_price >= upTarget) ?? rows[rows.length - 1];
+    const putRow =
+      [...rows].reverse().find((r) => r.strike_price <= downTarget) ?? rows[0];
+
+    const stdMove = spot * baseSigma * Math.sqrt(T);
+    const ivRangeLow = Math.max(0, spot - stdMove);
+    const ivRangeHigh = spot + stdMove;
+
+    let maxCallOi = -Infinity;
+    let maxPutOi = -Infinity;
+    let maxCallOiStrike: number | null = null;
+    let maxPutOiStrike: number | null = null;
+    for (const r of rows) {
+      const cOi = parseNum(r.call?.open_interest);
+      if (Number.isFinite(cOi) && cOi > maxCallOi) {
+        maxCallOi = cOi;
+        maxCallOiStrike = r.strike_price;
+      }
+      const pOi = parseNum(r.put?.open_interest);
+      if (Number.isFinite(pOi) && pOi > maxPutOi) {
+        maxPutOi = pOi;
+        maxPutOiStrike = r.strike_price;
+      }
+    }
+
+    return {
+      downPct,
+      upPct,
+      upTarget,
+      downTarget,
+      callStrike: callRow.strike_price,
+      putStrike: putRow.strike_price,
+      callPremium: optionMidFromApiLeg(callRow.call),
+      putPremium: optionMidFromApiLeg(putRow.put),
+      atmIvPct: baseSigma * 100,
+      ivRangeLow,
+      ivRangeHigh,
+      maxCallOiStrike,
+      maxPutOiStrike,
+    };
+  }, [
+    selectedReadymade,
+    chainSuccess,
+    spot,
+    longStrangleDownPct,
+    longStrangleUpPct,
+    T,
+    baseSigma,
+  ]);
+
+  const shortStrangleSuggestion = useMemo(() => {
+    if (selectedReadymade !== "short_strangle") return null;
+    if (
+      !chainSuccess?.chain_rows?.length ||
+      spot == null ||
+      spot <= 0 ||
+      T <= 0
+    ) {
+      return null;
+    }
+
+    const rows = [...chainSuccess.chain_rows].sort(
+      (a, b) => a.strike_price - b.strike_price,
+    );
+    if (!rows.length) return null;
+
+    const downPct = Math.min(
+      -1,
+      Math.max(STRANGLE_MOVE_MIN, shortStrangleDownPct),
+    );
+    const upPct = Math.min(
+      STRANGLE_MOVE_MAX,
+      Math.max(1, shortStrangleUpPct),
+    );
+    const upTarget = spot * (1 + upPct / 100);
+    const downTarget = spot * (1 + downPct / 100);
+
+    const callRow =
+      rows.find((r) => r.strike_price >= upTarget) ?? rows[rows.length - 1];
+    const putRow =
+      [...rows].reverse().find((r) => r.strike_price <= downTarget) ?? rows[0];
+
+    const stdMove = spot * baseSigma * Math.sqrt(T);
+    const ivRangeLow = Math.max(0, spot - stdMove);
+    const ivRangeHigh = spot + stdMove;
+
+    let maxCallOi = -Infinity;
+    let maxPutOi = -Infinity;
+    let maxCallOiStrike: number | null = null;
+    let maxPutOiStrike: number | null = null;
+    for (const r of rows) {
+      const cOi = parseNum(r.call?.open_interest);
+      if (Number.isFinite(cOi) && cOi > maxCallOi) {
+        maxCallOi = cOi;
+        maxCallOiStrike = r.strike_price;
+      }
+      const pOi = parseNum(r.put?.open_interest);
+      if (Number.isFinite(pOi) && pOi > maxPutOi) {
+        maxPutOi = pOi;
+        maxPutOiStrike = r.strike_price;
+      }
+    }
+
+    return {
+      downPct,
+      upPct,
+      upTarget,
+      downTarget,
+      callStrike: callRow.strike_price,
+      putStrike: putRow.strike_price,
+      callPremium: optionMidFromApiLeg(callRow.call),
+      putPremium: optionMidFromApiLeg(putRow.put),
+      atmIvPct: baseSigma * 100,
+      ivRangeLow,
+      ivRangeHigh,
+      maxCallOiStrike,
+      maxPutOiStrike,
+    };
+  }, [
+    selectedReadymade,
+    chainSuccess,
+    spot,
+    shortStrangleDownPct,
+    shortStrangleUpPct,
+    T,
+    baseSigma,
+  ]);
+
+  useEffect(() => {
+    if (
+      (selectedReadymade !== "long_straddle" &&
+        selectedReadymade !== "short_straddle") ||
+      !chainSuccess
+    )
+      return;
+    const ctx = buildTemplateContext(chainSuccess.chain_rows, spot);
+    if (!ctx) return;
+    setLegs(
+      applyTemplate(
+        selectedReadymade === "long_straddle" ? "long_straddle" : "short_straddle",
+        ctx,
+      ),
+    );
+  }, [selectedReadymade, chainSuccess, spot]);
+
+  useEffect(() => {
+    if (selectedReadymade !== "long_strangle") return;
+    setLegs([]);
+    setLongStrangleFetched(false);
+    setLongStrangleApplied(null);
+  }, [selectedReadymade]);
+
+  useEffect(() => {
+    if (selectedReadymade !== "short_strangle") return;
+    setLegs([]);
+    setShortStrangleFetched(false);
+    setShortStrangleApplied(null);
+  }, [selectedReadymade]);
+
+  const fetchLongStrangleTrades = useCallback(() => {
+    if (!longStrangleSuggestion) return;
+    setLongStrangleApplied(longStrangleSuggestion);
+    setLegs([
+      {
+        id: "auto-long-strangle-call",
+        side: "Buy",
+        right: "Call",
+        strike: longStrangleSuggestion.callStrike,
+        lots: 1,
+        premiumPerUnit: longStrangleSuggestion.callPremium,
+      },
+      {
+        id: "auto-long-strangle-put",
+        side: "Buy",
+        right: "Put",
+        strike: longStrangleSuggestion.putStrike,
+        lots: 1,
+        premiumPerUnit: longStrangleSuggestion.putPremium,
+      },
+    ]);
+    setLongStrangleFetched(true);
+  }, [longStrangleSuggestion]);
+
+  const handleLongStrangleDownPct = useCallback((v: number) => {
+    setLongStrangleDownPct(v);
+    setLongStrangleFetched(false);
+    setLongStrangleApplied(null);
+    setLegs([]);
+  }, []);
+
+  const handleLongStrangleUpPct = useCallback((v: number) => {
+    setLongStrangleUpPct(v);
+    setLongStrangleFetched(false);
+    setLongStrangleApplied(null);
+    setLegs([]);
+  }, []);
+
+  const fetchShortStrangleTrades = useCallback(() => {
+    if (!shortStrangleSuggestion) return;
+    setShortStrangleApplied(shortStrangleSuggestion);
+    setLegs([
+      {
+        id: "auto-short-strangle-call",
+        side: "Sell",
+        right: "Call",
+        strike: shortStrangleSuggestion.callStrike,
+        lots: 1,
+        premiumPerUnit: shortStrangleSuggestion.callPremium,
+      },
+      {
+        id: "auto-short-strangle-put",
+        side: "Sell",
+        right: "Put",
+        strike: shortStrangleSuggestion.putStrike,
+        lots: 1,
+        premiumPerUnit: shortStrangleSuggestion.putPremium,
+      },
+    ]);
+    setShortStrangleFetched(true);
+  }, [shortStrangleSuggestion]);
+
+  const handleShortStrangleDownPct = useCallback((v: number) => {
+    setShortStrangleDownPct(v);
+    setShortStrangleFetched(false);
+    setShortStrangleApplied(null);
+    setLegs([]);
+  }, []);
+
+  const handleShortStrangleUpPct = useCallback((v: number) => {
+    setShortStrangleUpPct(v);
+    setShortStrangleFetched(false);
+    setShortStrangleApplied(null);
+    setLegs([]);
+  }, []);
+
+  const ironCondorSuggestion = useMemo(() => {
+    if (selectedReadymade !== "iron_condor") return null;
+    if (
+      !chainSuccess?.chain_rows?.length ||
+      spot == null ||
+      spot <= 0 ||
+      T <= 0
+    ) {
+      return null;
+    }
+
+    const rows = [...chainSuccess.chain_rows].sort(
+      (a, b) => a.strike_price - b.strike_price,
+    );
+    if (!rows.length) return null;
+
+    const strikes = rows.map((r) => r.strike_price);
+
+    const downPct = Math.min(
+      -1,
+      Math.max(STRANGLE_MOVE_MIN, ironCondorDownPct),
+    );
+    const upPct = Math.min(
+      STRANGLE_MOVE_MAX,
+      Math.max(1, ironCondorUpPct),
+    );
+    const upTarget = spot * (1 + upPct / 100);
+    const downTarget = spot * (1 + downPct / 100);
+
+    const lpRow =
+      [...rows].reverse().find((r) => r.strike_price <= downTarget) ?? rows[0];
+    const longPutStrike = lpRow.strike_price;
+    const lpIdx = strikes.indexOf(longPutStrike);
+    if (lpIdx < 0 || lpIdx >= strikes.length - 1) return null;
+    const shortPutStrike = strikes[lpIdx + 1]!;
+
+    const lcRow =
+      rows.find((r) => r.strike_price >= upTarget) ?? rows[rows.length - 1]!;
+    const longCallStrike = lcRow.strike_price;
+    const lcIdx = strikes.indexOf(longCallStrike);
+    if (lcIdx <= 0) return null;
+    const shortCallStrike = strikes[lcIdx - 1]!;
+
+    if (
+      !(
+        longPutStrike < shortPutStrike &&
+        shortPutStrike < shortCallStrike &&
+        shortCallStrike < longCallStrike
+      )
+    ) {
+      return null;
+    }
+
+    const rowLongPut = rows.find((r) => r.strike_price === longPutStrike);
+    const rowShortPut = rows.find((r) => r.strike_price === shortPutStrike);
+    const rowShortCall = rows.find((r) => r.strike_price === shortCallStrike);
+    const rowLongCall = rows.find((r) => r.strike_price === longCallStrike);
+    if (
+      !rowLongPut?.put ||
+      !rowShortPut?.put ||
+      !rowShortCall?.call ||
+      !rowLongCall?.call
+    ) {
+      return null;
+    }
+
+    const stdMove = spot * baseSigma * Math.sqrt(T);
+    const ivRangeLow = Math.max(0, spot - stdMove);
+    const ivRangeHigh = spot + stdMove;
+
+    let maxCallOi = -Infinity;
+    let maxPutOi = -Infinity;
+    let maxCallOiStrike: number | null = null;
+    let maxPutOiStrike: number | null = null;
+    for (const r of rows) {
+      const cOi = parseNum(r.call?.open_interest);
+      if (Number.isFinite(cOi) && cOi > maxCallOi) {
+        maxCallOi = cOi;
+        maxCallOiStrike = r.strike_price;
+      }
+      const pOi = parseNum(r.put?.open_interest);
+      if (Number.isFinite(pOi) && pOi > maxPutOi) {
+        maxPutOi = pOi;
+        maxPutOiStrike = r.strike_price;
+      }
+    }
+
+    return {
+      downPct,
+      upPct,
+      longPutStrike,
+      shortPutStrike,
+      shortCallStrike,
+      longCallStrike,
+      longPutPremium: optionMidFromApiLeg(rowLongPut.put),
+      shortPutPremium: optionMidFromApiLeg(rowShortPut.put),
+      shortCallPremium: optionMidFromApiLeg(rowShortCall.call),
+      longCallPremium: optionMidFromApiLeg(rowLongCall.call),
+      atmIvPct: baseSigma * 100,
+      ivRangeLow,
+      ivRangeHigh,
+      maxCallOiStrike,
+      maxPutOiStrike,
+    };
+  }, [
+    selectedReadymade,
+    chainSuccess,
+    spot,
+    ironCondorDownPct,
+    ironCondorUpPct,
+    T,
+    baseSigma,
+  ]);
+
+  useEffect(() => {
+    if (selectedReadymade !== "iron_condor") return;
+    setLegs([]);
+    setIronCondorFetched(false);
+    setIronCondorApplied(null);
+  }, [selectedReadymade]);
+
+  const fetchIronCondorTrades = useCallback(() => {
+    if (!ironCondorSuggestion) return;
+    setIronCondorApplied(ironCondorSuggestion);
+    const s = ironCondorSuggestion;
+    setLegs([
+      {
+        id: "auto-iron-condor-long-put",
+        side: "Buy",
+        right: "Put",
+        strike: s.longPutStrike,
+        lots: 1,
+        premiumPerUnit: s.longPutPremium,
+      },
+      {
+        id: "auto-iron-condor-short-put",
+        side: "Sell",
+        right: "Put",
+        strike: s.shortPutStrike,
+        lots: 1,
+        premiumPerUnit: s.shortPutPremium,
+      },
+      {
+        id: "auto-iron-condor-short-call",
+        side: "Sell",
+        right: "Call",
+        strike: s.shortCallStrike,
+        lots: 1,
+        premiumPerUnit: s.shortCallPremium,
+      },
+      {
+        id: "auto-iron-condor-long-call",
+        side: "Buy",
+        right: "Call",
+        strike: s.longCallStrike,
+        lots: 1,
+        premiumPerUnit: s.longCallPremium,
+      },
+    ]);
+    setIronCondorFetched(true);
+  }, [ironCondorSuggestion]);
+
+  const handleIronCondorDownPct = useCallback((v: number) => {
+    setIronCondorDownPct(v);
+    setIronCondorFetched(false);
+    setIronCondorApplied(null);
+    setLegs([]);
+  }, []);
+
+  const handleIronCondorUpPct = useCallback((v: number) => {
+    setIronCondorUpPct(v);
+    setIronCondorFetched(false);
+    setIronCondorApplied(null);
+    setLegs([]);
+  }, []);
+
+  const ironButterflySuggestion = useMemo(() => {
+    if (selectedReadymade !== "iron_butterfly") return null;
+    if (
+      !chainSuccess?.chain_rows?.length ||
+      spot == null ||
+      spot <= 0 ||
+      T <= 0
+    ) {
+      return null;
+    }
+    const ctx = buildTemplateContext(chainSuccess.chain_rows, spot);
+    if (!ctx) return null;
+    const { strikes, atmIdx, rowsByStrike } = ctx;
+    const midStrike = strikes[atmIdx];
+    if (midStrike == null) return null;
+
+    const wingPct = Math.min(
+      OTM_SLIDER_MAX,
+      Math.max(OTM_SLIDER_MIN, Math.round(ironButterflyWingPct)),
+    );
+
+    let lowStrike: number;
+    let highStrike: number;
+
+    if (wingPct <= 0) {
+      if (atmIdx < 1 || atmIdx >= strikes.length - 1) return null;
+      lowStrike = strikes[atmIdx - 1]!;
+      highStrike = strikes[atmIdx + 1]!;
+    } else {
+      const lowTarget = spot * (1 - wingPct / 100);
+      const highTarget = spot * (1 + wingPct / 100);
+      const below = strikes.filter((s) => s < midStrike);
+      const above = strikes.filter((s) => s > midStrike);
+      if (!below.length || !above.length) return null;
+      lowStrike = below.reduce((best, s) =>
+        Math.abs(s - lowTarget) < Math.abs(best - lowTarget) ? s : best,
+      );
+      highStrike = above.reduce((best, s) =>
+        Math.abs(s - highTarget) < Math.abs(best - highTarget) ? s : best,
+      );
+    }
+
+    if (!(lowStrike < midStrike && midStrike < highStrike)) return null;
+
+    const rowLow = rowsByStrike.get(lowStrike);
+    const rowMid = rowsByStrike.get(midStrike);
+    const rowHigh = rowsByStrike.get(highStrike);
+    if (!rowLow?.put || !rowMid?.put || !rowMid?.call || !rowHigh?.call) {
+      return null;
+    }
+
+    const stdMove = spot * baseSigma * Math.sqrt(T);
+    const ivRangeLow = Math.max(0, spot - stdMove);
+    const ivRangeHigh = spot + stdMove;
+
+    let maxCallOi = -Infinity;
+    let maxPutOi = -Infinity;
+    let maxCallOiStrike: number | null = null;
+    let maxPutOiStrike: number | null = null;
+    for (const r of chainSuccess.chain_rows) {
+      const cOi = parseNum(r.call?.open_interest);
+      if (Number.isFinite(cOi) && cOi > maxCallOi) {
+        maxCallOi = cOi;
+        maxCallOiStrike = r.strike_price;
+      }
+      const pOi = parseNum(r.put?.open_interest);
+      if (Number.isFinite(pOi) && pOi > maxPutOi) {
+        maxPutOi = pOi;
+        maxPutOiStrike = r.strike_price;
+      }
+    }
+
+    return {
+      wingPct,
+      lowStrike,
+      midStrike,
+      highStrike,
+      longPutPremium: optionMidFromApiLeg(rowLow.put),
+      midPutPremium: optionMidFromApiLeg(rowMid.put),
+      midCallPremium: optionMidFromApiLeg(rowMid.call),
+      longCallPremium: optionMidFromApiLeg(rowHigh.call),
+      atmIvPct: baseSigma * 100,
+      ivRangeLow,
+      ivRangeHigh,
+      maxCallOiStrike,
+      maxPutOiStrike,
+    };
+  }, [
+    selectedReadymade,
+    chainSuccess,
+    spot,
+    T,
+    baseSigma,
+    ironButterflyWingPct,
+  ]);
+
+  useEffect(() => {
+    if (selectedReadymade !== "iron_butterfly") return;
+    setLegs([]);
+    setIronButterflyFetched(false);
+    setIronButterflyApplied(null);
+  }, [selectedReadymade]);
+
+  const fetchIronButterflyTrades = useCallback(() => {
+    if (!ironButterflySuggestion) return;
+    setIronButterflyApplied(ironButterflySuggestion);
+    const s = ironButterflySuggestion;
+    setLegs([
+      {
+        id: "auto-iron-bfly-long-put",
+        side: "Buy",
+        right: "Put",
+        strike: s.lowStrike,
+        lots: 1,
+        premiumPerUnit: s.longPutPremium,
+      },
+      {
+        id: "auto-iron-bfly-short-put",
+        side: "Sell",
+        right: "Put",
+        strike: s.midStrike,
+        lots: 1,
+        premiumPerUnit: s.midPutPremium,
+      },
+      {
+        id: "auto-iron-bfly-short-call",
+        side: "Sell",
+        right: "Call",
+        strike: s.midStrike,
+        lots: 1,
+        premiumPerUnit: s.midCallPremium,
+      },
+      {
+        id: "auto-iron-bfly-long-call",
+        side: "Buy",
+        right: "Call",
+        strike: s.highStrike,
+        lots: 1,
+        premiumPerUnit: s.longCallPremium,
+      },
+    ]);
+    setIronButterflyFetched(true);
+  }, [ironButterflySuggestion]);
+
+  const handleIronButterflyWingPct = useCallback((v: number) => {
+    setIronButterflyWingPct(v);
+    setIronButterflyFetched(false);
+    setIronButterflyApplied(null);
+    setLegs([]);
+  }, []);
+
+  const longCallButterflySuggestion = useMemo(() => {
+    if (selectedReadymade !== "long_call_butterfly") return null;
+    if (
+      !chainSuccess?.chain_rows?.length ||
+      spot == null ||
+      spot <= 0 ||
+      T <= 0
+    ) {
+      return null;
+    }
+    const ctx = buildTemplateContext(chainSuccess.chain_rows, spot);
+    if (!ctx) return null;
+    const { strikes, atmIdx, rowsByStrike } = ctx;
+    const midStrike = strikes[atmIdx];
+    if (midStrike == null) return null;
+
+    const wingPct = Math.min(
+      OTM_SLIDER_MAX,
+      Math.max(OTM_SLIDER_MIN, Math.round(butterflyWingPct)),
+    );
+
+    let lowStrike: number;
+    let highStrike: number;
+
+    if (wingPct <= 0) {
+      if (atmIdx < 1 || atmIdx >= strikes.length - 1) return null;
+      lowStrike = strikes[atmIdx - 1]!;
+      highStrike = strikes[atmIdx + 1]!;
+    } else {
+      const lowTarget = spot * (1 - wingPct / 100);
+      const highTarget = spot * (1 + wingPct / 100);
+      const below = strikes.filter((s) => s < midStrike);
+      const above = strikes.filter((s) => s > midStrike);
+      if (!below.length || !above.length) return null;
+      lowStrike = below.reduce((best, s) =>
+        Math.abs(s - lowTarget) < Math.abs(best - lowTarget) ? s : best,
+      );
+      highStrike = above.reduce((best, s) =>
+        Math.abs(s - highTarget) < Math.abs(best - highTarget) ? s : best,
+      );
+    }
+
+    if (!(lowStrike < midStrike && midStrike < highStrike)) return null;
+
+    const rowLow = rowsByStrike.get(lowStrike);
+    const rowMid = rowsByStrike.get(midStrike);
+    const rowHigh = rowsByStrike.get(highStrike);
+    if (!rowLow?.call || !rowMid?.call || !rowHigh?.call) return null;
+
+    const stdMove = spot * baseSigma * Math.sqrt(T);
+    const ivRangeLow = Math.max(0, spot - stdMove);
+    const ivRangeHigh = spot + stdMove;
+
+    let maxCallOi = -Infinity;
+    let maxPutOi = -Infinity;
+    let maxCallOiStrike: number | null = null;
+    let maxPutOiStrike: number | null = null;
+    for (const r of chainSuccess.chain_rows) {
+      const cOi = parseNum(r.call?.open_interest);
+      if (Number.isFinite(cOi) && cOi > maxCallOi) {
+        maxCallOi = cOi;
+        maxCallOiStrike = r.strike_price;
+      }
+      const pOi = parseNum(r.put?.open_interest);
+      if (Number.isFinite(pOi) && pOi > maxPutOi) {
+        maxPutOi = pOi;
+        maxPutOiStrike = r.strike_price;
+      }
+    }
+
+    return {
+      wingPct,
+      lowStrike,
+      midStrike,
+      highStrike,
+      lowPremium: optionMidFromApiLeg(rowLow.call),
+      midPremium: optionMidFromApiLeg(rowMid.call),
+      highPremium: optionMidFromApiLeg(rowHigh.call),
+      atmIvPct: baseSigma * 100,
+      ivRangeLow,
+      ivRangeHigh,
+      maxCallOiStrike,
+      maxPutOiStrike,
+    };
+  }, [
+    selectedReadymade,
+    chainSuccess,
+    spot,
+    T,
+    baseSigma,
+    butterflyWingPct,
+  ]);
+
+  useEffect(() => {
+    if (selectedReadymade !== "long_call_butterfly") return;
+    setLegs([]);
+    setButterflyFetched(false);
+    setButterflyApplied(null);
+  }, [selectedReadymade]);
+
+  const fetchLongCallButterflyTrades = useCallback(() => {
+    if (!longCallButterflySuggestion) return;
+    setButterflyApplied(longCallButterflySuggestion);
+    const s = longCallButterflySuggestion;
+    setLegs([
+      {
+        id: "auto-butterfly-low",
+        side: "Buy",
+        right: "Call",
+        strike: s.lowStrike,
+        lots: 1,
+        premiumPerUnit: s.lowPremium,
+      },
+      {
+        id: "auto-butterfly-mid",
+        side: "Sell",
+        right: "Call",
+        strike: s.midStrike,
+        lots: 2,
+        premiumPerUnit: s.midPremium,
+      },
+      {
+        id: "auto-butterfly-high",
+        side: "Buy",
+        right: "Call",
+        strike: s.highStrike,
+        lots: 1,
+        premiumPerUnit: s.highPremium,
+      },
+    ]);
+    setButterflyFetched(true);
+  }, [longCallButterflySuggestion]);
+
+  const handleButterflyWingPct = useCallback((v: number) => {
+    setButterflyWingPct(v);
+    setButterflyFetched(false);
+    setButterflyApplied(null);
+    setLegs([]);
+  }, []);
 
   const applyTemplateId = useCallback(
     (id: TemplateId) => {
@@ -1534,6 +3294,46 @@ export default function StrategyBuilderPage() {
   const profitClass =
     "text-emerald-700 dark:text-emerald-400";
   const lossClass = "text-red-700 dark:text-red-400";
+  const totalsNetPremium = useMemo(
+    () =>
+      legs.reduce((sum, l) => {
+        if (l.lots <= 0 || l.premiumPerUnit == null) return sum;
+        const legPremium = l.premiumPerUnit * Math.round(l.lots * lotSize);
+        return l.side === "Sell" ? sum + legPremium : sum - legPremium;
+      }, 0),
+    [legs, lotSize],
+  );
+  const totalsMargin = useMemo(() => {
+    let sum = 0;
+    let hasPositiveLots = false;
+    let hasMissingFreshMargin = false;
+    let hasMarginFetchInFlight = false;
+    for (const l of legs) {
+      if (l.lots <= 0) continue;
+      hasPositiveLots = true;
+      if (legMarginFetchingId === l.id) {
+        hasMarginFetchInFlight = true;
+      }
+      const legEntry = legMarginCache[l.id];
+      const legMarginFresh = legMarginEntryMatches(l, legEntry);
+      if (
+        legMarginFresh &&
+        legEntry != null &&
+        legEntry.span != null &&
+        Number.isFinite(legEntry.span)
+      ) {
+        sum += legEntry.span;
+      } else {
+        hasMissingFreshMargin = true;
+      }
+    }
+    return {
+      sum,
+      hasPositiveLots,
+      hasMissingFreshMargin,
+      hasMarginFetchInFlight,
+    };
+  }, [legs, legMarginCache, legMarginFetchingId]);
 
   return (
     <AppShell contentWidth="wide">
@@ -1629,102 +3429,170 @@ export default function StrategyBuilderPage() {
         <section className={`${sb.section} relative z-10 space-y-4`}>
           <h2 className={sb.sectionTitle}>2. Readymade Strategies</h2>
           <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              disabled={
-                uq.isLoading ||
-                !stockCode.trim() ||
-                !expiryDate.trim() ||
-                !chainSuccess
-              }
-              onClick={() => {
-                setScanError(null);
-                setUncoveredScanResult(null);
-                setLegs([]);
-                setSelectedReadymade("build-your-own");
-              }}
-              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden ${
-                selectedReadymade === "build-your-own"
-                  ? "ring-2 ring-sky-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
-                  : ""
-              }`}
-              aria-pressed={selectedReadymade === "build-your-own"}
-            >
-              <div className="w-full flex-1">
-                <OptionStrategyIcon templateId="build-your-own" />
-              </div>
-              <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
-                Build Your Own
-              </div>
-            </button>
-            <button
-              type="button"
-              disabled={
-                uq.isLoading || !stockCode.trim() || !expiryDate.trim()
-              }
-              onClick={() => {
-                setScanError(null);
-                setUncoveredScanResult(null);
-                setSelectedReadymade("naked-shorts");
-              }}
-              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden ${
-                selectedReadymade === "naked-shorts"
-                  ? "ring-2 ring-amber-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
-                  : ""
-              }`}
-              aria-pressed={selectedReadymade === "naked-shorts"}
-            >
-              <div className="w-full flex-1">
-                <OptionStrategyIcon templateId="naked-shorts" />
-              </div>
-              <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
-                Naked Shorts
-              </div>
-            </button>
-            <button
-              type="button"
-              disabled={
-                uq.isLoading || !stockCode.trim() || !expiryDate.trim()
-              }
-              onClick={() => {
-                setScanError(null);
-                setUncoveredScanResult(null);
-                setSelectedReadymade("covered-shorts");
-              }}
-              className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden ${
-                selectedReadymade === "covered-shorts"
-                  ? "ring-2 ring-amber-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
-                  : ""
-              }`}
-              aria-pressed={selectedReadymade === "covered-shorts"}
-            >
-              <div className="w-full flex-1">
-                <OptionStrategyIcon templateId="covered-shorts" />
-              </div>
-              <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
-                Covered Shorts
-              </div>
-            </button>
+            <ReadymadeSetupTooltip strategyId="build-your-own">
+              <button
+                type="button"
+                disabled={
+                  uq.isLoading ||
+                  !stockCode.trim() ||
+                  !expiryDate.trim() ||
+                  !chainSuccess
+                }
+                onClick={() => {
+                  setScanError(null);
+                  setUncoveredScanResult(null);
+                  setLegs([]);
+                  setSelectedReadymade("build-your-own");
+                }}
+                className={`${sb.cardTemplate} relative p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden ${
+                  selectedReadymade === "build-your-own"
+                    ? "ring-2 ring-sky-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
+                    : ""
+                }`}
+                aria-pressed={selectedReadymade === "build-your-own"}
+              >
+                <div className={READYMADE_GRAPH_AREA}>
+                  <div className={READYMADE_GRAPH_BOX}>
+                    <OptionStrategyIcon templateId="build-your-own" />
+                  </div>
+                </div>
+                <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
+                  Build Your Own
+                </div>
+              </button>
+            </ReadymadeSetupTooltip>
+            <ReadymadeSetupTooltip strategyId="naked-shorts">
+              <button
+                type="button"
+                disabled={
+                  uq.isLoading || !stockCode.trim() || !expiryDate.trim()
+                }
+                onClick={() => {
+                  setScanError(null);
+                  setUncoveredScanResult(null);
+                  setSelectedReadymade("naked-shorts");
+                }}
+                className={`${sb.cardTemplate} relative p-0 w-[13.75rem] h-[6.875rem] flex flex-col items-center justify-start gap-0 text-center overflow-hidden ${
+                  selectedReadymade === "naked-shorts"
+                    ? "ring-2 ring-amber-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
+                    : ""
+                }`}
+                aria-pressed={selectedReadymade === "naked-shorts"}
+              >
+                <div className={READYMADE_GRAPH_AREA}>
+                  <div className={READYMADE_GRAPH_BOX}>
+                    <OptionStrategyIcon templateId="naked-shorts" />
+                  </div>
+                </div>
+                <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
+                  Naked Shorts
+                </div>
+              </button>
+            </ReadymadeSetupTooltip>
+            <ReadymadeSetupTooltip strategyId="covered-shorts">
+              <button
+                type="button"
+                disabled={
+                  uq.isLoading || !stockCode.trim() || !expiryDate.trim()
+                }
+                onClick={() => {
+                  setScanError(null);
+                  setUncoveredScanResult(null);
+                  setSelectedReadymade("covered-shorts");
+                }}
+                className={`${sb.cardTemplate} relative p-0 w-[13.75rem] h-[6.875rem] flex flex-col items-center justify-start gap-0 text-center overflow-hidden ${
+                  selectedReadymade === "covered-shorts"
+                    ? "ring-2 ring-amber-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
+                    : ""
+                }`}
+                aria-pressed={selectedReadymade === "covered-shorts"}
+              >
+                <div className={READYMADE_GRAPH_AREA}>
+                  <div className={READYMADE_GRAPH_BOX}>
+                    <OptionStrategyIcon templateId="covered-shorts" />
+                  </div>
+                </div>
+                <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
+                  Covered Shorts (Ratio Spreads)
+                </div>
+              </button>
+            </ReadymadeSetupTooltip>
             {STRATEGY_TEMPLATES.map((t) => (
               <div
                 key={t.id}
                 className="relative"
                 onMouseLeave={() => setComingSoonTooltipId(null)}
               >
-                <button
-                  type="button"
-                  className={`${sb.cardTemplate} p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden opacity-90 border-dotted hover:border-zinc-200/90 hover:shadow-sm`}
-                  aria-pressed={false}
-                  aria-label={`${t.label} - Coming soon`}
-                  onClick={() => setComingSoonTooltipId(t.id)}
-                >
-                  <div className="w-full flex-1">
-                    <OptionStrategyIcon templateId={t.id} />
-                  </div>
-                  <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
-                    {t.label}
-                  </div>
-                </button>
+                {t.id === "bull_call_spread" ||
+                t.id === "bull_put_spread" ||
+                t.id === "bear_call_spread" ||
+                t.id === "bear_put_spread" ||
+                t.id === "long_straddle" ||
+                t.id === "long_strangle" ||
+                t.id === "short_straddle" ||
+                t.id === "short_strangle" ||
+                t.id === "iron_condor" ||
+                t.id === "iron_butterfly" ||
+                t.id === "long_call_butterfly" ? (
+                  <ReadymadeSetupTooltip strategyId={t.id}>
+                    <button
+                      type="button"
+                      disabled={
+                        uq.isLoading ||
+                        !stockCode.trim() ||
+                        !expiryDate.trim() ||
+                        (t.id !== "long_strangle" &&
+                          t.id !== "short_strangle" &&
+                          t.id !== "long_call_butterfly" &&
+                          t.id !== "iron_condor" &&
+                          t.id !== "iron_butterfly" &&
+                          !chainSuccess)
+                      }
+                      className={`${sb.cardTemplate} relative p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden ${
+                        selectedReadymade === t.id
+                          ? "ring-2 ring-sky-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
+                          : ""
+                      }`}
+                      aria-pressed={selectedReadymade === t.id}
+                      onClick={() => {
+                        setScanError(null);
+                        setUncoveredScanResult(null);
+                        setLegs([]);
+                        setSelectedReadymade(t.id);
+                      }}
+                    >
+                      <ReadymadeOutlookPill outlook={t.outlook[0]} />
+                      <div className={READYMADE_GRAPH_AREA}>
+                        <div className={READYMADE_GRAPH_BOX}>
+                          <OptionStrategyIcon templateId={t.id} />
+                        </div>
+                      </div>
+                      <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
+                        {t.label}
+                      </div>
+                    </button>
+                  </ReadymadeSetupTooltip>
+                ) : (
+                  <ReadymadeSetupTooltip strategyId={t.id}>
+                    <button
+                      type="button"
+                      className={`${sb.cardTemplate} relative p-0 w-[6.875rem] aspect-square flex flex-col items-center justify-start gap-0 text-center overflow-hidden opacity-90 border-dotted hover:border-zinc-200/90 hover:shadow-sm`}
+                      aria-pressed={false}
+                      aria-label={`${t.label} - Coming soon`}
+                      onClick={() => setComingSoonTooltipId(t.id)}
+                    >
+                      <ReadymadeOutlookPill outlook={t.outlook[0]} />
+                      <div className={READYMADE_GRAPH_AREA}>
+                        <div className={READYMADE_GRAPH_BOX}>
+                          <OptionStrategyIcon templateId={t.id} />
+                        </div>
+                      </div>
+                      <div className="font-medium text-[11px] leading-none whitespace-nowrap w-full h-[1.1rem] flex items-center justify-center text-center">
+                        {t.label}
+                      </div>
+                    </button>
+                  </ReadymadeSetupTooltip>
+                )}
                 {comingSoonTooltipId === t.id ? (
                   <div className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-[0.35rem] whitespace-nowrap rounded-lg bg-zinc-950/90 px-2 py-1 text-[10px] font-medium text-white shadow-lg dark:bg-black/80">
                     Coming soon
@@ -1865,7 +3733,7 @@ export default function StrategyBuilderPage() {
                 >
                   <AsyncLabelSpan
                     busy={uncoveredScanMut.isPending}
-                    idleLabel="Fetch Legs"
+                    idleLabel="Fetch Trades"
                     busyLabel="Fetching..."
                   />
                 </button>
@@ -1875,6 +3743,391 @@ export default function StrategyBuilderPage() {
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               Not applicable — use the option chain in Proposed Legs.
             </p>
+          ) : selectedReadymade === "bull_call_spread" ? (
+            <div className="space-y-3">
+              <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {segmentExchange === "NFO" ? "NSE" : "BSE"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {stockCode || "—"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {expiryDate || "—"}
+                </span>
+              </p>
+              <div className="max-w-[18rem]">
+                <UncoveredNumberStepper
+                  compact
+                  label="Minimum POP required"
+                  value={bullCallMinPop}
+                  onChange={setBullCallMinPop}
+                  min={1}
+                  max={99}
+                  suffix="%"
+                />
+              </div>
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  disabled={
+                    !stockCode.trim() ||
+                    !expiryDate.trim() ||
+                    !chainSuccess ||
+                    !bullCallSuggestion
+                  }
+                  className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                  onClick={fetchBullCallTrades}
+                >
+                  Fetch Trades
+                </button>
+              </div>
+              {!bullCallSuggestion ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Unable to compute Bull Call Spread legs from this chain.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "bear_call_spread" ? (
+            <div className="space-y-3">
+              <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {segmentExchange === "NFO" ? "NSE" : "BSE"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {stockCode || "—"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {expiryDate || "—"}
+                </span>
+              </p>
+              <div className="max-w-[18rem]">
+                <UncoveredNumberStepper
+                  compact
+                  label="Minimum POP required"
+                  value={bearCallMinPop}
+                  onChange={setBearCallMinPop}
+                  min={1}
+                  max={99}
+                  suffix="%"
+                />
+              </div>
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  disabled={
+                    !stockCode.trim() ||
+                    !expiryDate.trim() ||
+                    !chainSuccess ||
+                    !bearCallSuggestion
+                  }
+                  className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                  onClick={fetchBearCallTrades}
+                >
+                  Fetch Trades
+                </button>
+              </div>
+              {!bearCallSuggestion ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Unable to compute Bear Call Spread legs from this chain.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "bear_put_spread" ? (
+            <div className="space-y-3">
+              <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {segmentExchange === "NFO" ? "NSE" : "BSE"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {stockCode || "—"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {expiryDate || "—"}
+                </span>
+              </p>
+              <div className="max-w-[18rem]">
+                <UncoveredNumberStepper
+                  compact
+                  label="Minimum POP required"
+                  value={bearPutMinPop}
+                  onChange={setBearPutMinPop}
+                  min={1}
+                  max={99}
+                  suffix="%"
+                />
+              </div>
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  disabled={
+                    !stockCode.trim() ||
+                    !expiryDate.trim() ||
+                    !chainSuccess ||
+                    !bearPutSuggestion
+                  }
+                  className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                  onClick={fetchBearPutTrades}
+                >
+                  Fetch Trades
+                </button>
+              </div>
+              {!bearPutSuggestion ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Unable to compute Bear Put Spread legs from this chain.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "bull_put_spread" ? (
+            <div className="space-y-3">
+              <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {segmentExchange === "NFO" ? "NSE" : "BSE"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {stockCode || "—"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {expiryDate || "—"}
+                </span>
+              </p>
+              <div className="max-w-[18rem]">
+                <UncoveredNumberStepper
+                  compact
+                  label="Minimum POP required"
+                  value={bullPutMinPop}
+                  onChange={setBullPutMinPop}
+                  min={1}
+                  max={99}
+                  suffix="%"
+                />
+              </div>
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  disabled={
+                    !stockCode.trim() ||
+                    !expiryDate.trim() ||
+                    !chainSuccess ||
+                    !bullPutSuggestion
+                  }
+                  className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                  onClick={fetchBullPutTrades}
+                >
+                  Fetch Trades
+                </button>
+              </div>
+              {!bullPutSuggestion ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Unable to compute Bull Put Spread legs from this chain.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "long_straddle" ||
+            selectedReadymade === "short_straddle" ? (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              {selectedReadymade === "long_straddle"
+                ? "No parameters required — both legs are buys at the ATM strike (ATM CE and PE)."
+                : "No parameters required — both legs are sells at the ATM strike (ATM CE and PE). Uncovered shorts carry significant risk and margin."}
+            </p>
+          ) : selectedReadymade === "long_strangle" ? (
+            <div className="space-y-3">
+              <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {segmentExchange === "NFO" ? "NSE" : "BSE"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {stockCode || "—"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {expiryDate || "—"}
+                </span>
+              </p>
+              <div className="max-w-xl">
+                <StrangleMoveRangeSlider
+                  compact
+                  label="Expected move from spot"
+                  downPct={longStrangleDownPct}
+                  upPct={longStrangleUpPct}
+                  onDownChange={handleLongStrangleDownPct}
+                  onUpChange={handleLongStrangleUpPct}
+                />
+              </div>
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  disabled={
+                    !stockCode.trim() ||
+                    !expiryDate.trim() ||
+                    !chainSuccess ||
+                    !longStrangleSuggestion
+                  }
+                  className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                  onClick={fetchLongStrangleTrades}
+                >
+                  Fetch Trades
+                </button>
+              </div>
+              {!longStrangleSuggestion ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Load the option chain (section 1) to enable Fetch Trades.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "short_strangle" ? (
+            <div className="space-y-3">
+              <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {segmentExchange === "NFO" ? "NSE" : "BSE"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {stockCode || "—"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {expiryDate || "—"}
+                </span>
+              </p>
+              <div className="max-w-xl">
+                <StrangleMoveRangeSlider
+                  compact
+                  label="Expected range from spot"
+                  downPct={shortStrangleDownPct}
+                  upPct={shortStrangleUpPct}
+                  onDownChange={handleShortStrangleDownPct}
+                  onUpChange={handleShortStrangleUpPct}
+                />
+              </div>
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  disabled={
+                    !stockCode.trim() ||
+                    !expiryDate.trim() ||
+                    !chainSuccess ||
+                    !shortStrangleSuggestion
+                  }
+                  className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                  onClick={fetchShortStrangleTrades}
+                >
+                  Fetch Trades
+                </button>
+              </div>
+              {!shortStrangleSuggestion ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Load the option chain (section 1) to enable Fetch Trades.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "iron_condor" ? (
+            <div className="space-y-3">
+              <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {segmentExchange === "NFO" ? "NSE" : "BSE"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {stockCode || "—"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {expiryDate || "—"}
+                </span>
+              </p>
+              <div className="max-w-xl">
+                <StrangleMoveRangeSlider
+                  compact
+                  label="Short spread range from spot"
+                  downPct={ironCondorDownPct}
+                  upPct={ironCondorUpPct}
+                  onDownChange={handleIronCondorDownPct}
+                  onUpChange={handleIronCondorUpPct}
+                />
+              </div>
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  disabled={
+                    !stockCode.trim() ||
+                    !expiryDate.trim() ||
+                    !chainSuccess ||
+                    !ironCondorSuggestion
+                  }
+                  className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                  onClick={fetchIronCondorTrades}
+                >
+                  Fetch Trades
+                </button>
+              </div>
+              {!ironCondorSuggestion ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Load the option chain (section 1) to enable Fetch Trades, or
+                  widen the range — strikes may not form a valid condor.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "iron_butterfly" ? (
+            <div className="space-y-3">
+              <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {segmentExchange === "NFO" ? "NSE" : "BSE"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {stockCode || "—"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {expiryDate || "—"}
+                </span>
+              </p>
+              <ButterflyWingDistanceSlider
+                compact
+                label="Wing distance (% from spot each side)"
+                value={ironButterflyWingPct}
+                onChange={handleIronButterflyWingPct}
+              />
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  disabled={
+                    !stockCode.trim() ||
+                    !expiryDate.trim() ||
+                    !chainSuccess ||
+                    !ironButterflySuggestion
+                  }
+                  className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                  onClick={fetchIronButterflyTrades}
+                >
+                  Fetch Trades
+                </button>
+              </div>
+              {!ironButterflySuggestion ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Load the option chain (section 1) to enable Fetch Trades, or
+                  the chain may not support this wing at ATM.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "long_call_butterfly" ? (
+            <div className="space-y-3">
+              <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {segmentExchange === "NFO" ? "NSE" : "BSE"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {stockCode || "—"}
+                  <span className="mx-1 text-zinc-400 dark:text-zinc-500">›</span>
+                  {expiryDate || "—"}
+                </span>
+              </p>
+              <ButterflyWingDistanceSlider
+                compact
+                label="Wing distance (% from spot each side)"
+                value={butterflyWingPct}
+                onChange={handleButterflyWingPct}
+              />
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  disabled={
+                    !stockCode.trim() ||
+                    !expiryDate.trim() ||
+                    !chainSuccess ||
+                    !longCallButterflySuggestion
+                  }
+                  className={`${sb.btnPrimary} inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm`}
+                  onClick={fetchLongCallButterflyTrades}
+                >
+                  Fetch Trades
+                </button>
+              </div>
+              {!longCallButterflySuggestion ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Load the option chain (section 1) to enable Fetch Trades, or
+                  the chain may not support a call butterfly at this wing
+                  setting.
+                </p>
+              ) : null}
+            </div>
           ) : (
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               No additional parameters for this strategy yet. Strategy-specific
@@ -1884,7 +4137,7 @@ export default function StrategyBuilderPage() {
         </section>
 
         <section className={`${sb.section} space-y-4`}>
-          <h2 className={sb.sectionTitle}>4. Proposed Legs</h2>
+          <h2 className={sb.sectionTitle}>4. Proposed Trades</h2>
           {selectedReadymade === "build-your-own" ? (
             <div className="space-y-3">
               {cq.isFetching && !chainSuccess ? (
@@ -1935,6 +4188,992 @@ export default function StrategyBuilderPage() {
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
                   Set underlying and expiry in section 1 to load the chain.
                 </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "bull_call_spread" ? (
+            <div className="space-y-3">
+              {bullCallSuggestion ? (
+                <div className="grid gap-2 md:grid-cols-3">
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">ATM IV</div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {bullCallSuggestion.atmIvPct.toFixed(1)}%
+                    </div>
+                    <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                      1σ range (IV):{" "}
+                      <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                        {bullCallSuggestion.ivRangeLow.toFixed(2)} -{" "}
+                        {bullCallSuggestion.ivRangeHigh.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">
+                      Highest OI range (Put - Call)
+                    </div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {bullCallSuggestion.maxPutOiStrike != null &&
+                      bullCallSuggestion.maxCallOiStrike != null
+                        ? `${bullCallSuggestion.maxPutOiStrike.toLocaleString("en-IN")} - ${bullCallSuggestion.maxCallOiStrike.toLocaleString("en-IN")}`
+                        : "—"}
+                    </div>
+                  </div>
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">
+                      Auto-selected legs
+                    </div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      Buy {bullCallSuggestion.buyStrike.toLocaleString("en-IN")} CE
+                      {" · "}
+                      Sell {bullCallSuggestion.sellStrike.toLocaleString("en-IN")} CE
+                    </div>
+                    <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                      POP target {bullCallSuggestion.minPop}% · model{" "}
+                      <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                        {legs.length ? `${pop.toFixed(1)}%` : "—"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              {cq.isFetching && !chainSuccess ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Loading option chain…
+                </p>
+              ) : null}
+              {cq.isError ? (
+                <div className="app-alert-error text-xs">
+                  {cq.error instanceof Error
+                    ? cq.error.message
+                    : "Chain request failed"}
+                </div>
+              ) : null}
+              {chainSuccess?.chain_rows?.length ? (
+                <OptionChainTable
+                  chainSuccess={chainSuccess}
+                  scrollRef={buildOwnChainScrollRef}
+                  mode="strategyBuilder"
+                  onStrategyBuySell={handleStrategyChainBuySell}
+                  isStrategySlotAdded={(strike, right, side) =>
+                    buildYourOwnAddedSlots.has(
+                      buildYourOwnSlotKey(
+                        stockCode,
+                        expiryDate,
+                        strike,
+                        right,
+                        side,
+                      ),
+                    )
+                  }
+                />
+              ) : !cq.isFetching &&
+                stockCode.trim() &&
+                expiryDate.trim() &&
+                cq.data?.Status === 200 ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  No option chain rows for this expiry.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "bear_call_spread" ? (
+            <div className="space-y-3">
+              {bearCallSuggestion ? (
+                <div className="grid gap-2 md:grid-cols-3">
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">ATM IV</div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {bearCallSuggestion.atmIvPct.toFixed(1)}%
+                    </div>
+                    <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                      1σ range (IV):{" "}
+                      <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                        {bearCallSuggestion.ivRangeLow.toFixed(2)} -{" "}
+                        {bearCallSuggestion.ivRangeHigh.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">
+                      Highest OI range (Put - Call)
+                    </div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {bearCallSuggestion.maxPutOiStrike != null &&
+                      bearCallSuggestion.maxCallOiStrike != null
+                        ? `${bearCallSuggestion.maxPutOiStrike.toLocaleString("en-IN")} - ${bearCallSuggestion.maxCallOiStrike.toLocaleString("en-IN")}`
+                        : "—"}
+                    </div>
+                  </div>
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">
+                      Auto-selected legs
+                    </div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      Sell {bearCallSuggestion.sellStrike.toLocaleString("en-IN")}{" "}
+                      CE
+                      {" · "}
+                      Buy {bearCallSuggestion.buyStrike.toLocaleString("en-IN")} CE
+                    </div>
+                    <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                      POP target {bearCallSuggestion.minPop}% · model{" "}
+                      <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                        {legs.length ? `${pop.toFixed(1)}%` : "—"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              {cq.isFetching && !chainSuccess ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Loading option chain…
+                </p>
+              ) : null}
+              {cq.isError ? (
+                <div className="app-alert-error text-xs">
+                  {cq.error instanceof Error
+                    ? cq.error.message
+                    : "Chain request failed"}
+                </div>
+              ) : null}
+              {chainSuccess?.chain_rows?.length ? (
+                <OptionChainTable
+                  chainSuccess={chainSuccess}
+                  scrollRef={buildOwnChainScrollRef}
+                  mode="strategyBuilder"
+                  onStrategyBuySell={handleStrategyChainBuySell}
+                  isStrategySlotAdded={(strike, right, side) =>
+                    buildYourOwnAddedSlots.has(
+                      buildYourOwnSlotKey(
+                        stockCode,
+                        expiryDate,
+                        strike,
+                        right,
+                        side,
+                      ),
+                    )
+                  }
+                />
+              ) : !cq.isFetching &&
+                stockCode.trim() &&
+                expiryDate.trim() &&
+                cq.data?.Status === 200 ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  No option chain rows for this expiry.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "bear_put_spread" ? (
+            <div className="space-y-3">
+              {bearPutSuggestion ? (
+                <div className="grid gap-2 md:grid-cols-3">
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">ATM IV</div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {bearPutSuggestion.atmIvPct.toFixed(1)}%
+                    </div>
+                    <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                      1σ range (IV):{" "}
+                      <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                        {bearPutSuggestion.ivRangeLow.toFixed(2)} -{" "}
+                        {bearPutSuggestion.ivRangeHigh.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">
+                      Highest OI range (Put - Call)
+                    </div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {bearPutSuggestion.maxPutOiStrike != null &&
+                      bearPutSuggestion.maxCallOiStrike != null
+                        ? `${bearPutSuggestion.maxPutOiStrike.toLocaleString("en-IN")} - ${bearPutSuggestion.maxCallOiStrike.toLocaleString("en-IN")}`
+                        : "—"}
+                    </div>
+                  </div>
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">
+                      Auto-selected legs
+                    </div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      Buy {bearPutSuggestion.buyStrike.toLocaleString("en-IN")} PE
+                      {" · "}
+                      Sell {bearPutSuggestion.sellStrike.toLocaleString("en-IN")} PE
+                    </div>
+                    <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                      POP target {bearPutSuggestion.minPop}% · model{" "}
+                      <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                        {legs.length ? `${pop.toFixed(1)}%` : "—"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              {cq.isFetching && !chainSuccess ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Loading option chain…
+                </p>
+              ) : null}
+              {cq.isError ? (
+                <div className="app-alert-error text-xs">
+                  {cq.error instanceof Error
+                    ? cq.error.message
+                    : "Chain request failed"}
+                </div>
+              ) : null}
+              {chainSuccess?.chain_rows?.length ? (
+                <OptionChainTable
+                  chainSuccess={chainSuccess}
+                  scrollRef={buildOwnChainScrollRef}
+                  mode="strategyBuilder"
+                  onStrategyBuySell={handleStrategyChainBuySell}
+                  isStrategySlotAdded={(strike, right, side) =>
+                    buildYourOwnAddedSlots.has(
+                      buildYourOwnSlotKey(
+                        stockCode,
+                        expiryDate,
+                        strike,
+                        right,
+                        side,
+                      ),
+                    )
+                  }
+                />
+              ) : !cq.isFetching &&
+                stockCode.trim() &&
+                expiryDate.trim() &&
+                cq.data?.Status === 200 ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  No option chain rows for this expiry.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "bull_put_spread" ? (
+            <div className="space-y-3">
+              {bullPutSuggestion ? (
+                <div className="grid gap-2 md:grid-cols-3">
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">ATM IV</div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {bullPutSuggestion.atmIvPct.toFixed(1)}%
+                    </div>
+                    <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                      1σ range (IV):{" "}
+                      <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                        {bullPutSuggestion.ivRangeLow.toFixed(2)} -{" "}
+                        {bullPutSuggestion.ivRangeHigh.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">
+                      Highest OI range (Put - Call)
+                    </div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {bullPutSuggestion.maxPutOiStrike != null &&
+                      bullPutSuggestion.maxCallOiStrike != null
+                        ? `${bullPutSuggestion.maxPutOiStrike.toLocaleString("en-IN")} - ${bullPutSuggestion.maxCallOiStrike.toLocaleString("en-IN")}`
+                        : "—"}
+                    </div>
+                  </div>
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">
+                      Auto-selected legs
+                    </div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      Sell {bullPutSuggestion.sellStrike.toLocaleString("en-IN")}{" "}
+                      PE
+                      {" · "}
+                      Buy {bullPutSuggestion.buyStrike.toLocaleString("en-IN")} PE
+                    </div>
+                    <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                      POP target {bullPutSuggestion.minPop}% · model{" "}
+                      <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                        {legs.length ? `${pop.toFixed(1)}%` : "—"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              {cq.isFetching && !chainSuccess ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Loading option chain…
+                </p>
+              ) : null}
+              {cq.isError ? (
+                <div className="app-alert-error text-xs">
+                  {cq.error instanceof Error
+                    ? cq.error.message
+                    : "Chain request failed"}
+                </div>
+              ) : null}
+              {chainSuccess?.chain_rows?.length ? (
+                <OptionChainTable
+                  chainSuccess={chainSuccess}
+                  scrollRef={buildOwnChainScrollRef}
+                  mode="strategyBuilder"
+                  onStrategyBuySell={handleStrategyChainBuySell}
+                  isStrategySlotAdded={(strike, right, side) =>
+                    buildYourOwnAddedSlots.has(
+                      buildYourOwnSlotKey(
+                        stockCode,
+                        expiryDate,
+                        strike,
+                        right,
+                        side,
+                      ),
+                    )
+                  }
+                />
+              ) : !cq.isFetching &&
+                stockCode.trim() &&
+                expiryDate.trim() &&
+                cq.data?.Status === 200 ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  No option chain rows for this expiry.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "long_straddle" ||
+            selectedReadymade === "short_straddle" ? (
+            <div className="space-y-3">
+              {atmStraddleProposedSummary ? (
+                <div className="grid gap-2 md:grid-cols-3">
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">ATM IV</div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {atmStraddleProposedSummary.atmIvPct.toFixed(1)}%
+                    </div>
+                    <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                      1σ range (IV):{" "}
+                      <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                        {atmStraddleProposedSummary.ivRangeLow.toFixed(2)} -{" "}
+                        {atmStraddleProposedSummary.ivRangeHigh.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">
+                      Highest OI range (Put - Call)
+                    </div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {atmStraddleProposedSummary.maxPutOiStrike != null &&
+                      atmStraddleProposedSummary.maxCallOiStrike != null
+                        ? `${atmStraddleProposedSummary.maxPutOiStrike.toLocaleString("en-IN")} - ${atmStraddleProposedSummary.maxCallOiStrike.toLocaleString("en-IN")}`
+                        : "—"}
+                    </div>
+                  </div>
+                  <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                    <div className="text-zinc-500 dark:text-zinc-400">
+                      Auto-selected legs
+                    </div>
+                    <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {selectedReadymade === "long_straddle" ? "Buy" : "Sell"}{" "}
+                      {atmStraddleProposedSummary.atmStrike.toLocaleString("en-IN")}{" "}
+                      CE · {selectedReadymade === "long_straddle" ? "Buy" : "Sell"}{" "}
+                      {atmStraddleProposedSummary.atmStrike.toLocaleString("en-IN")}{" "}
+                      PE
+                    </div>
+                    <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                      Model POP{" "}
+                      <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                        {legs.length ? `${pop.toFixed(1)}%` : "—"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              {cq.isFetching && !chainSuccess ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Loading option chain…
+                </p>
+              ) : null}
+              {cq.isError ? (
+                <div className="app-alert-error text-xs">
+                  {cq.error instanceof Error
+                    ? cq.error.message
+                    : "Chain request failed"}
+                </div>
+              ) : null}
+              {cq.data &&
+              cq.data.Status !== 200 &&
+              (cq.data.Error || "").trim() ? (
+                <div className="app-alert-error text-xs">
+                  {String(cq.data.Error).trim()}
+                </div>
+              ) : null}
+              {chainSuccess?.chain_rows?.length ? (
+                <OptionChainTable
+                  chainSuccess={chainSuccess}
+                  scrollRef={buildOwnChainScrollRef}
+                  mode="strategyBuilder"
+                  onStrategyBuySell={handleStrategyChainBuySell}
+                  isStrategySlotAdded={(strike, right, side) =>
+                    buildYourOwnAddedSlots.has(
+                      buildYourOwnSlotKey(
+                        stockCode,
+                        expiryDate,
+                        strike,
+                        right,
+                        side,
+                      ),
+                    )
+                  }
+                />
+              ) : !cq.isFetching &&
+                stockCode.trim() &&
+                expiryDate.trim() &&
+                cq.data?.Status === 200 ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  No option chain rows for this expiry.
+                </p>
+              ) : !stockCode.trim() || !expiryDate.trim() ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Set underlying and expiry in section 1 to load the chain.
+                </p>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "long_strangle" ? (
+            <div className="space-y-3">
+              {cq.isFetching && !chainSuccess ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Loading option chain…
+                </p>
+              ) : null}
+              {cq.isError ? (
+                <div className="app-alert-error text-xs">
+                  {cq.error instanceof Error
+                    ? cq.error.message
+                    : "Chain request failed"}
+                </div>
+              ) : null}
+              {cq.data &&
+              cq.data.Status !== 200 &&
+              (cq.data.Error || "").trim() ? (
+                <div className="app-alert-error text-xs">
+                  {String(cq.data.Error).trim()}
+                </div>
+              ) : null}
+              {!longStrangleFetched ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {!stockCode.trim() || !expiryDate.trim()
+                    ? "Set underlying and expiry in section 1 first."
+                    : "Set the expected move range in section 3, then click Fetch Trades to view the option chain and proposed legs."}
+                </p>
+              ) : longStrangleApplied ? (
+                <>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">ATM IV</div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {longStrangleApplied.atmIvPct.toFixed(1)}%
+                      </div>
+                      <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                        1σ range (IV):{" "}
+                        <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {longStrangleApplied.ivRangeLow.toFixed(2)} -{" "}
+                          {longStrangleApplied.ivRangeHigh.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">
+                        Highest OI range (Put - Call)
+                      </div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {longStrangleApplied.maxPutOiStrike != null &&
+                        longStrangleApplied.maxCallOiStrike != null
+                          ? `${longStrangleApplied.maxPutOiStrike.toLocaleString("en-IN")} - ${longStrangleApplied.maxCallOiStrike.toLocaleString("en-IN")}`
+                          : "—"}
+                      </div>
+                    </div>
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">
+                        Auto-selected legs
+                      </div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        Buy{" "}
+                        {longStrangleApplied.callStrike.toLocaleString("en-IN")} CE
+                        {" · "}
+                        Buy{" "}
+                        {longStrangleApplied.putStrike.toLocaleString("en-IN")} PE
+                      </div>
+                      <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                        Move targets:{" "}
+                        <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {longStrangleApplied.downPct}% / +
+                          {longStrangleApplied.upPct}%
+                        </span>
+                        {spot != null
+                          ? ` · spot ${spot.toLocaleString("en-IN")}`
+                          : ""}
+                      </div>
+                    </div>
+                  </div>
+                  {chainSuccess?.chain_rows?.length ? (
+                    <OptionChainTable
+                      chainSuccess={chainSuccess}
+                      scrollRef={buildOwnChainScrollRef}
+                      mode="strategyBuilder"
+                      onStrategyBuySell={handleStrategyChainBuySell}
+                      isStrategySlotAdded={(strike, right, side) =>
+                        buildYourOwnAddedSlots.has(
+                          buildYourOwnSlotKey(
+                            stockCode,
+                            expiryDate,
+                            strike,
+                            right,
+                            side,
+                          ),
+                        )
+                      }
+                    />
+                  ) : !cq.isFetching &&
+                    stockCode.trim() &&
+                    expiryDate.trim() &&
+                    cq.data?.Status === 200 ? (
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                      No option chain rows for this expiry.
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "short_strangle" ? (
+            <div className="space-y-3">
+              {cq.isFetching && !chainSuccess ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Loading option chain…
+                </p>
+              ) : null}
+              {cq.isError ? (
+                <div className="app-alert-error text-xs">
+                  {cq.error instanceof Error
+                    ? cq.error.message
+                    : "Chain request failed"}
+                </div>
+              ) : null}
+              {cq.data &&
+              cq.data.Status !== 200 &&
+              (cq.data.Error || "").trim() ? (
+                <div className="app-alert-error text-xs">
+                  {String(cq.data.Error).trim()}
+                </div>
+              ) : null}
+              {!shortStrangleFetched ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {!stockCode.trim() || !expiryDate.trim()
+                    ? "Set underlying and expiry in section 1 first."
+                    : "Set the range lines in section 3, then click Fetch Trades to view the option chain and proposed legs."}
+                </p>
+              ) : shortStrangleApplied ? (
+                <>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">ATM IV</div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {shortStrangleApplied.atmIvPct.toFixed(1)}%
+                      </div>
+                      <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                        1σ range (IV):{" "}
+                        <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {shortStrangleApplied.ivRangeLow.toFixed(2)} -{" "}
+                          {shortStrangleApplied.ivRangeHigh.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">
+                        Highest OI range (Put - Call)
+                      </div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {shortStrangleApplied.maxPutOiStrike != null &&
+                        shortStrangleApplied.maxCallOiStrike != null
+                          ? `${shortStrangleApplied.maxPutOiStrike.toLocaleString("en-IN")} - ${shortStrangleApplied.maxCallOiStrike.toLocaleString("en-IN")}`
+                          : "—"}
+                      </div>
+                    </div>
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">
+                        Auto-selected legs
+                      </div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        Sell{" "}
+                        {shortStrangleApplied.callStrike.toLocaleString("en-IN")}{" "}
+                        CE
+                        {" · "}
+                        Sell{" "}
+                        {shortStrangleApplied.putStrike.toLocaleString("en-IN")}{" "}
+                        PE
+                      </div>
+                      <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                        Range lines:{" "}
+                        <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {shortStrangleApplied.downPct}% / +
+                          {shortStrangleApplied.upPct}%
+                        </span>
+                        {spot != null
+                          ? ` · spot ${spot.toLocaleString("en-IN")}`
+                          : ""}
+                      </div>
+                    </div>
+                  </div>
+                  {chainSuccess?.chain_rows?.length ? (
+                    <OptionChainTable
+                      chainSuccess={chainSuccess}
+                      scrollRef={buildOwnChainScrollRef}
+                      mode="strategyBuilder"
+                      onStrategyBuySell={handleStrategyChainBuySell}
+                      isStrategySlotAdded={(strike, right, side) =>
+                        buildYourOwnAddedSlots.has(
+                          buildYourOwnSlotKey(
+                            stockCode,
+                            expiryDate,
+                            strike,
+                            right,
+                            side,
+                          ),
+                        )
+                      }
+                    />
+                  ) : !cq.isFetching &&
+                    stockCode.trim() &&
+                    expiryDate.trim() &&
+                    cq.data?.Status === 200 ? (
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                      No option chain rows for this expiry.
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "iron_condor" ? (
+            <div className="space-y-3">
+              {cq.isFetching && !chainSuccess ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Loading option chain…
+                </p>
+              ) : null}
+              {cq.isError ? (
+                <div className="app-alert-error text-xs">
+                  {cq.error instanceof Error
+                    ? cq.error.message
+                    : "Chain request failed"}
+                </div>
+              ) : null}
+              {cq.data &&
+              cq.data.Status !== 200 &&
+              (cq.data.Error || "").trim() ? (
+                <div className="app-alert-error text-xs">
+                  {String(cq.data.Error).trim()}
+                </div>
+              ) : null}
+              {!ironCondorFetched ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {!stockCode.trim() || !expiryDate.trim()
+                    ? "Set underlying and expiry in section 1 first."
+                    : "Set the short spread range in section 3, then click Fetch Trades to view the option chain and proposed legs."}
+                </p>
+              ) : ironCondorApplied ? (
+                <>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">ATM IV</div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {ironCondorApplied.atmIvPct.toFixed(1)}%
+                      </div>
+                      <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                        1σ range (IV):{" "}
+                        <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {ironCondorApplied.ivRangeLow.toFixed(2)} -{" "}
+                          {ironCondorApplied.ivRangeHigh.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">
+                        Highest OI range (Put - Call)
+                      </div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {ironCondorApplied.maxPutOiStrike != null &&
+                        ironCondorApplied.maxCallOiStrike != null
+                          ? `${ironCondorApplied.maxPutOiStrike.toLocaleString("en-IN")} - ${ironCondorApplied.maxCallOiStrike.toLocaleString("en-IN")}`
+                          : "—"}
+                      </div>
+                    </div>
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">
+                        Auto-selected legs
+                      </div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        Buy{" "}
+                        {ironCondorApplied.longPutStrike.toLocaleString("en-IN")}{" "}
+                        PE · Sell{" "}
+                        {ironCondorApplied.shortPutStrike.toLocaleString("en-IN")}{" "}
+                        PE · Sell{" "}
+                        {ironCondorApplied.shortCallStrike.toLocaleString("en-IN")}{" "}
+                        CE · Buy{" "}
+                        {ironCondorApplied.longCallStrike.toLocaleString("en-IN")}{" "}
+                        CE
+                      </div>
+                      <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                        Short range:{" "}
+                        <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {ironCondorApplied.downPct}% / +
+                          {ironCondorApplied.upPct}%
+                        </span>
+                        {spot != null
+                          ? ` · spot ${spot.toLocaleString("en-IN")}`
+                          : ""}
+                        {" · "}model POP{" "}
+                        <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {legs.length ? `${pop.toFixed(1)}%` : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  {chainSuccess?.chain_rows?.length ? (
+                    <OptionChainTable
+                      chainSuccess={chainSuccess}
+                      scrollRef={buildOwnChainScrollRef}
+                      mode="strategyBuilder"
+                      onStrategyBuySell={handleStrategyChainBuySell}
+                      isStrategySlotAdded={(strike, right, side) =>
+                        buildYourOwnAddedSlots.has(
+                          buildYourOwnSlotKey(
+                            stockCode,
+                            expiryDate,
+                            strike,
+                            right,
+                            side,
+                          ),
+                        )
+                      }
+                    />
+                  ) : !cq.isFetching &&
+                    stockCode.trim() &&
+                    expiryDate.trim() &&
+                    cq.data?.Status === 200 ? (
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                      No option chain rows for this expiry.
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "iron_butterfly" ? (
+            <div className="space-y-3">
+              {cq.isFetching && !chainSuccess ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Loading option chain…
+                </p>
+              ) : null}
+              {cq.isError ? (
+                <div className="app-alert-error text-xs">
+                  {cq.error instanceof Error
+                    ? cq.error.message
+                    : "Chain request failed"}
+                </div>
+              ) : null}
+              {cq.data &&
+              cq.data.Status !== 200 &&
+              (cq.data.Error || "").trim() ? (
+                <div className="app-alert-error text-xs">
+                  {String(cq.data.Error).trim()}
+                </div>
+              ) : null}
+              {!ironButterflyFetched ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {!stockCode.trim() || !expiryDate.trim()
+                    ? "Set underlying and expiry in section 1 first."
+                    : "Set wing distance in section 3, then click Fetch Trades to view the option chain and proposed legs."}
+                </p>
+              ) : ironButterflyApplied ? (
+                <>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">ATM IV</div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {ironButterflyApplied.atmIvPct.toFixed(1)}%
+                      </div>
+                      <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                        1σ range (IV):{" "}
+                        <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {ironButterflyApplied.ivRangeLow.toFixed(2)} -{" "}
+                          {ironButterflyApplied.ivRangeHigh.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">
+                        Highest OI range (Put - Call)
+                      </div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {ironButterflyApplied.maxPutOiStrike != null &&
+                        ironButterflyApplied.maxCallOiStrike != null
+                          ? `${ironButterflyApplied.maxPutOiStrike.toLocaleString("en-IN")} - ${ironButterflyApplied.maxCallOiStrike.toLocaleString("en-IN")}`
+                          : "—"}
+                      </div>
+                    </div>
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">
+                        Auto-selected legs
+                      </div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        Buy{" "}
+                        {ironButterflyApplied.lowStrike.toLocaleString("en-IN")}{" "}
+                        PE · Sell{" "}
+                        {ironButterflyApplied.midStrike.toLocaleString("en-IN")}{" "}
+                        PE · Sell{" "}
+                        {ironButterflyApplied.midStrike.toLocaleString("en-IN")}{" "}
+                        CE · Buy{" "}
+                        {ironButterflyApplied.highStrike.toLocaleString("en-IN")}{" "}
+                        CE
+                      </div>
+                      <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                        Wing distance {ironButterflyApplied.wingPct}%
+                        {spot != null
+                          ? ` · spot ${spot.toLocaleString("en-IN")}`
+                          : ""}
+                        {" · "}model POP{" "}
+                        <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {legs.length ? `${pop.toFixed(1)}%` : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  {chainSuccess?.chain_rows?.length ? (
+                    <OptionChainTable
+                      chainSuccess={chainSuccess}
+                      scrollRef={buildOwnChainScrollRef}
+                      mode="strategyBuilder"
+                      onStrategyBuySell={handleStrategyChainBuySell}
+                      isStrategySlotAdded={(strike, right, side) =>
+                        buildYourOwnAddedSlots.has(
+                          buildYourOwnSlotKey(
+                            stockCode,
+                            expiryDate,
+                            strike,
+                            right,
+                            side,
+                          ),
+                        )
+                      }
+                    />
+                  ) : !cq.isFetching &&
+                    stockCode.trim() &&
+                    expiryDate.trim() &&
+                    cq.data?.Status === 200 ? (
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                      No option chain rows for this expiry.
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : selectedReadymade === "long_call_butterfly" ? (
+            <div className="space-y-3">
+              {cq.isFetching && !chainSuccess ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Loading option chain…
+                </p>
+              ) : null}
+              {cq.isError ? (
+                <div className="app-alert-error text-xs">
+                  {cq.error instanceof Error
+                    ? cq.error.message
+                    : "Chain request failed"}
+                </div>
+              ) : null}
+              {cq.data &&
+              cq.data.Status !== 200 &&
+              (cq.data.Error || "").trim() ? (
+                <div className="app-alert-error text-xs">
+                  {String(cq.data.Error).trim()}
+                </div>
+              ) : null}
+              {!butterflyFetched ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {!stockCode.trim() || !expiryDate.trim()
+                    ? "Set underlying and expiry in section 1 first."
+                    : "Set wing distance in section 3, then click Fetch Trades to view the option chain and proposed legs."}
+                </p>
+              ) : butterflyApplied ? (
+                <>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">ATM IV</div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {butterflyApplied.atmIvPct.toFixed(1)}%
+                      </div>
+                      <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                        1σ range (IV):{" "}
+                        <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {butterflyApplied.ivRangeLow.toFixed(2)} -{" "}
+                          {butterflyApplied.ivRangeHigh.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">
+                        Highest OI range (Put - Call)
+                      </div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {butterflyApplied.maxPutOiStrike != null &&
+                        butterflyApplied.maxCallOiStrike != null
+                          ? `${butterflyApplied.maxPutOiStrike.toLocaleString("en-IN")} - ${butterflyApplied.maxCallOiStrike.toLocaleString("en-IN")}`
+                          : "—"}
+                      </div>
+                    </div>
+                    <div className="bg-zinc-50/70 px-3 py-2 text-xs dark:border-zinc-700/80 dark:bg-zinc-900/35">
+                      <div className="text-zinc-500 dark:text-zinc-400">
+                        Auto-selected legs
+                      </div>
+                      <div className="mt-0.5 font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        Buy{" "}
+                        {butterflyApplied.lowStrike.toLocaleString("en-IN")} CE
+                        {" · "}Sell 2×{" "}
+                        {butterflyApplied.midStrike.toLocaleString("en-IN")} CE
+                        {" · "}Buy{" "}
+                        {butterflyApplied.highStrike.toLocaleString("en-IN")} CE
+                      </div>
+                      <div className="mt-1 text-zinc-500 dark:text-zinc-400">
+                        Wing distance {butterflyApplied.wingPct}%
+                        {spot != null
+                          ? ` · spot ${spot.toLocaleString("en-IN")}`
+                          : ""}
+                        {" · "}model POP{" "}
+                        <span className="font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {legs.length ? `${pop.toFixed(1)}%` : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  {chainSuccess?.chain_rows?.length ? (
+                    <OptionChainTable
+                      chainSuccess={chainSuccess}
+                      scrollRef={buildOwnChainScrollRef}
+                      mode="strategyBuilder"
+                      onStrategyBuySell={handleStrategyChainBuySell}
+                      isStrategySlotAdded={(strike, right, side) =>
+                        buildYourOwnAddedSlots.has(
+                          buildYourOwnSlotKey(
+                            stockCode,
+                            expiryDate,
+                            strike,
+                            right,
+                            side,
+                          ),
+                        )
+                      }
+                    />
+                  ) : !cq.isFetching &&
+                    stockCode.trim() &&
+                    expiryDate.trim() &&
+                    cq.data?.Status === 200 ? (
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                      No option chain rows for this expiry.
+                    </p>
+                  ) : null}
+                </>
               ) : null}
             </div>
           ) : !uncoveredScanResult ? (
@@ -2238,6 +5477,40 @@ export default function StrategyBuilderPage() {
                     </tr>
                   );
                 })}
+                {legs.length > 0 ? (
+                  <tr className="border-t border-zinc-200/80 bg-zinc-50/80 dark:border-zinc-700/80 dark:bg-zinc-900/40">
+                    <td
+                      className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300"
+                      colSpan={5}
+                    >
+                      Totals
+                    </td>
+                    <td
+                      className={`px-2 py-2 text-xs font-semibold tabular-nums ${
+                        totalsNetPremium < 0
+                          ? "text-red-700 dark:text-red-400"
+                          : "text-zinc-900 dark:text-zinc-100"
+                      }`}
+                    >
+                      {formatNetPremiumCompactInr(totalsNetPremium)}
+                    </td>
+                    <td className="px-2 py-2 text-xs text-zinc-500 dark:text-zinc-400">
+                      —
+                    </td>
+                    <td className="px-2 py-2 text-xs font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                      {!totalsMargin.hasPositiveLots ? (
+                        "—"
+                      ) : totalsMargin.hasMarginFetchInFlight ? (
+                        "…"
+                      ) : totalsMargin.hasMissingFreshMargin ? (
+                        "—"
+                      ) : (
+                        formatIndianMoneyCompact(totalsMargin.sum)
+                      )}
+                    </td>
+                    <td className="px-2 py-2" />
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>
@@ -2395,30 +5668,25 @@ export default function StrategyBuilderPage() {
                 </p>
               </div>
               <div
-                className={`${sb.segmentGroup} shrink-0 self-start`}
-                role="group"
-                aria-label="Portfolio Greeks visibility"
+                className={`${sb.checkboxRow} shrink-0 self-start gap-2 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
               >
                 <button
                   type="button"
-                  className={`${sb.segmentBtn} px-3 py-1.5 text-xs ${
-                    !showGreeks ? sb.segmentBtnActive : sb.segmentBtnInactive
+                  role="switch"
+                  aria-checked={showGreeks}
+                  aria-label="Toggle Show Greeks"
+                  onClick={() => setShowGreeks((v) => !v)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${
+                    showGreeks ? "bg-sky-600" : "bg-zinc-300 dark:bg-zinc-700"
                   }`}
-                  aria-pressed={!showGreeks}
-                  onClick={() => setShowGreeks(false)}
                 >
-                  Hide
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                      showGreeks ? "translate-x-4" : "translate-x-0.5"
+                    }`}
+                  />
                 </button>
-                <button
-                  type="button"
-                  className={`${sb.segmentBtn} px-3 py-1.5 text-xs ${
-                    showGreeks ? sb.segmentBtnActive : sb.segmentBtnInactive
-                  }`}
-                  aria-pressed={showGreeks}
-                  onClick={() => setShowGreeks(true)}
-                >
-                  Show Greeks
-                </button>
+                Show Greeks
               </div>
             </div>
             <IvShockSlider value={ivShockPct} onChange={setIvShockPct} />

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   portfolioPayoffAtExpiry,
   scanPayoffCurve,
+  summarizePayoffExact,
   summarizePayoffScan,
 } from "@/lib/strategy-builder/payoff";
 import type { StrategyLeg } from "@/lib/strategy-builder/types";
@@ -42,5 +43,30 @@ describe("payoff", () => {
     expect(breakevens).toEqual([]);
     expect(maxProfit).toBe(0);
     expect(maxLoss).toBe(0);
+  });
+
+  it("string strikes still produce breakevens for long straddle summary", () => {
+    const legs: StrategyLeg[] = [
+      {
+        id: "c",
+        right: "Call",
+        side: "Buy",
+        strike: "25000" as unknown as number,
+        lots: 1,
+        premiumPerUnit: 45,
+      },
+      {
+        id: "p",
+        right: "Put",
+        side: "Buy",
+        strike: "25000" as unknown as number,
+        lots: 1,
+        premiumPerUnit: 53,
+      },
+    ];
+    const { breakevens, maxLoss } = summarizePayoffExact(legs, 65, 25_000);
+    expect(breakevens.length).toBeGreaterThanOrEqual(2);
+    expect(maxLoss).toBeLessThan(0);
+    expect(portfolioPayoffAtExpiry(25_000, legs, 65)).toBeCloseTo(maxLoss, -2);
   });
 });

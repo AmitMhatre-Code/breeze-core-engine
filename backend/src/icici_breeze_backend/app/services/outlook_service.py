@@ -37,10 +37,11 @@ class CachedOutlook:
 
 
 class OutlookError(Exception):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, status_code: int | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.status_code = status_code
 
 
 class OutlookService:
@@ -211,19 +212,32 @@ class OutlookService:
         last_error: Optional[OutlookError] = None
         for model in models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={ai_cfg.api_key}"
-            try:
-                return self._parse_provider_response(
-                    url=url,
-                    headers={"Content-Type": "application/json"},
-                    payload=payload,
-                    provider=f"gemini:{model}",
-                )
-            except OutlookError as exc:
-                last_error = exc
-                if exc.code != "provider_error" or "404" not in exc.message:
+            for attempt in range(2):
+                try:
+                    return self._parse_provider_response(
+                        url=url,
+                        headers={"Content-Type": "application/json"},
+                        payload=payload,
+                        provider=f"gemini:{model}",
+                    )
+                except OutlookError as exc:
+                    last_error = exc
+                    status = exc.status_code or 0
+                    is_not_found = exc.code == "provider_error" and status == 404
+                    is_transient = exc.code == "provider_error" and status in (500, 502, 503, 504)
+                    if is_transient and attempt == 0:
+                        logger.warning("gemini_transient_failure model=%s status=%s retrying=true", model, status)
+                        time.sleep(0.8)
+                        continue
+                    if is_not_found or is_transient:
+                        logger.warning(
+                            "gemini_model_fallback model=%s status=%s trying_next=%s",
+                            model,
+                            status,
+                            model != models[-1],
+                        )
+                        break
                     raise
-                logger.warning("gemini_model_not_found model=%s trying_next=%s", model, model != models[-1])
-                continue
         if last_error:
             raise last_error
         raise OutlookError("provider_error", "Gemini generation failed without a response.")
@@ -247,16 +261,18 @@ class OutlookService:
                 raise OutlookError(
                     "invalid_api_key",
                     f"Invalid or unauthorized API key for {provider_label}.",
+                    status_code=res.status_code,
                 )
             if res.status_code in (429,):
                 body = (res.text or "").lower()
                 if "quota" in body:
-                    raise OutlookError("quota_exceeded", f"Quota exceeded on {provider_label}.")
-                raise OutlookError("rate_limit_exceeded", f"Rate limit reached on {provider_label}.")
+                    raise OutlookError("quota_exceeded", f"Quota exceeded on {provider_label}.", status_code=429)
+                raise OutlookError("rate_limit_exceeded", f"Rate limit reached on {provider_label}.", status_code=429)
             if res.status_code >= 400:
                 raise OutlookError(
                     "provider_error",
                     f"Provider error {res.status_code} on {provider_label}.",
+                    status_code=res.status_code,
                 )
             data = res.json()
             if provider.startswith("openai:") or provider == "openai":
@@ -268,7 +284,7 @@ class OutlookService:
         except OutlookError:
             raise
         except Exception as exc:
-            raise OutlookError("provider_error", f"Failed to generate outlook: {exc}") from exc
+            raise OutlookError("provider_error", f"Failed to generate outlook: {exc}", status_code=503) from exc
 
     def _validate_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         payload = dict(payload or {})

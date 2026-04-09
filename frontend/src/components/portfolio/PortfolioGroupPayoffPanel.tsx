@@ -10,6 +10,7 @@ import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
   estimateProbabilityOfProfit,
+  payoffChartSpotDomain,
   portfolioPayoffAtExpiry,
   scanMarkToModelCurve,
   scanPayoffCurve,
@@ -214,22 +215,21 @@ export function PortfolioGroupPayoffPanel({
   const spot = chainSuccess?.spot_price ?? null;
   const sigma = chainSuccess ? atmSigmaFromChain(chainSuccess, T) : 0.22;
 
-  const minS = useMemo(() => {
-    if (!strikes.length) return spot != null ? spot * 0.65 : 0;
+  const { minS, maxS } = useMemo(() => {
+    if (spot != null && Number.isFinite(spot) && spot > 0) {
+      return payoffChartSpotDomain(spot);
+    }
+    if (!strikes.length) {
+      return { minS: 0, maxS: 1 };
+    }
     const lo = Math.min(...strikes);
     const hi = Math.max(...strikes);
-    const center = spot != null ? spot : (lo + hi) / 2;
+    const center = (lo + hi) / 2;
     const pad = Math.max((hi - lo) * 0.25, center * 0.35);
-    return Math.max(0, Math.min(lo, center) - pad);
-  }, [strikes, spot]);
-
-  const maxS = useMemo(() => {
-    if (!strikes.length) return spot != null ? spot * 1.35 : 1;
-    const lo = Math.min(...strikes);
-    const hi = Math.max(...strikes);
-    const center = spot != null ? spot : (lo + hi) / 2;
-    const pad = Math.max((hi - lo) * 0.25, center * 0.35);
-    return Math.max(1, Math.max(hi, center) + pad);
+    return {
+      minS: Math.max(0, Math.min(lo, center) - pad),
+      maxS: Math.max(1, Math.max(hi, center) + pad),
+    };
   }, [strikes, spot]);
 
   const { xs, ys, summary, xsToday, ysToday, pop } = useMemo(() => {
