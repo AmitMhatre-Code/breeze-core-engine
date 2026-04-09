@@ -16,24 +16,63 @@ function intrinsic(S: number, K: number, right: "Call" | "Put"): number {
   return right === "Call" ? Math.max(0, S - K) : Math.max(0, K - S);
 }
 
+/** Strike from a leg (chain / UI may surface strings — must not be dropped from exact payoff breakpoints). */
+function finiteStrikeFromLeg(leg: StrategyLeg): number | null {
+  const raw = leg.strike as unknown;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string") {
+    const n = parseFloat(raw.replace(/,/g, ""));
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function finiteLots(leg: StrategyLeg): number {
+  const raw = leg.lots as unknown;
+  if (typeof raw === "number" && Number.isFinite(raw)) return Math.max(0, raw);
+  if (typeof raw === "string") {
+    const n = parseFloat(raw.replace(/,/g, ""));
+    return Number.isFinite(n) ? Math.max(0, n) : 0;
+  }
+  return 0;
+}
+
 /** P&amp;L at expiry in rupee terms (approx): lots × lotSize × (direction × intrinsic − signed premium flow). */
 export function portfolioPayoffAtExpiry(
   spot: number,
   legs: StrategyLeg[],
   lotSize: number,
 ): number {
+  const ls =
+    typeof lotSize === "number" && Number.isFinite(lotSize) && lotSize > 0
+      ? lotSize
+      : 0;
   let total = 0;
   for (const leg of legs) {
-    const units = Math.max(0, leg.lots) * lotSize;
-    const intr = intrinsic(spot, leg.strike, leg.right);
+    const K = finiteStrikeFromLeg(leg);
+    if (K == null) continue;
+    const units = finiteLots(leg) * ls;
+    const intr = intrinsic(spot, K, leg.right);
     const prem = leg.premiumPerUnit ?? 0;
+    const premN = typeof prem === "number" && Number.isFinite(prem) ? prem : 0;
     if (leg.side === "Buy") {
-      total += units * (intr - prem);
+      total += units * (intr - premN);
     } else {
-      total += units * (prem - intr);
+      total += units * (premN - intr);
     }
   }
   return total;
+}
+
+/**
+ * Spot-centered payoff chart domain: prices from spot×(1−f) to spot×(1+f), f = 0.4 → ±40%.
+ * PayoffChart uses defaultSpanFraction 0.5 so the initial view is ±20% around spot; zoom-out reaches this full span.
+ */
+export const PAYOFF_CHART_SPOT_HALFBAND = 0.4;
+
+export function payoffChartSpotDomain(spot: number): { minS: number; maxS: number } {
+  const f = PAYOFF_CHART_SPOT_HALFBAND;
+  return { minS: Math.max(0, spot * (1 - f)), maxS: spot * (1 + f) };
 }
 
 export function scanPayoffCurve(
@@ -129,7 +168,12 @@ export function summarizePayoffExact(
   spot: number | null = null,
 ): PayoffSummary {
   if (!legs.length) return { maxProfit: 0, maxLoss: 0, breakevens: [] };
-  const strikes = uniqueSorted(legs.map((l) => l.strike));
+  const strikes = uniqueSorted(
+    legs.flatMap((l) => {
+      const k = finiteStrikeFromLeg(l);
+      return k == null ? [] : [k];
+    }),
+  );
   const maxStrike = strikes.length ? strikes[strikes.length - 1] : 0;
   const ref = Math.max(maxStrike, spot ?? 0, 1);
   const left = 0;

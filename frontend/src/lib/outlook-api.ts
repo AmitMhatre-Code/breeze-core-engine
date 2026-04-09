@@ -24,6 +24,7 @@ export type OutlookWarning = {
   error_code: string;
   message: string;
   stale_response_served: boolean;
+  upstream_status?: number | null;
 };
 
 export type OutlookResponse = {
@@ -117,4 +118,42 @@ export function resetOutlookConfig(body: {
 export function getMarketOutlook(forceRefresh = false) {
   const suffix = forceRefresh ? "?force_refresh=true" : "";
   return apiClient.get<OutlookResponse>(`/api/outlook/market${suffix}`);
+}
+
+export type OutlookStreamError = {
+  message: string;
+  error_code?: string;
+  status_code?: number;
+};
+
+export function subscribeMarketOutlookStream(handlers: {
+  onOutlook: (payload: OutlookResponse) => void;
+  onStreamError: (payload: OutlookStreamError) => void;
+  onTransportError?: () => void;
+}) {
+  const stream = new EventSource("/api/outlook/market/stream");
+  stream.addEventListener("outlook", (event) => {
+    try {
+      handlers.onOutlook(JSON.parse((event as MessageEvent).data) as OutlookResponse);
+    } catch {
+      handlers.onStreamError({ message: "Invalid market outlook stream payload." });
+    }
+  });
+  stream.addEventListener("error", (event) => {
+    // Backend semantic error event with JSON payload.
+    const msgEvent = event as MessageEvent;
+    if (typeof msgEvent.data === "string" && msgEvent.data) {
+      try {
+        handlers.onStreamError(JSON.parse(msgEvent.data) as OutlookStreamError);
+        return;
+      } catch {
+        // Fall through to transport handler.
+      }
+    }
+    handlers.onTransportError?.();
+  });
+  stream.onerror = () => {
+    handlers.onTransportError?.();
+  };
+  return () => stream.close();
 }

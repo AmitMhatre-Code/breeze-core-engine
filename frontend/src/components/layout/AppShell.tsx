@@ -9,6 +9,7 @@ import breezeMark from "@/app/android-chrome-192x192.png";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { apiClient } from "@/lib/api-client";
+import { getLatestRelease } from "@/lib/changelog";
 import {
   getAvailableMargin,
   getCustomerDisplayName,
@@ -67,6 +68,7 @@ export function AppShell({
       className: moneyToneClass(freeMargin),
     };
   }, [freeMargin]);
+  const latestReleaseVersion = getLatestRelease()?.version;
 
   return (
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
@@ -181,8 +183,9 @@ export function AppShell({
               onClick={() => setChangelogOpen(true)}
               className="shrink-0 truncate rounded-sm px-1.5 py-1 text-xs font-medium text-sky-700 underline-offset-2 hover:underline sm:px-2 dark:text-sky-400"
               aria-haspopup="dialog"
+              aria-label="Open changelog"
             >
-              What&apos;s new
+              {latestReleaseVersion ? `v${latestReleaseVersion}` : "Version"}
             </button>
             <ThemeToggle />
             <Link

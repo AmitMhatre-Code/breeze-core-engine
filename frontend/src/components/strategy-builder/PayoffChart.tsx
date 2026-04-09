@@ -16,7 +16,7 @@ type Props = {
   height?: number;
   /**
    * Initial fraction of the full [minS, maxS] span shown on the x-axis (centered on spot or midpoint).
-   * Zoom out reaches 1 (full range). Default 0.5 tightens a wide domain until the user zooms out.
+   * Zoom out reaches 1 (full range). Default 0.5: when the domain is spot ±40%, the initial view is spot ±20%.
    */
   defaultSpanFraction?: number;
 };

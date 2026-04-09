@@ -1,10 +1,8 @@
 import type { ReactNode } from "react";
-import type { TemplateId } from "@/lib/strategy-builder/templates";
-
-type ReadymadeId = "build-your-own" | "naked-shorts" | "covered-shorts";
+import type { ReadymadeCardId, TemplateId } from "@/lib/strategy-builder/templates";
 
 type Props = {
-  templateId: TemplateId | ReadymadeId;
+  templateId: TemplateId | ReadymadeCardId;
 };
 
 const ProfitColor = "#22c55e"; // green-500
@@ -20,17 +18,18 @@ const Tile = ({ children }: { children: ReactNode }) => (
     color="primaryContainer"
     className="text-zinc-900 dark:text-zinc-50"
   >
-    <rect
+    {/* <rect
       className="background"
       width="60"
       height="60"
       transform="translate(1 1)"
-      fill="currentColor"
+      fill="none"
       opacity="0.04"
-    />
-    <path d="M1.5 1V60.2366" strokeLinecap="square" stroke="currentColor" />
+    /> */}
+    {/* <path d="M1.5 1V60.2366" strokeLinecap="square" stroke="currentColor" /> */}
     <path
       d="M1.46154 31H61"
+      strokeWidth="0.5"
       strokeLinecap="round"
       strokeDasharray="5 5"
       stroke="currentColor"
@@ -49,16 +48,6 @@ export function OptionStrategyIcon({ templateId }: Props) {
   const topY = 12;
   const midY = 31;
   const bottomY = 52;
-
-  const strokeCommon = {
-    strokeWidth: "2",
-    strokeLinecap: "round" as const,
-  };
-
-  const line = (d: string, stroke: string) => (
-    <path d={d} stroke={stroke} {...strokeCommon} />
-  );
-
   // Layout conventions (x positions for the "strikes"):
   const K1_2 = 18;
   const K2_2 = 44;
@@ -79,14 +68,59 @@ export function OptionStrategyIcon({ templateId }: Props) {
   const K3_4 = 40;
   const K4_4 = 52;
   const crossUp4 = 16;
-  const crossDown4 = 46;
+  const crossDown4 = 46;  
+
+  const strokeCommon = {
+    strokeWidth: "1",
+    strokeLinecap: "round" as const,
+  };
+
+  const line = (d: string, stroke: string) => (
+    <path d={d} stroke={stroke} {...strokeCommon} />
+  );
+
+  const nakedShortCallTile = (
+    <Tile>
+      {line(`M${x0} ${topY}H28`, ProfitColor)}
+      {line(`M28 ${topY}L36 ${midY}`, ProfitColor)}
+      {line(`M36 ${midY}L${K2_2} ${bottomY}`, LossColor)}
+    </Tile>
+  );
+
+  const nakedShortPutTile = (
+    <Tile>
+      {line(`M${K1_2} ${K4_4}L26 ${midY}`, LossColor)}
+      {line(`M26 ${midY}L34 ${topY}`, ProfitColor)}
+      {line(`M34 ${topY}H${xEnd}`, ProfitColor)}
+    </Tile>
+  );
+
+  const coveredShortCallTile = (
+    <Tile>
+      {line(`M${x0} ${topY}H28`, ProfitColor)}
+      {line(`M28 ${topY}L36 ${midY}`, ProfitColor)}
+      {line(`M36 ${midY}L44 ${bottomY}`, LossColor)}
+      {line(`M44 ${bottomY}H${xEnd}`, LossColor)}
+    </Tile>
+  );
+
+  const coveredShortPutTile = (
+    <Tile>
+      {line(`M${x0} ${bottomY}H18`, LossColor)}
+      {line(`M18 ${bottomY}L26 ${midY}`, LossColor)}
+      {line(`M26 ${midY}L34 ${topY}`, ProfitColor)}
+      {line(`M34 ${topY}H${xEnd}`, ProfitColor)}
+    </Tile>
+  );
+
+
 
   switch (templateId) {
     case "build-your-own":
       return (
         <svg
-          width="80%"
-          height="80%"
+          width="60%"
+          height="60%"
           viewBox="0 0 20 20"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
@@ -96,40 +130,33 @@ export function OptionStrategyIcon({ templateId }: Props) {
             stroke="currentColor"
             strokeLinecap="round"
             strokeLinejoin="round"
-            strokeWidth="1"
+            strokeWidth="0.5"
             d="M7.75 4H19M7.75 4a2.25 2.25 0 0 1-4.5 0m4.5 0a2.25 2.25 0 0 0-4.5 0M1 4h2.25m13.5 6H19m-2.25 0a2.25 2.25 0 0 1-4.5 0m4.5 0a2.25 2.25 0 0 0-4.5 0M1 10h11.25m-4.5 6H19M7.75 16a2.25 2.25 0 0 1-4.5 0m4.5 0a2.25 2.25 0 0 0-4.5 0M1 16h2.25"
           />
         </svg>
       );
 
     case "naked-shorts":
-      // Profit capped on one side, loss increases after breakeven.
+      // Mixed setup: show short call and short put side by side.
       return (
-        <Tile>
-          {line(`M${x0} ${topY}H28`, ProfitColor)}
-          {line(`M28 ${topY}L36 ${midY}`, ProfitColor)}
-          {line(`M36 ${midY}L44 ${bottomY}`, LossColor)}
-          {line(`M44 ${bottomY}H${xEnd}`, LossColor)}
-        </Tile>
+        <div className="grid h-full min-h-0 w-full grid-cols-2 gap-1 sm:gap-0.5">
+          {nakedShortCallTile}
+          {nakedShortPutTile}
+        </div>
       );
 
     case "covered-shorts":
-      // Profit in the middle, loss capped at extremes.
+      // Mixed setup: show covered call and covered put side by side.
       return (
-        <Tile>
-          {line(`M${x0} ${bottomY}H10`, LossColor)}
-          {line(`M10 ${bottomY}L16 ${midY}`, LossColor)}
-          {line(`M16 ${midY}L22 ${topY}`, ProfitColor)}
-          {line(`M22 ${topY}H40`, ProfitColor)}
-          {line(`M40 ${topY}L46 ${midY}`, ProfitColor)}
-          {line(`M46 ${midY}L52 ${bottomY}`, LossColor)}
-          {line(`M52 ${bottomY}H${xEnd}`, LossColor)}
-        </Tile>
+        <div className="grid h-full min-h-0 w-full grid-cols-2 gap-1 sm:gap-0.5">
+          {coveredShortCallTile}
+          {coveredShortPutTile}
+        </div>
       );
 
     case "bull_call_spread":
-    {
-      // Before K1: loss (bottom flat) -> Between: diagonal -> After K2: profit (top flat)
+    case "bull_put_spread": {
+      // Debit call / credit put (bullish): loss flat left -> diagonal -> profit flat right
       return (
         <Tile>
           {line(`M${x0} ${bottomY}H${K1_2}`, LossColor)}
@@ -140,8 +167,9 @@ export function OptionStrategyIcon({ templateId }: Props) {
       );
     }
 
-    case "bear_put_spread": {
-      // Before K1: profit (top flat) -> Between: diagonal down -> After K2: loss (bottom flat)
+    case "bear_put_spread":
+    case "bear_call_spread": {
+      // Bearish verticals: profit flat left -> diagonal down -> loss flat right
       return (
         <Tile>
           {line(`M${x0} ${topY}H${K1_2}`, ProfitColor)}
@@ -164,6 +192,18 @@ export function OptionStrategyIcon({ templateId }: Props) {
       );
     }
 
+    case "short_straddle": {
+      // Inverted V: max profit at strike, loss diagonals away from K1
+      return (
+        <Tile>
+          {line(`M${x0} ${bottomY}L${crossLeft} ${midY}`, LossColor)}
+          {line(`M${crossLeft} ${midY}L${K_1} ${topY}`, ProfitColor)}
+          {line(`M${K_1} ${topY}L${crossRight} ${midY}`, ProfitColor)}
+          {line(`M${crossRight} ${midY}L${xEnd} ${bottomY}`, LossColor)}
+        </Tile>
+      );
+    }
+
     case "long_strangle": {
       // Bucket: diagonals down to trough, flat trough at max loss, then diagonals up
       const K1 = K1_2;
@@ -177,6 +217,23 @@ export function OptionStrategyIcon({ templateId }: Props) {
           {line(`M${K1} ${bottomY}H${K2}`, LossColor)}
           {line(`M${K2} ${bottomY}L${crossR} ${midY}`, LossColor)}
           {line(`M${crossR} ${midY}L${xEnd} ${topY}`, ProfitColor)}
+        </Tile>
+      );
+    }
+
+    case "short_strangle": {
+      // Inverted bucket: loss wings, flat plateau at max profit between strikes
+      const K1 = K1_2;
+      const K2 = K2_2;
+      const crossL = 10;
+      const crossR = 52;
+      return (
+        <Tile>
+          {line(`M${x0} ${bottomY}L${crossL} ${midY}`, LossColor)}
+          {line(`M${crossL} ${midY}L${K1} ${topY}`, ProfitColor)}
+          {line(`M${K1} ${topY}H${K2}`, ProfitColor)}
+          {line(`M${K2} ${topY}L${crossR} ${midY}`, ProfitColor)}
+          {line(`M${crossR} ${midY}L${xEnd} ${bottomY}`, LossColor)}
         </Tile>
       );
     }

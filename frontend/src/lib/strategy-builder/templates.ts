@@ -2,12 +2,65 @@ import type { Outlook, StrategyLeg } from "@/lib/strategy-builder/types";
 
 export type TemplateId =
   | "bull_call_spread"
+  | "bear_call_spread"
   | "bear_put_spread"
+  | "bull_put_spread"
   | "long_straddle"
+  | "short_straddle"
   | "long_strangle"
+  | "short_strangle"
   | "long_call_butterfly"
   | "iron_condor"
   | "iron_butterfly";
+
+/** Readymade tiles in `Strategy Builder` section 2 (with icons). */
+export type ReadymadeCardId =
+  | "build-your-own"
+  | "naked-shorts"
+  | "covered-shorts";
+
+export type StrategyCardId = TemplateId | ReadymadeCardId;
+
+/** User-facing hover copy: one line per leg, aligned with `applyTemplate` / builder flows. */
+export function strategySetupTooltipLines(
+  id: StrategyCardId,
+): readonly string[] {
+  switch (id) {
+    case "build-your-own":
+      return ["Choose strikes and legs yourself"];
+    case "naked-shorts":
+      return ["Sell 1 CE (uncovered)", "Sell 1 PE (uncovered)"];
+    case "covered-shorts":
+      return ["Sell 1 CE (vs stock)", "Sell 1 PE (vs stock)"];
+    case "bull_call_spread":
+      return ["Buy 1 ATM CE", "Sell 1 OTM CE"];
+    case "bear_call_spread":
+      return ["Sell 1 ATM CE", "Buy 1 OTM CE"];
+    case "bear_put_spread":
+      return ["Buy 1 ATM PE", "Sell 1 OTM PE"];
+    case "bull_put_spread":
+      return ["Sell 1 ATM PE", "Buy 1 OTM PE"];
+    case "long_straddle":
+      return ["Buy 1 ATM CE", "Buy 1 ATM PE"];
+    case "short_straddle":
+      return ["Sell 1 ATM CE", "Sell 1 ATM PE"];
+    case "long_strangle":
+      return ["Buy 1 OTM CE", "Buy 1 OTM PE"];
+    case "short_strangle":
+      return ["Sell 1 OTM CE", "Sell 1 OTM PE"];
+    case "long_call_butterfly":
+      return ["Buy 1 ITM CE", "Sell 2 ATM CE", "Buy 1 OTM CE"];
+    case "iron_condor":
+      return ["Buy 1 outer PE", "Sell 1 inner PE", "Sell 1 inner CE", "Buy 1 outer CE"];
+    case "iron_butterfly":
+      return [
+        "Buy 1 OTM PE",
+        "Sell 1 ATM PE",
+        "Sell 1 ATM CE",
+        "Buy 1 OTM CE",
+      ];
+  }
+}
 
 export type StrategyTemplateMeta = {
   id: TemplateId;
@@ -17,12 +70,50 @@ export type StrategyTemplateMeta = {
   naked?: boolean;
 };
 
+export function outlookPillLabel(o: Outlook): string {
+  switch (o) {
+    case "bullish":
+      return "Bullish";
+    case "bearish":
+      return "Bearish";
+    case "neutral":
+      return "Neutral";
+    case "volatile":
+      return "Volatility";
+  }
+}
+
+export function outlookPillClassName(o: Outlook): string {
+  switch (o) {
+    case "bullish":
+      return "bg-emerald-500/15 text-emerald-800 ring-1 ring-emerald-600/25 dark:text-emerald-200 dark:ring-emerald-400/20";
+    case "bearish":
+      return "bg-rose-500/15 text-rose-800 ring-1 ring-rose-600/25 dark:text-rose-200 dark:ring-rose-400/20";
+    case "neutral":
+      return "bg-zinc-500/15 text-zinc-800 ring-1 ring-zinc-600/25 dark:text-zinc-200 dark:ring-zinc-400/20";
+    case "volatile":
+      return "bg-violet-500/15 text-violet-800 ring-1 ring-violet-600/25 dark:text-violet-200 dark:ring-violet-400/20";
+  }
+}
+
 export const STRATEGY_TEMPLATES: StrategyTemplateMeta[] = [
   {
     id: "bull_call_spread",
     label: "Bull Call Spread",
     outlook: ["bullish"],
     description: "Buy lower CE, sell higher CE",
+  },
+  {
+    id: "bull_put_spread",
+    label: "Bull Put Spread",
+    outlook: ["bullish"],
+    description: "Sell higher PE, buy lower PE",
+  },  
+  {
+    id: "bear_call_spread",
+    label: "Bear Call Spread",
+    outlook: ["bearish"],
+    description: "Sell lower CE, buy higher CE",
   },
   {
     id: "bear_put_spread",
@@ -41,6 +132,19 @@ export const STRATEGY_TEMPLATES: StrategyTemplateMeta[] = [
     label: "Long Strangle",
     outlook: ["volatile"],
     description: "Buy OTM CE and PE",
+  },
+  {
+    id: "short_straddle",
+    label: "Short Straddle",
+    outlook: ["neutral"],
+    description: "Sell ATM CE and PE",
+    naked: true,
+  },  
+  {
+    id: "short_strangle",
+    label: "Short Strangle",
+    outlook: ["neutral"],
+    description: "Sell OTM CE and PE",
   },
   {
     id: "long_call_butterfly",
@@ -163,17 +267,33 @@ export function applyTemplate(
       add("Call", "Buy", pickStrike(strikes, atmIdx, 0));
       add("Call", "Sell", pickStrike(strikes, atmIdx, 1));
       break;
+    case "bear_call_spread":
+      add("Call", "Sell", pickStrike(strikes, atmIdx, 0));
+      add("Call", "Buy", pickStrike(strikes, atmIdx, 1));
+      break;
     case "bear_put_spread":
       add("Put", "Buy", pickStrike(strikes, atmIdx, 0));
       add("Put", "Sell", pickStrike(strikes, atmIdx, -1));
+      break;
+    case "bull_put_spread":
+      add("Put", "Sell", pickStrike(strikes, atmIdx, 0));
+      add("Put", "Buy", pickStrike(strikes, atmIdx, -1));
       break;
     case "long_straddle":
       add("Call", "Buy", pickStrike(strikes, atmIdx, 0));
       add("Put", "Buy", pickStrike(strikes, atmIdx, 0));
       break;
+    case "short_straddle":
+      add("Call", "Sell", pickStrike(strikes, atmIdx, 0));
+      add("Put", "Sell", pickStrike(strikes, atmIdx, 0));
+      break;
     case "long_strangle":
       add("Call", "Buy", pickStrike(strikes, atmIdx, 1));
       add("Put", "Buy", pickStrike(strikes, atmIdx, -1));
+      break;
+    case "short_strangle":
+      add("Call", "Sell", pickStrike(strikes, atmIdx, 1));
+      add("Put", "Sell", pickStrike(strikes, atmIdx, -1));
       break;
     case "iron_condor": {
       const pl = pickStrike(strikes, atmIdx, -2);

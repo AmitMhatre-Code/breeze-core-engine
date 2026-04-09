@@ -17,6 +17,16 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "1.3.0",
+    date: "10-Apr-2026",
+    releaseKind: "major",
+    summary: "Options Strategies Enabled",
+    changes: [
+      "All options strategies are now enabled",
+      "LLM generated market outlook now displays the right error message when the API call fails",
+    ],
+  },
+  {
     version: "1.2.1",
     date: "9-Apr-2026",
     releaseKind: "minor",
