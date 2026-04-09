@@ -2,15 +2,33 @@
 
 import { useEffect } from "react";
 import {
+  getHistoryReleases,
+  getLatestMajorRelease,
   getLatestRelease,
-  getOlderReleases,
   type ChangelogRelease,
+  type ReleaseKind,
 } from "@/lib/changelog";
 
 export type ChangelogDialogProps = {
   open: boolean;
   onClose: () => void;
 };
+
+function KindBadge({ kind }: { kind: ReleaseKind }) {
+  const isMajor = kind === "major";
+  return (
+    <span
+      className={[
+        "inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        isMajor
+          ? "bg-sky-100 text-sky-900 dark:bg-sky-950/70 dark:text-sky-200"
+          : "bg-zinc-200/90 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200",
+      ].join(" ")}
+    >
+      {isMajor ? "Major" : "Minor"}
+    </span>
+  );
+}
 
 function ReleaseBullets({ release }: { release: ChangelogRelease }) {
   return (
@@ -25,8 +43,99 @@ function ReleaseBullets({ release }: { release: ChangelogRelease }) {
 }
 
 function formatReleaseHeading(release: ChangelogRelease) {
-  const d = release.date;
-  return `${release.version} · ${d}`;
+  return `${release.version} · ${release.date}`;
+}
+
+function MajorReleasePanel({ release }: { release: ChangelogRelease }) {
+  return (
+    <section
+      className="rounded-lg border border-sky-200/90 bg-sky-50/80 p-4 dark:border-sky-900/45 dark:bg-sky-950/30"
+      aria-label="Major release"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-sky-800 dark:text-sky-300">
+          Major release
+        </span>
+        <KindBadge kind="major" />
+      </div>
+      <div className="mt-2 text-base font-semibold text-zinc-900 dark:text-zinc-100">
+        {formatReleaseHeading(release)}
+      </div>
+      {release.summary ? (
+        <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
+          {release.summary}
+        </p>
+      ) : null}
+      <ReleaseBullets release={release} />
+    </section>
+  );
+}
+
+function MinorUpdatePanel({ release }: { release: ChangelogRelease }) {
+  return (
+    <section
+      className="rounded-md border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-900/35"
+      aria-label="Latest update"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+          Latest update (your build)
+        </span>
+        <KindBadge kind="minor" />
+      </div>
+      <div className="mt-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+        {formatReleaseHeading(release)}
+      </div>
+      {release.summary ? (
+        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+          {release.summary}
+        </p>
+      ) : null}
+      <ReleaseBullets release={release} />
+    </section>
+  );
+}
+
+function UnifiedLatestPanel({ release }: { release: ChangelogRelease }) {
+  const isMajor = release.releaseKind === "major";
+  return (
+    <section
+      className={
+        isMajor
+          ? "rounded-lg border border-sky-200/90 bg-sky-50/80 p-4 dark:border-sky-900/45 dark:bg-sky-950/30"
+          : "rounded-md border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-700 dark:bg-zinc-900/35"
+      }
+      aria-label="Latest release"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={
+            isMajor
+              ? "text-xs font-medium uppercase tracking-wide text-sky-800 dark:text-sky-300"
+              : "text-xs font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-400"
+          }
+        >
+          {isMajor ? "Latest major release" : "Latest release"}
+        </span>
+        <KindBadge kind={release.releaseKind} />
+      </div>
+      <div className="mt-2 text-base font-semibold text-zinc-900 dark:text-zinc-100">
+        {formatReleaseHeading(release)}
+      </div>
+      {release.summary ? (
+        <p
+          className={
+            isMajor
+              ? "mt-1 text-sm text-zinc-700 dark:text-zinc-300"
+              : "mt-1 text-sm text-zinc-600 dark:text-zinc-400"
+          }
+        >
+          {release.summary}
+        </p>
+      ) : null}
+      <ReleaseBullets release={release} />
+    </section>
+  );
 }
 
 export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
@@ -42,7 +151,20 @@ export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
   if (!open) return null;
 
   const latest = getLatestRelease();
-  const older = getOlderReleases();
+  const latestMajor = getLatestMajorRelease();
+
+  const showSplitLayout = Boolean(
+    latest &&
+      latest.releaseKind === "minor" &&
+      latestMajor &&
+      (latestMajor.version !== latest.version ||
+        latestMajor.date !== latest.date),
+  );
+
+  const history = getHistoryReleases(
+    latest,
+    showSplitLayout ? latestMajor : undefined,
+  );
 
   return (
     <div
@@ -67,7 +189,8 @@ export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
               What&apos;s new
             </h2>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              Recent updates to Breeze Web
+              Major milestones are highlighted; minor releases list fixes so you
+              can match your app version.
             </p>
           </div>
           <button
@@ -99,73 +222,78 @@ export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               No release notes yet.
             </p>
+          ) : showSplitLayout && latestMajor ? (
+            <>
+              <MajorReleasePanel release={latestMajor} />
+              <MinorUpdatePanel release={latest} />
+              {history.length > 0 ? (
+                <HistorySection releases={history} />
+              ) : null}
+            </>
           ) : (
             <>
-              <section aria-label="Latest release">
-                <div className="text-xs font-medium uppercase tracking-wide text-sky-700 dark:text-sky-400">
-                  Latest
-                </div>
-                <div className="mt-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  {formatReleaseHeading(latest)}
-                </div>
-                {latest.summary ? (
-                  <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                    {latest.summary}
-                  </p>
-                ) : null}
-                <ReleaseBullets release={latest} />
-              </section>
-
-              {older.length > 0 ? (
-                <section className="border-t border-zinc-100 pt-4 dark:border-zinc-800">
-                  <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                    Previous releases
-                  </div>
-                  <div className="space-y-2">
-                    {older.map((release) => (
-                      <details
-                        key={`${release.version}-${release.date}`}
-                        className="group rounded-md border border-zinc-200 dark:border-zinc-800"
-                      >
-                        <summary className="cursor-pointer list-none px-3 py-2 text-sm font-medium text-zinc-800 marker:hidden dark:text-zinc-200 [&::-webkit-details-marker]:hidden">
-                          <span className="flex items-center justify-between gap-2">
-                            <span>{formatReleaseHeading(release)}</span>
-                            <span
-                              className="text-zinc-400 transition group-open:rotate-180 dark:text-zinc-500"
-                              aria-hidden
-                            >
-                              <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              >
-                                <path d="m6 9 6 6 6-6" />
-                              </svg>
-                            </span>
-                          </span>
-                        </summary>
-                        <div className="border-t border-zinc-100 px-3 pb-3 pt-2 dark:border-zinc-800">
-                          {release.summary ? (
-                            <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                              {release.summary}
-                            </p>
-                          ) : null}
-                          <ReleaseBullets release={release} />
-                        </div>
-                      </details>
-                    ))}
-                  </div>
-                </section>
+              <UnifiedLatestPanel release={latest} />
+              {history.length > 0 ? (
+                <HistorySection releases={history} />
               ) : null}
             </>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+function HistorySection({ releases }: { releases: ChangelogRelease[] }) {
+  return (
+    <section className="border-t border-zinc-100 pt-4 dark:border-zinc-800">
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        Earlier releases
+      </div>
+      <div className="space-y-2">
+        {releases.map((release) => (
+          <details
+            key={`${release.version}-${release.date}`}
+            className="group rounded-md border border-zinc-200 dark:border-zinc-800"
+          >
+            <summary className="cursor-pointer list-none px-3 py-2 marker:hidden dark:text-zinc-200 [&::-webkit-details-marker]:hidden">
+              <span className="flex items-center justify-between gap-2">
+                <span className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    {formatReleaseHeading(release)}
+                  </span>
+                  <KindBadge kind={release.releaseKind} />
+                </span>
+                <span
+                  className="shrink-0 text-zinc-400 transition group-open:rotate-180 dark:text-zinc-500"
+                  aria-hidden
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </span>
+              </span>
+            </summary>
+            <div className="border-t border-zinc-100 px-3 pb-3 pt-2 dark:border-zinc-800">
+              {release.summary ? (
+                <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                  {release.summary}
+                </p>
+              ) : null}
+              <ReleaseBullets release={release} />
+            </div>
+          </details>
+        ))}
+      </div>
+    </section>
   );
 }

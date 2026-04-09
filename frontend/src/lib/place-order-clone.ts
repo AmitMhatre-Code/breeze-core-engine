@@ -1,4 +1,8 @@
 import type { ParkedOrderListItem } from "@/lib/parked-orders";
+import {
+  prefillFromOrdersSearchParams,
+  type OrderConfirmPayload,
+} from "@/lib/order-confirm";
 import type { OptionRight, OrderSide } from "@/lib/strategy-builder/types";
 
 export type PlaceOrderSegment = "NFO" | "BFO";
@@ -12,6 +16,12 @@ export type PlaceOrderClonePayload = {
   quantity: string;
   price: string;
   action: OrderSide;
+  /**
+   * When true, exchange / scrip / expiry / strike / option are fixed (clone,
+   * square-off, or `/place-order?…` prefill). Only quantity, price, and the
+   * locked execution side remain editable.
+   */
+  lock_contract_fields?: boolean;
 };
 
 const STORAGE_KEY = "breeze_place_order_clone_v1";
@@ -127,6 +137,7 @@ export function buildPlaceOrderCloneFromParkedRow(
     quantity: String(q),
     price,
     action,
+    lock_contract_fields: true,
   };
 }
 
@@ -170,7 +181,49 @@ export function buildPlaceOrderCloneFromBookRow(
     quantity: String(q),
     price: priceStringFromRow(row),
     action,
+    lock_contract_fields: true,
   };
+}
+
+function orderConfirmToPlaceOrderClone(
+  oc: OrderConfirmPayload,
+): PlaceOrderClonePayload | null {
+  const right = normRight(oc.right);
+  if (!right) return null;
+  const strike = parseFloat(String(oc.strike_price).replace(/,/g, ""));
+  if (!Number.isFinite(strike)) return null;
+  const q = parseInt(String(oc.quantity).replace(/,/g, "").trim(), 10);
+  if (!Number.isFinite(q) || q === 0) return null;
+  const absQ = Math.abs(q);
+  let price = "";
+  const pr = String(oc.price ?? "").trim();
+  if (pr !== "") {
+    const pn = parseFloat(pr.replace(/,/g, ""));
+    if (Number.isFinite(pn) && pn >= 0) price = String(Number(pn.toFixed(4)));
+  }
+  return {
+    segment: normExchange(oc.exchange_code),
+    stock_code: oc.stock_code.trim(),
+    expiry_date: oc.expiry_date.trim(),
+    right,
+    strike_price: Math.round(strike),
+    quantity: String(absQ),
+    price,
+    action: oc.action,
+    lock_contract_fields: true,
+  };
+}
+
+/**
+ * `/place-order?action=SquareOff&position=…` or direct Buy/Sell contract params
+ * (same shape as legacy `/orders` prefill).
+ */
+export function placeOrderPrefillFromSearchParams(sp: {
+  get: (name: string) => string | null;
+}): PlaceOrderClonePayload | null {
+  const oc = prefillFromOrdersSearchParams(sp);
+  if (!oc) return null;
+  return orderConfirmToPlaceOrderClone(oc);
 }
 
 export function setPlaceOrderClonePayload(p: PlaceOrderClonePayload): void {
@@ -195,6 +248,13 @@ function isPayload(v: unknown): v is PlaceOrderClonePayload {
   if (typeof o.quantity !== "string" || !o.quantity.trim()) return false;
   if (typeof o.price !== "string") return false;
   if (o.action !== "Buy" && o.action !== "Sell") return false;
+  if (
+    "lock_contract_fields" in o &&
+    o.lock_contract_fields != null &&
+    typeof o.lock_contract_fields !== "boolean"
+  ) {
+    return false;
+  }
   return true;
 }
 

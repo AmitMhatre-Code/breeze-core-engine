@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request, Depends, HTTPException, Query
 from icici_breeze_backend.app.services.processor import _expiry_display_to_api, processor
@@ -114,11 +115,20 @@ async def process_post(
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
 
     if body.action == cfg.SQUAREOFF:
-        return json_redirect(
-            f"/order?action={body.action}&position={body.position_action}&product_type={body.product_type}"
-            f"&stock_code={body.stock_code}&exchange_code={body.exchange_code}&expiry_date={body.expiry_date}"
-            f"&right={body.right}&strike_price={body.strike_price}&quantity={body.quantity}"
+        q = urlencode(
+            {
+                "action": body.action,
+                "position": body.position_action,
+                "product_type": body.product_type,
+                "stock_code": body.stock_code,
+                "exchange_code": body.exchange_code,
+                "expiry_date": body.expiry_date,
+                "right": body.right,
+                "strike_price": body.strike_price,
+                "quantity": body.quantity,
+            }
         )
+        return json_redirect(f"/place-order?{q}")
 
     if body.action == cfg.HEDGE:
         return json_redirect(

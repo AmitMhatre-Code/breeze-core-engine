@@ -19,6 +19,8 @@ def map_legacy_html_path_to_spa(path_with_query: str) -> str:
     """Map old Jinja page paths to Next.js app routes."""
     if not path_with_query:
         return "/"
+    if path_with_query == "/place-order" or path_with_query.startswith("/place-order?"):
+        return path_with_query
     if path_with_query == "/order" or path_with_query.startswith("/order?"):
         return "/orders" + path_with_query[6:]
     if path_with_query == "/book" or path_with_query.startswith("/book?"):

@@ -9,10 +9,7 @@ import { PortfolioHedgeOrderSheet } from "@/components/portfolio/PortfolioHedgeO
 import { apiClient } from "@/lib/api-client";
 import { buildPortfolioPositionGroups } from "@/lib/portfolio/groupPositions";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
-import {
-  ltpAsOrderPrice,
-  squareOffToOrderPayload,
-} from "@/lib/order-confirm";
+import { ltpAsOrderPrice, squareOffToOrderPayload } from "@/lib/order-confirm";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import type { OptionRight } from "@/lib/strategy-builder/types";
 
@@ -175,7 +172,7 @@ export function squareOffHref(row: PortfolioPositionRecord): string {
   });
   const ltpPrice = ltpAsOrderPrice(row.ltp);
   if (ltpPrice !== "0") params.set("price", ltpPrice);
-  return `/orders?${params.toString()}`;
+  return `/place-order?${params.toString()}`;
 }
 
 export function hedgeHref(row: PortfolioPositionRecord): string {
@@ -377,22 +374,20 @@ function PositionActionsTable({
   hedgeExpanded: boolean;
   onToggleHedges: (key: string) => void;
 }) {
-  const { openOrderConfirm } = useOrderConfirm();
-  const squarePayload = squareOffToOrderPayload(row);
+  const squareOk = squareOffToOrderPayload(row) != null;
   return (
     <div className="flex flex-nowrap items-center justify-end gap-1.5 2xl:gap-2">
-      {squarePayload ? (
-        <button
-          type="button"
-          className={btnPrimaryTable}
-          onClick={() => openOrderConfirm(squarePayload)}
-        >
-          Square Off
-        </button>
-      ) : (
+      {squareOk ? (
         <Link href={squareOffHref(row)} className={btnPrimaryTable}>
           Square Off
         </Link>
+      ) : (
+        <span
+          className={`${btnPrimaryTable} pointer-events-none cursor-not-allowed opacity-50`}
+          aria-disabled
+        >
+          Square Off
+        </span>
       )}
       {isHedgeable(row.hedgeable) ? (
         <button
@@ -418,25 +413,23 @@ function PositionActionsCard({
   hedgeExpanded: boolean;
   onToggleHedges: (key: string) => void;
 }) {
-  const { openOrderConfirm } = useOrderConfirm();
-  const squarePayload = squareOffToOrderPayload(row);
+  const squareOk = squareOffToOrderPayload(row) != null;
   return (
     <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap">
-      {squarePayload ? (
-        <button
-          type="button"
-          className={`${btnPrimaryCard} w-full min-h-11 sm:min-h-0 sm:flex-1`}
-          onClick={() => openOrderConfirm(squarePayload)}
-        >
-          Square Off
-        </button>
-      ) : (
+      {squareOk ? (
         <Link
           href={squareOffHref(row)}
           className={`${btnPrimaryCard} w-full min-h-11 sm:min-h-0 sm:flex-1`}
         >
           Square Off
         </Link>
+      ) : (
+        <span
+          className={`${btnPrimaryCard} w-full min-h-11 cursor-not-allowed opacity-50 sm:min-h-0 sm:flex-1`}
+          aria-disabled
+        >
+          Square Off
+        </span>
       )}
       {isHedgeable(row.hedgeable) ? (
         <button

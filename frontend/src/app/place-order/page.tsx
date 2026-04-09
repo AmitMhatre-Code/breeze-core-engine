@@ -2,11 +2,13 @@
 
 import {
   startTransition,
+  Suspense,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
@@ -16,7 +18,10 @@ import { StrikeSelectPill } from "@/components/strategy-builder/StrikeSelectPill
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
-import { consumePlaceOrderClonePayload } from "@/lib/place-order-clone";
+import {
+  consumePlaceOrderClonePayload,
+  placeOrderPrefillFromSearchParams,
+} from "@/lib/place-order-clone";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   ChainApiResponse,
@@ -75,10 +80,11 @@ function formatRatio(raw: unknown): string {
   return n.toFixed(4);
 }
 
-export default function PlaceOrderPage() {
+function PlaceOrderPageInner() {
+  const searchParams = useSearchParams();
   const { openExecutionConfirm } = useOrderConfirm();
   const queryClient = useQueryClient();
-  const cloneConsumedRef = useRef(false);
+  const prefillConsumedRef = useRef(false);
   const cloneAutoFetchDoneRef = useRef(false);
   const [segment, setSegment] = useState<Segment>("NFO");
   const [stockCode, setStockCode] = useState("");
@@ -90,13 +96,21 @@ export default function PlaceOrderPage() {
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
   const [previewSide, setPreviewSide] = useState<OrderSide>("Buy");
-  /** When set, the opposite side button is disabled (order book clone). */
+  /** When set, the opposite side button is disabled (clone / square-off / URL prefill). */
   const [lockedOrderSide, setLockedOrderSide] = useState<OrderSide | null>(null);
+  /** Exchange, scrip, expiry, strike, option fixed — only qty, price, and locked side editable. */
+  const [contractFieldsLocked, setContractFieldsLocked] = useState(false);
 
   useEffect(() => {
-    const p = consumePlaceOrderClonePayload();
+    if (prefillConsumedRef.current) return;
+    const fromStorage = consumePlaceOrderClonePayload();
+    const fromUrl =
+      fromStorage == null
+        ? placeOrderPrefillFromSearchParams(searchParams)
+        : null;
+    const p = fromStorage ?? fromUrl;
     if (!p) return;
-    cloneConsumedRef.current = true;
+    prefillConsumedRef.current = true;
     startTransition(() => {
       setSegment(p.segment);
       setStockCode(p.stock_code);
@@ -107,8 +121,9 @@ export default function PlaceOrderPage() {
       setPrice(p.price);
       setScripDetails(null);
       setLockedOrderSide(p.action);
+      setContractFieldsLocked(p.lock_contract_fields === true);
     });
-  }, []);
+  }, [searchParams]);
 
   const uq = useQuery({
     queryKey: ["place-order", "underlyings", segment],
@@ -170,6 +185,7 @@ export default function PlaceOrderPage() {
     setQuantity("");
     setPrice("");
     setLockedOrderSide(null);
+    setContractFieldsLocked(false);
   }
 
   const fetchDetailsMut = useMutation({
@@ -278,6 +294,13 @@ export default function PlaceOrderPage() {
     Boolean(stockCode.trim() && expiryDate.trim() && effectiveStrike != null) &&
     !fetchDetailsMut.isPending;
 
+  const fetchDetailsDisabled =
+    fetchDetailsMut.isPending ||
+    (contractFieldsLocked &&
+      scripDetails != null &&
+      !fetchDetailsMut.isError) ||
+    (!contractFieldsLocked && !canFetchDetails);
+
   const pillStretch = "!max-w-none w-full min-w-0";
 
   const qtyNum = Math.round(parseNum(quantity));
@@ -359,7 +382,7 @@ export default function PlaceOrderPage() {
   const spot = chainSuccess?.spot_price ?? null;
 
   useEffect(() => {
-    if (!cloneConsumedRef.current || cloneAutoFetchDoneRef.current) return;
+    if (!prefillConsumedRef.current || cloneAutoFetchDoneRef.current) return;
     if (!stockCode.trim() || !expiryDate.trim() || effectiveStrike == null)
       return;
     if (fetchDetailsMut.isPending) return;
@@ -397,6 +420,12 @@ export default function PlaceOrderPage() {
           className={`${sb.section} relative z-20 space-y-4`}
           aria-label="Options order entry"
         >
+          {contractFieldsLocked ? (
+            <p className="rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs leading-snug text-sky-950 dark:border-sky-400/20 dark:bg-sky-950/40 dark:text-sky-100">
+              Contract details are fixed. Change quantity, limit price, or tap Buy
+              / Sell when ready.
+            </p>
+          ) : null}
           <div className="space-y-4">
             <div
               className="flex flex-wrap items-center gap-2"
@@ -407,11 +436,12 @@ export default function PlaceOrderPage() {
               <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
                 <button
                   type="button"
+                  disabled={contractFieldsLocked}
                   onClick={() => {
                     setSegment("NFO");
                     resetOrderForm();
                   }}
-                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm disabled:pointer-events-none disabled:opacity-50 ${
                     segment === "NFO"
                       ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
                       : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
@@ -422,11 +452,12 @@ export default function PlaceOrderPage() {
                 </button>
                 <button
                   type="button"
+                  disabled={contractFieldsLocked}
                   onClick={() => {
                     setSegment("BFO");
                     resetOrderForm();
                   }}
-                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm disabled:pointer-events-none disabled:opacity-50 ${
                     segment === "BFO"
                       ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
                       : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
@@ -445,7 +476,7 @@ export default function PlaceOrderPage() {
                 chainBar
                 underlyings={uq.data?.underlyings ?? []}
                 value={stockCode}
-                disabled={uq.isLoading}
+                disabled={uq.isLoading || contractFieldsLocked}
                 spot={spot}
                 onChange={(code) => {
                   setStockCode(code);
@@ -468,7 +499,7 @@ export default function PlaceOrderPage() {
                 rootClassName={pillStretch}
                 dates={expiryOptions}
                 value={expiryDate}
-                disabled={!stockCode}
+                disabled={!stockCode || contractFieldsLocked}
                 onChange={(d) => {
                   setExpiryDate(d);
                   setStrikeSelection(null);
@@ -496,7 +527,8 @@ export default function PlaceOrderPage() {
                   !stockCode ||
                   !expiryDate ||
                   (chainQ.isFetching && !strikes.length) ||
-                  !strikes.length
+                  !strikes.length ||
+                  contractFieldsLocked
                 }
                 onChange={(k) => {
                   setStrikeSelection(k);
@@ -514,7 +546,8 @@ export default function PlaceOrderPage() {
               <div className="inline-flex w-full rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70 sm:w-auto">
                 <button
                   type="button"
-                  className={`min-w-0 flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:flex-initial sm:text-sm ${
+                  disabled={contractFieldsLocked}
+                  className={`min-w-0 flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:flex-initial sm:text-sm disabled:pointer-events-none disabled:opacity-50 ${
                     right === "Call"
                       ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
                       : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
@@ -529,7 +562,8 @@ export default function PlaceOrderPage() {
                 </button>
                 <button
                   type="button"
-                  className={`min-w-0 flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:flex-initial sm:text-sm ${
+                  disabled={contractFieldsLocked}
+                  className={`min-w-0 flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:flex-initial sm:text-sm disabled:pointer-events-none disabled:opacity-50 ${
                     right === "Put"
                       ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
                       : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
@@ -548,7 +582,7 @@ export default function PlaceOrderPage() {
             <button
               type="button"
               className={`${sb.btnPrimary} relative w-full min-h-[2.75rem] px-4 py-2.5 text-sm`}
-              disabled={!canFetchDetails}
+              disabled={fetchDetailsDisabled}
               aria-busy={fetchDetailsMut.isPending}
               onClick={() => void fetchDetailsMut.mutate()}
             >
@@ -736,5 +770,21 @@ export default function PlaceOrderPage() {
       </div>
 
     </AppShell>
+  );
+}
+
+export default function PlaceOrderPage() {
+  return (
+    <Suspense
+      fallback={
+        <AppShell contentWidth="default">
+          <div className="mx-auto max-w-md p-6 text-sm app-text-muted">
+            Loading…
+          </div>
+        </AppShell>
+      }
+    >
+      <PlaceOrderPageInner />
+    </Suspense>
   );
 }
