@@ -21,17 +21,22 @@ def test_ai_provider_key_manager_roundtrip():
         try:
             mgr = AiProviderKeyManager(encryption_key="unit-test-secret")
             mgr.upsert(user_id="u1", provider="gemini", api_key="abcd1234xyz", model="gemini-1.5-flash")
-            cfg = mgr.get("u1")
+            cfg = mgr.get("u1", "gemini")
             assert cfg is not None
             assert cfg.provider == "gemini"
             assert cfg.api_key == "abcd1234xyz"
-            masked = mgr.get_masked("u1")
+            masked = mgr.get_masked("u1", "gemini")
             assert masked is not None
             assert masked["masked_api_key"].startswith("abcd")
-            assert mgr.revoke("u1")
-            revoked = mgr.get("u1")
-            assert revoked is not None
-            assert revoked.enabled is False
+            mgr.upsert(user_id="u1", provider="openai", api_key="sk-openai-test", model="gpt-4o-mini")
+            gem2 = mgr.get("u1", "gemini")
+            oai = mgr.get("u1", "openai")
+            assert gem2 is not None and oai is not None
+            assert mgr.delete_provider("u1", "gemini")
+            assert mgr.get("u1", "gemini") is None
+            assert mgr.get("u1", "openai") is not None
+            assert mgr.delete_provider("u1", "openai")
+            assert mgr.get("u1", "openai") is None
         finally:
             keys_mod.DATA_PATH = prev_data_path
             keys_mod.USERS_DB = prev_users_db

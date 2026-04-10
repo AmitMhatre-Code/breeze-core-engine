@@ -15,6 +15,7 @@ import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { ApiHttpError, apiClient } from "@/lib/api-client";
 import {
   getMarketOutlook,
+  outlookFetchErrorMessage,
   subscribeMarketOutlookStream,
   type OutlookResponse,
 } from "@/lib/outlook-api";
@@ -427,7 +428,10 @@ export default function DashboardPage() {
                 <OutlookBlock
                   title="market outlook"
                   data={marketOutlookData}
-                  pending={marketOutlookPending || refreshOutlookM.isPending}
+                  pendingInitial={
+                    !marketOutlookData &&
+                    (marketOutlookPending || refreshOutlookM.isPending)
+                  }
                   error={marketOutlookError}
                   refreshError={refreshOutlookM.error as Error | null}
                 />
@@ -808,23 +812,48 @@ function MarketOutlookStreamBadge({
 function OutlookBlock({
   title,
   data,
-  pending,
+  pendingInitial,
   error,
   refreshError,
 }: {
   title: string;
   data?: OutlookResponse;
-  pending: boolean;
+  pendingInitial: boolean;
   error?: Error | null;
   refreshError?: Error | null;
 }) {
-  const errorMessage = formatOutlookProviderError(error ?? refreshError ?? null);
-  if (pending) return <div className="text-xs app-text-muted">Loading {title}...</div>;
-  if (errorMessage)
-    return <div className="text-xs text-red-700 dark:text-red-300">{errorMessage}</div>;
-  if (!data) return <div className="text-xs app-text-muted">No outlook available.</div>;
+  if (pendingInitial) {
+    return <div className="text-xs app-text-muted">Loading {title}...</div>;
+  }
+  const errText = error ? outlookFetchErrorMessage(error) : null;
+  if (!data) {
+    const refreshMsg = refreshError ? formatOutlookProviderError(refreshError) : "";
+    if (errText) {
+      return (
+        <div className="space-y-2 text-xs text-red-700 dark:text-red-300">
+          <p>{errText}</p>
+        </div>
+      );
+    }
+    if (refreshMsg) {
+      return (
+        <div className="space-y-2 text-xs text-red-700 dark:text-red-300">
+          <p>{refreshMsg}</p>
+        </div>
+      );
+    }
+    return <div className="text-xs app-text-muted">No outlook available.</div>;
+  }
   return (
     <div className="space-y-2 text-xs">
+      {errText ? (
+        <p
+          className="rounded-md border border-red-300 bg-red-50 px-2 py-1.5 text-red-800 dark:border-red-800/80 dark:bg-red-950/35 dark:text-red-200"
+          role="alert"
+        >
+          {errText}
+        </p>
+      ) : null}
       <ul className="list-disc space-y-1 pl-4">
         {data.summary.slice(0, 3).map((line) => (
           <li key={line}>{line}</li>

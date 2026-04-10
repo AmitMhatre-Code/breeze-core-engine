@@ -85,7 +85,6 @@ function PlaceOrderPageInner() {
   const { openExecutionConfirm } = useOrderConfirm();
   const queryClient = useQueryClient();
   const prefillConsumedRef = useRef(false);
-  const cloneAutoFetchDoneRef = useRef(false);
   const [segment, setSegment] = useState<Segment>("NFO");
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
@@ -381,27 +380,6 @@ function PlaceOrderPageInner() {
 
   const spot = chainSuccess?.spot_price ?? null;
 
-  useEffect(() => {
-    if (!prefillConsumedRef.current || cloneAutoFetchDoneRef.current) return;
-    if (!stockCode.trim() || !expiryDate.trim() || effectiveStrike == null)
-      return;
-    if (fetchDetailsMut.isPending) return;
-    if (!chainSuccess?.chain_rows?.length) return;
-    const row = chainSuccess.chain_rows.find(
-      (r) => Math.round(r.strike_price) === Math.round(effectiveStrike),
-    );
-    if (!row || !pickOptionCell(row, right)) return;
-    cloneAutoFetchDoneRef.current = true;
-    void fetchDetailsMut.mutate();
-  }, [
-    stockCode,
-    expiryDate,
-    effectiveStrike,
-    right,
-    chainSuccess,
-    fetchDetailsMut,
-  ]);
-
   return (
     <AppShell contentWidth="default">
       <div className="mx-auto max-w-md space-y-5">
@@ -432,7 +410,7 @@ function PlaceOrderPageInner() {
               role="group"
               aria-label="Exchange segment"
             >
-              <span className={`${sb.fieldLabel} mb-0`}>Exchange</span>
+              {/* <span className={`${sb.fieldLabel} mb-0`}>Exchange</span> */}
               <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
                 <button
                   type="button"
@@ -538,16 +516,16 @@ function PlaceOrderPageInner() {
             </div>
 
             <div
-              className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+              className="flex flex-wrap items-center gap-2"
               role="group"
               aria-label="Call or Put"
             >
-              <span className={`${sb.fieldLabel} mb-0`}>Option</span>
-              <div className="inline-flex w-full rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70 sm:w-auto">
+              {/* <span className={`${sb.fieldLabel} mb-0`}>Option</span> */}
+              <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
                 <button
                   type="button"
                   disabled={contractFieldsLocked}
-                  className={`min-w-0 flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:flex-initial sm:text-sm disabled:pointer-events-none disabled:opacity-50 ${
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm disabled:pointer-events-none disabled:opacity-50 ${
                     right === "Call"
                       ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
                       : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
@@ -563,7 +541,7 @@ function PlaceOrderPageInner() {
                 <button
                   type="button"
                   disabled={contractFieldsLocked}
-                  className={`min-w-0 flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:flex-initial sm:text-sm disabled:pointer-events-none disabled:opacity-50 ${
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm disabled:pointer-events-none disabled:opacity-50 ${
                     right === "Put"
                       ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
                       : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"

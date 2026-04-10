@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.auth.ai_provider_keys import AiProviderKeyManager
+from icici_breeze_backend.app.auth.outlook_ai_provider_pref import get_outlook_ai_provider
 from icici_breeze_backend.app.auth.outlook_preferences import OutlookPreferencesManager
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
 from icici_breeze_backend.app.services.outlook_service import OutlookError, OutlookService
@@ -34,17 +35,33 @@ def _status_for_outlook_error(exc: OutlookError) -> int:
     return 400
 
 
+def _row_ok(cfg_row):
+    return (
+        cfg_row is not None
+        and cfg_row.enabled
+        and bool((cfg_row.api_key or "").strip())
+    )
+
+
 def _get_enabled_ai_provider(user_id: str):
-    cfg_row = key_manager.get(user_id)
-    if not cfg_row or not cfg_row.enabled:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error_code": "no_llm_api_key_configured",
-                "message": "No API key set for any LLMs.",
-            },
-        )
-    return cfg_row
+    pref = get_outlook_ai_provider(user_id)
+    gem = key_manager.get(user_id, "gemini")
+    oai = key_manager.get(user_id, "openai")
+    if pref == "gemini" and _row_ok(gem):
+        return gem
+    if pref == "openai" and _row_ok(oai):
+        return oai
+    if _row_ok(gem):
+        return gem
+    if _row_ok(oai):
+        return oai
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error_code": "no_llm_api_key_configured",
+            "message": "No API key set for any LLMs.",
+        },
+    )
 
 
 @router.get("/market")

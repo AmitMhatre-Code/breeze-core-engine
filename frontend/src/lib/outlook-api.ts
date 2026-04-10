@@ -1,4 +1,4 @@
-import { apiClient } from "@/lib/api-client";
+import { apiClient, ApiHttpError } from "@/lib/api-client";
 
 export type OutlookSource = {
   title: string;
@@ -39,17 +39,36 @@ export type OutlookResponse = {
   warning?: OutlookWarning;
 };
 
-export type AiProviderState = {
-  user_id: string;
+export type AiProviderHealthEntry = {
+  ok: boolean;
+  message?: string | null;
+  checked_at?: string | null;
+};
+
+export type AiProviderSideState = {
+  provider: string;
   configured: boolean;
   enabled: boolean;
-  provider?: "gemini" | "openai" | null;
   model?: string | null;
+  fallback_models: string[];
   masked_api_key?: string | null;
+  models_working: number;
+  models_failing: number;
+  last_model_health_at?: string | null;
+  model_health: Record<string, AiProviderHealthEntry>;
+};
+
+export type AiProviderState = {
+  user_id: string;
+  gemini: AiProviderSideState;
+  openai: AiProviderSideState;
+  outlook_ai_provider?: "gemini" | "openai" | null;
   english_only: boolean;
   disclaimer: string;
   message?: string | null;
 };
+
+export const OPENAI_MODEL_OPTIONS = ["gpt-4o-mini", "gpt-4o"] as const;
 
 export type OutlookFeedConfig = {
   name: string;
@@ -75,24 +94,66 @@ export function saveAiProviderSettings(body: {
   provider: "gemini" | "openai";
   api_key: string;
   model?: string;
+  fallback_models?: string[];
   enabled?: boolean;
 }) {
   return apiClient.put<AiProviderState, typeof body>("/api/settings/ai-provider", body);
+}
+
+export function patchAiProviderSettings(body: {
+  provider: "gemini" | "openai";
+  model?: string;
+  fallback_models?: string[];
+}) {
+  return apiClient.patch<AiProviderState, typeof body>("/api/settings/ai-provider", body);
+}
+
+export function setOutlookAiProvider(body: { provider: "gemini" | "openai" }) {
+  return apiClient.put<AiProviderState, typeof body>(
+    "/api/settings/ai-provider/outlook-provider",
+    body,
+  );
 }
 
 export function testAiProviderSettings(body: {
   provider: "gemini" | "openai";
   api_key: string;
   model?: string;
+  fallback_models?: string[];
 }) {
-  return apiClient.post<{ ok: boolean; message: string }>(
+  return apiClient.post<{
+    ok: boolean;
+    message: string;
+    results: { model: string; ok: boolean; status_code?: number; message?: string | null }[];
+  }>(
     "/api/settings/ai-provider/test",
     body,
   );
 }
 
-export function revokeAiProviderSettings() {
-  return apiClient.delete<{ ok: boolean; message: string }>("/api/settings/ai-provider");
+export function testAiProviderModel(body: { provider: "gemini" | "openai"; model: string }) {
+  return apiClient.post<{
+    ok: boolean;
+    message: string;
+    results: { model: string; ok: boolean; status_code?: number; message?: string | null }[];
+  }>("/api/settings/ai-provider/test-model", body);
+}
+
+export function getGeminiModels() {
+  return apiClient.get<{
+    provider: "gemini";
+    available_models: { model: string; status: string; message?: string | null }[];
+    stale_models: { model: string; status: string; message?: string | null }[];
+    last_refreshed_at?: string | null;
+    last_health_check_at?: string | null;
+  }>("/api/settings/ai-provider/models?provider=gemini");
+}
+
+export function deleteAiProvider(provider: "gemini" | "openai") {
+  const q = new URLSearchParams({ provider });
+  return apiClient.delete<{ ok: boolean; message: string }>(
+    `/api/settings/ai-provider?${q.toString()}`,
+  );
 }
 
 export function getOutlookConfig() {
@@ -156,4 +217,20 @@ export function subscribeMarketOutlookStream(handlers: {
     handlers.onTransportError?.();
   };
   return () => stream.close();
+}
+
+/** User-visible copy for outlook fetch failures (includes refresh errors). */
+export function outlookFetchErrorMessage(err: unknown): string {
+  if (!(err instanceof ApiHttpError)) {
+    return err instanceof Error ? err.message : "Could not load market outlook.";
+  }
+  const base = err.message;
+  const payload = err.payload as { detail?: { error_code?: string } } | undefined;
+  if (
+    payload?.detail?.error_code === "provider_error" &&
+    !base.includes("Settings → AI provider")
+  ) {
+    return `${base} If this persists, pick a different model (e.g. gemini-2.0-flash) in AI provider settings.`;
+  }
+  return base;
 }

@@ -30,6 +30,19 @@ _BAD_ADVICE_RE = re.compile(r"\b(buy now|sell now|guaranteed return|sure-shot)\b
 _GEMINI_DEFAULT_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest")
 
 
+def _ordered_models(*model_groups: list[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for group in model_groups:
+        for model in group:
+            m = str(model or "").strip()
+            if not m or m in seen:
+                continue
+            seen.add(m)
+            out.append(m)
+    return tuple(out)
+
+
 @dataclass
 class CachedOutlook:
     payload: dict[str, Any]
@@ -199,7 +212,7 @@ class OutlookService:
 
     def _call_gemini(self, *, ai_cfg: AiProviderConfig, prompt: str, system_prompt: Optional[str]) -> dict[str, Any]:
         configured = (ai_cfg.model or "").strip()
-        models = (configured,) if configured else _GEMINI_DEFAULT_MODELS
+        models = _ordered_models([configured], ai_cfg.fallback_models, list(_GEMINI_DEFAULT_MODELS))
         sys_prompt = (system_prompt or "").strip() or DEFAULT_OUTLOOK_SYSTEM_PROMPT
         payload = {
             "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
@@ -211,12 +224,13 @@ class OutlookService:
         }
         last_error: Optional[OutlookError] = None
         for model in models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={ai_cfg.api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            headers = {"Content-Type": "application/json", "x-goog-api-key": ai_cfg.api_key}
             for attempt in range(2):
                 try:
                     return self._parse_provider_response(
                         url=url,
-                        headers={"Content-Type": "application/json"},
+                        headers=headers,
                         payload=payload,
                         provider=f"gemini:{model}",
                     )
@@ -269,9 +283,15 @@ class OutlookService:
                     raise OutlookError("quota_exceeded", f"Quota exceeded on {provider_label}.", status_code=429)
                 raise OutlookError("rate_limit_exceeded", f"Rate limit reached on {provider_label}.", status_code=429)
             if res.status_code >= 400:
+                extra = ""
+                if res.status_code in (502, 503, 504):
+                    extra = (
+                        " The provider may be temporarily overloaded, or the model may be "
+                        "unavailable or misnamed—try another model under Settings → AI provider."
+                    )
                 raise OutlookError(
                     "provider_error",
-                    f"Provider error {res.status_code} on {provider_label}.",
+                    f"Provider error {res.status_code} on {provider_label}.{extra}",
                     status_code=res.status_code,
                 )
             data = res.json()

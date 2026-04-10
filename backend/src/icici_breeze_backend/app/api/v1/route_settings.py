@@ -1,15 +1,20 @@
 """Settings JSON API under /api/settings."""
 import datetime
+import json
 import sqlite3
 from typing import Any, List
 
 import httpx
 import time
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.auth.ai_provider_keys import AiProviderKeyManager
+from icici_breeze_backend.app.auth.outlook_ai_provider_pref import (
+    get_outlook_ai_provider,
+    set_outlook_ai_provider,
+)
 from icici_breeze_backend.app.auth.outlook_preferences import OutlookPreferencesManager
 from icici_breeze_backend.app.auth.context import get_request_context, RequestContext
 from icici_breeze_backend.app.services.processor import processor
@@ -21,6 +26,15 @@ from icici_breeze_backend.app.domain.outlook_defaults import (
     DEFAULT_OUTLOOK_SYSTEM_PROMPT,
 )
 from icici_breeze_backend.app.domain.settings_api import (
+    AiProviderHealthEntry,
+    AiProviderOutlookPickBody,
+    AiProviderPatchBody,
+    AiProviderSideState,
+    AiProviderTestModelBody,
+    AiProviderTestResponse,
+    AiProviderModelTestResult,
+    GeminiCatalogModelItem,
+    GeminiCatalogResponse,
     AiProviderStateResponse,
     AiProviderTestBody,
     AiProviderUpdateBody,
@@ -59,6 +73,256 @@ ai_key_manager = AiProviderKeyManager(encryption_key=(cfg.JWT_SECRET or "").stri
 outlook_preferences_manager = OutlookPreferencesManager()
 _GEMINI_DEFAULT_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest")
 _AI_PROVIDER_TEST_LAST_TS_BY_USER: dict[str, float] = {}
+_GEMINI_CATALOG_TTL_SECONDS = 24 * 60 * 60
+_AI_PROVIDER_TEST_MODEL_LAST_TS: dict[str, float] = {}
+# Pace Gemini generateContent probes to reduce 429s (~2 requests/sec).
+_GEMINI_TEST_MIN_INTERVAL_SEC = 0.55
+
+
+def _now_utc() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _normalize_models(models: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for model in models:
+        m = str(model or "").strip()
+        if not m or m in seen:
+            continue
+        seen.add(m)
+        out.append(m)
+    return out[:20]
+
+
+def _catalog_row() -> tuple | None:
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        return conn.execute(
+            """
+            SELECT models_json, fetched_at, expires_at, last_health_check_at, health_json
+            FROM gemini_model_catalog_cache
+            WHERE provider = 'gemini'
+            """
+        ).fetchone()
+
+
+def _write_catalog(models: list[str], *, fetched_at: datetime.datetime, health: dict[str, Any] | None = None) -> None:
+    expires_at = fetched_at + datetime.timedelta(seconds=_GEMINI_CATALOG_TTL_SECONDS)
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        conn.execute(
+            """
+            INSERT INTO gemini_model_catalog_cache(
+                provider, models_json, fetched_at, expires_at, last_health_check_at, health_json
+            ) VALUES ('gemini', ?, ?, ?, ?, ?)
+            ON CONFLICT(provider) DO UPDATE SET
+                models_json=excluded.models_json,
+                fetched_at=excluded.fetched_at,
+                expires_at=excluded.expires_at,
+                last_health_check_at=excluded.last_health_check_at,
+                health_json=excluded.health_json
+            """,
+            (
+                json.dumps(_normalize_models(models)),
+                fetched_at.isoformat(),
+                expires_at.isoformat(),
+                fetched_at.isoformat() if health else None,
+                json.dumps(health or {}),
+            ),
+        )
+        conn.commit()
+
+
+def _write_catalog_model_list_only(models: list[str], *, fetched_at: datetime.datetime) -> None:
+    """Refresh cached Gemini model id list only; do not overwrite global health_json."""
+    expires_at = fetched_at + datetime.timedelta(seconds=_GEMINI_CATALOG_TTL_SECONDS)
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        conn.execute(
+            """
+            INSERT INTO gemini_model_catalog_cache(
+                provider, models_json, fetched_at, expires_at, last_health_check_at, health_json
+            ) VALUES ('gemini', ?, ?, ?, NULL, '{}')
+            ON CONFLICT(provider) DO UPDATE SET
+                models_json=excluded.models_json,
+                fetched_at=excluded.fetched_at,
+                expires_at=excluded.expires_at
+            """,
+            (
+                json.dumps(_normalize_models(models)),
+                fetched_at.isoformat(),
+                expires_at.isoformat(),
+            ),
+        )
+        conn.commit()
+
+
+def _fetch_gemini_models(api_key: str) -> list[str]:
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
+    with httpx.Client(timeout=20.0) as client:
+        res = client.get(url, headers={"x-goog-api-key": api_key})
+    if res.status_code in (401, 403):
+        raise HTTPException(status_code=400, detail="Invalid API key or unauthorized provider access")
+    if res.status_code >= 400:
+        raise HTTPException(status_code=400, detail=f"Could not fetch Gemini model catalog ({res.status_code})")
+    payload = res.json() or {}
+    names: list[str] = []
+    for item in payload.get("models", []):
+        methods = item.get("supportedGenerationMethods") or []
+        if "generateContent" not in methods:
+            continue
+        raw_name = str(item.get("name") or "").strip()
+        name = raw_name.split("/", 1)[1] if raw_name.startswith("models/") else raw_name
+        if name:
+            names.append(name)
+    return _normalize_models(names)
+
+
+def _gemini_models_to_validate(single_model: str, fallback_models: list[str]) -> list[str]:
+    """Models the user selected (primary + fallbacks). Do not append catalog defaults — those
+    may 404/429 and would block PATCH/PUT even when the user's picks are fine."""
+    seed: list[str] = []
+    if (single_model or "").strip():
+        seed.append(single_model)
+    seed.extend(fallback_models)
+    return _normalize_models(seed)
+
+
+def _test_gemini_models(api_key: str, models: list[str]) -> tuple[list[AiProviderModelTestResult], bool]:
+    results: list[AiProviderModelTestResult] = []
+    all_ok = True
+    payload = {"contents": [{"parts": [{"text": "Ping"}]}]}
+    headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+    for i, model in enumerate(_normalize_models(models)):
+        if i > 0:
+            time.sleep(_GEMINI_TEST_MIN_INTERVAL_SEC)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                res = client.post(url, headers=headers, json=payload)
+            ok = res.status_code < 400
+            message = None
+            if res.status_code in (401, 403):
+                message = "Unauthorized"
+            elif res.status_code == 404:
+                message = "Model not available"
+            elif res.status_code == 429:
+                message = "Quota or rate limit reached"
+            elif res.status_code >= 400:
+                message = f"Provider returned {res.status_code}"
+            results.append(
+                AiProviderModelTestResult(
+                    model=model,
+                    ok=ok,
+                    status_code=res.status_code,
+                    message=message,
+                )
+            )
+            if not ok:
+                all_ok = False
+        except Exception as exc:
+            all_ok = False
+            results.append(AiProviderModelTestResult(model=model, ok=False, message=str(exc)))
+    return results, all_ok
+
+
+def _openai_test_one_model(api_key: str, model: str) -> AiProviderModelTestResult:
+    payload = {
+        "model": model,
+        "max_tokens": 5,
+        "messages": [{"role": "user", "content": "Ping"}],
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    url = "https://api.openai.com/v1/chat/completions"
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            res = client.post(url, headers=headers, json=payload)
+        ok = res.status_code < 400
+        message = None
+        if res.status_code in (401, 403):
+            message = "Unauthorized"
+        elif res.status_code >= 400:
+            message = f"Provider returned {res.status_code}"
+        return AiProviderModelTestResult(
+            model=model,
+            ok=ok,
+            status_code=res.status_code,
+            message=message,
+        )
+    except Exception as exc:
+        return AiProviderModelTestResult(model=model, ok=False, message=str(exc))
+
+
+def _side_state(provider: str, user_id: str) -> AiProviderSideState:
+    m = ai_key_manager.get_masked(user_id, provider)
+    if not m:
+        return AiProviderSideState(provider=provider, configured=False, enabled=False)
+    mh_raw = m.get("model_health") or {}
+    mh: dict[str, AiProviderHealthEntry] = {}
+    for k, v in mh_raw.items():
+        if isinstance(v, dict):
+            mh[str(k)] = AiProviderHealthEntry(
+                ok=bool(v.get("ok")),
+                message=v.get("message") if v.get("message") is not None else None,
+                checked_at=v.get("checked_at") if v.get("checked_at") is not None else None,
+            )
+    return AiProviderSideState(
+        provider=provider,
+        configured=True,
+        enabled=bool(m.get("enabled")),
+        model=m.get("model"),
+        fallback_models=list(m.get("fallback_models") or []),
+        masked_api_key=m.get("masked_api_key"),
+        models_working=int(m.get("models_working") or 0),
+        models_failing=int(m.get("models_failing") or 0),
+        last_model_health_at=m.get("last_model_health_at"),
+        model_health=mh,
+    )
+
+
+def _read_ai_provider_state_response(user_id: str, message: str | None = None) -> AiProviderStateResponse:
+    outlook_p = get_outlook_ai_provider(user_id)
+    return AiProviderStateResponse(
+        user_id=user_id,
+        gemini=_side_state("gemini", user_id),
+        openai=_side_state("openai", user_id),
+        outlook_ai_provider=outlook_p,
+        message=message,
+    )
+
+
+def _schedule_ai_provider_health_refresh_if_needed(user_id: str, background_tasks: BackgroundTasks) -> None:
+    """Model reachability checks run only via explicit test endpoints / UI test actions (no background probing)."""
+    del user_id, background_tasks
+    return
+
+
+def _ensure_outlook_pref_after_upsert(user_id: str, saved_provider: str) -> None:
+    if get_outlook_ai_provider(user_id) is not None:
+        return
+    set_outlook_ai_provider(user_id, saved_provider)
+
+
+def _reconcile_outlook_pref_after_delete(user_id: str, deleted_provider: str) -> None:
+    pref = get_outlook_ai_provider(user_id)
+    if pref != deleted_provider:
+        return
+    fallback: str | None = None
+    if deleted_provider == "openai":
+        g = ai_key_manager.get(user_id, "gemini")
+        if g and g.enabled and g.api_key:
+            fallback = "gemini"
+    else:
+        o = ai_key_manager.get(user_id, "openai")
+        if o and o.enabled and o.api_key:
+            fallback = "openai"
+    if fallback:
+        set_outlook_ai_provider(user_id, fallback)
+    else:
+        with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+            conn.execute(
+                "UPDATE user_account SET outlook_ai_provider = NULL WHERE user_id = ?",
+                (user_id,),
+            )
+            conn.commit()
 
 
 def _ensure_user_margin_source_column() -> None:
@@ -420,23 +684,18 @@ async def settings_scrip_master_refresh(ctx: RequestContext = Depends(get_reques
 
 
 @router.get("/ai-provider", response_model=AiProviderStateResponse)
-async def settings_ai_provider_data(ctx: RequestContext = Depends(get_request_context)):
-    row = ai_key_manager.get_masked(ctx.user_id)
-    if not row:
-        return AiProviderStateResponse(user_id=ctx.user_id)
-    return AiProviderStateResponse(
-        user_id=ctx.user_id,
-        configured=True,
-        enabled=bool(row.get("enabled")),
-        provider=row.get("provider"),
-        model=row.get("model"),
-        masked_api_key=row.get("masked_api_key"),
-    )
+async def settings_ai_provider_data(
+    background_tasks: BackgroundTasks,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    _schedule_ai_provider_health_refresh_if_needed(ctx.user_id, background_tasks)
+    return _read_ai_provider_state_response(ctx.user_id)
 
 
 @router.put("/ai-provider", response_model=AiProviderStateResponse)
 async def settings_ai_provider_update(
     body: AiProviderUpdateBody,
+    background_tasks: BackgroundTasks,
     ctx: RequestContext = Depends(get_request_context),
 ):
     provider = (body.provider or "").strip().lower()
@@ -445,28 +704,73 @@ async def settings_ai_provider_update(
     api_key = (body.api_key or "").strip()
     if not api_key:
         raise HTTPException(status_code=400, detail="api_key is required")
+    fallback_models = _normalize_models(body.fallback_models)
     ai_key_manager.upsert(
         user_id=ctx.user_id,
         provider=provider,
         api_key=api_key,
         model=body.model,
+        fallback_models=fallback_models,
         enabled=bool(body.enabled),
     )
-    row = ai_key_manager.get_masked(ctx.user_id)
-    if not row:
-        raise HTTPException(status_code=400, detail="Could not persist AI provider settings")
-    return AiProviderStateResponse(
+    _ensure_outlook_pref_after_upsert(ctx.user_id, provider)
+    _schedule_ai_provider_health_refresh_if_needed(ctx.user_id, background_tasks)
+    return _read_ai_provider_state_response(ctx.user_id, message="AI provider settings saved.")
+
+
+@router.patch("/ai-provider", response_model=AiProviderStateResponse)
+async def settings_ai_provider_patch(
+    body: AiProviderPatchBody,
+    background_tasks: BackgroundTasks,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    provider = (body.provider or "").strip().lower()
+    if provider not in {"gemini", "openai"}:
+        raise HTTPException(status_code=400, detail="provider must be gemini or openai")
+    cfg_row = ai_key_manager.get(ctx.user_id, provider)
+    if not cfg_row or not (cfg_row.api_key or "").strip():
+        raise HTTPException(status_code=400, detail="Provider is not configured")
+    model_next = (body.model if body.model is not None else cfg_row.model) or ""
+    model_s = (model_next or "").strip()
+    fallbacks_src = cfg_row.fallback_models if body.fallback_models is None else body.fallback_models
+    fallbacks_n = _normalize_models(list(fallbacks_src or []))
+    fallbacks_n = [f for f in fallbacks_n if f != model_s]
+    if not ai_key_manager.update_model_fields(
         user_id=ctx.user_id,
-        configured=True,
-        enabled=bool(row.get("enabled")),
-        provider=row.get("provider"),
-        model=row.get("model"),
-        masked_api_key=row.get("masked_api_key"),
-        message="AI provider settings saved.",
-    )
+        provider=provider,
+        model=model_s or None,
+        fallback_models=fallbacks_n,
+    ):
+        raise HTTPException(status_code=400, detail="Could not update model settings")
+    _schedule_ai_provider_health_refresh_if_needed(ctx.user_id, background_tasks)
+    return _read_ai_provider_state_response(ctx.user_id, message="Model settings updated.")
 
 
-@router.post("/ai-provider/test")
+@router.put("/ai-provider/outlook-provider", response_model=AiProviderStateResponse)
+async def settings_ai_provider_outlook_pick(
+    body: AiProviderOutlookPickBody,
+    background_tasks: BackgroundTasks,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    p = (body.provider or "").strip().lower()
+    if p not in {"gemini", "openai"}:
+        raise HTTPException(status_code=400, detail="provider must be gemini or openai")
+
+    def _ok_row(c):
+        return c is not None and c.enabled and bool((c.api_key or "").strip())
+
+    gem = ai_key_manager.get(ctx.user_id, "gemini")
+    oai = ai_key_manager.get(ctx.user_id, "openai")
+    if p == "gemini" and not _ok_row(gem):
+        raise HTTPException(status_code=400, detail="Gemini is not configured")
+    if p == "openai" and not _ok_row(oai):
+        raise HTTPException(status_code=400, detail="OpenAI is not configured")
+    set_outlook_ai_provider(ctx.user_id, p)
+    _schedule_ai_provider_health_refresh_if_needed(ctx.user_id, background_tasks)
+    return _read_ai_provider_state_response(ctx.user_id, message="Outlook LLM provider updated.")
+
+
+@router.post("/ai-provider/test", response_model=AiProviderTestResponse)
 async def settings_ai_provider_test(
     body: AiProviderTestBody,
     ctx: RequestContext = Depends(get_request_context),
@@ -492,43 +796,147 @@ async def settings_ai_provider_test(
             }
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             url = "https://api.openai.com/v1/chat/completions"
-        else:
-            payload = {"contents": [{"parts": [{"text": "Ping"}]}]}
-            headers = {"Content-Type": "application/json"}
-            configured = (body.model or "").strip()
-            models = (configured,) if configured else _GEMINI_DEFAULT_MODELS
-            res = None
-            for model in models:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-                with httpx.Client(timeout=20.0) as client:
-                    res = client.post(url, headers=headers, json=payload)
-                if res.status_code != 404:
-                    break
-            if res is None:
-                raise HTTPException(status_code=400, detail="Gemini provider test failed with no response")
-        if res.status_code in (401, 403):
-            raise HTTPException(status_code=400, detail="Invalid API key or unauthorized provider access")
-        if res.status_code == 429:
-            raise HTTPException(status_code=400, detail="Provider quota or rate limit reached")
-        if res.status_code == 404 and provider == "gemini":
-            raise HTTPException(
-                status_code=400,
-                detail="Selected Gemini model unavailable for this key/project. Try gemini-2.5-flash or gemini-2.0-flash.",
+            with httpx.Client(timeout=20.0) as client:
+                res = client.post(url, headers=headers, json=payload)
+            if res.status_code >= 400:
+                raise HTTPException(status_code=400, detail=f"Provider returned {res.status_code}")
+            return AiProviderTestResponse(
+                ok=True,
+                message="Provider key test successful.",
+                results=[AiProviderModelTestResult(model=model, ok=True, status_code=res.status_code)],
             )
-        if res.status_code >= 400:
-            raise HTTPException(status_code=400, detail=f"Provider returned {res.status_code}")
+        else:
+            models = _gemini_models_to_validate((body.model or "").strip(), body.fallback_models)
+            results, all_ok = _test_gemini_models(api_key, models)
+            msg = "All selected Gemini models are reachable." if all_ok else "One or more Gemini models failed test."
+            return AiProviderTestResponse(ok=all_ok, message=msg, results=results)
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Provider test failed: {exc}") from exc
-    return JSONResponse({"ok": True, "message": "Provider key test successful.", "user_id": ctx.user_id})
+
+
+@router.post("/ai-provider/test-model", response_model=AiProviderTestResponse)
+async def settings_ai_provider_test_model(
+    body: AiProviderTestModelBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    provider = (body.provider or "").strip().lower()
+    model = (body.model or "").strip()
+    if provider not in {"gemini", "openai"}:
+        raise HTTPException(status_code=400, detail="provider must be gemini or openai")
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+    rate_key = f"{ctx.user_id}:{provider}:{model}"
+    now = time.time()
+    last_ts = _AI_PROVIDER_TEST_MODEL_LAST_TS.get(rate_key)
+    if last_ts is not None and now - last_ts < 3.0:
+        raise HTTPException(status_code=429, detail="Please wait a moment before testing again.")
+    _AI_PROVIDER_TEST_MODEL_LAST_TS[rate_key] = now
+    cfg_row = ai_key_manager.get(ctx.user_id, provider)
+    if not cfg_row or not (cfg_row.api_key or "").strip():
+        raise HTTPException(status_code=400, detail="Provider is not configured")
+    checked = _now_utc().isoformat()
+    if provider == "openai":
+        res = _openai_test_one_model(cfg_row.api_key, model)
+        results = [res]
+    else:
+        results, _ = _test_gemini_models(cfg_row.api_key, [model])
+    if not results:
+        raise HTTPException(status_code=400, detail="No test result")
+    head = results[0]
+    ai_key_manager.merge_model_health_entry(
+        ctx.user_id,
+        provider,
+        model,
+        ok=bool(head.ok),
+        message=head.message,
+        checked_at_iso=checked,
+    )
+    msg = (head.message or "").strip() or ("Reachable" if head.ok else "Unreachable")
+    return AiProviderTestResponse(ok=bool(head.ok), message=msg, results=results)
+
+
+@router.get("/ai-provider/models", response_model=GeminiCatalogResponse)
+async def settings_ai_provider_models(
+    provider: str = Query(default="gemini"),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if provider.strip().lower() != "gemini":
+        raise HTTPException(status_code=400, detail="Only gemini model listing is currently supported")
+    cfg_row = ai_key_manager.get(ctx.user_id, "gemini")
+    if not cfg_row or not cfg_row.api_key:
+        raise HTTPException(status_code=400, detail="Configure Gemini API key first")
+    now = _now_utc()
+    row = _catalog_row()
+    models: list[str] = []
+    fetched_at: str | None = None
+    last_user_health_at: str | None = None
+    needs_refresh = True
+    if row:
+        models_json, fetched_raw, expires_raw, _health_checked_raw, _health_raw = row
+        try:
+            models = _normalize_models(json.loads(models_json or "[]"))
+        except Exception:
+            models = []
+        fetched_at = fetched_raw
+        if expires_raw:
+            try:
+                needs_refresh = datetime.datetime.fromisoformat(str(expires_raw)) <= now
+            except ValueError:
+                needs_refresh = True
+    if needs_refresh:
+        models = _fetch_gemini_models(cfg_row.api_key)
+        if not models:
+            models = list(_GEMINI_DEFAULT_MODELS)
+        _write_catalog_model_list_only(models, fetched_at=now)
+        fetched_at = now.isoformat()
+
+    cfg_row = ai_key_manager.get(ctx.user_id, "gemini")
+    user_health = (cfg_row.model_health if cfg_row else {}) or {}
+    last_user_health_at = (cfg_row.last_model_health_at if cfg_row else None) or None
+
+    available: list[GeminiCatalogModelItem] = []
+    stale: list[GeminiCatalogModelItem] = []
+    for model in models:
+        meta = user_health.get(model) if isinstance(user_health, dict) else None
+        if isinstance(meta, dict) and "ok" in meta:
+            is_ok = bool(meta.get("ok"))
+            status = "healthy" if is_ok else "defunct"
+            message = meta.get("message")
+        else:
+            status = "unknown"
+            message = None
+        item = GeminiCatalogModelItem(
+            model=model,
+            status=status,
+            message=message if message is not None else None,
+        )
+        if status == "defunct":
+            stale.append(item)
+        else:
+            available.append(item)
+    return GeminiCatalogResponse(
+        provider="gemini",
+        available_models=available,
+        stale_models=stale,
+        last_refreshed_at=fetched_at,
+        last_health_check_at=last_user_health_at,
+    )
 
 
 @router.delete("/ai-provider")
-async def settings_ai_provider_delete(ctx: RequestContext = Depends(get_request_context)):
-    if not ai_key_manager.revoke(ctx.user_id):
-        raise HTTPException(status_code=404, detail="No AI provider settings found")
-    return JSONResponse({"ok": True, "message": "AI provider key revoked."})
+async def settings_ai_provider_delete(
+    provider: str = Query(..., description="gemini or openai"),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    p = (provider or "").strip().lower()
+    if p not in {"gemini", "openai"}:
+        raise HTTPException(status_code=400, detail="provider query must be gemini or openai")
+    if not ai_key_manager.delete_provider(ctx.user_id, p):
+        raise HTTPException(status_code=404, detail="No saved settings for this provider")
+    _reconcile_outlook_pref_after_delete(ctx.user_id, p)
+    return JSONResponse({"ok": True, "message": f"{p} provider removed."})
 
 
 @router.get("/outlook-config", response_model=OutlookConfigStateResponse)

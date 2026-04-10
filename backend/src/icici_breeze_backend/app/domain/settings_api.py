@@ -85,13 +85,40 @@ class ScripMasterStateResponse(BaseModel):
     message: Optional[str] = None
 
 
-class AiProviderStateResponse(BaseModel):
-    user_id: str = ""
+class AiProviderHealthEntry(BaseModel):
+    ok: bool = False
+    message: Optional[str] = None
+    checked_at: Optional[str] = None
+
+
+class AiProviderSideState(BaseModel):
+    """One LLM provider row for the settings UI."""
+
+    provider: str
     configured: bool = False
     enabled: bool = False
-    provider: Optional[str] = None
     model: Optional[str] = None
+    fallback_models: list[str] = Field(default_factory=list)
     masked_api_key: Optional[str] = None
+    models_working: int = 0
+    models_failing: int = 0
+    last_model_health_at: Optional[str] = None
+    model_health: dict[str, AiProviderHealthEntry] = Field(default_factory=dict)
+
+
+def _default_gemini_side() -> AiProviderSideState:
+    return AiProviderSideState(provider="gemini")
+
+
+def _default_openai_side() -> AiProviderSideState:
+    return AiProviderSideState(provider="openai")
+
+
+class AiProviderStateResponse(BaseModel):
+    user_id: str = ""
+    gemini: AiProviderSideState = Field(default_factory=_default_gemini_side)
+    openai: AiProviderSideState = Field(default_factory=_default_openai_side)
+    outlook_ai_provider: Optional[str] = None
     english_only: bool = True
     disclaimer: str = (
         "AI-generated outlook. Informational only. Not investment advice. Verify with primary sources."
@@ -103,13 +130,57 @@ class AiProviderUpdateBody(BaseModel):
     provider: str
     api_key: str
     model: Optional[str] = None
+    fallback_models: list[str] = Field(default_factory=list)
     enabled: bool = True
+
+
+class AiProviderPatchBody(BaseModel):
+    provider: str
+    model: Optional[str] = None
+    fallback_models: Optional[list[str]] = None
+
+
+class AiProviderOutlookPickBody(BaseModel):
+    provider: str
+
+
+class AiProviderTestModelBody(BaseModel):
+    provider: str
+    model: str
 
 
 class AiProviderTestBody(BaseModel):
     provider: str
     api_key: str
     model: Optional[str] = None
+    fallback_models: list[str] = Field(default_factory=list)
+
+
+class AiProviderModelTestResult(BaseModel):
+    model: str
+    ok: bool
+    status_code: Optional[int] = None
+    message: Optional[str] = None
+
+
+class AiProviderTestResponse(BaseModel):
+    ok: bool
+    message: str
+    results: list[AiProviderModelTestResult] = Field(default_factory=list)
+
+
+class GeminiCatalogModelItem(BaseModel):
+    model: str
+    status: str = "healthy"
+    message: Optional[str] = None
+
+
+class GeminiCatalogResponse(BaseModel):
+    provider: str = "gemini"
+    available_models: list[GeminiCatalogModelItem] = Field(default_factory=list)
+    stale_models: list[GeminiCatalogModelItem] = Field(default_factory=list)
+    last_refreshed_at: Optional[str] = None
+    last_health_check_at: Optional[str] = None
 
 
 class OutlookFeedInput(BaseModel):
