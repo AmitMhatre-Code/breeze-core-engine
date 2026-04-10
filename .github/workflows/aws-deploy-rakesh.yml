@@ -282,7 +282,7 @@ jobs:
           echo "public_ip=$PUBLIC_IP" >> "$GITHUB_OUTPUT"
 
       - name: Wait for cloud-init bootstrap
-        run: sleep 120
+        run: sleep 60
 
       - name: Deployment summary
         run: |
