@@ -1,8 +1,12 @@
+import json
 import os
 import sqlite3
 import tempfile
+from unittest.mock import MagicMock, patch
 
-from icici_breeze_backend.app.auth.ai_provider_keys import AiProviderKeyManager
+import httpx
+
+from icici_breeze_backend.app.auth.ai_provider_keys import AiProviderConfig, AiProviderKeyManager
 from icici_breeze_backend.app.db.ai_provider_migrate import ensure_ai_provider_table
 from icici_breeze_backend.app.services.outlook_service import OutlookError, OutlookService
 
@@ -98,3 +102,125 @@ def test_ensure_ai_provider_table_creates_table():
             assert row is not None
     finally:
         os.unlink(path)
+
+
+def test_gemini_tries_fallback_after_429():
+    svc = OutlookService()
+    cfg = AiProviderConfig(
+        user_id="u1",
+        provider="gemini",
+        api_key="test-key",
+        model="gemini-primary",
+        fallback_models=["gemini-fallback"],
+        enabled=True,
+    )
+    inner = {
+        "summary": ["Volatility can stay elevated"],
+        "inference": {
+            "volatility_view": "v",
+            "movement_scenarios": ["m"],
+            "confidence": "medium",
+            "caveats": ["c"],
+        },
+        "strategy_ideas": [{"tag": "t", "rationale": "r", "risk_note": "n"}],
+        "sources": [
+            {"title": "Reuters", "url": "https://example.com", "publisher": "Reuters", "published_at": None},
+        ],
+    }
+    ok_body = {
+        "candidates": [{"content": {"parts": [{"text": json.dumps(inner)}]}}],
+    }
+
+    def _resp(status: int, *, json_payload=None, text: str = ""):
+        m = MagicMock()
+        m.status_code = status
+        m.text = text
+        m.json.return_value = json_payload
+        return m
+
+    r429 = _resp(429, text="Resource exhausted (quota)")
+    r200 = _resp(200, json_payload=ok_body)
+
+    with patch("icici_breeze_backend.app.services.outlook_service.httpx.Client") as client_cls:
+        inst = MagicMock()
+        client_cls.return_value.__enter__.return_value = inst
+        inst.post.side_effect = [r429, r200]
+        out = svc._call_gemini(ai_cfg=cfg, prompt="prompt", system_prompt=None)  # noqa: SLF001
+
+    assert out["summary"] == ["Volatility can stay elevated"]
+    assert inst.post.call_count == 2
+    first_url = inst.post.call_args_list[0][0][0]
+    second_url = inst.post.call_args_list[1][0][0]
+    assert "gemini-primary" in first_url
+    assert "gemini-fallback" in second_url
+
+
+def test_gemini_tries_fallback_after_non_success_http():
+    svc = OutlookService()
+    cfg = AiProviderConfig(
+        user_id="u1",
+        provider="gemini",
+        api_key="test-key",
+        model="gemini-primary",
+        fallback_models=["gemini-fallback"],
+        enabled=True,
+    )
+    inner = {
+        "summary": ["S"],
+        "inference": {
+            "volatility_view": "v",
+            "movement_scenarios": ["m"],
+            "confidence": "low",
+            "caveats": ["c"],
+        },
+        "strategy_ideas": [{"tag": "t", "rationale": "r", "risk_note": "n"}],
+        "sources": [
+            {"title": "Reuters", "url": "https://example.com", "publisher": "Reuters", "published_at": None},
+        ],
+    }
+    ok_body = {
+        "candidates": [{"content": {"parts": [{"text": json.dumps(inner)}]}}],
+    }
+
+    def _resp(status: int, *, json_payload=None, text: str = ""):
+        m = MagicMock()
+        m.status_code = status
+        m.text = text
+        m.json.return_value = json_payload
+        return m
+
+    r400 = _resp(400, text="bad request")
+    r200 = _resp(200, json_payload=ok_body)
+
+    with patch("icici_breeze_backend.app.services.outlook_service.httpx.Client") as client_cls:
+        inst = MagicMock()
+        client_cls.return_value.__enter__.return_value = inst
+        inst.post.side_effect = [r400, r200]
+        out = svc._call_gemini(ai_cfg=cfg, prompt="prompt", system_prompt=None)  # noqa: SLF001
+
+    assert out["summary"] == ["S"]
+    assert inst.post.call_count == 2
+
+
+def test_gemini_does_not_chain_models_on_network_error():
+    svc = OutlookService()
+    cfg = AiProviderConfig(
+        user_id="u1",
+        provider="gemini",
+        api_key="test-key",
+        model="gemini-primary",
+        fallback_models=["gemini-fallback"],
+        enabled=True,
+    )
+
+    with patch("icici_breeze_backend.app.services.outlook_service.httpx.Client") as client_cls:
+        inst = MagicMock()
+        client_cls.return_value.__enter__.return_value = inst
+        inst.post.side_effect = httpx.ConnectError("no route to host", request=MagicMock())
+        try:
+            svc._call_gemini(ai_cfg=cfg, prompt="prompt", system_prompt=None)  # noqa: SLF001
+        except OutlookError as exc:
+            assert exc.code == "network_error"
+        else:
+            raise AssertionError("Expected network_error")
+        assert inst.post.call_count == 1

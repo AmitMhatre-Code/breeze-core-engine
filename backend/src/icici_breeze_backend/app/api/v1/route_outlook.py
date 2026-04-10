@@ -5,6 +5,7 @@ import logging
 
 import asyncio
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,7 @@ from icici_breeze_backend.app.auth.ai_provider_keys import AiProviderKeyManager
 from icici_breeze_backend.app.auth.outlook_ai_provider_pref import get_outlook_ai_provider
 from icici_breeze_backend.app.auth.outlook_preferences import OutlookPreferencesManager
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
+from icici_breeze_backend.app.domain.outlook_api import OUTLOOK_DISCLAIMER
 from icici_breeze_backend.app.services.outlook_service import OutlookError, OutlookService
 
 router = APIRouter(prefix="/api/outlook", tags=["outlook"])
@@ -23,9 +25,35 @@ service = OutlookService()
 logger = logging.getLogger(__name__)
 
 
+def _no_cached_outlook_payload(message: str) -> dict:
+    """Valid-shaped JSON so the dashboard can load without a prior in-process cache."""
+    return {
+        "outlook_type": "market",
+        "as_of": datetime.now(timezone.utc).isoformat(),
+        "english_only": True,
+        "disclaimer": OUTLOOK_DISCLAIMER,
+        "summary": [],
+        "inference": {
+            "volatility_view": "",
+            "movement_scenarios": [],
+            "confidence": "low",
+            "caveats": [],
+        },
+        "strategy_ideas": [],
+        "sources": [],
+        "warning": {
+            "error_code": "no_cached_outlook",
+            "message": message,
+            "stale_response_served": False,
+        },
+    }
+
+
 def _status_for_outlook_error(exc: OutlookError) -> int:
     if exc.code == "invalid_api_key":
         return 401
+    if exc.code == "network_error":
+        return 503
     if exc.code in ("quota_exceeded", "rate_limit_exceeded"):
         return 429
     if exc.code == "provider_error":
@@ -93,6 +121,8 @@ async def market_outlook(
                     "upstream_status": exc.status_code,
                 },
             }
+        if exc.code == "no_cached_outlook":
+            return _no_cached_outlook_payload(exc.message)
         raise HTTPException(
             status_code=_status_for_outlook_error(exc),
             detail={"message": exc.message, "error_code": exc.code},
@@ -134,13 +164,18 @@ async def market_outlook_stream(
                         },
                     }
                     yield f"event: outlook\ndata: {json.dumps(payload)}\n\n"
+                elif exc.code == "no_cached_outlook":
+                    payload = _no_cached_outlook_payload(exc.message)
+                    yield f"event: outlook\ndata: {json.dumps(payload)}\n\n"
                 else:
                     err = {
                         "message": exc.message,
                         "error_code": exc.code,
                         "status_code": _status_for_outlook_error(exc),
                     }
-                    yield f"event: error\ndata: {json.dumps(err)}\n\n"
+                    # Named `outlook_error` — browser EventSource reserves `error` for transport failures
+                    # and does not reliably surface `event: error` … as a MessageEvent with `.data`.
+                    yield f"event: outlook_error\ndata: {json.dumps(err)}\n\n"
             yield "event: ping\ndata: {}\n\n"
             await asyncio.sleep(interval_seconds)
 

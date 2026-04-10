@@ -34,6 +34,7 @@ from icici_breeze_backend.app.domain.settings_api import (
     AiProviderTestResponse,
     AiProviderModelTestResult,
     GeminiCatalogModelItem,
+    GeminiCatalogPickerEntry,
     GeminiCatalogResponse,
     AiProviderStateResponse,
     AiProviderTestBody,
@@ -65,6 +66,11 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
     ingest_exchange_baseline_upload,
     refresh_exchange_risk_baseline,
 )
+from icici_breeze_backend.app.services.gemini_model_catalog import (
+    dedupe_model_ids,
+    fetch_gemini_model_catalog,
+    models_list_for_user,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 breeze = processor()
@@ -84,6 +90,7 @@ def _now_utc() -> datetime.datetime:
 
 
 def _normalize_models(models: list[str]) -> list[str]:
+    """Primary + fallback chain only (max 20)."""
     seen: set[str] = set()
     out: list[str] = []
     for model in models:
@@ -97,6 +104,18 @@ def _normalize_models(models: list[str]) -> list[str]:
 
 def _catalog_row() -> tuple | None:
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        cols = {
+            str(c[1]) for c in conn.execute("PRAGMA table_info(gemini_model_catalog_cache)").fetchall()
+        }
+        if "display_names_json" in cols:
+            return conn.execute(
+                """
+                SELECT models_json, fetched_at, expires_at, last_health_check_at, health_json,
+                       display_names_json
+                FROM gemini_model_catalog_cache
+                WHERE provider = 'gemini'
+                """
+            ).fetchone()
         return conn.execute(
             """
             SELECT models_json, fetched_at, expires_at, last_health_check_at, health_json
@@ -122,7 +141,7 @@ def _write_catalog(models: list[str], *, fetched_at: datetime.datetime, health: 
                 health_json=excluded.health_json
             """,
             (
-                json.dumps(_normalize_models(models)),
+                json.dumps(dedupe_model_ids(models)),
                 fetched_at.isoformat(),
                 expires_at.isoformat(),
                 fetched_at.isoformat() if health else None,
@@ -132,48 +151,82 @@ def _write_catalog(models: list[str], *, fetched_at: datetime.datetime, health: 
         conn.commit()
 
 
-def _write_catalog_model_list_only(models: list[str], *, fetched_at: datetime.datetime) -> None:
+def _write_catalog_model_list_only(
+    models: list[str],
+    *,
+    display_names: dict[str, str],
+    fetched_at: datetime.datetime,
+) -> None:
     """Refresh cached Gemini model id list only; do not overwrite global health_json."""
     expires_at = fetched_at + datetime.timedelta(seconds=_GEMINI_CATALOG_TTL_SECONDS)
+    ids = dedupe_model_ids(models)
+    id_set = set(ids)
+    dn_compact = {k: v for k, v in display_names.items() if k in id_set and (v or "").strip()}
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
-        conn.execute(
-            """
-            INSERT INTO gemini_model_catalog_cache(
-                provider, models_json, fetched_at, expires_at, last_health_check_at, health_json
-            ) VALUES ('gemini', ?, ?, ?, NULL, '{}')
-            ON CONFLICT(provider) DO UPDATE SET
-                models_json=excluded.models_json,
-                fetched_at=excluded.fetched_at,
-                expires_at=excluded.expires_at
-            """,
-            (
-                json.dumps(_normalize_models(models)),
-                fetched_at.isoformat(),
-                expires_at.isoformat(),
-            ),
-        )
+        cols = {
+            str(c[1]) for c in conn.execute("PRAGMA table_info(gemini_model_catalog_cache)").fetchall()
+        }
+        if "display_names_json" in cols:
+            conn.execute(
+                """
+                INSERT INTO gemini_model_catalog_cache(
+                    provider, models_json, fetched_at, expires_at, last_health_check_at, health_json,
+                    display_names_json
+                ) VALUES ('gemini', ?, ?, ?, NULL, '{}', ?)
+                ON CONFLICT(provider) DO UPDATE SET
+                    models_json=excluded.models_json,
+                    fetched_at=excluded.fetched_at,
+                    expires_at=excluded.expires_at,
+                    display_names_json=excluded.display_names_json
+                """,
+                (
+                    json.dumps(ids),
+                    fetched_at.isoformat(),
+                    expires_at.isoformat(),
+                    json.dumps(dn_compact),
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO gemini_model_catalog_cache(
+                    provider, models_json, fetched_at, expires_at, last_health_check_at, health_json
+                ) VALUES ('gemini', ?, ?, ?, NULL, '{}')
+                ON CONFLICT(provider) DO UPDATE SET
+                    models_json=excluded.models_json,
+                    fetched_at=excluded.fetched_at,
+                    expires_at=excluded.expires_at
+                """,
+                (
+                    json.dumps(ids),
+                    fetched_at.isoformat(),
+                    expires_at.isoformat(),
+                ),
+            )
         conn.commit()
 
 
+def _parse_display_names_json(raw: str | None) -> dict[str, str]:
+    if not raw or not str(raw).strip():
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in data.items():
+        ks = str(k or "").strip()
+        vs = str(v or "").strip()
+        if ks and vs:
+            out[ks] = vs
+    return out
+
+
 def _fetch_gemini_models(api_key: str) -> list[str]:
-    url = "https://generativelanguage.googleapis.com/v1beta/models"
-    with httpx.Client(timeout=20.0) as client:
-        res = client.get(url, headers={"x-goog-api-key": api_key})
-    if res.status_code in (401, 403):
-        raise HTTPException(status_code=400, detail="Invalid API key or unauthorized provider access")
-    if res.status_code >= 400:
-        raise HTTPException(status_code=400, detail=f"Could not fetch Gemini model catalog ({res.status_code})")
-    payload = res.json() or {}
-    names: list[str] = []
-    for item in payload.get("models", []):
-        methods = item.get("supportedGenerationMethods") or []
-        if "generateContent" not in methods:
-            continue
-        raw_name = str(item.get("name") or "").strip()
-        name = raw_name.split("/", 1)[1] if raw_name.startswith("models/") else raw_name
-        if name:
-            names.append(name)
-    return _normalize_models(names)
+    ids, _ = fetch_gemini_model_catalog(api_key)
+    return ids
 
 
 def _gemini_models_to_validate(single_model: str, fallback_models: list[str]) -> list[str]:
@@ -270,6 +323,7 @@ def _side_state(provider: str, user_id: str) -> AiProviderSideState:
         enabled=bool(m.get("enabled")),
         model=m.get("model"),
         fallback_models=list(m.get("fallback_models") or []),
+        tracked_models=m.get("tracked_models"),
         masked_api_key=m.get("masked_api_key"),
         models_working=int(m.get("models_working") or 0),
         models_failing=int(m.get("models_failing") or 0),
@@ -735,11 +789,19 @@ async def settings_ai_provider_patch(
     fallbacks_src = cfg_row.fallback_models if body.fallback_models is None else body.fallback_models
     fallbacks_n = _normalize_models(list(fallbacks_src or []))
     fallbacks_n = [f for f in fallbacks_n if f != model_s]
+    patch_dump = body.model_dump(exclude_unset=True)
+    tracked_kw: dict = {}
+    if "tracked_models" in patch_dump:
+        if provider != "gemini":
+            raise HTTPException(status_code=400, detail="tracked_models applies only to gemini")
+        raw_tm = patch_dump["tracked_models"]
+        tracked_kw["tracked_models"] = [] if raw_tm is None else list(raw_tm)
     if not ai_key_manager.update_model_fields(
         user_id=ctx.user_id,
         provider=provider,
         model=model_s or None,
         fallback_models=fallbacks_n,
+        **tracked_kw,
     ):
         raise HTTPException(status_code=400, detail="Could not update model settings")
     _schedule_ai_provider_health_refresh_if_needed(ctx.user_id, background_tasks)
@@ -806,7 +868,10 @@ async def settings_ai_provider_test(
                 results=[AiProviderModelTestResult(model=model, ok=True, status_code=res.status_code)],
             )
         else:
-            models = _gemini_models_to_validate((body.model or "").strip(), body.fallback_models)
+            models = _gemini_models_to_validate((body.model or "").strip(), body.fallback_models or [])
+            if not models:
+                # Smoke-test the key with one widely available model when none was specified.
+                models = [_GEMINI_DEFAULT_MODELS[0]]
             results, all_ok = _test_gemini_models(api_key, models)
             msg = "All selected Gemini models are reachable." if all_ok else "One or more Gemini models failed test."
             return AiProviderTestResponse(ok=all_ok, message=msg, results=results)
@@ -860,6 +925,10 @@ async def settings_ai_provider_test_model(
 @router.get("/ai-provider/models", response_model=GeminiCatalogResponse)
 async def settings_ai_provider_models(
     provider: str = Query(default="gemini"),
+    force_refresh: bool = Query(
+        default=False,
+        description="Bypass catalog TTL and fetch the latest model list from Gemini.",
+    ),
     ctx: RequestContext = Depends(get_request_context),
 ):
     if provider.strip().lower() != "gemini":
@@ -870,13 +939,18 @@ async def settings_ai_provider_models(
     now = _now_utc()
     row = _catalog_row()
     models: list[str] = []
+    display_names: dict[str, str] = {}
     fetched_at: str | None = None
     last_user_health_at: str | None = None
     needs_refresh = True
-    if row:
-        models_json, fetched_raw, expires_raw, _health_checked_raw, _health_raw = row
+    if row and not force_refresh:
+        models_json = row[0]
+        fetched_raw = row[1]
+        expires_raw = row[2]
+        if len(row) > 5:
+            display_names = _parse_display_names_json(row[5])
         try:
-            models = _normalize_models(json.loads(models_json or "[]"))
+            models = dedupe_model_ids(json.loads(models_json or "[]"))
         except Exception:
             models = []
         fetched_at = fetched_raw
@@ -885,20 +959,29 @@ async def settings_ai_provider_models(
                 needs_refresh = datetime.datetime.fromisoformat(str(expires_raw)) <= now
             except ValueError:
                 needs_refresh = True
+        else:
+            needs_refresh = True
     if needs_refresh:
-        models = _fetch_gemini_models(cfg_row.api_key)
+        models, display_names = fetch_gemini_model_catalog(cfg_row.api_key)
         if not models:
             models = list(_GEMINI_DEFAULT_MODELS)
-        _write_catalog_model_list_only(models, fetched_at=now)
+            display_names = {}
+        _write_catalog_model_list_only(models, display_names=display_names, fetched_at=now)
         fetched_at = now.isoformat()
 
     cfg_row = ai_key_manager.get(ctx.user_id, "gemini")
     user_health = (cfg_row.model_health if cfg_row else {}) or {}
     last_user_health_at = (cfg_row.last_model_health_at if cfg_row else None) or None
+    tracked = cfg_row.tracked_models if cfg_row else None
+    filtered = models_list_for_user(models, tracked)
+
+    full_catalog = [
+        GeminiCatalogPickerEntry(model=m, display_name=display_names.get(m)) for m in models
+    ]
 
     available: list[GeminiCatalogModelItem] = []
     stale: list[GeminiCatalogModelItem] = []
-    for model in models:
+    for model in filtered:
         meta = user_health.get(model) if isinstance(user_health, dict) else None
         if isinstance(meta, dict) and "ok" in meta:
             is_ok = bool(meta.get("ok"))
@@ -911,6 +994,7 @@ async def settings_ai_provider_models(
             model=model,
             status=status,
             message=message if message is not None else None,
+            display_name=display_names.get(model),
         )
         if status == "defunct":
             stale.append(item)
@@ -920,6 +1004,7 @@ async def settings_ai_provider_models(
         provider="gemini",
         available_models=available,
         stale_models=stale,
+        full_catalog=full_catalog,
         last_refreshed_at=fetched_at,
         last_health_check_at=last_user_health_at,
     )

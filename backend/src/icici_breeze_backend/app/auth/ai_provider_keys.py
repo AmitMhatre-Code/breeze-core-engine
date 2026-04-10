@@ -54,6 +54,11 @@ class AiProviderConfig:
     enabled: bool
     model_health: dict[str, dict[str, Any]] = field(default_factory=dict)
     last_model_health_at: Optional[str] = None
+    """None = list every model in global Gemini catalog (legacy)."""
+    tracked_models: Optional[list[str]] = None
+
+
+_MISSING = object()
 
 
 class AiProviderKeyManager:
@@ -90,13 +95,15 @@ class AiProviderKeyManager:
                 f"""
                 INSERT INTO user_ai_provider(
                     user_id, provider, api_key_encrypted, model, fallback_models_json,
+                    tracked_models_json,
                     enabled, model_health_json, last_model_health_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON CONFLICT(user_id, provider) DO UPDATE SET
                     api_key_encrypted=excluded.api_key_encrypted,
                     model=excluded.model,
                     fallback_models_json=excluded.fallback_models_json,
+                    tracked_models_json=user_ai_provider.tracked_models_json,
                     enabled=excluded.enabled,
                     {set_health}
                     updated_at=CURRENT_TIMESTAMP
@@ -119,6 +126,7 @@ class AiProviderKeyManager:
         provider: str,
         model: Optional[str] = None,
         fallback_models: Optional[list[str]] = None,
+        tracked_models: Any = _MISSING,
     ) -> bool:
         p = (provider or "").strip().lower()
         if p not in _PROVIDERS:
@@ -129,14 +137,24 @@ class AiProviderKeyManager:
         normalized = self._normalize_model_list(fallback_models if fallback_models is not None else self._load_model_list(row[4]))
         new_model = (model if model is not None else row[3])
         new_model = (new_model or "").strip() or None
+        tracked_sql = ""
+        tracked_val: tuple = ()
+        if tracked_models is not _MISSING:
+            tj: Optional[str]
+            if not tracked_models:
+                tj = None
+            else:
+                tj = json.dumps(self._dedupe_tracked_list([str(x) for x in tracked_models]))
+            tracked_sql = ", tracked_models_json = ?"
+            tracked_val = (tj,)
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
-                """
+                f"""
                 UPDATE user_ai_provider
-                SET model = ?, fallback_models_json = ?, updated_at = CURRENT_TIMESTAMP
+                SET model = ?, fallback_models_json = ?, updated_at = CURRENT_TIMESTAMP{tracked_sql}
                 WHERE user_id = ? AND provider = ?
                 """,
-                (new_model, json.dumps(normalized), user_id, p),
+                (new_model, json.dumps(normalized), *tracked_val, user_id, p),
             )
             conn.commit()
         return True
@@ -146,7 +164,7 @@ class AiProviderKeyManager:
             return conn.execute(
                 """
                 SELECT user_id, provider, api_key_encrypted, model, fallback_models_json, enabled,
-                       model_health_json, last_model_health_at
+                       model_health_json, last_model_health_at, tracked_models_json
                 FROM user_ai_provider
                 WHERE user_id = ? AND provider = ?
                 """,
@@ -170,6 +188,7 @@ class AiProviderKeyManager:
             enabled=bool(row[5]),
             model_health=_parse_health(row[6] if len(row) > 6 else None),
             last_model_health_at=(row[7] if len(row) > 7 else None) or None,
+            tracked_models=self._parse_tracked_list(row[8] if len(row) > 8 else None),
         )
 
     def get_masked(self, user_id: str, provider: str) -> Optional[dict[str, Any]]:
@@ -182,6 +201,7 @@ class AiProviderKeyManager:
             "provider": cfg.provider,
             "model": cfg.model,
             "fallback_models": cfg.fallback_models,
+            "tracked_models": cfg.tracked_models,
             "enabled": cfg.enabled,
             "masked_api_key": _mask_key(cfg.api_key),
             "model_health": cfg.model_health,
@@ -264,6 +284,31 @@ class AiProviderKeyManager:
         if not isinstance(data, list):
             return []
         return AiProviderKeyManager._normalize_model_list([str(item) for item in data])
+
+    @staticmethod
+    def _parse_tracked_list(raw: Optional[str]) -> Optional[list[str]]:
+        text = (raw or "").strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except Exception:
+            return None
+        if not isinstance(data, list):
+            return None
+        return AiProviderKeyManager._dedupe_tracked_list([str(item) for item in data])
+
+    @staticmethod
+    def _dedupe_tracked_list(models: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for model in models:
+            m = str(model or "").strip()
+            if not m or m in seen:
+                continue
+            seen.add(m)
+            out.append(m)
+        return out
 
 
 def _health_counts(health: dict[str, dict[str, Any]]) -> tuple[int, int]:

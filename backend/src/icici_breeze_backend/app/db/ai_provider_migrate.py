@@ -13,6 +13,7 @@ CREATE TABLE {name} (
     api_key_encrypted BLOB NOT NULL,
     model TEXT,
     fallback_models_json TEXT,
+    tracked_models_json TEXT,
     enabled INTEGER NOT NULL DEFAULT 1,
     model_health_json TEXT,
     last_model_health_at TEXT,
@@ -53,6 +54,7 @@ def _migrate_user_ai_provider_to_dual_pk(conn: sqlite3.Connection) -> None:
         f"""
         INSERT INTO user_ai_provider__new (
             user_id, provider, api_key_encrypted, model, fallback_models_json,
+            tracked_models_json,
             enabled, model_health_json, last_model_health_at, created_at, updated_at
         )
         SELECT
@@ -61,6 +63,7 @@ def _migrate_user_ai_provider_to_dual_pk(conn: sqlite3.Connection) -> None:
             api_key_encrypted,
             model,
             {fb_src},
+            NULL,
             enabled,
             NULL,
             NULL,
@@ -107,6 +110,8 @@ def ensure_ai_provider_table(db_path: str) -> None:
                 conn.execute("ALTER TABLE user_ai_provider ADD COLUMN model_health_json TEXT")
             if "last_model_health_at" not in cols:
                 conn.execute("ALTER TABLE user_ai_provider ADD COLUMN last_model_health_at TEXT")
+            if "tracked_models_json" not in cols:
+                conn.execute("ALTER TABLE user_ai_provider ADD COLUMN tracked_models_json TEXT")
             conn.commit()
             conn.execute(
                 """
@@ -128,6 +133,13 @@ def ensure_ai_provider_table(db_path: str) -> None:
             )
             """
         )
+        gcat_cols = {str(c[1]) for c in conn.execute("PRAGMA table_info(gemini_model_catalog_cache)").fetchall()}
+        if "display_names_json" not in gcat_cols:
+            try:
+                conn.execute("ALTER TABLE gemini_model_catalog_cache ADD COLUMN display_names_json TEXT")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
 
         try:

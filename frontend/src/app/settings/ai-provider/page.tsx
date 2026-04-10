@@ -11,9 +11,12 @@ import {
   getAiProviderState,
   getOutlookConfig,
   OPENAI_MODEL_OPTIONS,
+  patchAiProviderSettings,
+  type GeminiCatalogResponse,
+  type GeminiCatalogPickerEntry,
+  type AiProviderState,
   type AiProviderSideState,
   type OutlookFeedConfig,
-  patchAiProviderSettings,
   resetOutlookConfig,
   saveAiProviderSettings,
   saveOutlookConfig,
@@ -24,6 +27,164 @@ import {
 
 const fieldCls =
   "mt-1 h-10 w-full rounded-md border border-zinc-300/80 bg-white/95 px-3 text-sm text-zinc-900 shadow-sm outline-none transition-all hover:border-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-blue-400 dark:focus:ring-blue-400/20";
+
+function modelIdListSortKey(ids: string[]): string {
+  return [...ids]
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .sort()
+    .join("\n");
+}
+
+/** After saving a new tracked-model selection: drop primary/fallback not in that selection. */
+function reconcileGeminiModelsWithTrackedSelection(
+  selectedIds: string[],
+  gem: AiProviderSideState,
+): {
+  patch: { model?: string; fallback_models: string[] } | null;
+  primaryRemoved: boolean;
+} {
+  const freshIds = new Set(selectedIds);
+  const primary = (gem.model || "").trim();
+  const hadPrimary = Boolean(primary);
+  const primaryInFresh = hadPrimary && freshIds.has(primary);
+  const currFallbacks = [...(gem.fallback_models ?? [])];
+  let nextFallbacks = currFallbacks.filter((f) => freshIds.has(f));
+  if (primaryInFresh) {
+    nextFallbacks = nextFallbacks.filter((f) => f !== primary);
+  }
+  const primaryRemoved = hadPrimary && !primaryInFresh;
+  const fbChanged = modelIdListSortKey(currFallbacks) !== modelIdListSortKey(nextFallbacks);
+  if (!primaryRemoved && !fbChanged) {
+    return { patch: null, primaryRemoved: false };
+  }
+  const patch: { model?: string; fallback_models: string[] } = { fallback_models: nextFallbacks };
+  if (primaryRemoved) {
+    patch.model = "";
+  }
+  return { patch, primaryRemoved };
+}
+
+function catalogAsPickerEntries(catalog: GeminiCatalogResponse) {
+  if (catalog.full_catalog?.length) return catalog.full_catalog;
+  return [...catalog.available_models, ...catalog.stale_models].map((m) => ({
+    model: m.model,
+    display_name: m.display_name ?? null,
+  }));
+}
+
+function GeminiModelPickerModal({
+  open,
+  entries,
+  selected,
+  onToggle,
+  onClose,
+  onAdd,
+  addPending,
+}: {
+  open: boolean;
+  entries: GeminiCatalogPickerEntry[];
+  selected: Set<string>;
+  onToggle: (modelId: string) => void;
+  onClose: () => void;
+  onAdd: () => void;
+  addPending: boolean;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+      <button type="button" className="absolute inset-0 bg-black/50" aria-label="Close" onClick={onClose} />
+      <div className="relative flex max-h-[min(90vh,720px)] w-full max-w-3xl flex-col rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Add Gemini models</h2>
+            <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+              Select models to show in your list. Click a card to toggle. Already listed models start selected.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            aria-label="Close"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M18 6 6 18M6 6l12 12" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+          {entries.length ? (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {entries.map((e) => {
+                const on = selected.has(e.model);
+                return (
+                  <button
+                    key={e.model}
+                    type="button"
+                    onClick={() => onToggle(e.model)}
+                    className={[
+                      "rounded-lg border px-3 py-2.5 text-left text-xs transition-colors",
+                      on
+                        ? "border-blue-500 bg-blue-50 text-blue-950 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-100"
+                        : "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-600 dark:hover:bg-zinc-700",
+                    ].join(" ")}
+                  >
+                    <div className="font-mono text-[11px] font-semibold leading-snug break-all text-zinc-900 dark:text-zinc-100">
+                      {e.model}
+                    </div>
+                    {e.display_name ? (
+                      <div className="mt-1 line-clamp-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+                        {e.display_name}
+                      </div>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="py-8 text-center text-sm app-text-muted">No models returned.</div>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <button type="button" className="app-btn-outline" onClick={onClose} disabled={addPending}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="app-btn-primary"
+            disabled={addPending || !entries.length}
+            onClick={onAdd}
+          >
+            {addPending ? "Saving…" : "Add models"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RowTrashIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  );
+}
 
 function CollapsiblePanel({
   title,
@@ -136,39 +297,75 @@ function RefreshIcon({ className }: { className?: string }) {
   );
 }
 
+const STAR_POLYGON = "12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2";
+
+function PrimaryStarSolidIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+      <polygon points={STAR_POLYGON} fill="currentColor" />
+    </svg>
+  );
+}
+
+function SetPrimaryOutlineIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <polygon points={STAR_POLYGON} />
+    </svg>
+  );
+}
+
 function FallbackToggleSwitch({
   pressed,
   disabled,
+  lockedOn,
   onPressedChange,
   title,
   ariaLabel,
 }: {
   pressed: boolean;
   disabled: boolean;
+  /** Visually on and non-interactive without heavy dimming (e.g. primary model always “in use”). */
+  lockedOn?: boolean;
   onPressedChange: (next: boolean) => void;
   title?: string;
   ariaLabel: string;
 }) {
+  const effectivePressed = lockedOn ? true : pressed;
+  const inert = Boolean(disabled || lockedOn);
   return (
     <button
       type="button"
       role="switch"
-      aria-checked={pressed}
-      disabled={disabled}
+      aria-checked={effectivePressed}
+      disabled={inert}
       title={title}
       aria-label={ariaLabel}
-      onClick={() => onPressedChange(!pressed)}
+      onClick={() => {
+        if (!inert) onPressedChange(!pressed);
+      }}
       className={[
         "relative inline-flex h-4 w-7 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950",
-        disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer",
-        pressed ? "bg-blue-600 dark:bg-blue-500" : "bg-zinc-300 dark:bg-zinc-600",
+        inert ? "cursor-not-allowed" : "cursor-pointer",
+        inert && !lockedOn ? "opacity-45" : "",
+        effectivePressed ? "bg-blue-600 dark:bg-blue-500" : "bg-zinc-300 dark:bg-zinc-600",
       ].join(" ")}
     >
       <span
         aria-hidden
         className={[
           "pointer-events-none absolute top-0.5 left-0.5 block h-3 w-3 rounded-full bg-white shadow-sm transition-transform duration-200 ease-out dark:bg-zinc-50",
-          pressed ? "translate-x-3" : "translate-x-0",
+          effectivePressed ? "translate-x-3" : "translate-x-0",
         ].join(" ")}
       />
     </button>
@@ -186,14 +383,11 @@ function KeyModal({
   title,
   providerLabel,
   apiKey,
-  model,
-  modelChoices,
   canSave,
   isTesting,
   isSaving,
   onClose,
   onChangeApiKey,
-  onChangeModel,
   onTest,
   onSave,
 }: {
@@ -201,14 +395,11 @@ function KeyModal({
   title: string;
   providerLabel: string;
   apiKey: string;
-  model: string;
-  modelChoices: string[];
   canSave: boolean;
   isTesting: boolean;
   isSaving: boolean;
   onClose: () => void;
   onChangeApiKey: (v: string) => void;
-  onChangeModel: (v: string) => void;
   onTest: () => void;
   onSave: () => void;
 }) {
@@ -258,36 +449,6 @@ function KeyModal({
               autoComplete="off"
             />
           </label>
-          <label className="block text-xs text-zinc-600 dark:text-zinc-400">
-            Primary model
-            <div className="relative">
-              <select
-                className={`${fieldCls} appearance-none pr-9`}
-                value={model}
-                onChange={(e) => onChangeModel(e.target.value)}
-              >
-                {modelChoices.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 20 20"
-                fill="none"
-                className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500 dark:text-zinc-400"
-              >
-                <path
-                  d="M6 8l4 4 4-4"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </div>
-          </label>
 
           <div className="flex flex-wrap gap-2 pt-1">
             <button
@@ -310,7 +471,9 @@ function KeyModal({
             </button>
           </div>
 
-          <p className="text-[11px] app-text-muted">Save is enabled only after a successful test.</p>
+          <p className="text-[11px] app-text-muted">
+            Save is enabled only after a successful test. Use the star icon on the provider card to pick the primary model after saving.
+          </p>
         </div>
       </div>
     </div>
@@ -329,9 +492,14 @@ function LlmProviderCard({
   onDelete,
   deleteDisabled,
   onToggleFallback,
+  onSetPrimaryModel,
   onTestModel,
   testingModelId,
   patchPending,
+  onRefreshModelList,
+  refreshModelListPending,
+  catalogLastRefreshedAt,
+  onRemoveModelFromList,
 }: {
   kind: "gemini" | "openai";
   side: AiProviderSideState;
@@ -344,9 +512,14 @@ function LlmProviderCard({
   onDelete: () => void;
   deleteDisabled: boolean;
   onToggleFallback: (modelId: string, include: boolean) => void;
+  onSetPrimaryModel: (modelId: string) => void;
   onTestModel: (modelId: string) => void;
   testingModelId: string | null;
   patchPending: boolean;
+  onRefreshModelList?: () => void;
+  refreshModelListPending?: boolean;
+  catalogLastRefreshedAt?: string | null;
+  onRemoveModelFromList?: (modelId: string) => void;
 }) {
   const configured = side.configured && side.enabled;
   const primary = (side.model || "").trim();
@@ -413,8 +586,8 @@ function LlmProviderCard({
             onEdit();
           }}
           className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-zinc-600 transition-all hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
-          aria-label={`Edit ${label} key and primary model`}
-          title="Edit"
+          aria-label={`Edit ${label} API key`}
+          title="Edit key"
         >
           <EditIcon />
         </button>
@@ -447,8 +620,34 @@ function LlmProviderCard({
               {primary ? (
                 <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
                   Primary model: <span className="font-mono text-zinc-800 dark:text-zinc-200">{primary}</span>{" "}
-                  (change via Edit)
+                  (filled star = primary; outline star on another row changes primary)
                 </p>
+              ) : null}
+              {kind === "gemini" && onRefreshModelList ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={Boolean(refreshModelListPending || patchPending)}
+                    onClick={onRefreshModelList}
+                    className={[
+                      "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
+                      refreshModelListPending || patchPending
+                        ? "cursor-not-allowed border-zinc-200 text-zinc-400 dark:border-zinc-800 dark:text-zinc-600"
+                        : "border-zinc-300 text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-900",
+                    ].join(" ")}
+                    title="Fetch all models from Google (paginated) and choose which to add to your list"
+                  >
+                    <RefreshIcon
+                      className={refreshModelListPending ? "animate-spin" : undefined}
+                    />
+                    Refresh model list
+                  </button>
+                  {catalogLastRefreshedAt ? (
+                    <span className="text-[10px] app-text-muted">
+                      Catalog: {new Date(catalogLastRefreshedAt).toLocaleString()}
+                    </span>
+                  ) : null}
+                </div>
               ) : null}
               {kind === "gemini" && !geminiModelIds.length ? (
                 <div className="text-sm app-text-muted">Loading model list…</div>
@@ -459,7 +658,7 @@ function LlmProviderCard({
                   const inFallback = side.fallback_models.includes(mid);
                   const healthOk = side.model_health[mid]?.ok === true;
                   const fallbackToggleDisabled =
-                    patchPending || isPrimary || (!healthOk && !inFallback);
+                    patchPending || (!isPrimary && !healthOk && !inFallback);
                   return (
                     <li
                       key={mid}
@@ -476,17 +675,54 @@ function LlmProviderCard({
                       </span>
                       <FallbackToggleSwitch
                         pressed={inFallback && !isPrimary}
+                        lockedOn={isPrimary}
                         disabled={fallbackToggleDisabled}
                         onPressedChange={(next) => onToggleFallback(mid, next)}
-                        ariaLabel={`Include ${mid} in fallback chain`}
+                        ariaLabel={
+                          isPrimary
+                            ? `${mid} is the primary model (always active)`
+                            : `Include ${mid} in fallback chain`
+                        }
                         title={
                           isPrimary
-                            ? "Primary model"
+                            ? "Primary model is always used first (not part of the fallback chain)"
                             : !healthOk && !inFallback
                               ? "Run a successful test to enable fallback"
                               : "Include in fallback chain"
                         }
                       />
+                      {isPrimary ? (
+                        <span
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center text-amber-500 dark:text-amber-400"
+                          title="Primary model"
+                          aria-label={`${mid} is the primary model`}
+                        >
+                          <PrimaryStarSolidIcon />
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={patchPending}
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                          title="Set as primary model"
+                          aria-label={`Set ${mid} as primary model`}
+                          onClick={() => onSetPrimaryModel(mid)}
+                        >
+                          <SetPrimaryOutlineIcon />
+                        </button>
+                      )}
+                      {kind === "gemini" && onRemoveModelFromList ? (
+                        <button
+                          type="button"
+                          disabled={patchPending}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-red-950/40 dark:hover:text-red-300"
+                          title="Remove from your list"
+                          aria-label={`Remove ${mid} from your model list`}
+                          onClick={() => onRemoveModelFromList(mid)}
+                        >
+                          <RowTrashIcon />
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         disabled={testingModelId === mid}
@@ -534,6 +770,9 @@ export default function AiProviderSettingsPage() {
   const [promptTemplate, setPromptTemplate] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [editingFeedIdx, setEditingFeedIdx] = useState<number | null>(null);
+  const [geminiPickerOpen, setGeminiPickerOpen] = useState(false);
+  const [geminiPickerEntries, setGeminiPickerEntries] = useState<GeminiCatalogPickerEntry[]>([]);
+  const [geminiPickerSelected, setGeminiPickerSelected] = useState<Set<string>>(() => new Set());
 
   const outlookQ = useQuery({
     queryKey: ["settings", "outlook-config"],
@@ -542,10 +781,7 @@ export default function AiProviderSettingsPage() {
   const geminiModelsQ = useQuery({
     queryKey: ["settings", "ai-provider", "gemini-models"],
     queryFn: () => getGeminiModels(),
-    enabled: Boolean(
-      q.data?.gemini?.configured &&
-        (expanded.gemini || (modalOpen && editingProvider === "gemini")),
-    ),
+    enabled: Boolean(q.data?.gemini?.configured && expanded.gemini),
   });
 
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -588,9 +824,6 @@ export default function AiProviderSettingsPage() {
       testAiProviderSettings({
         provider: editingProvider,
         api_key: apiKey.trim(),
-        model: model.trim() || undefined,
-        fallback_models:
-          editingProvider === "gemini" ? (q.data?.gemini.fallback_models ?? []) : [],
       }),
     onSuccess: (data) => {
       setTestedOk(Boolean(data.ok));
@@ -620,12 +853,68 @@ export default function AiProviderSettingsPage() {
   });
 
   const patchM = useMutation({
-    mutationFn: (body: { provider: "gemini" | "openai"; model?: string; fallback_models: string[] }) =>
-      patchAiProviderSettings(body),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["settings", "ai-provider"] });
+    mutationFn: (body: {
+      provider: "gemini" | "openai";
+      model?: string;
+      fallback_models?: string[];
+      tracked_models?: string[] | null;
+    }) => patchAiProviderSettings(body),
+    onSuccess: (data) => {
+      qc.setQueryData<AiProviderState>(["settings", "ai-provider"], data);
+      void qc.invalidateQueries({ queryKey: ["settings", "ai-provider", "gemini-models"] });
     },
     onError: (e) => alert(e instanceof Error ? e.message : "Update failed"),
+  });
+
+  const fetchGeminiPickerM = useMutation({
+    mutationFn: () => getGeminiModels({ forceRefresh: true }),
+    onSuccess: (catalog) => {
+      const prev = qc.getQueryData<GeminiCatalogResponse>(["settings", "ai-provider", "gemini-models"]);
+      qc.setQueryData(["settings", "ai-provider", "gemini-models"], catalog);
+      const st = qc.getQueryData<AiProviderState>(["settings", "ai-provider"]);
+      const gem = st?.gemini;
+      const entries = catalogAsPickerEntries(catalog);
+      const idset = new Set(entries.map((e) => e.model));
+      const preIds = [
+        ...(prev?.available_models ?? []).map((m) => m.model),
+        ...(prev?.stale_models ?? []).map((m) => m.model),
+        ...(gem?.model ? [gem.model] : []),
+        ...(gem?.fallback_models ?? []),
+      ];
+      const pre = new Set(
+        preIds.filter((id, i, arr) => id && arr.indexOf(id) === i && idset.has(id)),
+      );
+      setGeminiPickerEntries(entries);
+      setGeminiPickerSelected(pre);
+      setGeminiPickerOpen(true);
+    },
+    onError: (e) => alert(e instanceof Error ? e.message : "Could not refresh model list"),
+  });
+
+  const addGeminiPickerM = useMutation({
+    mutationFn: async (args: { ids: string[] }) => {
+      await patchAiProviderSettings({ provider: "gemini", tracked_models: args.ids });
+      const state = await getAiProviderState();
+      const { patch, primaryRemoved } = reconcileGeminiModelsWithTrackedSelection(
+        args.ids,
+        state.gemini,
+      );
+      if (patch) {
+        await patchAiProviderSettings({ provider: "gemini", ...patch });
+      }
+      return { primaryRemoved };
+    },
+    onSuccess: ({ primaryRemoved }) => {
+      setGeminiPickerOpen(false);
+      void qc.invalidateQueries({ queryKey: ["settings", "ai-provider"] });
+      void qc.invalidateQueries({ queryKey: ["settings", "ai-provider", "gemini-models"] });
+      if (primaryRemoved) {
+        alert(
+          "Your primary model is not in the model list you saved, so it was cleared. Choose a new primary with the star icon on a row.",
+        );
+      }
+    },
+    onError: (e) => alert(e instanceof Error ? e.message : "Could not update model list"),
   });
 
   const testModelM = useMutation({
@@ -722,6 +1011,27 @@ export default function AiProviderSettingsPage() {
     patchM.mutate({ provider, fallback_models: next });
   };
 
+  const removeGeminiModelFromList = (mid: string) => {
+    const side = cur?.gemini;
+    if (!side?.configured) return;
+    const primary = (side.model || "").trim();
+    const nextTracked = geminiCatalogIds.filter((id) => id !== mid);
+    const nextFb = (side.fallback_models ?? []).filter((f) => f !== mid);
+    const body: {
+      provider: "gemini";
+      tracked_models: string[];
+      model?: string;
+      fallback_models?: string[];
+    } = { provider: "gemini", tracked_models: nextTracked };
+    if (mid === primary) {
+      body.model = "";
+    }
+    if (modelIdListSortKey(nextFb) !== modelIdListSortKey(side.fallback_models ?? [])) {
+      body.fallback_models = nextFb;
+    }
+    patchM.mutate(body);
+  };
+
   return (
     <AppShell>
       <section className="app-card max-w-2xl space-y-5 p-5">
@@ -780,11 +1090,16 @@ export default function AiProviderSettingsPage() {
                 }}
                 deleteDisabled={deleteM.isPending || !geminiSide.configured}
                 onToggleFallback={(mid, inc) => toggleFallback("gemini", mid, inc)}
+                onSetPrimaryModel={(mid) => patchM.mutate({ provider: "gemini", model: mid })}
                 onTestModel={(mid) => testModelM.mutate({ provider: "gemini", model: mid })}
                 testingModelId={
                   testingModel?.provider === "gemini" ? testingModel.model : null
                 }
                 patchPending={patchM.isPending}
+                onRefreshModelList={() => fetchGeminiPickerM.mutate()}
+                refreshModelListPending={fetchGeminiPickerM.isPending}
+                catalogLastRefreshedAt={geminiModelsQ.data?.last_refreshed_at ?? null}
+                onRemoveModelFromList={removeGeminiModelFromList}
               />
             ) : null}
             {openaiSide ? (
@@ -805,6 +1120,7 @@ export default function AiProviderSettingsPage() {
                 }}
                 deleteDisabled={deleteM.isPending || !openaiSide.configured}
                 onToggleFallback={(mid, inc) => toggleFallback("openai", mid, inc)}
+                onSetPrimaryModel={(mid) => patchM.mutate({ provider: "openai", model: mid })}
                 onTestModel={(mid) => testModelM.mutate({ provider: "openai", model: mid })}
                 testingModelId={
                   testingModel?.provider === "openai" ? testingModel.model : null
@@ -815,20 +1131,30 @@ export default function AiProviderSettingsPage() {
           </div>
         </section>
 
+        <GeminiModelPickerModal
+          open={geminiPickerOpen}
+          entries={geminiPickerEntries}
+          selected={geminiPickerSelected}
+          onToggle={(mid) => {
+            setGeminiPickerSelected((prev) => {
+              const n = new Set(prev);
+              if (n.has(mid)) n.delete(mid);
+              else n.add(mid);
+              return n;
+            });
+          }}
+          onClose={() => setGeminiPickerOpen(false)}
+          onAdd={() => {
+            addGeminiPickerM.mutate({ ids: Array.from(geminiPickerSelected) });
+          }}
+          addPending={addGeminiPickerM.isPending}
+        />
+
         <KeyModal
           open={modalOpen}
           title="Configure API key"
           providerLabel={editingProvider === "gemini" ? "Google (Gemini)" : "OpenAI"}
           apiKey={apiKey}
-          model={model}
-          modelChoices={(() => {
-            if (editingProvider === "openai") return [...OPENAI_MODEL_OPTIONS];
-            const ids = (geminiModelsQ.data?.available_models ?? [])
-              .concat(geminiModelsQ.data?.stale_models ?? [])
-              .map((m) => m.model)
-              .filter((m, i, a) => a.indexOf(m) === i);
-            return ids.length ? ids : ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest"];
-          })()}
           canSave={testedOk && !!apiKey.trim()}
           isTesting={testM.isPending}
           isSaving={saveM.isPending}
@@ -839,10 +1165,6 @@ export default function AiProviderSettingsPage() {
           }}
           onChangeApiKey={(v) => {
             setApiKey(v);
-            setTestedOk(false);
-          }}
-          onChangeModel={(v) => {
-            setModel(v);
             setTestedOk(false);
           }}
           onTest={() => testM.mutate()}

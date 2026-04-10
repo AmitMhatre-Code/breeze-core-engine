@@ -236,22 +236,26 @@ class OutlookService:
                     )
                 except OutlookError as exc:
                     last_error = exc
+                    # Same key for every model; no point burning attempts.
+                    if exc.code == "invalid_api_key":
+                        raise
+                    # Transport failures: do not hide connectivity issues behind model fallbacks.
+                    if exc.code == "network_error":
+                        raise
                     status = exc.status_code or 0
-                    is_not_found = exc.code == "provider_error" and status == 404
                     is_transient = exc.code == "provider_error" and status in (500, 502, 503, 504)
                     if is_transient and attempt == 0:
                         logger.warning("gemini_transient_failure model=%s status=%s retrying=true", model, status)
                         time.sleep(0.8)
                         continue
-                    if is_not_found or is_transient:
-                        logger.warning(
-                            "gemini_model_fallback model=%s status=%s trying_next=%s",
-                            model,
-                            status,
-                            model != models[-1],
-                        )
-                        break
-                    raise
+                    logger.warning(
+                        "gemini_model_fallback model=%s code=%s status=%s trying_next=%s",
+                        model,
+                        exc.code,
+                        status,
+                        model != models[-1],
+                    )
+                    break
         if last_error:
             raise last_error
         raise OutlookError("provider_error", "Gemini generation failed without a response.")
@@ -303,6 +307,12 @@ class OutlookService:
             return parsed
         except OutlookError:
             raise
+        except httpx.RequestError as exc:
+            raise OutlookError(
+                "network_error",
+                f"Network error calling {provider}: {exc}",
+                status_code=None,
+            ) from exc
         except Exception as exc:
             raise OutlookError("provider_error", f"Failed to generate outlook: {exc}", status_code=503) from exc
 

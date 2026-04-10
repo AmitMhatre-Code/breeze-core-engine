@@ -99,6 +99,8 @@ class AiProviderSideState(BaseModel):
     enabled: bool = False
     model: Optional[str] = None
     fallback_models: list[str] = Field(default_factory=list)
+    """Gemini-only. When null/omitted, UI lists all models from the global catalog."""
+    tracked_models: Optional[list[str]] = None
     masked_api_key: Optional[str] = None
     models_working: int = 0
     models_failing: int = 0
@@ -138,6 +140,8 @@ class AiProviderPatchBody(BaseModel):
     provider: str
     model: Optional[str] = None
     fallback_models: Optional[list[str]] = None
+    """Gemini only. Omit to leave unchanged; empty list clears tracking (show full catalog)."""
+    tracked_models: Optional[list[str]] = None
 
 
 class AiProviderOutlookPickBody(BaseModel):
@@ -173,12 +177,20 @@ class GeminiCatalogModelItem(BaseModel):
     model: str
     status: str = "healthy"
     message: Optional[str] = None
+    display_name: Optional[str] = None
+
+
+class GeminiCatalogPickerEntry(BaseModel):
+    model: str
+    display_name: Optional[str] = None
 
 
 class GeminiCatalogResponse(BaseModel):
     provider: str = "gemini"
     available_models: list[GeminiCatalogModelItem] = Field(default_factory=list)
     stale_models: list[GeminiCatalogModelItem] = Field(default_factory=list)
+    """Full generateContent-capable list from the cached Google catalog (for the picker modal)."""
+    full_catalog: list[GeminiCatalogPickerEntry] = Field(default_factory=list)
     last_refreshed_at: Optional[str] = None
     last_health_check_at: Optional[str] = None
 

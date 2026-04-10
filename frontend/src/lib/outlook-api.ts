@@ -51,6 +51,8 @@ export type AiProviderSideState = {
   enabled: boolean;
   model?: string | null;
   fallback_models: string[];
+  /** Gemini: explicit sidebar list. Omitted/null = show entire global catalog. */
+  tracked_models?: string[] | null;
   masked_api_key?: string | null;
   models_working: number;
   models_failing: number;
@@ -104,6 +106,7 @@ export function patchAiProviderSettings(body: {
   provider: "gemini" | "openai";
   model?: string;
   fallback_models?: string[];
+  tracked_models?: string[] | null;
 }) {
   return apiClient.patch<AiProviderState, typeof body>("/api/settings/ai-provider", body);
 }
@@ -139,14 +142,34 @@ export function testAiProviderModel(body: { provider: "gemini" | "openai"; model
   }>("/api/settings/ai-provider/test-model", body);
 }
 
-export function getGeminiModels() {
-  return apiClient.get<{
-    provider: "gemini";
-    available_models: { model: string; status: string; message?: string | null }[];
-    stale_models: { model: string; status: string; message?: string | null }[];
-    last_refreshed_at?: string | null;
-    last_health_check_at?: string | null;
-  }>("/api/settings/ai-provider/models?provider=gemini");
+export type GeminiCatalogPickerEntry = {
+  model: string;
+  display_name?: string | null;
+};
+
+export type GeminiCatalogResponse = {
+  provider: "gemini";
+  available_models: {
+    model: string;
+    status: string;
+    message?: string | null;
+    display_name?: string | null;
+  }[];
+  stale_models: {
+    model: string;
+    status: string;
+    message?: string | null;
+    display_name?: string | null;
+  }[];
+  full_catalog?: GeminiCatalogPickerEntry[];
+  last_refreshed_at?: string | null;
+  last_health_check_at?: string | null;
+};
+
+export function getGeminiModels(opts?: { forceRefresh?: boolean }) {
+  const q = new URLSearchParams({ provider: "gemini" });
+  if (opts?.forceRefresh) q.set("force_refresh", "true");
+  return apiClient.get<GeminiCatalogResponse>(`/api/settings/ai-provider/models?${q}`);
 }
 
 export function deleteAiProvider(provider: "gemini" | "openai") {
@@ -200,18 +223,17 @@ export function subscribeMarketOutlookStream(handlers: {
       handlers.onStreamError({ message: "Invalid market outlook stream payload." });
     }
   });
-  stream.addEventListener("error", (event) => {
-    // Backend semantic error event with JSON payload.
+  stream.addEventListener("outlook_error", (event) => {
     const msgEvent = event as MessageEvent;
-    if (typeof msgEvent.data === "string" && msgEvent.data) {
-      try {
-        handlers.onStreamError(JSON.parse(msgEvent.data) as OutlookStreamError);
-        return;
-      } catch {
-        // Fall through to transport handler.
-      }
+    if (typeof msgEvent.data !== "string" || !msgEvent.data) {
+      handlers.onStreamError({ message: "Market outlook stream error (empty payload)." });
+      return;
     }
-    handlers.onTransportError?.();
+    try {
+      handlers.onStreamError(JSON.parse(msgEvent.data) as OutlookStreamError);
+    } catch {
+      handlers.onStreamError({ message: "Invalid market outlook error payload." });
+    }
   });
   stream.onerror = () => {
     handlers.onTransportError?.();
@@ -231,6 +253,9 @@ export function outlookFetchErrorMessage(err: unknown): string {
     !base.includes("Settings → AI provider")
   ) {
     return `${base} If this persists, pick a different model (e.g. gemini-2.0-flash) in AI provider settings.`;
+  }
+  if (payload?.detail?.error_code === "quota_exceeded" && !base.toLowerCase().includes("quota")) {
+    return `${base} (API quota exceeded — try again later or check usage limits.)`;
   }
   return base;
 }

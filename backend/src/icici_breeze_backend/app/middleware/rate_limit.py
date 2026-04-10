@@ -9,9 +9,10 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 try:
-    RATE_LIMIT_PER_MIN = int(os.environ.get("RATE_LIMIT_PER_MIN", "100"))
+    # Single-page settings flows (many PATCH + refetches) can burst past 100/min in dev.
+    RATE_LIMIT_PER_MIN = int(os.environ.get("RATE_LIMIT_PER_MIN", "240"))
 except (ValueError, TypeError):
-    RATE_LIMIT_PER_MIN = 100
+    RATE_LIMIT_PER_MIN = 240
 
 # When set, requests with header X-E2E-Test: <this value> are not counted (for Playwright E2E).
 _E2E_BYPASS_SECRET = (os.environ.get("E2E_RATE_LIMIT_BYPASS_SECRET") or "").strip()

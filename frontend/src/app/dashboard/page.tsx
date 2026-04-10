@@ -16,12 +16,8 @@ import { ApiHttpError, apiClient } from "@/lib/api-client";
 import {
   getMarketOutlook,
   outlookFetchErrorMessage,
-  subscribeMarketOutlookStream,
   type OutlookResponse,
 } from "@/lib/outlook-api";
-
-const STATIC_OUTLOOK_DISCLAIMER =
-  "AI-generated outlook. Informational only. Not investment advice. Verify with primary sources.";
 
 type Vix30Point = { date: string; value: number };
 
@@ -62,7 +58,7 @@ type PortfolioApiResponse = {
   };
 };
 
-type MarketStreamStatus = "idle" | "connecting" | "live" | "reconnecting" | "offline";
+type MarketOutlookBadgePhase = "idle" | "loading" | "cached" | "updated" | "unavailable";
 
 function coerceMarginField(v: unknown): number | null {
   if (v == null || v === "") return null;
@@ -187,12 +183,6 @@ export default function DashboardPage() {
   const [marketCardHeightPx, setMarketCardHeightPx] = useState<number | undefined>(
     undefined,
   );
-  const [marketOutlookData, setMarketOutlookData] = useState<OutlookResponse | undefined>(
-    undefined,
-  );
-  const [marketOutlookPending, setMarketOutlookPending] = useState(false);
-  const [marketOutlookError, setMarketOutlookError] = useState<Error | null>(null);
-  const [marketStreamStatus, setMarketStreamStatus] = useState<MarketStreamStatus>("idle");
   const [marketEnabled, marketTriggerRef] = useLazySection("300px");
   const [accountEnabled, accountTriggerRef] = useLazySection("200px");
   const [niftyEnabled, niftyTriggerRef] = useLazySection("250px");
@@ -237,56 +227,79 @@ export default function DashboardPage() {
     },
     enabled: niftyEnabled,
   });
+
+  const marketOutlookQ = useQuery({
+    queryKey: ["dashboard", "market-outlook"],
+    queryFn: () => getMarketOutlook(false),
+    staleTime: 120_000,
+    enabled: marketEnabled,
+    retry: false,
+  });
+
+  const [outlookShowUpdatedBadge, setOutlookShowUpdatedBadge] = useState(false);
+  const outlookUpdatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (outlookUpdatedTimerRef.current) {
+        clearTimeout(outlookUpdatedTimerRef.current);
+        outlookUpdatedTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const refreshOutlookM = useMutation({
     mutationFn: async () => {
       const market = await getMarketOutlook(true);
       return { market };
     },
     onSuccess: (data) => {
-      setMarketOutlookData(data.market);
-      setMarketOutlookError(null);
+      queryClient.setQueryData<OutlookResponse>(["dashboard", "market-outlook"], data.market);
+      if (outlookUpdatedTimerRef.current) clearTimeout(outlookUpdatedTimerRef.current);
+      setOutlookShowUpdatedBadge(true);
+      outlookUpdatedTimerRef.current = setTimeout(() => {
+        setOutlookShowUpdatedBadge(false);
+        outlookUpdatedTimerRef.current = null;
+      }, 12_000);
     },
   });
 
-  useEffect(() => {
-    if (!marketEnabled) return;
-    setMarketOutlookPending(true);
-    setMarketStreamStatus("connecting");
-    const unsubscribe = subscribeMarketOutlookStream({
-      onOutlook: (payload) => {
-        setMarketOutlookData(payload);
-        setMarketOutlookError(null);
-        setMarketOutlookPending(false);
-        setMarketStreamStatus("live");
-      },
-      onStreamError: (payload) => {
-        setMarketOutlookError(
-          new Error(
-            payload.error_code ? `[${payload.error_code}] ${payload.message}` : payload.message,
-          ),
-        );
-        setMarketOutlookPending(false);
-        setMarketStreamStatus("offline");
-      },
-      onTransportError: () => {
-        setMarketOutlookError((prev) => prev ?? new Error("Market outlook stream disconnected."));
-        setMarketOutlookPending(false);
-        setMarketStreamStatus((prev) => {
-          if (prev === "live" || prev === "reconnecting") return "reconnecting";
-          return "connecting";
-        });
-      },
-    });
-    return () => unsubscribe();
-  }, [marketEnabled]);
+  const marketOutlookBadgePhase = useMemo((): MarketOutlookBadgePhase => {
+    if (!marketEnabled) return "idle";
+    const noCacheYet =
+      marketOutlookQ.data?.warning?.error_code === "no_cached_outlook";
+    const hasData = Boolean(marketOutlookQ.data);
+    const loading =
+      !hasData && (marketOutlookQ.isPending || refreshOutlookM.isPending);
+    if (loading) return "loading";
+    if (!hasData) return "unavailable";
+    if (noCacheYet) return "unavailable";
+    if (outlookShowUpdatedBadge) return "updated";
+    return "cached";
+  }, [
+    marketEnabled,
+    marketOutlookQ.data,
+    marketOutlookQ.data?.warning?.error_code,
+    marketOutlookQ.isPending,
+    refreshOutlookM.isPending,
+    outlookShowUpdatedBadge,
+  ]);
 
-  useEffect(() => {
-    if (marketStreamStatus !== "reconnecting") return;
-    const timer = window.setTimeout(() => {
-      setMarketStreamStatus((prev) => (prev === "reconnecting" ? "offline" : prev));
-    }, 20_000);
-    return () => window.clearTimeout(timer);
-  }, [marketStreamStatus]);
+  const marketOutlookHeaderAlert = useMemo(() => {
+    if (!marketEnabled) return null;
+    const loadError = outlookQueryLoadError(marketOutlookQ.error, marketOutlookQ.isError);
+    return buildMarketOutlookHeaderAlert({
+      data: marketOutlookQ.data,
+      loadError,
+      refreshError: refreshOutlookM.error as Error | null,
+    });
+  }, [
+    marketEnabled,
+    marketOutlookQ.data,
+    marketOutlookQ.error,
+    marketOutlookQ.isError,
+    refreshOutlookM.error,
+  ]);
 
   const core = coreQ.data;
   const opts = optsQ.data;
@@ -405,7 +418,7 @@ export default function DashboardPage() {
             <header className="flex items-center justify-between gap-2">
               <h2 className="app-text-heading">Market Outlook (AI)</h2>
               <div className="flex items-center gap-2">
-                <MarketOutlookStreamBadge enabled={marketEnabled} status={marketStreamStatus} />
+                <MarketOutlookConnectionBadge phase={marketOutlookBadgePhase} />
                 <button
                   type="button"
                   title="Refresh market outlook"
@@ -414,25 +427,38 @@ export default function DashboardPage() {
                   className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
                   onClick={() => refreshOutlookM.mutate()}
                 >
-                  <OutlookRefreshIcon />
+                  <OutlookRefreshIcon spinning={refreshOutlookM.isPending} />
                 </button>
               </div>
             </header>
-            <div className="py-1 text-xs text-red-700 dark:text-red-300">
-                {STATIC_OUTLOOK_DISCLAIMER}
-            </div>
+            {marketOutlookHeaderAlert ? (
+              <div
+                className={[
+                  "py-1 text-xs",
+                  marketOutlookHeaderAlert.tone === "warning"
+                    ? "text-amber-800 dark:text-amber-200"
+                    : "text-red-700 dark:text-red-300",
+                ].join(" ")}
+                role="alert"
+              >
+                {marketOutlookHeaderAlert.text}
+              </div>
+            ) : null}
             <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
               {!marketEnabled ? (
                 <div className="text-xs app-text-muted">Load when visible...</div>
               ) : (
                 <OutlookBlock
                   title="market outlook"
-                  data={marketOutlookData}
+                  data={marketOutlookQ.data}
                   pendingInitial={
-                    !marketOutlookData &&
-                    (marketOutlookPending || refreshOutlookM.isPending)
+                    !marketOutlookQ.data &&
+                    (marketOutlookQ.isPending || refreshOutlookM.isPending)
                   }
-                  error={marketOutlookError}
+                  loadError={outlookQueryLoadError(
+                    marketOutlookQ.error,
+                    marketOutlookQ.isError,
+                  )}
                   refreshError={refreshOutlookM.error as Error | null}
                 />
               )}
@@ -747,7 +773,12 @@ function VolatilityRefreshIcon({ spinning }: { spinning: boolean }) {
   );
 }
 
-function OutlookRefreshIcon() {
+function outlookQueryLoadError(error: unknown, isError: boolean): Error | null {
+  if (!isError) return null;
+  return error instanceof Error ? error : new Error("Could not load market outlook.");
+}
+
+function OutlookRefreshIcon({ spinning }: { spinning: boolean }) {
   return (
     <svg
       width="14"
@@ -759,6 +790,7 @@ function OutlookRefreshIcon() {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden
+      className={spinning ? "animate-spin" : undefined}
     >
       <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
       <path d="M3 3v5h5" />
@@ -768,14 +800,8 @@ function OutlookRefreshIcon() {
   );
 }
 
-function MarketOutlookStreamBadge({
-  enabled,
-  status,
-}: {
-  enabled: boolean;
-  status: MarketStreamStatus;
-}) {
-  if (!enabled) {
+function MarketOutlookConnectionBadge({ phase }: { phase: MarketOutlookBadgePhase }) {
+  if (phase === "idle") {
     return (
       <span className="rounded-full border border-zinc-300 px-2 py-0.5 text-[10px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
         idle
@@ -784,23 +810,23 @@ function MarketOutlookStreamBadge({
   }
 
   const cfg =
-    status === "live"
+    phase === "loading"
       ? {
-          label: "live",
-          cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+          label: "loading",
+          cls: "border-zinc-400/40 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
         }
-      : status === "reconnecting"
+      : phase === "updated"
         ? {
-            label: "reconnecting",
-            cls: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+            label: "updated",
+            cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
           }
-        : status === "offline"
+        : phase === "cached"
           ? {
-              label: "offline",
-              cls: "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300",
+              label: "cached",
+              cls: "border-sky-500/35 bg-sky-500/10 text-sky-800 dark:text-sky-200",
             }
           : {
-              label: "connecting",
+              label: "not connected",
               cls: "border-zinc-400/40 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
             };
 
@@ -809,51 +835,108 @@ function MarketOutlookStreamBadge({
   );
 }
 
+function formatOutlookWarning(warning: NonNullable<OutlookResponse["warning"]>): string {
+  const code = warning.error_code ? `[${warning.error_code}] ` : "";
+  const upstream =
+    typeof warning.upstream_status === "number"
+      ? ` (upstream HTTP ${warning.upstream_status})`
+      : "";
+  return `${code}${warning.message}${upstream}`;
+}
+
+function formatOutlookProviderError(error: Error | null | undefined): string {
+  if (!error) return "";
+  if (!(error instanceof ApiHttpError)) return error.message || "Unknown error";
+
+  const payload = error.payload as
+    | { detail?: { message?: string; error_code?: string } | string }
+    | undefined;
+  const detail = payload?.detail;
+  if (detail && typeof detail === "object") {
+    const code = typeof detail.error_code === "string" ? detail.error_code : null;
+    const message = typeof detail.message === "string" ? detail.message : error.message;
+    const http = Number.isFinite(error.status) ? ` (HTTP ${error.status})` : "";
+    return `${code ? `[${code}] ` : ""}${message}${http}`;
+  }
+  const http = Number.isFinite(error.status) ? ` (HTTP ${error.status})` : "";
+  return `${error.message}${http}`;
+}
+
+type MarketOutlookHeaderAlert = { text: string; tone: "warning" | "error" };
+
+function buildMarketOutlookHeaderAlert(opts: {
+  data?: OutlookResponse;
+  loadError: Error | null;
+  refreshError: Error | null;
+}): MarketOutlookHeaderAlert | null {
+  const { data, loadError, refreshError } = opts;
+  const errText = loadError ? outlookFetchErrorMessage(loadError) : null;
+  const refreshMsg = refreshError ? formatOutlookProviderError(refreshError) : "";
+
+  if (data?.warning) {
+    let text = formatOutlookWarning(data.warning);
+    if (data.warning.stale_response_served) {
+      text = `${text} This outlook may be outdated; it is from cache because the latest refresh failed.`;
+    }
+    return { text, tone: "warning" };
+  }
+
+  if (data && (errText || refreshMsg)) {
+    const parts: string[] = [];
+    if (errText) parts.push(errText);
+    if (refreshMsg) parts.push(`Refresh failed: ${refreshMsg}`);
+    let text = parts.join(" ");
+    if (loadError) {
+      text = `${text} The outlook below may be from an earlier load.`;
+    } else if (refreshError) {
+      text = `${text} The outlook below is what was loaded before refresh failed.`;
+    }
+    return { text, tone: "error" };
+  }
+
+  if (!data && (errText || refreshMsg)) {
+    const parts: string[] = [];
+    if (errText) parts.push(errText);
+    if (refreshMsg) parts.push(refreshMsg);
+    return { text: parts.join(" "), tone: "error" };
+  }
+
+  return null;
+}
+
 function OutlookBlock({
   title,
   data,
   pendingInitial,
-  error,
+  loadError,
   refreshError,
 }: {
   title: string;
   data?: OutlookResponse;
   pendingInitial: boolean;
-  error?: Error | null;
+  loadError?: Error | null;
   refreshError?: Error | null;
 }) {
-  if (pendingInitial) {
-    return <div className="text-xs app-text-muted">Loading {title}...</div>;
-  }
-  const errText = error ? outlookFetchErrorMessage(error) : null;
+  const errText = loadError ? outlookFetchErrorMessage(loadError) : null;
+  const refreshMsg = refreshError ? formatOutlookProviderError(refreshError) : "";
   if (!data) {
-    const refreshMsg = refreshError ? formatOutlookProviderError(refreshError) : "";
-    if (errText) {
-      return (
-        <div className="space-y-2 text-xs text-red-700 dark:text-red-300">
-          <p>{errText}</p>
-        </div>
-      );
+    if (errText || refreshMsg) {
+      return null;
     }
-    if (refreshMsg) {
-      return (
-        <div className="space-y-2 text-xs text-red-700 dark:text-red-300">
-          <p>{refreshMsg}</p>
-        </div>
-      );
+    if (pendingInitial) {
+      return <div className="text-xs app-text-muted">Loading {title}...</div>;
     }
     return <div className="text-xs app-text-muted">No outlook available.</div>;
   }
+  if (data.warning?.error_code === "no_cached_outlook" && data.summary.length === 0) {
+    return (
+      <div className="text-xs app-text-muted">
+        No outlook in this session yet. Use refresh above to generate one (calls your AI provider).
+      </div>
+    );
+  }
   return (
     <div className="space-y-2 text-xs">
-      {errText ? (
-        <p
-          className="rounded-md border border-red-300 bg-red-50 px-2 py-1.5 text-red-800 dark:border-red-800/80 dark:bg-red-950/35 dark:text-red-200"
-          role="alert"
-        >
-          {errText}
-        </p>
-      ) : null}
       <ul className="list-disc space-y-1 pl-4">
         {data.summary.slice(0, 3).map((line) => (
           <li key={line}>{line}</li>
@@ -897,46 +980,8 @@ function OutlookBlock({
       <div className="app-text-muted text-[10px]">
         As of {new Date(data.as_of).toLocaleString("en-IN")}
       </div>
-      {refreshError ? (
-        <div className="text-[10px] text-red-700 dark:text-red-300">
-          Refresh failed: {formatOutlookProviderError(refreshError)}
-        </div>
-      ) : null}
-      {data.warning ? (
-        <div className="text-[10px] text-amber-700 dark:text-amber-200">
-          {formatOutlookWarning(data.warning)}
-        </div>
-      ) : null}
     </div>
   );
-}
-
-function formatOutlookWarning(warning: OutlookResponse["warning"]): string {
-  if (!warning) return "";
-  const code = warning.error_code ? `[${warning.error_code}] ` : "";
-  const upstream =
-    typeof warning.upstream_status === "number"
-      ? ` (upstream HTTP ${warning.upstream_status})`
-      : "";
-  return `${code}${warning.message}${upstream}`;
-}
-
-function formatOutlookProviderError(error: Error | null | undefined): string {
-  if (!error) return "";
-  if (!(error instanceof ApiHttpError)) return error.message || "Unknown error";
-
-  const payload = error.payload as
-    | { detail?: { message?: string; error_code?: string } | string }
-    | undefined;
-  const detail = payload?.detail;
-  if (detail && typeof detail === "object") {
-    const code = typeof detail.error_code === "string" ? detail.error_code : null;
-    const message = typeof detail.message === "string" ? detail.message : error.message;
-    const http = Number.isFinite(error.status) ? ` (HTTP ${error.status})` : "";
-    return `${code ? `[${code}] ` : ""}${message}${http}`;
-  }
-  const http = Number.isFinite(error.status) ? ` (HTTP ${error.status})` : "";
-  return `${error.message}${http}`;
 }
 
 function TrendChip({ pct }: { pct: number | null | undefined }) {
