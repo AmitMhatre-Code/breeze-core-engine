@@ -588,7 +588,7 @@ function PlaceOrderPageInner() {
               <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                 Scrip details
               </p>
-              <div className="grid grid-cols-3 gap-2 gap-y-2.5">
+              <div className="grid grid-cols-2 gap-2 gap-y-2.5 sm:grid-cols-3">
                 <div className="min-w-0">
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                     LTP (₹)

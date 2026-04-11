@@ -5,8 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
-import { ChunkSizeOrderField } from "@/components/order/ChunkSizeOrderField";
-import { OptionChainTable } from "@/components/order/OptionChainTable";
+import {
+  OptionChainTable,
+  scrollOptionChainAtmIntoView,
+} from "@/components/order/OptionChainTable";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionConfirmDialog";
 import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
@@ -1582,10 +1584,7 @@ export default function StrategyBuilderPage() {
     if (selectedReadymade === "iron_butterfly" && !ironButterflyFetched) return;
     if (selectedReadymade === "long_call_butterfly" && !butterflyFetched) return;
     const t = requestAnimationFrame(() => {
-      const row = buildOwnChainScrollRef.current?.querySelector(
-        "tr[data-atm-strike='true']",
-      );
-      row?.scrollIntoView({ block: "center", behavior: "smooth" });
+      scrollOptionChainAtmIntoView(buildOwnChainScrollRef.current);
     });
     return () => cancelAnimationFrame(t);
   }, [
@@ -3428,7 +3427,7 @@ export default function StrategyBuilderPage() {
 
         <section className={`${sb.section} relative z-10 space-y-4`}>
           <h2 className={sb.sectionTitle}>2. Readymade Strategies</h2>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex min-w-0 flex-wrap justify-center gap-3 sm:justify-start">
             <ReadymadeSetupTooltip strategyId="build-your-own">
               <button
                 type="button"
@@ -5333,7 +5332,217 @@ export default function StrategyBuilderPage() {
 
         <section className={`${sb.section} space-y-4`}>
           <h2 className={sb.sectionTitle}>5. Legs</h2>
-          <div className="app-table-wrap">
+          <div className="space-y-3 md:hidden">
+            {legs.length === 0 ? (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                No legs yet. Add contracts from the option chain or a readymade
+                strategy.
+              </p>
+            ) : (
+              legs.map((l) => {
+                const qtyU =
+                  l.lots > 0 ? Math.round(l.lots * lotSize) : 0;
+                const premTotal = (l.premiumPerUnit ?? 0) * qtyU;
+                const legEntry = legMarginCache[l.id];
+                const legMarginFresh = legMarginEntryMatches(l, legEntry);
+                const marginPerLot =
+                  legMarginFresh &&
+                  legEntry != null &&
+                  legEntry.span != null &&
+                  Number.isFinite(legEntry.span) &&
+                  l.lots > 0
+                    ? legEntry.span / l.lots
+                    : null;
+                return (
+                  <div
+                    key={l.id}
+                    className="rounded-lg border border-zinc-200/80 bg-white/80 p-3 text-sm text-zinc-700 dark:border-zinc-700/80 dark:bg-zinc-950/40 dark:text-zinc-300"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2 border-b border-zinc-200/80 pb-2 dark:border-zinc-700/80">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100">
+                          {formatOptionSymbolLabel(
+                            stockCode,
+                            expiryDate,
+                            l.strike,
+                            l.right,
+                          )}
+                        </p>
+                        <div className="mt-1.5">
+                          <LegPositionChip side={l.side} />
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="shrink-0 text-sm font-medium text-red-600 dark:text-red-400"
+                        onClick={() =>
+                          setLegs((prev) => prev.filter((x) => x.id !== l.id))
+                        }
+                      >
+                        Delete
+                      </button>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <label className="min-w-0 space-y-1">
+                        <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                          Quantity
+                        </span>
+                        <LegQuantityInput
+                          legId={l.id}
+                          lots={l.lots}
+                          lotSize={lotSize}
+                          onLotsChange={(newLots) =>
+                            setLegs((prev) =>
+                              prev.map((x) =>
+                                x.id === l.id ? { ...x, lots: newLots } : x,
+                              ),
+                            )
+                          }
+                          className={`${sb.tableInput} w-full max-w-full tabular-nums`}
+                        />
+                      </label>
+                      <div className="space-y-1">
+                        <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                          Lot size
+                        </span>
+                        <p className="pt-1.5 tabular-nums text-zinc-900 dark:text-zinc-100">
+                          {lotSize.toLocaleString("en-IN")}
+                        </p>
+                      </div>
+                      <label className="min-w-0 space-y-1">
+                        <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                          Price (₹)
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.05}
+                          className={`${sb.tableInput} w-full max-w-full tabular-nums`}
+                          value={
+                            l.premiumPerUnit != null
+                              ? l.premiumPerUnit
+                              : ""
+                          }
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            setLegs((prev) =>
+                              prev.map((x) =>
+                                x.id === l.id
+                                  ? {
+                                      ...x,
+                                      premiumPerUnit: Number.isFinite(v)
+                                        ? v
+                                        : undefined,
+                                    }
+                                  : x,
+                              ),
+                            );
+                          }}
+                        />
+                      </label>
+                      <div className="space-y-1">
+                        <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                          Premium
+                        </span>
+                        <p className="pt-1.5 tabular-nums text-zinc-900 dark:text-zinc-100">
+                          {formatIndianMoneyCompact(premTotal)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200/80 pt-2 dark:border-zinc-700/80">
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                          Margin / lot
+                        </span>
+                        <div className="tabular-nums text-zinc-900 dark:text-zinc-100">
+                          {l.lots <= 0 ? (
+                            "—"
+                          ) : legMarginFetchingId === l.id ? (
+                            "…"
+                          ) : marginPerLot != null &&
+                            Number.isFinite(marginPerLot) ? (
+                            formatIndianMoneyCompact(marginPerLot)
+                          ) : legMarginFresh && legEntry?.error ? (
+                            "—"
+                          ) : (
+                            <MarginRefreshIconButton
+                              label="Fetch margin for this leg"
+                              onClick={() => void fetchLegMargin(l)}
+                            />
+                          )}
+                        </div>
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-0.5 text-end">
+                        <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                          Margin
+                        </span>
+                        <div className="tabular-nums text-zinc-900 dark:text-zinc-100">
+                          {l.lots <= 0 ? (
+                            "—"
+                          ) : legMarginFetchingId === l.id ? (
+                            "…"
+                          ) : legMarginFresh &&
+                            legEntry != null &&
+                            legEntry.span != null &&
+                            Number.isFinite(legEntry.span) ? (
+                            formatIndianMoneyCompact(legEntry.span)
+                          ) : legMarginFresh && legEntry?.error ? (
+                            <span className="text-xs text-red-600 dark:text-red-400">
+                              {legEntry.error}
+                            </span>
+                          ) : (
+                            <MarginRefreshIconButton
+                              label="Fetch margin for this leg"
+                              onClick={() => void fetchLegMargin(l)}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            {legs.length > 0 ? (
+              <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/90 px-3 py-2.5 text-sm dark:border-zinc-700/80 dark:bg-zinc-900/50">
+                <div className="text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
+                  Totals
+                </div>
+                <div className="mt-2 flex flex-wrap justify-between gap-2">
+                  <span className="text-zinc-500 dark:text-zinc-400">
+                    Net premium
+                  </span>
+                  <span
+                    className={`font-semibold tabular-nums ${
+                      totalsNetPremium < 0
+                        ? "text-red-700 dark:text-red-400"
+                        : "text-zinc-900 dark:text-zinc-100"
+                    }`}
+                  >
+                    {formatNetPremiumCompactInr(totalsNetPremium)}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap justify-between gap-2">
+                  <span className="text-zinc-500 dark:text-zinc-400">
+                    Total margin
+                  </span>
+                  <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                    {!totalsMargin.hasPositiveLots ? (
+                      "—"
+                    ) : totalsMargin.hasMarginFetchInFlight ? (
+                      "…"
+                    ) : totalsMargin.hasMissingFreshMargin ? (
+                      "—"
+                    ) : (
+                      formatIndianMoneyCompact(totalsMargin.sum)
+                    )}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <div className="hidden md:block">
+            <div className="app-table-wrap">
             <table className="w-full min-w-[56rem] border-collapse text-left text-xs">
               <thead className="app-table-head">
                 <tr>
@@ -5513,6 +5722,7 @@ export default function StrategyBuilderPage() {
                 ) : null}
               </tbody>
             </table>
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button

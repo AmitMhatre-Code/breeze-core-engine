@@ -1,6 +1,7 @@
 "use client";
 
 import type { RefObject } from "react";
+import { Fragment } from "react";
 import type { ChainRow, ChainSuccess, OrderSide, OptionRight } from "@/lib/strategy-builder/types";
 
 const LAKH = 100_000;
@@ -171,6 +172,26 @@ export type OptionChainTableProps = {
   ) => boolean;
 };
 
+/** Scrolls the first visible ATM strike (table row or mobile card) into view. */
+export function scrollOptionChainAtmIntoView(
+  container: HTMLElement | null | undefined,
+  options?: ScrollIntoViewOptions,
+) {
+  if (!container) return;
+  const merged: ScrollIntoViewOptions = {
+    block: "center",
+    behavior: "smooth",
+    ...options,
+  };
+  const nodes = container.querySelectorAll("[data-atm-strike='true']");
+  for (const n of nodes) {
+    if (!(n instanceof HTMLElement)) continue;
+    if (!n.offsetParent) continue;
+    n.scrollIntoView(merged);
+    return;
+  }
+}
+
 export function OptionChainTable({
   chainSuccess,
   scrollRef,
@@ -193,10 +214,196 @@ export function OptionChainTable({
     mode === "strategyBuilder" ? "B/S" : "Buy/Sell";
 
   return (
-    <div
-      ref={scrollRef}
-      className="max-h-[min(70vh,42rem)] overflow-auto rounded-md border border-zinc-200 bg-white shadow-lg ring-1 ring-black/5 dark:border-zinc-800 dark:bg-[#0e0e10] dark:ring-black/20 dark:ring-zinc-800/80"
-    >
+    <div ref={scrollRef} className="min-w-0 space-y-0">
+      <div className="space-y-2 md:hidden">
+        {chainSuccess.chain_rows.map((row) => {
+          const c = row.call ?? null;
+          const p = row.put ?? null;
+          const strike = row.strike_price;
+          const isAtm = atmStrike != null && strike === atmStrike;
+          const callItm = c != null && itmCall(strike);
+          const putItm = p != null && itmPut(strike);
+          const callOi = c ? parseNum(c.open_interest) : NaN;
+          const putOi = p ? parseNum(p.open_interest) : NaN;
+          const callOiPct =
+            maxCallOi > 0 && Number.isFinite(callOi)
+              ? Math.min(100, (callOi / maxCallOi) * 100)
+              : 0;
+          const putOiPct =
+            maxPutOi > 0 && Number.isFinite(putOi)
+              ? Math.min(100, (putOi / maxPutOi) * 100)
+              : 0;
+          const itmLegCls = "bg-zinc-900/5 dark:bg-zinc-500/22";
+          const strikeAtmCls = isAtm
+            ? "bg-sky-100/80 font-semibold text-sky-900 ring-1 ring-sky-500/20 dark:bg-sky-950/60 dark:text-sky-100 dark:ring-sky-500/35"
+            : "font-semibold text-zinc-800 dark:text-zinc-100";
+          const rowClick =
+            mode === "trade" && onRowClick
+              ? () => onRowClick(row)
+              : undefined;
+          const cardInteractiveCls =
+            mode === "trade"
+              ? "cursor-pointer transition hover:border-zinc-300 hover:bg-zinc-50/80 active:bg-zinc-100/80 dark:hover:border-zinc-600 dark:hover:bg-zinc-900/50 dark:active:bg-zinc-900/70"
+              : "";
+
+          return (
+            <div
+              key={strike}
+              data-atm-strike={isAtm ? "true" : undefined}
+              role={mode === "trade" ? "button" : undefined}
+              tabIndex={mode === "trade" ? 0 : undefined}
+              aria-label={
+                mode === "trade"
+                  ? `Open order sheet for strike ${strike.toLocaleString("en-IN")}`
+                  : undefined
+              }
+              className={`rounded-lg border border-zinc-200/90 bg-white p-2.5 text-xs leading-snug shadow-sm ring-1 ring-black/[0.04] tabular-nums text-zinc-700 dark:border-zinc-800 dark:bg-[#0e0e10] dark:text-zinc-300 dark:ring-black/20 ${cardInteractiveCls}`}
+              onClick={rowClick}
+              onKeyDown={
+                mode === "trade" && onRowClick
+                  ? (e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onRowClick(row);
+                      }
+                    }
+                  : undefined
+              }
+            >
+              <div
+                className={`rounded-md px-2 py-1.5 text-center text-sm tabular-nums ${strikeAtmCls}`}
+              >
+                {strike.toLocaleString("en-IN")}
+                {isAtm ? (
+                  <span className="ms-1.5 text-[10px] font-medium uppercase tracking-wide text-sky-700 dark:text-sky-300">
+                    ATM
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-2 grid min-w-0 grid-cols-2 gap-2">
+                <div
+                  className={`min-w-0 space-y-1.5 rounded-md border border-emerald-200/60 bg-emerald-50/40 p-2 dark:border-emerald-900/40 dark:bg-emerald-950/20 ${callItm ? itmLegCls : ""}`}
+                >
+                  <div className="text-center text-[10px] font-semibold uppercase tracking-wide text-emerald-800 dark:text-emerald-200/90">
+                    Call
+                  </div>
+                  {c ? (
+                    <Fragment>
+                      <div className="flex justify-center">
+                        {mode === "strategyBuilder" &&
+                        onStrategyBuySell &&
+                        isStrategySlotAdded ? (
+                          <StrategyBuySellPair
+                            strike={strike}
+                            right="Call"
+                            isAdded={(side) =>
+                              isStrategySlotAdded(strike, "Call", side)
+                            }
+                            onBuySell={(side) =>
+                              onStrategyBuySell(side, row, "Call")
+                            }
+                          />
+                        ) : (
+                          <BuySellBookLines leg={c} />
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+                        <span className="shrink-0 text-zinc-500 dark:text-zinc-500">
+                          OI (L)
+                        </span>
+                        <span className="truncate text-end tabular-nums">
+                          {formatOiLakh(callOi)}
+                        </span>
+                      </div>
+                      <div
+                        className="relative h-2 min-w-0 overflow-hidden rounded-full bg-zinc-200/80 dark:bg-zinc-800/80"
+                        title={`Call OI ${formatOiLakh(callOi)}`}
+                      >
+                        <div
+                          className="absolute top-0 h-full rounded-l-full bg-emerald-600/60 dark:bg-[#2d4a3c]"
+                          style={{ right: 0, width: `${callOiPct}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-zinc-500 dark:text-zinc-500">
+                          LTP
+                        </span>
+                        <span className="truncate text-end font-medium tabular-nums text-zinc-800 dark:text-zinc-100">
+                          {formatLtpInr(c.ltp)}
+                        </span>
+                      </div>
+                    </Fragment>
+                  ) : (
+                    <p className="py-2 text-center text-[11px] text-zinc-400 dark:text-zinc-600">
+                      No contract
+                    </p>
+                  )}
+                </div>
+                <div
+                  className={`min-w-0 space-y-1.5 rounded-md border border-rose-200/70 bg-rose-50/35 p-2 dark:border-rose-900/35 dark:bg-rose-950/15 ${putItm ? itmLegCls : ""}`}
+                >
+                  <div className="text-center text-[10px] font-semibold uppercase tracking-wide text-rose-900 dark:text-rose-200/90">
+                    Put
+                  </div>
+                  {p ? (
+                    <Fragment>
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-zinc-500 dark:text-zinc-500">
+                          LTP
+                        </span>
+                        <span className="truncate text-end font-medium tabular-nums text-zinc-800 dark:text-zinc-100">
+                          {formatLtpInr(p.ltp)}
+                        </span>
+                      </div>
+                      <div
+                        className="relative h-2 min-w-0 overflow-hidden rounded-full bg-zinc-200/80 dark:bg-zinc-800/80"
+                        title={`Put OI ${formatOiLakh(putOi)}`}
+                      >
+                        <div
+                          className="absolute top-0 h-full rounded-r-full bg-red-700/60 dark:bg-[#5a3d3a]"
+                          style={{ left: 0, width: `${putOiPct}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+                        <span className="shrink-0 text-zinc-500 dark:text-zinc-500">
+                          OI (L)
+                        </span>
+                        <span className="truncate text-end tabular-nums">
+                          {formatOiLakh(putOi)}
+                        </span>
+                      </div>
+                      <div className="flex justify-center">
+                        {mode === "strategyBuilder" &&
+                        onStrategyBuySell &&
+                        isStrategySlotAdded ? (
+                          <StrategyBuySellPair
+                            strike={strike}
+                            right="Put"
+                            isAdded={(side) =>
+                              isStrategySlotAdded(strike, "Put", side)
+                            }
+                            onBuySell={(side) =>
+                              onStrategyBuySell(side, row, "Put")
+                            }
+                          />
+                        ) : (
+                          <BuySellBookLines leg={p} />
+                        )}
+                      </div>
+                    </Fragment>
+                  ) : (
+                    <p className="py-2 text-center text-[11px] text-zinc-400 dark:text-zinc-600">
+                      No contract
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden max-h-[min(70vh,42rem)] min-w-0 overflow-x-auto overflow-y-auto overscroll-x-contain overscroll-y-auto rounded-md border border-zinc-200 bg-white shadow-lg ring-1 ring-black/5 md:block dark:border-zinc-800 dark:bg-[#0e0e10] dark:ring-black/20 dark:ring-zinc-800/80">
       <table className="w-full max-w-full border-collapse text-xs leading-snug tabular-nums text-zinc-700 dark:text-zinc-300 sm:text-sm">
         <thead className="sticky top-0 z-20 bg-white dark:bg-[#0e0e10]">
           <tr className="border-b border-zinc-200/90 dark:border-zinc-800">
@@ -412,6 +619,7 @@ export function OptionChainTable({
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

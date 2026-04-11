@@ -69,7 +69,7 @@ function ChallengeForm() {
 
   if (!apisession) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 text-zinc-100">
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] text-zinc-100">
         <div className="max-w-md rounded-lg border border-zinc-800 bg-zinc-900/80 p-6 text-sm">
           <p className="text-zinc-300">Missing session token in URL.</p>
           <Link href="/login" className="app-link mt-4 inline-block">
@@ -81,7 +81,7 @@ function ChallengeForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 text-zinc-50">
+    <div className="flex min-h-screen items-center justify-center bg-zinc-950 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] text-zinc-50">
       <div className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900/80 p-8 shadow-xl">
         <h1 className="text-xl font-semibold">Complete ICICI login</h1>
         <p className="mt-1 text-xs text-zinc-500">Step 2 of 2</p>

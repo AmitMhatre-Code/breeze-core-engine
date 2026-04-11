@@ -380,7 +380,13 @@ export default function DashboardPage() {
   }, [queryClient]);
 
   useEffect(() => {
+    const mdMq = window.matchMedia("(min-width: 768px)");
+
     const recompute = () => {
+      if (!mdMq.matches) {
+        setMarketCardHeightPx(undefined);
+        return;
+      }
       const a = accountSectionRef.current;
       const n = niftySectionRef.current;
       if (!a || !n) return;
@@ -392,14 +398,20 @@ export default function DashboardPage() {
     };
 
     recompute();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => recompute());
-    if (accountSectionRef.current) ro.observe(accountSectionRef.current);
-    if (niftySectionRef.current) ro.observe(niftySectionRef.current);
     window.addEventListener("resize", recompute);
+    mdMq.addEventListener("change", recompute);
+
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(() => recompute());
+      if (accountSectionRef.current) ro.observe(accountSectionRef.current);
+      if (niftySectionRef.current) ro.observe(niftySectionRef.current);
+    }
+
     return () => {
-      ro.disconnect();
+      ro?.disconnect();
       window.removeEventListener("resize", recompute);
+      mdMq.removeEventListener("change", recompute);
     };
   }, [accountEnabled, niftyEnabled, homeQ.isPending, coreQ.isPending, optsLoading]);
 
@@ -424,7 +436,7 @@ export default function DashboardPage() {
                   title="Refresh market outlook"
                   aria-label="Refresh outlook"
                   disabled={refreshOutlookM.isPending}
-                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
+                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent sm:size-9 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
                   onClick={() => refreshOutlookM.mutate()}
                 >
                   <OutlookRefreshIcon spinning={refreshOutlookM.isPending} />
@@ -588,7 +600,7 @@ export default function DashboardPage() {
                   disabled={volatilityFetching}
                   title="Refresh VIX, IV, and range"
                   aria-label="Refresh volatility data"
-                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
+                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent sm:size-9 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
                 >
                   <VolatilityRefreshIcon spinning={volatilityFetching} />
                 </button>
