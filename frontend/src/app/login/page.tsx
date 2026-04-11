@@ -1,7 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import breezeMark from "@/app/android-chrome-192x192.png";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
@@ -72,13 +74,25 @@ function LoginContent() {
         <ThemeToggle />
       </div>
       <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white/90 p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900/80 dark:shadow-xl dark:shadow-black/40">
-        <div className="mb-6 space-y-2">
-          <h1 className="text-xl font-semibold tracking-tight text-sky-500 dark:text-sky-500">
-            Breeze Web
-          </h1>
-          <p className="text-xs text-zinc-600 dark:text-zinc-400">
-            Sign in with your ICICI user id and app password, then complete ICICI Direct login.
-          </p>
+        <div className="mb-6 flex gap-3">
+          <div className="flex h-16 w-16 shrink-0 items-center justify-center">
+            <Image
+              src={breezeMark}
+              alt="Breeze"
+              width={48}
+              height={48}
+              className="h-22 w-22 object-contain"
+              priority
+            />
+          </div>
+          <div className="min-w-0 space-y-2">
+            <h1 className="text-xl font-semibold tracking-tight text-sky-500 dark:text-sky-500">
+              Breeze Web
+            </h1>
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              Sign in with your ICICI user id and app password, then complete ICICI Direct login.
+            </p>
+          </div>
         </div>
         {banner && (
           <div
