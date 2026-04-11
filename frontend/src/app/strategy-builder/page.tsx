@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
@@ -1415,6 +1415,11 @@ export default function StrategyBuilderPage() {
     null,
   );
   const buildOwnChainScrollRef = useRef<HTMLDivElement>(null);
+  const parametersSectionRef = useRef<HTMLElement | null>(null);
+  const proposedTradesSectionRef = useRef<HTMLElement | null>(null);
+  const legsSectionRef = useRef<HTMLElement | null>(null);
+  const [proposedTradesInView, setProposedTradesInView] = useState(false);
+  const [legsInView, setLegsInView] = useState(false);
   const onSegmentChange = (ex: "NFO" | "BFO") => {
     if (ex === segmentExchange) return;
     setSegmentExchange(ex);
@@ -1596,6 +1601,51 @@ export default function StrategyBuilderPage() {
     ironButterflyFetched,
     butterflyFetched,
   ]);
+
+  const hasProposedTradesChainRows =
+    (chainSuccess?.chain_rows?.length ?? 0) > 0;
+
+  useEffect(() => {
+    const proposedEl = proposedTradesSectionRef.current;
+    const legsEl = legsSectionRef.current;
+    if (!hasProposedTradesChainRows || !proposedEl || !legsEl) {
+      setProposedTradesInView(false);
+      setLegsInView(false);
+      return;
+    }
+    const obsProposed = new IntersectionObserver(
+      ([e]) => setProposedTradesInView(Boolean(e?.isIntersecting)),
+      { threshold: 0 },
+    );
+    const obsLegs = new IntersectionObserver(
+      ([e]) => setLegsInView(Boolean(e?.isIntersecting)),
+      { threshold: 0 },
+    );
+    obsProposed.observe(proposedEl);
+    obsLegs.observe(legsEl);
+    return () => {
+      obsProposed.disconnect();
+      obsLegs.disconnect();
+    };
+  }, [hasProposedTradesChainRows]);
+
+  const showChainJumpNav =
+    hasProposedTradesChainRows && proposedTradesInView && !legsInView;
+
+  const scrollToStrategySection = useCallback(
+    (ref: RefObject<HTMLElement | null>) => {
+      const el = ref.current;
+      if (!el) return;
+      const prefersReduced =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      el.scrollIntoView({
+        behavior: prefersReduced ? "auto" : "smooth",
+        block: "start",
+      });
+    },
+    [],
+  );
 
   const T = expiryDisplayToYears(expiryDate || "01-Jan-2099");
   const baseSigma = chainSuccess ? atmSigmaFromChain(chainSuccess, T) : 0.22;
@@ -3608,6 +3658,8 @@ export default function StrategyBuilderPage() {
         </section>
 
         <section
+          ref={parametersSectionRef}
+          id="strategy-builder-parameters"
           className={`${sb.section} ${
             selectedReadymade == null
               ? "border-dashed border-zinc-300/90 bg-zinc-50/40 py-6 dark:border-zinc-600/80 dark:bg-zinc-950/30"
@@ -4135,7 +4187,11 @@ export default function StrategyBuilderPage() {
           )}
         </section>
 
-        <section className={`${sb.section} space-y-4`}>
+        <section
+          ref={proposedTradesSectionRef}
+          id="strategy-builder-proposed-trades"
+          className={`${sb.section} space-y-4`}
+        >
           <h2 className={sb.sectionTitle}>4. Proposed Trades</h2>
           {selectedReadymade === "build-your-own" ? (
             <div className="space-y-3">
@@ -5330,7 +5386,11 @@ export default function StrategyBuilderPage() {
           )}
         </section>
 
-        <section className={`${sb.section} space-y-4`}>
+        <section
+          ref={legsSectionRef}
+          id="strategy-builder-legs"
+          className={`${sb.section} space-y-4`}
+        >
           <h2 className={sb.sectionTitle}>5. Legs</h2>
           <div className="space-y-3 md:hidden">
             {legs.length === 0 ? (
@@ -5992,6 +6052,29 @@ export default function StrategyBuilderPage() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {showChainJumpNav ? (
+        <>
+          <button
+            type="button"
+            className={`${sb.btnSecondary} fixed left-1/2 top-[max(4.75rem,calc(env(safe-area-inset-top)+3.5rem))] z-[45] -translate-x-1/2 whitespace-nowrap !rounded-full px-3.5 py-2 text-xs font-semibold shadow-lg ring-1 ring-zinc-950/10 backdrop-blur-sm dark:ring-white/10`}
+            aria-label="Scroll to Parameters (section 3)"
+            title="Jump to Parameters"
+            onClick={() => scrollToStrategySection(parametersSectionRef)}
+          >
+            ↑ Parameters
+          </button>
+          <button
+            type="button"
+            className={`${sb.btnSecondary} fixed bottom-[max(1rem,calc(env(safe-area-inset-bottom)+0.75rem))] left-1/2 z-[45] -translate-x-1/2 whitespace-nowrap !rounded-full px-3.5 py-2 text-xs font-semibold shadow-lg ring-1 ring-zinc-950/10 backdrop-blur-sm dark:ring-white/10`}
+            aria-label="Scroll to Legs (section 5)"
+            title="Jump to Legs"
+            onClick={() => scrollToStrategySection(legsSectionRef)}
+          >
+            ↓ Legs
+          </button>
+        </>
       ) : null}
     </AppShell>
   );
