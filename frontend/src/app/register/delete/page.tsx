@@ -4,6 +4,6 @@ import { DeleteAccountWidget } from "@/components/settings/DeleteAccountWidget";
 
 export default function RegisterDeletePage() {
   return (
-    <DeleteAccountWidget variant="standalone" oauthNextPath="/register/delete" />
+    <DeleteAccountWidget variant="standalone" />
   );
 }

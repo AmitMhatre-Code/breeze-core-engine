@@ -77,8 +77,7 @@ export default function SettingsPage() {
               Delete Account
             </div>
             <p className="mt-1 text-zinc-700 dark:text-zinc-400">
-              Permanently remove your account and stored credentials. Works for both
-              Google sign-in and app-password accounts.
+              Permanently remove your account and stored credentials using your app password.
             </p>
             <Link
               href="/settings/delete-account"

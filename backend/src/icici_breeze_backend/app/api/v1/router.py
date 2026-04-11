@@ -9,7 +9,6 @@ from icici_breeze_backend.app.api.v1 import route_uncovered_shorts
 from icici_breeze_backend.app.api.v1 import route_vertical_spread
 from icici_breeze_backend.app.api.v1 import route_hedge
 from icici_breeze_backend.app.api.v1 import route_settings
-from icici_breeze_backend.app.api.v1 import route_google_auth
 from icici_breeze_backend.app.api.v1 import route_dashboard
 from icici_breeze_backend.app.api.v1 import route_outlook
 from icici_breeze_backend.app.api.v1 import route_register
@@ -22,7 +21,6 @@ from icici_breeze_backend.app.api.v1 import route_dev_mock
 v1_router = APIRouter()
 
 v1_router.include_router(route_dev_mock.router, prefix="", include_in_schema=False)
-v1_router.include_router(route_google_auth.router, prefix="", include_in_schema=False)
 v1_router.include_router(auth.router, prefix="", tags=["auth"], include_in_schema=True)
 v1_router.include_router(route_register.router, prefix="", include_in_schema=False)
 v1_router.include_router(home.router, prefix="", tags=[""], include_in_schema=False)

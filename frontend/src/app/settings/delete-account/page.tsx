@@ -29,15 +29,11 @@ export default function SettingsDeleteAccountPage() {
         <section className="app-card space-y-2 p-4">
           <h2 className="app-text-heading">Delete account</h2>
           <p className="app-text-muted max-w-2xl text-sm">
-            Remove your Breeze Web account and stored broker API credentials. Google users
-            verify with Google first; direct users confirm with their app password.
+            Remove your Breeze Web account and stored broker API credentials. Confirm with your
+            ICICI user id and app password.
           </p>
         </section>
-        <DeleteAccountWidget
-          variant="settings"
-          oauthNextPath="/settings/delete-account"
-          initialDirectUserId={q.data?.user_id}
-        />
+        <DeleteAccountWidget variant="settings" initialDirectUserId={q.data?.user_id} />
       </div>
     </AppShell>
   );

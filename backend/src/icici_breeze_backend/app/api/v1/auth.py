@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from icici_breeze_backend.app.api.deps import get_current_user, get_optional_user, RequestContext, ICICI_BROKER_TOKEN_COOKIE, ACCESS_TOKEN_COOKIE, CREDENTIAL_FULL_SECRET_COOKIE
-from icici_breeze_backend.app.api.v1.route_google_auth import COOKIE_MAX_AGE, DIRECT_ICICI_COOKIE
+from icici_breeze_backend.app.auth.auth_cookies import COOKIE_MAX_AGE, DIRECT_ICICI_COOKIE
 from icici_breeze_backend.app.auth.credentials import encrypt_direct_icici_cookie
 from icici_breeze_backend.app.auth.user_account import verify_direct_account_password, get_google_id_by_user_id
 from icici_breeze_backend.app.domain.auth import (
@@ -39,11 +39,19 @@ async def _require_admin(ctx: RequestContext = Depends(get_current_user)) -> Req
 
 @router.post("/auth/login", include_in_schema=False)
 async def login_endpoint_disabled():
-    """ICICI token + user id login removed; use Google OAuth then ICICI (see /auth/google, /auth/icici-redirect)."""
+    """ICICI token + user id login removed; use app password sign-in then complete ICICI login."""
     raise HTTPException(
         status_code=410,
-        detail="Login with ICICI token is disabled. Use Google or app password sign-in, then complete ICICI login.",
+        detail="Login with ICICI token is disabled. Use app password sign-in, then complete ICICI login.",
     )
+
+
+@router.get("/auth/icici-redirect", include_in_schema=False)
+async def auth_icici_redirect(request: Request):
+    """After direct-login bootstrap: resolve user_id and redirect to ICICI Breeze."""
+    from icici_breeze_backend.app.api.v1.google_icici_redirect import redirect_to_icici_login
+
+    return await redirect_to_icici_login(request)
 
 
 @router.post("/auth/direct-login", include_in_schema=False)

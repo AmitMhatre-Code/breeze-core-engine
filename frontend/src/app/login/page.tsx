@@ -3,7 +3,6 @@
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
-import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
 
@@ -11,6 +10,7 @@ function LoginContent() {
   const sp = useSearchParams();
   const registered = sp.get("registered");
   const corrected = sp.get("corrected");
+  const recovered = sp.get("recovered");
   const deleted = sp.get("deleted");
   const err = sp.get("error");
   const reason = sp.get("reason");
@@ -28,6 +28,9 @@ function LoginContent() {
   } else if (corrected) {
     banner = "Credentials updated. Please sign in again.";
     tone = "ok";
+  } else if (recovered) {
+    banner = "App password updated. Please sign in.";
+    tone = "ok";
   } else if (deleted) {
     banner = "Account removed. You can register again.";
     tone = "ok";
@@ -38,7 +41,7 @@ function LoginContent() {
     banner = "No broker credentials on file. Register or update settings.";
     tone = "warn";
   } else if (err === "oauth_invalid" || err?.startsWith("oauth_")) {
-    banner = "Sign-in session invalid or expired. Try again.";
+    banner = "Sign-in bootstrap invalid or expired. Try again.";
     tone = "err";
   } else if (reason === "session") {
     banner =
@@ -74,7 +77,7 @@ function LoginContent() {
             Breeze Web
           </h1>
           <p className="text-xs text-zinc-600 dark:text-zinc-400">
-            Sign in with Google or your app password, then complete ICICI Direct login.
+            Sign in with your ICICI user id and app password, then complete ICICI Direct login.
           </p>
         </div>
         {banner && (
@@ -95,7 +98,6 @@ function LoginContent() {
           </div>
         )}
         <div className="space-y-3">
-          <GoogleSignInButton href="/auth/google?next=/auth/icici-redirect" />
           <p className="text-center text-[11px] text-zinc-500">
             New user?{" "}
             <a href="/register" className="app-link">
@@ -108,6 +110,12 @@ function LoginContent() {
               Update credentials
             </a>
           </p>
+          <p className="text-center text-[11px] text-zinc-500">
+            Forgot password?{" "}
+            <a href="/register/forgot-password" className="app-link">
+              Reset via ICICI
+            </a>
+          </p>
         </div>
 
         <div className="relative my-6">
@@ -115,7 +123,7 @@ function LoginContent() {
             <span className="w-full border-t border-zinc-200 dark:border-zinc-700" />
           </div>
           <div className="relative flex justify-center text-[10px] uppercase tracking-wide text-zinc-500">
-            <span className="bg-white px-2 dark:bg-zinc-900/80">Or app password</span>
+            <span className="bg-white px-2 dark:bg-zinc-900/80">App password</span>
           </div>
         </div>
 

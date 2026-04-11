@@ -119,6 +119,32 @@ def user_account_exists_by_google_id(conn: sqlite3.Connection, google_id: str) -
     return get_user_id_by_google_id(conn, google_id) is not None
 
 
+def user_has_active_broker_credentials(conn: sqlite3.Connection, user_id: str) -> bool:
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT 1 FROM user_credentials WHERE user_id = ? AND is_active = 1 LIMIT 1",
+        (user_id,),
+    )
+    return cur.fetchone() is not None
+
+
+def update_direct_app_password(conn: sqlite3.Connection, user_id: str, password_plain: str) -> bool:
+    """Set bcrypt app password for a direct account. Returns False if not direct or missing row."""
+    row = get_account_auth_row(conn, user_id)
+    if not row:
+        return False
+    _gid, provider, _ph = row
+    if (provider or "") != "direct":
+        return False
+    ph = hash_app_password(password_plain)
+    conn.execute(
+        "UPDATE user_account SET password_hash = ? WHERE user_id = ? AND auth_provider = 'direct'",
+        (ph, user_id),
+    )
+    conn.commit()
+    return True
+
+
 def verify_direct_account_password(conn: sqlite3.Connection, user_id: str, password: str) -> bool:
     row = get_account_auth_row(conn, user_id)
     if not row:

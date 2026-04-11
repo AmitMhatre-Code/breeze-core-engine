@@ -14,7 +14,6 @@ starlette==0.27.0
 sqlalchemy==2.0.23
 
 PyJWT==2.8.0
-authlib==1.2.1
 itsdangerous>=2.1.0
 cryptography==41.0.7
 python-multipart==0.0.6

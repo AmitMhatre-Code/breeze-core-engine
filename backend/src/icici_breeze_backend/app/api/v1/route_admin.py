@@ -188,7 +188,7 @@ async def run_tests(
         python_bin = Path("python3")
 
     # Playwright suite: run all e2e tests except those that exercise Google OAuth
-    # (marked with @pytest.mark.google_oauth). This ensures Admin-triggered runs
+    # (marked with @pytest.mark.google_oauth if present). This ensures Admin-triggered runs
     # never hit the Google consent UI, even indirectly.
     pytest_playwright_args = ["tests/e2e/", "--browser", "webkit", "--headed", "-v", "--durations=0", "-m", "not google_oauth"]
     if run_mode == "trace":

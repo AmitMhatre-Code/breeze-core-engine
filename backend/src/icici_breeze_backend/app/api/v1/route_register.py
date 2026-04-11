@@ -2,18 +2,30 @@
 import logging
 import sqlite3
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.api.v1.route_google_auth import GOOGLE_OAUTH_COOKIE
-from icici_breeze_backend.app.auth.credentials import CredentialManager, decrypt_google_oauth_cookie
+from icici_breeze_backend.app.auth.auth_cookies import (
+    BROKER_RECOVERY_BOOTSTRAP_COOKIE,
+    BROKER_RECOVERY_TOKEN_COOKIE,
+    COOKIE_MAX_AGE,
+    RECOVERY_TOKEN_MAX_AGE,
+)
+from icici_breeze_backend.app.auth.credentials import (
+    CredentialManager,
+    decrypt_broker_recovery_token,
+    encrypt_broker_recovery_bootstrap_cookie,
+    encrypt_broker_recovery_token,
+)
 from icici_breeze_backend.app.auth.user_account import (
     create_direct_user_account,
     delete_user_account_by_user_id,
-    ensure_user_account,
-    get_user_id_by_google_id,
+    get_account_auth_row,
+    update_direct_app_password,
+    user_account_exists_by_user_id,
+    user_has_active_broker_credentials,
     verify_direct_account_password,
 )
 
@@ -25,30 +37,8 @@ DB_PATH = cfg.DATA_PATH + cfg.USERS_DB
 _MIN_PASSWORD_LEN = 8
 
 
-def _get_google_data_from_cookie(request: Request) -> tuple[str | None, str | None]:
-    cookie = request.cookies.get(GOOGLE_OAUTH_COOKIE)
-    if not cookie:
-        return None, None
-    enc_key = (cfg.JWT_SECRET or "").strip()
-    if not enc_key:
-        return None, None
-    result = decrypt_google_oauth_cookie(cookie, enc_key)
-    return result if result else (None, None)
-
-
-def _clear_oauth_cookie(response: JSONResponse) -> None:
-    response.delete_cookie(key=GOOGLE_OAUTH_COOKIE, path="/")
-
-
 class RegisterBootstrapResponse(BaseModel):
-    google_authenticated: bool
     direct_registration_available: bool = True
-
-
-class RegisterSubmitBody(BaseModel):
-    user_id: str
-    api_key: str
-    secret_fragment: str
 
 
 class RegisterDirectBody(BaseModel):
@@ -58,17 +48,21 @@ class RegisterDirectBody(BaseModel):
     secret_fragment: str = Field(..., min_length=1)
 
 
-class CorrectBootstrapResponse(BaseModel):
-    google_authenticated: bool
-    has_account: bool | None = None
-    user_id: str | None = None
+class CorrectDirectBody(BaseModel):
+    user_id: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+    api_key: str = Field(..., min_length=1)
+    secret_fragment: str = Field(..., min_length=1)
 
 
-class DeleteBootstrapResponse(BaseModel):
-    google_authenticated: bool
-    has_account: bool | None = None
-    user_id: str | None = None
-    direct_delete_available: bool = True
+class RecoverStartBody(BaseModel):
+    user_id: str = Field(..., min_length=1)
+
+
+class RecoverCompleteBody(BaseModel):
+    """ICICI verification is complete; only the new app password is required."""
+
+    password: str = Field(..., min_length=_MIN_PASSWORD_LEN)
 
 
 class DeleteAccountBody(BaseModel):
@@ -76,49 +70,13 @@ class DeleteAccountBody(BaseModel):
     password: str | None = None
 
 
+def _clear_recovery_token(response: JSONResponse) -> None:
+    response.delete_cookie(key=BROKER_RECOVERY_TOKEN_COOKIE, path="/")
+
+
 @router.get("/session", response_model=RegisterBootstrapResponse)
-async def register_session(request: Request):
-    google_id, _ = _get_google_data_from_cookie(request)
-    return RegisterBootstrapResponse(google_authenticated=bool(google_id))
-
-
-@router.post("")
-async def register_post(request: Request, body: RegisterSubmitBody):
-    google_id, email = _get_google_data_from_cookie(request)
-    if not google_id:
-        raise HTTPException(status_code=401, detail="Sign in with Google first")
-    user_id = (body.user_id or "").strip()
-    api_key = (body.api_key or "").strip()
-    secret_fragment = (body.secret_fragment or "").strip()
-    if not user_id or not api_key or not secret_fragment:
-        raise HTTPException(status_code=400, detail="Missing fields")
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            existing = get_user_id_by_google_id(conn, google_id)
-            if existing and existing != user_id:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Different ICICI id linked; use correct-credentials flow",
-                )
-            ensure_user_account(
-                conn,
-                google_id,
-                user_id,
-                email or f"{user_id}@user.local",
-            )
-            if not cred_manager.update_credentials(user_id, api_key, secret_fragment):
-                raise HTTPException(status_code=400, detail="Could not save credentials")
-    except HTTPException:
-        raise
-    except sqlite3.IntegrityError as e:
-        logger.warning("register_post integrity error: %s", e)
-        raise HTTPException(status_code=409, detail="Account already exists")
-    except Exception as e:
-        logger.exception("register_post failed: %s", e)
-        raise HTTPException(status_code=500, detail="Registration failed")
-    response = JSONResponse({"ok": True, "redirect": "/login?registered=1"})
-    _clear_oauth_cookie(response)
-    return response
+async def register_session():
+    return RegisterBootstrapResponse(direct_registration_available=True)
 
 
 @router.post("/direct", response_model=None)
@@ -128,7 +86,10 @@ async def register_direct_post(body: RegisterDirectBody):
     api_key = (body.api_key or "").strip()
     secret_fragment = (body.secret_fragment or "").strip()
     if len(password) < _MIN_PASSWORD_LEN:
-        raise HTTPException(status_code=400, detail=f"Password must be at least {_MIN_PASSWORD_LEN} characters")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {_MIN_PASSWORD_LEN} characters",
+        )
     if not user_id or not api_key or not secret_fragment:
         raise HTTPException(status_code=400, detail="Missing fields")
     email = f"{user_id}@user.local"
@@ -162,76 +123,121 @@ async def register_direct_post(body: RegisterDirectBody):
     return JSONResponse({"ok": True, "redirect": "/login?registered=1"})
 
 
-@router.get("/correct/session", response_model=CorrectBootstrapResponse)
-async def register_correct_session(request: Request):
-    google_id, _ = _get_google_data_from_cookie(request)
-    if not google_id:
-        return CorrectBootstrapResponse(google_authenticated=False, has_account=None)
-    with sqlite3.connect(DB_PATH) as conn:
-        user_id = get_user_id_by_google_id(conn, google_id)
-    if not user_id:
-        return CorrectBootstrapResponse(google_authenticated=True, has_account=False)
-    return CorrectBootstrapResponse(google_authenticated=True, has_account=True, user_id=user_id)
-
-
-@router.post("/correct", response_model=None)
-async def register_correct_post(request: Request, body: RegisterSubmitBody):
-    google_id, email = _get_google_data_from_cookie(request)
-    if not google_id:
-        raise HTTPException(status_code=401, detail="Sign in with Google first")
-    with sqlite3.connect(DB_PATH) as conn:
-        existing_user_id = get_user_id_by_google_id(conn, google_id)
-    if not existing_user_id:
-        raise HTTPException(status_code=400, detail="No account for this Google user")
+@router.post("/correct-direct", response_model=None)
+async def register_correct_direct_post(body: CorrectDirectBody):
     user_id = (body.user_id or "").strip()
+    password = body.password or ""
     api_key = (body.api_key or "").strip()
     secret_fragment = (body.secret_fragment or "").strip()
-    if not user_id or not api_key or not secret_fragment:
+    if not user_id or not password or not api_key or not secret_fragment:
         raise HTTPException(status_code=400, detail="Missing fields")
-    if user_id != existing_user_id:
-        raise HTTPException(status_code=400, detail="User id mismatch")
+    with sqlite3.connect(DB_PATH) as conn:
+        if not verify_direct_account_password(conn, user_id, password):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
     if not cred_manager.update_credentials(user_id, api_key, secret_fragment):
         raise HTTPException(status_code=400, detail="Could not save credentials")
-    em = (email or "").strip() or f"{user_id}@user.local"
+    return JSONResponse({"ok": True, "redirect": "/login?corrected=1"})
+
+
+@router.post("/recover/start", response_model=None)
+async def register_recover_start(request: Request, body: RecoverStartBody):
+    user_id = (body.user_id or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    enc_key = (cfg.JWT_SECRET or "").strip()
+    if not enc_key:
+        raise HTTPException(status_code=503, detail="Server misconfiguration")
+
     with sqlite3.connect(DB_PATH) as conn:
-        ensure_user_account(conn, google_id, user_id, em)
-    response = JSONResponse({"ok": True, "redirect": "/login?corrected=1"})
-    _clear_oauth_cookie(response)
+        row = get_account_auth_row(conn, user_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="No account found")
+        _gid, provider, ph = row
+        if (provider or "") != "direct" or not ph:
+            raise HTTPException(
+                status_code=400,
+                detail="Recovery is only available for app-password accounts",
+            )
+        if not user_has_active_broker_credentials(conn, user_id):
+            raise HTTPException(status_code=400, detail="No broker credentials on file")
+
+    if getattr(cfg, "ICICI_BROKER_MODE", "live") == "mock":
+        token_val = encrypt_broker_recovery_token(user_id, enc_key, RECOVERY_TOKEN_MAX_AGE)
+        if not token_val:
+            raise HTTPException(status_code=500, detail="Could not issue recovery token")
+        response = JSONResponse({"ok": True, "redirect": "/register/recover-complete"})
+        response.set_cookie(
+            key=BROKER_RECOVERY_TOKEN_COOKIE,
+            value=token_val,
+            max_age=RECOVERY_TOKEN_MAX_AGE,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="lax",
+            path="/",
+        )
+        return response
+
+    cookie_val = encrypt_broker_recovery_bootstrap_cookie(user_id, enc_key)
+    if not cookie_val:
+        raise HTTPException(status_code=500, detail="Could not create recovery session")
+    response = JSONResponse({"ok": True, "redirect": "/auth/icici-redirect"})
+    response.set_cookie(
+        key=BROKER_RECOVERY_BOOTSTRAP_COOKIE,
+        value=cookie_val,
+        max_age=COOKIE_MAX_AGE,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        path="/",
+    )
     return response
 
 
-@router.get("/delete/session", response_model=DeleteBootstrapResponse)
-async def register_delete_session(request: Request):
-    google_id, _ = _get_google_data_from_cookie(request)
-    if not google_id:
-        return DeleteBootstrapResponse(google_authenticated=False, has_account=None)
-    with sqlite3.connect(DB_PATH) as conn:
-        user_id = get_user_id_by_google_id(conn, google_id)
+@router.post("/recover/complete", response_model=None)
+async def register_recover_complete(request: Request, body: RecoverCompleteBody):
+    password = body.password or ""
+    if len(password) < _MIN_PASSWORD_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {_MIN_PASSWORD_LEN} characters",
+        )
+
+    enc_key = (cfg.JWT_SECRET or "").strip()
+    if not enc_key:
+        raise HTTPException(status_code=503, detail="Server misconfiguration")
+    raw = request.cookies.get(BROKER_RECOVERY_TOKEN_COOKIE)
+    if not raw:
+        raise HTTPException(status_code=401, detail="Recovery session expired or missing")
+    decoded = decrypt_broker_recovery_token(raw, enc_key)
+    if not decoded:
+        raise HTTPException(status_code=401, detail="Recovery session invalid")
+    user_id = (decoded[0] or "").strip()
     if not user_id:
-        return DeleteBootstrapResponse(google_authenticated=True, has_account=False)
-    return DeleteBootstrapResponse(google_authenticated=True, has_account=True, user_id=user_id)
+        raise HTTPException(status_code=401, detail="Recovery session invalid")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        if not user_account_exists_by_user_id(conn, user_id):
+            raise HTTPException(status_code=404, detail="No account found")
+        row = get_account_auth_row(conn, user_id)
+        if not row or (row[1] or "") != "direct":
+            raise HTTPException(status_code=400, detail="Invalid account type")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        if not update_direct_app_password(conn, user_id, password):
+            raise HTTPException(status_code=400, detail="Could not update app password")
+
+    response = JSONResponse({"ok": True, "redirect": "/login?recovered=1"})
+    _clear_recovery_token(response)
+    return response
 
 
 @router.post("/delete", response_model=None)
-async def register_delete_post(request: Request, body: DeleteAccountBody | None = None):
-    google_id, _ = _get_google_data_from_cookie(request)
-    if google_id:
-        with sqlite3.connect(DB_PATH) as conn:
-            user_id = get_user_id_by_google_id(conn, google_id)
-        if not user_id:
-            raise HTTPException(status_code=400, detail="No account")
-        with sqlite3.connect(DB_PATH) as conn:
-            delete_user_account_by_user_id(conn, user_id)
-        response = JSONResponse({"ok": True, "redirect": "/login?deleted=1"})
-        _clear_oauth_cookie(response)
-        return response
-
-    # Direct account: require user_id + password (no Google cookie)
+async def register_delete_post(body: DeleteAccountBody | None = None):
     body = body or DeleteAccountBody()
     uid = (body.user_id or "").strip()
     pwd = body.password or ""
     if not uid or not pwd:
-        raise HTTPException(status_code=400, detail="user_id and password are required for direct accounts")
+        raise HTTPException(status_code=400, detail="user_id and password are required")
     with sqlite3.connect(DB_PATH) as conn:
         if not verify_direct_account_password(conn, uid, pwd):
             raise HTTPException(status_code=401, detail="Invalid credentials")

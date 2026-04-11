@@ -17,6 +17,15 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "1.4.1",
+    date: "11-Apr-2026",
+    releaseKind: "minor",
+    summary: "Application Password Reset",
+    changes: [
+      "Application now allows resetting the app password if user can authenticate with ICICI",
+    ],
+  },
+  {
     version: "1.4.0",
     date: "11-Apr-2026",
     releaseKind: "major",

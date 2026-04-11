@@ -37,35 +37,6 @@ def decrypt_from_session_cookie(encrypted: str, encryption_key: str) -> Optional
         return None
 
 
-def _google_oauth_cipher(encryption_key: str):
-    """Fernet cipher for Google OAuth temp cookie (google_id|email)."""
-    key_material = hashlib.sha256(((encryption_key or "") + "google_oauth_temp").encode()).digest()
-    return Fernet(urlsafe_b64encode(key_material[:32]))
-
-
-def encrypt_google_oauth_cookie(google_id: str, email: str, encryption_key: str) -> str:
-    """Encrypt google_id|email for short-lived OAuth cookie."""
-    if not encryption_key or not google_id:
-        return ""
-    payload = f"{google_id}|{email or ''}"
-    try:
-        return _google_oauth_cipher(encryption_key).encrypt(payload.encode()).decode("ascii")
-    except Exception:
-        return ""
-
-
-def decrypt_google_oauth_cookie(encrypted: str, encryption_key: str) -> Optional[tuple]:
-    """Decrypt cookie to (google_id, email). Returns None on failure."""
-    if not encrypted or not encryption_key:
-        return None
-    try:
-        payload = _google_oauth_cipher(encryption_key).decrypt(encrypted.encode()).decode()
-        parts = payload.split("|", 1)
-        return (parts[0], parts[1] if len(parts) > 1 else "")
-    except Exception:
-        return None
-
-
 def _direct_icici_cipher(encryption_key: str):
     """Fernet for short-lived direct-login → ICICI redirect cookie (user_id only)."""
     key_material = hashlib.sha256(((encryption_key or "") + "direct_icici_prelogin").encode()).digest()
@@ -86,6 +57,97 @@ def decrypt_direct_icici_cookie(encrypted: str, encryption_key: str) -> Optional
         return None
     try:
         return _direct_icici_cipher(encryption_key).decrypt(encrypted.encode()).decode()
+    except Exception:
+        return None
+
+
+def _broker_recovery_bootstrap_cipher(encryption_key: str):
+    key_material = hashlib.sha256(
+        ((encryption_key or "") + "broker_recovery_bootstrap_v1").encode()
+    ).digest()
+    return Fernet(urlsafe_b64encode(key_material[:32]))
+
+
+def encrypt_broker_recovery_bootstrap_cookie(user_id: str, encryption_key: str) -> str:
+    if not encryption_key or not user_id:
+        return ""
+    try:
+        return _broker_recovery_bootstrap_cipher(encryption_key).encrypt(user_id.encode()).decode("ascii")
+    except Exception:
+        return ""
+
+
+def decrypt_broker_recovery_bootstrap_cookie(encrypted: str, encryption_key: str) -> Optional[str]:
+    if not encrypted or not encryption_key:
+        return None
+    try:
+        return _broker_recovery_bootstrap_cipher(encryption_key).decrypt(encrypted.encode()).decode()
+    except Exception:
+        return None
+
+
+def _broker_recovery_pending_cipher(encryption_key: str):
+    key_material = hashlib.sha256(
+        ((encryption_key or "") + "broker_recovery_pending_v1").encode()
+    ).digest()
+    return Fernet(urlsafe_b64encode(key_material[:32]))
+
+
+def encrypt_broker_recovery_pending_cookie(user_id: str, encryption_key: str) -> str:
+    if not encryption_key or not user_id:
+        return ""
+    try:
+        return _broker_recovery_pending_cipher(encryption_key).encrypt(user_id.encode()).decode("ascii")
+    except Exception:
+        return ""
+
+
+def decrypt_broker_recovery_pending_cookie(encrypted: str, encryption_key: str) -> Optional[str]:
+    if not encrypted or not encryption_key:
+        return None
+    try:
+        return _broker_recovery_pending_cipher(encryption_key).decrypt(encrypted.encode()).decode()
+    except Exception:
+        return None
+
+
+def _broker_recovery_token_cipher(encryption_key: str):
+    key_material = hashlib.sha256(
+        ((encryption_key or "") + "broker_recovery_token_v1").encode()
+    ).digest()
+    return Fernet(urlsafe_b64encode(key_material[:32]))
+
+
+def encrypt_broker_recovery_token(user_id: str, encryption_key: str, max_age_seconds: int) -> str:
+    """Opaque token: user_id + expiry (unix seconds), Fernet-encrypted."""
+    import time
+
+    if not encryption_key or not user_id or max_age_seconds <= 0:
+        return ""
+    exp = int(time.time()) + int(max_age_seconds)
+    payload = f"{user_id}\n{exp}"
+    try:
+        return _broker_recovery_token_cipher(encryption_key).encrypt(payload.encode()).decode("ascii")
+    except Exception:
+        return ""
+
+
+def decrypt_broker_recovery_token(encrypted: str, encryption_key: str) -> Optional[tuple[str, int]]:
+    """Returns (user_id, exp_unix) or None if invalid/expired."""
+    import time
+
+    if not encrypted or not encryption_key:
+        return None
+    try:
+        raw = _broker_recovery_token_cipher(encryption_key).decrypt(encrypted.encode()).decode()
+        parts = raw.split("\n", 1)
+        if len(parts) != 2:
+            return None
+        uid, exp_s = parts[0].strip(), parts[1].strip()
+        exp = int(exp_s)
+        if exp < int(time.time()):
+            return None
+        return (uid, exp)
     except Exception:
         return None
 

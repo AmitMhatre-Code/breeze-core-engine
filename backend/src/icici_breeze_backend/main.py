@@ -112,8 +112,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.sessions import SessionMiddleware
-
 from icici_breeze_backend.app.services.processor import processor
 from fastapi.responses import RedirectResponse
 from icici_breeze_backend.core.errors import ConflictError, UnauthorizedError, ForbiddenError
@@ -290,9 +288,6 @@ def start_application():
         _logger.info("Skipping ICICI master download (ICICI_BROKER_MODE=mock).")
 
     app = FastAPI(trust_env=True)
-    # Session for Google OAuth (Authlib stores state here)
-    session_secret = (cfg.JWT_SECRET or "dev-session-secret").strip()[:32].ljust(32, "0")
-    app.add_middleware(SessionMiddleware, secret_key=session_secret)
     # CORS: allow web UI. .env uses ALLOWED_ORIGINS; CORS_ORIGINS overrides if set.
     _cors_raw = (
         os.environ.get("CORS_ORIGINS")

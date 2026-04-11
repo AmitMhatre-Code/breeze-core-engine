@@ -8,6 +8,11 @@ from fastapi import APIRouter, Request, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
 
+from icici_breeze_backend.app.auth.auth_cookies import (
+    BROKER_RECOVERY_PENDING_COOKIE,
+    BROKER_RECOVERY_TOKEN_COOKIE,
+    RECOVERY_TOKEN_MAX_AGE,
+)
 from icici_breeze_backend.app.auth.context import (
     get_request_context,
     get_optional_request_context,
@@ -180,7 +185,7 @@ async def updatemaster(ctx: RequestContext = Depends(get_request_context_or_redi
 
 
 @router.get("/login")
-async def login_via_google(request: Request):
+async def login_bootstrap_icici(request: Request):
     return await redirect_to_icici_login(request)
 
 
@@ -348,6 +353,36 @@ async def _complete_icici_session(
             errors = breeze.retrieve_errors()
             raise_route_errors(errors, log_context="route_home.initiate_session no_account")
         google_id = get_google_id_by_user_id(conn, form.user_id)
+
+    enc_key = (cfg.JWT_SECRET or "").strip()
+    pending_uid = None
+    if enc_key:
+        from icici_breeze_backend.app.auth.credentials import decrypt_broker_recovery_pending_cookie
+
+        pr = request.cookies.get(BROKER_RECOVERY_PENDING_COOKIE)
+        if pr:
+            pending_uid = decrypt_broker_recovery_pending_cookie(pr, enc_key)
+
+    if pending_uid and pending_uid == form.user_id:
+        from icici_breeze_backend.app.auth.credentials import encrypt_broker_recovery_token
+
+        token_val = encrypt_broker_recovery_token(form.user_id, enc_key, RECOVERY_TOKEN_MAX_AGE)
+        if not token_val:
+            raise HTTPException(status_code=500, detail="Could not issue recovery token")
+        logger.info("login_submit broker_recovery user_id=%s", form.user_id)
+        response = JSONResponse({"redirect": "/register/recover-complete"})
+        response.delete_cookie(key=LOGIN_USER_ID_COOKIE, path="/")
+        response.delete_cookie(key=BROKER_RECOVERY_PENDING_COOKIE, path="/")
+        response.set_cookie(
+            key=BROKER_RECOVERY_TOKEN_COOKIE,
+            value=token_val,
+            max_age=RECOVERY_TOKEN_MAX_AGE,
+            httponly=True,
+            secure=cfg.COOKIE_SECURE,
+            samesite="lax",
+            path="/",
+        )
+        return response
 
     handler = JWTHandler(
         secret_key=cfg.JWT_SECRET,
