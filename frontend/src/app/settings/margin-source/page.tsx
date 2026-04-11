@@ -236,8 +236,8 @@ export default function MarginSourceSettingsPage() {
               </p>
             </div>
             <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
-              <div className="flex items-center justify-between gap-3">
-                <div className="space-y-1">
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0 flex-1 space-y-1 pe-1">
                   <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
                     Margin source override
                   </div>
@@ -252,7 +252,7 @@ export default function MarginSourceSettingsPage() {
                   aria-label="Toggle exchange baseline for margin calculations"
                   disabled={toggleDisabled}
                   onClick={() => handleToggle(!useExchangeBaseline)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${
                     toggleDisabled
                       ? useExchangeBaseline
                         ? "cursor-not-allowed bg-sky-800"
@@ -263,8 +263,11 @@ export default function MarginSourceSettingsPage() {
                   }`}
                 >
                   <span
-                    className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
-                      useExchangeBaseline ? "translate-x-5" : "translate-x-1"
+                    aria-hidden
+                    className={`pointer-events-none absolute top-1/2 size-5 -translate-y-1/2 rounded-full bg-white shadow transition-[inset-inline-start,inset-inline-end] duration-200 ease-out ${
+                      useExchangeBaseline
+                        ? "start-auto end-0.5"
+                        : "start-0.5 end-auto"
                     }`}
                   />
                 </button>

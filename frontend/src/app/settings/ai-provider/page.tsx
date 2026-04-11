@@ -1202,7 +1202,7 @@ export default function AiProviderSettingsPage() {
                     return (
                       <div
                         key={`${idx}-${feed.url}`}
-                        className="grid items-center gap-3 px-1 py-1 md:grid-cols-[1fr_1.4fr_auto]"
+                        className="grid min-w-0 grid-cols-1 items-center gap-3 px-1 py-1 md:grid-cols-[1fr_1.4fr_auto]"
                       >
                         {isEditing ? (
                           <input
@@ -1273,7 +1273,7 @@ export default function AiProviderSettingsPage() {
                   <div className="px-1 py-1 text-sm text-zinc-500 dark:text-zinc-400">No sources yet.</div>
                 )}
 
-                <div className="grid items-center gap-3 px-1 py-1 md:grid-cols-[1fr_1.4fr_auto]">
+                <div className="grid min-w-0 grid-cols-1 items-center gap-3 px-1 py-1 md:grid-cols-[1fr_1.4fr_auto]">
                   <div className="text-xs text-zinc-500 dark:text-zinc-400">Add a new source</div>
                   <div />
                   <div className="flex items-center justify-end">

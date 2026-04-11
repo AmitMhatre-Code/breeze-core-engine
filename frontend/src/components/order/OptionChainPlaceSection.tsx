@@ -14,6 +14,7 @@ import {
   chainLotSize,
   legLotSize,
   OptionChainTable,
+  scrollOptionChainAtmIntoView,
 } from "@/components/order/OptionChainTable";
 import type {
   ChainApiResponse,
@@ -142,10 +143,7 @@ export function OptionChainPlaceSection() {
   useEffect(() => {
     if (!chainSuccess) return;
     const t = requestAnimationFrame(() => {
-      const row = scrollRef.current?.querySelector(
-        "tr[data-atm-strike='true']",
-      );
-      row?.scrollIntoView({ block: "center", behavior: "smooth" });
+      scrollOptionChainAtmIntoView(scrollRef.current);
     });
     return () => cancelAnimationFrame(t);
   }, [chainSuccess]);

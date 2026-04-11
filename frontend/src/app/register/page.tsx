@@ -82,7 +82,7 @@ export default function RegisterPage() {
     session.direct_registration_available !== false;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 py-10 text-zinc-50">
+    <div className="flex min-h-screen items-center justify-center bg-zinc-950 py-10 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(2.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] text-zinc-50">
       <div className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900/80 p-8">
         <h1 className="text-xl font-semibold">Register</h1>
         <p className="mt-2 text-xs text-zinc-400">

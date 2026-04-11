@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { formatExpiryChipShort } from "@/lib/strategy-builder/expiry";
 
 type Props = {
@@ -31,6 +32,12 @@ export function ExpirySelectPill({
 }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const mobilePortalRef = useRef<HTMLDivElement>(null);
+  const portalReady = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   const pick = (d: string) => {
     onChange(d);
@@ -40,7 +47,9 @@ export function ExpirySelectPill({
   useEffect(() => {
     if (!open) return;
     const fn = (e: MouseEvent) => {
-      if (rootRef.current?.contains(e.target as Node)) return;
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t)) return;
+      if (mobilePortalRef.current?.contains(t)) return;
       setOpen(false);
     };
     document.addEventListener("mousedown", fn);
@@ -76,6 +85,130 @@ export function ExpirySelectPill({
     }
     return "flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus-visible:border-sky-500 focus-visible:ring-4 focus-visible:ring-sky-500/15 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus-visible:border-sky-400 dark:focus-visible:ring-sky-400/20";
   })();
+
+  const mobilePanelClass =
+    darkToolbar && toolbarLayout
+      ? "absolute inset-0 z-[1] flex flex-col bg-white dark:bg-zinc-900"
+      : toolbarLayout
+        ? "absolute inset-0 z-[1] flex flex-col bg-zinc-50 dark:bg-zinc-950"
+        : darkToolbar
+          ? "absolute inset-0 z-[1] flex flex-col bg-white dark:bg-zinc-900"
+          : "absolute inset-0 z-[1] flex flex-col bg-zinc-50 dark:bg-zinc-950";
+
+  const desktopListboxClass =
+    darkToolbar && toolbarLayout
+      ? "absolute left-0 top-full z-[300] mt-1 hidden max-h-[min(22rem,70vh)] w-52 min-w-[12rem] rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-600 dark:bg-zinc-800 lg:flex lg:flex-col"
+      : toolbarLayout
+        ? "absolute left-0 top-full z-[300] mt-1 hidden max-h-[min(22rem,70vh)] w-52 min-w-[12rem] rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900 lg:flex lg:flex-col"
+        : darkToolbar
+          ? "absolute left-0 top-full z-[300] mt-0 hidden max-h-[min(22rem,70vh)] w-full min-w-[18rem] max-w-lg rounded-b-lg rounded-t-none border border-t-0 border-zinc-200 bg-white shadow-xl dark:border-zinc-600 dark:bg-zinc-800 lg:flex lg:flex-col"
+          : "absolute left-0 top-full z-[300] mt-1.5 hidden max-h-[min(22rem,70vh)] w-full min-w-[18rem] max-w-lg rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900 lg:flex lg:flex-col";
+
+  const mobileHeaderBarClass = darkToolbar
+    ? "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-700"
+    : "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800";
+
+  const mobileTitleClass = darkToolbar
+    ? "text-sm font-semibold text-zinc-900 dark:text-zinc-100"
+    : "text-sm font-semibold text-zinc-900 dark:text-zinc-50";
+
+  const mobileCloseBtnClass = darkToolbar
+    ? "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:text-zinc-400 dark:hover:bg-zinc-700/80"
+    : "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:hover:bg-zinc-800";
+
+  const renderExpiryUl = () => (
+    <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1 lg:max-h-[min(18rem,50vh)]">
+      {value ? (
+        <li>
+          <button
+            type="button"
+            role="option"
+            aria-selected={false}
+            className={
+              darkToolbar
+                ? "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700/50"
+                : "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/80"
+            }
+            onClick={() => pick("")}
+          >
+            Clear expiry
+          </button>
+        </li>
+      ) : null}
+      {dates.length === 0 ? (
+        <li
+          className={
+            darkToolbar
+              ? "px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500"
+              : "px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400"
+          }
+        >
+          No expiries for this underlying
+        </li>
+      ) : (
+        dates.map((d) => (
+          <li key={d}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={d === value}
+              className={
+                darkToolbar
+                  ? `flex w-full rounded-lg px-3 py-2 text-left text-sm transition ${
+                      d === value
+                        ? "bg-sky-100 text-sky-900 dark:bg-sky-950/55 dark:text-sky-400"
+                        : "text-zinc-900 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700/50"
+                    }`
+                  : `flex w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800/80 ${
+                      d === value
+                        ? "bg-sky-50 text-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
+                        : "text-zinc-900 dark:text-zinc-100"
+                    }`
+              }
+              onClick={() => pick(d)}
+            >
+              <span className="font-semibold">{d}</span>
+            </button>
+          </li>
+        ))
+      )}
+    </ul>
+  );
+
+  const mobileLayer =
+    portalReady && open ? (
+      <div
+        ref={mobilePortalRef}
+        className="fixed inset-0 z-[520] lg:hidden"
+      >
+        <div
+          className="absolute inset-0 z-0 bg-black/45"
+          role="presentation"
+          aria-hidden
+          onClick={() => setOpen(false)}
+        />
+        <div
+          className={mobilePanelClass}
+          role="listbox"
+          aria-label="Expiry dates"
+        >
+          <div className={mobileHeaderBarClass}>
+            <span className={mobileTitleClass}>Choose expiry</span>
+            <button
+              type="button"
+              className={mobileCloseBtnClass}
+              aria-label="Close"
+              onClick={() => setOpen(false)}
+            >
+              <span className="text-xl leading-none" aria-hidden>
+                ×
+              </span>
+            </button>
+          </div>
+          {renderExpiryUl()}
+        </div>
+      </div>
+    ) : null;
 
   return (
     <div
@@ -165,113 +298,9 @@ export function ExpirySelectPill({
 
       {open ? (
         <>
-          <div
-            className="fixed inset-0 z-[295] bg-black/45 lg:hidden"
-            role="presentation"
-            aria-hidden
-            onClick={() => setOpen(false)}
-          />
-          <div
-            className={
-              darkToolbar && toolbarLayout
-                ? "fixed inset-0 z-[300] flex flex-col bg-white dark:bg-zinc-900 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-1 lg:max-h-[min(22rem,70vh)] lg:w-52 lg:min-w-[12rem] lg:rounded-lg lg:border lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-600 lg:dark:bg-zinc-800"
-                : toolbarLayout
-                  ? "fixed inset-0 z-[300] flex flex-col bg-zinc-50 dark:bg-zinc-950 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-1 lg:max-h-[min(22rem,70vh)] lg:w-52 lg:min-w-[12rem] lg:rounded-md lg:border lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-700 lg:dark:bg-zinc-900"
-                  : darkToolbar
-                    ? "fixed inset-0 z-[300] flex flex-col bg-white dark:bg-zinc-900 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-0 lg:max-h-[min(22rem,70vh)] lg:w-full lg:min-w-[18rem] lg:max-w-lg lg:rounded-b-lg lg:rounded-t-none lg:border lg:border-t-0 lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-600 lg:dark:bg-zinc-800"
-                    : "fixed inset-0 z-[300] flex flex-col bg-zinc-50 dark:bg-zinc-950 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-1.5 lg:max-h-[min(22rem,70vh)] lg:w-full lg:min-w-[18rem] lg:max-w-lg lg:rounded-md lg:border lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-700 lg:dark:bg-zinc-900"
-            }
-            role="listbox"
-            aria-label="Expiry dates"
-          >
-            <div
-              className={
-                darkToolbar
-                  ? "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-700 lg:hidden"
-                  : "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800 lg:hidden"
-              }
-            >
-              <span
-                className={
-                  darkToolbar
-                    ? "text-sm font-semibold text-zinc-900 dark:text-zinc-100"
-                    : "text-sm font-semibold text-zinc-900 dark:text-zinc-50"
-                }
-              >
-                Choose expiry
-              </span>
-              <button
-                type="button"
-                className={
-                  darkToolbar
-                    ? "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:text-zinc-400 dark:hover:bg-zinc-700/80"
-                    : "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:hover:bg-zinc-800"
-                }
-                aria-label="Close"
-                onClick={() => setOpen(false)}
-              >
-                <span className="text-xl leading-none" aria-hidden>
-                  ×
-                </span>
-              </button>
-            </div>
-
-            <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1 lg:max-h-[min(18rem,50vh)]">
-              {value ? (
-                <li>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={false}
-                    className={
-                      darkToolbar
-                        ? "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700/50"
-                        : "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/80"
-                    }
-                    onClick={() => pick("")}
-                  >
-                    Clear expiry
-                  </button>
-                </li>
-              ) : null}
-              {dates.length === 0 ? (
-                <li
-                  className={
-                    darkToolbar
-                      ? "px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500"
-                      : "px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400"
-                  }
-                >
-                  No expiries for this underlying
-                </li>
-              ) : (
-                dates.map((d) => (
-                  <li key={d}>
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={d === value}
-                      className={
-                        darkToolbar
-                          ? `flex w-full rounded-lg px-3 py-2 text-left text-sm transition ${
-                              d === value
-                                ? "bg-sky-100 text-sky-900 dark:bg-sky-950/55 dark:text-sky-400"
-                                : "text-zinc-900 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700/50"
-                            }`
-                          : `flex w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800/80 ${
-                              d === value
-                                ? "bg-sky-50 text-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
-                                : "text-zinc-900 dark:text-zinc-100"
-                            }`
-                      }
-                      onClick={() => pick(d)}
-                    >
-                      <span className="font-semibold">{d}</span>
-                    </button>
-                  </li>
-                ))
-              )}
-            </ul>
+          {mobileLayer ? createPortal(mobileLayer, document.body) : null}
+          <div className={desktopListboxClass} role="listbox" aria-label="Expiry dates">
+            {renderExpiryUl()}
           </div>
         </>
       ) : null}

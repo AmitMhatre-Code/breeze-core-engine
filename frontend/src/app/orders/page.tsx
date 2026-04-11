@@ -624,72 +624,210 @@ function OrdersBody() {
             {parkedError ? (
               <div className="app-alert-error text-xs">{parkedError}</div>
             ) : null}
-            <div className="overflow-x-auto rounded-lg border border-zinc-200/80 dark:border-zinc-700/80">
-              <table className="min-w-full text-left text-sm">
-                <thead className="bg-zinc-50 dark:bg-zinc-900/60">
-                  <tr>
-                    <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                      #
-                    </th>
-                    <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                      Contract
-                    </th>
-                    <th className="px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                      Side
-                    </th>
-                    <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                      Quantity
-                    </th>
-                    <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                      Price
-                    </th>
-                    <th className="px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                      <span className="sr-only">Run or clone</span>
-                    </th>
-                    <th className="px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                      {parkedRows.length ? (
+            <div className="hidden md:block">
+              <div className="app-table-wrap">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-zinc-50 dark:bg-zinc-900/60">
+                    <tr>
+                      <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        #
+                      </th>
+                      <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        Contract
+                      </th>
+                      <th className="px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        Side
+                      </th>
+                      <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        Quantity
+                      </th>
+                      <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        Price
+                      </th>
+                      <th className="px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        <span className="sr-only">Run or clone</span>
+                      </th>
+                      <th className="px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        {parkedRows.length ? (
+                          <input
+                            type="checkbox"
+                            className={parkedCheckboxClass}
+                            checked={allParkedSelected}
+                            ref={(el) => {
+                              if (!el) return;
+                              el.indeterminate =
+                                someParkedSelected && !allParkedSelected;
+                            }}
+                            onChange={(e) => toggleParkedAll(e.target.checked)}
+                            aria-label="Select all parked orders"
+                          />
+                        ) : null}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                    {parkedRows.map((row, idx) => {
+                      const edit = parkedEdits[row.id] ?? {
+                        quantity: row.quantity,
+                        price: row.price,
+                      };
+                      const qtyOk = parsePositiveInt(edit.quantity) != null;
+                      return (
+                        <tr key={row.id}>
+                          <td className="px-3 py-2 align-middle tabular-nums text-zinc-400 dark:text-zinc-500">
+                            {idx + 1}
+                          </td>
+                          <td className="px-3 py-2 align-middle">
+                            {row.stock_code} {row.expiry_date} {row.right}{" "}
+                            {row.strike_price}
+                          </td>
+                          <td className="px-3 py-2 align-middle text-center">
+                            <span className={sidePillClass(row.action)}>
+                              {row.action}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 align-middle">
+                            <input
+                              type="number"
+                              min={1}
+                              className="w-24 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                              value={edit.quantity}
+                              onChange={(e) =>
+                                setParkedEdits((prev) => ({
+                                  ...prev,
+                                  [row.id]: {
+                                    ...edit,
+                                    quantity: e.target.value,
+                                  },
+                                }))
+                              }
+                            />
+                          </td>
+                          <td className="px-3 py-2 align-middle">
+                            <input
+                              type="number"
+                              step={0.05}
+                              className="w-28 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                              value={edit.price}
+                              onChange={(e) =>
+                                setParkedEdits((prev) => ({
+                                  ...prev,
+                                  [row.id]: {
+                                    ...edit,
+                                    price: e.target.value,
+                                  },
+                                }))
+                              }
+                            />
+                          </td>
+                          <td className="px-3 py-2 align-middle">
+                            <div className="flex flex-wrap justify-end gap-1">
+                              <button
+                                type="button"
+                                className={executeParkedBtnClass}
+                                disabled={!qtyOk}
+                                aria-label="Execute parked order"
+                                onClick={() => executeOneParked(row)}
+                              >
+                                <ExecuteOrderGlyph />
+                              </button>
+                              <button
+                                type="button"
+                                className={cloneToPlaceBtnClass}
+                                aria-label="Clone order to Place Order"
+                                onClick={(e) => cloneParkedToPlace(row, e)}
+                              >
+                                <CloneOrderGlyph />
+                              </button>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-center align-middle">
+                            <input
+                              type="checkbox"
+                              className={parkedCheckboxClass}
+                              checked={parkedSelected.has(row.id)}
+                              onChange={(e) =>
+                                toggleParkedOne(row.id, e.target.checked)
+                              }
+                              aria-label={`Select parked order ${row.stock_code}`}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="space-y-3 md:hidden">
+              {parkedRows.length ? (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-zinc-200/80 bg-zinc-50/80 px-3 py-2.5 dark:border-zinc-700/80 dark:bg-zinc-900/50">
+                  <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                    Bulk select
+                  </span>
+                  <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                    <input
+                      type="checkbox"
+                      className={parkedCheckboxClass}
+                      checked={allParkedSelected}
+                      ref={(el) => {
+                        if (!el) return;
+                        el.indeterminate =
+                          someParkedSelected && !allParkedSelected;
+                      }}
+                      onChange={(e) => toggleParkedAll(e.target.checked)}
+                    />
+                    All
+                  </label>
+                </div>
+              ) : null}
+              {parkedRows.map((row, idx) => {
+                const edit = parkedEdits[row.id] ?? {
+                  quantity: row.quantity,
+                  price: row.price,
+                };
+                const qtyOk = parsePositiveInt(edit.quantity) != null;
+                return (
+                  <div
+                    key={row.id}
+                    className="rounded-lg border border-zinc-200/80 bg-white/80 p-3 text-sm text-zinc-600 dark:border-zinc-700/80 dark:bg-zinc-950/40 dark:text-zinc-400"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="tabular-nums text-xs text-zinc-400 dark:text-zinc-500">
+                            #{idx + 1}
+                          </p>
+                          <p className="text-base font-medium text-zinc-900 dark:text-zinc-100">
+                            {row.stock_code} {row.expiry_date} {row.right}{" "}
+                            {row.strike_price}
+                          </p>
+                          <div className="mt-1">
+                            <span className={sidePillClass(row.action)}>
+                              {row.action}
+                            </span>
+                          </div>
+                        </div>
                         <input
                           type="checkbox"
                           className={parkedCheckboxClass}
-                          checked={allParkedSelected}
-                          ref={(el) => {
-                            if (!el) return;
-                            el.indeterminate =
-                              someParkedSelected && !allParkedSelected;
-                          }}
-                          onChange={(e) => toggleParkedAll(e.target.checked)}
-                          aria-label="Select all parked orders"
+                          checked={parkedSelected.has(row.id)}
+                          onChange={(e) =>
+                            toggleParkedOne(row.id, e.target.checked)
+                          }
+                          aria-label={`Select parked order ${row.stock_code}`}
                         />
-                      ) : null}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {parkedRows.map((row, idx) => {
-                    const edit = parkedEdits[row.id] ?? {
-                      quantity: row.quantity,
-                      price: row.price,
-                    };
-                    const qtyOk = parsePositiveInt(edit.quantity) != null;
-                    return (
-                      <tr key={row.id}>
-                        <td className="px-3 py-2 align-middle tabular-nums text-zinc-400 dark:text-zinc-500">
-                          {idx + 1}
-                        </td>
-                        <td className="px-3 py-2 align-middle">
-                          {row.stock_code} {row.expiry_date} {row.right}{" "}
-                          {row.strike_price}
-                        </td>
-                        <td className="px-3 py-2 align-middle text-center">
-                          <span className={sidePillClass(row.action)}>
-                            {row.action}
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="block min-w-0 space-y-1">
+                          <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                            Quantity
                           </span>
-                        </td>
-                        <td className="px-3 py-2 align-middle">
                           <input
                             type="number"
                             min={1}
-                            className="w-24 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            className="w-full max-w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
                             value={edit.quantity}
                             onChange={(e) =>
                               setParkedEdits((prev) => ({
@@ -701,12 +839,15 @@ function OrdersBody() {
                               }))
                             }
                           />
-                        </td>
-                        <td className="px-3 py-2 align-middle">
+                        </label>
+                        <label className="block min-w-0 space-y-1">
+                          <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                            Price
+                          </span>
                           <input
                             type="number"
                             step={0.05}
-                            className="w-28 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            className="w-full max-w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
                             value={edit.price}
                             onChange={(e) =>
                               setParkedEdits((prev) => ({
@@ -718,44 +859,31 @@ function OrdersBody() {
                               }))
                             }
                           />
-                        </td>
-                        <td className="px-3 py-2 align-middle">
-                          <div className="flex flex-wrap justify-end gap-1">
-                            <button
-                              type="button"
-                              className={executeParkedBtnClass}
-                              disabled={!qtyOk}
-                              aria-label="Execute parked order"
-                              onClick={() => executeOneParked(row)}
-                            >
-                              <ExecuteOrderGlyph />
-                            </button>
-                            <button
-                              type="button"
-                              className={cloneToPlaceBtnClass}
-                              aria-label="Clone order to Place Order"
-                              onClick={(e) => cloneParkedToPlace(row, e)}
-                            >
-                              <CloneOrderGlyph />
-                            </button>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-center align-middle">
-                          <input
-                            type="checkbox"
-                            className={parkedCheckboxClass}
-                            checked={parkedSelected.has(row.id)}
-                            onChange={(e) =>
-                              toggleParkedOne(row.id, e.target.checked)
-                            }
-                            aria-label={`Select parked order ${row.stock_code}`}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                        </label>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-end gap-1 border-t border-zinc-200/80 pt-2 dark:border-zinc-700/80">
+                        <button
+                          type="button"
+                          className={executeParkedBtnClass}
+                          disabled={!qtyOk}
+                          aria-label="Execute parked order"
+                          onClick={() => executeOneParked(row)}
+                        >
+                          <ExecuteOrderGlyph />
+                        </button>
+                        <button
+                          type="button"
+                          className={cloneToPlaceBtnClass}
+                          aria-label="Clone order to Place Order"
+                          onClick={(e) => cloneParkedToPlace(row, e)}
+                        >
+                          <CloneOrderGlyph />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
             {parkedSelected.size > 0 || parkedDeleteManyMut.isPending ? (
               <div className={ordersCancelBarClass}>
@@ -879,8 +1007,8 @@ function OrdersBody() {
                 });
               }}
             >
-              <div className="hidden overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-sm ring-1 ring-zinc-950/[0.04] dark:border-zinc-800 dark:bg-zinc-900/40 dark:shadow-none dark:ring-white/[0.06] md:block">
-                <div className="overflow-x-auto">
+              <div className="hidden min-w-0 overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-sm ring-1 ring-zinc-950/[0.04] dark:border-zinc-800 dark:bg-zinc-900/40 dark:shadow-none dark:ring-white/[0.06] md:block">
+                <div className="min-w-0 overflow-x-auto">
                   <table className="min-w-full text-left text-sm text-zinc-800 dark:text-zinc-200">
                     <thead className="sticky top-0 z-[1] border-b border-zinc-200/90 bg-zinc-50/95 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-900/95">
                       <tr>

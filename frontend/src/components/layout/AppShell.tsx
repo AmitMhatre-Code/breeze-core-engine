@@ -3,7 +3,15 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ReactNode, useMemo, useState } from "react";
+import {
+  ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import breezeMark from "@/app/android-chrome-192x192.png";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
@@ -28,6 +36,12 @@ const navItems = [
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
+function navItemActive(pathname: string, href: string) {
+  return href === "/dashboard"
+    ? pathname === "/" || pathname.startsWith("/dashboard")
+    : pathname.startsWith(href);
+}
+
 export function AppShell({
   children,
   contentWidth = "default",
@@ -38,6 +52,46 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const [changelogOpen, setChangelogOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [pathnameSeen, setPathnameSeen] = useState(pathname);
+  if (pathname !== pathnameSeen) {
+    setPathnameSeen(pathname);
+    if (mobileNavOpen) setMobileNavOpen(false);
+  }
+  const mobileNavTitleId = useId();
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const drawerCloseRef = useRef<HTMLButtonElement>(null);
+
+  const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        closeMobileNav();
+        menuButtonRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileNavOpen, closeMobileNav]);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [mobileNavOpen]);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const id = window.requestAnimationFrame(() => {
+      drawerCloseRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [mobileNavOpen]);
 
   const homeQ = useQuery({
     queryKey: ["home", "data"],
@@ -94,10 +148,7 @@ export function AppShell({
         </div>
         <nav className="space-y-0.5 px-2 text-sm">
           {navItems.map((item) => {
-            const active =
-              item.href === "/dashboard"
-                ? pathname === "/" || pathname.startsWith("/dashboard")
-                : pathname.startsWith(item.href);
+            const active = navItemActive(pathname, item.href);
             const Icon = item.icon;
             return (
               <Link
@@ -118,7 +169,18 @@ export function AppShell({
         </nav>
       </aside>
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="flex h-12 min-h-12 items-center justify-between gap-3 border-b border-zinc-200 bg-white px-3 dark:border-zinc-800 dark:bg-zinc-950 sm:px-4">
+        <header className="flex min-h-12 items-center justify-between gap-2 border-b border-zinc-200 bg-white px-[max(0.75rem,env(safe-area-inset-left))] py-1 pe-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.25rem,env(safe-area-inset-top))] dark:border-zinc-800 dark:bg-zinc-950 sm:gap-3 sm:px-4">
+          <button
+            type="button"
+            ref={menuButtonRef}
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-700 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 md:hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            aria-label="Open menu"
+            aria-expanded={mobileNavOpen}
+            aria-controls="mobile-app-nav"
+            onClick={() => setMobileNavOpen(true)}
+          >
+            <MenuIcon />
+          </button>
           <div className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-4">
             <span className="hidden truncate text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 md:inline">
               Trading
@@ -157,10 +219,10 @@ export function AppShell({
               </>
             )}
           </div>
-          <div className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-3">
+          <div className="flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-3">
             {homeDataReady && (
               <span
-                className="min-w-0 max-w-[9rem] shrink-0 whitespace-nowrap text-xs tabular-nums text-zinc-500 dark:text-zinc-400 sm:max-w-none"
+                className="min-w-0 max-w-[6.25rem] shrink-0 truncate whitespace-nowrap text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400 sm:max-w-none sm:text-xs"
                 title="Breeze REST calls from this app today (IST calendar day, ICICI daily cap 5,000)"
               >
                 <span className="hidden sm:inline">API </span>
@@ -181,7 +243,7 @@ export function AppShell({
             <button
               type="button"
               onClick={() => setChangelogOpen(true)}
-              className="shrink-0 truncate rounded-sm px-1.5 py-1 text-xs font-medium text-sky-700 underline-offset-2 hover:underline sm:px-2 dark:text-sky-400"
+              className="inline-flex min-h-11 min-w-9 shrink-0 items-center justify-center truncate rounded-md px-1.5 text-xs font-medium text-sky-700 underline-offset-2 hover:underline sm:min-h-9 sm:min-w-0 sm:px-2 dark:text-sky-400"
               aria-haspopup="dialog"
               aria-label="Open changelog"
             >
@@ -192,17 +254,89 @@ export function AppShell({
               href="/logout"
               title="Log out"
               aria-label="Log out"
-              className="inline-flex rounded-sm border border-zinc-200 bg-zinc-50 p-1.5 text-zinc-600 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-600 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
             >
               <LogOutIcon />
             </Link>
           </div>
         </header>
+        {mobileNavOpen ? (
+          <div
+            className="fixed inset-0 z-50 md:hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={mobileNavTitleId}
+            id="mobile-app-nav"
+          >
+            <button
+              type="button"
+              className="absolute inset-0 bg-zinc-950/55 dark:bg-black/60"
+              aria-label="Close menu"
+              onClick={() => {
+                closeMobileNav();
+                menuButtonRef.current?.focus();
+              }}
+            />
+            <div className="absolute inset-y-0 left-0 flex w-[min(18rem,85vw)] max-w-[calc(100vw-env(safe-area-inset-left)-0.5rem)] flex-col border-r border-zinc-200 bg-white pt-[env(safe-area-inset-top)] ps-[max(0.5rem,env(safe-area-inset-left))] shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2.5 pe-2 dark:border-zinc-800">
+                <div className="min-w-0">
+                  <div
+                    id={mobileNavTitleId}
+                    className="truncate text-sm font-semibold text-sky-600 dark:text-sky-500"
+                  >
+                    Breeze Web
+                  </div>
+                  <div className="app-text-muted">Menu</div>
+                </div>
+                <button
+                  type="button"
+                  ref={drawerCloseRef}
+                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-600 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                  aria-label="Close menu"
+                  onClick={() => {
+                    closeMobileNav();
+                    menuButtonRef.current?.focus();
+                  }}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <nav
+                className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain px-2 py-3 text-sm pe-[env(safe-area-inset-right)] pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+                aria-label="Primary"
+              >
+                {navItems.map((item) => {
+                  const active = navItemActive(pathname, item.href);
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={[
+                        "flex min-h-11 items-center gap-3 rounded-md px-3 py-2 transition",
+                        active
+                          ? "bg-sky-100 text-sky-950 dark:bg-sky-950/50 dark:text-sky-50"
+                          : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100",
+                      ].join(" ")}
+                      onClick={() => {
+                        closeMobileNav();
+                        menuButtonRef.current?.focus();
+                      }}
+                    >
+                      <Icon />
+                      <span>{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
+            </div>
+          </div>
+        ) : null}
         <ChangelogDialog
           open={changelogOpen}
           onClose={() => setChangelogOpen(false)}
         />
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-50 px-4 py-4 dark:bg-zinc-950 md:px-5 md:py-5">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-50 py-4 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-zinc-950 md:py-5 md:ps-5 md:pe-5">
           <div
             className={[
               "mx-auto w-full min-w-0",
@@ -216,6 +350,43 @@ export function AppShell({
         </main>
       </div>
     </div>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M18 6 6 18" />
+      <path d="M6 6l12 12" />
+    </svg>
   );
 }
 
