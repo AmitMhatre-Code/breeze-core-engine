@@ -143,7 +143,9 @@ function PlaceOrderPageInner() {
           exchange_code: segment,
         }).toString()}`,
       ),
-    enabled: Boolean(stockCode.trim() && expiryDate.trim()),
+    enabled: Boolean(
+      !contractFieldsLocked && stockCode.trim() && expiryDate.trim(),
+    ),
     staleTime: 5_000,
   });
 

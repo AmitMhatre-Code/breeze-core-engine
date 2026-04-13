@@ -17,6 +17,15 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "1.4.2",
+    date: "12-Apr-2026",
+    releaseKind: "minor",
+    summary: "Clone and Square-off Fixes",
+    changes: [
+      "Application doesn't 'lookup' scrip expiries and strikes on cloning and square-off. It just uses the expiry and strike from the order being cloned / squared-off",
+    ],
+  },
+  {
     version: "1.4.1",
     date: "11-Apr-2026",
     releaseKind: "minor",
