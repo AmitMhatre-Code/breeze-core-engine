@@ -284,6 +284,58 @@ jobs:
       - name: Wait for cloud-init bootstrap
         run: sleep 60
 
+      # Scheduler target uses the same IAM role as this workflow (OIDC). That role's trust policy must include
+      # BOTH: GitHub OIDC (token.actions.githubusercontent.com) AND scheduler.amazonaws.com. It also needs
+      # iam:PassRole on its own role ARN with iam:PassedToService = scheduler.amazonaws.com (often already
+      # covered by AmazonEventBridgeSchedulerFullAccess). EC2 start/stop must be allowed on the instance.
+      - name: Configure Auto Start/Stop Schedules
+        env:
+          INSTANCE_ID: ${{ steps.ec2.outputs.instance_id }}
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          CALLER_ARN=$(aws sts get-caller-identity --query Arn --output text)
+          if [[ ! "$CALLER_ARN" =~ assumed-role/([^/]+)/ ]]; then
+            echo "::error::Expected OIDC assumed-role session; got: $CALLER_ARN"
+            exit 1
+          fi
+          ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${BASH_REMATCH[1]}"
+
+          START_TARGET=$(jq -nc \
+            --arg role "$ROLE_ARN" \
+            --arg id "$INSTANCE_ID" \
+            '{
+              Arn: "arn:aws:scheduler:::aws-sdk:ec2:startInstances",
+              RoleArn: $role,
+              Input: ({InstanceIds: [$id]} | tojson)
+            }')
+
+          # Weekdays 9:00 IST
+          aws scheduler create-schedule \
+            --name "Start-Breeze-App-${INSTANCE_ID}" \
+            --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+            --schedule-expression-timezone "Asia/Kolkata" \
+            --target "$START_TARGET" \
+            --flexible-time-window '{"Mode": "OFF"}' \
+            --action-after-completion NONE
+
+          STOP_TARGET=$(jq -nc \
+            --arg role "$ROLE_ARN" \
+            --arg id "$INSTANCE_ID" \
+            '{
+              Arn: "arn:aws:scheduler:::aws-sdk:ec2:stopInstances",
+              RoleArn: $role,
+              Input: ({InstanceIds: [$id]} | tojson)
+            }')
+
+          # Weekdays 17:00 IST
+          aws scheduler create-schedule \
+            --name "Stop-Breeze-App-${INSTANCE_ID}" \
+            --schedule-expression "cron(0 17 ? * MON-FRI *)" \
+            --schedule-expression-timezone "Asia/Kolkata" \
+            --target "$STOP_TARGET" \
+            --flexible-time-window '{"Mode": "OFF"}' \
+            --action-after-completion NONE
+
       - name: Deployment summary
         run: |
           echo "Instance ID: ${{ steps.ec2.outputs.instance_id }}"
