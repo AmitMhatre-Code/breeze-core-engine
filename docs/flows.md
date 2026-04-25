@@ -84,30 +84,28 @@ Same path rules as compose nginx (`deploy/nginx.all-in-one.conf`).
 
 ---
 
-## 4. Google OAuth login (browser on Next origin)
+## 4. Direct app login (browser on Next origin)
 
-**Preconditions**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` in `.env`. Google Cloud Console has redirect URI `{GOOGLE_OAUTH_REDIRECT_BASE_URL}/auth/google/callback` (typically `http://localhost:3000/auth/google/callback`).
+**Preconditions**: User account already created via direct registration and app password.
 
 ```mermaid
 sequenceDiagram
   participant B as Browser
   participant N as Next / nginx
   participant F as FastAPI
-  participant G as Google
+  participant C as Credentials store
 
   B->>N: GET /login (UI)
-  B->>N: GET /auth/google
+  B->>N: POST /auth/direct-login (user_id + password)
   N->>F: proxy
-  F->>G: redirect to Google consent
-  G->>B: redirect to /auth/google/callback?code&state
-  B->>N: GET /auth/google/callback
+  F->>C: verify app password hash
+  F-->>B: Set bootstrap cookie, redirect /auth/icici-redirect
+  B->>N: GET /auth/icici-redirect
   N->>F: proxy
-  F->>F: validate state, session
-  F->>G: exchange code
-  F-->>B: Set-Cookie, redirect to app (e.g. ICICI step)
+  F-->>B: Redirect to broker login
 ```
 
-**Failure mode — `mismatching_state`**: Browser started OAuth on a different host than `GOOGLE_OAUTH_REDIRECT_BASE_URL` (e.g. mixed `localhost` vs `127.0.0.1`).
+**Failure mode**: Browser origin mismatch (`localhost` vs `127.0.0.1`) can break cookie handoff between direct login and ICICI redirect.
 
 ---
 
@@ -122,8 +120,8 @@ sequenceDiagram
   participant F as FastAPI
   participant I as ICICI
 
-  B->>E: User completes Google step
-  B->>F: Redirect or POST to ICICI login
+  B->>E: User completes direct-login step
+  B->>F: Redirect to ICICI login
   I->>B: Redirect / form POST to /icici-return
   B->>E: POST /icici-return (same origin)
   E->>F: proxy
@@ -163,16 +161,15 @@ Parallel pattern for `/portfolio/data`, `/order/data`, `/dashboard/vix/options`,
 
 ```mermaid
 flowchart TB
-  A[User opens /register UI] --> B[Google OAuth bootstrap]
-  B --> C[POST /api/register\nsession from cookie]
+  A[User opens /register UI] --> B[Enter user_id app_password api_key secret_fragment]
+  B --> C[POST /api/register/direct]
   C --> D{Valid?}
   D -->|no| E[4xx + message]
-  D -->|yes| F[ICICI credential capture\nper product flow]
-  F --> G[Persist user row\nencrypt secrets with JWT_SECRET]
-  G --> H[Redirect to login / dashboard]
+  D -->|yes| F[Persist user row + encrypted credentials]
+  F --> H[Redirect to login / dashboard]
 ```
 
-Correction and delete flows use `/api/register/correct` and `/api/register/delete` with their own session bootstrap endpoints—same idea: **Google proves identity**, **backend mutates SQLite**.
+Correction and delete flows use `/api/register/correct-direct` and `/api/register/delete`; password recovery uses `/api/register/recover/start` and `/api/register/recover/complete`.
 
 ---
 
@@ -207,7 +204,7 @@ flowchart LR
   REF --> ICICI[ICICI / external fetch\nper implementation]
 ```
 
-Large uploads are why Next enables an increased **proxy body size** in `next.config.ts`.
+Large uploads are why Next enables an increased **proxy body size** in `next.config.js`.
 
 ---
 
@@ -303,7 +300,7 @@ Used for integration checks; see `route_admin.py` for exact behaviour and guards
 flowchart TB
   PUSH[Push to breeze-modern-main] --> GHA[ghcr-publish workflow]
   GHA --> BDX[docker buildx]
-  BDX --> IM[Image linux/amd64 + arm64]
+  BDX --> IM[Image linux/arm64]
   IM --> GHCR[ghcr.io/owner/repo:tag]
 ```
 

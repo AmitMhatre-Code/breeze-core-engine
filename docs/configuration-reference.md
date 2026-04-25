@@ -9,8 +9,8 @@ All sensitive values belong in a **repo-root `.env` file** (or an equivalent env
 | Variable | Purpose |
 |----------|---------|
 | `JWT_SECRET` | Signing JWTs **and** symmetric encryption for stored credentials and OAuth cookie payloads. Alternatives accepted: `ENCRYPTION_KEY`, `JWT_SECRET_KEY` (first non-empty wins in code). Use a long random string. |
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID. |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret. |
+| `GOOGLE_CLIENT_ID` | Optional unless Google OAuth routes are actively enabled in your deployment. |
+| `GOOGLE_CLIENT_SECRET` | Optional unless Google OAuth routes are actively enabled in your deployment. |
 
 **ICICI**: API key and related broker credentials are normally **entered through the UI** (`/settings/credentials`) and stored encrypted in SQLite—not always a single static env var. You still need whatever ICICI’s registration flow expects for your account (documented by ICICI). Ensure redirect URL matches below.
 
@@ -26,7 +26,7 @@ All sensitive values belong in a **repo-root `.env` file** (or an equivalent env
 
 ---
 
-## Google Cloud Console
+## Google Cloud Console (optional/legacy-compatible)
 
 **Authorized redirect URIs** (typical dev):
 
@@ -63,8 +63,13 @@ Use the **same** host you type in the browser (`localhost` vs `127.0.0.1` are di
 |----------|---------|---------|
 | `ICICI_BREEZE_INSECURE_SSL` | unset (`dev.sh` sets `1`) | When truthy, disables TLS verification for `breeze_connect`’s import-time download path. **Security risk** if enabled in untrusted networks. |
 | `BREEZE_SESSION_CACHE_TTL_SECONDS` | `0` | `0` means cache until midnight IST; otherwise TTL in seconds for session reuse logic. |
+| `ICICI_BROKER_MODE` | `live` | `live` uses actual ICICI APIs; `mock` stubs ICICI calls for local/testing workflows. |
+| `ICICI_MOCK_SYNTHETIC_BROKER_TOKEN` | `mock-token` | Synthetic broker token used in mock mode when issuing app auth cookies. |
+| `ICICI_MOCK_BROKER_COOKIE_VALUE` | `mock` | Broker cookie value injected by mock mode auth paths. |
 
 `ICICI_MAX_RETRIES` and `ICICI_TIMEOUT_SECONDS` are currently defined in code (`core/config.py`) with fixed defaults unless extended.
+
+`/dev/mock-broker-cookie` is exposed for dev/test setup and should not be publicly enabled in production deployments.
 
 ---
 
@@ -85,6 +90,7 @@ Use the **same** host you type in the browser (`localhost` vs `127.0.0.1` are di
 | `E2E_RATE_LIMIT_BYPASS_SECRET` | unset | If set, matching requests can bypass rate limit (admin / E2E). |
 | `INTEGRATION_SKIP_MARKET_HOURS` | unset | When `1`, admin integration tests may skip market-hours checks. |
 | `E2E_BASE_URL` | `http://localhost:8000` | Base URL for subprocess tests spawned from admin routes. |
+| `E2E_HOST`, `E2E_PORT`, `E2E_ADMIN_EMAIL`, `E2E_ADMIN_PASSWORD` | unset | Optional overrides for admin-triggered test harness execution. |
 
 ---
 
@@ -96,6 +102,15 @@ Read **only from the `.env` file** (not from the process environment) in `main.p
 |----------|---------|
 | `LOG_LEVEL` | e.g. `INFO`, `DEBUG`. |
 | `LOG_FILE` | Optional path for file logging under `backend/logs/` or absolute path. |
+
+---
+
+## Runtime endpoints worth monitoring
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/health` | Liveness check. |
+| `/metrics` | ICICI client retry/circuit-breaker metrics. |
 
 ---
 
@@ -119,7 +134,7 @@ for the **backend** service. Mounts:
 
 | Variable | Where | Purpose |
 |----------|-------|---------|
-| `BACKEND_UPSTREAM_URL` | `next.config.ts`, server routes | Upstream FastAPI for rewrites (compose: `http://backend:8000`; dev: `http://127.0.0.1:8000`). |
+| `BACKEND_UPSTREAM_URL` | `next.config.js`, server routes | Upstream FastAPI for rewrites (compose: `http://backend:8000`; dev: `http://127.0.0.1:8000`). |
 | `NEXT_PUBLIC_BACKEND_UPSTREAM_URL` | Same | Public alias for build-time if needed. |
 | `NEXT_PUBLIC_BACKEND_URL` | `frontend/src/lib/config.ts`, `dev.sh` | Browser-visible API base; dev sets to `http://APP_HOST:FRONTEND_PORT` so calls go through Next’s origin. Production image often omits this so the client uses `window.location.origin`. |
 

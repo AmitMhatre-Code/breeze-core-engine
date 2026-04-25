@@ -1,6 +1,6 @@
 # AWS deployment guide
 
-This guide describes the **manual GitHub Actions workflow** [`.github/workflows/aws-deploy.yml`](../.github/workflows/aws-deploy.yml) that provisions an **EC2** instance, installs **Docker**, pulls the **GHCR** image from [`.github/workflows/ghcr-publish.yml`](../.github/workflows/ghcr-publish.yml), and runs the **all-in-one** container from the root [`Dockerfile`](../Dockerfile).
+This guide describes the **manual GitHub Actions workflows** [`.github/workflows/aws-deploy-amit.yml`](../.github/workflows/aws-deploy-amit.yml) and [`.github/workflows/aws-deploy-rakesh.yml`](../.github/workflows/aws-deploy-rakesh.yml) that provision an **EC2** instance, install **Docker**, pull the **GHCR** image from [`.github/workflows/ghcr-publish.yml`](../.github/workflows/ghcr-publish.yml), and run the **all-in-one** container from the root [`Dockerfile`](../Dockerfile).
 
 It is **opinionated**: default VPC, Ubuntu **24.04 arm64**, `t4g.small`, Elastic IP association, optional **EBS** data volume. Adjust the workflow if your organisation requires a different topology (ALB, private subnets, ECS, etc.).
 
@@ -10,7 +10,7 @@ It is **opinionated**: default VPC, Ubuntu **24.04 arm64**, `t4g.small`, Elastic
 
 | Artifact | Description |
 |----------|-------------|
-| **Image** | `ghcr.io/<github-owner>/<repo-lowercase>:latest` (multi-arch: amd64 + arm64; EC2 uses **arm64** AMI). |
+| **Image** | `ghcr.io/<github-owner>/<repo-lowercase>:latest` (currently built as **linux/arm64**). |
 | **Runtime** | One `docker run` with `-p 80:3000` — host port **80** maps to **nginx** inside the container on **3000**. |
 | **Data** | Optional persistent volume mounted at `/app/backend/data` inside the container (SQLite, ICICI masters, limits). |
 | **Secrets** | Full `.env` written on the instance from GitHub Actions secret `APP_ENV_FILE_B64`. |
@@ -53,18 +53,19 @@ and:
 1. Create an **IAM role** trusted by GitHub OIDC (`token.actions.githubusercontent.com`) for this repository.
 2. Attach policies allowing the EC2/API calls above.
 3. Store the role ARN in GitHub secret **`AWS_ROLE_TO_ASSUME`**.
+4. Ensure the same role trust policy also allows `scheduler.amazonaws.com` (workflows create EventBridge Scheduler schedules).
 
-The job uses GitHub **environment** `production` (see `environment: name: production`), so you can add protection rules and environment-scoped secrets.
+The jobs use GitHub environments `production` (Amit workflow) and `production-rakesh` (Rakesh workflow), so you can add protection rules and environment-scoped secrets.
 
-### 3. EC2 key pair
+### 3. EC2 key pair (workflow-specific)
 
-The workflow launches instances with:
+The Amit workflow launches instances with:
 
 ```yaml
 EC2_KEY_NAME: ICICI-Breeze-Web-KP
 ```
 
-Create an EC2 key pair with **exactly that name** in the target region (`ap-south-1` by default), or change `EC2_KEY_NAME` in the workflow to match your key.
+Create an EC2 key pair with **exactly that name** in the target region (`ap-south-1` by default), or change `EC2_KEY_NAME` in the workflow to match your key. The Rakesh workflow currently does **not** pass `--key-name`.
 
 ### 4. GHCR read access on the instance
 
@@ -161,8 +162,9 @@ The workflow **validates AZ** matches the launch subnet before starting.
 9. **Wait** until `running`.
 10. **Attach** EBS volume if secret set.
 11. **Associate** Elastic IP.
-12. **Sleep 120s** for cloud-init (bootstrap is not SSH-validated in the workflow).
-13. **Print** instance id, public IP, URL `http://<ip>`.
+12. **Sleep 60s** for cloud-init (bootstrap is not SSH-validated in the workflow).
+13. **Create EventBridge Scheduler schedules** for weekday auto start (09:00 IST) and stop (17:00 IST).
+14. **Print** instance id, public IP, URL `http://<ip>`.
 
 Configurable **env** at job level (edit workflow to change):
 
@@ -181,6 +183,7 @@ Configurable **env** at job level (edit workflow to change):
 2. **HTTPS**: Put **ACM + ALB** or **CloudFront** in front, or use **Caddy/nginx on host** with Let’s Encrypt, then set `COOKIE_SECURE=true` and use `https://` in `PUBLIC_FRONTEND_ORIGIN`.
 3. **Secrets rotation**: Rotate `JWT_SECRET` only with a plan—existing encrypted credentials need re-entry.
 4. **IMDSv2** and **instance profile**: Consider replacing GHCR user/pass with an instance role + ECR pull if you migrate registries.
+5. **Scheduler least privilege**: Scope scheduler, `iam:PassRole`, and EC2 start/stop permissions to the schedules/instances used by deployment.
 
 ---
 
@@ -198,7 +201,7 @@ sudo docker logs -f icici-app
 ### Update after a new image
 
 1. Ensure **`ghcr-publish`** ran and pushed `latest` (or bump `IMAGE_TAG` in the workflow).
-2. Re-run **`aws-deploy`** workflow (it replaces the instance and re-pulls).
+2. Re-run the appropriate manual deploy workflow (Amit or Rakesh) (it replaces the instance and re-pulls).
 
 ### Backup
 

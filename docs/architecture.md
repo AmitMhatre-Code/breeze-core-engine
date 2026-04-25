@@ -35,7 +35,7 @@ Two processes:
 | **uvicorn** | 8000 | FastAPI application |
 | **next dev** | 3000 | Next.js dev server |
 
-`frontend/next.config.ts` **rewrites** browser paths such as `/auth/*`, `/api/*`, `/home/data`, etc. to `BACKEND_UPSTREAM_URL` (default `http://localhost:8000`). The user should open **only** the Next origin (3000) so cookies and OAuth redirects stay consistent.
+`frontend/next.config.js` **rewrites** browser paths such as `/auth/*`, `/api/*`, `/home/data`, `/book/*`, and `/strategy-builder/*` to `BACKEND_UPSTREAM_URL` (default `http://localhost:8000`). The user should open **only** the Next origin (3000) so cookies and redirects stay consistent.
 
 ### B. Docker Compose (repo root `docker-compose.yml`)
 
@@ -79,7 +79,7 @@ sequenceDiagram
   F-->>B: JSON
 ```
 
-**Important**: Many JSON endpoints are **not** under `/api/`; nginx and Next explicitly list paths like `/home/data`, `/portfolio/data`, `/order/data`, `/dashboard/vix`, etc. This avoids accidentally routing UI paths to the API.
+**Important**: Many JSON endpoints are **not** under `/api/`; nginx and Next explicitly list paths like `/home/data`, `/portfolio/data`, `/order/data`, `/book/data`, `/dashboard/vix`, etc. This avoids accidentally routing UI paths to the API.
 
 ---
 
@@ -106,16 +106,15 @@ Client-side API base: production Docker build intentionally avoids hardcoding `N
 
 ### Middleware chain (order matters)
 
-1. **SessionMiddleware** — Google OAuth state (Authlib / session).
-2. **CORSMiddleware** — Origins from `CORS_ORIGINS` or `ALLOWED_ORIGINS`.
-3. **RateLimitMiddleware** — Basic protection.
-4. **CorrelationIdMiddleware** — Request correlation for logs and error JSON.
-5. **RequestLoggerMiddleware** — Structured request logging.
+1. **CORSMiddleware** — Origins from `CORS_ORIGINS` or `ALLOWED_ORIGINS`.
+2. **RateLimitMiddleware** — Basic protection.
+3. **CorrelationIdMiddleware** — Request correlation for logs and error JSON.
+4. **RequestLoggerMiddleware** — Structured request logging.
 
 ### Routing
 
 - `app/api/router.py` includes `app/api/v1/router.py` with **no global `/api/v1` prefix** on the root router.
-- Individual modules set their own prefixes, e.g. `/api/register`, `/api/settings`, `/portfolio`, `/order`, `/auth/...`, `/home/data`.
+- Individual modules set their own prefixes, e.g. `/api/register`, `/api/settings`, `/portfolio`, `/order`, `/book`, `/auth/...`, `/home/data`, `/admin`.
 
 ### Layering (conceptual)
 
@@ -153,7 +152,7 @@ flowchart TB
 - **`breeze_connect.BreezeConnect`** is the official SDK-style client.
 - **`app/services/processor.py`** centralises most broker calls, scrip master usage, and option chain handling.
 - **`core/icici_client.py`** adds retries, timeouts, metrics, and a circuit breaker for selected call paths.
-- **Startup**: `processor().update_ICICImaster()` attempts to refresh ICICI security master from the configured HTTPS URL (may be skipped or warn on failure).
+- **Startup**: `processor().update_ICICImaster()` attempts to refresh ICICI security master from the configured HTTPS URL in live mode; this is skipped when `ICICI_BROKER_MODE=mock`.
 
 ### Patches and TLS
 
@@ -166,7 +165,7 @@ flowchart TB
 
 | Store | File / path | Purpose |
 |-------|-------------|---------|
-| Users DB | `backend/data/users.sqlite3` | Accounts, encrypted credential metadata, migrations (`user_account_migrate`, AI provider table, outlook preferences). |
+| Users DB | `backend/data/users.sqlite3` | Accounts, encrypted credential metadata, migrations (`user_account_migrate`, AI provider table, outlook preferences, parked orders table). |
 | Scrips DB | `backend/data/scrips.sqlite3` | Scrip master cache for lookups and validation. |
 | Templates | `backend/db-templates/` | Seed copies of empty DBs and limit files; survives bind mounts over `data/`. |
 | Masters | `FONSEScripMaster.txt`, BSE counterparts, `SecurityMaster` zip content | Exchange and ICICI reference data. |
@@ -182,7 +181,8 @@ Docker Compose mounts `./backend/data` and `./backend/logs` for durability on th
 - **Correlation ID** returned on API errors for support.
 - **Audit logger** (`audit/`) for operator trails where enabled.
 - **Idempotency helpers** (`concurrency/`) for sensitive operations.
-- **Health endpoint** for load balancers and compose healthchecks.
+- **Health endpoint** (`/health`) for load balancers and compose healthchecks.
+- **Metrics endpoint** (`/metrics`) exposing ICICI client metrics for monitoring.
 
 ---
 
@@ -190,8 +190,8 @@ Docker Compose mounts `./backend/data` and `./backend/logs` for durability on th
 
 | Workflow | Purpose |
 |----------|---------|
-| `ghcr-publish.yml` | On push to `breeze-modern-main`, builds **multi-arch** (`linux/amd64`, `linux/arm64`) image from root `Dockerfile`, pushes to **GHCR** as `latest` and SHA tags. |
-| `aws-deploy.yml` | Manual dispatch: provisions **EC2 (Ubuntu 24.04 arm64)**, installs Docker, pulls GHCR image, runs container with env file and optional EBS mount. |
+| `ghcr-publish.yml` | On push to `breeze-modern-main`, builds **arm64** (`linux/arm64`) image from root `Dockerfile`, pushes to **GHCR** as `latest` and SHA tags. |
+| `aws-deploy-amit.yml` / `aws-deploy-rakesh.yml` | Manual dispatch workflows: provision **EC2 (Ubuntu 24.04 arm64)**, install Docker, pull GHCR image, run container with env file and optional EBS mount, then configure weekday start/stop schedules. |
 
 See [AWS deployment](./aws-deployment.md) for operational detail.
 

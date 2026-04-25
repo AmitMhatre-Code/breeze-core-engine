@@ -11,4 +11,16 @@ This folder contains detailed documentation for the application. The repository 
 | [Configuration reference](./configuration-reference.md) | Environment variables, defaults, Google/ICICI redirect checklist, Docker and Next env wiring. |
 | [AWS deployment](./aws-deployment.md) | GitHub Actions workflow, AWS resources, secrets, first-time setup, and operations. |
 
+## Copyright submission package
+
+Use the following set when preparing a filing package for the Copyright Office:
+
+| Document | Purpose |
+|----------|---------|
+| [Copyright submission guide](./copyright-submission.md) | Scope, originality statement template, and filing checklist. |
+| [Third-party exclusions](./third-party-exclusions.md) | Explicit denylist of external/common/generated/sensitive artifacts to omit from the filing. |
+| [Single code document](./code-submission.md) | Consolidated first-party code document (PDF-ready markdown). |
+
+The code document intentionally excludes third-party dependencies (`node_modules`, `.venv`), generated/build outputs, runtime logs, secrets (`.env*`), local databases, and the read-only `legacy/` snapshot.
+
 The `legacy/` directory in the repo is a **read-only** historical snapshot; it is not described as part of the running system here.

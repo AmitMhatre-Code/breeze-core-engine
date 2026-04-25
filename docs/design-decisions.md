@@ -25,7 +25,7 @@ This document records **why** the modern stack is shaped the way it is. It is no
 
 - The backend evolved from **legacy path shapes** (`/home/data`, `/portfolio/data`, etc.) that the modern UI still calls.
 - Collapsing everything under `/api/v1/...` would be a large breaking change for both frontend and any bookmarks/scripts.
-- Narrow proxy rules reduce the risk that a random Next route (e.g. `/portfolio`) is swallowed by the API upstream; `next.config.ts` explicitly avoids rewriting `GET /portfolio` because the backend can redirect in ways that break when proxied.
+- Narrow proxy rules reduce the risk that a random Next route (e.g. `/portfolio`) is swallowed by the API upstream; `next.config.js` explicitly avoids rewriting `GET /portfolio` because the backend can redirect in ways that break when proxied.
 
 ---
 
@@ -142,3 +142,38 @@ This document records **why** the modern stack is shaped the way it is. It is no
 **Rationale**:
 
 - Historical naming; documented here to avoid confusion for new contributors.
+
+---
+
+## 13. Explicit live vs mock broker mode
+
+**Decision**: Support both `ICICI_BROKER_MODE=live` and `ICICI_BROKER_MODE=mock`.
+
+**Rationale**:
+
+- Local development and admin/e2e checks need deterministic behavior without outbound ICICI dependencies.
+- Mock mode preserves the same auth and route shape so frontend integration remains realistic.
+
+**Trade-off**: Mock mode must never be treated as production-safe; docs and deployment guidance keep this boundary explicit.
+
+---
+
+## 14. Parked orders persist in users SQLite database
+
+**Decision**: Persist parked-order drafts in `users.sqlite3` using migration-backed schema (`parked_orders`).
+
+**Rationale**:
+
+- Draft and staged-order UX needs persistence across page refresh and app restarts.
+- Keeping this in SQLite avoids introducing another state store for a single-node deployment model.
+
+---
+
+## 15. Outlook routes keep a frontend proxy boundary
+
+**Decision**: Frontend server route proxy (`frontend/src/app/api/outlook/[...path]/route.ts`) remains in front of backend outlook APIs.
+
+**Rationale**:
+
+- Maintains same-origin behavior for browser clients.
+- Centralizes request shaping for streaming and future UI-specific headers without exposing backend topology details to clients.

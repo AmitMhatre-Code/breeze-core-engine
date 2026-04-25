@@ -1,13 +1,14 @@
 # Application functionality
 
-ICICI Breeze Modern is a **browser-based trading and portfolio dashboard** that sits on top of **ICICI Direct Breeze** APIs. Users authenticate with **Google** (account binding) and **ICICI** (broker session). The app surfaces portfolio, orders, option strategies, margin and scrip tooling, and optional AI-assisted market outlook features.
+ICICI Breeze Modern is a **browser-based trading and portfolio dashboard** that sits on top of **ICICI Direct Breeze** APIs. Users authenticate with **app credentials** (direct account password) and **ICICI** (broker session). The app surfaces portfolio, orders, option strategies, margin and scrip tooling, and optional AI-assisted market outlook features.
 
 ---
 
 ## Identity and access
 
-- **Google OAuth**: Used to establish or verify the application user identity and to drive registration, correction, and account-deletion flows that require a trusted email.
-- **Application session**: After Google and ICICI steps complete, the backend issues credentials (JWT in cookies / headers patterns as implemented) so subsequent JSON API calls are authorized.
+- **Direct app auth**: Login uses `/auth/direct-login` (user id + app password), then `/auth/icici-redirect` to complete broker login.
+- **Deprecated path**: Legacy `/auth/login` (ICICI-token login) is disabled and returns HTTP 410.
+- **Application session**: After direct auth and ICICI steps complete, the backend issues credentials (JWT in cookies / headers patterns as implemented) so subsequent JSON API calls are authorized.
 - **ICICI Breeze session**: Broker API key and session token are stored per user (encrypted); the backend builds `BreezeConnect` sessions to call ICICI on the user’s behalf.
 
 ---
@@ -19,15 +20,17 @@ Paths below are relative to the site root (e.g. `http://localhost:3000` in devel
 | Route | Purpose |
 |-------|---------|
 | `/` | Landing; navigation toward login. |
-| `/login` | Google sign-in and ICICI login flow entry. |
+| `/login` | Direct sign-in and ICICI login flow entry. |
 | `/logout` | Session termination UX. |
-| `/register` | New user registration (Google + ICICI). |
-| `/register/correct` | Correct registration data. |
+| `/register` | New user registration (direct user id/password + ICICI credentials). |
+| `/register/correct` | Correct stored ICICI credentials for an existing direct account. |
+| `/register/forgot-password` | Start app-password recovery flow. |
+| `/register/recover-complete` | Complete app-password reset after broker verification. |
 | `/register/delete` | Account deletion flow. |
 | `/challenge` | ICICI challenge handling UX (works with backend challenge endpoints). |
 | `/dashboard` | Home-style overview: aggregates `/home/data` and VIX/options endpoints. |
 | `/portfolio` | Holdings and positions-style data from `/portfolio/data`. |
-| `/orders` | Order list from `/order/data`. |
+| `/orders` | Order list from `/book/data`. |
 | `/strategies` | Summary entry using hedge, vertical-spread, and uncovered-shorts data endpoints. |
 | `/hedge`, `/vertical-spread`, `/uncovered-shorts` | Dedicated strategy views and scans. |
 | `/trade-options-chain` | Options chain trading UI. |
@@ -59,6 +62,7 @@ The UI uses **React Query** for server state and **Chart.js** where charts are s
 - **`/portfolio/data`**, **`/portfolio/hedge-candidates`**: Portfolio and hedge candidate retrieval via ICICI.
 - **`/order/data`**, **`/order`**: Order listing and related operations.
 - **`/book/data`**, **`/book`**: Book / positions-style data (implementation aligns with ICICI book APIs).
+- **`/book/parked-orders`** (+ patch/delete endpoints): Parked order draft lifecycle.
 
 ### Dashboard and volatility
 
@@ -76,7 +80,7 @@ The UI uses **React Query** for server state and **Chart.js** where charts are s
 
 ### Registration API
 
-- **`/api/register/*`**: Session bootstrap and POST endpoints for register, direct register, correct, delete—backed by `users.sqlite3` and Google OAuth cookies.
+- **`/api/register/*`**: Direct registration, correction, delete, and recovery endpoints (`/direct`, `/correct-direct`, `/delete`, `/recover/start`, `/recover/complete`) backed by `users.sqlite3`.
 
 ### Settings API
 
@@ -89,15 +93,16 @@ The UI uses **React Query** for server state and **Chart.js** where charts are s
 ### Performance and admin
 
 - **`/performance/data`**: Performance reporting payload.
-- **`/admin/*`**: Admin data and test runners (restricted usage).
+- **`/admin/*`**: Admin data and test runners (restricted usage), including `/admin/tests/status`.
 
 ### Audit
 
-- Audit log listing for operators (see `route_audit`).
+- Internal audit logging is active; an operator-facing `route_audit` module exists but is not currently mounted in the v1 router.
 
 ### Health
 
 - **`/health`**: Liveness for orchestration and load checks.
+- **`/metrics`**: ICICI client metrics payload for monitoring.
 
 ---
 
