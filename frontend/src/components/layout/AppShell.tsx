@@ -139,7 +139,7 @@ export function AppShell({
           </div>
           <div className="min-w-0 flex flex-col justify-center py-0.5">
             <div className="text-base font-semibold tracking-tight text-sky-600 dark:text-sky-500">
-              Breeze Web
+              Breeze Core Engine
             </div>
             <div className="app-text-muted mt-0.5">
               Enabled by Breeze API
@@ -284,7 +284,7 @@ export function AppShell({
                     id={mobileNavTitleId}
                     className="truncate text-sm font-semibold text-sky-600 dark:text-sky-500"
                   >
-                    Breeze Web
+                    Breeze Core Engine
                   </div>
                   <div className="app-text-muted">Menu</div>
                 </div>

@@ -1,9 +1,9 @@
-# ICICI Breeze Modern - Code Submission
+# Breeze Core Engine - Code Submission
 
 ## Metadata
 
-- Generated at (UTC): 2026-04-25 15:30:18Z
-- Git commit: `926670866d29ef959268fa9094f372dcf7bbe636`
+- Generated at (UTC): 2026-05-15 11:51:18Z
+- Git commit: `8a06a03b3541de22c51853d52c80d8228b236870`
 - Scope: first-party code only
 
 ## Inclusion policy
@@ -253,11 +253,11 @@ jobs:
       AWS_REGION: ap-south-1
       INSTANCE_TYPE: t4g.small
       IMAGE_TAG: latest
-      REPO_NAME: icici-breeze-modern
+      REPO_NAME: breeze-core-engine
       EC2_USER: ubuntu
-      APP_NAME: icici-breeze-web
-      EC2_TAG: ICICI-Breeze-Web-EC2
-      EC2_KEY_NAME: ICICI-Breeze-Web-KP
+      APP_NAME: breeze-core-engine-web
+      EC2_TAG: Breeze-Core-Engine-EC2
+      EC2_KEY_NAME: Breeze-Core-Engine-KP
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -271,7 +271,7 @@ jobs:
 
       # Optional: set GitHub secret EBS_DATA_VOLUME_ID (vol-...) to a gp3 volume in the same AZ as
       # the default VPC subnet, with DeleteOnTermination=false. Workflow attaches it as /dev/sdf;
-      # cloud-init waits, formats if empty (ext4, label icici-data), mounts /opt/icici/data.
+      # cloud-init waits, formats if empty (ext4, label breeze-core-data), mounts /opt/breeze-core-engine/data.
       - name: Build startup script
         env:
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
@@ -317,32 +317,32 @@ jobs:
               exit 1
             fi
             if ! blkid "\${DATA_DEV}" >/dev/null 2>&1; then
-              mkfs.ext4 -L icici-data -E discard "\${DATA_DEV}"
+              mkfs.ext4 -L breeze-core-data -E discard "\${DATA_DEV}"
             fi
-            mkdir -p /opt/icici/data
-            mount "\${DATA_DEV}" /opt/icici/data
-            if ! grep -q 'LABEL=icici-data /opt/icici/data' /etc/fstab; then
-              echo 'LABEL=icici-data /opt/icici/data ext4 defaults,nofail 0 2' >> /etc/fstab
+            mkdir -p /opt/breeze-core-engine/data
+            mount "\${DATA_DEV}" /opt/breeze-core-engine/data
+            if ! grep -q 'LABEL=breeze-core-data /opt/breeze-core-engine/data' /etc/fstab; then
+              echo 'LABEL=breeze-core-data /opt/breeze-core-engine/data ext4 defaults,nofail 0 2' >> /etc/fstab
             fi
           else
-            mkdir -p /opt/icici/data
+            mkdir -p /opt/breeze-core-engine/data
           fi
 
           # Write runtime env file from GitHub secret (base64-encoded .env content)
-          printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/icici/.env
-          chmod 600 /opt/icici/.env
+          printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/breeze-core-engine/.env
+          chmod 600 /opt/breeze-core-engine/.env
 
           # Login and pull from GHCR
           echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
           docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
 
           # Run app container
-          docker rm -f icici-app || true
+          docker rm -f breeze-core-engine-app || true
           docker run -d \
-            --name icici-app \
+            --name breeze-core-engine-app \
             --restart unless-stopped \
-            --env-file /opt/icici/.env \
-            -v /opt/icici/data:/app/backend/data \
+            --env-file /opt/breeze-core-engine/.env \
+            -v /opt/breeze-core-engine/data:/app/backend/data \
             -p 80:3000 \
             "${IMAGE_NAME}:${IMAGE_TAG}"
           EOF
@@ -602,11 +602,11 @@ jobs:
       AWS_REGION: ap-south-1
       INSTANCE_TYPE: t4g.small
       IMAGE_TAG: latest
-      REPO_NAME: icici-breeze-modern
+      REPO_NAME: breeze-core-engine
       EC2_USER: ubuntu
-      APP_NAME: icici-breeze-web
-      EC2_TAG: ICICI-Breeze-Modern-EC2
-      # EC2_KEY_NAME: ICICI-Breeze-Web-KP
+      APP_NAME: breeze-core-engine-web
+      EC2_TAG: Breeze-Core-Engine-EC2
+      # EC2_KEY_NAME: Breeze-Core-Engine-KP
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -620,7 +620,7 @@ jobs:
 
       # Optional: set GitHub secret EBS_DATA_VOLUME_ID (vol-...) to a gp3 volume in the same AZ as
       # the default VPC subnet, with DeleteOnTermination=false. Workflow attaches it as /dev/sdf;
-      # cloud-init waits, formats if empty (ext4, label icici-data), mounts /opt/icici/data.
+      # cloud-init waits, formats if empty (ext4, label breeze-core-data), mounts /opt/breeze-core-engine/data.
       - name: Build startup script
         env:
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
@@ -666,32 +666,32 @@ jobs:
               exit 1
             fi
             if ! blkid "\${DATA_DEV}" >/dev/null 2>&1; then
-              mkfs.ext4 -L icici-data -E discard "\${DATA_DEV}"
+              mkfs.ext4 -L breeze-core-data -E discard "\${DATA_DEV}"
             fi
-            mkdir -p /opt/icici/data
-            mount "\${DATA_DEV}" /opt/icici/data
-            if ! grep -q 'LABEL=icici-data /opt/icici/data' /etc/fstab; then
-              echo 'LABEL=icici-data /opt/icici/data ext4 defaults,nofail 0 2' >> /etc/fstab
+            mkdir -p /opt/breeze-core-engine/data
+            mount "\${DATA_DEV}" /opt/breeze-core-engine/data
+            if ! grep -q 'LABEL=breeze-core-data /opt/breeze-core-engine/data' /etc/fstab; then
+              echo 'LABEL=breeze-core-data /opt/breeze-core-engine/data ext4 defaults,nofail 0 2' >> /etc/fstab
             fi
           else
-            mkdir -p /opt/icici/data
+            mkdir -p /opt/breeze-core-engine/data
           fi
 
           # Write runtime env file from GitHub secret (base64-encoded .env content)
-          printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/icici/.env
-          chmod 600 /opt/icici/.env
+          printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/breeze-core-engine/.env
+          chmod 600 /opt/breeze-core-engine/.env
 
           # Login and pull from GHCR
           echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
           docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
 
           # Run app container
-          docker rm -f icici-app || true
+          docker rm -f breeze-core-engine-app || true
           docker run -d \
-            --name icici-app \
+            --name breeze-core-engine-app \
             --restart unless-stopped \
-            --env-file /opt/icici/.env \
-            -v /opt/icici/data:/app/backend/data \
+            --env-file /opt/breeze-core-engine/.env \
+            -v /opt/breeze-core-engine/data:/app/backend/data \
             -p 80:3000 \
             "${IMAGE_NAME}:${IMAGE_TAG}"
           EOF
@@ -935,7 +935,7 @@ name: Publish container to GHCR
 on:
   push:
     branches:
-      - breeze-modern-main
+      - main
 
 permissions:
   contents: read
@@ -988,7 +988,7 @@ jobs:
 
 ```text
 # Single image: nginx (port 3000) + Next.js (standalone) + FastAPI. Build from repo root:
-#   docker build -t icici-breeze-modern .
+#   docker build -t breeze-core-engine .
 #
 # Run (requires secrets — use an env file or mount):
 #   podman run --rm -p 3000:3000 --env-file .env ghcr.io/<owner>/<repo>:latest
@@ -1067,7 +1067,7 @@ CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
 ## README.md
 
 ```markdown
-## ICICI Breeze Modern
+## Breeze Core Engine
 
 A **browser-based dashboard** for **ICICI Direct Breeze**: portfolio, orders, option strategies, margin and scrip tools, and optional AI-assisted market outlook. Users sign in with **Google** (application identity) and **ICICI** (broker session). The stack is a **Next.js** front end and a **FastAPI** backend that calls ICICI through **`breeze_connect`**, with **SQLite** and local files under `backend/data/`.
 
@@ -1161,7 +1161,7 @@ Manual equivalent: run uvicorn from `backend/` with `PYTHONPATH=./src`, and `npm
 ## backend/src/icici_breeze_backend/__init__.py
 
 ```python
-"""Modernized ICICI Breeze backend namespace."""
+"""Breeze Core Engine backend namespace."""
 ```
 
 ## backend/src/icici_breeze_backend/app/__init__.py
@@ -18924,7 +18924,7 @@ function TrendChip({ pct }: { pct: number | null | undefined }) {
   .app-table-row {
     @apply border-t border-zinc-200 dark:border-zinc-800/80;
   }
-  /** Primary actions (matches sidebar “Breeze Web” sky brand). */
+  /** Primary actions (matches sidebar “Breeze Core Engine” sky brand). */
   .app-btn-primary {
     @apply inline-flex items-center justify-center rounded-sm border border-sky-600 bg-sky-600 px-3.5 py-1.5 text-sm font-medium text-white transition hover:border-sky-500 hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-sky-800 disabled:bg-sky-800 disabled:text-white dark:border-sky-500 dark:bg-sky-500 dark:hover:border-sky-400 dark:hover:bg-sky-400 dark:disabled:border-sky-800 dark:disabled:bg-sky-800;
   }
@@ -18932,7 +18932,7 @@ function TrendChip({ pct }: { pct: number | null | undefined }) {
   .app-btn-outline {
     @apply inline-flex items-center justify-center rounded-sm border border-sky-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-800 transition hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:border-sky-800/70 dark:bg-zinc-900 dark:text-sky-200 dark:hover:border-sky-600 dark:hover:bg-sky-950/40 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500;
   }
-  /** Inline & text links (same brand blue as Breeze Web). */
+  /** Inline & text links (same brand blue as Breeze Core Engine). */
   .app-link {
     @apply font-medium text-sky-600 underline-offset-2 transition-colors hover:text-sky-500 hover:underline dark:text-sky-400 dark:hover:text-sky-300;
   }
@@ -19238,8 +19238,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ICICI Breeze Modern",
-  description: "Modern trading dashboard for ICICI Breeze",
+  title: "Breeze Core Engine",
+  description: "Trading dashboard for ICICI Breeze",
 };
 
 export const viewport: Viewport = {
@@ -19366,7 +19366,7 @@ function LoginContent() {
           </div>
           <div className="min-w-0 space-y-2">
             <h1 className="text-xl font-semibold tracking-tight text-sky-500 dark:text-sky-500">
-              Breeze Web
+              Breeze Core Engine
             </h1>
             <p className="text-xs text-zinc-600 dark:text-zinc-400">
               Sign in with your ICICI user id and app password, then complete ICICI Direct login.
@@ -22601,7 +22601,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white/90 p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900/80 dark:shadow-xl dark:shadow-black/40">
         <h1 className="text-xl font-semibold tracking-tight">Register</h1>
         <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-          Link your ICICI Breeze API credentials and choose an app-only password for Breeze Web.
+          Link your ICICI Breeze API credentials and choose an app-only password for Breeze Core Engine.
         </p>
         <h2 className="app-text-heading mt-6">Create account</h2>
         <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
@@ -24603,7 +24603,7 @@ export default function SettingsDeleteAccountPage() {
         <section className="app-card space-y-2 p-4">
           <h2 className="app-text-heading">Delete account</h2>
           <p className="app-text-muted max-w-2xl text-sm">
-            Remove your Breeze Web account and stored broker API credentials. Confirm with your
+            Remove your Breeze Core Engine account and stored broker API credentials. Confirm with your
             ICICI user id and app password.
           </p>
         </section>
@@ -32796,7 +32796,7 @@ export function AppShell({
           </div>
           <div className="min-w-0 flex flex-col justify-center py-0.5">
             <div className="text-base font-semibold tracking-tight text-sky-600 dark:text-sky-500">
-              Breeze Web
+              Breeze Core Engine
             </div>
             <div className="app-text-muted mt-0.5">
               Enabled by Breeze API
@@ -32941,7 +32941,7 @@ export function AppShell({
                     id={mobileNavTitleId}
                     className="truncate text-sm font-semibold text-sky-600 dark:text-sky-500"
                   >
-                    Breeze Web
+                    Breeze Core Engine
                   </div>
                   <div className="app-text-muted">Menu</div>
                 </div>
@@ -39787,7 +39787,7 @@ import {
   type ReactNode,
 } from "react";
 
-export const THEME_STORAGE_KEY = "icici-breeze-theme";
+export const THEME_STORAGE_KEY = "breeze-core-engine-theme";
 
 export type ThemeMode = "light" | "dark";
 

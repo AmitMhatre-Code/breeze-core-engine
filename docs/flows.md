@@ -298,7 +298,7 @@ Used for integration checks; see `route_admin.py` for exact behaviour and guards
 
 ```mermaid
 flowchart TB
-  PUSH[Push to breeze-modern-main] --> GHA[ghcr-publish workflow]
+  PUSH[Push to main] --> GHA[ghcr-publish workflow]
   GHA --> BDX[docker buildx]
   BDX --> IM[Image linux/arm64]
   IM --> GHCR[ghcr.io/owner/repo:tag]
@@ -314,11 +314,11 @@ flowchart TB
   OIDC --> TERM[Terminate prior tagged EC2]
   TERM --> RUN[Run new instance + user-data]
   RUN --> VOL{EBS volume?}
-  VOL -->|yes| MNT[Mount /opt/icici/data]
+  VOL -->|yes| MNT[Mount /opt/breeze-core-engine/data]
   VOL -->|no| LOCAL[Ephemeral data dir]
   MNT --> PULL[docker pull GHCR]
   LOCAL --> PULL
-  PULL --> CONT[docker run -p 80:3000\n--env-file /opt/icici/.env]
+  PULL --> CONT[docker run -p 80:3000\n--env-file /opt/breeze-core-engine/.env]
   CONT --> EIP[Associate Elastic IP]
 ```
 

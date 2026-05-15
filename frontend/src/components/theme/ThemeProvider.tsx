@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 
-export const THEME_STORAGE_KEY = "icici-breeze-theme";
+export const THEME_STORAGE_KEY = "breeze-core-engine-theme";
 
 export type ThemeMode = "light" | "dark";
 

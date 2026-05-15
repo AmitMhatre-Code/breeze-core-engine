@@ -1,6 +1,6 @@
 # Technical architecture
 
-This document describes how ICICI Breeze Modern is structured: runtimes, networking, the backend package layout, persistence, and external dependencies.
+This document describes how Breeze Core Engine is structured: runtimes, networking, the backend package layout, persistence, and external dependencies.
 
 ---
 
@@ -9,7 +9,7 @@ This document describes how ICICI Breeze Modern is structured: runtimes, network
 ```mermaid
 flowchart LR
   U[Trader / operator]
-  APP[ICICI Breeze Modern\nNext + FastAPI + nginx]
+  APP[Breeze Core Engine\nNext + FastAPI + nginx]
   ICICI[ICICI Breeze / Direct]
   GOOG[Google OAuth]
   RSS[RSS feeds]
@@ -190,7 +190,7 @@ Docker Compose mounts `./backend/data` and `./backend/logs` for durability on th
 
 | Workflow | Purpose |
 |----------|---------|
-| `ghcr-publish.yml` | On push to `breeze-modern-main`, builds **arm64** (`linux/arm64`) image from root `Dockerfile`, pushes to **GHCR** as `latest` and SHA tags. |
+| `ghcr-publish.yml` | On push to `main`, builds **arm64** (`linux/arm64`) image from root `Dockerfile`, pushes to **GHCR** as `latest` and SHA tags. |
 | `aws-deploy-amit.yml` / `aws-deploy-rakesh.yml` | Manual dispatch workflows: provision **EC2 (Ubuntu 24.04 arm64)**, install Docker, pull GHCR image, run container with env file and optional EBS mount, then configure weekday start/stop schedules. |
 
 See [AWS deployment](./aws-deployment.md) for operational detail.
