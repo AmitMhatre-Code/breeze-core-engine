@@ -1,6 +1,6 @@
 ## Frontend (Next.js app)
 
-Modern Tailwind-based UI for ICICI Breeze, talking to the legacy FastAPI backend.
+Tailwind-based UI for Breeze Core Engine, talking to the FastAPI backend.
 
 ### Running in dev mode
 

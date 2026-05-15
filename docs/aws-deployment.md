@@ -62,7 +62,7 @@ The jobs use GitHub environments `production` (Amit workflow) and `production-ra
 The Amit workflow launches instances with:
 
 ```yaml
-EC2_KEY_NAME: ICICI-Breeze-Web-KP
+EC2_KEY_NAME: Breeze-Core-Engine-KP
 ```
 
 Create an EC2 key pair with **exactly that name** in the target region (`ap-south-1` by default), or change `EC2_KEY_NAME` in the workflow to match your key. The Rakesh workflow currently does **not** pass `--key-name`.
@@ -131,9 +131,9 @@ Behaviour:
 
 - Volume attaches as **`/dev/sdf`**.
 - Cloud-init waits for **`/dev/nvme1n1`**, **`/dev/xvdf`**, or **`/dev/sdf`** (Nitro vs Xen).
-- If filesystem missing, **`mkfs.ext4`** with label **`icici-data`**.
-- Mounted at **`/opt/icici/data`**, fstab entry `LABEL=icici-data`.
-- Docker run includes `-v /opt/icici/data:/app/backend/data`.
+- If filesystem missing, **`mkfs.ext4`** with label **`breeze-core-data`**.
+- Mounted at **`/opt/breeze-core-engine/data`**, fstab entry `LABEL=breeze-core-data`.
+- Docker run includes `-v /opt/breeze-core-engine/data:/app/backend/data`.
 
 The workflow **validates AZ** matches the launch subnet before starting.
 
@@ -147,17 +147,17 @@ The workflow **validates AZ** matches the launch subnet before starting.
 2. **Resolve image** `ghcr.io/<owner>/<repo-lower>`.
 3. **Emit user-data script** that:
    - Installs Docker from Docker’s apt repo.
-   - Optionally mounts EBS at `/opt/icici/data`.
-   - Writes `/opt/icici/.env` from `APP_ENV_FILE_B64`.
+   - Optionally mounts EBS at `/opt/breeze-core-engine/data`.
+   - Writes `/opt/breeze-core-engine/.env` from `APP_ENV_FILE_B64`.
    - Logs into GHCR and `docker pull`.
-   - Stops/removes old `icici-app` container.
+   - Stops/removes old `breeze-core-engine-app` container.
    - Runs:  
-     `docker run -d --name icici-app --restart unless-stopped --env-file /opt/icici/.env -v /opt/icici/data:/app/backend/data -p 80:3000 IMAGE:TAG`  
-     (volume mount still created as `/opt/icici/data` even without EBS—ephemeral root disk.)
+     `docker run -d --name breeze-core-engine-app --restart unless-stopped --env-file /opt/breeze-core-engine/.env -v /opt/breeze-core-engine/data:/app/backend/data -p 80:3000 IMAGE:TAG`  
+     (volume mount still created as `/opt/breeze-core-engine/data` even without EBS—ephemeral root disk.)
 4. **Find default VPC** and first default subnet.
 5. **Ensure security group** named `{EC2_TAG}-sg` with ingress **TCP 22** and **TCP 80** from `0.0.0.0/0` (adjust for production hardening).
 6. **Resolve Ubuntu 24.04 arm64** AMI via SSM parameter.
-7. **Terminate** existing instances tagged `Name=ICICI-Breeze-Web-EC2` (workflow constant `EC2_TAG`) and wait for termination—ensures EIP can move and no duplicate fleet.
+7. **Terminate** existing instances tagged `Name=Breeze-Core-Engine-EC2` (workflow constant `EC2_TAG`) and wait for termination—ensures EIP can move and no duplicate fleet.
 8. **Launch** new instance with user-data.
 9. **Wait** until `running`.
 10. **Attach** EBS volume if secret set.
@@ -173,7 +173,7 @@ Configurable **env** at job level (edit workflow to change):
 | `AWS_REGION` | `ap-south-1` |
 | `INSTANCE_TYPE` | `t4g.small` |
 | `IMAGE_TAG` | `latest` |
-| `EC2_TAG` | `ICICI-Breeze-Web-EC2` |
+| `EC2_TAG` | `Breeze-Core-Engine-EC2` |
 
 ---
 
@@ -195,7 +195,7 @@ SSH as `ubuntu` with your key:
 
 ```bash
 ssh -i your-key.pem ubuntu@<ELASTIC_IP>
-sudo docker logs -f icici-app
+sudo docker logs -f breeze-core-engine-app
 ```
 
 ### Update after a new image

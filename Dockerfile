@@ -1,5 +1,5 @@
 # Single image: nginx (port 3000) + Next.js (standalone) + FastAPI. Build from repo root:
-#   docker build -t icici-breeze-modern .
+#   docker build -t breeze-core-engine .
 #
 # Run (requires secrets — use an env file or mount):
 #   podman run --rm -p 3000:3000 --env-file .env ghcr.io/<owner>/<repo>:latest

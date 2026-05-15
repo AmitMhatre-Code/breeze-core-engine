@@ -18,11 +18,11 @@ jobs:
       AWS_REGION: ap-south-1
       INSTANCE_TYPE: t4g.small
       IMAGE_TAG: latest
-      REPO_NAME: icici-breeze-modern
+      REPO_NAME: breeze-core-engine
       EC2_USER: ubuntu
-      APP_NAME: icici-breeze-web
-      EC2_TAG: ICICI-Breeze-Modern-EC2
-      # EC2_KEY_NAME: ICICI-Breeze-Web-KP
+      APP_NAME: breeze-core-engine-web
+      EC2_TAG: Breeze-Core-Engine-EC2
+      # EC2_KEY_NAME: Breeze-Core-Engine-KP
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -36,7 +36,7 @@ jobs:
 
       # Optional: set GitHub secret EBS_DATA_VOLUME_ID (vol-...) to a gp3 volume in the same AZ as
       # the default VPC subnet, with DeleteOnTermination=false. Workflow attaches it as /dev/sdf;
-      # cloud-init waits, formats if empty (ext4, label icici-data), mounts /opt/icici/data.
+      # cloud-init waits, formats if empty (ext4, label breeze-core-data), mounts /opt/breeze-core-engine/data.
       - name: Build startup script
         env:
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
@@ -82,32 +82,32 @@ jobs:
               exit 1
             fi
             if ! blkid "\${DATA_DEV}" >/dev/null 2>&1; then
-              mkfs.ext4 -L icici-data -E discard "\${DATA_DEV}"
+              mkfs.ext4 -L breeze-core-data -E discard "\${DATA_DEV}"
             fi
-            mkdir -p /opt/icici/data
-            mount "\${DATA_DEV}" /opt/icici/data
-            if ! grep -q 'LABEL=icici-data /opt/icici/data' /etc/fstab; then
-              echo 'LABEL=icici-data /opt/icici/data ext4 defaults,nofail 0 2' >> /etc/fstab
+            mkdir -p /opt/breeze-core-engine/data
+            mount "\${DATA_DEV}" /opt/breeze-core-engine/data
+            if ! grep -q 'LABEL=breeze-core-data /opt/breeze-core-engine/data' /etc/fstab; then
+              echo 'LABEL=breeze-core-data /opt/breeze-core-engine/data ext4 defaults,nofail 0 2' >> /etc/fstab
             fi
           else
-            mkdir -p /opt/icici/data
+            mkdir -p /opt/breeze-core-engine/data
           fi
 
           # Write runtime env file from GitHub secret (base64-encoded .env content)
-          printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/icici/.env
-          chmod 600 /opt/icici/.env
+          printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/breeze-core-engine/.env
+          chmod 600 /opt/breeze-core-engine/.env
 
           # Login and pull from GHCR
           echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
           docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
 
           # Run app container
-          docker rm -f icici-app || true
+          docker rm -f breeze-core-engine-app || true
           docker run -d \
-            --name icici-app \
+            --name breeze-core-engine-app \
             --restart unless-stopped \
-            --env-file /opt/icici/.env \
-            -v /opt/icici/data:/app/backend/data \
+            --env-file /opt/breeze-core-engine/.env \
+            -v /opt/breeze-core-engine/data:/app/backend/data \
             -p 80:3000 \
             "${IMAGE_NAME}:${IMAGE_TAG}"
           EOF

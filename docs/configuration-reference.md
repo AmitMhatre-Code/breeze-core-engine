@@ -147,7 +147,7 @@ Compose sets for **frontend** container:
 
 ## AWS runtime (`APP_ENV_FILE_B64`)
 
-The GitHub Actions deploy decodes a **base64-encoded full `.env`** into `/opt/icici/.env` on the instance. Include every variable the app needs in that secret. See [AWS deployment](./aws-deployment.md).
+The GitHub Actions deploy decodes a **base64-encoded full `.env`** into `/opt/breeze-core-engine/.env` on the instance. Include every variable the app needs in that secret. See [AWS deployment](./aws-deployment.md).
 
 ---
 

@@ -1,2 +1,2 @@
-"""Modernized ICICI Breeze backend namespace."""
+"""Breeze Core Engine backend namespace."""
 
