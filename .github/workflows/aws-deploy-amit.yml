@@ -20,7 +20,7 @@ jobs:
       IMAGE_TAG: latest
       REPO_NAME: breeze-core-engine
       EC2_USER: ubuntu
-      APP_NAME: breeze-core-engine-web
+      APP_NAME: breeze-core-engine
       EC2_TAG: Breeze-Core-Engine-EC2
       EC2_KEY_NAME: Breeze-Core-Engine-KP
     steps:
