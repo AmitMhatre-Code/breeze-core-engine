@@ -72,13 +72,19 @@ jobs:
               find /app \( -name ".env*" -o -name "*.pem" \) 2>/dev/null
               exit 1
             fi
-            if grep -rqE "(JWT_SECRET=|GOOGLE_CLIENT_SECRET=|BREEZE_CI_CANARY_MARKER)" /app 2>/dev/null; then
-              echo "ERROR: secret-like patterns found under /app"
-              grep -rE "(JWT_SECRET=|GOOGLE_CLIENT_SECRET=|BREEZE_CI_CANARY_MARKER)" /app 2>/dev/null || true
+            # Env-file lines only (line-start KEY=value with a real value, not "..." placeholders in source strings).
+            if grep -rE "^[[:space:]]*(JWT_SECRET|GOOGLE_CLIENT_SECRET)=[a-zA-Z0-9+/=_-]{8,}" /app 2>/dev/null; then
+              echo "ERROR: env-style secret assignment found under /app"
+              grep -rE "^[[:space:]]*(JWT_SECRET|GOOGLE_CLIENT_SECRET)=[a-zA-Z0-9+/=_-]{8,}" /app 2>/dev/null || true
               exit 1
             fi
-            if grep -rq "sk-" /app 2>/dev/null; then
-              echo "ERROR: sk- pattern found under /app"
+            if grep -rq "BREEZE_CI_CANARY_MARKER=do-not-ship-in-image" /app 2>/dev/null; then
+              echo "ERROR: CI canary marker found in image"
+              exit 1
+            fi
+            if grep -rE "sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}" /app 2>/dev/null | grep -q .; then
+              echo "ERROR: API key-like pattern found under /app"
+              grep -rE "sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}" /app 2>/dev/null || true
               exit 1
             fi
             echo "Image secret scan passed"
