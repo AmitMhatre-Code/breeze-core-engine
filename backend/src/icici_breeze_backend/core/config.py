@@ -123,6 +123,10 @@ ICICI_MOCK_SYNTHETIC_BROKER_TOKEN = os.environ.get("ICICI_MOCK_SYNTHETIC_BROKER_
 )
 ICICI_MOCK_BROKER_COOKIE_VALUE = (os.environ.get("ICICI_MOCK_BROKER_COOKIE_VALUE") or "mock").strip() or "mock"
 
+# Console portal: report successful app login against registered deployment (EC2 stack .env).
+DEPLOYMENT_LICENSE_KEY = (os.environ.get("DEPLOYMENT_LICENSE_KEY") or "").strip()
+PORTAL_API_BASE_URL = (os.environ.get("PORTAL_API_BASE_URL") or "").strip().rstrip("/")
+
 EXPIRED = "Expired"
 CANCELLED = "Cancelled"
 EXECUTED = "Executed"

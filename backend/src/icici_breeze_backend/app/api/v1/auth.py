@@ -89,6 +89,9 @@ async def auth_direct_login(request: Request, body: DirectLoginRequest):
             access_token,
             full_secret,
         )
+        from icici_breeze_backend.app.services.portal_deployment_login import notify_portal_deployment_login
+
+        notify_portal_deployment_login()
         return response
     cookie_val = encrypt_direct_icici_cookie(uid, enc_key)
     if not cookie_val:

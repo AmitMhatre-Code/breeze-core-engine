@@ -394,6 +394,9 @@ async def _complete_icici_session(
     logger.info("login_submit success user_id=%s", form.user_id)
     response = JSONResponse({"redirect": "/dashboard"})
     _set_auth_cookies(response, icici_token, access_token, full_secret)
+    from icici_breeze_backend.app.services.portal_deployment_login import notify_portal_deployment_login
+
+    notify_portal_deployment_login()
     return response
 
 
