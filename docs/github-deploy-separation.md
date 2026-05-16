@@ -48,6 +48,25 @@ Use this environment for secrets you want isolated from legacy, for example:
 
 **Runtime deploy:** only via breeze-saas-portal — see below.
 
+### Public GHCR image vs runtime secrets
+
+The published image is intended to be **public** on GHCR. It contains only:
+
+- Next.js **standalone** output (no repo-root `.env` at build time; `DOCKER_BUILD=1` skips `loadEnvConfig` in `frontend/next.config.js`)
+- Whitelisted Python **source** under `backend/src/` (with `compileall` bytecode), `backend/static/`, and empty SQLite / limit-file **templates**
+- nginx + supervisor config under `deploy/`
+
+It does **not** contain operator API keys, database passwords, `JWT_SECRET`, Google OAuth secrets, or any `.env` file. The root [`.dockerignore`](../.dockerignore) and multi-stage [Dockerfile](../Dockerfile) exclude tests, dev helpers, local DBs, and env files from the build context. `ghcr-publish.yml` does not pass application secrets to `docker/build-push-action`; after each push it scans the image for `.env*` files and common secret patterns.
+
+**All sensitive configuration is injected at container start** on the customer EC2 instance:
+
+1. CloudFormation UserData writes `/opt/breeze-core-engine/.env` (e.g. `JWT_SECRET` from `openssl`, `PUBLIC_FRONTEND_ORIGIN` from the Elastic IP).
+2. `docker run ... --env-file /opt/breeze-core-engine/.env` passes those variables into the container.
+
+Operators add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and ICICI-related settings to that file on the instance (or extend the stack later). See breeze-saas-portal `infra/env-parameters.example.md`.
+
+Making the GHCR package public only affects **pull authentication**; it does not change where secrets live.
+
 ---
 
 ## breeze-saas-portal repo (CFN operator)

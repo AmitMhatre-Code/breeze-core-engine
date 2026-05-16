@@ -16,6 +16,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Place build-context canary (must not appear in image)
+        run: echo 'BREEZE_CI_CANARY_MARKER=do-not-ship-in-image' > .env.ci-canary
+
       - name: Set image name (GHCR requires lowercase)
         id: image
         run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
@@ -50,3 +53,32 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Verify image contains no secrets or env files
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}:latest
+          CANARY: BREEZE_CI_CANARY_MARKER
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE"
+          docker run --rm "$IMAGE" sh -c '
+            set -e
+            if find /app \( -name ".env*" -o -name "*.pem" \) 2>/dev/null | grep -q .; then
+              echo "ERROR: .env or .pem files found under /app"
+              find /app \( -name ".env*" -o -name "*.pem" \) 2>/dev/null
+              exit 1
+            fi
+            if grep -rqE "(JWT_SECRET=|GOOGLE_CLIENT_SECRET=|BREEZE_CI_CANARY_MARKER)" /app 2>/dev/null; then
+              echo "ERROR: secret-like patterns found under /app"
+              grep -rE "(JWT_SECRET=|GOOGLE_CLIENT_SECRET=|BREEZE_CI_CANARY_MARKER)" /app 2>/dev/null || true
+              exit 1
+            fi
+            if grep -rq "sk-" /app 2>/dev/null; then
+              echo "ERROR: sk- pattern found under /app"
+              exit 1
+            fi
+            echo "Image secret scan passed"
+          '

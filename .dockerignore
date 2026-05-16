@@ -1,16 +1,42 @@
+# Secrets & env
+**/.env
+**/.env.*
+.env.example
+**/*.pem
+**/*credentials*
+**/*secret*
+
+# Non-runtime repo content
 .git
 .github
 legacy
+docs
+scripts
+dev.sh
+docker-compose.yml
+README.md
+
+# Python/Node dev artifacts
 **/.venv
 **/node_modules
 **/.next
 **/__pycache__
 **/*.pyc
-**/.env
-**/.env.*
-.DS_Store
+backend/tests
+backend/**/tests
+**/test_*.py
+**/conftest.py
+backend/.pytest_cache
+backend/.mypy_cache
+backend/.ruff_cache
+backend/src/icici_breeze_backend/dev
 
-# Local app DB — image seeds from users.empty.sqlite3 in Dockerfile.
+# Local app DB — image seeds from *.empty.sqlite3 in Dockerfile
 backend/data/users.sqlite3
 backend/data/users.sqlite3-wal
 backend/data/users.sqlite3-shm
+backend/data/scrips.sqlite3
+backend/data/scrips.sqlite3-wal
+backend/data/scrips.sqlite3-shm
+
+.DS_Store

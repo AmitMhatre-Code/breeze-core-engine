@@ -1,8 +1,10 @@
 const path = require("node:path");
 const { loadEnvConfig } = require("@next/env");
 
-// Merge repo-root `.env` so rewrites see BACKEND_UPSTREAM_URL / NEXT_PUBLIC_* without `frontend/.env.local`.
-loadEnvConfig(path.join(__dirname, ".."));
+// Merge repo-root `.env` for local dev; skip during Docker image build (DOCKER_BUILD=1).
+if (process.env.DOCKER_BUILD !== "1") {
+  loadEnvConfig(path.join(__dirname, ".."));
+}
 
 /** @type {import("next").NextConfig} */
 const nextConfig = {
