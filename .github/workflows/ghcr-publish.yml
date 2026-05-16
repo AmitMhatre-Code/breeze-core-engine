@@ -63,8 +63,9 @@ jobs:
           CANARY: BREEZE_CI_CANARY_MARKER
         run: |
           set -euo pipefail
-          docker pull "$IMAGE"
-          docker run --rm "$IMAGE" sh -c '
+          # Image is built for linux/arm64 only; GHA runners are amd64 — pull/run with explicit platform.
+          docker pull --platform linux/arm64 "$IMAGE"
+          docker run --rm --platform linux/arm64 "$IMAGE" sh -c '
             set -e
             if find /app \( -name ".env*" -o -name "*.pem" \) 2>/dev/null | grep -q .; then
               echo "ERROR: .env or .pem files found under /app"
