@@ -1,4 +1,4 @@
-name: Manual AWS Deploy for Rakesh S (EC2 + Elastic IP)
+name: Legacy Manual AWS Deployment for Rakesh S (ICICI-Breeze-Modern)
 
 on:
   workflow_dispatch:

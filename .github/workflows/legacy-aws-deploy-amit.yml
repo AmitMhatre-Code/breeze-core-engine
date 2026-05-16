@@ -1,4 +1,4 @@
-name: Manual AWS Deploy for Amit M (EC2 + Elastic IP)
+name: Legacy Manual AWS Deployment for Amit M (ICICI-Breeze-Modern)
 
 on:
   workflow_dispatch:
