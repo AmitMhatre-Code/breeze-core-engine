@@ -1,6 +1,10 @@
 # AWS deployment guide
 
-This guide describes the **manual GitHub Actions workflows** [`.github/workflows/aws-deploy-amit.yml`](../.github/workflows/aws-deploy-amit.yml) and [`.github/workflows/aws-deploy-rakesh.yml`](../.github/workflows/aws-deploy-rakesh.yml) that provision an **EC2** instance, install **Docker**, pull the **GHCR** image from [`.github/workflows/ghcr-publish.yml`](../.github/workflows/ghcr-publish.yml), and run the **all-in-one** container from the root [`Dockerfile`](../Dockerfile).
+This guide describes the **legacy manual GitHub Actions workflows** [`.github/workflows/legacy-aws-deploy-amit.yml`](../.github/workflows/legacy-aws-deploy-amit.yml) and [`.github/workflows/legacy-aws-deploy-rakesh.yml`](../.github/workflows/legacy-aws-deploy-rakesh.yml) that provision an **EC2** instance, install **Docker**, pull the **`icici-breeze-modern`** GHCR package, and run the legacy all-in-one container.
+
+[`ghcr-publish.yml`](../.github/workflows/ghcr-publish.yml) publishes **`breeze-core-engine`** only. Legacy deploys use **`icici-breeze-modern:latest`** from your legacy GHCR package (separate publish path). See **[GitHub deploy separation](./github-deploy-separation.md)**.
+
+For **breeze-core-engine** customer deploys via CloudFormation, see **[GitHub deploy separation](./github-deploy-separation.md)** and the breeze-saas-portal stack template.
 
 It is **opinionated**: default VPC, Ubuntu **24.04 arm64**, `t4g.small`, Elastic IP association, optional **EBS** data volume. Adjust the workflow if your organisation requires a different topology (ALB, private subnets, ECS, etc.).
 
@@ -10,7 +14,7 @@ It is **opinionated**: default VPC, Ubuntu **24.04 arm64**, `t4g.small`, Elastic
 
 | Artifact | Description |
 |----------|-------------|
-| **Image** | `ghcr.io/<github-owner>/<repo-lowercase>:latest` (currently built as **linux/arm64**). |
+| **Image** | `ghcr.io/<github-owner>/icici-breeze-modern:latest` (**linux/arm64**; not built by `ghcr-publish.yml` in this repo). |
 | **Runtime** | One `docker run` with `-p 80:3000` — host port **80** maps to **nginx** inside the container on **3000**. |
 | **Data** | Optional persistent volume mounted at `/app/backend/data` inside the container (SQLite, ICICI masters, limits). |
 | **Secrets** | Full `.env` written on the instance from GitHub Actions secret `APP_ENV_FILE_B64`. |
@@ -55,14 +59,14 @@ and:
 3. Store the role ARN in GitHub secret **`AWS_ROLE_TO_ASSUME`**.
 4. Ensure the same role trust policy also allows `scheduler.amazonaws.com` (workflows create EventBridge Scheduler schedules).
 
-The jobs use GitHub environments `production` (Amit workflow) and `production-rakesh` (Rakesh workflow), so you can add protection rules and environment-scoped secrets.
+The jobs use GitHub environments **`production`** (Amit legacy workflow) and **`production-rakesh`** (Rakesh legacy workflow). **`breeze-core-engine`** is deployed only via CloudFormation (environment **`production-breeze-core-engine`** for operator config). See **[GitHub deploy separation](./github-deploy-separation.md)**.
 
 ### 3. EC2 key pair (workflow-specific)
 
 The Amit workflow launches instances with:
 
 ```yaml
-EC2_KEY_NAME: Breeze-Core-Engine-KP
+EC2_KEY_NAME: icici-breeze-modern-KP
 ```
 
 Create an EC2 key pair with **exactly that name** in the target region (`ap-south-1` by default), or change `EC2_KEY_NAME` in the workflow to match your key. The Rakesh workflow currently does **not** pass `--key-name`.
