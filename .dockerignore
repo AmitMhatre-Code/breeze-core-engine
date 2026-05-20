@@ -3,7 +3,11 @@
 **/.env.*
 .env.example
 **/*.pem
-**/*credentials*
+# Secret credential files only — do not use *credentials* (excludes app/auth/credentials.py).
+**/.credentials
+**/credentials.json
+**/credentials.yml
+**/credentials.yaml
 **/*secret*
 
 # Non-runtime repo content
