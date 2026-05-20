@@ -214,7 +214,7 @@ sudo docker logs -f breeze-core-engine-app
 
 ### Health
 
-The Dockerfile **HEALTHCHECK** requests `http://127.0.0.1:3000/` (nginx → Next). The FastAPI **`/health`** route is **not** listed in `deploy/nginx.all-in-one.conf`, so **`http://<EIP>/health`** from the internet may not reach the API unless you add a `location` block (mirror `nginx.conf` in the repo) or terminate checks inside the container. For a quick external check, use **`http://<EIP>/`** (expect HTML from the UI).
+The Dockerfile **HEALTHCHECK** requests `http://127.0.0.1:3000/` (nginx → Next). Nginx also proxies **`http://<EIP>/health`** to FastAPI for external liveness (used by the SaaS console). For a manual check: **`http://<EIP>/`** (UI HTML) and **`http://<EIP>/health`** (JSON `{"status":"ok",...}`).
 
 ---
 
