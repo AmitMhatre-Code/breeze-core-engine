@@ -15,7 +15,8 @@
 .github
 legacy
 docs
-scripts
+scripts/*
+!scripts/changelog-latest-version.mjs
 dev.sh
 docker-compose.yml
 README.md
