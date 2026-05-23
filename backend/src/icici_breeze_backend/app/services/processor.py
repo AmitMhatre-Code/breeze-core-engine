@@ -473,7 +473,6 @@ class processor():
         try:
             from icici_breeze_backend.app.auth.context import get_broker_token_for_request, get_breeze_session_for_request, set_breeze_session_for_request
             from icici_breeze_backend.app.services.breeze_session_cache import get as cache_get, set as cache_set
-            from icici_breeze_backend.dev.mock_broker import MockBreezeSdk
 
             # Reuse session created earlier in this request
             cached = get_breeze_session_for_request()
@@ -484,6 +483,8 @@ class processor():
                 _logger.warning("get_session_breeze: no broker token in request (cookie missing or empty) user_id=%s", user_id)
                 return None
             if getattr(cfg, "ICICI_BROKER_MODE", "live") == "mock":
+                from icici_breeze_backend.dev.mock_broker import MockBreezeSdk
+
                 breeze = cache_get(user_id, broker_token)
                 if breeze is not None:
                     set_breeze_session_for_request(breeze)
