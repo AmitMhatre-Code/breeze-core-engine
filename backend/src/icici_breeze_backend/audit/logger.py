@@ -83,6 +83,9 @@ class AuditLogger:
         Returns:
             True if logged successfully
         """
+        if not user_id:
+            user_id = "anonymous"
+
         # Persist audit entry into the audit_log table.
         try:
             import sqlite3

@@ -9,6 +9,14 @@ from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
 logger = logging.getLogger("app.middleware")
 
+# High-frequency probes should not write to audit_log (no authenticated user).
+_AUDIT_SKIP_PATHS = frozenset({"/health", "/metrics"})
+
+
+def _resolve_request_actor(request: Request, state_user_id: str | None) -> str:
+    client_ip = (request.client.host if request.client else None) or "unknown"
+    return state_user_id or client_ip or "anonymous"
+
 
 class RequestLoggerMiddleware(BaseHTTPMiddleware):
     """Log incoming requests and append to audit trail."""
@@ -17,12 +25,13 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
         set_current_route_id(f"{request.method} {request.url.path}")
         # request.state.user_id is set by auth dependencies; middleware runs before them.
         state_user_id_before = getattr(request.state, "user_id", None)
-        client_ip = request.client.host if request.client else "unknown"
 
         response = await call_next(request)
 
         state_user_id_after = getattr(request.state, "user_id", None)
-        user_id = state_user_id_after or state_user_id_before or client_ip
+        user_id = _resolve_request_actor(
+            request, state_user_id_after or state_user_id_before
+        )
 
         logger.info(
             "Incoming request %s %s user_id=%s",
@@ -30,6 +39,9 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
             request.url.path,
             user_id,
         )
+
+        if request.url.path in _AUDIT_SKIP_PATHS:
+            return response
 
         try:
             AuditLogger(None).log_operation(
