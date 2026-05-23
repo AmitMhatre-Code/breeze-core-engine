@@ -4,9 +4,11 @@ import Image from "next/image";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import breezeMark from "@/app/android-chrome-192x192.png";
+import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
+import { getLatestRelease } from "@/lib/changelog";
 
 function LoginContent() {
   const sp = useSearchParams();
@@ -21,6 +23,8 @@ function LoginContent() {
   const [directPassword, setDirectPassword] = useState("");
   const [directErr, setDirectErr] = useState<string | null>(null);
   const [directBusy, setDirectBusy] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
+  const latestReleaseVersion = getLatestRelease()?.version;
 
   let banner: string | null = null;
   let tone: "ok" | "warn" | "err" = "ok";
@@ -70,9 +74,22 @@ function LoginContent() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-background py-8 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] text-foreground">
-      <div className="absolute end-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))]">
+      <div className="absolute end-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setChangelogOpen(true)}
+          className="inline-flex min-h-9 shrink-0 items-center justify-center truncate rounded-md px-1.5 text-xs font-medium text-sky-700 underline-offset-2 hover:underline dark:text-sky-400"
+          aria-haspopup="dialog"
+          aria-label="Open changelog"
+        >
+          {latestReleaseVersion ? `v${latestReleaseVersion}` : "Version"}
+        </button>
         <ThemeToggle />
       </div>
+      <ChangelogDialog
+        open={changelogOpen}
+        onClose={() => setChangelogOpen(false)}
+      />
       <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white/90 p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900/80 dark:shadow-xl dark:shadow-black/40">
         <div className="mb-6 flex gap-3">
           <div className="flex h-16 w-16 shrink-0 items-center justify-center">

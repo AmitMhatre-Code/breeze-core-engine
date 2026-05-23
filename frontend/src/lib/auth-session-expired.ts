@@ -13,7 +13,11 @@ export function isSessionExpiredRedirectPending(): boolean {
 
 const UNAUTH_REDIRECT_PATH_PREFIXES = ["/api/register"];
 
-const UNAUTH_REDIRECT_EXACT_PATHS = new Set(["/auth/direct-login"]);
+const UNAUTH_REDIRECT_EXACT_PATHS = new Set([
+  "/auth/direct-login",
+  // Session probe: 401 means "not signed in yet", not "session expired".
+  "/auth/session",
+]);
 
 /** 401 cases where the user is not in an “logged in but stale” state. */
 function isBenignUnauthorizedMessage(message: string): boolean {
