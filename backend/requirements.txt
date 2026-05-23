@@ -24,6 +24,7 @@ pydantic-settings==2.1.0
 # Utilities
 requests==2.31.0
 httpx==0.25.1
+docker>=7.0.0,<8
 markupsafe>=2.1.0
 scipy>=1.11.0
 feedparser>=6.0.0

@@ -1,6 +1,8 @@
+import asyncio
 import os
 import sys
 import logging
+from contextlib import asynccontextmanager
 from typing import Optional
 
 _root = os.path.dirname(os.path.abspath(__file__))
@@ -287,7 +289,25 @@ def start_application():
     else:
         _logger.info("Skipping ICICI master download (ICICI_BROKER_MODE=mock).")
 
-    app = FastAPI(trust_env=True)
+    from icici_breeze_backend.app.services.portal_deployment_heartbeat import (
+        heartbeat_loop_enabled,
+        run_heartbeat_loop,
+    )
+
+    @asynccontextmanager
+    async def _portal_heartbeat_lifespan(_app: FastAPI):
+        task: asyncio.Task | None = None
+        if heartbeat_loop_enabled():
+            task = asyncio.create_task(run_heartbeat_loop())
+        yield
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    app = FastAPI(trust_env=True, lifespan=_portal_heartbeat_lifespan)
     # CORS: allow web UI. .env uses ALLOWED_ORIGINS; CORS_ORIGINS overrides if set.
     _cors_raw = (
         os.environ.get("CORS_ORIGINS")

@@ -126,6 +126,13 @@ ICICI_MOCK_BROKER_COOKIE_VALUE = (os.environ.get("ICICI_MOCK_BROKER_COOKIE_VALUE
 # Console portal: report successful app login against registered deployment (EC2 stack .env).
 DEPLOYMENT_LICENSE_KEY = (os.environ.get("DEPLOYMENT_LICENSE_KEY") or "").strip()
 PORTAL_API_BASE_URL = (os.environ.get("PORTAL_API_BASE_URL") or "").strip().rstrip("/")
+DEPLOYMENT_GHCR_IMAGE = (os.environ.get("DEPLOYMENT_GHCR_IMAGE") or "").strip()
+DEPLOYMENT_CONTAINER_NAME = (os.environ.get("DEPLOYMENT_CONTAINER_NAME") or "breeze-core-engine").strip()
+_PORTAL_HEARTBEAT_INTERVAL_RAW = (os.environ.get("PORTAL_HEARTBEAT_INTERVAL_SEC") or "300").strip()
+try:
+    PORTAL_HEARTBEAT_INTERVAL_SEC = max(60, int(_PORTAL_HEARTBEAT_INTERVAL_RAW))
+except ValueError:
+    PORTAL_HEARTBEAT_INTERVAL_SEC = 300
 
 EXPIRED = "Expired"
 CANCELLED = "Cancelled"
