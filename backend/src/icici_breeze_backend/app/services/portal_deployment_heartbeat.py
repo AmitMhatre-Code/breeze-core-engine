@@ -19,10 +19,14 @@ _MARKET_OPEN = time(9, 0)
 _MARKET_CLOSE = time(16, 0)
 _HEARTBEAT_TIMEOUT_SEC = 10.0
 _WATCHTOWER_IMAGE = "containrrr/watchtower"
+_INTERVAL_MIN_SEC = 300
+_INTERVAL_MAX_SEC = 3600
+
+_last_interval_sec: int = _INTERVAL_MIN_SEC
 
 
 def is_ist_market_hours(now: datetime | None = None) -> bool:
-    """True when local IST time is in [09:00, 16:00) — upgrades must not run."""
+    """True when local IST time is in [09:00, 16:00) — legacy upgrade guard."""
     dt = now or datetime.now(_IST)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=_IST)
@@ -32,12 +36,51 @@ def is_ist_market_hours(now: datetime | None = None) -> bool:
     return _MARKET_OPEN <= t < _MARKET_CLOSE
 
 
+def _clamp_interval(sec: int | float | str | None) -> int:
+    try:
+        n = int(sec)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        n = int(cfg.PORTAL_HEARTBEAT_INTERVAL_SEC or 300)
+    return max(_INTERVAL_MIN_SEC, min(_INTERVAL_MAX_SEC, n))
+
+
+def _read_baked_app_version() -> str:
+    path = (os.environ.get("APP_VERSION_FILE") or "").strip() or "/etc/breeze_app_version"
+    try:
+        with open(path, encoding="utf-8") as fh:
+            val = fh.read().strip()
+            if val:
+                return val[:512]
+    except OSError:
+        pass
+    return ""
+
+
 def _reported_version() -> str:
     for key in ("APP_VERSION", "IMAGE_TAG", "DEPLOYMENT_VERSION"):
         val = (os.environ.get(key) or "").strip()
         if val:
             return val[:512]
+    baked = _read_baked_app_version()
+    if baked:
+        return baked
     return "unknown"
+
+
+def _upgrade_allowed(body: dict) -> bool:
+    if "upgrade_allowed_now" in body:
+        return bool(body.get("upgrade_allowed_now"))
+    return not is_ist_market_hours()
+
+
+def _apply_policy_from_body(body: dict) -> None:
+    global _last_interval_sec
+    if "heartbeat_interval_sec" in body:
+        _last_interval_sec = _clamp_interval(body.get("heartbeat_interval_sec"))
+
+
+def current_heartbeat_interval_sec() -> int:
+    return _last_interval_sec
 
 
 def _resolve_upgrade_image(target_tag: str | None) -> str | None:
@@ -126,25 +169,30 @@ async def post_heartbeat() -> dict | None:
         return None
 
 
-async def heartbeat_tick() -> None:
-    if is_ist_market_hours():
-        logger.debug("portal heartbeat skipped: IST market hours")
-        return
+async def heartbeat_tick() -> int:
+    """Phone home; run upgrade when portal approves. Returns next sleep interval (seconds)."""
+    global _last_interval_sec
 
     body = await post_heartbeat()
+    if body:
+        _apply_policy_from_body(body)
+
     if not body:
-        return
+        return _last_interval_sec
 
     if body.get("status") != "OK":
         logger.warning("portal heartbeat unexpected status: %s", body.get("status"))
-        return
+        return _last_interval_sec
 
-    if not body.get("trigger_upgrade"):
-        return
+    if body.get("trigger_upgrade"):
+        if _upgrade_allowed(body):
+            target_tag = body.get("target_tag")
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, execute_upgrade, target_tag)
+        else:
+            logger.info("portal heartbeat upgrade deferred: outside operator upgrade window")
 
-    target_tag = body.get("target_tag")
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, execute_upgrade, target_tag)
+    return _last_interval_sec
 
 
 def heartbeat_loop_enabled() -> bool:
@@ -159,13 +207,15 @@ def heartbeat_loop_enabled() -> bool:
 
 async def run_heartbeat_loop() -> None:
     """Sleep interval loop; exits when cancelled."""
-    interval = max(60, int(cfg.PORTAL_HEARTBEAT_INTERVAL_SEC or 300))
-    logger.info("portal heartbeat loop started (interval=%ss)", interval)
+    global _last_interval_sec
+    _last_interval_sec = _clamp_interval(cfg.PORTAL_HEARTBEAT_INTERVAL_SEC)
+    logger.info("portal heartbeat loop started (interval=%ss)", _last_interval_sec)
     while True:
         try:
-            await heartbeat_tick()
+            interval = await heartbeat_tick()
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("portal heartbeat tick error: %s", exc)
+            interval = _last_interval_sec
         await asyncio.sleep(interval)

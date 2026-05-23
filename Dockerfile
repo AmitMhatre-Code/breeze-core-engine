@@ -6,6 +6,13 @@
 # Optional: persist backend data
 #   podman run ... -v /opt/breeze-core-engine/data:/app/backend/data ...
 
+FROM node:22-bookworm-slim AS version-extract
+
+WORKDIR /src
+COPY scripts/changelog-latest-version.mjs scripts/changelog-latest-version.mjs
+COPY frontend/src/lib/changelog.ts frontend/src/lib/changelog.ts
+RUN node scripts/changelog-latest-version.mjs frontend/src/lib/changelog.ts > /tmp/app_version
+
 FROM node:22-bookworm-slim AS frontend-builder
 
 WORKDIR /app
@@ -81,6 +88,9 @@ ENV PYTHONPATH=/app/backend/src
 ENV PYTHONUNBUFFERED=1
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY --from=version-extract /tmp/app_version /etc/breeze_app_version
+ENV APP_VERSION_FILE=/etc/breeze_app_version
 
 EXPOSE 3000
 

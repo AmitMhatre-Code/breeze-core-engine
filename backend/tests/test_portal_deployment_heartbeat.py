@@ -31,12 +31,35 @@ def test_is_ist_market_hours(dt, blocked):
     assert hb.is_ist_market_hours(dt) is blocked
 
 
-def test_heartbeat_tick_skips_during_market_hours():
+def test_heartbeat_tick_always_posts():
     async def _run():
-        with patch.object(hb, "is_ist_market_hours", return_value=True):
-            with patch.object(hb, "post_heartbeat") as post:
+        with patch.object(
+            hb,
+            "post_heartbeat",
+            return_value={"status": "OK", "trigger_upgrade": False, "heartbeat_interval_sec": 600},
+        ) as post:
+            interval = await hb.heartbeat_tick()
+            post.assert_called_once()
+            assert interval == 600
+
+    asyncio.run(_run())
+
+
+def test_heartbeat_tick_defers_upgrade_when_not_allowed():
+    async def _run():
+        with patch.object(
+            hb,
+            "post_heartbeat",
+            return_value={
+                "status": "OK",
+                "trigger_upgrade": True,
+                "target_tag": "latest",
+                "upgrade_allowed_now": False,
+            },
+        ):
+            with patch.object(hb, "execute_upgrade") as upgrade:
                 await hb.heartbeat_tick()
-                post.assert_not_called()
+                upgrade.assert_not_called()
 
     asyncio.run(_run())
 
@@ -45,15 +68,19 @@ def test_heartbeat_tick_runs_upgrade_when_triggered(monkeypatch):
     monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/example/breeze-core-engine:latest")
 
     async def _run():
-        with patch.object(hb, "is_ist_market_hours", return_value=False):
-            with patch.object(
-                hb,
-                "post_heartbeat",
-                return_value={"status": "OK", "trigger_upgrade": True, "target_tag": "latest"},
-            ):
-                with patch.object(hb, "execute_upgrade") as upgrade:
-                    await hb.heartbeat_tick()
-                    upgrade.assert_called_once_with("latest")
+        with patch.object(
+            hb,
+            "post_heartbeat",
+            return_value={
+                "status": "OK",
+                "trigger_upgrade": True,
+                "target_tag": "latest",
+                "upgrade_allowed_now": True,
+            },
+        ):
+            with patch.object(hb, "execute_upgrade") as upgrade:
+                await hb.heartbeat_tick()
+                upgrade.assert_called_once_with("latest")
 
     asyncio.run(_run())
 
