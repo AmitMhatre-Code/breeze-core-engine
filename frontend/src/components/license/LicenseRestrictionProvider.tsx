@@ -1,6 +1,5 @@
 "use client";
 
-import { usePathname } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -10,20 +9,22 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "@/lib/api-client";
 import {
-  isTradingReadOnly,
   LICENSE_CONSOLE_URL,
   LICENSE_REVOKED_BANNER,
   type DeploymentLicenseStatus,
 } from "@/lib/deployment-license";
-import type { HomeDataResponse } from "@/lib/home-data";
-import { shouldFetchLicenseHomeData } from "@/lib/public-auth-routes";
+import { buildContactSalesMailtoForLicenseStatus } from "@/lib/contact-sales-mailto";
+import {
+  licenseStatusFromQuery,
+  tradingReadOnlyFromLicense,
+  useDeploymentLicense,
+} from "@/lib/use-deployment-license";
 
 type LicenseRestrictionContextValue = {
   licenseStatus: DeploymentLicenseStatus | null;
   tradingReadOnly: boolean;
+  contactSalesMailto: string | null;
   showRevokedDialog: () => void;
   guardTradingAction: (fn: () => void) => void;
 };
@@ -44,9 +45,11 @@ export function useLicenseRestrictions(): LicenseRestrictionContextValue {
 function RevokedLicenseDialog({
   open,
   onClose,
+  contactSalesMailto,
 }: {
   open: boolean;
   onClose: () => void;
+  contactSalesMailto: string | null;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -101,7 +104,16 @@ function RevokedLicenseDialog({
           </a>
           {after}
         </p>
-        <div className="mt-4 flex justify-end">
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          {contactSalesMailto ? (
+            <a
+              href={contactSalesMailto}
+              data-license-allow
+              className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-900 hover:bg-red-50 dark:border-red-500/40 dark:text-red-100 dark:hover:bg-red-950/40"
+            >
+              Contact Sales
+            </a>
+          ) : null}
           <button
             type="button"
             data-license-allow
@@ -117,25 +129,14 @@ function RevokedLicenseDialog({
 }
 
 export function LicenseRestrictionProvider({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
-  const licenseQueryEnabled = shouldFetchLicenseHomeData(pathname);
+  const licenseQ = useDeploymentLicense();
 
-  const homeQ = useQuery({
-    queryKey: ["home", "data"],
-    queryFn: () => apiClient.get<HomeDataResponse>("/home/data"),
-    staleTime: 30_000,
-    enabled: licenseQueryEnabled,
-    retry: false,
-    refetchInterval: (query) => {
-      const status = query.state.data?.deployment_license_status;
-      return status === "expired" || status === "revoked" ? 60_000 : false;
-    },
-  });
-
-  const licenseStatus = homeQ.data?.deployment_license_status ?? null;
-  const tradingReadOnly =
-    homeQ.data?.deployment_license_read_only === true ||
-    isTradingReadOnly(licenseStatus);
+  const licenseStatus = licenseStatusFromQuery(licenseQ.data);
+  const tradingReadOnly = tradingReadOnlyFromLicense(licenseQ.data);
+  const contactSalesMailto = buildContactSalesMailtoForLicenseStatus(
+    licenseStatus,
+    licenseQ.data?.contact_sales,
+  );
 
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -158,10 +159,11 @@ export function LicenseRestrictionProvider({ children }: { children: ReactNode }
     () => ({
       licenseStatus,
       tradingReadOnly,
+      contactSalesMailto,
       showRevokedDialog,
       guardTradingAction,
     }),
-    [licenseStatus, tradingReadOnly, showRevokedDialog, guardTradingAction],
+    [licenseStatus, tradingReadOnly, contactSalesMailto, showRevokedDialog, guardTradingAction],
   );
 
   return (
@@ -170,6 +172,7 @@ export function LicenseRestrictionProvider({ children }: { children: ReactNode }
       <RevokedLicenseDialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
+        contactSalesMailto={contactSalesMailto}
       />
     </LicenseRestrictionContext.Provider>
   );

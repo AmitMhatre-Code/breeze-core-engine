@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services.portal_deployment_heartbeat import _reported_version
+from icici_breeze_backend.app.services.portal_deployment_login import _public_ip_from_origin
 
 LicenseStatus = Literal["active", "expired", "revoked"]
 LicenseSource = Literal["heartbeat", "deployment-login"]
@@ -96,6 +98,18 @@ def trading_mutations_allowed() -> bool:
         return _status != "revoked"
 
 
+def _contact_sales_context() -> dict[str, Any]:
+    key = (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
+    origin = (cfg.PUBLIC_FRONTEND_ORIGIN or "").strip()
+    version = (_reported_version() or "").strip()
+    return {
+        "license_key": key or None,
+        "public_ip": _public_ip_from_origin(),
+        "deployment_origin": origin or None,
+        "app_version": version or None,
+    }
+
+
 def get_license_status_for_api() -> dict[str, Any] | None:
     """Payload fields for HomeDataResponse; None when license env is not configured."""
     if not _license_env_configured():
@@ -103,10 +117,13 @@ def get_license_status_for_api() -> dict[str, Any] | None:
     with _lock:
         if _status is None:
             return None
-        return {
+        payload: dict[str, Any] = {
             "deployment_license_status": _status,
             "deployment_license_read_only": _status == "revoked",
         }
+        if _status in ("expired", "revoked"):
+            payload["contact_sales"] = _contact_sales_context()
+        return payload
 
 
 def reset_for_tests() -> None:

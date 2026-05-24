@@ -15,6 +15,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import breezeMark from "@/app/android-chrome-192x192.png";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
+import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { apiClient } from "@/lib/api-client";
@@ -95,14 +96,12 @@ export function AppShell({
     return () => window.cancelAnimationFrame(id);
   }, [mobileNavOpen]);
 
+  const { licenseStatus, contactSalesMailto } = useLicenseRestrictions();
+
   const homeQ = useQuery({
     queryKey: ["home", "data"],
     queryFn: () => apiClient.get<HomeDataResponse>("/home/data"),
     staleTime: 30_000,
-    refetchInterval: (query) => {
-      const status = query.state.data?.deployment_license_status;
-      return status === "expired" || status === "revoked" ? 60_000 : false;
-    },
   });
 
   const displayName = useMemo(
@@ -342,7 +341,10 @@ export function AppShell({
           open={changelogOpen}
           onClose={() => setChangelogOpen(false)}
         />
-        <LicenseStatusBanner status={homeQ.data?.deployment_license_status} />
+        <LicenseStatusBanner
+          status={licenseStatus}
+          contactSalesMailto={contactSalesMailto}
+        />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-50 py-4 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-zinc-950 md:py-5 md:ps-5 md:pe-5">
           <div
             className={[

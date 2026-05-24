@@ -8,6 +8,10 @@ if (process.env.DOCKER_BUILD !== "1") {
 
 /** @type {import("next").NextConfig} */
 const nextConfig = {
+  env: {
+    NEXT_PUBLIC_SALES_EMAIL:
+      process.env.SALES_EMAIL || process.env.NEXT_PUBLIC_SALES_EMAIL || "",
+  },
   output: "standalone",
   experimental: {
     proxyClientMaxBodySize: "128mb",
@@ -44,6 +48,10 @@ const nextConfig = {
         destination: `${backendUpstream}/api/outlook/:path*`,
       },
       { source: "/home/data", destination: `${backendUpstream}/home/data` },
+      {
+        source: "/deployment/license-status",
+        destination: `${backendUpstream}/deployment/license-status`,
+      },
       {
         source: "/dashboard/vix",
         destination: `${backendUpstream}/dashboard/vix`,

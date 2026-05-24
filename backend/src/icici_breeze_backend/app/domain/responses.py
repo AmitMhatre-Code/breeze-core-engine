@@ -76,6 +76,16 @@ class StockCodesResponse(BaseModel):
     stock_codes: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class DeploymentLicenseContactSales(BaseModel):
+    """Deployment context for Contact Sales mailto when license is expired or revoked."""
+
+    model_config = ConfigDict(extra="forbid")
+    license_key: Optional[str] = Field(None, description="Deployment license key from env")
+    public_ip: Optional[str] = Field(None, description="Public IP parsed from deployment origin")
+    deployment_origin: Optional[str] = Field(None, description="PUBLIC_FRONTEND_ORIGIN URL")
+    app_version: Optional[str] = Field(None, description="Reported app version from heartbeat")
+
+
 class HomeDataResponse(BaseModel):
     """Home /data: customer and margin info."""
     customer: Dict[str, Any] = Field(default_factory=dict)
@@ -99,6 +109,27 @@ class HomeDataResponse(BaseModel):
     deployment_license_read_only: bool = Field(
         False,
         description="True when deployment license is revoked (trading mutations blocked)",
+    )
+    contact_sales: Optional[DeploymentLicenseContactSales] = Field(
+        None,
+        description="License/deployment snapshot for Contact Sales when status is expired or revoked",
+    )
+
+
+class DeploymentLicenseStatusResponse(BaseModel):
+    """Portal deployment license status (heartbeat cache); JWT only, no broker calls."""
+
+    deployment_license_status: Optional[Literal["active", "expired", "revoked"]] = Field(
+        None,
+        description="Portal-reported deployment license status when license env is configured",
+    )
+    deployment_license_read_only: bool = Field(
+        False,
+        description="True when deployment license is revoked (trading mutations blocked)",
+    )
+    contact_sales: Optional[DeploymentLicenseContactSales] = Field(
+        None,
+        description="License/deployment snapshot for Contact Sales when status is expired or revoked",
     )
 
 

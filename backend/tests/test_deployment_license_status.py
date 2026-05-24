@@ -26,6 +26,7 @@ def test_update_from_portal_response_active_on_200():
         "deployment_license_status": "active",
         "deployment_license_read_only": False,
     }
+    assert "contact_sales" not in api
 
 
 @pytest.mark.parametrize(
@@ -42,7 +43,8 @@ def test_update_from_portal_response_403(detail, expected):
     assert dls.trading_mutations_allowed() is (expected != "revoked")
 
 
-def test_expired_allows_trading_mutations():
+def test_expired_allows_trading_mutations(monkeypatch):
+    monkeypatch.setattr(cfg, "PUBLIC_FRONTEND_ORIGIN", "http://203.0.113.10")
     dls.update_from_portal_response(
         403,
         {"detail": "License expired"},
@@ -51,6 +53,8 @@ def test_expired_allows_trading_mutations():
     assert dls.trading_mutations_allowed() is True
     api = dls.get_license_status_for_api()
     assert api["deployment_license_read_only"] is False
+    assert api["contact_sales"]["license_key"] == "test-license-key"
+    assert api["contact_sales"]["public_ip"] == "203.0.113.10"
 
 
 def test_revoked_blocks_trading_mutations():

@@ -1,6 +1,6 @@
 /**
- * App routes where the user is often unauthenticated. Do not probe /home/data for
- * license status or treat 401s as "session expired" (would eject ICICI challenge / register).
+ * App routes where the user is often unauthenticated. Do not probe deployment license
+ * status or treat 401s as "session expired" (would eject ICICI challenge / register).
  */
 const PUBLIC_UNAUTHENTICATED_PATH_PREFIXES = [
   "/login",

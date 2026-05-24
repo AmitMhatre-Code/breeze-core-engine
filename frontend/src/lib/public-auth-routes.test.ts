@@ -5,7 +5,7 @@ import {
 } from "@/lib/public-auth-routes";
 
 describe("public-auth-routes", () => {
-  it("skips license home/data on auth and register flows", () => {
+  it("skips license status polling on auth and register flows", () => {
     for (const path of [
       "/login",
       "/challenge",
@@ -20,7 +20,7 @@ describe("public-auth-routes", () => {
     }
   });
 
-  it("fetches license home/data on authenticated app routes", () => {
+  it("fetches license status on authenticated app routes", () => {
     expect(shouldFetchLicenseHomeData("/dashboard")).toBe(true);
     expect(shouldFetchLicenseHomeData("/orders")).toBe(true);
     expect(isPublicUnauthenticatedPath("/dashboard")).toBe(false);

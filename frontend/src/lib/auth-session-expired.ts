@@ -1,6 +1,9 @@
 /**
- * When the backend returns 401 for authenticated routes, clear server session and
+ * When the backend returns 401 for authenticated app routes, clear server session and
  * send the user to login with a clear re-authentication message.
+ *
+ * License status probes use apiClient `sessionPolicy: "passive"` and must not call
+ * handleUnauthorizedApiResponse — deployment license expiry is unrelated to JWT auth.
  */
 
 import { isPublicUnauthenticatedPath } from "@/lib/public-auth-routes";

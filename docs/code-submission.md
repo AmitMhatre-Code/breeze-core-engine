@@ -25149,7 +25149,7 @@ export default function SettingsPage() {
               Delete Account
             </div>
             <p className="mt-1 text-zinc-700 dark:text-zinc-400">
-              Permanently remove your account and stored credentials using your app password.
+              Permanently remove your account and stored credentials using your app password. This only removes your account from the Breeze Core Engine. It does not delete your account from ICICI nor does it release any AWS resources. To release your AWS resources, login to breeze-ui.com and follow the instructions in the license console to release your AWS resources.
             </p>
             <Link
               href="/settings/delete-account"

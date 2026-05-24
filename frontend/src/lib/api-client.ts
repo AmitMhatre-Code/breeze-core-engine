@@ -3,6 +3,8 @@ import { handleUnauthorizedApiResponse } from "@/lib/auth-session-expired";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
+export type SessionPolicy = "default" | "passive";
+
 /** Thrown when the backend returns a non-OK status; includes HTTP status when available. */
 export class ApiHttpError extends Error {
   readonly status: number;
@@ -14,6 +16,18 @@ export class ApiHttpError extends Error {
     this.status = status;
     this.payload = payload;
   }
+}
+
+export type ApiRequestOpts = {
+  signal?: AbortSignal;
+  sessionPolicy?: SessionPolicy;
+  headers?: Record<string, string>;
+};
+
+function normalizeGetOpts(opts?: AbortSignal | ApiRequestOpts): ApiRequestOpts {
+  if (opts === undefined) return {};
+  if (opts instanceof AbortSignal) return { signal: opts };
+  return opts;
 }
 
 function formatErrorPayload(payload: unknown): string {
@@ -50,6 +64,7 @@ async function request<TResponse, TBody = unknown>(
     signal?: AbortSignal;
     credentials?: RequestCredentials;
     headers?: Record<string, string>;
+    sessionPolicy?: SessionPolicy;
   } = {},
 ): Promise<TResponse> {
   const url = new URL(path, getBackendBaseUrl());
@@ -59,6 +74,7 @@ async function request<TResponse, TBody = unknown>(
     signal,
     credentials = "include",
     headers: extraHeaders,
+    sessionPolicy = "default",
   } = options;
 
   const res = await fetch(url.toString(), {
@@ -77,7 +93,7 @@ async function request<TResponse, TBody = unknown>(
 
   if (!res.ok) {
     const message = formatErrorPayload(payload);
-    if (res.status === 401) {
+    if (res.status === 401 && sessionPolicy !== "passive") {
       await handleUnauthorizedApiResponse(path, res.status, message);
     }
     throw new ApiHttpError(res.status, message, payload);
@@ -87,49 +103,57 @@ async function request<TResponse, TBody = unknown>(
 }
 
 export const apiClient = {
-  get: <TResponse>(path: string, signal?: AbortSignal) =>
-    request<TResponse>(path, { method: "GET", signal }),
+  get: <TResponse>(path: string, opts?: AbortSignal | ApiRequestOpts) => {
+    const { signal, sessionPolicy, headers } = normalizeGetOpts(opts);
+    return request<TResponse>(path, { method: "GET", signal, sessionPolicy, headers });
+  },
   post: <TResponse, TBody = unknown>(
     path: string,
     body: TBody,
-    opts?: { signal?: AbortSignal; headers?: Record<string, string> },
+    opts?: { signal?: AbortSignal; headers?: Record<string, string>; sessionPolicy?: SessionPolicy },
   ) =>
     request<TResponse, TBody>(path, {
       method: "POST",
       body,
       signal: opts?.signal,
       headers: opts?.headers,
+      sessionPolicy: opts?.sessionPolicy,
     }),
   put: <TResponse, TBody = unknown>(
     path: string,
     body: TBody,
-    opts?: { signal?: AbortSignal; headers?: Record<string, string> },
+    opts?: { signal?: AbortSignal; headers?: Record<string, string>; sessionPolicy?: SessionPolicy },
   ) =>
     request<TResponse, TBody>(path, {
       method: "PUT",
       body,
       signal: opts?.signal,
       headers: opts?.headers,
+      sessionPolicy: opts?.sessionPolicy,
     }),
   patch: <TResponse, TBody = unknown>(
     path: string,
     body: TBody,
-    opts?: { signal?: AbortSignal; headers?: Record<string, string> },
+    opts?: { signal?: AbortSignal; headers?: Record<string, string>; sessionPolicy?: SessionPolicy },
   ) =>
     request<TResponse, TBody>(path, {
       method: "PATCH",
       body,
       signal: opts?.signal,
       headers: opts?.headers,
+      sessionPolicy: opts?.sessionPolicy,
     }),
-  delete: <TResponse>(path: string, signal?: AbortSignal) =>
-    request<TResponse>(path, { method: "DELETE", signal }),
+  delete: <TResponse>(path: string, opts?: AbortSignal | ApiRequestOpts) => {
+    const { signal, sessionPolicy, headers } = normalizeGetOpts(opts);
+    return request<TResponse>(path, { method: "DELETE", signal, sessionPolicy, headers });
+  },
   postForm: async <TResponse>(
     path: string,
     form: FormData,
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; sessionPolicy?: SessionPolicy },
   ): Promise<TResponse> => {
     const url = new URL(path, getBackendBaseUrl());
+    const sessionPolicy = opts?.sessionPolicy ?? "default";
     const res = await fetch(url.toString(), {
       method: "POST",
       credentials: "include",
@@ -140,7 +164,7 @@ export const apiClient = {
     const payload = isJson ? await res.json() : await res.text();
     if (!res.ok) {
       const message = formatErrorPayload(payload);
-      if (res.status === 401) {
+      if (res.status === 401 && sessionPolicy !== "passive") {
         await handleUnauthorizedApiResponse(path, res.status, message);
       }
       throw new ApiHttpError(res.status, message, payload);
