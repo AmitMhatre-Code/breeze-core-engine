@@ -12,6 +12,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
+import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import type { ExecutionPreviewLeg } from "@/components/order/OrderExecutionConfirmDialog";
 import { OrderBookDatePopover } from "@/components/order/OrderBookDatePopover";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
@@ -1389,7 +1390,9 @@ function OrdersBody() {
 export default function OrdersPage() {
   return (
     <AppShell contentWidth="wide">
-      <OrdersBody />
+      <RevokedTradingPageGuard>
+        <OrdersBody />
+      </RevokedTradingPageGuard>
     </AppShell>
   );
 }

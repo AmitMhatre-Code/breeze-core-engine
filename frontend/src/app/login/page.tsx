@@ -8,6 +8,7 @@ import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
+import { formatAppVersionLabel } from "@/lib/app-version";
 import { getLatestRelease } from "@/lib/changelog";
 
 function LoginContent() {
@@ -24,7 +25,7 @@ function LoginContent() {
   const [directErr, setDirectErr] = useState<string | null>(null);
   const [directBusy, setDirectBusy] = useState(false);
   const [changelogOpen, setChangelogOpen] = useState(false);
-  const latestReleaseVersion = getLatestRelease()?.version;
+  const latestVersionLabel = formatAppVersionLabel(getLatestRelease()?.version);
 
   let banner: string | null = null;
   let tone: "ok" | "warn" | "err" = "ok";
@@ -82,7 +83,7 @@ function LoginContent() {
           aria-haspopup="dialog"
           aria-label="Open changelog"
         >
-          {latestReleaseVersion ? `v${latestReleaseVersion}` : "Version"}
+          {latestVersionLabel || "Version"}
         </button>
         <ThemeToggle />
       </div>

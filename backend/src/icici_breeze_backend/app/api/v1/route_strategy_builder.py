@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
 from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend
 from icici_breeze_backend.app.auth.context import get_request_context, RequestContext
 from icici_breeze_backend.app.api.v1.covered_shorts_scan import run_covered_shorts_scan
@@ -133,6 +134,7 @@ async def post_margin(
 async def post_execute(
     body: StrategyBuilderExecuteRequest,
     ctx: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")

@@ -9,6 +9,9 @@ from urllib.parse import urlparse
 import httpx
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services.deployment_license_status import (
+    update_from_portal_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +40,20 @@ async def _post_deployment_login(public_ip: str) -> None:
     url = f"{base}/api/public/deployment-login"
     try:
         async with httpx.AsyncClient(timeout=_LOGIN_TIMEOUT_SEC) as client:
-            await client.post(
+            resp = await client.post(
                 url,
                 json={"license_key": key, "public_ip": public_ip},
             )
+            if resp.status_code == 403:
+                try:
+                    body = resp.json()
+                except Exception:  # noqa: BLE001
+                    body = resp.text
+                update_from_portal_response(403, body, source="deployment-login")
+                logger.warning("portal deployment-login rejected: %s", body)
+                return
+            if resp.is_success:
+                update_from_portal_response(resp.status_code, resp.text, source="deployment-login")
     except Exception as exc:  # noqa: BLE001
         logger.warning("portal deployment-login failed: %s", exc)
 

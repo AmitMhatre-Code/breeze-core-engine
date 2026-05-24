@@ -15,8 +15,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import breezeMark from "@/app/android-chrome-192x192.png";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
+import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { apiClient } from "@/lib/api-client";
+import { formatAppVersionLabel } from "@/lib/app-version";
 import { getLatestRelease } from "@/lib/changelog";
 import {
   getAvailableMargin,
@@ -97,6 +99,10 @@ export function AppShell({
     queryKey: ["home", "data"],
     queryFn: () => apiClient.get<HomeDataResponse>("/home/data"),
     staleTime: 30_000,
+    refetchInterval: (query) => {
+      const status = query.state.data?.deployment_license_status;
+      return status === "expired" || status === "revoked" ? 60_000 : false;
+    },
   });
 
   const displayName = useMemo(
@@ -122,7 +128,7 @@ export function AppShell({
       className: moneyToneClass(freeMargin),
     };
   }, [freeMargin]);
-  const latestReleaseVersion = getLatestRelease()?.version;
+  const latestVersionLabel = formatAppVersionLabel(getLatestRelease()?.version);
 
   return (
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
@@ -247,7 +253,7 @@ export function AppShell({
               aria-haspopup="dialog"
               aria-label="Open changelog"
             >
-              {latestReleaseVersion ? `v${latestReleaseVersion}` : "Version"}
+              {latestVersionLabel || "Version"}
             </button>
             <ThemeToggle />
             <Link
@@ -336,6 +342,7 @@ export function AppShell({
           open={changelogOpen}
           onClose={() => setChangelogOpen(false)}
         />
+        <LicenseStatusBanner status={homeQ.data?.deployment_license_status} />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-50 py-4 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-zinc-950 md:py-5 md:ps-5 md:pe-5">
           <div
             className={[

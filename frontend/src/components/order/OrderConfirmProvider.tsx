@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
+import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import {
   OrderExecutionConfirmDialog,
   type ExecutionPreviewLeg,
@@ -90,6 +91,7 @@ function orderPayloadToLeg(base: OrderConfirmPayload): ExecutionPreviewLeg {
 
 export function OrderConfirmProvider({ children }: { children: ReactNode }) {
   const { secondsRemaining } = useRateLimitCountdown();
+  const { guardTradingAction } = useLicenseRestrictions();
   const [modal, setModal] = useState<ConfirmModalState>({ open: false });
 
   const close = useCallback(() => {
@@ -98,30 +100,34 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
 
   const openOrderConfirm = useCallback(
     (payload: OrderConfirmPayload, opts?: OpenOrderConfirmOptions) => {
-      setModal({
-        open: true,
-        mode: "single",
-        base: payload,
-        sourceParkedIds: [...(opts?.sourceParkedIds ?? [])],
+      guardTradingAction(() => {
+        setModal({
+          open: true,
+          mode: "single",
+          base: payload,
+          sourceParkedIds: [...(opts?.sourceParkedIds ?? [])],
+        });
       });
     },
-    [],
+    [guardTradingAction],
   );
 
   const openExecutionConfirm = useCallback(
     (args: OpenExecutionConfirmArgs) => {
-      setModal({
-        open: true,
-        mode: "multi",
-        stockCode: args.stockCode,
-        exchangeCode: args.exchangeCode,
-        expiryDisplay: args.expiryDisplay,
-        legs: args.legs,
-        sourceParkedIds: [...(args.sourceParkedIds ?? [])],
-        productType: args.productType ?? "Options",
+      guardTradingAction(() => {
+        setModal({
+          open: true,
+          mode: "multi",
+          stockCode: args.stockCode,
+          exchangeCode: args.exchangeCode,
+          expiryDisplay: args.expiryDisplay,
+          legs: args.legs,
+          sourceParkedIds: [...(args.sourceParkedIds ?? [])],
+          productType: args.productType ?? "Options",
+        });
       });
     },
-    [],
+    [guardTradingAction],
   );
 
   const value = useMemo(

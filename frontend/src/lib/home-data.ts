@@ -6,6 +6,8 @@ export type HomeDataResponse = {
   api_calls_today?: number;
   api_calls_limit?: number;
   api_usage_band?: "green" | "amber" | "red" | string;
+  deployment_license_status?: "active" | "expired" | "revoked";
+  deployment_license_read_only?: boolean;
 };
 
 function readSuccess(

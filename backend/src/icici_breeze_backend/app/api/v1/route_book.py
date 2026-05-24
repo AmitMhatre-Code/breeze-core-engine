@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import today_ist_date
-from icici_breeze_backend.app.api.error_utils import raise_route_errors
+from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
 from icici_breeze_backend.app.api.frontend_redirect import json_redirect, redirect_to_frontend
 from icici_breeze_backend.app.auth.context import (
     RequestContext,
@@ -136,6 +136,7 @@ async def get_book_data(
 async def process_post(
     body: BookActionRequest,
     context: RequestContext = Depends(get_request_context_or_redirect),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     user_id = context.user_id
 
@@ -162,6 +163,7 @@ async def process_post(
 async def post_cancel_one(
     body: BookCancelOneRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -174,6 +176,7 @@ async def post_cancel_one(
 async def post_cancel_commit(
     body: BookCancelCommitRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -207,6 +210,7 @@ async def list_parked_orders(
 async def create_parked_orders(
     body: ParkedOrderCreateRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     breeze.create_parked_orders(
         context.user_id,
@@ -223,6 +227,7 @@ async def patch_parked_order(
     order_id: str,
     body: ParkedOrderPatchRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     patch = body.model_dump(exclude_unset=True)
     kw: dict = {}
@@ -247,6 +252,7 @@ async def patch_parked_order(
 async def delete_parked_order_route(
     order_id: str,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     ok = breeze.delete_parked_order(context.user_id, order_id.strip())
     if not ok:
@@ -258,6 +264,7 @@ async def delete_parked_order_route(
 async def delete_parked_orders_many(
     body: ParkedOrderIdsRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     n = breeze.delete_parked_orders(context.user_id, body.ids)
     return JSONResponse({"deleted": n})

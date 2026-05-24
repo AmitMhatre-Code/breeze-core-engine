@@ -4,6 +4,7 @@ import type { ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import {
   OptionChainTable,
@@ -3386,6 +3387,7 @@ export default function StrategyBuilderPage() {
 
   return (
     <AppShell contentWidth="wide">
+      <RevokedTradingPageGuard>
       {secondsRemaining !== null ? (
         <RateLimitPauseOverlay secondsRemaining={secondsRemaining} />
       ) : null}
@@ -6076,6 +6078,7 @@ export default function StrategyBuilderPage() {
           </button>
         </>
       ) : null}
+      </RevokedTradingPageGuard>
     </AppShell>
   );
 }

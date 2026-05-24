@@ -10,6 +10,9 @@ from zoneinfo import ZoneInfo
 import httpx
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services.deployment_license_status import (
+    update_from_portal_response,
+)
 from icici_breeze_backend.app.services.portal_deployment_login import _public_ip_from_origin
 
 logger = logging.getLogger(__name__)
@@ -159,7 +162,16 @@ async def post_heartbeat() -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=_HEARTBEAT_TIMEOUT_SEC) as client:
             resp = await client.post(url, json=payload)
+            if resp.status_code == 403:
+                try:
+                    body = resp.json()
+                except Exception:  # noqa: BLE001
+                    body = resp.text
+                update_from_portal_response(403, body, source="heartbeat")
+                logger.warning("portal heartbeat rejected: %s", body)
+                return None
             resp.raise_for_status()
+            update_from_portal_response(resp.status_code, resp.text, source="heartbeat")
             return resp.json()
     except httpx.HTTPError as exc:
         logger.warning("portal heartbeat request failed: %s", exc)
@@ -218,4 +230,7 @@ async def run_heartbeat_loop() -> None:
         except Exception as exc:  # noqa: BLE001
             logger.warning("portal heartbeat tick error: %s", exc)
             interval = _last_interval_sec
-        await asyncio.sleep(interval)
+        try:
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            raise

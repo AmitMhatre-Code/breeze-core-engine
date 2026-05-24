@@ -1,12 +1,15 @@
-export type ReleaseKind = "major" | "minor";
+import { parseAppVersion } from "./app-version";
+
+export type ReleaseKind = "major" | "minor" | "patch" | "prerelease";
 
 export type ChangelogRelease = {
   version: string;
   /** ISO date (YYYY-MM-DD) for sorting/display */
   date: string;
   /**
-   * `major` — feature milestones; shown as the main story in What’s new.
-   * `minor` — patches / urgent fixes; always listed so users can match their build.
+   * Semver-aligned release label:
+   * `major` — major version bump; `minor` — minor bump (x.Y.0);
+   * `patch` — patch bump; `prerelease` — suffix build (e.g. 1.4.2-a).
    */
   releaseKind: ReleaseKind;
   /** Optional one-line headline for the release */
@@ -17,9 +20,9 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "1.4.2.a",
+    version: "1.4.2-a",
     date: "23-May-2026",
-    releaseKind: "minor",
+    releaseKind: "prerelease",
     summary: "Live testing of license deployment",
     changes: [
       "Live testing of license deployment",
@@ -28,7 +31,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.4.2",
     date: "12-Apr-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "Clone and Square-off Fixes",
     changes: [
       "Application doesn't 'lookup' scrip expiries and strikes on cloning and square-off. It just uses the expiry and strike from the order being cloned / squared-off",
@@ -37,7 +40,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.4.1",
     date: "11-Apr-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "Application Password Reset",
     changes: [
       "Application now allows resetting the app password if user can authenticate with ICICI",
@@ -46,7 +49,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.4.0",
     date: "11-Apr-2026",
-    releaseKind: "major",
+    releaseKind: "minor",
     summary: "Responsive Design",
     changes: [
       "Application now is responsive to smaller screens; although only tested on iPhone 13 Pro",
@@ -55,7 +58,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.3.1",
     date: "10-Apr-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "LLM Model Fallback Fix",
     changes: [
       "LLM model fallbacks can be configured in the Settings page",
@@ -64,7 +67,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.3.0",
     date: "10-Apr-2026",
-    releaseKind: "major",
+    releaseKind: "minor",
     summary: "Options Strategies Enabled",
     changes: [
       "All options strategies are now enabled",
@@ -74,7 +77,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.2.1",
     date: "9-Apr-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "Square-off and Cloning Fixes",
     changes: [
       "Square-off and cloning takes the user to the 'Place Order' page to allow them to change the price and quantity",
@@ -83,7 +86,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.2.0",
     date: "7-Apr-2026",
-    releaseKind: "major",
+    releaseKind: "minor",
     summary: "Advanced Order Management",
     changes: [
       "Clone orders from Order Book",
@@ -93,7 +96,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.1.1",
     date: "4-Apr-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "Rate Limit Fix",
     changes: [
       "Configurable delays for rate limiting when ICICI returns 429",
@@ -102,7 +105,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.1.0",
     date: "27-Mar-2026",
-    releaseKind: "major",
+    releaseKind: "minor",
     summary: "Gen AI Outlook & Portfolio Payoff",
     changes: [
       "Integration with Gemini and OpenAI APIs for Gen AI Outlook (BYOK)",
@@ -125,9 +128,11 @@ export function getLatestRelease(): ChangelogRelease | undefined {
   return changelogReleases[0];
 }
 
-/** Newest major release in the log (for highlighting when the latest build is a minor). */
-export function getLatestMajorRelease(): ChangelogRelease | undefined {
-  return changelogReleases.find((r) => r.releaseKind === "major");
+/** Newest feature release (major or minor) for highlighting when the latest build is a patch/pre-release. */
+export function getLatestFeatureRelease(): ChangelogRelease | undefined {
+  return changelogReleases.find(
+    (r) => r.releaseKind === "major" || r.releaseKind === "minor",
+  );
 }
 
 export function getOlderReleases(): ChangelogRelease[] {
@@ -139,21 +144,49 @@ function releaseKey(r: ChangelogRelease): string {
 }
 
 /**
- * Entries for the collapsible history: excludes the latest build and the major
- * row already shown in the featured major section (when those differ).
+ * Entries for the collapsible history: excludes the latest build and the feature
+ * row already shown in the featured section (when those differ).
  */
 export function getHistoryReleases(
   latest: ChangelogRelease | undefined,
-  featuredMajor: ChangelogRelease | undefined,
+  featuredRelease: ChangelogRelease | undefined,
 ): ChangelogRelease[] {
   if (!latest) return [];
   const skip = new Set<string>();
   skip.add(releaseKey(latest));
   if (
-    featuredMajor &&
-    releaseKey(featuredMajor) !== releaseKey(latest)
+    featuredRelease &&
+    releaseKey(featuredRelease) !== releaseKey(latest)
   ) {
-    skip.add(releaseKey(featuredMajor));
+    skip.add(releaseKey(featuredRelease));
   }
   return changelogReleases.filter((r) => !skip.has(releaseKey(r)));
+}
+
+export function inferReleaseKind(
+  version: string,
+  previousVersion?: string,
+): ReleaseKind | null {
+  const parsed = parseAppVersion(version);
+  if (!parsed) return null;
+  if (parsed.prerelease) return "prerelease";
+  if (!previousVersion) return "major";
+  const previous = parseAppVersion(previousVersion);
+  if (!previous) return null;
+  if (parsed.major > previous.major) return "major";
+  if (parsed.minor > previous.minor) return "minor";
+  if (parsed.patch > previous.patch) return "patch";
+  return null;
+}
+
+export function assertReleaseKindMatchesVersion(
+  release: ChangelogRelease,
+  previous?: ChangelogRelease,
+): void {
+  const expected = inferReleaseKind(release.version, previous?.version);
+  if (expected !== release.releaseKind) {
+    throw new Error(
+      `${release.version}: expected releaseKind "${expected}", got "${release.releaseKind}"`,
+    );
+  }
 }

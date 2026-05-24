@@ -454,12 +454,18 @@ async def get_home_api(ctx: RequestContext = Depends(get_request_context)):
     from icici_breeze_backend.app.services.api_usage import get_usage_for_display
 
     usage = get_usage_for_display(user_id)
+    from icici_breeze_backend.app.services.deployment_license_status import (
+        get_license_status_for_api,
+    )
+
+    license_fields = get_license_status_for_api() or {}
     return HomeDataResponse(
         customer=customer or {},
         margin=margin or {},
         api_calls_today=usage["api_calls_today"],
         api_calls_limit=usage["api_calls_limit"],
         api_usage_band=usage["api_usage_band"],
+        **license_fields,
     )
 
 

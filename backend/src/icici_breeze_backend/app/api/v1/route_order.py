@@ -22,7 +22,7 @@ from icici_breeze_backend.app.services.user_rate_limit_prefs import (
 from icici_breeze_backend.app.domain.responses import IciciApiResponse, OrderDetailResponse
 from icici_breeze_backend.audit.logger import AuditLogger
 from icici_breeze_backend.concurrency.idempotency import idempotency_store, IdempotencyResult
-from icici_breeze_backend.app.api.error_utils import raise_route_errors
+from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
 from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend, json_redirect, map_legacy_html_path_to_spa
 
 
@@ -99,6 +99,7 @@ async def process_post(
     body: OrderFormRequest,
     context: RequestContext = Depends(get_request_context_or_redirect),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     user_id = context.user_id
 
@@ -186,6 +187,7 @@ async def post_break_chunk_defaults(
 async def post_break_chunk(
     body: BreakOrderChunkRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -216,6 +218,7 @@ async def post_break_chunk(
 async def post_break_finalize(
     body: BreakOrderFinalizeRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")

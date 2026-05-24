@@ -1,6 +1,6 @@
 """Response models for API endpoints. Ensures explicit schemas and no raw DB/API objects."""
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -91,6 +91,14 @@ class HomeDataResponse(BaseModel):
     api_usage_band: str = Field(
         "green",
         description="green | amber | red relative to daily limit thresholds",
+    )
+    deployment_license_status: Optional[Literal["active", "expired", "revoked"]] = Field(
+        None,
+        description="Portal-reported deployment license status when license env is configured",
+    )
+    deployment_license_read_only: bool = Field(
+        False,
+        description="True when deployment license is revoked (trading mutations blocked)",
     )
 
 

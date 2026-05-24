@@ -11,6 +11,7 @@ import {
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
@@ -384,6 +385,7 @@ function PlaceOrderPageInner() {
 
   return (
     <AppShell contentWidth="default">
+      <RevokedTradingPageGuard>
       <div className="mx-auto max-w-md space-y-5">
         <header className="flex flex-col gap-3">
           <div>
@@ -748,6 +750,7 @@ function PlaceOrderPageInner() {
           ) : null}
         </section>
       </div>
+      </RevokedTradingPageGuard>
 
     </AppShell>
   );

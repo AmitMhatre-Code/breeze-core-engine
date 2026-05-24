@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
+import { formatAppVersionForDisplay } from "@/lib/app-version";
 import {
   getHistoryReleases,
-  getLatestMajorRelease,
+  getLatestFeatureRelease,
   getLatestRelease,
   type ChangelogRelease,
   type ReleaseKind,
@@ -14,18 +15,42 @@ export type ChangelogDialogProps = {
   onClose: () => void;
 };
 
+const KIND_BADGE: Record<
+  ReleaseKind,
+  { label: string; className: string }
+> = {
+  major: {
+    label: "Major",
+    className:
+      "bg-sky-100 text-sky-900 dark:bg-sky-950/70 dark:text-sky-200",
+  },
+  minor: {
+    label: "Minor",
+    className:
+      "bg-slate-100 text-slate-900 dark:bg-slate-900/70 dark:text-slate-200",
+  },
+  patch: {
+    label: "Patch",
+    className:
+      "bg-zinc-200/90 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200",
+  },
+  prerelease: {
+    label: "Pre-release",
+    className:
+      "bg-amber-100 text-amber-950 dark:bg-amber-950/50 dark:text-amber-200",
+  },
+};
+
 function KindBadge({ kind }: { kind: ReleaseKind }) {
-  const isMajor = kind === "major";
+  const badge = KIND_BADGE[kind];
   return (
     <span
       className={[
         "inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-        isMajor
-          ? "bg-sky-100 text-sky-900 dark:bg-sky-950/70 dark:text-sky-200"
-          : "bg-zinc-200/90 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200",
+        badge.className,
       ].join(" ")}
     >
-      {isMajor ? "Major" : "Minor"}
+      {badge.label}
     </span>
   );
 }
@@ -43,20 +68,24 @@ function ReleaseBullets({ release }: { release: ChangelogRelease }) {
 }
 
 function formatReleaseHeading(release: ChangelogRelease) {
-  return `${release.version} · ${release.date}`;
+  return `${formatAppVersionForDisplay(release.version)} · ${release.date}`;
 }
 
-function MajorReleasePanel({ release }: { release: ChangelogRelease }) {
+function isFeatureReleaseKind(kind: ReleaseKind) {
+  return kind === "major" || kind === "minor";
+}
+
+function FeatureReleasePanel({ release }: { release: ChangelogRelease }) {
   return (
     <section
       className="rounded-lg border border-sky-200/90 bg-sky-50/80 p-4 dark:border-sky-900/45 dark:bg-sky-950/30"
-      aria-label="Major release"
+      aria-label="Feature release"
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium uppercase tracking-wide text-sky-800 dark:text-sky-300">
-          Major release
+          Feature release
         </span>
-        <KindBadge kind="major" />
+        <KindBadge kind={release.releaseKind} />
       </div>
       <div className="mt-2 text-base font-semibold text-zinc-900 dark:text-zinc-100">
         {formatReleaseHeading(release)}
@@ -71,7 +100,7 @@ function MajorReleasePanel({ release }: { release: ChangelogRelease }) {
   );
 }
 
-function MinorUpdatePanel({ release }: { release: ChangelogRelease }) {
+function LatestBuildPanel({ release }: { release: ChangelogRelease }) {
   return (
     <section
       className="rounded-md border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-900/35"
@@ -81,7 +110,7 @@ function MinorUpdatePanel({ release }: { release: ChangelogRelease }) {
         <span className="text-xs font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
           Latest update (your build)
         </span>
-        <KindBadge kind="minor" />
+        <KindBadge kind={release.releaseKind} />
       </div>
       <div className="mt-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
         {formatReleaseHeading(release)}
@@ -97,11 +126,11 @@ function MinorUpdatePanel({ release }: { release: ChangelogRelease }) {
 }
 
 function UnifiedLatestPanel({ release }: { release: ChangelogRelease }) {
-  const isMajor = release.releaseKind === "major";
+  const isFeature = isFeatureReleaseKind(release.releaseKind);
   return (
     <section
       className={
-        isMajor
+        isFeature
           ? "rounded-lg border border-sky-200/90 bg-sky-50/80 p-4 dark:border-sky-900/45 dark:bg-sky-950/30"
           : "rounded-md border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-700 dark:bg-zinc-900/35"
       }
@@ -110,12 +139,16 @@ function UnifiedLatestPanel({ release }: { release: ChangelogRelease }) {
       <div className="flex flex-wrap items-center gap-2">
         <span
           className={
-            isMajor
+            isFeature
               ? "text-xs font-medium uppercase tracking-wide text-sky-800 dark:text-sky-300"
               : "text-xs font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-400"
           }
         >
-          {isMajor ? "Latest major release" : "Latest release"}
+          {release.releaseKind === "major"
+            ? "Latest major release"
+            : release.releaseKind === "minor"
+              ? "Latest feature release"
+              : "Latest release"}
         </span>
         <KindBadge kind={release.releaseKind} />
       </div>
@@ -125,7 +158,7 @@ function UnifiedLatestPanel({ release }: { release: ChangelogRelease }) {
       {release.summary ? (
         <p
           className={
-            isMajor
+            isFeature
               ? "mt-1 text-sm text-zinc-700 dark:text-zinc-300"
               : "mt-1 text-sm text-zinc-600 dark:text-zinc-400"
           }
@@ -160,24 +193,23 @@ export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
   if (!open) return null;
 
   const latest = getLatestRelease();
-  const latestMajor = getLatestMajorRelease();
+  const latestFeature = getLatestFeatureRelease();
 
   const showSplitLayout = Boolean(
     latest &&
-      latest.releaseKind === "minor" &&
-      latestMajor &&
-      (latestMajor.version !== latest.version ||
-        latestMajor.date !== latest.date),
+      (latest.releaseKind === "patch" || latest.releaseKind === "prerelease") &&
+      latestFeature &&
+      (latestFeature.version !== latest.version ||
+        latestFeature.date !== latest.date),
   );
 
   const history = getHistoryReleases(
     latest,
-    showSplitLayout ? latestMajor : undefined,
+    showSplitLayout ? latestFeature : undefined,
   );
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex flex-col justify-end sm:items-center sm:justify-center sm:p-4"
+    <div className="fixed inset-0 z-50 flex flex-col justify-end sm:items-center sm:justify-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="changelog-dialog-title"
@@ -204,8 +236,8 @@ export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
               What&apos;s new
             </h2>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              Major milestones are highlighted; minor releases list fixes so you
-              can match your app version.
+              Feature releases are highlighted; patch and pre-release builds are
+              listed so you can match your app version.
             </p>
           </div>
           <button
@@ -237,10 +269,10 @@ export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               No release notes yet.
             </p>
-          ) : showSplitLayout && latestMajor ? (
+          ) : showSplitLayout && latestFeature ? (
             <>
-              <MajorReleasePanel release={latestMajor} />
-              <MinorUpdatePanel release={latest} />
+              <FeatureReleasePanel release={latestFeature} />
+              <LatestBuildPanel release={latest} />
               {history.length > 0 ? (
                 <HistorySection releases={history} />
               ) : null}

@@ -16,9 +16,7 @@ def test_changelog_latest_version_script():
         text=True,
         cwd=_REPO_ROOT,
     ).strip()
-    assert out
-    assert out[0].isdigit()
-    assert "." in out
+    assert out == "1.4.2-a"
 
 
 def test_reported_version_reads_baked_file(monkeypatch, tmp_path):
@@ -30,9 +28,9 @@ def test_reported_version_reads_baked_file(monkeypatch, tmp_path):
     from icici_breeze_backend.app.services import portal_deployment_heartbeat as hb
 
     version_file = tmp_path / "app_version"
-    version_file.write_text("1.4.2.a\n", encoding="utf-8")
+    version_file.write_text("1.4.2-a\n", encoding="utf-8")
     monkeypatch.delenv("APP_VERSION", raising=False)
     monkeypatch.delenv("IMAGE_TAG", raising=False)
     monkeypatch.delenv("DEPLOYMENT_VERSION", raising=False)
     monkeypatch.setenv("APP_VERSION_FILE", str(version_file))
-    assert hb._reported_version() == "1.4.2.a"
+    assert hb._reported_version() == "1.4.2-a"
