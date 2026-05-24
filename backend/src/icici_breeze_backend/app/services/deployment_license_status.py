@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.services.portal_deployment_heartbeat import _reported_version
-from icici_breeze_backend.app.services.portal_deployment_login import _public_ip_from_origin
 
 LicenseStatus = Literal["active", "expired", "revoked"]
 LicenseSource = Literal["heartbeat", "deployment-login"]
@@ -57,6 +55,14 @@ def _parse_detail_from_body(body: str | dict | None) -> LicenseStatus | None:
     return _parse_detail(text)
 
 
+def _status_from_success_body(body: str | dict | None) -> LicenseStatus:
+    if isinstance(body, dict):
+        raw = body.get("deployment_license_status") or body.get("license_status")
+        if raw in ("active", "expired", "revoked"):
+            return raw  # type: ignore[return-value]
+    return "active"
+
+
 def update_from_portal_response(
     status_code: int,
     body: str | dict | None = None,
@@ -69,7 +75,7 @@ def update_from_portal_response(
 
     new_status: LicenseStatus | None = None
     if 200 <= status_code < 300:
-        new_status = "active"
+        new_status = _status_from_success_body(body)
     elif status_code == 403:
         new_status = _parse_detail_from_body(body)
 
@@ -99,6 +105,9 @@ def trading_mutations_allowed() -> bool:
 
 
 def _contact_sales_context() -> dict[str, Any]:
+    from icici_breeze_backend.app.services.portal_deployment_heartbeat import _reported_version
+    from icici_breeze_backend.app.services.portal_deployment_login import _public_ip_from_origin
+
     key = (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
     origin = (cfg.PUBLIC_FRONTEND_ORIGIN or "").strip()
     version = (_reported_version() or "").strip()

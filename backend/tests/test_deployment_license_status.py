@@ -20,13 +20,27 @@ def _reset_license_state(monkeypatch):
 def test_update_from_portal_response_active_on_200():
     dls.update_from_portal_response(200, {"status": "OK"}, source="heartbeat")
     assert dls.get_license_status() == "active"
-    assert dls.trading_mutations_allowed() is True
+
+
+@pytest.mark.parametrize(
+    "body,expected,trading_allowed,read_only",
+    [
+        ({"status": "OK", "deployment_license_status": "expired"}, "expired", True, False),
+        ({"status": "OK", "deployment_license_status": "revoked"}, "revoked", False, True),
+        ({"status": "OK", "license_status": "expired"}, "expired", True, False),
+    ],
+)
+def test_update_from_portal_response_license_status_on_200(
+    body, expected, trading_allowed, read_only
+):
+    dls.update_from_portal_response(200, body, source="heartbeat")
+    assert dls.get_license_status() == expected
+    assert dls.trading_mutations_allowed() is trading_allowed
     api = dls.get_license_status_for_api()
-    assert api == {
-        "deployment_license_status": "active",
-        "deployment_license_read_only": False,
-    }
-    assert "contact_sales" not in api
+    assert api is not None
+    assert api["deployment_license_status"] == expected
+    assert api["deployment_license_read_only"] is read_only
+    assert "contact_sales" in api
 
 
 @pytest.mark.parametrize(

@@ -171,8 +171,12 @@ async def post_heartbeat() -> dict | None:
                 logger.warning("portal heartbeat rejected: %s", body)
                 return None
             resp.raise_for_status()
-            update_from_portal_response(resp.status_code, resp.text, source="heartbeat")
-            return resp.json()
+            try:
+                payload = resp.json()
+            except Exception:  # noqa: BLE001
+                payload = None
+            update_from_portal_response(resp.status_code, payload, source="heartbeat")
+            return payload if isinstance(payload, dict) else None
     except httpx.HTTPError as exc:
         logger.warning("portal heartbeat request failed: %s", exc)
         return None

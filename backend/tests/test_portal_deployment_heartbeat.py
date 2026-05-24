@@ -122,6 +122,51 @@ def test_post_heartbeat_updates_license_status_on_403(monkeypatch):
     asyncio.run(_run())
 
 
+def test_post_heartbeat_updates_license_status_on_200_expired(monkeypatch):
+    from icici_breeze_backend.app.services import deployment_license_status as dls
+
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_LICENSE_KEY", "key")
+    monkeypatch.setattr(hb.cfg, "PORTAL_API_BASE_URL", "https://portal.example")
+    monkeypatch.setattr(hb, "_public_ip_from_origin", lambda: "203.0.113.1")
+    dls.reset_for_tests()
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "status": "OK",
+                "trigger_upgrade": False,
+                "deployment_license_status": "expired",
+            }
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json):
+            return FakeResponse()
+
+    async def _run():
+        with patch.object(hb.httpx, "AsyncClient", FakeClient):
+            result = await hb.post_heartbeat()
+            assert result is not None
+            assert result["deployment_license_status"] == "expired"
+            assert dls.get_license_status() == "expired"
+
+    asyncio.run(_run())
+
+
 def test_resolve_upgrade_image_replaces_tag(monkeypatch):
     monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/org/breeze-core-engine:v1.0.0")
     assert hb._resolve_upgrade_image("latest") == "ghcr.io/org/breeze-core-engine:latest"
