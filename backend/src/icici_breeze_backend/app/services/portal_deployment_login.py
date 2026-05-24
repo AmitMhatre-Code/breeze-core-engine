@@ -35,15 +35,15 @@ def _public_ip_from_origin() -> str | None:
 async def _post_deployment_login(public_ip: str) -> None:
     base = (cfg.PORTAL_API_BASE_URL or "").strip().rstrip("/")
     key = (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
-    if not base or not key:
+    if not base:
         return
     url = f"{base}/api/public/deployment-login"
+    payload: dict[str, str] = {"public_ip": public_ip}
+    if key:
+        payload["license_key"] = key
     try:
         async with httpx.AsyncClient(timeout=_LOGIN_TIMEOUT_SEC) as client:
-            resp = await client.post(
-                url,
-                json={"license_key": key, "public_ip": public_ip},
-            )
+            resp = await client.post(url, json=payload)
             if resp.status_code == 403:
                 try:
                     body = resp.json()
@@ -63,7 +63,7 @@ def notify_portal_deployment_login() -> None:
     public_ip = _public_ip_from_origin()
     if not public_ip:
         return
-    if not (cfg.DEPLOYMENT_LICENSE_KEY or "").strip() or not (cfg.PORTAL_API_BASE_URL or "").strip():
+    if not (cfg.PORTAL_API_BASE_URL or "").strip():
         return
     try:
         loop = asyncio.get_running_loop()

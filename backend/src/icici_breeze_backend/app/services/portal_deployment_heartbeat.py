@@ -150,15 +150,16 @@ async def post_heartbeat() -> dict | None:
     base = (cfg.PORTAL_API_BASE_URL or "").strip().rstrip("/")
     key = (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
     public_ip = _public_ip_from_origin()
-    if not base or not key or not public_ip:
+    if not base or not public_ip:
         return None
 
     url = f"{base}/api/public/heartbeat"
-    payload = {
-        "license_key": key,
+    payload: dict[str, str] = {
         "public_ip": public_ip,
         "version": _reported_version(),
     }
+    if key:
+        payload["license_key"] = key
     try:
         async with httpx.AsyncClient(timeout=_HEARTBEAT_TIMEOUT_SEC) as client:
             resp = await client.post(url, json=payload)
@@ -212,8 +213,6 @@ async def heartbeat_tick() -> int:
 
 
 def heartbeat_loop_enabled() -> bool:
-    if not (cfg.DEPLOYMENT_LICENSE_KEY or "").strip():
-        return False
     if not (cfg.PORTAL_API_BASE_URL or "").strip():
         return False
     if not _public_ip_from_origin():

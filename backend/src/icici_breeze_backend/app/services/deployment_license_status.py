@@ -8,14 +8,16 @@ from typing import Any, Literal
 
 import icici_breeze_backend.app.core.config as cfg
 
-LicenseStatus = Literal["active", "expired", "revoked"]
+LicenseStatus = Literal["active", "expired", "revoked", "unlicensed"]
 LicenseSource = Literal["heartbeat", "deployment-login"]
 
-REVOKED_TRADING_MESSAGE = (
+TRADING_READ_ONLY_MESSAGE = (
     "Read-only mode — you cannot define strategies or execute trades. "
-    "Sign in at breeze-ui.com and follow the instructions for your license "
-    "to reactivate this application."
+    "Sign in at breeze-ui.com to obtain or activate a deployment license for this application."
 )
+
+# Backward-compatible alias for tests and imports.
+REVOKED_TRADING_MESSAGE = TRADING_READ_ONLY_MESSAGE
 
 _lock = threading.Lock()
 _status: LicenseStatus | None = None
@@ -23,10 +25,17 @@ _updated_at: datetime | None = None
 _source: LicenseSource | None = None
 
 
+def _portal_configured() -> bool:
+    return bool((cfg.PORTAL_API_BASE_URL or "").strip())
+
+
+def _has_license_key() -> bool:
+    return bool((cfg.DEPLOYMENT_LICENSE_KEY or "").strip())
+
+
 def _license_env_configured() -> bool:
-    return bool((cfg.DEPLOYMENT_LICENSE_KEY or "").strip()) and bool(
-        (cfg.PORTAL_API_BASE_URL or "").strip()
-    )
+    """Portal URL and license key both set (full licensed deployment wiring)."""
+    return _portal_configured() and _has_license_key()
 
 
 def _parse_detail(detail: Any) -> LicenseStatus | None:
@@ -58,7 +67,7 @@ def _parse_detail_from_body(body: str | dict | None) -> LicenseStatus | None:
 def _status_from_success_body(body: str | dict | None) -> LicenseStatus:
     if isinstance(body, dict):
         raw = body.get("deployment_license_status") or body.get("license_status")
-        if raw in ("active", "expired", "revoked"):
+        if raw in ("active", "expired", "revoked", "unlicensed"):
             return raw  # type: ignore[return-value]
     return "active"
 
@@ -70,7 +79,7 @@ def update_from_portal_response(
     source: LicenseSource,
 ) -> None:
     """Update cached license status from a portal HTTP response."""
-    if not _license_env_configured():
+    if not _portal_configured():
         return
 
     new_status: LicenseStatus | None = None
@@ -90,18 +99,22 @@ def update_from_portal_response(
 
 
 def get_license_status() -> LicenseStatus | None:
-    if not _license_env_configured():
+    if not _portal_configured():
         return None
+    if not _has_license_key():
+        return "unlicensed"
     with _lock:
         return _status
 
 
 def trading_mutations_allowed() -> bool:
-    """True when license is not revoked (expired still allows trading)."""
-    if not _license_env_configured():
+    """True when deployment has a valid active license for trading mutations."""
+    if not _portal_configured():
         return True
+    if not _has_license_key():
+        return False
     with _lock:
-        return _status != "revoked"
+        return _status not in ("revoked", "unlicensed")
 
 
 def _contact_sales_context() -> dict[str, Any]:
@@ -119,18 +132,28 @@ def _contact_sales_context() -> dict[str, Any]:
     }
 
 
+def _read_only_for_status(status: LicenseStatus) -> bool:
+    return status in ("revoked", "unlicensed")
+
+
 def get_license_status_for_api() -> dict[str, Any] | None:
-    """Payload fields for HomeDataResponse; None when license env is not configured."""
-    if not _license_env_configured():
+    """Payload fields for HomeDataResponse; None when portal is not configured."""
+    if not _portal_configured():
         return None
+    if not _has_license_key():
+        return {
+            "deployment_license_status": "unlicensed",
+            "deployment_license_read_only": True,
+            "contact_sales": _contact_sales_context(),
+        }
     with _lock:
         if _status is None:
             return None
         payload: dict[str, Any] = {
             "deployment_license_status": _status,
-            "deployment_license_read_only": _status == "revoked",
+            "deployment_license_read_only": _read_only_for_status(_status),
         }
-        if _status in ("expired", "revoked"):
+        if _status in ("expired", "revoked", "unlicensed"):
             payload["contact_sales"] = _contact_sales_context()
         return payload
 

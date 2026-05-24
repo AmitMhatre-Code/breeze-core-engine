@@ -102,34 +102,34 @@ class HomeDataResponse(BaseModel):
         "green",
         description="green | amber | red relative to daily limit thresholds",
     )
-    deployment_license_status: Optional[Literal["active", "expired", "revoked"]] = Field(
+    deployment_license_status: Optional[Literal["active", "expired", "revoked", "unlicensed"]] = Field(
         None,
-        description="Portal-reported deployment license status when license env is configured",
+        description="Portal-reported deployment license status when portal env is configured",
     )
     deployment_license_read_only: bool = Field(
         False,
-        description="True when deployment license is revoked (trading mutations blocked)",
+        description="True when deployment is unlicensed or revoked (trading mutations blocked)",
     )
     contact_sales: Optional[DeploymentLicenseContactSales] = Field(
         None,
-        description="License/deployment snapshot for Contact Sales when status is expired or revoked",
+        description="License/deployment snapshot for Contact Sales when status is expired, revoked, or unlicensed",
     )
 
 
 class DeploymentLicenseStatusResponse(BaseModel):
     """Portal deployment license status (heartbeat cache); JWT only, no broker calls."""
 
-    deployment_license_status: Optional[Literal["active", "expired", "revoked"]] = Field(
+    deployment_license_status: Optional[Literal["active", "expired", "revoked", "unlicensed"]] = Field(
         None,
-        description="Portal-reported deployment license status when license env is configured",
+        description="Portal-reported deployment license status when portal env is configured",
     )
     deployment_license_read_only: bool = Field(
         False,
-        description="True when deployment license is revoked (trading mutations blocked)",
+        description="True when deployment is unlicensed or revoked (trading mutations blocked)",
     )
     contact_sales: Optional[DeploymentLicenseContactSales] = Field(
         None,
-        description="License/deployment snapshot for Contact Sales when status is expired or revoked",
+        description="License/deployment snapshot for Contact Sales when status is expired, revoked, or unlicensed",
     )
 
 

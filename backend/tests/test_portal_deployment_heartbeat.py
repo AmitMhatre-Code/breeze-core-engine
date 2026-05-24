@@ -167,6 +167,57 @@ def test_post_heartbeat_updates_license_status_on_200_expired(monkeypatch):
     asyncio.run(_run())
 
 
+def test_heartbeat_loop_enabled_without_license_key(monkeypatch):
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_LICENSE_KEY", "")
+    monkeypatch.setattr(hb.cfg, "PORTAL_API_BASE_URL", "https://portal.example")
+    monkeypatch.setattr(hb, "_public_ip_from_origin", lambda: "203.0.113.1")
+    assert hb.heartbeat_loop_enabled() is True
+
+
+def test_post_heartbeat_omits_empty_license_key(monkeypatch):
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_LICENSE_KEY", "")
+    monkeypatch.setattr(hb.cfg, "PORTAL_API_BASE_URL", "https://portal.example")
+    monkeypatch.setattr(hb, "_public_ip_from_origin", lambda: "203.0.113.1")
+
+    captured: dict = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "status": "OK",
+                "deployment_license_status": "unlicensed",
+                "deployment_license_read_only": True,
+            }
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json):
+            captured["json"] = json
+            return FakeResponse()
+
+    async def _run():
+        with patch.object(hb.httpx, "AsyncClient", FakeClient):
+            await hb.post_heartbeat()
+
+    asyncio.run(_run())
+    assert "license_key" not in captured["json"]
+    assert captured["json"]["public_ip"] == "203.0.113.1"
+
+
 def test_resolve_upgrade_image_replaces_tag(monkeypatch):
     monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/org/breeze-core-engine:v1.0.0")
     assert hb._resolve_upgrade_image("latest") == "ghcr.io/org/breeze-core-engine:latest"

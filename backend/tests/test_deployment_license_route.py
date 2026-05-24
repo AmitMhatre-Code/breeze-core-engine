@@ -37,7 +37,21 @@ def test_license_status_returns_cached_fields_without_broker_token():
     assert resp.contact_sales.license_key == "test-license-key"
 
 
-def test_license_status_empty_when_env_not_configured(monkeypatch):
+def test_license_status_unlicensed_when_portal_without_key(monkeypatch):
+    monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "")
+    ctx = RequestContext(
+        user_id="uid1",
+        username="uid1",
+        roles=["trader"],
+        is_authenticated=True,
+    )
+    resp = asyncio.run(get_deployment_license_status(ctx))
+    assert resp.deployment_license_status == "unlicensed"
+    assert resp.deployment_license_read_only is True
+
+
+def test_license_status_empty_when_portal_not_configured(monkeypatch):
+    monkeypatch.setattr(cfg, "PORTAL_API_BASE_URL", "")
     monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "")
     ctx = RequestContext(
         user_id="uid1",

@@ -4,7 +4,11 @@
  * GET /home/data may still include these fields for backward compatibility.
  */
 
-export type DeploymentLicenseStatus = "active" | "expired" | "revoked";
+export type DeploymentLicenseStatus =
+  | "active"
+  | "expired"
+  | "revoked"
+  | "unlicensed";
 
 export const LICENSE_CONSOLE_URL = "https://breeze-ui.com";
 
@@ -14,16 +18,19 @@ export const LICENSE_EXPIRED_BANNER =
 export const LICENSE_REVOKED_BANNER =
   "Read-only mode — you cannot define strategies or execute trades. Sign in at breeze-ui.com and follow the instructions for your license to reactivate this application.";
 
+export const LICENSE_UNLICENSED_BANNER =
+  "Read-only mode — this deployment has no valid license. Sign in at breeze-ui.com to obtain a deployment license and configure it on this instance.";
+
 export function isTradingReadOnly(
   status: DeploymentLicenseStatus | null | undefined,
 ): boolean {
-  return status === "revoked";
+  return status === "revoked" || status === "unlicensed";
 }
 
 export function shouldShowLicenseBanner(
   status: DeploymentLicenseStatus | null | undefined,
-): status is "expired" | "revoked" {
-  return status === "expired" || status === "revoked";
+): status is "expired" | "revoked" | "unlicensed" {
+  return status === "expired" || status === "revoked" || status === "unlicensed";
 }
 
 export function licenseBannerMessage(
@@ -31,5 +38,6 @@ export function licenseBannerMessage(
 ): string | null {
   if (status === "expired") return LICENSE_EXPIRED_BANNER;
   if (status === "revoked") return LICENSE_REVOKED_BANNER;
+  if (status === "unlicensed") return LICENSE_UNLICENSED_BANNER;
   return null;
 }

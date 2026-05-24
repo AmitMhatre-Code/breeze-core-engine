@@ -27,7 +27,9 @@ export function useDeploymentLicense() {
     placeholderData: (prev) => prev,
     refetchInterval: (query) => {
       const status = query.state.data?.deployment_license_status;
-      return status === "expired" || status === "revoked" ? 60_000 : false;
+      return status === "expired" || status === "revoked" || status === "unlicensed"
+        ? 60_000
+        : false;
     },
   });
 }

@@ -118,7 +118,9 @@ export function buildContactSalesMailtoForLicenseStatus(
   status: DeploymentLicenseStatus | null | undefined,
   contact: DeploymentLicenseContactSales | null | undefined,
 ): string | null {
-  if (status !== "expired" && status !== "revoked") return null;
+  if (status !== "expired" && status !== "revoked" && status !== "unlicensed") {
+    return null;
+  }
   const salesEmail = getSalesEmail();
   if (!salesEmail) return null;
   return buildContactSalesMailto(

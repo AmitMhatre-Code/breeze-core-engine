@@ -11,7 +11,7 @@ import {
 } from "react";
 import {
   LICENSE_CONSOLE_URL,
-  LICENSE_REVOKED_BANNER,
+  licenseBannerMessage,
   type DeploymentLicenseStatus,
 } from "@/lib/deployment-license";
 import { buildContactSalesMailtoForLicenseStatus } from "@/lib/contact-sales-mailto";
@@ -46,10 +46,12 @@ function RevokedLicenseDialog({
   open,
   onClose,
   contactSalesMailto,
+  licenseStatus,
 }: {
   open: boolean;
   onClose: () => void;
   contactSalesMailto: string | null;
+  licenseStatus: DeploymentLicenseStatus | null;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -71,7 +73,13 @@ function RevokedLicenseDialog({
 
   if (!open) return null;
 
-  const [before, after] = LICENSE_REVOKED_BANNER.split("breeze-ui.com");
+  const banner =
+    licenseBannerMessage(licenseStatus) ??
+    licenseBannerMessage("revoked") ??
+    "";
+  const [before, after] = banner.split("breeze-ui.com");
+  const title =
+    licenseStatus === "unlicensed" ? "No deployment license" : "License revoked";
 
   return (
     <div
@@ -90,7 +98,7 @@ function RevokedLicenseDialog({
           id="license-revoked-title"
           className="text-base font-semibold text-zinc-900 dark:text-zinc-100"
         >
-          License revoked
+          {title}
         </h2>
         <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
           {before}
@@ -173,6 +181,7 @@ export function LicenseRestrictionProvider({ children }: { children: ReactNode }
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
         contactSalesMailto={contactSalesMailto}
+        licenseStatus={licenseStatus}
       />
     </LicenseRestrictionContext.Provider>
   );

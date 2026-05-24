@@ -27,6 +27,7 @@ def test_update_from_portal_response_active_on_200():
     [
         ({"status": "OK", "deployment_license_status": "expired"}, "expired", True, False),
         ({"status": "OK", "deployment_license_status": "revoked"}, "revoked", False, True),
+        ({"status": "OK", "deployment_license_status": "unlicensed"}, "unlicensed", False, True),
         ({"status": "OK", "license_status": "expired"}, "expired", True, False),
     ],
 )
@@ -82,11 +83,32 @@ def test_revoked_blocks_trading_mutations():
     assert api["deployment_license_read_only"] is True
 
 
-def test_no_api_fields_when_license_env_missing(monkeypatch):
+def test_no_api_fields_when_portal_not_configured(monkeypatch):
+    monkeypatch.setattr(cfg, "PORTAL_API_BASE_URL", "")
     monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "")
-    dls.update_from_portal_response(403, {"detail": "License revoked"}, source="heartbeat")
     assert dls.get_license_status_for_api() is None
     assert dls.trading_mutations_allowed() is True
+
+
+def test_portal_without_license_key_is_unlicensed_read_only(monkeypatch):
+    monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "")
+    monkeypatch.setattr(cfg, "PUBLIC_FRONTEND_ORIGIN", "http://203.0.113.10")
+    assert dls.get_license_status() == "unlicensed"
+    assert dls.trading_mutations_allowed() is False
+    api = dls.get_license_status_for_api()
+    assert api is not None
+    assert api["deployment_license_status"] == "unlicensed"
+    assert api["deployment_license_read_only"] is True
+    assert api["contact_sales"]["public_ip"] == "203.0.113.10"
+
+
+def test_unlicensed_from_heartbeat_blocks_trading():
+    dls.update_from_portal_response(
+        200,
+        {"status": "OK", "deployment_license_status": "unlicensed"},
+        source="heartbeat",
+    )
+    assert dls.trading_mutations_allowed() is False
 
 
 def test_require_trading_not_revoked_raises_when_revoked():
