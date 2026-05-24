@@ -3,6 +3,8 @@
  * send the user to login with a clear re-authentication message.
  */
 
+import { isPublicUnauthenticatedPath } from "@/lib/public-auth-routes";
+
 export const LOGIN_REAUTH_REASON_QUERY = "session";
 
 let sessionExpiredRedirectPending = false;
@@ -49,7 +51,7 @@ export async function handleUnauthorizedApiResponse(
 ): Promise<boolean> {
   if (typeof window === "undefined" || status !== 401) return false;
   if (!shouldAutoLogoutOn401(apiPath, message)) return false;
-  if (window.location.pathname === "/login") return false;
+  if (isPublicUnauthenticatedPath(window.location.pathname)) return false;
 
   if (sessionExpiredRedirectPending) return true;
   sessionExpiredRedirectPending = true;

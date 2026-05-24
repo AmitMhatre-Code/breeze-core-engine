@@ -19,6 +19,7 @@ import {
   type DeploymentLicenseStatus,
 } from "@/lib/deployment-license";
 import type { HomeDataResponse } from "@/lib/home-data";
+import { shouldFetchLicenseHomeData } from "@/lib/public-auth-routes";
 
 type LicenseRestrictionContextValue = {
   licenseStatus: DeploymentLicenseStatus | null;
@@ -117,7 +118,7 @@ function RevokedLicenseDialog({
 
 export function LicenseRestrictionProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const licenseQueryEnabled = pathname !== "/login";
+  const licenseQueryEnabled = shouldFetchLicenseHomeData(pathname);
 
   const homeQ = useQuery({
     queryKey: ["home", "data"],
