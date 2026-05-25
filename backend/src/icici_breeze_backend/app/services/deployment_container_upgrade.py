@@ -1,6 +1,7 @@
 """In-place Core Engine container upgrade (matches CFN bootstrap docker run)."""
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import shlex
@@ -15,6 +16,9 @@ _DEFAULT_ENV_FILE = "/opt/breeze-core-engine/.env"
 _DEFAULT_DATA_HOST = "/opt/breeze-core-engine/data"
 _DEFAULT_HOST_PORT = 80
 _CONTAINER_PORT = 3000
+_UPGRADE_ENV_FILE = "/opt/breeze-core-engine/.upgrade.env"
+_UPGRADE_LOG_FILE = "/opt/breeze-core-engine/upgrade.log"
+_DEPLOY_ROOT = "/opt/breeze-core-engine"
 # Recreate must run in a sibling container — stopping the app from inside kills the upgrade process.
 _UPGRADE_HELPER_IMAGE = "docker:cli"
 _UPGRADE_PLATFORM = "linux/arm64"
@@ -142,6 +146,71 @@ def resolve_recreate_environment(client: Any, container_name: str, env_file: str
     return env
 
 
+def format_dotenv_text(env: dict[str, str]) -> str:
+    """Serialize environment for docker --env-file (KEY=value lines)."""
+    lines: list[str] = []
+    for key in sorted(env):
+        value = env[key]
+        if not key:
+            continue
+        if any(ch in value for ch in " \t\n#'\""):
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'{key}="{escaped}"')
+        else:
+            lines.append(f"{key}={value}")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def write_host_file_via_docker(client: Any, host_path: str, content: str, *, mode: int = 0o600) -> None:
+    """Write a file on the EC2 host by bind-mounting its parent directory into alpine."""
+    from docker.errors import APIError, DockerException
+
+    parent = os.path.dirname(host_path) or "/"
+    filename = os.path.basename(host_path)
+    payload = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    script = "\n".join(
+        [
+            "set -eu",
+            f"mkdir -p {shlex.quote(parent)}",
+            f"echo {shlex.quote(payload)} | base64 -d > {shlex.quote(host_path)}",
+            f"chmod {mode:o} {shlex.quote(host_path)}",
+        ]
+    )
+    try:
+        client.containers.run(
+            "alpine:3.20",
+            ["sh", "-c", script],
+            remove=True,
+            volumes={parent: {"bind": parent, "mode": "rw"}},
+        )
+    except (APIError, DockerException, OSError) as exc:
+        logger.warning("deployment upgrade: could not write host file %s: %s", host_path, exc)
+        raise
+
+
+def prepare_upgrade_env_file(client: Any, container_name: str) -> str:
+    """
+    Resolve full environment (host .env + running container) and write .upgrade.env on the host.
+    The helper uses this file so recreate survives missing or stale host .env files.
+    """
+    canonical = deployment_env_file_path()
+    env = resolve_recreate_environment(client, container_name, canonical)
+    if not env:
+        logger.warning(
+            "deployment upgrade: no env keys resolved; helper will fall back to %s if present",
+            canonical,
+        )
+        return canonical
+
+    write_host_file_via_docker(client, _UPGRADE_ENV_FILE, format_dotenv_text(env))
+    logger.info(
+        "deployment upgrade: wrote %d keys to %s for helper recreate",
+        len(env),
+        _UPGRADE_ENV_FILE,
+    )
+    return _UPGRADE_ENV_FILE
+
+
 def upgrade_shell_script(
     *,
     image: str,
@@ -149,22 +218,41 @@ def upgrade_shell_script(
     env_file: str,
     data_host: str,
     host_port: int,
+    log_file: str = _UPGRADE_LOG_FILE,
 ) -> str:
     """Shell recreate matching CFN bootstrap; runs on host via docker CLI helper."""
+    qn = shlex.quote(container_name)
+    qe = shlex.quote(env_file)
+    qi = shlex.quote(image)
+    qd = shlex.quote(data_host)
+    ql = shlex.quote(log_file)
     return "\n".join(
         [
             "set -eu",
-            f"docker pull {shlex.quote(image)}",
-            f"docker rm -f {shlex.quote(container_name)} 2>/dev/null || true",
+            f"LOG={ql}",
+            f"NAME={qn}",
+            f"IMAGE={qi}",
+            f"ENV_FILE={qe}",
+            'mkdir -p "$(dirname "$LOG")"',
+            'exec >>"$LOG" 2>&1',
+            'echo "=== breeze upgrade $(date -Iseconds 2>/dev/null || date) image=$IMAGE container=$NAME ==="',
+            f"test -f \"$ENV_FILE\" || {{ echo \"ERROR: env file missing: $ENV_FILE\"; exit 1; }}",
+            f"docker pull \"$IMAGE\"",
+            "docker rm -f \"$NAME\" 2>/dev/null || true",
+            "if docker ps -a --format '{{.Names}}' | grep -Fxq \"$NAME\"; then",
+            '  echo "ERROR: container $NAME still exists after docker rm -f"',
+            "  exit 1",
+            "fi",
             "docker run -d "
-            f"--name {shlex.quote(container_name)} "
+            '--name "$NAME" '
             "--restart unless-stopped "
             f"-p {int(host_port)}:{_CONTAINER_PORT} "
-            f"-v {shlex.quote(data_host)}:/app/backend/data "
-            f"-v {shlex.quote(env_file)}:{shlex.quote(env_file)}:ro "
+            f"-v {qd}:/app/backend/data "
+            '-v "$ENV_FILE":"$ENV_FILE":ro '
             "-v /var/run/docker.sock:/var/run/docker.sock "
-            f"--env-file {shlex.quote(env_file)} "
-            f"{shlex.quote(image)}",
+            '--env-file "$ENV_FILE" '
+            '"$IMAGE"',
+            'echo "=== upgrade complete: $(docker ps --filter name=^/$NAME$ --format {{.Status}}) ==="',
         ]
     )
 
@@ -190,7 +278,7 @@ def schedule_recreate_via_helper(client: Any, *, image: str, container_name: str
     """
     from docker.errors import APIError, DockerException
 
-    env_file = deployment_env_file_path()
+    env_file = prepare_upgrade_env_file(client, container_name)
     data_host = deployment_data_host_path()
     host_port = deployment_publish_port()
     script = upgrade_shell_script(
@@ -217,18 +305,23 @@ def schedule_recreate_via_helper(client: Any, *, image: str, container_name: str
             command=[script],
             name=helper_name,
             detach=True,
-            remove=True,
-            volumes={"/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}},
+            remove=False,
+            volumes={
+                "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
+                _DEPLOY_ROOT: {"bind": _DEPLOY_ROOT, "mode": "rw"},
+            },
         )
     except (APIError, DockerException) as exc:
         logger.warning("deployment upgrade: helper launch failed: %s", exc)
         raise
     helper_id = getattr(helper, "id", helper)
     logger.info(
-        "deployment upgrade: helper started id=%s name=%s — inspect with: docker logs %s",
+        "deployment upgrade: helper started id=%s name=%s — on failure inspect: "
+        "docker logs %s; cat %s",
         helper_id,
         helper_name,
         helper_name,
+        _UPGRADE_LOG_FILE,
     )
 
 

@@ -61,17 +61,38 @@ def test_resolve_recreate_environment_prefers_file(tmp_path, monkeypatch):
     assert env["PATH"] == "/usr/bin"
 
 
+def test_format_dotenv_text_quotes_spaces():
+    text = dcu.format_dotenv_text({"JWT_SECRET": "abc", "ALLOWED_ORIGINS": "http://1.2.3.4 http://5.6.7.8"})
+    assert 'ALLOWED_ORIGINS="http://1.2.3.4 http://5.6.7.8"' in text
+    assert "JWT_SECRET=abc\n" in text
+
+
 def test_upgrade_shell_script_uses_env_file():
     script = dcu.upgrade_shell_script(
         image="ghcr.io/org/breeze-core-engine:latest",
         container_name="breeze-core-engine",
-        env_file="/opt/breeze-core-engine/.env",
+        env_file="/opt/breeze-core-engine/.upgrade.env",
         data_host="/opt/breeze-core-engine/data",
         host_port=80,
     )
-    assert "--env-file /opt/breeze-core-engine/.env" in script
-    assert "docker rm -f breeze-core-engine" in script
+    assert 'ENV_FILE=/opt/breeze-core-engine/.upgrade.env' in script
+    assert 'docker rm -f "$NAME"' in script
+    assert "still exists after docker rm" in script
     assert "-p 80:3000" in script
+    assert "upgrade.log" in script
+
+
+def test_prepare_upgrade_env_file_writes_host(tmp_path, monkeypatch):
+    mock_client = MagicMock()
+    monkeypatch.setattr(
+        dcu,
+        "resolve_recreate_environment",
+        lambda _c, _n, _p: {"JWT_ACCESS_TOKEN_EXPIRE_MINUTES": "1440"},
+    )
+    monkeypatch.setattr(dcu, "write_host_file_via_docker", lambda _c, path, content, **_: path)
+
+    path = dcu.prepare_upgrade_env_file(mock_client, "breeze-core-engine")
+    assert path == dcu._UPGRADE_ENV_FILE
 
 
 def test_schedule_recreate_via_helper_detached_cli(monkeypatch):
@@ -79,7 +100,7 @@ def test_schedule_recreate_via_helper_detached_cli(monkeypatch):
     mock_helper = MagicMock()
     mock_helper.id = "helper123"
     mock_client.containers.run.return_value = mock_helper
-    monkeypatch.setattr(dcu, "deployment_env_file_path", lambda: "/opt/breeze-core-engine/.env")
+    monkeypatch.setattr(dcu, "prepare_upgrade_env_file", lambda _c, _n: "/opt/breeze-core-engine/.upgrade.env")
     monkeypatch.setattr(dcu, "deployment_data_host_path", lambda: "/opt/breeze-core-engine/data")
     monkeypatch.setattr(dcu, "deployment_publish_port", lambda: 80)
     monkeypatch.setattr(dcu, "pull_upgrade_helper_image", lambda _c: None)
@@ -94,9 +115,10 @@ def test_schedule_recreate_via_helper_detached_cli(monkeypatch):
     args, kwargs = mock_client.containers.run.call_args
     assert args[0] == "docker:cli"
     assert kwargs["detach"] is True
-    assert kwargs["remove"] is True
+    assert kwargs["remove"] is False
     assert "/var/run/docker.sock" in kwargs["volumes"]
-    assert "--env-file" in kwargs["command"][0]
+    assert dcu._DEPLOY_ROOT in kwargs["volumes"]
+    assert 'ENV_FILE=' in kwargs["command"][0]
 
 
 def test_recreate_deployment_container_stops_and_runs_with_env(tmp_path, monkeypatch):
