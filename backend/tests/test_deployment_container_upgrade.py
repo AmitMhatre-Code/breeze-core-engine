@@ -61,6 +61,40 @@ def test_resolve_recreate_environment_prefers_file(tmp_path, monkeypatch):
     assert env["PATH"] == "/usr/bin"
 
 
+def test_upgrade_shell_script_uses_env_file():
+    script = dcu.upgrade_shell_script(
+        image="ghcr.io/org/breeze-core-engine:latest",
+        container_name="breeze-core-engine",
+        env_file="/opt/breeze-core-engine/.env",
+        data_host="/opt/breeze-core-engine/data",
+        host_port=80,
+    )
+    assert "--env-file /opt/breeze-core-engine/.env" in script
+    assert "docker rm -f breeze-core-engine" in script
+    assert "-p 80:3000" in script
+
+
+def test_schedule_recreate_via_helper_detached_cli(monkeypatch):
+    mock_client = MagicMock()
+    monkeypatch.setattr(dcu, "deployment_env_file_path", lambda: "/opt/breeze-core-engine/.env")
+    monkeypatch.setattr(dcu, "deployment_data_host_path", lambda: "/opt/breeze-core-engine/data")
+    monkeypatch.setattr(dcu, "deployment_publish_port", lambda: 80)
+
+    dcu.schedule_recreate_via_helper(
+        mock_client,
+        image="ghcr.io/org/breeze-core-engine:latest",
+        container_name="breeze-core-engine",
+    )
+
+    mock_client.containers.run.assert_called_once()
+    args, kwargs = mock_client.containers.run.call_args
+    assert args[0] == "docker:27-cli"
+    assert kwargs["detach"] is True
+    assert kwargs["remove"] is True
+    assert "/var/run/docker.sock" in kwargs["volumes"]
+    assert "--env-file" in kwargs["command"][0]
+
+
 def test_recreate_deployment_container_stops_and_runs_with_env(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
     env_path.write_text(

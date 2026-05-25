@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
+import time
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
@@ -13,6 +15,8 @@ _DEFAULT_ENV_FILE = "/opt/breeze-core-engine/.env"
 _DEFAULT_DATA_HOST = "/opt/breeze-core-engine/data"
 _DEFAULT_HOST_PORT = 80
 _CONTAINER_PORT = 3000
+# Must run recreate on the host via a sibling container — stopping the app from inside kills the upgrade process.
+_UPGRADE_HELPER_IMAGE = "docker:27-cli"
 
 
 def deployment_env_file_path() -> str:
@@ -135,6 +139,77 @@ def resolve_recreate_environment(client: Any, container_name: str, env_file: str
             env_file,
         )
     return env
+
+
+def upgrade_shell_script(
+    *,
+    image: str,
+    container_name: str,
+    env_file: str,
+    data_host: str,
+    host_port: int,
+) -> str:
+    """Shell recreate matching CFN bootstrap; runs on host via docker CLI helper."""
+    return "\n".join(
+        [
+            "set -eu",
+            f"docker pull {shlex.quote(image)}",
+            f"docker rm -f {shlex.quote(container_name)} 2>/dev/null || true",
+            "docker run -d "
+            f"--name {shlex.quote(container_name)} "
+            "--restart unless-stopped "
+            f"-p {int(host_port)}:{_CONTAINER_PORT} "
+            f"-v {shlex.quote(data_host)}:/app/backend/data "
+            f"-v {shlex.quote(env_file)}:{shlex.quote(env_file)}:ro "
+            "-v /var/run/docker.sock:/var/run/docker.sock "
+            f"--env-file {shlex.quote(env_file)} "
+            f"{shlex.quote(image)}",
+        ]
+    )
+
+
+def schedule_recreate_via_helper(client: Any, *, image: str, container_name: str) -> None:
+    """
+    Run stop/rm/run in a detached docker-cli container so the app container can be
+    replaced without killing the process that scheduled the upgrade.
+    """
+    from docker.errors import APIError, DockerException
+
+    env_file = deployment_env_file_path()
+    data_host = deployment_data_host_path()
+    host_port = deployment_publish_port()
+    script = upgrade_shell_script(
+        image=image,
+        container_name=container_name,
+        env_file=env_file,
+        data_host=data_host,
+        host_port=host_port,
+    )
+    helper_name = f"breeze-upgrade-{int(time.time())}"
+    logger.info(
+        "deployment upgrade: launching helper %s to recreate %s (env_file=%s)",
+        helper_name,
+        container_name,
+        env_file,
+    )
+    try:
+        client.containers.run(
+            _UPGRADE_HELPER_IMAGE,
+            entrypoint=["sh", "-c"],
+            command=[script],
+            name=helper_name,
+            detach=True,
+            remove=True,
+            volumes={"/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}},
+        )
+    except (APIError, DockerException) as exc:
+        logger.warning("deployment upgrade: helper launch failed: %s", exc)
+        raise
+    logger.info(
+        "deployment upgrade: helper %s started; %s will be recreated on host",
+        helper_name,
+        container_name,
+    )
 
 
 def recreate_deployment_container(client: Any, *, image: str, container_name: str) -> None:

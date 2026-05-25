@@ -238,12 +238,12 @@ def test_execute_upgrade_pulls_and_recreates_container(monkeypatch):
     monkeypatch.setitem(sys.modules, "docker.errors", docker_errors)
 
     with patch(
-        "icici_breeze_backend.app.services.deployment_container_upgrade.recreate_deployment_container",
-    ) as recreate:
+        "icici_breeze_backend.app.services.deployment_container_upgrade.schedule_recreate_via_helper",
+    ) as schedule:
         hb.execute_upgrade("latest")
 
     mock_client.images.pull.assert_called_once_with("ghcr.io/org/breeze-core-engine:latest")
-    recreate.assert_called_once_with(
+    schedule.assert_called_once_with(
         mock_client,
         image="ghcr.io/org/breeze-core-engine:latest",
         container_name="breeze-core-engine",

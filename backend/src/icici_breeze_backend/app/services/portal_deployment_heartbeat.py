@@ -101,7 +101,7 @@ def _resolve_upgrade_image(target_tag: str | None) -> str | None:
 def execute_upgrade(target_tag: str | None) -> None:
     """Pull target image and recreate the deployment container with the host .env file."""
     from icici_breeze_backend.app.services.deployment_container_upgrade import (
-        recreate_deployment_container,
+        schedule_recreate_via_helper,
     )
 
     image = _resolve_upgrade_image(target_tag)
@@ -132,7 +132,7 @@ def execute_upgrade(target_tag: str | None) -> None:
         return
 
     try:
-        recreate_deployment_container(client, image=image, container_name=container_name)
+        schedule_recreate_via_helper(client, image=image, container_name=container_name)
     except (APIError, DockerException) as exc:
         logger.warning("portal heartbeat upgrade: container recreate failed: %s", exc)
 
