@@ -131,6 +131,10 @@ def execute_upgrade(target_tag: str | None) -> None:
         logger.warning("portal heartbeat upgrade: image pull failed: %s", exc)
         return
 
+    logger.info(
+        "portal heartbeat upgrade: scheduling detached helper recreate for %s (app container stays up until helper runs)",
+        container_name,
+    )
     try:
         schedule_recreate_via_helper(client, image=image, container_name=container_name)
     except (APIError, DockerException) as exc:

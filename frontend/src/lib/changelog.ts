@@ -20,6 +20,16 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "1.4.2-i",
+    date: "25-May-2026",
+    releaseKind: "prerelease",
+    summary: "In-place upgrade uses detached docker-cli helper",
+    changes: [
+      "Console upgrades recreate the container via a detached helper instead of stopping the app from inside (fixes failed upgrades leaving the site down).",
+      "Upgrades apply /opt/breeze-core-engine/.env via --env-file on recreate.",
+    ],
+  },
+  {
     version: "1.4.2-h",
     date: "23-May-2026",
     releaseKind: "prerelease",

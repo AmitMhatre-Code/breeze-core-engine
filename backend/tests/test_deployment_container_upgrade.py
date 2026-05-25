@@ -76,9 +76,13 @@ def test_upgrade_shell_script_uses_env_file():
 
 def test_schedule_recreate_via_helper_detached_cli(monkeypatch):
     mock_client = MagicMock()
+    mock_helper = MagicMock()
+    mock_helper.id = "helper123"
+    mock_client.containers.run.return_value = mock_helper
     monkeypatch.setattr(dcu, "deployment_env_file_path", lambda: "/opt/breeze-core-engine/.env")
     monkeypatch.setattr(dcu, "deployment_data_host_path", lambda: "/opt/breeze-core-engine/data")
     monkeypatch.setattr(dcu, "deployment_publish_port", lambda: 80)
+    monkeypatch.setattr(dcu, "pull_upgrade_helper_image", lambda _c: None)
 
     dcu.schedule_recreate_via_helper(
         mock_client,
@@ -88,7 +92,7 @@ def test_schedule_recreate_via_helper_detached_cli(monkeypatch):
 
     mock_client.containers.run.assert_called_once()
     args, kwargs = mock_client.containers.run.call_args
-    assert args[0] == "docker:27-cli"
+    assert args[0] == "docker:cli"
     assert kwargs["detach"] is True
     assert kwargs["remove"] is True
     assert "/var/run/docker.sock" in kwargs["volumes"]

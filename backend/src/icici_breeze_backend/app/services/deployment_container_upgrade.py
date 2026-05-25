@@ -15,8 +15,9 @@ _DEFAULT_ENV_FILE = "/opt/breeze-core-engine/.env"
 _DEFAULT_DATA_HOST = "/opt/breeze-core-engine/data"
 _DEFAULT_HOST_PORT = 80
 _CONTAINER_PORT = 3000
-# Must run recreate on the host via a sibling container — stopping the app from inside kills the upgrade process.
-_UPGRADE_HELPER_IMAGE = "docker:27-cli"
+# Recreate must run in a sibling container — stopping the app from inside kills the upgrade process.
+_UPGRADE_HELPER_IMAGE = "docker:cli"
+_UPGRADE_PLATFORM = "linux/arm64"
 
 
 def deployment_env_file_path() -> str:
@@ -168,6 +169,20 @@ def upgrade_shell_script(
     )
 
 
+def pull_upgrade_helper_image(client: Any) -> None:
+    """Ensure the docker-cli helper image is present (EC2 hosts are arm64)."""
+    from docker.errors import APIError, DockerException
+
+    try:
+        logger.info("deployment upgrade: pulling helper image %s", _UPGRADE_HELPER_IMAGE)
+        client.images.pull(_UPGRADE_HELPER_IMAGE, platform=_UPGRADE_PLATFORM)
+    except TypeError:
+        client.images.pull(_UPGRADE_HELPER_IMAGE)
+    except (APIError, DockerException) as exc:
+        logger.warning("deployment upgrade: helper image pull failed: %s", exc)
+        raise
+
+
 def schedule_recreate_via_helper(client: Any, *, image: str, container_name: str) -> None:
     """
     Run stop/rm/run in a detached docker-cli container so the app container can be
@@ -185,15 +200,18 @@ def schedule_recreate_via_helper(client: Any, *, image: str, container_name: str
         data_host=data_host,
         host_port=host_port,
     )
+    pull_upgrade_helper_image(client)
+
     helper_name = f"breeze-upgrade-{int(time.time())}"
     logger.info(
-        "deployment upgrade: launching helper %s to recreate %s (env_file=%s)",
+        "deployment upgrade: launching detached helper %s to recreate %s (env_file=%s); "
+        "this container will be replaced shortly",
         helper_name,
         container_name,
         env_file,
     )
     try:
-        client.containers.run(
+        helper = client.containers.run(
             _UPGRADE_HELPER_IMAGE,
             entrypoint=["sh", "-c"],
             command=[script],
@@ -205,10 +223,12 @@ def schedule_recreate_via_helper(client: Any, *, image: str, container_name: str
     except (APIError, DockerException) as exc:
         logger.warning("deployment upgrade: helper launch failed: %s", exc)
         raise
+    helper_id = getattr(helper, "id", helper)
     logger.info(
-        "deployment upgrade: helper %s started; %s will be recreated on host",
+        "deployment upgrade: helper started id=%s name=%s — inspect with: docker logs %s",
+        helper_id,
         helper_name,
-        container_name,
+        helper_name,
     )
 
 
