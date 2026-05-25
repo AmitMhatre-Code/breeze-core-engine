@@ -21,7 +21,6 @@ _IST = ZoneInfo("Asia/Kolkata")
 _MARKET_OPEN = time(9, 0)
 _MARKET_CLOSE = time(16, 0)
 _HEARTBEAT_TIMEOUT_SEC = 10.0
-_WATCHTOWER_IMAGE = "containrrr/watchtower"
 _INTERVAL_MIN_SEC = 300
 _INTERVAL_MAX_SEC = 3600
 
@@ -100,7 +99,11 @@ def _resolve_upgrade_image(target_tag: str | None) -> str | None:
 
 
 def execute_upgrade(target_tag: str | None) -> None:
-    """Pull target image and run Watchtower once against the deployment container."""
+    """Pull target image and recreate the deployment container with the host .env file."""
+    from icici_breeze_backend.app.services.deployment_container_upgrade import (
+        recreate_deployment_container,
+    )
+
     image = _resolve_upgrade_image(target_tag)
     if not image:
         logger.warning("portal heartbeat upgrade skipped: DEPLOYMENT_GHCR_IMAGE not set")
@@ -129,20 +132,9 @@ def execute_upgrade(target_tag: str | None) -> None:
         return
 
     try:
-        watch = client.containers.run(
-            _WATCHTOWER_IMAGE,
-            command=["--run-once", container_name],
-            volumes={"/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}},
-            detach=True,
-            remove=True,
-        )
-        logger.info(
-            "portal heartbeat upgrade: started watchtower id=%s for container=%s",
-            getattr(watch, "id", watch),
-            container_name,
-        )
+        recreate_deployment_container(client, image=image, container_name=container_name)
     except (APIError, DockerException) as exc:
-        logger.warning("portal heartbeat upgrade: watchtower failed: %s", exc)
+        logger.warning("portal heartbeat upgrade: container recreate failed: %s", exc)
 
 
 async def post_heartbeat() -> dict | None:

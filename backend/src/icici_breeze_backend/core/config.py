@@ -128,6 +128,16 @@ DEPLOYMENT_LICENSE_KEY = (os.environ.get("DEPLOYMENT_LICENSE_KEY") or "").strip(
 PORTAL_API_BASE_URL = (os.environ.get("PORTAL_API_BASE_URL") or "").strip().rstrip("/")
 DEPLOYMENT_GHCR_IMAGE = (os.environ.get("DEPLOYMENT_GHCR_IMAGE") or "").strip()
 DEPLOYMENT_CONTAINER_NAME = (os.environ.get("DEPLOYMENT_CONTAINER_NAME") or "breeze-core-engine").strip()
+# Host paths for in-place upgrade (docker.sock API on EC2; matches CFN bootstrap).
+DEPLOYMENT_ENV_FILE = (os.environ.get("DEPLOYMENT_ENV_FILE") or "/opt/breeze-core-engine/.env").strip()
+DEPLOYMENT_DATA_HOST_PATH = (
+    os.environ.get("DEPLOYMENT_DATA_HOST_PATH") or "/opt/breeze-core-engine/data"
+).strip()
+_DEPLOYMENT_PUBLISH_PORT_RAW = (os.environ.get("DEPLOYMENT_PUBLISH_PORT") or "80").strip()
+try:
+    DEPLOYMENT_PUBLISH_PORT = int(_DEPLOYMENT_PUBLISH_PORT_RAW)
+except ValueError:
+    DEPLOYMENT_PUBLISH_PORT = 80
 _PORTAL_HEARTBEAT_INTERVAL_RAW = (os.environ.get("PORTAL_HEARTBEAT_INTERVAL_SEC") or "300").strip()
 try:
     PORTAL_HEARTBEAT_INTERVAL_SEC = max(60, int(_PORTAL_HEARTBEAT_INTERVAL_RAW))

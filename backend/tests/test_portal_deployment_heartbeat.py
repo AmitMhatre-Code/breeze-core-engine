@@ -223,15 +223,11 @@ def test_resolve_upgrade_image_replaces_tag(monkeypatch):
     assert hb._resolve_upgrade_image("latest") == "ghcr.io/org/breeze-core-engine:latest"
 
 
-def test_execute_upgrade_pulls_and_starts_watchtower(monkeypatch):
+def test_execute_upgrade_pulls_and_recreates_container(monkeypatch):
     monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/org/breeze-core-engine:latest")
     monkeypatch.setattr(hb.cfg, "DEPLOYMENT_CONTAINER_NAME", "breeze-core-engine")
 
     mock_client = MagicMock()
-    mock_container = MagicMock()
-    mock_container.id = "wt-abc"
-    mock_client.containers.run.return_value = mock_container
-
     docker_mod = types.ModuleType("docker")
     docker_errors = types.ModuleType("docker.errors")
     docker_errors.DockerException = Exception
@@ -241,10 +237,14 @@ def test_execute_upgrade_pulls_and_starts_watchtower(monkeypatch):
     monkeypatch.setitem(sys.modules, "docker", docker_mod)
     monkeypatch.setitem(sys.modules, "docker.errors", docker_errors)
 
-    hb.execute_upgrade("latest")
+    with patch(
+        "icici_breeze_backend.app.services.deployment_container_upgrade.recreate_deployment_container",
+    ) as recreate:
+        hb.execute_upgrade("latest")
 
     mock_client.images.pull.assert_called_once_with("ghcr.io/org/breeze-core-engine:latest")
-    mock_client.containers.run.assert_called_once()
-    args, kwargs = mock_client.containers.run.call_args
-    assert args[0] == "containrrr/watchtower"
-    assert kwargs["command"] == ["--run-once", "breeze-core-engine"]
+    recreate.assert_called_once_with(
+        mock_client,
+        image="ghcr.io/org/breeze-core-engine:latest",
+        container_name="breeze-core-engine",
+    )
