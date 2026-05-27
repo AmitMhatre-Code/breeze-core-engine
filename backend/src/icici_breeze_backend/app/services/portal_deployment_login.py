@@ -10,7 +10,12 @@ import httpx
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.services.deployment_license_status import (
-    update_from_portal_response,
+    record_portal_verify_failure,
+    update_from_verified_policy,
+)
+from icici_breeze_backend.app.services.portal_policy_token import (
+    parse_verified_portal_body,
+    portal_host_allowed,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,6 +42,10 @@ async def _post_deployment_login(public_ip: str) -> None:
     key = (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
     if not base:
         return
+    if not portal_host_allowed(base):
+        logger.warning("portal deployment-login skipped: PORTAL_API_BASE_URL host not allowed")
+        record_portal_verify_failure()
+        return
     url = f"{base}/api/public/deployment-login"
     payload: dict[str, str] = {"public_ip": public_ip}
     if key:
@@ -45,17 +54,24 @@ async def _post_deployment_login(public_ip: str) -> None:
         async with httpx.AsyncClient(timeout=_LOGIN_TIMEOUT_SEC) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code == 403:
-                try:
-                    body = resp.json()
-                except Exception:  # noqa: BLE001
-                    body = resp.text
-                update_from_portal_response(403, body, source="deployment-login")
-                logger.warning("portal deployment-login rejected: %s", body)
+                logger.warning("portal deployment-login rejected: %s", resp.text[:500])
+                record_portal_verify_failure()
                 return
-            if resp.is_success:
-                update_from_portal_response(resp.status_code, resp.text, source="deployment-login")
+            if not resp.is_success:
+                record_portal_verify_failure()
+                return
+            try:
+                raw = resp.json()
+            except Exception:  # noqa: BLE001
+                raw = None
+            policy = parse_verified_portal_body(raw if isinstance(raw, dict) else None, public_ip=public_ip)
+            if policy is None:
+                record_portal_verify_failure()
+                return
+            update_from_verified_policy(policy, source="deployment-login")
     except Exception as exc:  # noqa: BLE001
         logger.warning("portal deployment-login failed: %s", exc)
+        record_portal_verify_failure()
 
 
 def notify_portal_deployment_login() -> None:

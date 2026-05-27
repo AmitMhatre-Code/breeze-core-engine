@@ -1,7 +1,6 @@
 """In-memory deployment license status from portal heartbeat / deployment-login."""
 from __future__ import annotations
 
-import json
 import threading
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -21,8 +20,10 @@ REVOKED_TRADING_MESSAGE = TRADING_READ_ONLY_MESSAGE
 
 _lock = threading.Lock()
 _status: LicenseStatus | None = None
-_updated_at: datetime | None = None
+_verified_at: datetime | None = None
 _source: LicenseSource | None = None
+_heartbeat_interval_sec: int = 300
+_startup_at: datetime = datetime.now(timezone.utc)
 
 
 def _portal_configured() -> bool:
@@ -33,69 +34,56 @@ def _has_license_key() -> bool:
     return bool((cfg.DEPLOYMENT_LICENSE_KEY or "").strip())
 
 
-def _license_env_configured() -> bool:
-    """Portal URL and license key both set (full licensed deployment wiring)."""
-    return _portal_configured() and _has_license_key()
+def _effective_status_locked(now: datetime) -> LicenseStatus:
+    """License status used for enforcement, accounting for staleness."""
+    if _status is None:
+        return "unlicensed"
+    if _is_stale_locked(now):
+        return "unlicensed"
+    return _status
 
 
-def _parse_detail(detail: Any) -> LicenseStatus | None:
-    text = str(detail or "").strip().lower()
-    if "revoked" in text:
-        return "revoked"
-    if "expired" in text:
-        return "expired"
-    return None
+def _is_stale_locked(now: datetime) -> bool:
+    if _verified_at is None:
+        return True
+    interval = max(300, min(3600, int(_heartbeat_interval_sec or 300)))
+    age = (now - _verified_at).total_seconds()
+    return age > (2 * interval)
 
 
-def _parse_detail_from_body(body: str | dict | None) -> LicenseStatus | None:
-    if body is None:
-        return None
-    if isinstance(body, dict):
-        return _parse_detail(body.get("detail"))
-    text = str(body).strip()
-    if not text:
-        return None
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return _parse_detail(text)
-    if isinstance(parsed, dict):
-        return _parse_detail(parsed.get("detail"))
-    return _parse_detail(text)
-
-
-def _status_from_success_body(body: str | dict | None) -> LicenseStatus:
-    if isinstance(body, dict):
-        raw = body.get("deployment_license_status") or body.get("license_status")
-        if raw in ("active", "expired", "revoked", "unlicensed"):
-            return raw  # type: ignore[return-value]
-    return "active"
-
-
-def update_from_portal_response(
-    status_code: int,
-    body: str | dict | None = None,
+def update_from_verified_policy(
+    policy: dict[str, Any],
     *,
     source: LicenseSource,
 ) -> None:
-    """Update cached license status from a portal HTTP response."""
+    """Update cached license state from a cryptographically verified portal policy."""
     if not _portal_configured():
         return
 
-    new_status: LicenseStatus | None = None
-    if 200 <= status_code < 300:
-        new_status = _status_from_success_body(body)
-    elif status_code == 403:
-        new_status = _parse_detail_from_body(body)
-
-    if new_status is None:
+    raw = policy.get("deployment_license_status") or policy.get("license_status")
+    if raw not in ("active", "expired", "revoked", "unlicensed"):
         return
 
-    global _status, _updated_at, _source
+    new_status: LicenseStatus = raw  # type: ignore[assignment]
+    interval = policy.get("heartbeat_interval_sec")
+    try:
+        interval_sec = int(interval) if interval is not None else None
+    except (TypeError, ValueError):
+        interval_sec = None
+
+    global _status, _verified_at, _source, _heartbeat_interval_sec
     with _lock:
         _status = new_status
-        _updated_at = datetime.now(timezone.utc)
+        _verified_at = datetime.now(timezone.utc)
         _source = source
+        if interval_sec is not None:
+            _heartbeat_interval_sec = max(300, min(3600, interval_sec))
+
+
+def record_portal_verify_failure() -> None:
+    """Mark that the latest portal call did not yield a verified policy (staleness only)."""
+    # Intentionally does not clear _verified_at; trading falls back via _is_stale_locked.
+    pass
 
 
 def get_license_status() -> LicenseStatus | None:
@@ -104,7 +92,9 @@ def get_license_status() -> LicenseStatus | None:
     if not _has_license_key():
         return "unlicensed"
     with _lock:
-        return _status
+        if _status is None:
+            return None
+        return _effective_status_locked(datetime.now(timezone.utc))
 
 
 def trading_mutations_allowed() -> bool:
@@ -113,8 +103,10 @@ def trading_mutations_allowed() -> bool:
         return True
     if not _has_license_key():
         return False
+    now = datetime.now(timezone.utc)
     with _lock:
-        return _status not in ("revoked", "unlicensed")
+        effective = _effective_status_locked(now)
+        return effective not in ("revoked", "unlicensed")
 
 
 def _contact_sales_context() -> dict[str, Any]:
@@ -146,22 +138,30 @@ def get_license_status_for_api() -> dict[str, Any] | None:
             "deployment_license_read_only": True,
             "contact_sales": _contact_sales_context(),
         }
+    now = datetime.now(timezone.utc)
     with _lock:
         if _status is None:
-            return None
+            return {
+                "deployment_license_status": "unlicensed",
+                "deployment_license_read_only": True,
+                "contact_sales": _contact_sales_context(),
+            }
+        effective = _effective_status_locked(now)
         payload: dict[str, Any] = {
-            "deployment_license_status": _status,
-            "deployment_license_read_only": _read_only_for_status(_status),
+            "deployment_license_status": effective,
+            "deployment_license_read_only": _read_only_for_status(effective),
         }
-        if _status in ("expired", "revoked", "unlicensed"):
+        if effective in ("expired", "revoked", "unlicensed"):
             payload["contact_sales"] = _contact_sales_context()
         return payload
 
 
 def reset_for_tests() -> None:
     """Clear cached state (tests only)."""
-    global _status, _updated_at, _source
+    global _status, _verified_at, _source, _heartbeat_interval_sec, _startup_at
     with _lock:
         _status = None
-        _updated_at = None
+        _verified_at = None
         _source = None
+        _heartbeat_interval_sec = 300
+        _startup_at = datetime.now(timezone.utc)

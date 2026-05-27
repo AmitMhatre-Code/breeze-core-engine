@@ -11,9 +11,14 @@ import httpx
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.services.deployment_license_status import (
-    update_from_portal_response,
+    record_portal_verify_failure,
+    update_from_verified_policy,
 )
 from icici_breeze_backend.app.services.portal_deployment_login import _public_ip_from_origin
+from icici_breeze_backend.app.services.portal_policy_token import (
+    parse_verified_portal_body,
+    portal_host_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,16 +74,16 @@ def _reported_version() -> str:
     return "unknown"
 
 
-def _upgrade_allowed(body: dict) -> bool:
-    if "upgrade_allowed_now" in body:
-        return bool(body.get("upgrade_allowed_now"))
+def _upgrade_allowed(policy: dict) -> bool:
+    if "upgrade_allowed_now" in policy:
+        return bool(policy.get("upgrade_allowed_now"))
     return not is_ist_market_hours()
 
 
-def _apply_policy_from_body(body: dict) -> None:
+def _apply_policy_from_body(policy: dict) -> None:
     global _last_interval_sec
-    if "heartbeat_interval_sec" in body:
-        _last_interval_sec = _clamp_interval(body.get("heartbeat_interval_sec"))
+    if "heartbeat_interval_sec" in policy:
+        _last_interval_sec = _clamp_interval(policy.get("heartbeat_interval_sec"))
 
 
 def current_heartbeat_interval_sec() -> int:
@@ -142,11 +147,15 @@ def execute_upgrade(target_tag: str | None) -> None:
 
 
 async def post_heartbeat() -> dict | None:
-    """POST heartbeat to portal; return JSON body or None on failure."""
+    """POST heartbeat to portal; return verified policy dict or None on failure."""
     base = (cfg.PORTAL_API_BASE_URL or "").strip().rstrip("/")
     key = (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
     public_ip = _public_ip_from_origin()
     if not base or not public_ip:
+        return None
+    if not portal_host_allowed(base):
+        logger.warning("portal heartbeat skipped: PORTAL_API_BASE_URL host not allowed")
+        record_portal_verify_failure()
         return None
 
     url = f"{base}/api/public/heartbeat"
@@ -160,25 +169,27 @@ async def post_heartbeat() -> dict | None:
         async with httpx.AsyncClient(timeout=_HEARTBEAT_TIMEOUT_SEC) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code == 403:
-                try:
-                    body = resp.json()
-                except Exception:  # noqa: BLE001
-                    body = resp.text
-                update_from_portal_response(403, body, source="heartbeat")
-                logger.warning("portal heartbeat rejected: %s", body)
+                logger.warning("portal heartbeat rejected: %s", resp.text[:500])
+                record_portal_verify_failure()
                 return None
             resp.raise_for_status()
             try:
-                payload = resp.json()
+                raw = resp.json()
             except Exception:  # noqa: BLE001
-                payload = None
-            update_from_portal_response(resp.status_code, payload, source="heartbeat")
-            return payload if isinstance(payload, dict) else None
+                raw = None
+            policy = parse_verified_portal_body(raw if isinstance(raw, dict) else None, public_ip=public_ip)
+            if policy is None:
+                record_portal_verify_failure()
+                return None
+            update_from_verified_policy(policy, source="heartbeat")
+            return policy
     except httpx.HTTPError as exc:
         logger.warning("portal heartbeat request failed: %s", exc)
+        record_portal_verify_failure()
         return None
     except Exception as exc:  # noqa: BLE001
         logger.warning("portal heartbeat unexpected error: %s", exc)
+        record_portal_verify_failure()
         return None
 
 
@@ -186,20 +197,20 @@ async def heartbeat_tick() -> int:
     """Phone home; run upgrade when portal approves. Returns next sleep interval (seconds)."""
     global _last_interval_sec
 
-    body = await post_heartbeat()
-    if body:
-        _apply_policy_from_body(body)
+    policy = await post_heartbeat()
+    if policy:
+        _apply_policy_from_body(policy)
 
-    if not body:
+    if not policy:
         return _last_interval_sec
 
-    if body.get("status") != "OK":
-        logger.warning("portal heartbeat unexpected status: %s", body.get("status"))
+    if policy.get("status") != "OK":
+        logger.warning("portal heartbeat unexpected status: %s", policy.get("status"))
         return _last_interval_sec
 
-    if body.get("trigger_upgrade"):
-        if _upgrade_allowed(body):
-            target_tag = body.get("target_tag")
+    if policy.get("trigger_upgrade"):
+        if _upgrade_allowed(policy):
+            target_tag = policy.get("target_tag")
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, execute_upgrade, target_tag)
         else:

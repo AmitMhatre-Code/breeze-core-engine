@@ -20,9 +20,7 @@ def _license_env(monkeypatch):
 
 
 def test_license_status_returns_cached_fields_without_broker_token():
-    dls.update_from_portal_response(
-        403, {"detail": "License expired"}, source="heartbeat"
-    )
+    dls.update_from_verified_policy({"deployment_license_status": "expired"}, source="heartbeat")
     ctx = RequestContext(
         user_id="uid1",
         username="uid1",

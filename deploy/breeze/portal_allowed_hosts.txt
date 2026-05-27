@@ -1,0 +1,2 @@
+# Populated at image build from CONSOLE_API_PUBLIC_BASE_URL (one hostname per line).
+# Local/test images may leave this empty; portal enforcement requires a non-empty allowlist.

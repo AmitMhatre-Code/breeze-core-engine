@@ -81,6 +81,20 @@ COPY --from=frontend-builder /app/public ./public
 
 COPY deploy/nginx.all-in-one.conf /etc/nginx/nginx.conf
 COPY deploy/supervisor/breeze.conf /etc/supervisor/conf.d/breeze.conf
+COPY deploy/breeze/portal_allowed_hosts.txt /etc/breeze/portal_allowed_hosts.txt
+
+ARG PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM=""
+ARG PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64=""
+ARG PORTAL_ALLOWED_HOSTS=""
+RUN mkdir -p /etc/breeze \
+  && if [ -n "$PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64" ]; then \
+       printf '%s' "$PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64" | base64 -d > /etc/breeze/portal_heartbeat_public.pem; \
+     elif [ -n "$PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM" ]; then \
+       printf '%s\n' "$PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM" > /etc/breeze/portal_heartbeat_public.pem; \
+     fi \
+  && if [ -n "$PORTAL_ALLOWED_HOSTS" ]; then \
+       printf '%s\n' "$PORTAL_ALLOWED_HOSTS" > /etc/breeze/portal_allowed_hosts.txt; \
+     fi
 
 RUN nginx -t
 

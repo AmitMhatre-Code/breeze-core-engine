@@ -85,7 +85,7 @@ def test_heartbeat_tick_runs_upgrade_when_triggered(monkeypatch):
     asyncio.run(_run())
 
 
-def test_post_heartbeat_updates_license_status_on_403(monkeypatch):
+def test_post_heartbeat_403_does_not_update_unsigned_status(monkeypatch):
     from icici_breeze_backend.app.services import deployment_license_status as dls
 
     monkeypatch.setattr(hb.cfg, "DEPLOYMENT_LICENSE_KEY", "key")
@@ -95,6 +95,7 @@ def test_post_heartbeat_updates_license_status_on_403(monkeypatch):
 
     class FakeResponse:
         status_code = 403
+        text = '{"detail": "License revoked"}'
 
         @staticmethod
         def json():
@@ -117,29 +118,35 @@ def test_post_heartbeat_updates_license_status_on_403(monkeypatch):
         with patch.object(hb.httpx, "AsyncClient", FakeClient):
             result = await hb.post_heartbeat()
             assert result is None
-            assert dls.get_license_status() == "revoked"
+            assert dls.get_license_status() is None
 
     asyncio.run(_run())
 
 
 def test_post_heartbeat_updates_license_status_on_200_expired(monkeypatch):
     from icici_breeze_backend.app.services import deployment_license_status as dls
+    from tests.fixtures.portal_heartbeat_drm_keys import attach_test_policy_token
 
     monkeypatch.setattr(hb.cfg, "DEPLOYMENT_LICENSE_KEY", "key")
     monkeypatch.setattr(hb.cfg, "PORTAL_API_BASE_URL", "https://portal.example")
     monkeypatch.setattr(hb, "_public_ip_from_origin", lambda: "203.0.113.1")
     dls.reset_for_tests()
 
+    signed_body = attach_test_policy_token(
+        {
+            "status": "OK",
+            "trigger_upgrade": False,
+            "deployment_license_status": "expired",
+        },
+        public_ip="203.0.113.1",
+    )
+
     class FakeResponse:
         status_code = 200
 
         @staticmethod
         def json():
-            return {
-                "status": "OK",
-                "trigger_upgrade": False,
-                "deployment_license_status": "expired",
-            }
+            return signed_body
 
         def raise_for_status(self):
             return None
@@ -175,22 +182,28 @@ def test_heartbeat_loop_enabled_without_license_key(monkeypatch):
 
 
 def test_post_heartbeat_omits_empty_license_key(monkeypatch):
+    from tests.fixtures.portal_heartbeat_drm_keys import attach_test_policy_token
+
     monkeypatch.setattr(hb.cfg, "DEPLOYMENT_LICENSE_KEY", "")
     monkeypatch.setattr(hb.cfg, "PORTAL_API_BASE_URL", "https://portal.example")
     monkeypatch.setattr(hb, "_public_ip_from_origin", lambda: "203.0.113.1")
 
     captured: dict = {}
+    signed_body = attach_test_policy_token(
+        {
+            "status": "OK",
+            "deployment_license_status": "unlicensed",
+            "deployment_license_read_only": True,
+        },
+        public_ip="203.0.113.1",
+    )
 
     class FakeResponse:
         status_code = 200
 
         @staticmethod
         def json():
-            return {
-                "status": "OK",
-                "deployment_license_status": "unlicensed",
-                "deployment_license_read_only": True,
-            }
+            return signed_body
 
         def raise_for_status(self):
             return None
