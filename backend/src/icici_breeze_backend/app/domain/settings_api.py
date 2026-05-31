@@ -221,3 +221,43 @@ class OutlookConfigResetBody(BaseModel):
     reset_feeds: bool = True
     reset_prompt: bool = True
     reset_system_prompt: bool = False
+
+
+class BreezeApiTesterParamDef(BaseModel):
+    name: str
+    label: str
+    type: str = "string"
+    required: bool = False
+    placeholder: str = ""
+    help: str = ""
+
+
+class BreezeApiTesterCatalogEntry(BaseModel):
+    method: str
+    title: str
+    risk_level: str
+    description: str = ""
+    notes: str = ""
+    params: list[BreezeApiTesterParamDef] = Field(default_factory=list)
+
+
+class BreezeApiTesterCatalogResponse(BaseModel):
+    entries: list[BreezeApiTesterCatalogEntry] = Field(default_factory=list)
+
+
+class BreezeApiTesterRiskStatusResponse(BaseModel):
+    accepted: bool = False
+    accepted_at: Optional[str] = None
+
+
+class BreezeApiTesterInvokeBody(BaseModel):
+    method: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class BreezeApiTesterInvokeResponse(BaseModel):
+    ok: bool
+    method: str
+    duration_ms: int
+    response: Any = None
+    error: Optional[str] = None

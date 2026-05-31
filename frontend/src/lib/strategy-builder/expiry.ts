@@ -40,6 +40,11 @@ export function expiryDisplayToTimestamp(expiryDisplay: string): number {
   return new Date(year, mon, day).getTime();
 }
 
+/** True when `expiryDisplay` is a valid DD-Mon-YYYY date. */
+export function isValidExpiryDisplay(expiryDisplay: string): boolean {
+  return expiryDisplayToTimestamp(expiryDisplay.trim()) > 0;
+}
+
 /** Earliest expiry first (DD-Mon-YYYY from scrip master). */
 export function sortExpiryDatesAsc(dates: string[]): string[] {
   return [...dates].sort(

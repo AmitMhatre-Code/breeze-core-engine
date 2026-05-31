@@ -25,6 +25,11 @@ from icici_breeze_backend.app.domain.outlook_defaults import (
     DEFAULT_OUTLOOK_PROMPT_TEMPLATE,
     DEFAULT_OUTLOOK_SYSTEM_PROMPT,
 )
+from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
+    ALLOWED_METHODS,
+    build_invoke_args,
+    get_catalog_response,
+)
 from icici_breeze_backend.app.domain.settings_api import (
     AiProviderHealthEntry,
     AiProviderOutlookPickBody,
@@ -49,9 +54,19 @@ from icici_breeze_backend.app.domain.settings_api import (
     OutlookConfigResetBody,
     OutlookConfigStateResponse,
     OutlookConfigUpdateBody,
+    BreezeApiTesterCatalogEntry,
+    BreezeApiTesterCatalogResponse,
+    BreezeApiTesterInvokeBody,
+    BreezeApiTesterInvokeResponse,
+    BreezeApiTesterRiskStatusResponse,
     QuantityLimitsStateResponse,
     QuantityLimitsUpdateBody,
     ScripMasterStateResponse,
+)
+from icici_breeze_backend.app.services.breeze_api_tester_risk import (
+    get_breeze_api_tester_risk_accepted_at,
+    is_breeze_api_tester_risk_accepted,
+    set_breeze_api_tester_risk_accepted,
 )
 from icici_breeze_backend.app.services.api_usage import get_daily_usage_by_api, get_daily_usage_by_route
 from icici_breeze_backend.app.services.user_rate_limit_prefs import (
@@ -79,6 +94,8 @@ ai_key_manager = AiProviderKeyManager(encryption_key=(cfg.JWT_SECRET or "").stri
 outlook_preferences_manager = OutlookPreferencesManager()
 _GEMINI_DEFAULT_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest")
 _AI_PROVIDER_TEST_LAST_TS_BY_USER: dict[str, float] = {}
+_BREEZE_API_TESTER_INVOKE_LAST_TS: dict[str, float] = {}
+_BREEZE_API_TESTER_INVOKE_MIN_INTERVAL_SEC = 2.0
 _GEMINI_CATALOG_TTL_SECONDS = 24 * 60 * 60
 _AI_PROVIDER_TEST_MODEL_LAST_TS: dict[str, float] = {}
 # Pace Gemini generateContent probes to reduce 429s (~2 requests/sec).
@@ -1094,4 +1111,96 @@ async def settings_outlook_config_reset(
         using_default_prompt=prefs.using_default_prompt,
         using_default_system_prompt=prefs.using_default_system_prompt,
         message="Outlook configuration reset to defaults.",
+    )
+
+
+@router.get("/breeze-api-tester/catalog", response_model=BreezeApiTesterCatalogResponse)
+async def settings_breeze_api_tester_catalog(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    del ctx
+    raw = get_catalog_response()
+    entries = [BreezeApiTesterCatalogEntry.model_validate(e) for e in raw]
+    return BreezeApiTesterCatalogResponse(entries=entries)
+
+
+@router.get("/breeze-api-tester/risk-status", response_model=BreezeApiTesterRiskStatusResponse)
+async def settings_breeze_api_tester_risk_status(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    accepted = is_breeze_api_tester_risk_accepted(ctx.user_id)
+    accepted_at = get_breeze_api_tester_risk_accepted_at(ctx.user_id) if accepted else None
+    return BreezeApiTesterRiskStatusResponse(accepted=accepted, accepted_at=accepted_at)
+
+
+@router.post("/breeze-api-tester/acknowledge-risk", response_model=BreezeApiTesterRiskStatusResponse)
+async def settings_breeze_api_tester_acknowledge_risk(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    accepted_at = set_breeze_api_tester_risk_accepted(ctx.user_id)
+    return BreezeApiTesterRiskStatusResponse(accepted=True, accepted_at=accepted_at)
+
+
+@router.post("/breeze-api-tester/invoke", response_model=BreezeApiTesterInvokeResponse)
+async def settings_breeze_api_tester_invoke(
+    body: BreezeApiTesterInvokeBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not is_breeze_api_tester_risk_accepted(ctx.user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Accept the risk disclaimer before invoking Breeze APIs.",
+        )
+
+    method = (body.method or "").strip()
+    if method not in ALLOWED_METHODS:
+        raise HTTPException(status_code=400, detail=f"Unknown or disallowed API method: {method}")
+
+    last = _BREEZE_API_TESTER_INVOKE_LAST_TS.get(ctx.user_id)
+    now = time.time()
+    if last is not None and now - last < _BREEZE_API_TESTER_INVOKE_MIN_INTERVAL_SEC:
+        raise HTTPException(status_code=429, detail="Please wait before invoking another API.")
+    _BREEZE_API_TESTER_INVOKE_LAST_TS[ctx.user_id] = now
+
+    try:
+        positional, kwargs = build_invoke_args(method, dict(body.params or {}))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    sdk = breeze.get_session_breeze(ctx.user_id)
+    if sdk is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No active ICICI broker session. Log in with your broker token first.",
+        )
+
+    fn = getattr(sdk, method, None)
+    if not callable(fn):
+        raise HTTPException(status_code=400, detail=f"Method not available on Breeze session: {method}")
+
+    start = time.time()
+    try:
+        result = fn(*positional, **kwargs)
+    except Exception as exc:
+        duration_ms = int((time.time() - start) * 1000)
+        return BreezeApiTesterInvokeResponse(
+            ok=False,
+            method=method,
+            duration_ms=duration_ms,
+            response=None,
+            error=str(exc),
+        )
+
+    duration_ms = int((time.time() - start) * 1000)
+    ok = True
+    if isinstance(result, dict):
+        st = result.get("Status") or result.get("status")
+        if st not in (200, None):
+            ok = False
+    return BreezeApiTesterInvokeResponse(
+        ok=ok,
+        method=method,
+        duration_ms=duration_ms,
+        response=result,
+        error=None,
     )

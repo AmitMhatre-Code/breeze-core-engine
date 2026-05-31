@@ -20,6 +20,15 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "1.5.0",
+    date: "31-May-2026",
+    releaseKind: "major",
+    summary: "Allow invocation of raw ICICI Breeze APIs",
+    changes: [
+      "Allow invocation of raw ICICI Breeze APIs from the Settings page. This allows testing the APIs for their functionality and response times.",
+    ],
+  },
+  {
     version: "1.4.2-o",
     date: "25-May-2026",
     releaseKind: "prerelease",

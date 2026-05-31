@@ -210,3 +210,118 @@ class MockBreezeSdk:
             "Success": {"total_margin": 125000, "span_margin_required": 118500},
             "Error": None,
         }
+
+    def get_order_detail(self, exchange_code: str = "", order_id: str = "", **kwargs):
+        rows = [dict(o) for o in fx.MOCK_ORDER_LIST_SAMPLE if str(o.get("order_id")) == str(order_id)]
+        if not rows and fx.MOCK_ORDER_LIST_SAMPLE:
+            rows = [dict(fx.MOCK_ORDER_LIST_SAMPLE[0])]
+        return {"Status": 200, "Success": rows, "Error": None}
+
+    def get_demat_holdings(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": [
+                {
+                    "stock_code": "UNITEC",
+                    "stock_ISIN": "INE694A01020",
+                    "quantity": "1",
+                    "demat_avail_quantity": "0",
+                }
+            ],
+            "Error": None,
+        }
+
+    def get_portfolio_holdings(self, **kwargs):
+        return {"Status": 200, "Success": [], "Error": None}
+
+    def modify_order(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"message": "Mock: order modified", "order_id": kwargs.get("order_id", "MOCK")},
+            "Error": None,
+        }
+
+    def square_off(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"order_id": "MOCK-SQ-1", "message": "Mock broker: square off not sent to ICICI."},
+            "Error": None,
+        }
+
+    def set_funds(self, **kwargs):
+        return {"Status": 200, "Success": {"status": "Success"}, "Error": None}
+
+    def get_historical_data(self, **kwargs):
+        return self.get_historical_data_v2(**kwargs)
+
+    def get_names(self, exchange_code: str = "", stock_code: str = "", **kwargs):
+        return {
+            "exchange_code": exchange_code or "NSE",
+            "exchange_stock_code": stock_code or "NIFTY",
+            "isec_stock_code": "MOCK",
+            "isec_token": "3499",
+            "company name": "Mock Company",
+            "isec_token_level1": "4.1!3499",
+        }
+
+    def preview_order(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"total_brokerage": 0.89, "brokerage": 0.31},
+            "Error": None,
+        }
+
+    def limit_calculator(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"limit_rate": "16", "order_margin": "0"},
+            "Error": None,
+        }
+
+    def gtt_three_leg_place_order(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"gtt_order_id": "MOCK-GTT-1", "message": "Mock GTT placed"},
+            "Error": None,
+        }
+
+    def gtt_three_leg_modify_order(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"gtt_order_id": kwargs.get("gtt_order_id", "MOCK-GTT-1"), "message": "Mock GTT modified"},
+            "Error": None,
+        }
+
+    def gtt_three_leg_cancel_order(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"gtt_order_id": kwargs.get("gtt_order_id", "MOCK-GTT-1"), "message": "Mock GTT cancelled"},
+            "Error": None,
+        }
+
+    def gtt_single_leg_place_order(self, **kwargs):
+        return self.gtt_three_leg_place_order(**kwargs)
+
+    def gtt_single_leg_modify_order(self, **kwargs):
+        return self.gtt_three_leg_modify_order(**kwargs)
+
+    def gtt_single_leg_cancel_order(self, **kwargs):
+        return self.gtt_three_leg_cancel_order(**kwargs)
+
+    def gtt_order_book(self, **kwargs):
+        return {"Status": 200, "Success": [], "Error": None}
+
+    def get_trade_detail(self, exchange_code: str = "", order_id: str = "", **kwargs):
+        return {"Status": 200, "Success": [], "Error": None}
+
+    def __getattr__(self, name: str):
+        """Safe stub for Breeze API Playground methods not explicitly mocked."""
+
+        def _stub(*args, **kwargs):
+            return {
+                "Status": 200,
+                "Success": {"message": f"Mock: {name} not fully implemented"},
+                "Error": None,
+            }
+
+        return _stub
