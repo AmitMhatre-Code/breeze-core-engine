@@ -292,12 +292,14 @@ def start_application():
     from icici_breeze_backend.app.services.portal_deployment_heartbeat import (
         heartbeat_loop_enabled,
         run_heartbeat_loop,
+        send_startup_heartbeat,
     )
 
     @asynccontextmanager
     async def _portal_heartbeat_lifespan(_app: FastAPI):
         task: asyncio.Task | None = None
         if heartbeat_loop_enabled():
+            await send_startup_heartbeat()
             task = asyncio.create_task(run_heartbeat_loop())
         yield
         if task is not None:

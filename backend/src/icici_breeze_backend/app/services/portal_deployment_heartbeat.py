@@ -193,6 +193,17 @@ async def post_heartbeat() -> dict | None:
         return None
 
 
+async def send_startup_heartbeat() -> bool:
+    """First portal check-in after DB/master init (before periodic loop)."""
+    policy = await post_heartbeat()
+    if policy:
+        _apply_policy_from_body(policy)
+        logger.info("portal startup heartbeat succeeded")
+        return True
+    logger.warning("portal startup heartbeat failed or skipped")
+    return False
+
+
 async def heartbeat_tick() -> int:
     """Phone home; run upgrade when portal approves. Returns next sleep interval (seconds)."""
     global _last_interval_sec
@@ -228,19 +239,17 @@ def heartbeat_loop_enabled() -> bool:
 
 
 async def run_heartbeat_loop() -> None:
-    """Sleep interval loop; exits when cancelled."""
+    """Periodic heartbeat loop (startup heartbeat runs separately in app lifespan)."""
     global _last_interval_sec
     _last_interval_sec = _clamp_interval(cfg.PORTAL_HEARTBEAT_INTERVAL_SEC)
     logger.info("portal heartbeat loop started (interval=%ss)", _last_interval_sec)
     while True:
         try:
+            await asyncio.sleep(_last_interval_sec)
             interval = await heartbeat_tick()
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("portal heartbeat tick error: %s", exc)
             interval = _last_interval_sec
-        try:
-            await asyncio.sleep(interval)
-        except asyncio.CancelledError:
-            raise
+        _last_interval_sec = _clamp_interval(interval)

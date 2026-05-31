@@ -31,6 +31,41 @@ def test_is_ist_market_hours(dt, blocked):
     assert hb.is_ist_market_hours(dt) is blocked
 
 
+def test_send_startup_heartbeat_success():
+    async def _run():
+        with patch.object(
+            hb,
+            "post_heartbeat",
+            return_value={"status": "OK", "heartbeat_interval_sec": 300},
+        ) as post:
+            ok = await hb.send_startup_heartbeat()
+            assert ok is True
+            post.assert_called_once()
+
+    asyncio.run(_run())
+
+
+def test_run_heartbeat_loop_sleeps_before_tick():
+    async def _run():
+        order: list[str] = []
+
+        async def fake_sleep(_n):
+            order.append("sleep")
+            raise asyncio.CancelledError()
+
+        async def fake_tick():
+            order.append("tick")
+            return 300
+
+        with patch.object(asyncio, "sleep", side_effect=fake_sleep):
+            with patch.object(hb, "heartbeat_tick", side_effect=fake_tick):
+                with pytest.raises(asyncio.CancelledError):
+                    await hb.run_heartbeat_loop()
+        assert order == ["sleep"]
+
+    asyncio.run(_run())
+
+
 def test_heartbeat_tick_always_posts():
     async def _run():
         with patch.object(
