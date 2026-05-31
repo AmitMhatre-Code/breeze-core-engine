@@ -44,7 +44,7 @@ Use this environment for secrets you want isolated from legacy, for example:
 | *(optional)* `GHCR_READ_TOKEN` | If you add automation that verifies the `breeze-core-engine` image |
 | Documentation / approval rules | Gate changes that affect the CFN image tag |
 
-**Image publish:** `ghcr-publish.yml` runs on `main` without an environment block; the image is `ghcr.io/<org>/breeze-core-engine:latest`.
+**Image publish:** `ghcr-publish.yml` runs on `main` with GitHub environment **`production`** (same as saas-portal `aws-deploy`). Set **`CONSOLE_API_PUBLIC_BASE_URL`** and **`PORTAL_HEARTBEAT_JWT_PRIVATE_KEY_B64`** there (or at repo level). Image: `ghcr.io/<org>/breeze-core-engine:latest`.
 
 **Runtime deploy:** only via breeze-saas-portal — see below.
 
