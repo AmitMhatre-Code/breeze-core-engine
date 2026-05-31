@@ -94,7 +94,9 @@ RUN mkdir -p /etc/breeze \
      fi \
   && if [ -n "$PORTAL_ALLOWED_HOSTS" ]; then \
        printf '%s\n' "$PORTAL_ALLOWED_HOSTS" > /etc/breeze/portal_allowed_hosts.txt; \
-     fi
+     fi \
+  && test -s /etc/breeze/portal_heartbeat_public.pem \
+  && grep -v '^[[:space:]]*#' /etc/breeze/portal_allowed_hosts.txt | grep -qv '^[[:space:]]*$'
 
 RUN nginx -t
 

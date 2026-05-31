@@ -65,7 +65,7 @@ It does **not** contain operator API keys, database passwords, `JWT_SECRET`, Goo
 
 Operators add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and ICICI-related settings to that file on the instance (or extend the stack later). See breeze-saas-portal `infra/env-parameters.example.md`.
 
-**Deployment license DRM:** When `PORTAL_API_BASE_URL` is set on the instance (from CloudFormation `RegistrationEndpoint`), the engine requires signed `policy_token` JWTs on heartbeat/login responses and only trusts the portal hostname baked into the image (`/etc/breeze/portal_allowed_hosts.txt`). Generate a key pair with breeze-saas-portal `scripts/generate-portal-heartbeat-jwt-keys.sh`; set **`PORTAL_HEARTBEAT_JWT_PRIVATE_KEY`** on the portal and **`PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM`** as a GitHub secret for `ghcr-publish.yml` (same org/vars as `CONSOLE_API_PUBLIC_BASE_URL`). Do not change `PORTAL_API_BASE_URL` on customer instances to a host that is not on that allowlist.
+**Deployment license DRM:** Production engine images **always** ship with portal DRM (`/etc/breeze/portal_heartbeat_public.pem` + `/etc/breeze/portal_allowed_hosts.txt`). `ghcr-publish.yml` **fails** if `CONSOLE_API_PUBLIC_BASE_URL` or a heartbeat key is missing. Generate a key pair with breeze-saas-portal `scripts/generate-portal-heartbeat-jwt-keys.sh`; set **`PORTAL_HEARTBEAT_JWT_PRIVATE_KEY_B64`** on **both** repos (portal signs policies; core-engine derives the public key at image build). Optional explicit **`PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM`** / **`_B64`** overrides derivation. Do not point customer `PORTAL_API_BASE_URL` at a host not on the image allowlist.
 
 Making the GHCR package public only affects **pull authentication**; it does not change where secrets live.
 
@@ -82,8 +82,7 @@ On the **portal** host (or in `APP_ENV_FILE_B64` for saas-portal’s own `aws-de
 | `CONSOLE_CFN_TEMPLATE_URL` | `https://<bucket>.s3.<region>.amazonaws.com/cfn/breeze-core-engine-stack.yaml` |
 | `CONSOLE_API_PUBLIC_BASE_URL` | `https://api.example.com` |
 | `CONSOLE_GHCR_IMAGE_DEFAULT` | `ghcr.io/<org>/breeze-core-engine:latest` |
-| `PORTAL_HEARTBEAT_JWT_PRIVATE_KEY_B64` | Base64 ES256 private PEM on portal (`aws-deploy` secret) |
-| `PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM` or `_B64` | Matching public key baked into engine images (`ghcr-publish.yml` secrets) |
+| `PORTAL_HEARTBEAT_JWT_PRIVATE_KEY_B64` | Base64 ES256 **private** PEM — portal signs **`policy_token`**; **same secret** on breeze-core-engine (public key derived at image build). Generate with **`scripts/generate-portal-heartbeat-jwt-keys.sh`**. Plain **`PORTAL_HEARTBEAT_JWT_PRIVATE_KEY`** (PEM) works for local dev only. |
 
 After template changes, run saas-portal **`aws-deploy`** with **`CFN_TEMPLATES_BUCKET`** to republish YAML. Rebuild **breeze-core-engine** on `main` whenever the public key or allowed portal hostname changes.
 

@@ -42,25 +42,14 @@ jobs:
             type=raw,value=latest
             type=sha
 
-      - name: Resolve portal DRM build args
+      - name: Resolve portal DRM build args (required)
         id: portal_drm
         env:
-          PUBLIC_KEY: ${{ secrets.PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM }}
-          API_BASE: ${{ vars.CONSOLE_API_PUBLIC_BASE_URL || secrets.CONSOLE_API_PUBLIC_BASE_URL }}
-        run: |
-          set -euo pipefail
-          ALLOWED=""
-          if [ -n "${API_BASE:-}" ]; then
-            ALLOWED=$(python3 -c "from urllib.parse import urlparse; print(urlparse('''${API_BASE}''').hostname or '')")
-          fi
-          {
-            echo "allowed_hosts<<EOF"
-            echo "$ALLOWED"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-          if [ -z "${PUBLIC_KEY:-}" ]; then
-            echo "::warning::PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM not set; engine images will not verify signed heartbeat policies until rebuilt with the public key."
-          fi
+          CONSOLE_API_PUBLIC_BASE_URL: ${{ vars.CONSOLE_API_PUBLIC_BASE_URL || secrets.CONSOLE_API_PUBLIC_BASE_URL }}
+          PORTAL_HEARTBEAT_JWT_PRIVATE_KEY_B64: ${{ secrets.PORTAL_HEARTBEAT_JWT_PRIVATE_KEY_B64 }}
+          PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64: ${{ secrets.PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64 }}
+          PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM: ${{ secrets.PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM }}
+        run: bash scripts/resolve-portal-drm-build-args.sh
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -72,8 +61,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64=${{ secrets.PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64 }}
-            PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM=${{ secrets.PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM }}
+            PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64=${{ steps.portal_drm.outputs.public_key_b64 }}
             PORTAL_ALLOWED_HOSTS=${{ steps.portal_drm.outputs.allowed_hosts }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -96,9 +84,16 @@ jobs:
               find /app \( -name ".env*" -o -name "*.pem" \) 2>/dev/null
               exit 1
             fi
-            if [ -f /etc/breeze/portal_heartbeat_public.pem ]; then
-              echo "Portal heartbeat public key present at /etc/breeze (expected for licensed deployments)"
+            if [ ! -s /etc/breeze/portal_heartbeat_public.pem ]; then
+              echo "ERROR: portal DRM public key missing at /etc/breeze/portal_heartbeat_public.pem"
+              exit 1
             fi
+            if ! grep -v "^[[:space:]]*#" /etc/breeze/portal_allowed_hosts.txt | grep -qv "^[[:space:]]*$"; then
+              echo "ERROR: portal allowed hosts file is empty"
+              cat /etc/breeze/portal_allowed_hosts.txt
+              exit 1
+            fi
+            echo "Portal DRM configured (public key + allowed hosts present)"
             # Env-file lines only (line-start KEY=value with a real value, not "..." placeholders in source strings).
             if grep -rE "^[[:space:]]*(JWT_SECRET|GOOGLE_CLIENT_SECRET)=[a-zA-Z0-9+/=_-]{8,}" /app 2>/dev/null; then
               echo "ERROR: env-style secret assignment found under /app"
