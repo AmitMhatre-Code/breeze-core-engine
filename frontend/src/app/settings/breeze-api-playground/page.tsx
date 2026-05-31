@@ -264,9 +264,11 @@ export default function BreezeApiPlaygroundPage() {
                   disabled={invokeM.isPending || !riskQ.data?.accepted}
                   onClick={onFire}
                 >
-                  <AsyncLabelSpan pending={invokeM.isPending} pendingLabel="Calling ICICI…">
-                    Fire API
-                  </AsyncLabelSpan>
+                  <AsyncLabelSpan
+                    busy={invokeM.isPending}
+                    idleLabel="Fire API"
+                    busyLabel="Calling ICICI…"
+                  />
                 </button>
               </div>
 
