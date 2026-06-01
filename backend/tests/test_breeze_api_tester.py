@@ -46,6 +46,12 @@ def test_catalog_has_thirty_methods():
     assert get_catalog_entry("get_order_list") is not None
 
 
+def test_get_customer_details_has_no_params():
+    entry = get_catalog_entry("get_customer_details")
+    assert entry is not None
+    assert entry.params == ()
+
+
 def test_build_invoke_args_unknown_method():
     with pytest.raises(ValueError, match="Unknown method"):
         build_invoke_args("not_a_real_api", {})

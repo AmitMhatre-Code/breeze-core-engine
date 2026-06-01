@@ -20,12 +20,12 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "1.5.0-b",
-    date: "31-May-2026",
+    version: "1.6.0",
+    date: "1-Jun-2026",
     releaseKind: "prerelease",
     summary: "DRM Hardening",
     changes: [
-      "DRM Hardening: Improved DRM by adding a new layer of security to the application. This is a pre-release version of the DRM Hardening feature.",
+      "DRM Hardening: Improved DRM by adding a new layer of security to the application.",
     ],
   },
   {
@@ -35,45 +35,6 @@ export const changelogReleases: ChangelogRelease[] = [
     summary: "Allow invocation of raw ICICI Breeze APIs",
     changes: [
       "Allow invocation of raw ICICI Breeze APIs from the Settings page. This allows testing the APIs for their functionality and response times.",
-    ],
-  },
-  {
-    version: "1.4.2-o",
-    date: "25-May-2026",
-    releaseKind: "prerelease",
-    summary: "Add support for unlicensed deployments",
-    changes: [
-      "Add support for unlicensed deployments",
-    ],
-  },
-  {
-    version: "1.4.2-m",
-    date: "25-May-2026",
-    releaseKind: "prerelease",
-    summary: "Harden in-place upgrade helper recreate",
-    changes: [
-      "Upgrade helper writes merged env to /opt/breeze-core-engine/.upgrade.env before recreate (host .env plus running container).",
-      "Upgrade steps append to /opt/breeze-core-engine/upgrade.log; helper container is kept for docker logs on failure.",
-      "Recreate verifies the old container name is removed before docker run (avoids name-conflict leaving the site down).",
-    ],
-  },
-  {
-    version: "1.4.2-j",
-    date: "25-May-2026",
-    releaseKind: "prerelease",
-    summary: "In-place upgrade uses detached docker-cli helper",
-    changes: [
-      "Console upgrades recreate the container via a detached helper instead of stopping the app from inside (fixes failed upgrades leaving the site down).",
-      "Upgrades apply /opt/breeze-core-engine/.env via --env-file on recreate.",
-    ],
-  },
-  {
-    version: "1.4.2-h",
-    date: "23-May-2026",
-    releaseKind: "prerelease",
-    summary: "Live testing of license deployment",
-    changes: [
-      "Live testing of license deployment",
     ],
   },
   {

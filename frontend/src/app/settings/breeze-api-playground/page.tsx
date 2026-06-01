@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { BreezeApiMethodPicker } from "@/components/settings/BreezeApiMethodPicker";
 import { BreezeApiRiskGateDialog } from "@/components/settings/BreezeApiRiskGateDialog";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import {
@@ -180,24 +181,11 @@ export default function BreezeApiPlaygroundPage() {
           <>
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="space-y-3">
-                <label className="block text-sm">
-                  <span className="font-medium text-zinc-800 dark:text-zinc-200">API</span>
-                  <select
-                    className={`${inputCls} mt-1`}
-                    value={selectedMethod}
-                    onChange={(e) => setSelectedMethod(e.target.value)}
-                  >
-                    {groupedOptions.map((g) => (
-                      <optgroup key={g.level} label={g.label}>
-                        {g.items.map((item) => (
-                          <option key={item.method} value={item.method}>
-                            {item.title} ({item.method})
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </label>
+                <BreezeApiMethodPicker
+                  groups={groupedOptions}
+                  selectedMethod={selectedMethod}
+                  onSelect={setSelectedMethod}
+                />
 
                 {selected.description ? (
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">{selected.description}</p>

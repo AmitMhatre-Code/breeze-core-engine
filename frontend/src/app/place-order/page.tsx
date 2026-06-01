@@ -39,7 +39,7 @@ type Segment = "NFO" | "BFO";
 type FieldMode = "dropdown" | "manual";
 
 const fieldModeBtnClass =
-  "flex shrink-0 items-center justify-center self-center rounded-md border border-zinc-200 bg-white p-2 text-zinc-500 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:pointer-events-none disabled:opacity-40 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-500 dark:hover:bg-zinc-700 dark:hover:text-zinc-200";
+  "flex shrink-0 items-center justify-center self-center rounded-md p-2 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:pointer-events-none disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200";
 
 function EditIcon() {
   return (

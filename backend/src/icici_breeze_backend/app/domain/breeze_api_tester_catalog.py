@@ -119,8 +119,7 @@ _CATALOG: tuple[BreezeApiCatalogEntry, ...] = (
         method="get_customer_details",
         title="Get Customer Details",
         risk_level="read",
-        params=(_s("api_session", help="Optional; session is usually established by the app."),),
-        description="Customer profile and exchange status by API session.",
+        description="Customer profile and exchange status using your logged-in broker session.",
     ),
     BreezeApiCatalogEntry(
         method="get_demat_holdings",

@@ -1162,6 +1162,28 @@ async def settings_breeze_api_tester_invoke(
         raise HTTPException(status_code=429, detail="Please wait before invoking another API.")
     _BREEZE_API_TESTER_INVOKE_LAST_TS[ctx.user_id] = now
 
+    if method == "get_customer_details":
+        start = time.time()
+        result = breeze.get_customer_details(ctx.user_id)
+        duration_ms = int((time.time() - start) * 1000)
+        if result is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No active ICICI broker session. Log in with your broker token first.",
+            )
+        ok = True
+        if isinstance(result, dict):
+            st = result.get("Status") or result.get("status")
+            if st not in (200, None):
+                ok = False
+        return BreezeApiTesterInvokeResponse(
+            ok=ok,
+            method=method,
+            duration_ms=duration_ms,
+            response=result,
+            error=None,
+        )
+
     try:
         positional, kwargs = build_invoke_args(method, dict(body.params or {}))
     except ValueError as exc:
