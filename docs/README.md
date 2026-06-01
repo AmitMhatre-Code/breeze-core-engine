@@ -8,6 +8,7 @@ This folder contains detailed documentation for the application. The repository 
 | [Architecture](./architecture.md) | Technical stack, runtime topology, components, data stores, and integration boundaries. |
 | [Design decisions](./design-decisions.md) | Rationale for major choices (single origin, proxy model, auth, persistence, deployment shape). |
 | [User and system flows](./flows.md) | End-to-end flows with sequence and flow diagrams (login, broker auth, registration, trading data, settings, deployment paths). |
+| [License management](../breeze-saas-portal/docs/license-management.md) | Deployment licensing (authoritative doc in **breeze-saas-portal**): portal APIs, trial policy, heartbeat DRM, and core-engine enforcement. |
 | [Configuration reference](./configuration-reference.md) | Environment variables, defaults, Google/ICICI redirect checklist, Docker and Next env wiring. |
 | [AWS deployment](./aws-deployment.md) | GitHub Actions workflow, AWS resources, secrets, first-time setup, and operations. |
 

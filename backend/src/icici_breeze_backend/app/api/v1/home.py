@@ -388,7 +388,10 @@ async def _complete_icici_session(
         request_portal_license_activation,
     )
 
-    allowed, activation_error = await request_portal_license_activation(form.user_id)
+    allowed, activation_error = await request_portal_license_activation(
+        customer_check,
+        fallback_user_id=form.user_id,
+    )
     if not allowed:
         raise HTTPException(
             status_code=403,

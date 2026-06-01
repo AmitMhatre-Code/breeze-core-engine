@@ -28,12 +28,24 @@ def _portal_activation_configured() -> bool:
     )
 
 
-async def request_portal_license_activation(icici_user_id: str) -> tuple[bool, str | None]:
+async def request_portal_license_activation(
+    customer_check: dict,
+    *,
+    fallback_user_id: str,
+) -> tuple[bool, str | None]:
     """
     Phone home to start or confirm trial for this ICICI user ID.
 
     Returns (allowed, error_message). When allowed is False, login must not proceed.
   """
+    from icici_breeze_backend.app.services.icici_customer_identity import (
+        parse_customer_details_identity,
+    )
+
+    icici_user_id, idirect_user_name = parse_customer_details_identity(
+        customer_check, fallback_user_id=fallback_user_id
+    )
+
     if not _portal_activation_configured():
         return True, None
 
@@ -49,13 +61,15 @@ async def request_portal_license_activation(icici_user_id: str) -> tuple[bool, s
         return True, None
 
     url = f"{base}/api/public/activate-license"
-    payload = {
+    payload: dict[str, str] = {
         "license_key": (cfg.DEPLOYMENT_LICENSE_KEY or "").strip(),
         "public_ip": public_ip,
-        "icici_user_id": (icici_user_id or "").strip(),
+        "icici_user_id": icici_user_id,
     }
     if not payload["icici_user_id"]:
         return False, "ICICI User ID is required."
+    if idirect_user_name:
+        payload["idirect_user_name"] = idirect_user_name
 
     try:
         async with httpx.AsyncClient(timeout=_ACTIVATION_TIMEOUT_SEC) as client:
