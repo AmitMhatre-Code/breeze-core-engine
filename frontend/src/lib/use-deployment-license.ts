@@ -27,7 +27,11 @@ export function useDeploymentLicense() {
     placeholderData: (prev) => prev,
     refetchInterval: (query) => {
       const status = query.state.data?.deployment_license_status;
-      return status === "expired" || status === "revoked" || status === "unlicensed"
+      return status === "expired" ||
+        status === "revoked" ||
+        status === "unlicensed" ||
+        status === "pending_activation" ||
+        status === "trial_denied"
         ? 60_000
         : false;
     },

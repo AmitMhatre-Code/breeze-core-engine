@@ -32,6 +32,8 @@ def test_update_from_verified_policy_active():
         ({"deployment_license_status": "expired"}, "expired", True, False),
         ({"deployment_license_status": "revoked"}, "revoked", False, True),
         ({"deployment_license_status": "unlicensed"}, "unlicensed", False, True),
+        ({"deployment_license_status": "pending_activation"}, "pending_activation", False, True),
+        ({"deployment_license_status": "trial_denied"}, "trial_denied", False, True),
     ],
 )
 def test_update_from_verified_policy_license_status(policy, expected, trading_allowed, read_only):
@@ -42,7 +44,7 @@ def test_update_from_verified_policy_license_status(policy, expected, trading_al
     assert api is not None
     assert api["deployment_license_status"] == expected
     assert api["deployment_license_read_only"] is read_only
-    if expected in ("expired", "revoked", "unlicensed"):
+    if expected in ("expired", "revoked", "unlicensed", "trial_denied"):
         assert "contact_sales" in api
 
 

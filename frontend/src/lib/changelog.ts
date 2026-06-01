@@ -20,9 +20,18 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "1.5.0-a",
+    date: "31-May-2026",
+    releaseKind: "prerelease",
+    summary: "DRM Hardening",
+    changes: [
+      "DRM Hardening: Improved DRM by adding a new layer of security to the application. This is a pre-release version of the DRM Hardening feature.",
+    ],
+  },
+  {
     version: "1.5.0",
     date: "31-May-2026",
-    releaseKind: "major",
+    releaseKind: "minor",
     summary: "Allow invocation of raw ICICI Breeze APIs",
     changes: [
       "Allow invocation of raw ICICI Breeze APIs from the Settings page. This allows testing the APIs for their functionality and response times.",

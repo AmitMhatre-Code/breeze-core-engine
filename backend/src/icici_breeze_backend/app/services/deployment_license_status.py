@@ -7,7 +7,14 @@ from typing import Any, Literal
 
 import icici_breeze_backend.app.core.config as cfg
 
-LicenseStatus = Literal["active", "expired", "revoked", "unlicensed"]
+LicenseStatus = Literal[
+    "active",
+    "expired",
+    "revoked",
+    "unlicensed",
+    "pending_activation",
+    "trial_denied",
+]
 LicenseSource = Literal["heartbeat", "deployment-login"]
 
 TRADING_READ_ONLY_MESSAGE = (
@@ -61,7 +68,14 @@ def update_from_verified_policy(
         return
 
     raw = policy.get("deployment_license_status") or policy.get("license_status")
-    if raw not in ("active", "expired", "revoked", "unlicensed"):
+    if raw not in (
+        "active",
+        "expired",
+        "revoked",
+        "unlicensed",
+        "pending_activation",
+        "trial_denied",
+    ):
         return
 
     new_status: LicenseStatus = raw  # type: ignore[assignment]
@@ -106,7 +120,7 @@ def trading_mutations_allowed() -> bool:
     now = datetime.now(timezone.utc)
     with _lock:
         effective = _effective_status_locked(now)
-        return effective not in ("revoked", "unlicensed")
+        return effective not in ("revoked", "unlicensed", "pending_activation", "trial_denied")
 
 
 def _contact_sales_context() -> dict[str, Any]:
@@ -125,7 +139,7 @@ def _contact_sales_context() -> dict[str, Any]:
 
 
 def _read_only_for_status(status: LicenseStatus) -> bool:
-    return status in ("revoked", "unlicensed")
+    return status in ("revoked", "unlicensed", "pending_activation", "trial_denied")
 
 
 def get_license_status_for_api() -> dict[str, Any] | None:
@@ -151,7 +165,7 @@ def get_license_status_for_api() -> dict[str, Any] | None:
             "deployment_license_status": effective,
             "deployment_license_read_only": _read_only_for_status(effective),
         }
-        if effective in ("expired", "revoked", "unlicensed"):
+        if effective in ("expired", "revoked", "unlicensed", "trial_denied"):
             payload["contact_sales"] = _contact_sales_context()
         return payload
 

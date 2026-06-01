@@ -384,6 +384,17 @@ async def _complete_icici_session(
         )
         return response
 
+    from icici_breeze_backend.app.services.portal_license_activation import (
+        request_portal_license_activation,
+    )
+
+    allowed, activation_error = await request_portal_license_activation(form.user_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail=activation_error or "License activation was denied for this ICICI User ID.",
+        )
+
     handler = JWTHandler(
         secret_key=cfg.JWT_SECRET,
         access_token_expire_minutes=cfg.JWT_ACCESS_TOKEN_EXPIRE_MINUTES,

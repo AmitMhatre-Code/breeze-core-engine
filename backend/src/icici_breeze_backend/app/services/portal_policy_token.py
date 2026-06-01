@@ -22,6 +22,7 @@ _POLICY_CLAIM_KEYS = (
     "status",
     "deployment_license_status",
     "deployment_license_read_only",
+    "activation_rejected_reason",
     "trigger_upgrade",
     "target_tag",
     "upgrade_allowed_now",
