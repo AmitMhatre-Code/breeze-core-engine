@@ -37,7 +37,11 @@ def _public_ip_from_origin() -> str | None:
     return host
 
 
-async def _post_deployment_login(public_ip: str) -> None:
+async def _post_deployment_login(
+    public_ip: str,
+    *,
+    icici_user_id: str | None = None,
+) -> None:
     base = (cfg.PORTAL_API_BASE_URL or "").strip().rstrip("/")
     key = (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
     if not base:
@@ -50,6 +54,8 @@ async def _post_deployment_login(public_ip: str) -> None:
     payload: dict[str, str] = {"public_ip": public_ip}
     if key:
         payload["license_key"] = key
+    if icici_user_id:
+        payload["icici_user_id"] = icici_user_id.strip().upper()
     try:
         async with httpx.AsyncClient(timeout=_LOGIN_TIMEOUT_SEC) as client:
             resp = await client.post(url, json=payload)
@@ -74,7 +80,7 @@ async def _post_deployment_login(public_ip: str) -> None:
         record_portal_verify_failure()
 
 
-def notify_portal_deployment_login() -> None:
+def notify_portal_deployment_login(*, icici_user_id: str | None = None) -> None:
     """Schedule portal login heartbeat; no-op when env or public IP is unavailable."""
     public_ip = _public_ip_from_origin()
     if not public_ip:
@@ -85,4 +91,4 @@ def notify_portal_deployment_login() -> None:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    loop.create_task(_post_deployment_login(public_ip))
+    loop.create_task(_post_deployment_login(public_ip, icici_user_id=icici_user_id))

@@ -79,6 +79,9 @@ On the **portal** host (or in `APP_ENV_FILE_B64` for saas-portal’s own `aws-de
 
 | Variable | Example |
 |----------|---------|
+| `DATABASE_BACKEND` | `postgres` |
+| `POSTGRES_HOST` / `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Managed PostgreSQL (fleet registry + scrips) |
+| `REDIS_URL` | `redis://127.0.0.1:6379/0` (heartbeat buffer; run `db_syncer` worker alongside uvicorn) |
 | `CONSOLE_CFN_TEMPLATE_URL` | `https://<bucket>.s3.<region>.amazonaws.com/cfn/breeze-core-engine-stack.yaml` |
 | `CONSOLE_API_PUBLIC_BASE_URL` | `https://api.example.com` |
 | `CONSOLE_GHCR_IMAGE_DEFAULT` | `ghcr.io/<org>/breeze-core-engine:latest` |

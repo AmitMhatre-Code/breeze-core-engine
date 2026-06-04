@@ -384,8 +384,15 @@ async def _complete_icici_session(
         )
         return response
 
+    from icici_breeze_backend.app.services.icici_customer_identity import (
+        parse_customer_details_identity,
+    )
     from icici_breeze_backend.app.services.portal_license_activation import (
         request_portal_license_activation,
+    )
+
+    icici_user_id, _ = parse_customer_details_identity(
+        customer_check, fallback_user_id=form.user_id
     )
 
     allowed, activation_error = await request_portal_license_activation(
@@ -410,7 +417,7 @@ async def _complete_icici_session(
     _set_auth_cookies(response, icici_token, access_token, full_secret)
     from icici_breeze_backend.app.services.portal_deployment_login import notify_portal_deployment_login
 
-    notify_portal_deployment_login()
+    notify_portal_deployment_login(icici_user_id=icici_user_id)
     return response
 
 
