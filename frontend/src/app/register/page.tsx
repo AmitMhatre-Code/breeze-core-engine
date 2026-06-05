@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { IciciRegistrationGuideLink } from "@/components/auth/IciciRegistrationGuideLink";
 import { apiClient } from "@/lib/api-client";
 
 type Session = {
   direct_registration_available?: boolean;
+  icici_handoff_url?: string | null;
 };
 
 export default function RegisterPage() {
@@ -85,7 +87,8 @@ export default function RegisterPage() {
         <h2 className="app-text-heading mt-6">Create account</h2>
         <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
           Your ICICI user id is your app username. Choose an app-only password (min 8 characters),
-          plus API key and secret fragment from Breeze API registration.
+          plus API key and secret fragment from ICICI Direct app registration. Need help? See the{" "}
+          <IciciRegistrationGuideLink />.
         </p>
         {err && (
           <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200">

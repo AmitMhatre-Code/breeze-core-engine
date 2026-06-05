@@ -1,6 +1,7 @@
 """Registration API under /api/register (Next serves HTML at /register)."""
 import logging
 import sqlite3
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -37,8 +38,12 @@ DB_PATH = cfg.DATA_PATH + cfg.USERS_DB
 _MIN_PASSWORD_LEN = 8
 
 
+ICICI_HANDOFF_CONSOLE_URL = "https://breeze-ui.com/console/icici-handoff"
+
+
 class RegisterBootstrapResponse(BaseModel):
     direct_registration_available: bool = True
+    icici_handoff_url: str | None = None
 
 
 class RegisterDirectBody(BaseModel):
@@ -74,9 +79,21 @@ def _clear_recovery_token(response: JSONResponse) -> None:
     response.delete_cookie(key=BROKER_RECOVERY_TOKEN_COOKIE, path="/")
 
 
+def _icici_handoff_url() -> str | None:
+    from icici_breeze_backend.app.services.portal_deployment_login import _public_ip_from_origin
+
+    public_ip = _public_ip_from_origin()
+    if not public_ip:
+        return None
+    return f"{ICICI_HANDOFF_CONSOLE_URL}?{urlencode({'ip': public_ip})}"
+
+
 @router.get("/session", response_model=RegisterBootstrapResponse)
 async def register_session():
-    return RegisterBootstrapResponse(direct_registration_available=True)
+    return RegisterBootstrapResponse(
+        direct_registration_available=True,
+        icici_handoff_url=_icici_handoff_url(),
+    )
 
 
 @router.post("/direct", response_model=None)
