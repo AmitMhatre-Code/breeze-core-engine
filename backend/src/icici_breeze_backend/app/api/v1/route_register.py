@@ -120,6 +120,11 @@ async def register_direct_post(body: RegisterDirectBody):
                 logger.exception("rollback orphan direct user failed user_id=%s", user_id)
         logger.exception("register_direct_post failed: %s", e)
         raise HTTPException(status_code=500, detail="Registration failed")
+    from icici_breeze_backend.app.services.portal_deployment_user_registration import (
+        notify_portal_deployment_user_registration,
+    )
+
+    notify_portal_deployment_user_registration(user_id=user_id)
     return JSONResponse({"ok": True, "redirect": "/login?registered=1"})
 
 
