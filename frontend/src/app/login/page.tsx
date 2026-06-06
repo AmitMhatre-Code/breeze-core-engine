@@ -5,7 +5,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import breezeMark from "@/app/android-chrome-192x192.png";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
-import { IciciRegistrationGuideLink } from "@/components/auth/IciciRegistrationGuideLink";
+import { IciciHandoffHelpLinks } from "@/components/auth/IciciHandoffHelpLinks";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
@@ -136,8 +136,6 @@ function LoginContent() {
             <a href="/register" className="app-link">
               Register
             </a>
-            {" · "}
-            <IciciRegistrationGuideLink />
           </p>
           <p className="text-center text-[11px] text-zinc-500">
             Wrong credentials?{" "}
@@ -197,6 +195,7 @@ function LoginContent() {
               busyLabel="Signing in…"
             />
           </button>
+          <IciciHandoffHelpLinks />
         </form>
       </div>
     </div>
