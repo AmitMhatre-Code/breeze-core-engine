@@ -59,7 +59,7 @@
   .app-table-row {
     @apply border-t border-zinc-200 dark:border-zinc-800/80;
   }
-  /** Primary actions (matches sidebar “Breeze Core Engine” sky brand). */
+  /** Primary actions (matches sidebar “Breeze Modern” sky brand). */
   .app-btn-primary {
     @apply inline-flex items-center justify-center rounded-sm border border-sky-600 bg-sky-600 px-3.5 py-1.5 text-sm font-medium text-white transition hover:border-sky-500 hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-sky-800 disabled:bg-sky-800 disabled:text-white dark:border-sky-500 dark:bg-sky-500 dark:hover:border-sky-400 dark:hover:bg-sky-400 dark:disabled:border-sky-800 dark:disabled:bg-sky-800;
   }
@@ -67,7 +67,7 @@
   .app-btn-outline {
     @apply inline-flex items-center justify-center rounded-sm border border-sky-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-800 transition hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:border-sky-800/70 dark:bg-zinc-900 dark:text-sky-200 dark:hover:border-sky-600 dark:hover:bg-sky-950/40 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500;
   }
-  /** Inline & text links (same brand blue as Breeze Core Engine). */
+  /** Inline & text links (same brand blue as Breeze Modern). */
   .app-link {
     @apply font-medium text-sky-600 underline-offset-2 transition-colors hover:text-sky-500 hover:underline dark:text-sky-400 dark:hover:text-sky-300;
   }

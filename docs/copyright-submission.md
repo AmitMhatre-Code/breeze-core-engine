@@ -1,6 +1,6 @@
 # Copyright submission guide
 
-This guide prepares a repository submission package for the Copyright Office of India for Breeze Core Engine.
+This guide prepares a repository submission package for the Copyright Office of India for Breeze Modern.
 
 ## Scope statement
 
@@ -20,7 +20,7 @@ The submission package excludes third-party/common libraries, generated files, r
 
 Use/adapt this statement in your filing:
 
-1. The author/applicant claims copyright in the original source code, structure, module organization, and technical documentation of Breeze Core Engine.
+1. The author/applicant claims copyright in the original source code, structure, module organization, and technical documentation of Breeze Modern.
 2. The work includes integrations with external services and open-source components, but no ownership is claimed over third-party libraries, SDKs, platforms, trademarks, or APIs.
 3. The submitted code bundle excludes external/common libraries and generated/runtime outputs; only first-party authored material is included.
 

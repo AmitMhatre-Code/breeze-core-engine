@@ -1,6 +1,6 @@
 ## Frontend (Next.js app)
 
-Tailwind-based UI for Breeze Core Engine, talking to the FastAPI backend.
+Tailwind-based UI for Breeze Modern, talking to the FastAPI backend.
 
 ### Running in dev mode
 

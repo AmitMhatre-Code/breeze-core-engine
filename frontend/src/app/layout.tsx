@@ -19,8 +19,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Breeze Core Engine",
-  description: "Trading dashboard for ICICI Breeze",
+  title: "Breeze Modern",
+  description: "ICICI Direct Breeze API trading dashboard",
 };
 
 export const viewport: Viewport = {

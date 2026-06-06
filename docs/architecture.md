@@ -1,6 +1,6 @@
 # Technical architecture
 
-This document describes how Breeze Core Engine is structured: runtimes, networking, the backend package layout, persistence, and external dependencies.
+This document describes how Breeze Modern is structured: runtimes, networking, the backend package layout, persistence, and external dependencies.
 
 ---
 
@@ -9,7 +9,7 @@ This document describes how Breeze Core Engine is structured: runtimes, networki
 ```mermaid
 flowchart LR
   U[Trader / operator]
-  APP[Breeze Core Engine\nNext + FastAPI + nginx]
+  APP[Breeze Modern\nNext + FastAPI + nginx]
   ICICI[ICICI Breeze / Direct]
   GOOG[Google OAuth]
   RSS[RSS feeds]

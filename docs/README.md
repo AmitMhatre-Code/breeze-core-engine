@@ -1,4 +1,4 @@
-# Breeze Core Engine — documentation
+# Breeze Modern — documentation
 
 This folder contains detailed documentation for the application. The repository [README](../README.md) stays short: high-level product description, how to run locally, and essential prerequisites (redirects and secrets). Everything below goes deeper. Start here with the index table, or open any page directly.
 

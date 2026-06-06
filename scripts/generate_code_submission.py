@@ -126,7 +126,7 @@ def build_document(repo_root: Path, files: list[str]) -> str:
     commit = git_commit_hash(repo_root)
     lines: list[str] = []
 
-    lines.append("# Breeze Core Engine - Code Submission")
+    lines.append("# Breeze Modern - Code Submission")
     lines.append("")
     lines.append("## Metadata")
     lines.append("")

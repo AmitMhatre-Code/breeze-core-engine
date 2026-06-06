@@ -82,7 +82,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white/90 p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900/80 dark:shadow-xl dark:shadow-black/40">
         <h1 className="text-xl font-semibold tracking-tight">Register</h1>
         <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-          Link your ICICI Breeze API credentials and choose an app-only password for Breeze Core Engine.
+          Link your ICICI Breeze API credentials and choose an app-only password for Breeze Modern.
         </p>
         <h2 className="app-text-heading mt-6">Create account</h2>
         <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">

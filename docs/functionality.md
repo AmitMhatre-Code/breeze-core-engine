@@ -1,6 +1,6 @@
 # Application functionality
 
-Breeze Core Engine is a **browser-based trading and portfolio dashboard** that sits on top of **ICICI Direct Breeze** APIs. Users authenticate with **app credentials** (direct account password) and **ICICI** (broker session). The app surfaces portfolio, orders, option strategies, margin and scrip tooling, and optional AI-assisted market outlook features.
+Breeze Modern is a **browser-based trading and portfolio dashboard** that sits on top of **ICICI Direct Breeze** APIs. Users authenticate with **app credentials** (direct account password) and **ICICI** (broker session). The app surfaces portfolio, orders, option strategies, margin and scrip tooling, and optional AI-assisted market outlook features.
 
 ---
 

@@ -1,9 +1,9 @@
-# Breeze Core Engine - Code Submission
+# Breeze Modern - Code Submission
 
 ## Metadata
 
-- Generated at (UTC): 2026-05-15 11:51:18Z
-- Git commit: `8a06a03b3541de22c51853d52c80d8228b236870`
+- Generated at (UTC): 2026-06-06 04:24:14Z
+- Git commit: `7a2f39e0cec6b6de7d290c4ad800d4a262d668a8`
 - Scope: first-party code only
 
 ## Inclusion policy
@@ -13,15 +13,16 @@
 
 ## Table of contents
 
-- [.github/workflows/aws-deploy-amit.yml](#githubworkflowsaws-deploy-amityml)
-- [.github/workflows/aws-deploy-rakesh.yml](#githubworkflowsaws-deploy-rakeshyml)
 - [.github/workflows/ghcr-publish.yml](#githubworkflowsghcr-publishyml)
+- [.github/workflows/legacy-aws-deploy-amit.yml](#githubworkflowslegacy-aws-deploy-amityml)
+- [.github/workflows/legacy-aws-deploy-rakesh.yml](#githubworkflowslegacy-aws-deploy-rakeshyml)
 - [Dockerfile](#dockerfile)
 - [README.md](#readmemd)
 - [backend/src/icici_breeze_backend/__init__.py](#backendsrcicicibreezebackendinitpy)
 - [backend/src/icici_breeze_backend/app/__init__.py](#backendsrcicicibreezebackendappinitpy)
 - [backend/src/icici_breeze_backend/app/api/__init__.py](#backendsrcicicibreezebackendappapiinitpy)
 - [backend/src/icici_breeze_backend/app/api/deps.py](#backendsrcicicibreezebackendappapidepspy)
+- [backend/src/icici_breeze_backend/app/api/deps_license.py](#backendsrcicicibreezebackendappapidepslicensepy)
 - [backend/src/icici_breeze_backend/app/api/error_utils.py](#backendsrcicicibreezebackendappapierrorutilspy)
 - [backend/src/icici_breeze_backend/app/api/frontend_redirect.py](#backendsrcicicibreezebackendappapifrontendredirectpy)
 - [backend/src/icici_breeze_backend/app/api/health.py](#backendsrcicicibreezebackendappapihealthpy)
@@ -35,6 +36,7 @@
 - [backend/src/icici_breeze_backend/app/api/v1/route_audit.py](#backendsrcicicibreezebackendappapiv1routeauditpy)
 - [backend/src/icici_breeze_backend/app/api/v1/route_book.py](#backendsrcicicibreezebackendappapiv1routebookpy)
 - [backend/src/icici_breeze_backend/app/api/v1/route_dashboard.py](#backendsrcicicibreezebackendappapiv1routedashboardpy)
+- [backend/src/icici_breeze_backend/app/api/v1/route_deployment.py](#backendsrcicicibreezebackendappapiv1routedeploymentpy)
 - [backend/src/icici_breeze_backend/app/api/v1/route_dev_mock.py](#backendsrcicicibreezebackendappapiv1routedevmockpy)
 - [backend/src/icici_breeze_backend/app/api/v1/route_hedge.py](#backendsrcicicibreezebackendappapiv1routehedgepy)
 - [backend/src/icici_breeze_backend/app/api/v1/route_order.py](#backendsrcicicibreezebackendappapiv1routeorderpy)
@@ -70,6 +72,7 @@
 - [backend/src/icici_breeze_backend/app/db/user_account_migrate.py](#backendsrcicicibreezebackendappdbuseraccountmigratepy)
 - [backend/src/icici_breeze_backend/app/domain/__init__.py](#backendsrcicicibreezebackendappdomaininitpy)
 - [backend/src/icici_breeze_backend/app/domain/auth.py](#backendsrcicicibreezebackendappdomainauthpy)
+- [backend/src/icici_breeze_backend/app/domain/breeze_api_tester_catalog.py](#backendsrcicicibreezebackendappdomainbreezeapitestercatalogpy)
 - [backend/src/icici_breeze_backend/app/domain/order.py](#backendsrcicicibreezebackendappdomainorderpy)
 - [backend/src/icici_breeze_backend/app/domain/outlook_api.py](#backendsrcicicibreezebackendappdomainoutlookapipy)
 - [backend/src/icici_breeze_backend/app/domain/outlook_defaults.py](#backendsrcicicibreezebackendappdomainoutlookdefaultspy)
@@ -95,12 +98,21 @@
 - [backend/src/icici_breeze_backend/app/services/__init__.py](#backendsrcicicibreezebackendappservicesinitpy)
 - [backend/src/icici_breeze_backend/app/services/api_usage.py](#backendsrcicicibreezebackendappservicesapiusagepy)
 - [backend/src/icici_breeze_backend/app/services/auth_service.py](#backendsrcicicibreezebackendappservicesauthservicepy)
+- [backend/src/icici_breeze_backend/app/services/breeze_api_tester_risk.py](#backendsrcicicibreezebackendappservicesbreezeapitesterriskpy)
 - [backend/src/icici_breeze_backend/app/services/breeze_session_cache.py](#backendsrcicicibreezebackendappservicesbreezesessioncachepy)
 - [backend/src/icici_breeze_backend/app/services/dashboard_vix.py](#backendsrcicicibreezebackendappservicesdashboardvixpy)
+- [backend/src/icici_breeze_backend/app/services/deployment_container_upgrade.py](#backendsrcicicibreezebackendappservicesdeploymentcontainerupgradepy)
+- [backend/src/icici_breeze_backend/app/services/deployment_license_status.py](#backendsrcicicibreezebackendappservicesdeploymentlicensestatuspy)
 - [backend/src/icici_breeze_backend/app/services/gemini_model_catalog.py](#backendsrcicicibreezebackendappservicesgeminimodelcatalogpy)
+- [backend/src/icici_breeze_backend/app/services/icici_customer_identity.py](#backendsrcicicibreezebackendappservicesicicicustomeridentitypy)
 - [backend/src/icici_breeze_backend/app/services/iv_compute.py](#backendsrcicicibreezebackendappservicesivcomputepy)
 - [backend/src/icici_breeze_backend/app/services/nsccl_baseline.py](#backendsrcicicibreezebackendappservicesnscclbaselinepy)
 - [backend/src/icici_breeze_backend/app/services/outlook_service.py](#backendsrcicicibreezebackendappservicesoutlookservicepy)
+- [backend/src/icici_breeze_backend/app/services/portal_deployment_heartbeat.py](#backendsrcicicibreezebackendappservicesportaldeploymentheartbeatpy)
+- [backend/src/icici_breeze_backend/app/services/portal_deployment_login.py](#backendsrcicicibreezebackendappservicesportaldeploymentloginpy)
+- [backend/src/icici_breeze_backend/app/services/portal_deployment_user_registration.py](#backendsrcicicibreezebackendappservicesportaldeploymentuserregistrationpy)
+- [backend/src/icici_breeze_backend/app/services/portal_license_activation.py](#backendsrcicicibreezebackendappservicesportallicenseactivationpy)
+- [backend/src/icici_breeze_backend/app/services/portal_policy_token.py](#backendsrcicicibreezebackendappservicesportalpolicytokenpy)
 - [backend/src/icici_breeze_backend/app/services/processor.py](#backendsrcicicibreezebackendappservicesprocessorpy)
 - [backend/src/icici_breeze_backend/app/services/user_rate_limit_prefs.py](#backendsrcicicibreezebackendappservicesuserratelimitprefspy)
 - [backend/src/icici_breeze_backend/audit/__init__.py](#backendsrcicicibreezebackendauditinitpy)
@@ -117,12 +129,25 @@
 - [backend/src/icici_breeze_backend/dev/fixtures/responses.py](#backendsrcicicibreezebackenddevfixturesresponsespy)
 - [backend/src/icici_breeze_backend/dev/mock_broker.py](#backendsrcicicibreezebackenddevmockbrokerpy)
 - [backend/src/icici_breeze_backend/main.py](#backendsrcicicibreezebackendmainpy)
+- [backend/tests/conftest.py](#backendtestsconftestpy)
+- [backend/tests/fixtures/portal_heartbeat_drm_keys.py](#backendtestsfixturesportalheartbeatdrmkeyspy)
+- [backend/tests/test_breeze_api_tester.py](#backendteststestbreezeapitesterpy)
+- [backend/tests/test_changelog_latest_version.py](#backendteststestchangeloglatestversionpy)
+- [backend/tests/test_deployment_container_upgrade.py](#backendteststestdeploymentcontainerupgradepy)
+- [backend/tests/test_deployment_license_route.py](#backendteststestdeploymentlicenseroutepy)
+- [backend/tests/test_deployment_license_status.py](#backendteststestdeploymentlicensestatuspy)
 - [backend/tests/test_gemini_model_catalog_fetch.py](#backendteststestgeminimodelcatalogfetchpy)
+- [backend/tests/test_icici_customer_identity.py](#backendteststesticicicustomeridentitypy)
 - [backend/tests/test_icici_mock_mode.py](#backendteststesticicimockmodepy)
 - [backend/tests/test_outlook_service.py](#backendteststestoutlookservicepy)
+- [backend/tests/test_portal_deployment_heartbeat.py](#backendteststestportaldeploymentheartbeatpy)
+- [backend/tests/test_portal_license_activation.py](#backendteststestportallicenseactivationpy)
+- [backend/tests/test_portal_policy_token.py](#backendteststestportalpolicytokenpy)
 - [backend/tests/test_register_credential_flows.py](#backendteststestregistercredentialflowspy)
+- [backend/tests/test_register_portal_notification.py](#backendteststestregisterportalnotificationpy)
 - [backend/tests/test_strategy_builder_domain.py](#backendteststeststrategybuilderdomainpy)
 - [backend/tests/test_user_account_auth.py](#backendteststestuseraccountauthpy)
+- [deploy/breeze/portal_allowed_hosts.txt](#deploybreezeportalallowedhoststxt)
 - [deploy/nginx.all-in-one.conf](#deploynginxall-in-oneconf)
 - [deploy/supervisor/breeze.conf](#deploysupervisorbreezeconf)
 - [dev.sh](#devsh)
@@ -153,6 +178,7 @@
 - [frontend/src/app/register/recover-complete/page.tsx](#frontendsrcappregisterrecover-completepagetsx)
 - [frontend/src/app/settings/ai-provider/page.tsx](#frontendsrcappsettingsai-providerpagetsx)
 - [frontend/src/app/settings/api-usage/page.tsx](#frontendsrcappsettingsapi-usagepagetsx)
+- [frontend/src/app/settings/breeze-api-playground/page.tsx](#frontendsrcappsettingsbreeze-api-playgroundpagetsx)
 - [frontend/src/app/settings/credentials/page.tsx](#frontendsrcappsettingscredentialspagetsx)
 - [frontend/src/app/settings/delete-account/page.tsx](#frontendsrcappsettingsdelete-accountpagetsx)
 - [frontend/src/app/settings/margin-source/page.tsx](#frontendsrcappsettingsmargin-sourcepagetsx)
@@ -164,13 +190,18 @@
 - [frontend/src/app/trade-options-chain/page.tsx](#frontendsrcapptrade-options-chainpagetsx)
 - [frontend/src/app/uncovered-shorts/page.tsx](#frontendsrcappuncovered-shortspagetsx)
 - [frontend/src/app/vertical-spread/page.tsx](#frontendsrcappvertical-spreadpagetsx)
+- [frontend/src/components/auth/IciciRegistrationGuideLink.tsx](#frontendsrccomponentsauthiciciregistrationguidelinktsx)
 - [frontend/src/components/changelog/ChangelogDialog.tsx](#frontendsrccomponentschangelogchangelogdialogtsx)
 - [frontend/src/components/dashboard/InterpretationBadge.tsx](#frontendsrccomponentsdashboardinterpretationbadgetsx)
 - [frontend/src/components/dashboard/Vix30dChart.tsx](#frontendsrccomponentsdashboardvix30dcharttsx)
 - [frontend/src/components/dev/MockBrokerBanner.tsx](#frontendsrccomponentsdevmockbrokerbannertsx)
 - [frontend/src/components/layout/AppShell.tsx](#frontendsrccomponentslayoutappshelltsx)
+- [frontend/src/components/license/LicenseRestrictionProvider.tsx](#frontendsrccomponentslicenselicenserestrictionprovidertsx)
+- [frontend/src/components/license/LicenseStatusBanner.tsx](#frontendsrccomponentslicenselicensestatusbannertsx)
+- [frontend/src/components/license/RevokedTradingPageGuard.tsx](#frontendsrccomponentslicenserevokedtradingpageguardtsx)
 - [frontend/src/components/order/ChunkSizeOrderField.tsx](#frontendsrccomponentsorderchunksizeorderfieldtsx)
 - [frontend/src/components/order/ExecutionPreviewModal.tsx](#frontendsrccomponentsorderexecutionpreviewmodaltsx)
+- [frontend/src/components/order/ManualContractFieldWarningDialog.tsx](#frontendsrccomponentsordermanualcontractfieldwarningdialogtsx)
 - [frontend/src/components/order/OptionChainPlaceSection.tsx](#frontendsrccomponentsorderoptionchainplacesectiontsx)
 - [frontend/src/components/order/OptionChainTable.tsx](#frontendsrccomponentsorderoptionchaintabletsx)
 - [frontend/src/components/order/OptionChainUnderlyingSearch.tsx](#frontendsrccomponentsorderoptionchainunderlyingsearchtsx)
@@ -184,6 +215,8 @@
 - [frontend/src/components/portfolio/OpenPositionsTable.tsx](#frontendsrccomponentsportfolioopenpositionstabletsx)
 - [frontend/src/components/portfolio/PortfolioGroupPayoffPanel.tsx](#frontendsrccomponentsportfolioportfoliogrouppayoffpaneltsx)
 - [frontend/src/components/portfolio/PortfolioHedgeOrderSheet.tsx](#frontendsrccomponentsportfolioportfoliohedgeordersheettsx)
+- [frontend/src/components/settings/BreezeApiMethodPicker.tsx](#frontendsrccomponentssettingsbreezeapimethodpickertsx)
+- [frontend/src/components/settings/BreezeApiRiskGateDialog.tsx](#frontendsrccomponentssettingsbreezeapiriskgatedialogtsx)
 - [frontend/src/components/settings/DeleteAccountWidget.tsx](#frontendsrccomponentssettingsdeleteaccountwidgettsx)
 - [frontend/src/components/strategy-builder/ExpirySelectPill.tsx](#frontendsrccomponentsstrategy-builderexpiryselectpilltsx)
 - [frontend/src/components/strategy-builder/OptionStrategyIcon.tsx](#frontendsrccomponentsstrategy-builderoptionstrategyicontsx)
@@ -194,15 +227,26 @@
 - [frontend/src/components/theme/ThemeProvider.tsx](#frontendsrccomponentsthemethemeprovidertsx)
 - [frontend/src/components/theme/ThemeToggle.tsx](#frontendsrccomponentsthemethemetoggletsx)
 - [frontend/src/components/ui/AsyncLabelSpan.tsx](#frontendsrccomponentsuiasynclabelspantsx)
+- [frontend/src/lib/api-client.test.ts](#frontendsrclibapi-clienttestts)
 - [frontend/src/lib/api-client.ts](#frontendsrclibapi-clientts)
 - [frontend/src/lib/app-providers.tsx](#frontendsrclibapp-providerstsx)
+- [frontend/src/lib/app-version.test.ts](#frontendsrclibapp-versiontestts)
+- [frontend/src/lib/app-version.ts](#frontendsrclibapp-versionts)
 - [frontend/src/lib/auth-session-expired.ts](#frontendsrclibauth-session-expiredts)
 - [frontend/src/lib/break-chunk-defaults.ts](#frontendsrclibbreak-chunk-defaultsts)
+- [frontend/src/lib/breeze-api-tester.ts](#frontendsrclibbreeze-api-testerts)
+- [frontend/src/lib/changelog.test.ts](#frontendsrclibchangelogtestts)
 - [frontend/src/lib/changelog.ts](#frontendsrclibchangelogts)
 - [frontend/src/lib/config.ts](#frontendsrclibconfigts)
+- [frontend/src/lib/contact-sales-mailto.test.ts](#frontendsrclibcontact-sales-mailtotestts)
+- [frontend/src/lib/contact-sales-mailto.ts](#frontendsrclibcontact-sales-mailtots)
 - [frontend/src/lib/dashboard-interpretation.ts](#frontendsrclibdashboard-interpretationts)
+- [frontend/src/lib/deployment-license-status.ts](#frontendsrclibdeployment-license-statusts)
+- [frontend/src/lib/deployment-license.test.ts](#frontendsrclibdeployment-licensetestts)
+- [frontend/src/lib/deployment-license.ts](#frontendsrclibdeployment-licensets)
 - [frontend/src/lib/format-money-in.ts](#frontendsrclibformat-money-ints)
 - [frontend/src/lib/home-data.ts](#frontendsrclibhome-datats)
+- [frontend/src/lib/icici-handoff-url.ts](#frontendsrclibicici-handoff-urlts)
 - [frontend/src/lib/icici-rate-limit-flow.ts](#frontendsrclibicici-rate-limit-flowts)
 - [frontend/src/lib/icici-session-query.ts](#frontendsrclibicici-session-queryts)
 - [frontend/src/lib/order-confirm.ts](#frontendsrcliborder-confirmts)
@@ -212,6 +256,8 @@
 - [frontend/src/lib/place-order-clone.ts](#frontendsrclibplace-order-clonets)
 - [frontend/src/lib/portfolio.ts](#frontendsrclibportfoliots)
 - [frontend/src/lib/portfolio/groupPositions.ts](#frontendsrclibportfoliogrouppositionsts)
+- [frontend/src/lib/public-auth-routes.test.ts](#frontendsrclibpublic-auth-routestestts)
+- [frontend/src/lib/public-auth-routes.ts](#frontendsrclibpublic-auth-routests)
 - [frontend/src/lib/query-client.tsx](#frontendsrclibquery-clienttsx)
 - [frontend/src/lib/random-uuid.ts](#frontendsrclibrandom-uuidts)
 - [frontend/src/lib/strategy-builder/blackScholes.test.ts](#frontendsrclibstrategy-builderblackscholestestts)
@@ -225,15 +271,136 @@
 - [frontend/src/lib/strategy-builder/types.ts](#frontendsrclibstrategy-buildertypests)
 - [frontend/src/lib/strategy-builder/ui.ts](#frontendsrclibstrategy-builderuits)
 - [frontend/src/lib/use-break-chunk-qty.ts](#frontendsrclibuse-break-chunk-qtyts)
+- [frontend/src/lib/use-deployment-license.ts](#frontendsrclibuse-deployment-licensets)
 - [frontend/src/lib/use-rate-limit-countdown.ts](#frontendsrclibuse-rate-limit-countdownts)
 - [nginx.conf](#nginxconf)
 
 ---
 
-## .github/workflows/aws-deploy-amit.yml
+## .github/workflows/ghcr-publish.yml
 
 ```yaml
-name: Manual AWS Deploy for Amit M (EC2 + Elastic IP)
+name: Publish container to GHCR
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Place build-context canary (must not appear in image)
+        run: echo 'BREEZE_CI_CANARY_MARKER=do-not-ship-in-image' > .env.ci-canary
+
+      - name: Set image name (GHCR requires lowercase)
+        id: image
+        run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - name: Resolve portal DRM build args (required)
+        id: portal_drm
+        env:
+          CONSOLE_API_PUBLIC_BASE_URL: ${{ vars.CONSOLE_API_PUBLIC_BASE_URL || secrets.CONSOLE_API_PUBLIC_BASE_URL }}
+          PORTAL_HEARTBEAT_JWT_PRIVATE_KEY_B64: ${{ secrets.PORTAL_HEARTBEAT_JWT_PRIVATE_KEY_B64 }}
+          PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64: ${{ secrets.PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64 }}
+          PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM: ${{ secrets.PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM }}
+        run: bash scripts/resolve-portal-drm-build-args.sh
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64=${{ steps.portal_drm.outputs.public_key_b64 }}
+            PORTAL_ALLOWED_HOSTS=${{ steps.portal_drm.outputs.allowed_hosts }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Verify image contains no secrets or env files
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}:latest
+          CANARY: BREEZE_CI_CANARY_MARKER
+        run: |
+          set -euo pipefail
+          # Image is built for linux/arm64 only; GHA runners are amd64 — pull/run with explicit platform.
+          docker pull --platform linux/arm64 "$IMAGE"
+          docker run --rm --platform linux/arm64 "$IMAGE" sh -c '
+            set -e
+            if find /app \( -name ".env*" -o -name "*.pem" \) 2>/dev/null | grep -q .; then
+              echo "ERROR: .env or .pem files found under /app"
+              find /app \( -name ".env*" -o -name "*.pem" \) 2>/dev/null
+              exit 1
+            fi
+            if [ ! -s /etc/breeze/portal_heartbeat_public.pem ]; then
+              echo "ERROR: portal DRM public key missing at /etc/breeze/portal_heartbeat_public.pem"
+              exit 1
+            fi
+            if ! grep -v "^[[:space:]]*#" /etc/breeze/portal_allowed_hosts.txt | grep -qv "^[[:space:]]*$"; then
+              echo "ERROR: portal allowed hosts file is empty"
+              cat /etc/breeze/portal_allowed_hosts.txt
+              exit 1
+            fi
+            echo "Portal DRM configured (public key + allowed hosts present)"
+            # Env-file lines only (line-start KEY=value with a real value, not "..." placeholders in source strings).
+            if grep -rE "^[[:space:]]*(JWT_SECRET|GOOGLE_CLIENT_SECRET)=[a-zA-Z0-9+/=_-]{8,}" /app 2>/dev/null; then
+              echo "ERROR: env-style secret assignment found under /app"
+              grep -rE "^[[:space:]]*(JWT_SECRET|GOOGLE_CLIENT_SECRET)=[a-zA-Z0-9+/=_-]{8,}" /app 2>/dev/null || true
+              exit 1
+            fi
+            if grep -rq "BREEZE_CI_CANARY_MARKER=do-not-ship-in-image" /app 2>/dev/null; then
+              echo "ERROR: CI canary marker found in image"
+              exit 1
+            fi
+            if grep -rE "sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}" /app 2>/dev/null | grep -q .; then
+              echo "ERROR: API key-like pattern found under /app"
+              grep -rE "sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}" /app 2>/dev/null || true
+              exit 1
+            fi
+            echo "Image secret scan passed"
+          '
+```
+
+## .github/workflows/legacy-aws-deploy-amit.yml
+
+```yaml
+name: Legacy Manual AWS Deployment for Amit M (ICICI-Breeze-Modern)
 
 on:
   workflow_dispatch:
@@ -253,11 +420,11 @@ jobs:
       AWS_REGION: ap-south-1
       INSTANCE_TYPE: t4g.small
       IMAGE_TAG: latest
-      REPO_NAME: breeze-core-engine
+      REPO_NAME: icici-breeze-modern
       EC2_USER: ubuntu
-      APP_NAME: breeze-core-engine-web
-      EC2_TAG: Breeze-Core-Engine-EC2
-      EC2_KEY_NAME: Breeze-Core-Engine-KP
+      APP_NAME: icici-breeze-modern
+      EC2_TAG: icici-breeze-modern-EC2
+      EC2_KEY_NAME: icici-breeze-modern-KP
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -271,7 +438,7 @@ jobs:
 
       # Optional: set GitHub secret EBS_DATA_VOLUME_ID (vol-...) to a gp3 volume in the same AZ as
       # the default VPC subnet, with DeleteOnTermination=false. Workflow attaches it as /dev/sdf;
-      # cloud-init waits, formats if empty (ext4, label breeze-core-data), mounts /opt/breeze-core-engine/data.
+      # cloud-init waits, formats if empty (ext4, label breeze-core-data), mounts /opt/icici-breeze-modern/data.
       - name: Build startup script
         env:
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
@@ -319,30 +486,30 @@ jobs:
             if ! blkid "\${DATA_DEV}" >/dev/null 2>&1; then
               mkfs.ext4 -L breeze-core-data -E discard "\${DATA_DEV}"
             fi
-            mkdir -p /opt/breeze-core-engine/data
-            mount "\${DATA_DEV}" /opt/breeze-core-engine/data
-            if ! grep -q 'LABEL=breeze-core-data /opt/breeze-core-engine/data' /etc/fstab; then
-              echo 'LABEL=breeze-core-data /opt/breeze-core-engine/data ext4 defaults,nofail 0 2' >> /etc/fstab
+            mkdir -p /opt/icici-breeze-modern/data
+            mount "\${DATA_DEV}" /opt/icici-breeze-modern/data
+            if ! grep -q 'LABEL=breeze-core-data /opt/icici-breeze-modern/data' /etc/fstab; then
+              echo 'LABEL=breeze-core-data /opt/icici-breeze-modern/data ext4 defaults,nofail 0 2' >> /etc/fstab
             fi
           else
-            mkdir -p /opt/breeze-core-engine/data
+            mkdir -p /opt/icici-breeze-modern/data
           fi
 
           # Write runtime env file from GitHub secret (base64-encoded .env content)
-          printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/breeze-core-engine/.env
-          chmod 600 /opt/breeze-core-engine/.env
+          printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/icici-breeze-modern/.env
+          chmod 600 /opt/icici-breeze-modern/.env
 
           # Login and pull from GHCR
           echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
           docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
 
           # Run app container
-          docker rm -f breeze-core-engine-app || true
+          docker rm -f icici-breeze-modern-app || true
           docker run -d \
-            --name breeze-core-engine-app \
+            --name icici-breeze-modern-app \
             --restart unless-stopped \
-            --env-file /opt/breeze-core-engine/.env \
-            -v /opt/breeze-core-engine/data:/app/backend/data \
+            --env-file /opt/icici-breeze-modern/.env \
+            -v /opt/icici-breeze-modern/data:/app/backend/data \
             -p 80:3000 \
             "${IMAGE_NAME}:${IMAGE_TAG}"
           EOF
@@ -579,10 +746,10 @@ jobs:
           echo "URL:          http://${{ steps.eip.outputs.public_ip }}"
 ```
 
-## .github/workflows/aws-deploy-rakesh.yml
+## .github/workflows/legacy-aws-deploy-rakesh.yml
 
 ```yaml
-name: Manual AWS Deploy for Rakesh S (EC2 + Elastic IP)
+name: Legacy Manual AWS Deployment for Rakesh S (ICICI-Breeze-Modern)
 
 on:
   workflow_dispatch:
@@ -602,11 +769,11 @@ jobs:
       AWS_REGION: ap-south-1
       INSTANCE_TYPE: t4g.small
       IMAGE_TAG: latest
-      REPO_NAME: breeze-core-engine
+      REPO_NAME: icici-breeze-modern
       EC2_USER: ubuntu
-      APP_NAME: breeze-core-engine-web
-      EC2_TAG: Breeze-Core-Engine-EC2
-      # EC2_KEY_NAME: Breeze-Core-Engine-KP
+      APP_NAME: icici-breeze-modern-web
+      EC2_TAG: icici-breeze-modern-EC2
+      # EC2_KEY_NAME: icici-breeze-modern-KP
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -620,7 +787,7 @@ jobs:
 
       # Optional: set GitHub secret EBS_DATA_VOLUME_ID (vol-...) to a gp3 volume in the same AZ as
       # the default VPC subnet, with DeleteOnTermination=false. Workflow attaches it as /dev/sdf;
-      # cloud-init waits, formats if empty (ext4, label breeze-core-data), mounts /opt/breeze-core-engine/data.
+      # cloud-init waits, formats if empty (ext4, label breeze-core-data), mounts /opt/icici-breeze-modern/data.
       - name: Build startup script
         env:
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
@@ -668,30 +835,30 @@ jobs:
             if ! blkid "\${DATA_DEV}" >/dev/null 2>&1; then
               mkfs.ext4 -L breeze-core-data -E discard "\${DATA_DEV}"
             fi
-            mkdir -p /opt/breeze-core-engine/data
-            mount "\${DATA_DEV}" /opt/breeze-core-engine/data
-            if ! grep -q 'LABEL=breeze-core-data /opt/breeze-core-engine/data' /etc/fstab; then
-              echo 'LABEL=breeze-core-data /opt/breeze-core-engine/data ext4 defaults,nofail 0 2' >> /etc/fstab
+            mkdir -p /opt/icici-breeze-modern/data
+            mount "\${DATA_DEV}" /opt/icici-breeze-modern/data
+            if ! grep -q 'LABEL=breeze-core-data /opt/icici-breeze-modern/data' /etc/fstab; then
+              echo 'LABEL=breeze-core-data /opt/icici-breeze-modern/data ext4 defaults,nofail 0 2' >> /etc/fstab
             fi
           else
-            mkdir -p /opt/breeze-core-engine/data
+            mkdir -p /opt/icici-breeze-modern/data
           fi
 
           # Write runtime env file from GitHub secret (base64-encoded .env content)
-          printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/breeze-core-engine/.env
-          chmod 600 /opt/breeze-core-engine/.env
+          printf '%s' "${APP_ENV_FILE_B64}" | base64 -d > /opt/icici-breeze-modern/.env
+          chmod 600 /opt/icici-breeze-modern/.env
 
           # Login and pull from GHCR
           echo "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
           docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
 
           # Run app container
-          docker rm -f breeze-core-engine-app || true
+          docker rm -f icici-breeze-modern-app || true
           docker run -d \
-            --name breeze-core-engine-app \
+            --name icici-breeze-modern-app \
             --restart unless-stopped \
-            --env-file /opt/breeze-core-engine/.env \
-            -v /opt/breeze-core-engine/data:/app/backend/data \
+            --env-file /opt/icici-breeze-modern/.env \
+            -v /opt/icici-breeze-modern/data:/app/backend/data \
             -p 80:3000 \
             "${IMAGE_NAME}:${IMAGE_TAG}"
           EOF
@@ -927,63 +1094,6 @@ jobs:
           echo "URL:          http://${{ steps.eip.outputs.public_ip }}"
 ```
 
-## .github/workflows/ghcr-publish.yml
-
-```yaml
-name: Publish container to GHCR
-
-on:
-  push:
-    branches:
-      - main
-
-permissions:
-  contents: read
-  packages: write
-
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set image name (GHCR requires lowercase)
-        id: image
-        run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.image.outputs.name }}
-          tags: |
-            type=raw,value=latest
-            type=sha
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-```
-
 ## Dockerfile
 
 ```text
@@ -993,7 +1103,14 @@ jobs:
 # Run (requires secrets — use an env file or mount):
 #   podman run --rm -p 3000:3000 --env-file .env ghcr.io/<owner>/<repo>:latest
 # Optional: persist backend data
-#   podman run ... -v breeze-data:/app/backend/data ...
+#   podman run ... -v /opt/breeze-core-engine/data:/app/backend/data ...
+
+FROM node:22-bookworm-slim AS version-extract
+
+WORKDIR /src
+COPY scripts/changelog-latest-version.mjs scripts/changelog-latest-version.mjs
+COPY frontend/src/lib/changelog.ts frontend/src/lib/changelog.ts
+RUN node scripts/changelog-latest-version.mjs frontend/src/lib/changelog.ts > /tmp/app_version
 
 FROM node:22-bookworm-slim AS frontend-builder
 
@@ -1004,6 +1121,7 @@ RUN npm ci
 COPY frontend/ ./
 
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV DOCKER_BUILD=1
 # Browser API base: omit NEXT_PUBLIC_BACKEND_URL so the client uses window.location.origin
 # (same host/port as /auth/*). Hardcoding localhost breaks 127.0.0.1 or non-default port maps.
 ENV BACKEND_UPSTREAM_URL=http://127.0.0.1:8000
@@ -1013,11 +1131,35 @@ RUN npm run build
 # Node binary only (no apt NodeSource): matches bookworm base used by python:3.12-slim-bookworm.
 FROM node:22-bookworm-slim AS node-runtime
 
+FROM python:3.12-slim-bookworm AS backend-builder
+
+WORKDIR /build
+
+COPY backend/requirements.txt ./
+RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
+
+COPY backend/src ./src
+COPY backend/static ./static
+COPY backend/data/users.empty.sqlite3 backend/data/scrips.empty.sqlite3 \
+  backend/data/NSEFreezeLimits.txt backend/data/BSEFreezeLimits.txt \
+  ./data/
+
+RUN python -m compileall -q -b /build/src
+
+# Templates outside data/ survive `docker run -v ...:/app/backend/data` (bind mount hides data/*.empty.sqlite3).
+RUN mkdir -p db-templates data \
+  && cp data/users.empty.sqlite3 db-templates/ \
+  && cp data/scrips.empty.sqlite3 db-templates/ \
+  && cp data/NSEFreezeLimits.txt db-templates/ \
+  && cp data/BSEFreezeLimits.txt db-templates/ \
+  && cp data/users.empty.sqlite3 data/users.sqlite3 \
+  && cp data/scrips.empty.sqlite3 data/scrips.sqlite3
+
 # 3.12: prebuilt wheels for pinned pydantic; 3.13 + pydantic 2.5 can fail on arm64 (source build).
-# slim-bookworm: much smaller than full bookworm; extra apt packages keep scipy/numpy + ssl working.
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm AS runtime
 
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=backend-builder /install /usr/local
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -1029,17 +1171,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/backend
-COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-COPY backend/ ./
-# Templates outside data/ survive `docker run -v ...:/app/backend/data` (bind mount hides data/*.empty.sqlite3).
-RUN mkdir -p db-templates \
- && cp data/users.empty.sqlite3 db-templates/ \
- && cp data/scrips.empty.sqlite3 db-templates/ \
- && cp data/NSEFreezeLimits.txt db-templates/ \
- && cp data/BSEFreezeLimits.txt db-templates/ \
- && cp data/users.empty.sqlite3 data/users.sqlite3 \
- && cp data/scrips.empty.sqlite3 data/scrips.sqlite3
+COPY --from=backend-builder /build /app/backend
 
 WORKDIR /app/frontend
 COPY --from=frontend-builder /app/.next/standalone ./
@@ -1048,6 +1180,22 @@ COPY --from=frontend-builder /app/public ./public
 
 COPY deploy/nginx.all-in-one.conf /etc/nginx/nginx.conf
 COPY deploy/supervisor/breeze.conf /etc/supervisor/conf.d/breeze.conf
+COPY deploy/breeze/portal_allowed_hosts.txt /etc/breeze/portal_allowed_hosts.txt
+
+ARG PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM=""
+ARG PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64=""
+ARG PORTAL_ALLOWED_HOSTS=""
+RUN mkdir -p /etc/breeze \
+  && if [ -n "$PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64" ]; then \
+       printf '%s' "$PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64" | base64 -d > /etc/breeze/portal_heartbeat_public.pem; \
+     elif [ -n "$PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM" ]; then \
+       printf '%s\n' "$PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM" > /etc/breeze/portal_heartbeat_public.pem; \
+     fi \
+  && if [ -n "$PORTAL_ALLOWED_HOSTS" ]; then \
+       printf '%s\n' "$PORTAL_ALLOWED_HOSTS" > /etc/breeze/portal_allowed_hosts.txt; \
+     fi \
+  && test -s /etc/breeze/portal_heartbeat_public.pem \
+  && grep -v '^[[:space:]]*#' /etc/breeze/portal_allowed_hosts.txt | grep -qv '^[[:space:]]*$'
 
 RUN nginx -t
 
@@ -1056,10 +1204,14 @@ ENV PYTHONUNBUFFERED=1
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+COPY --from=version-extract /tmp/app_version /etc/breeze_app_version
+ENV APP_VERSION_FILE=/etc/breeze_app_version
+
 EXPOSE 3000
 
+# Probe /health via nginx → FastAPI (same path as SaaS console deployment probes).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/', timeout=5)"
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/health', timeout=5)"
 
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
 ```
@@ -1067,7 +1219,9 @@ CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
 ## README.md
 
 ```markdown
-## Breeze Core Engine
+## Breeze Modern
+
+Source for this product lives in the **`breeze-core-engine`** repository (engineering name; unchanged).
 
 A **browser-based dashboard** for **ICICI Direct Breeze**: portfolio, orders, option strategies, margin and scrip tools, and optional AI-assisted market outlook. Users sign in with **Google** (application identity) and **ICICI** (broker session). The stack is a **Next.js** front end and a **FastAPI** backend that calls ICICI through **`breeze_connect`**, with **SQLite** and local files under `backend/data/`.
 
@@ -1220,6 +1374,24 @@ def require_admin(ctx: RequestContext = None):
     if "admin" not in (getattr(ctx, "roles", None) or []):
         raise HTTPException(status_code=403, detail="Admin role required")
     return ctx
+```
+
+## backend/src/icici_breeze_backend/app/api/deps_license.py
+
+```python
+"""FastAPI dependencies for deployment license enforcement."""
+from fastapi import HTTPException
+
+from icici_breeze_backend.app.services.deployment_license_status import (
+    TRADING_READ_ONLY_MESSAGE,
+    trading_mutations_allowed,
+)
+
+
+def require_trading_not_revoked() -> None:
+    """Block trading mutations when deployment has no valid license."""
+    if not trading_mutations_allowed():
+        raise HTTPException(status_code=403, detail=TRADING_READ_ONLY_MESSAGE)
 ```
 
 ## backend/src/icici_breeze_backend/app/api/error_utils.py
@@ -1427,6 +1599,9 @@ async def auth_direct_login(request: Request, body: DirectLoginRequest):
             access_token,
             full_secret,
         )
+        from icici_breeze_backend.app.services.portal_deployment_login import notify_portal_deployment_login
+
+        notify_portal_deployment_login(icici_user_id=uid.strip().upper() if uid else None)
         return response
     cookie_val = encrypt_direct_icici_cookie(uid, enc_key)
     if not cookie_val:
@@ -2181,6 +2356,27 @@ async def _complete_icici_session(
         )
         return response
 
+    from icici_breeze_backend.app.services.icici_customer_identity import (
+        parse_customer_details_identity,
+    )
+    from icici_breeze_backend.app.services.portal_license_activation import (
+        request_portal_license_activation,
+    )
+
+    icici_user_id, _ = parse_customer_details_identity(
+        customer_check, fallback_user_id=form.user_id
+    )
+
+    allowed, activation_error = await request_portal_license_activation(
+        customer_check,
+        fallback_user_id=form.user_id,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail=activation_error or "License activation was denied for this ICICI User ID.",
+        )
+
     handler = JWTHandler(
         secret_key=cfg.JWT_SECRET,
         access_token_expire_minutes=cfg.JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -2191,6 +2387,9 @@ async def _complete_icici_session(
     logger.info("login_submit success user_id=%s", form.user_id)
     response = JSONResponse({"redirect": "/dashboard"})
     _set_auth_cookies(response, icici_token, access_token, full_secret)
+    from icici_breeze_backend.app.services.portal_deployment_login import notify_portal_deployment_login
+
+    notify_portal_deployment_login(icici_user_id=icici_user_id)
     return response
 
 
@@ -2248,12 +2447,18 @@ async def get_home_api(ctx: RequestContext = Depends(get_request_context)):
     from icici_breeze_backend.app.services.api_usage import get_usage_for_display
 
     usage = get_usage_for_display(user_id)
+    from icici_breeze_backend.app.services.deployment_license_status import (
+        get_license_status_for_api,
+    )
+
+    license_fields = get_license_status_for_api() or {}
     return HomeDataResponse(
         customer=customer or {},
         margin=margin or {},
         api_calls_today=usage["api_calls_today"],
         api_calls_limit=usage["api_calls_limit"],
         api_usage_band=usage["api_usage_band"],
+        **license_fields,
     )
 
 
@@ -2671,7 +2876,7 @@ from fastapi.responses import JSONResponse
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import today_ist_date
-from icici_breeze_backend.app.api.error_utils import raise_route_errors
+from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
 from icici_breeze_backend.app.api.frontend_redirect import json_redirect, redirect_to_frontend
 from icici_breeze_backend.app.auth.context import (
     RequestContext,
@@ -2802,6 +3007,7 @@ async def get_book_data(
 async def process_post(
     body: BookActionRequest,
     context: RequestContext = Depends(get_request_context_or_redirect),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     user_id = context.user_id
 
@@ -2828,6 +3034,7 @@ async def process_post(
 async def post_cancel_one(
     body: BookCancelOneRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -2840,6 +3047,7 @@ async def post_cancel_one(
 async def post_cancel_commit(
     body: BookCancelCommitRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -2873,6 +3081,7 @@ async def list_parked_orders(
 async def create_parked_orders(
     body: ParkedOrderCreateRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     breeze.create_parked_orders(
         context.user_id,
@@ -2889,6 +3098,7 @@ async def patch_parked_order(
     order_id: str,
     body: ParkedOrderPatchRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     patch = body.model_dump(exclude_unset=True)
     kw: dict = {}
@@ -2913,6 +3123,7 @@ async def patch_parked_order(
 async def delete_parked_order_route(
     order_id: str,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     ok = breeze.delete_parked_order(context.user_id, order_id.strip())
     if not ok:
@@ -2924,6 +3135,7 @@ async def delete_parked_order_route(
 async def delete_parked_orders_many(
     body: ParkedOrderIdsRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     n = breeze.delete_parked_orders(context.user_id, body.ids)
     return JSONResponse({"deleted": n})
@@ -2968,6 +3180,33 @@ async def get_dashboard_vix_options_atm(ctx: RequestContext = Depends(get_reques
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
     return fetch_vix_options_atm_skew(ctx.user_id, breeze)
+```
+
+## backend/src/icici_breeze_backend/app/api/v1/route_deployment.py
+
+```python
+"""Deployment metadata routes (license status from portal heartbeat cache)."""
+from fastapi import APIRouter, Depends
+
+from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
+from icici_breeze_backend.app.domain.responses import DeploymentLicenseStatusResponse
+from icici_breeze_backend.app.services.deployment_license_status import (
+    get_license_status_for_api,
+)
+
+router = APIRouter(tags=["deployment"])
+
+
+@router.get("/deployment/license-status", response_model=DeploymentLicenseStatusResponse)
+async def get_deployment_license_status(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """JWT-authenticated license probe; does not require ICICI broker session."""
+    _ = ctx
+    fields = get_license_status_for_api()
+    if not fields:
+        return DeploymentLicenseStatusResponse()
+    return DeploymentLicenseStatusResponse(**fields)
 ```
 
 ## backend/src/icici_breeze_backend/app/api/v1/route_dev_mock.py
@@ -3095,7 +3334,7 @@ from icici_breeze_backend.app.services.user_rate_limit_prefs import (
 from icici_breeze_backend.app.domain.responses import IciciApiResponse, OrderDetailResponse
 from icici_breeze_backend.audit.logger import AuditLogger
 from icici_breeze_backend.concurrency.idempotency import idempotency_store, IdempotencyResult
-from icici_breeze_backend.app.api.error_utils import raise_route_errors
+from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
 from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend, json_redirect, map_legacy_html_path_to_spa
 
 
@@ -3172,6 +3411,7 @@ async def process_post(
     body: OrderFormRequest,
     context: RequestContext = Depends(get_request_context_or_redirect),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     user_id = context.user_id
 
@@ -3259,6 +3499,7 @@ async def post_break_chunk_defaults(
 async def post_break_chunk(
     body: BreakOrderChunkRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -3289,6 +3530,7 @@ async def post_break_chunk(
 async def post_break_finalize(
     body: BreakOrderFinalizeRequest,
     context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -3879,6 +4121,7 @@ async def get_portfolio_hedge_candidates(
 """Registration API under /api/register (Next serves HTML at /register)."""
 import logging
 import sqlite3
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -3915,8 +4158,12 @@ DB_PATH = cfg.DATA_PATH + cfg.USERS_DB
 _MIN_PASSWORD_LEN = 8
 
 
+ICICI_HANDOFF_CONSOLE_URL = "https://breeze-ui.com/console/icici-handoff"
+
+
 class RegisterBootstrapResponse(BaseModel):
     direct_registration_available: bool = True
+    icici_handoff_url: str | None = None
 
 
 class RegisterDirectBody(BaseModel):
@@ -3952,9 +4199,21 @@ def _clear_recovery_token(response: JSONResponse) -> None:
     response.delete_cookie(key=BROKER_RECOVERY_TOKEN_COOKIE, path="/")
 
 
+def _icici_handoff_url() -> str | None:
+    from icici_breeze_backend.app.services.portal_deployment_login import _public_ip_from_origin
+
+    public_ip = _public_ip_from_origin()
+    if not public_ip:
+        return None
+    return f"{ICICI_HANDOFF_CONSOLE_URL}?{urlencode({'ip': public_ip})}"
+
+
 @router.get("/session", response_model=RegisterBootstrapResponse)
 async def register_session():
-    return RegisterBootstrapResponse(direct_registration_available=True)
+    return RegisterBootstrapResponse(
+        direct_registration_available=True,
+        icici_handoff_url=_icici_handoff_url(),
+    )
 
 
 @router.post("/direct", response_model=None)
@@ -3998,6 +4257,11 @@ async def register_direct_post(body: RegisterDirectBody):
                 logger.exception("rollback orphan direct user failed user_id=%s", user_id)
         logger.exception("register_direct_post failed: %s", e)
         raise HTTPException(status_code=500, detail="Registration failed")
+    from icici_breeze_backend.app.services.portal_deployment_user_registration import (
+        notify_portal_deployment_user_registration,
+    )
+
+    notify_portal_deployment_user_registration(user_id=user_id)
     return JSONResponse({"ok": True, "redirect": "/login?registered=1"})
 
 
@@ -4153,6 +4417,11 @@ from icici_breeze_backend.app.domain.outlook_defaults import (
     DEFAULT_OUTLOOK_PROMPT_TEMPLATE,
     DEFAULT_OUTLOOK_SYSTEM_PROMPT,
 )
+from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
+    ALLOWED_METHODS,
+    build_invoke_args,
+    get_catalog_response,
+)
 from icici_breeze_backend.app.domain.settings_api import (
     AiProviderHealthEntry,
     AiProviderOutlookPickBody,
@@ -4177,9 +4446,19 @@ from icici_breeze_backend.app.domain.settings_api import (
     OutlookConfigResetBody,
     OutlookConfigStateResponse,
     OutlookConfigUpdateBody,
+    BreezeApiTesterCatalogEntry,
+    BreezeApiTesterCatalogResponse,
+    BreezeApiTesterInvokeBody,
+    BreezeApiTesterInvokeResponse,
+    BreezeApiTesterRiskStatusResponse,
     QuantityLimitsStateResponse,
     QuantityLimitsUpdateBody,
     ScripMasterStateResponse,
+)
+from icici_breeze_backend.app.services.breeze_api_tester_risk import (
+    get_breeze_api_tester_risk_accepted_at,
+    is_breeze_api_tester_risk_accepted,
+    set_breeze_api_tester_risk_accepted,
 )
 from icici_breeze_backend.app.services.api_usage import get_daily_usage_by_api, get_daily_usage_by_route
 from icici_breeze_backend.app.services.user_rate_limit_prefs import (
@@ -4207,6 +4486,8 @@ ai_key_manager = AiProviderKeyManager(encryption_key=(cfg.JWT_SECRET or "").stri
 outlook_preferences_manager = OutlookPreferencesManager()
 _GEMINI_DEFAULT_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest")
 _AI_PROVIDER_TEST_LAST_TS_BY_USER: dict[str, float] = {}
+_BREEZE_API_TESTER_INVOKE_LAST_TS: dict[str, float] = {}
+_BREEZE_API_TESTER_INVOKE_MIN_INTERVAL_SEC = 2.0
 _GEMINI_CATALOG_TTL_SECONDS = 24 * 60 * 60
 _AI_PROVIDER_TEST_MODEL_LAST_TS: dict[str, float] = {}
 # Pace Gemini generateContent probes to reduce 429s (~2 requests/sec).
@@ -5223,6 +5504,120 @@ async def settings_outlook_config_reset(
         using_default_system_prompt=prefs.using_default_system_prompt,
         message="Outlook configuration reset to defaults.",
     )
+
+
+@router.get("/breeze-api-tester/catalog", response_model=BreezeApiTesterCatalogResponse)
+async def settings_breeze_api_tester_catalog(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    del ctx
+    raw = get_catalog_response()
+    entries = [BreezeApiTesterCatalogEntry.model_validate(e) for e in raw]
+    return BreezeApiTesterCatalogResponse(entries=entries)
+
+
+@router.get("/breeze-api-tester/risk-status", response_model=BreezeApiTesterRiskStatusResponse)
+async def settings_breeze_api_tester_risk_status(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    accepted = is_breeze_api_tester_risk_accepted(ctx.user_id)
+    accepted_at = get_breeze_api_tester_risk_accepted_at(ctx.user_id) if accepted else None
+    return BreezeApiTesterRiskStatusResponse(accepted=accepted, accepted_at=accepted_at)
+
+
+@router.post("/breeze-api-tester/acknowledge-risk", response_model=BreezeApiTesterRiskStatusResponse)
+async def settings_breeze_api_tester_acknowledge_risk(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    accepted_at = set_breeze_api_tester_risk_accepted(ctx.user_id)
+    return BreezeApiTesterRiskStatusResponse(accepted=True, accepted_at=accepted_at)
+
+
+@router.post("/breeze-api-tester/invoke", response_model=BreezeApiTesterInvokeResponse)
+async def settings_breeze_api_tester_invoke(
+    body: BreezeApiTesterInvokeBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not is_breeze_api_tester_risk_accepted(ctx.user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Accept the risk disclaimer before invoking Breeze APIs.",
+        )
+
+    method = (body.method or "").strip()
+    if method not in ALLOWED_METHODS:
+        raise HTTPException(status_code=400, detail=f"Unknown or disallowed API method: {method}")
+
+    last = _BREEZE_API_TESTER_INVOKE_LAST_TS.get(ctx.user_id)
+    now = time.time()
+    if last is not None and now - last < _BREEZE_API_TESTER_INVOKE_MIN_INTERVAL_SEC:
+        raise HTTPException(status_code=429, detail="Please wait before invoking another API.")
+    _BREEZE_API_TESTER_INVOKE_LAST_TS[ctx.user_id] = now
+
+    if method == "get_customer_details":
+        start = time.time()
+        result = breeze.get_customer_details(ctx.user_id)
+        duration_ms = int((time.time() - start) * 1000)
+        if result is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No active ICICI broker session. Log in with your broker token first.",
+            )
+        ok = True
+        if isinstance(result, dict):
+            st = result.get("Status") or result.get("status")
+            if st not in (200, None):
+                ok = False
+        return BreezeApiTesterInvokeResponse(
+            ok=ok,
+            method=method,
+            duration_ms=duration_ms,
+            response=result,
+            error=None,
+        )
+
+    try:
+        positional, kwargs = build_invoke_args(method, dict(body.params or {}))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    sdk = breeze.get_session_breeze(ctx.user_id)
+    if sdk is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No active ICICI broker session. Log in with your broker token first.",
+        )
+
+    fn = getattr(sdk, method, None)
+    if not callable(fn):
+        raise HTTPException(status_code=400, detail=f"Method not available on Breeze session: {method}")
+
+    start = time.time()
+    try:
+        result = fn(*positional, **kwargs)
+    except Exception as exc:
+        duration_ms = int((time.time() - start) * 1000)
+        return BreezeApiTesterInvokeResponse(
+            ok=False,
+            method=method,
+            duration_ms=duration_ms,
+            response=None,
+            error=str(exc),
+        )
+
+    duration_ms = int((time.time() - start) * 1000)
+    ok = True
+    if isinstance(result, dict):
+        st = result.get("Status") or result.get("status")
+        if st not in (200, None):
+            ok = False
+    return BreezeApiTesterInvokeResponse(
+        ok=ok,
+        method=method,
+        duration_ms=duration_ms,
+        response=result,
+        error=None,
+    )
 ```
 
 ## backend/src/icici_breeze_backend/app/api/v1/route_strategy_builder.py
@@ -5235,6 +5630,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
 from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend
 from icici_breeze_backend.app.auth.context import get_request_context, RequestContext
 from icici_breeze_backend.app.api.v1.covered_shorts_scan import run_covered_shorts_scan
@@ -5363,6 +5759,7 @@ async def post_margin(
 async def post_execute(
     body: StrategyBuilderExecuteRequest,
     ctx: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
 ):
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -5747,6 +6144,7 @@ from icici_breeze_backend.app.api.v1 import route_performance
 from icici_breeze_backend.app.api.v1 import route_admin
 from icici_breeze_backend.app.api.v1 import route_strategy_builder
 from icici_breeze_backend.app.api.v1 import route_dev_mock
+from icici_breeze_backend.app.api.v1 import route_deployment
 
 v1_router = APIRouter()
 
@@ -5754,6 +6152,7 @@ v1_router.include_router(route_dev_mock.router, prefix="", include_in_schema=Fal
 v1_router.include_router(auth.router, prefix="", tags=["auth"], include_in_schema=True)
 v1_router.include_router(route_register.router, prefix="", include_in_schema=False)
 v1_router.include_router(home.router, prefix="", tags=[""], include_in_schema=False)
+v1_router.include_router(route_deployment.router, prefix="", include_in_schema=False)
 v1_router.include_router(route_portfolio.router, prefix="/portfolio", tags=[""], include_in_schema=False)
 v1_router.include_router(route_order.router, prefix="/order", tags=[""], include_in_schema=False)
 v1_router.include_router(route_book.router, prefix="/book", tags=[""], include_in_schema=False)
@@ -7227,6 +7626,14 @@ GOOGLE_OAUTH_REDIRECT_BASE_URL = _cfg.GOOGLE_OAUTH_REDIRECT_BASE_URL
 ICICI_BROKER_MODE = getattr(_cfg, "ICICI_BROKER_MODE", "live")
 ICICI_MOCK_SYNTHETIC_BROKER_TOKEN = getattr(_cfg, "ICICI_MOCK_SYNTHETIC_BROKER_TOKEN", False)
 ICICI_MOCK_BROKER_COOKIE_VALUE = getattr(_cfg, "ICICI_MOCK_BROKER_COOKIE_VALUE", "mock")
+DEPLOYMENT_LICENSE_KEY = getattr(_cfg, "DEPLOYMENT_LICENSE_KEY", "")
+PORTAL_API_BASE_URL = getattr(_cfg, "PORTAL_API_BASE_URL", "")
+DEPLOYMENT_GHCR_IMAGE = getattr(_cfg, "DEPLOYMENT_GHCR_IMAGE", "")
+DEPLOYMENT_CONTAINER_NAME = getattr(_cfg, "DEPLOYMENT_CONTAINER_NAME", "breeze-core-engine")
+DEPLOYMENT_ENV_FILE = getattr(_cfg, "DEPLOYMENT_ENV_FILE", "/opt/breeze-core-engine/.env")
+DEPLOYMENT_DATA_HOST_PATH = getattr(_cfg, "DEPLOYMENT_DATA_HOST_PATH", "/opt/breeze-core-engine/data")
+DEPLOYMENT_PUBLISH_PORT = getattr(_cfg, "DEPLOYMENT_PUBLISH_PORT", 80)
+PORTAL_HEARTBEAT_INTERVAL_SEC = getattr(_cfg, "PORTAL_HEARTBEAT_INTERVAL_SEC", 300)
 ```
 
 ## backend/src/icici_breeze_backend/app/core/logging.py
@@ -8028,6 +8435,526 @@ class DirectLoginRequest(BaseModel):
     password: str = Field(..., min_length=1)
 ```
 
+## backend/src/icici_breeze_backend/app/domain/breeze_api_tester_catalog.py
+
+```python
+"""Breeze-connect REST API catalog for Settings → Breeze API Playground."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from typing import Any, Literal
+
+RiskLevel = Literal["read", "trade", "funds", "gtt"]
+ParamType = Literal["string", "json"]
+
+
+@dataclass(frozen=True)
+class BreezeApiParamDef:
+    name: str
+    label: str
+    type: ParamType = "string"
+    required: bool = False
+    placeholder: str = ""
+    help: str = ""
+
+
+@dataclass(frozen=True)
+class BreezeApiCatalogEntry:
+    method: str
+    title: str
+    risk_level: RiskLevel
+    params: tuple[BreezeApiParamDef, ...] = ()
+    description: str = ""
+    notes: str = ""
+
+
+def _s(
+    name: str,
+    label: str | None = None,
+    *,
+    required: bool = False,
+    placeholder: str = "",
+    help: str = "",
+) -> BreezeApiParamDef:
+    return BreezeApiParamDef(
+        name=name,
+        label=label or name.replace("_", " ").title(),
+        type="string",
+        required=required,
+        placeholder=placeholder,
+        help=help,
+    )
+
+
+def _j(
+    name: str,
+    label: str,
+    *,
+    required: bool = True,
+    placeholder: str = "[]",
+    help: str = "",
+) -> BreezeApiParamDef:
+    return BreezeApiParamDef(
+        name=name,
+        label=label,
+        type="json",
+        required=required,
+        placeholder=placeholder,
+        help=help,
+    )
+
+
+_HIST_PARAMS = (
+    _s("interval", required=True, placeholder="1minute"),
+    _s("from_date", required=True, placeholder="2025-02-03T09:21:00.000Z"),
+    _s("to_date", required=True, placeholder="2025-02-03T09:22:00.000Z"),
+    _s("stock_code", required=True, placeholder="NIFTY"),
+    _s("exchange_code", required=True, placeholder="NFO"),
+    _s("product_type", placeholder="futures"),
+    _s("expiry_date", placeholder="2025-02-27T07:00:00.000Z"),
+    _s("right", placeholder="others"),
+    _s("strike_price", placeholder="0"),
+)
+
+_PLACE_ORDER_PARAMS = (
+    _s("stock_code", required=True),
+    _s("exchange_code", required=True, placeholder="NFO"),
+    _s("product", required=True, placeholder="futures"),
+    _s("action", required=True, placeholder="buy"),
+    _s("order_type", required=True, placeholder="limit"),
+    _s("stoploss", placeholder="0"),
+    _s("quantity", required=True, placeholder="75"),
+    _s("price", required=True, placeholder="23700"),
+    _s("validity", placeholder="day"),
+    _s("validity_date", placeholder="2025-02-05T06:00:00.000Z"),
+    _s("disclosed_quantity", placeholder="0"),
+    _s("expiry_date", placeholder="2025-02-27T06:00:00.000Z"),
+    _s("right", placeholder="call"),
+    _s("strike_price", placeholder="24800"),
+    _s("user_remark", placeholder=""),
+)
+
+_SQUARE_OFF_PARAMS = (
+    _s("exchange_code", required=True, placeholder="NFO"),
+    _s("product", required=True, placeholder="options"),
+    _s("stock_code", required=True, placeholder="NIFTY"),
+    _s("expiry_date", placeholder="2025-02-27T06:00:00.000Z"),
+    _s("right", placeholder="Call"),
+    _s("strike_price", placeholder="24000"),
+    _s("action", required=True, placeholder="sell"),
+    _s("order_type", placeholder="limit"),
+    _s("validity", placeholder="day"),
+    _s("stoploss", placeholder="0"),
+    _s("quantity", required=True, placeholder="75"),
+    _s("price", placeholder="0"),
+    _s("validity_date", placeholder="2025-02-05T06:00:00.000Z"),
+    _s("trade_password", placeholder=""),
+    _s("disclosed_quantity", placeholder="0"),
+)
+
+_CATALOG: tuple[BreezeApiCatalogEntry, ...] = (
+    BreezeApiCatalogEntry(
+        method="get_customer_details",
+        title="Get Customer Details",
+        risk_level="read",
+        description="Customer profile and exchange status using your logged-in broker session.",
+    ),
+    BreezeApiCatalogEntry(
+        method="get_demat_holdings",
+        title="Get Demat Holdings",
+        risk_level="read",
+        description="Demat holding details.",
+    ),
+    BreezeApiCatalogEntry(
+        method="get_funds",
+        title="Get Funds",
+        risk_level="read",
+        description="Fund allocation and balances.",
+    ),
+    BreezeApiCatalogEntry(
+        method="set_funds",
+        title="Set Funds",
+        risk_level="funds",
+        params=(
+            _s("transaction_type", required=True, placeholder="debit", help='Use "credit" to add funds.'),
+            _s("amount", required=True, placeholder="200"),
+            _s("segment", required=True, placeholder="Equity", help="Equity, FNO, or Commodity"),
+        ),
+        notes="Moves funds between segments. Use with extreme care.",
+    ),
+    BreezeApiCatalogEntry(
+        method="get_historical_data",
+        title="Get Historical Data",
+        risk_level="read",
+        params=_HIST_PARAMS,
+        notes="Interval: 1minute, 5minute, 30minute, or 1day.",
+    ),
+    BreezeApiCatalogEntry(
+        method="get_historical_data_v2",
+        title="Get Historical Data V2",
+        risk_level="read",
+        params=_HIST_PARAMS,
+        notes="Interval: 1minute, 5minute, 30minute, or 1day.",
+    ),
+    BreezeApiCatalogEntry(
+        method="get_margin",
+        title="Get Margin",
+        risk_level="read",
+        params=(_s("exchange_code", required=True, placeholder="NSE"),),
+    ),
+    BreezeApiCatalogEntry(
+        method="place_order",
+        title="Place Order",
+        risk_level="trade",
+        params=_PLACE_ORDER_PARAMS,
+        notes="Market orders are converted to aggressive limit orders per ICICI policy.",
+    ),
+    BreezeApiCatalogEntry(
+        method="get_order_detail",
+        title="Get Order Detail",
+        risk_level="read",
+        params=(
+            _s("exchange_code", required=True, placeholder="NSE"),
+            _s("order_id", required=True),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="get_order_list",
+        title="Get Order List",
+        risk_level="read",
+        params=(
+            _s("exchange_code", required=True, placeholder="NSE"),
+            _s("from_date", required=True, placeholder="2025-02-05T10:00:00.000Z"),
+            _s("to_date", required=True, placeholder="2025-02-05T10:00:00.000Z"),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="cancel_order",
+        title="Cancel Order",
+        risk_level="trade",
+        params=(
+            _s("exchange_code", required=True, placeholder="NSE"),
+            _s("order_id", required=True),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="modify_order",
+        title="Modify Order",
+        risk_level="trade",
+        params=(
+            _s("order_id", required=True),
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("order_type", placeholder="limit"),
+            _s("stoploss", placeholder="0"),
+            _s("quantity", required=True, placeholder="75"),
+            _s("price", required=True, placeholder="0.30"),
+            _s("validity", placeholder="day"),
+            _s("disclosed_quantity", placeholder="0"),
+            _s("validity_date", placeholder="2025-02-05T06:00:00.000Z"),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="get_portfolio_holdings",
+        title="Get Portfolio Holdings",
+        risk_level="read",
+        params=(
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("from_date", placeholder="2024-08-01T06:00:00.000Z"),
+            _s("to_date", placeholder="2024-09-19T06:00:00.000Z"),
+            _s("stock_code", placeholder=""),
+            _s("portfolio_type", placeholder=""),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="get_portfolio_positions",
+        title="Get Portfolio Positions",
+        risk_level="read",
+    ),
+    BreezeApiCatalogEntry(
+        method="get_quotes",
+        title="Get Quotes",
+        risk_level="read",
+        params=(
+            _s("stock_code", required=True, placeholder="NIFTY"),
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("expiry_date", placeholder="2025-02-27T06:00:00.000Z"),
+            _s("product_type", placeholder="futures"),
+            _s("right", placeholder="others"),
+            _s("strike_price", placeholder="0"),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="get_option_chain_quotes",
+        title="Get Option Chain Quotes",
+        risk_level="read",
+        params=(
+            _s("stock_code", required=True, placeholder="NIFTY"),
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("product_type", placeholder="options"),
+            _s("right", placeholder="call"),
+            _s("expiry_date", placeholder="2025-08-28T06:00:00.000Z"),
+            _s("strike_price", help="Optional; omit for full chain when combined with expiry/right."),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="square_off",
+        title="Square Off",
+        risk_level="trade",
+        params=_SQUARE_OFF_PARAMS,
+        notes="Squares off an open position. Can place real orders.",
+    ),
+    BreezeApiCatalogEntry(
+        method="get_trade_list",
+        title="Get Trade List",
+        risk_level="read",
+        params=(
+            _s("from_date", required=True, placeholder="2025-02-05T06:00:00.000Z"),
+            _s("to_date", required=True, placeholder="2025-02-05T06:00:00.000Z"),
+            _s("exchange_code", required=True, placeholder="NSE"),
+            _s("product_type", placeholder=""),
+            _s("action", placeholder=""),
+            _s("stock_code", placeholder=""),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="get_trade_detail",
+        title="Get Trade Detail",
+        risk_level="read",
+        params=(
+            _s("exchange_code", required=True, placeholder="NSE"),
+            _s("order_id", required=True),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="get_names",
+        title="Get Names",
+        risk_level="read",
+        params=(
+            _s("exchange_code", required=True, placeholder="NSE"),
+            _s("stock_code", required=True, placeholder="TATASTEEL"),
+        ),
+        description="ICICI stock codes and tokens for a symbol.",
+    ),
+    BreezeApiCatalogEntry(
+        method="preview_order",
+        title="Preview Order",
+        risk_level="read",
+        params=(
+            _s("stock_code", required=True, placeholder="ITC"),
+            _s("exchange_code", required=True, placeholder="NSE"),
+            _s("product", required=True, placeholder="margin"),
+            _s("order_type", required=True, placeholder="limit"),
+            _s("price", required=True, placeholder="440"),
+            _s("action", required=True, placeholder="buy"),
+            _s("quantity", required=True, placeholder="1"),
+            _s("specialflag", placeholder="N"),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="limit_calculator",
+        title="Limit Calculator",
+        risk_level="read",
+        params=(
+            _s("strike_price", required=True, placeholder="24000"),
+            _s("product_type", required=True, placeholder="options"),
+            _s("expiry_date", required=True, placeholder="06-Feb-2025"),
+            _s("underlying", required=True, placeholder="NIFTY"),
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("order_flow", required=True, placeholder="Buy"),
+            _s("stop_loss_trigger", placeholder="8"),
+            _s("option_type", placeholder="Call"),
+            _s("source_flag", placeholder="P"),
+            _s("limit_rate", placeholder="7.5"),
+            _s("order_reference", placeholder=""),
+            _s("available_quantity", placeholder=""),
+            _s("market_type", placeholder="limit"),
+            _s("fresh_order_limit", placeholder="10.95"),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="margin_calculator",
+        title="Margin Calculator",
+        risk_level="read",
+        params=(
+            _j(
+                "margin_list",
+                "Margin list (JSON array)",
+                placeholder='[{"stock_code":"NIFTY","quantity":"75","product":"futures","action":"buy","price":"23400","expiry_date":"27-Feb-2025","right":"others","strike_price":"0"}]',
+                help="Array of leg objects per breeze-connect docs.",
+            ),
+            _s("exchange_code", placeholder="NFO"),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="gtt_three_leg_place_order",
+        title="GTT Three Leg Place Order",
+        risk_level="gtt",
+        params=(
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("stock_code", required=True, placeholder="NIFTY"),
+            _s("product", required=True, placeholder="options"),
+            _s("quantity", required=True, placeholder="75"),
+            _s("expiry_date", required=True),
+            _s("right", required=True, placeholder="call"),
+            _s("strike_price", required=True, placeholder="24000"),
+            _s("gtt_type", required=True, placeholder="cover_oco"),
+            _s("fresh_order_action", placeholder="buy"),
+            _s("fresh_order_price", placeholder="8"),
+            _s("fresh_order_type", placeholder="limit"),
+            _s("index_or_stock", placeholder="index"),
+            _s("trade_date", placeholder="2025-02-05T06:00:00.00Z"),
+            _j("order_details", "Order details (JSON array)", required=True),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="gtt_three_leg_modify_order",
+        title="GTT Three Leg Modify Order",
+        risk_level="gtt",
+        params=(
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("gtt_order_id", required=True),
+            _s("gtt_type", required=True, placeholder="oco"),
+            _j("order_details", "Order details (JSON array)", required=True),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="gtt_three_leg_cancel_order",
+        title="GTT Three Leg Cancel Order",
+        risk_level="gtt",
+        params=(
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("gtt_order_id", required=True),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="gtt_single_leg_place_order",
+        title="GTT Single Leg Place Order",
+        risk_level="gtt",
+        params=(
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("stock_code", required=True, placeholder="NIFTY"),
+            _s("product", required=True, placeholder="options"),
+            _s("quantity", required=True, placeholder="75"),
+            _s("expiry_date", required=True),
+            _s("right", required=True, placeholder="call"),
+            _s("strike_price", required=True, placeholder="24000"),
+            _s("gtt_type", required=True, placeholder="single"),
+            _s("index_or_stock", placeholder="index"),
+            _s("trade_date", placeholder="2025-02-05T06:00:00.00Z"),
+            _j("order_details", "Order details (JSON array)", required=True),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="gtt_single_leg_modify_order",
+        title="GTT Single Leg Modify Order",
+        risk_level="gtt",
+        params=(
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("gtt_order_id", required=True),
+            _s("gtt_type", required=True, placeholder="single"),
+            _j("order_details", "Order details (JSON array)", required=True),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="gtt_single_leg_cancel_order",
+        title="GTT Single Leg Cancel Order",
+        risk_level="gtt",
+        params=(
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("gtt_order_id", required=True),
+        ),
+    ),
+    BreezeApiCatalogEntry(
+        method="gtt_order_book",
+        title="GTT Order Book",
+        risk_level="read",
+        params=(
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("from_date", required=True, placeholder="2025-02-05T06:00:00.00Z"),
+            _s("to_date", required=True, placeholder="2025-02-05T06:00:00.00Z"),
+        ),
+    ),
+)
+
+_METHOD_INDEX: dict[str, BreezeApiCatalogEntry] = {e.method: e for e in _CATALOG}
+ALLOWED_METHODS: frozenset[str] = frozenset(_METHOD_INDEX.keys())
+
+
+def get_catalog_entries() -> list[BreezeApiCatalogEntry]:
+    return list(_CATALOG)
+
+
+def get_catalog_entry(method: str) -> BreezeApiCatalogEntry | None:
+    return _METHOD_INDEX.get((method or "").strip())
+
+
+def catalog_entry_to_dict(entry: BreezeApiCatalogEntry) -> dict[str, Any]:
+    return {
+        "method": entry.method,
+        "title": entry.title,
+        "risk_level": entry.risk_level,
+        "description": entry.description,
+        "notes": entry.notes,
+        "params": [asdict(p) for p in entry.params],
+    }
+
+
+def get_catalog_response() -> list[dict[str, Any]]:
+    return [catalog_entry_to_dict(e) for e in _CATALOG]
+
+
+def _parse_json_field(name: str, raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON for {name}: {exc}") from exc
+
+
+def build_invoke_args(method: str, params: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Return (positional_args, kwargs) for getattr(breeze, method)."""
+    entry = get_catalog_entry(method)
+    if entry is None:
+        raise ValueError(f"Unknown method: {method}")
+
+    allowed_names = {p.name for p in entry.params}
+    kwargs: dict[str, Any] = {}
+    positional: list[Any] = []
+
+    for pname, pdef in ((p.name, p) for p in entry.params):
+        if pname not in params:
+            if pdef.required:
+                raise ValueError(f"Missing required parameter: {pname}")
+            continue
+        raw = params[pname]
+        if raw is None:
+            continue
+        if isinstance(raw, str) and not raw.strip():
+            if pdef.required:
+                raise ValueError(f"Missing required parameter: {pname}")
+            continue
+
+        if pdef.type == "json":
+            val = raw if not isinstance(raw, str) else _parse_json_field(pname, raw.strip())
+        else:
+            val = str(raw).strip() if raw is not None else ""
+
+        if method == "margin_calculator" and pname == "margin_list":
+            positional.append(val)
+        else:
+            kwargs[pname] = val
+
+    extra = set(params.keys()) - allowed_names
+    if extra:
+        raise ValueError(f"Unknown parameters: {', '.join(sorted(extra))}")
+
+    if method == "margin_calculator" and not positional:
+        raise ValueError("margin_list is required for margin_calculator")
+
+    return tuple(positional), kwargs
+```
+
 ## backend/src/icici_breeze_backend/app/domain/order.py
 
 ```python
@@ -8472,7 +9399,7 @@ class CustomerDetails(BaseModel):
 ```python
 """Response models for API endpoints. Ensures explicit schemas and no raw DB/API objects."""
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -8548,6 +9475,16 @@ class StockCodesResponse(BaseModel):
     stock_codes: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class DeploymentLicenseContactSales(BaseModel):
+    """Deployment context for Contact Sales mailto when license is expired or revoked."""
+
+    model_config = ConfigDict(extra="forbid")
+    license_key: Optional[str] = Field(None, description="Deployment license key from env")
+    public_ip: Optional[str] = Field(None, description="Public IP parsed from deployment origin")
+    deployment_origin: Optional[str] = Field(None, description="PUBLIC_FRONTEND_ORIGIN URL")
+    app_version: Optional[str] = Field(None, description="Reported app version from heartbeat")
+
+
 class HomeDataResponse(BaseModel):
     """Home /data: customer and margin info."""
     customer: Dict[str, Any] = Field(default_factory=dict)
@@ -8563,6 +9500,35 @@ class HomeDataResponse(BaseModel):
     api_usage_band: str = Field(
         "green",
         description="green | amber | red relative to daily limit thresholds",
+    )
+    deployment_license_status: Optional[Literal["active", "expired", "revoked", "unlicensed"]] = Field(
+        None,
+        description="Portal-reported deployment license status when portal env is configured",
+    )
+    deployment_license_read_only: bool = Field(
+        False,
+        description="True when deployment is unlicensed or revoked (trading mutations blocked)",
+    )
+    contact_sales: Optional[DeploymentLicenseContactSales] = Field(
+        None,
+        description="License/deployment snapshot for Contact Sales when status is expired, revoked, or unlicensed",
+    )
+
+
+class DeploymentLicenseStatusResponse(BaseModel):
+    """Portal deployment license status (heartbeat cache); JWT only, no broker calls."""
+
+    deployment_license_status: Optional[Literal["active", "expired", "revoked", "unlicensed"]] = Field(
+        None,
+        description="Portal-reported deployment license status when portal env is configured",
+    )
+    deployment_license_read_only: bool = Field(
+        False,
+        description="True when deployment is unlicensed or revoked (trading mutations blocked)",
+    )
+    contact_sales: Optional[DeploymentLicenseContactSales] = Field(
+        None,
+        description="License/deployment snapshot for Contact Sales when status is expired, revoked, or unlicensed",
     )
 
 
@@ -8844,6 +9810,46 @@ class OutlookConfigResetBody(BaseModel):
     reset_feeds: bool = True
     reset_prompt: bool = True
     reset_system_prompt: bool = False
+
+
+class BreezeApiTesterParamDef(BaseModel):
+    name: str
+    label: str
+    type: str = "string"
+    required: bool = False
+    placeholder: str = ""
+    help: str = ""
+
+
+class BreezeApiTesterCatalogEntry(BaseModel):
+    method: str
+    title: str
+    risk_level: str
+    description: str = ""
+    notes: str = ""
+    params: list[BreezeApiTesterParamDef] = Field(default_factory=list)
+
+
+class BreezeApiTesterCatalogResponse(BaseModel):
+    entries: list[BreezeApiTesterCatalogEntry] = Field(default_factory=list)
+
+
+class BreezeApiTesterRiskStatusResponse(BaseModel):
+    accepted: bool = False
+    accepted_at: Optional[str] = None
+
+
+class BreezeApiTesterInvokeBody(BaseModel):
+    method: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class BreezeApiTesterInvokeResponse(BaseModel):
+    ok: bool
+    method: str
+    duration_ms: int
+    response: Any = None
+    error: Optional[str] = None
 ```
 
 ## backend/src/icici_breeze_backend/app/domain/strategy_builder.py
@@ -9283,6 +10289,14 @@ from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
 logger = logging.getLogger("app.middleware")
 
+# High-frequency probes should not write to audit_log (no authenticated user).
+_AUDIT_SKIP_PATHS = frozenset({"/health", "/metrics"})
+
+
+def _resolve_request_actor(request: Request, state_user_id: str | None) -> str:
+    client_ip = (request.client.host if request.client else None) or "unknown"
+    return state_user_id or client_ip or "anonymous"
+
 
 class RequestLoggerMiddleware(BaseHTTPMiddleware):
     """Log incoming requests and append to audit trail."""
@@ -9291,12 +10305,13 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
         set_current_route_id(f"{request.method} {request.url.path}")
         # request.state.user_id is set by auth dependencies; middleware runs before them.
         state_user_id_before = getattr(request.state, "user_id", None)
-        client_ip = request.client.host if request.client else "unknown"
 
         response = await call_next(request)
 
         state_user_id_after = getattr(request.state, "user_id", None)
-        user_id = state_user_id_after or state_user_id_before or client_ip
+        user_id = _resolve_request_actor(
+            request, state_user_id_after or state_user_id_before
+        )
 
         logger.info(
             "Incoming request %s %s user_id=%s",
@@ -9304,6 +10319,9 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
             request.url.path,
             user_id,
         )
+
+        if request.url.path in _AUDIT_SKIP_PATHS:
+            return response
 
         try:
             AuditLogger(None).log_operation(
@@ -9850,6 +10868,71 @@ def revoke_credentials(target_user_id: str) -> bool:
         raise ValueError("JWT_SECRET not configured")
     mgr = CredentialManager(encryption_key=key)
     return mgr.revoke_credentials(target_user_id)
+```
+
+## backend/src/icici_breeze_backend/app/services/breeze_api_tester_risk.py
+
+```python
+"""Server-side risk acknowledgment for Breeze API Playground (Settings)."""
+
+from __future__ import annotations
+
+import sqlite3
+from datetime import datetime, timedelta, timezone
+
+import icici_breeze_backend.app.core.config as cfg
+
+# Acceptance expires after 8 hours (browser-session-scale; re-ack on return).
+_RISK_ACK_TTL_HOURS = 8
+
+
+def ensure_breeze_api_tester_risk_column() -> None:
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        try:
+            conn.execute(
+                "ALTER TABLE user_account ADD COLUMN breeze_api_tester_risk_accepted_at TEXT"
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+
+def set_breeze_api_tester_risk_accepted(user_id: str) -> str:
+    """Persist acceptance timestamp (UTC ISO). Returns the stored value."""
+    ensure_breeze_api_tester_risk_column()
+    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        conn.execute(
+            "UPDATE user_account SET breeze_api_tester_risk_accepted_at = ? WHERE user_id = ?",
+            (ts, user_id),
+        )
+        conn.commit()
+    return ts
+
+
+def get_breeze_api_tester_risk_accepted_at(user_id: str) -> str | None:
+    ensure_breeze_api_tester_risk_column()
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        row = conn.execute(
+            "SELECT breeze_api_tester_risk_accepted_at FROM user_account WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if not row or not row[0]:
+        return None
+    return str(row[0])
+
+
+def is_breeze_api_tester_risk_accepted(user_id: str) -> bool:
+    raw = get_breeze_api_tester_risk_accepted_at(user_id)
+    if not raw:
+        return False
+    try:
+        accepted = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if accepted.tzinfo is None:
+            accepted = accepted.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return datetime.now(timezone.utc) - accepted <= timedelta(hours=_RISK_ACK_TTL_HOURS)
 ```
 
 ## backend/src/icici_breeze_backend/app/services/breeze_session_cache.py
@@ -10937,6 +12020,572 @@ def fetch_vix_data(user_id: str, processor) -> Dict[str, Any]:
     }
 ```
 
+## backend/src/icici_breeze_backend/app/services/deployment_container_upgrade.py
+
+```python
+"""In-place Core Engine container upgrade (matches CFN bootstrap docker run)."""
+from __future__ import annotations
+
+import base64
+import logging
+import os
+import shlex
+import time
+from typing import Any
+
+import icici_breeze_backend.app.core.config as cfg
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_ENV_FILE = "/opt/breeze-core-engine/.env"
+_DEFAULT_DATA_HOST = "/opt/breeze-core-engine/data"
+_DEFAULT_HOST_PORT = 80
+_CONTAINER_PORT = 3000
+_UPGRADE_ENV_FILE = "/opt/breeze-core-engine/.upgrade.env"
+_UPGRADE_LOG_FILE = "/opt/breeze-core-engine/upgrade.log"
+_DEPLOY_ROOT = "/opt/breeze-core-engine"
+# Recreate must run in a sibling container — stopping the app from inside kills the upgrade process.
+_UPGRADE_HELPER_IMAGE = "docker:cli"
+_UPGRADE_PLATFORM = "linux/arm64"
+
+
+def deployment_env_file_path() -> str:
+    return (getattr(cfg, "DEPLOYMENT_ENV_FILE", None) or _DEFAULT_ENV_FILE).strip() or _DEFAULT_ENV_FILE
+
+
+def deployment_data_host_path() -> str:
+    return (getattr(cfg, "DEPLOYMENT_DATA_HOST_PATH", None) or _DEFAULT_DATA_HOST).strip() or _DEFAULT_DATA_HOST
+
+
+def deployment_publish_port() -> int:
+    raw = getattr(cfg, "DEPLOYMENT_PUBLISH_PORT", None)
+    try:
+        return int(raw) if raw is not None else _DEFAULT_HOST_PORT
+    except (TypeError, ValueError):
+        return _DEFAULT_HOST_PORT
+
+
+def parse_dotenv_text(text: str) -> dict[str, str]:
+    """Parse KEY=value lines from .env file content."""
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip().strip('"').strip("'")
+        out[key] = value
+    return out
+
+
+def parse_dotenv_file(path: str) -> dict[str, str]:
+    """Parse KEY=value lines from a .env file on the local filesystem."""
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return parse_dotenv_text(fh.read())
+    except OSError as exc:
+        logger.warning("deployment upgrade: could not read env file %s: %s", path, exc)
+        return {}
+
+
+def read_host_env_file(client: Any, path: str) -> dict[str, str]:
+    """
+    Load host .env for upgrade. Prefer a local read (bind-mounted path); otherwise
+    read via a one-shot container on the host Docker socket (pre-mount EC2 stacks).
+    """
+    env = parse_dotenv_file(path)
+    if env:
+        return env
+
+    try:
+        from docker.errors import APIError, DockerException
+
+        raw = client.containers.run(
+            "alpine:3.20",
+            ["cat", path],
+            remove=True,
+            volumes={path: {"bind": path, "mode": "ro"}},
+        )
+        if isinstance(raw, bytes):
+            text = raw.decode("utf-8", errors="replace")
+        else:
+            text = str(raw or "")
+        env = parse_dotenv_text(text)
+        if env:
+            logger.info(
+                "deployment upgrade: loaded %d keys from host env file %s via docker",
+                len(env),
+                path,
+            )
+        return env
+    except (APIError, DockerException, OSError) as exc:
+        logger.warning("deployment upgrade: could not read host env file %s: %s", path, exc)
+        return {}
+
+
+def _env_list_from_container_attrs(attrs: dict[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in attrs.get("Config", {}).get("Env") or []:
+        if not isinstance(item, str) or "=" not in item:
+            continue
+        key, _, value = item.partition("=")
+        if key:
+            out[key] = value
+    return out
+
+
+def resolve_recreate_environment(client: Any, container_name: str, env_file: str) -> dict[str, str]:
+    """
+    Environment for the new container: on-disk .env wins over the running container.
+    """
+    env = read_host_env_file(client, env_file)
+    try:
+        old = client.containers.get(container_name)
+        inherited = _env_list_from_container_attrs(old.attrs or {})
+        if inherited:
+            merged = 0
+            for key, value in inherited.items():
+                if key not in env:
+                    env[key] = value
+                    merged += 1
+            if merged:
+                logger.info(
+                    "deployment upgrade: merged %d keys from existing container %s",
+                    merged,
+                    container_name,
+                )
+    except Exception as exc:  # noqa: BLE001
+        if exc.__class__.__name__ != "NotFound":
+            logger.debug("deployment upgrade: could not read env from existing container: %s", exc)
+
+    if not env:
+        logger.warning(
+            "deployment upgrade: no environment resolved (env file %s missing or empty?)",
+            env_file,
+        )
+    return env
+
+
+def format_dotenv_text(env: dict[str, str]) -> str:
+    """Serialize environment for docker --env-file (KEY=value lines)."""
+    lines: list[str] = []
+    for key in sorted(env):
+        value = env[key]
+        if not key:
+            continue
+        if any(ch in value for ch in " \t\n#'\""):
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'{key}="{escaped}"')
+        else:
+            lines.append(f"{key}={value}")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def write_host_file_via_docker(client: Any, host_path: str, content: str, *, mode: int = 0o600) -> None:
+    """Write a file on the EC2 host by bind-mounting its parent directory into alpine."""
+    from docker.errors import APIError, DockerException
+
+    parent = os.path.dirname(host_path) or "/"
+    filename = os.path.basename(host_path)
+    payload = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    script = "\n".join(
+        [
+            "set -eu",
+            f"mkdir -p {shlex.quote(parent)}",
+            f"echo {shlex.quote(payload)} | base64 -d > {shlex.quote(host_path)}",
+            f"chmod {mode:o} {shlex.quote(host_path)}",
+        ]
+    )
+    try:
+        client.containers.run(
+            "alpine:3.20",
+            ["sh", "-c", script],
+            remove=True,
+            volumes={parent: {"bind": parent, "mode": "rw"}},
+        )
+    except (APIError, DockerException, OSError) as exc:
+        logger.warning("deployment upgrade: could not write host file %s: %s", host_path, exc)
+        raise
+
+
+def prepare_upgrade_env_file(client: Any, container_name: str) -> str:
+    """
+    Resolve full environment (host .env + running container) and write .upgrade.env on the host.
+    The helper uses this file so recreate survives missing or stale host .env files.
+    """
+    canonical = deployment_env_file_path()
+    env = resolve_recreate_environment(client, container_name, canonical)
+    if not env:
+        logger.warning(
+            "deployment upgrade: no env keys resolved; helper will fall back to %s if present",
+            canonical,
+        )
+        return canonical
+
+    write_host_file_via_docker(client, _UPGRADE_ENV_FILE, format_dotenv_text(env))
+    logger.info(
+        "deployment upgrade: wrote %d keys to %s for helper recreate",
+        len(env),
+        _UPGRADE_ENV_FILE,
+    )
+    return _UPGRADE_ENV_FILE
+
+
+def upgrade_shell_script(
+    *,
+    image: str,
+    container_name: str,
+    env_file: str,
+    data_host: str,
+    host_port: int,
+    log_file: str = _UPGRADE_LOG_FILE,
+) -> str:
+    """Shell recreate matching CFN bootstrap; runs on host via docker CLI helper."""
+    qn = shlex.quote(container_name)
+    qe = shlex.quote(env_file)
+    qi = shlex.quote(image)
+    qd = shlex.quote(data_host)
+    ql = shlex.quote(log_file)
+    return "\n".join(
+        [
+            "set -eu",
+            f"LOG={ql}",
+            f"NAME={qn}",
+            f"IMAGE={qi}",
+            f"ENV_FILE={qe}",
+            'mkdir -p "$(dirname "$LOG")"',
+            'exec >>"$LOG" 2>&1',
+            'echo "=== breeze upgrade $(date -Iseconds 2>/dev/null || date) image=$IMAGE container=$NAME ==="',
+            f"test -f \"$ENV_FILE\" || {{ echo \"ERROR: env file missing: $ENV_FILE\"; exit 1; }}",
+            f"docker pull \"$IMAGE\"",
+            "docker rm -f \"$NAME\" 2>/dev/null || true",
+            "if docker ps -a --format '{{.Names}}' | grep -Fxq \"$NAME\"; then",
+            '  echo "ERROR: container $NAME still exists after docker rm -f"',
+            "  exit 1",
+            "fi",
+            "docker run -d "
+            '--name "$NAME" '
+            "--restart unless-stopped "
+            f"-p {int(host_port)}:{_CONTAINER_PORT} "
+            f"-v {qd}:/app/backend/data "
+            '-v "$ENV_FILE":"$ENV_FILE":ro '
+            "-v /var/run/docker.sock:/var/run/docker.sock "
+            '--env-file "$ENV_FILE" '
+            '"$IMAGE"',
+            'echo "=== upgrade complete: $(docker ps --filter name=^/$NAME$ --format {{.Status}}) ==="',
+        ]
+    )
+
+
+def pull_upgrade_helper_image(client: Any) -> None:
+    """Ensure the docker-cli helper image is present (EC2 hosts are arm64)."""
+    from docker.errors import APIError, DockerException
+
+    try:
+        logger.info("deployment upgrade: pulling helper image %s", _UPGRADE_HELPER_IMAGE)
+        client.images.pull(_UPGRADE_HELPER_IMAGE, platform=_UPGRADE_PLATFORM)
+    except TypeError:
+        client.images.pull(_UPGRADE_HELPER_IMAGE)
+    except (APIError, DockerException) as exc:
+        logger.warning("deployment upgrade: helper image pull failed: %s", exc)
+        raise
+
+
+def schedule_recreate_via_helper(client: Any, *, image: str, container_name: str) -> None:
+    """
+    Run stop/rm/run in a detached docker-cli container so the app container can be
+    replaced without killing the process that scheduled the upgrade.
+    """
+    from docker.errors import APIError, DockerException
+
+    env_file = prepare_upgrade_env_file(client, container_name)
+    data_host = deployment_data_host_path()
+    host_port = deployment_publish_port()
+    script = upgrade_shell_script(
+        image=image,
+        container_name=container_name,
+        env_file=env_file,
+        data_host=data_host,
+        host_port=host_port,
+    )
+    pull_upgrade_helper_image(client)
+
+    helper_name = f"breeze-upgrade-{int(time.time())}"
+    logger.info(
+        "deployment upgrade: launching detached helper %s to recreate %s (env_file=%s); "
+        "this container will be replaced shortly",
+        helper_name,
+        container_name,
+        env_file,
+    )
+    try:
+        helper = client.containers.run(
+            _UPGRADE_HELPER_IMAGE,
+            entrypoint=["sh", "-c"],
+            command=[script],
+            name=helper_name,
+            detach=True,
+            remove=False,
+            volumes={
+                "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
+                _DEPLOY_ROOT: {"bind": _DEPLOY_ROOT, "mode": "rw"},
+            },
+        )
+    except (APIError, DockerException) as exc:
+        logger.warning("deployment upgrade: helper launch failed: %s", exc)
+        raise
+    helper_id = getattr(helper, "id", helper)
+    logger.info(
+        "deployment upgrade: helper started id=%s name=%s — on failure inspect: "
+        "docker logs %s; cat %s",
+        helper_id,
+        helper_name,
+        helper_name,
+        _UPGRADE_LOG_FILE,
+    )
+
+
+def recreate_deployment_container(client: Any, *, image: str, container_name: str) -> None:
+    """
+    Pull image and replace the deployment container using the host .env file
+    (same contract as infra/breeze-core-engine-stack.yaml bootstrap).
+    """
+    from docker.errors import APIError, DockerException, NotFound
+
+    env_file = deployment_env_file_path()
+    data_host = deployment_data_host_path()
+    host_port = deployment_publish_port()
+
+    environment = resolve_recreate_environment(client, container_name, env_file)
+
+    try:
+        old = client.containers.get(container_name)
+        logger.info("deployment upgrade: stopping %s", container_name)
+        old.stop(timeout=120)
+        old.remove(force=True)
+    except NotFound:
+        pass
+    except (APIError, DockerException) as exc:
+        logger.warning("deployment upgrade: could not remove old container: %s", exc)
+        raise
+
+    volumes = {
+        data_host: {"bind": "/app/backend/data", "mode": "rw"},
+        "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
+    }
+    volumes[env_file] = {"bind": env_file, "mode": "ro"}
+
+    logger.info(
+        "deployment upgrade: starting %s from %s (env_file=%s, port %s:%s)",
+        container_name,
+        image,
+        env_file,
+        host_port,
+        _CONTAINER_PORT,
+    )
+    client.containers.run(
+        image,
+        name=container_name,
+        detach=True,
+        restart_policy={"Name": "unless-stopped"},
+        ports={f"{_CONTAINER_PORT}/tcp": host_port},
+        volumes=volumes,
+        environment=environment,
+    )
+    logger.info("deployment upgrade: container %s is up", container_name)
+```
+
+## backend/src/icici_breeze_backend/app/services/deployment_license_status.py
+
+```python
+"""In-memory deployment license status from portal heartbeat / deployment-login."""
+from __future__ import annotations
+
+import threading
+from datetime import datetime, timezone
+from typing import Any, Literal
+
+import icici_breeze_backend.app.core.config as cfg
+
+LicenseStatus = Literal[
+    "active",
+    "expired",
+    "revoked",
+    "unlicensed",
+    "pending_activation",
+    "trial_denied",
+]
+LicenseSource = Literal["heartbeat", "deployment-login"]
+
+TRADING_READ_ONLY_MESSAGE = (
+    "Read-only mode — you cannot define strategies or execute trades. "
+    "Sign in at breeze-ui.com to obtain or activate a deployment license for this application."
+)
+
+# Backward-compatible alias for tests and imports.
+REVOKED_TRADING_MESSAGE = TRADING_READ_ONLY_MESSAGE
+
+_lock = threading.Lock()
+_status: LicenseStatus | None = None
+_verified_at: datetime | None = None
+_source: LicenseSource | None = None
+_heartbeat_interval_sec: int = 300
+_startup_at: datetime = datetime.now(timezone.utc)
+
+
+def _portal_configured() -> bool:
+    return bool((cfg.PORTAL_API_BASE_URL or "").strip())
+
+
+def _has_license_key() -> bool:
+    return bool((cfg.DEPLOYMENT_LICENSE_KEY or "").strip())
+
+
+def _effective_status_locked(now: datetime) -> LicenseStatus:
+    """License status used for enforcement, accounting for staleness."""
+    if _status is None:
+        return "unlicensed"
+    if _is_stale_locked(now):
+        return "unlicensed"
+    return _status
+
+
+def _is_stale_locked(now: datetime) -> bool:
+    if _verified_at is None:
+        return True
+    interval = max(300, min(3600, int(_heartbeat_interval_sec or 300)))
+    age = (now - _verified_at).total_seconds()
+    return age > (2 * interval)
+
+
+def update_from_verified_policy(
+    policy: dict[str, Any],
+    *,
+    source: LicenseSource,
+) -> None:
+    """Update cached license state from a cryptographically verified portal policy."""
+    if not _portal_configured():
+        return
+
+    raw = policy.get("deployment_license_status") or policy.get("license_status")
+    if raw not in (
+        "active",
+        "expired",
+        "revoked",
+        "unlicensed",
+        "pending_activation",
+        "trial_denied",
+    ):
+        return
+
+    new_status: LicenseStatus = raw  # type: ignore[assignment]
+    interval = policy.get("heartbeat_interval_sec")
+    try:
+        interval_sec = int(interval) if interval is not None else None
+    except (TypeError, ValueError):
+        interval_sec = None
+
+    global _status, _verified_at, _source, _heartbeat_interval_sec
+    with _lock:
+        _status = new_status
+        _verified_at = datetime.now(timezone.utc)
+        _source = source
+        if interval_sec is not None:
+            _heartbeat_interval_sec = max(300, min(3600, interval_sec))
+
+
+def record_portal_verify_failure() -> None:
+    """Mark that the latest portal call did not yield a verified policy (staleness only)."""
+    # Intentionally does not clear _verified_at; trading falls back via _is_stale_locked.
+    pass
+
+
+def get_license_status() -> LicenseStatus | None:
+    if not _portal_configured():
+        return None
+    if not _has_license_key():
+        return "unlicensed"
+    with _lock:
+        if _status is None:
+            return None
+        return _effective_status_locked(datetime.now(timezone.utc))
+
+
+def trading_mutations_allowed() -> bool:
+    """True when deployment has a valid active license for trading mutations."""
+    if not _portal_configured():
+        return True
+    if not _has_license_key():
+        return False
+    now = datetime.now(timezone.utc)
+    with _lock:
+        effective = _effective_status_locked(now)
+        return effective not in ("revoked", "unlicensed", "pending_activation", "trial_denied")
+
+
+def _contact_sales_context() -> dict[str, Any]:
+    from icici_breeze_backend.app.services.portal_deployment_heartbeat import _reported_version
+    from icici_breeze_backend.app.services.portal_deployment_login import _public_ip_from_origin
+
+    key = (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
+    origin = (cfg.PUBLIC_FRONTEND_ORIGIN or "").strip()
+    version = (_reported_version() or "").strip()
+    return {
+        "license_key": key or None,
+        "public_ip": _public_ip_from_origin(),
+        "deployment_origin": origin or None,
+        "app_version": version or None,
+    }
+
+
+def _read_only_for_status(status: LicenseStatus) -> bool:
+    return status in ("revoked", "unlicensed", "pending_activation", "trial_denied")
+
+
+def get_license_status_for_api() -> dict[str, Any] | None:
+    """Payload fields for HomeDataResponse; None when portal is not configured."""
+    if not _portal_configured():
+        return None
+    if not _has_license_key():
+        return {
+            "deployment_license_status": "unlicensed",
+            "deployment_license_read_only": True,
+            "contact_sales": _contact_sales_context(),
+        }
+    now = datetime.now(timezone.utc)
+    with _lock:
+        if _status is None:
+            return {
+                "deployment_license_status": "unlicensed",
+                "deployment_license_read_only": True,
+                "contact_sales": _contact_sales_context(),
+            }
+        effective = _effective_status_locked(now)
+        payload: dict[str, Any] = {
+            "deployment_license_status": effective,
+            "deployment_license_read_only": _read_only_for_status(effective),
+        }
+        if effective in ("expired", "revoked", "unlicensed", "trial_denied"):
+            payload["contact_sales"] = _contact_sales_context()
+        return payload
+
+
+def reset_for_tests() -> None:
+    """Clear cached state (tests only)."""
+    global _status, _verified_at, _source, _heartbeat_interval_sec, _startup_at
+    with _lock:
+        _status = None
+        _verified_at = None
+        _source = None
+        _heartbeat_interval_sec = 300
+        _startup_at = datetime.now(timezone.utc)
+```
+
 ## backend/src/icici_breeze_backend/app/services/gemini_model_catalog.py
 
 ```python
@@ -11002,6 +12651,75 @@ def fetch_gemini_model_catalog(api_key: str) -> tuple[list[str], dict[str, str]]
             if not page_token:
                 break
     return ordered_ids, display
+```
+
+## backend/src/icici_breeze_backend/app/services/icici_customer_identity.py
+
+```python
+"""Parse ICICI customer details payload for portal license activation."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _success_dict(customer: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not customer or not isinstance(customer, dict):
+        return None
+    raw = customer.get("Success") or customer.get("success")
+    if isinstance(raw, dict):
+        return raw
+    return None
+
+
+def _pick_user_id(success: dict[str, Any]) -> str | None:
+    for key in ("id", "user_id", "idirect_user_id", "Idirect_user_id"):
+        val = success.get(key)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return None
+
+
+def _pick_display_name(success: dict[str, Any]) -> str | None:
+    for key in ("idirect_user_name", "Idirect_user_name", "user_name", "name"):
+        val = success.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return None
+
+
+def normalize_icici_user_id(raw: str) -> str:
+    return (raw or "").strip().upper()
+
+
+def parse_customer_details_identity(
+    customer: dict[str, Any] | None,
+    *,
+    fallback_user_id: str,
+) -> tuple[str, str | None]:
+    """
+    Return (icici_user_id, idirect_user_name) from get_customer_details response.
+    Prefers API Success.id over fallback form user_id when they differ.
+    """
+    success = _success_dict(customer)
+    api_id = _pick_user_id(success) if success else None
+    fallback = normalize_icici_user_id(fallback_user_id)
+    if api_id:
+        normalized_api = normalize_icici_user_id(api_id)
+        if fallback and normalized_api != fallback:
+            logger.warning(
+                "icici_user_id mismatch form=%s api=%s; using api id",
+                fallback,
+                normalized_api,
+            )
+        icici_user_id = normalized_api
+    else:
+        icici_user_id = fallback
+
+    display_name = _pick_display_name(success) if success else None
+    return icici_user_id, display_name
 ```
 
 ## backend/src/icici_breeze_backend/app/services/iv_compute.py
@@ -11963,6 +13681,732 @@ class OutlookService:
         return normalized
 ```
 
+## backend/src/icici_breeze_backend/app/services/portal_deployment_heartbeat.py
+
+```python
+"""Periodic portal heartbeat and admin-approved container upgrades."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
+
+import httpx
+
+import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services.deployment_license_status import (
+    record_portal_verify_failure,
+    update_from_verified_policy,
+)
+from icici_breeze_backend.app.services.portal_deployment_login import _public_ip_from_origin
+from icici_breeze_backend.app.services.portal_policy_token import (
+    parse_verified_portal_body,
+    portal_host_allowed,
+)
+
+logger = logging.getLogger(__name__)
+
+_IST = ZoneInfo("Asia/Kolkata")
+_MARKET_OPEN = time(9, 0)
+_MARKET_CLOSE = time(16, 0)
+_HEARTBEAT_TIMEOUT_SEC = 10.0
+_INTERVAL_MIN_SEC = 300
+_INTERVAL_MAX_SEC = 3600
+
+_last_interval_sec: int = _INTERVAL_MIN_SEC
+
+
+def is_ist_market_hours(now: datetime | None = None) -> bool:
+    """True when local IST time is in [09:00, 16:00) — legacy upgrade guard."""
+    dt = now or datetime.now(_IST)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_IST)
+    else:
+        dt = dt.astimezone(_IST)
+    t = dt.time()
+    return _MARKET_OPEN <= t < _MARKET_CLOSE
+
+
+def _clamp_interval(sec: int | float | str | None) -> int:
+    try:
+        n = int(sec)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        n = int(cfg.PORTAL_HEARTBEAT_INTERVAL_SEC or 300)
+    return max(_INTERVAL_MIN_SEC, min(_INTERVAL_MAX_SEC, n))
+
+
+def _read_baked_app_version() -> str:
+    path = (os.environ.get("APP_VERSION_FILE") or "").strip() or "/etc/breeze_app_version"
+    try:
+        with open(path, encoding="utf-8") as fh:
+            val = fh.read().strip()
+            if val:
+                return val[:512]
+    except OSError:
+        pass
+    return ""
+
+
+def _reported_version() -> str:
+    for key in ("APP_VERSION", "IMAGE_TAG", "DEPLOYMENT_VERSION"):
+        val = (os.environ.get(key) or "").strip()
+        if val:
+            return val[:512]
+    baked = _read_baked_app_version()
+    if baked:
+        return baked
+    return "unknown"
+
+
+def _upgrade_allowed(policy: dict) -> bool:
+    if "upgrade_allowed_now" in policy:
+        return bool(policy.get("upgrade_allowed_now"))
+    return not is_ist_market_hours()
+
+
+def _apply_policy_from_body(policy: dict) -> None:
+    global _last_interval_sec
+    if "heartbeat_interval_sec" in policy:
+        _last_interval_sec = _clamp_interval(policy.get("heartbeat_interval_sec"))
+
+
+def current_heartbeat_interval_sec() -> int:
+    return _last_interval_sec
+
+
+def _resolve_upgrade_image(target_tag: str | None) -> str | None:
+    base = (cfg.DEPLOYMENT_GHCR_IMAGE or "").strip()
+    if not base:
+        return None
+    tag = (target_tag or "").strip()
+    if not tag:
+        return base
+    if ":" in base:
+        repo = base.rsplit(":", 1)[0]
+        return f"{repo}:{tag}"
+    return f"{base}:{tag}"
+
+
+def execute_upgrade(target_tag: str | None) -> None:
+    """Pull target image and recreate the deployment container with the host .env file."""
+    from icici_breeze_backend.app.services.deployment_container_upgrade import (
+        schedule_recreate_via_helper,
+    )
+
+    image = _resolve_upgrade_image(target_tag)
+    if not image:
+        logger.warning("portal heartbeat upgrade skipped: DEPLOYMENT_GHCR_IMAGE not set")
+        return
+
+    container_name = (cfg.DEPLOYMENT_CONTAINER_NAME or "breeze-core-engine").strip() or "breeze-core-engine"
+
+    try:
+        import docker
+        from docker.errors import APIError, DockerException
+    except ImportError:
+        logger.warning("portal heartbeat upgrade skipped: docker SDK not installed")
+        return
+
+    try:
+        client = docker.from_env()
+    except DockerException as exc:
+        logger.warning("portal heartbeat upgrade: docker connection failed: %s", exc)
+        return
+
+    try:
+        logger.info("portal heartbeat upgrade: pulling %s", image)
+        client.images.pull(image)
+    except (APIError, DockerException) as exc:
+        logger.warning("portal heartbeat upgrade: image pull failed: %s", exc)
+        return
+
+    logger.info(
+        "portal heartbeat upgrade: scheduling detached helper recreate for %s (app container stays up until helper runs)",
+        container_name,
+    )
+    try:
+        schedule_recreate_via_helper(client, image=image, container_name=container_name)
+    except (APIError, DockerException) as exc:
+        logger.warning("portal heartbeat upgrade: container recreate failed: %s", exc)
+
+
+async def post_heartbeat() -> dict | None:
+    """POST heartbeat to portal; return verified policy dict or None on failure."""
+    base = (cfg.PORTAL_API_BASE_URL or "").strip().rstrip("/")
+    key = (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
+    public_ip = _public_ip_from_origin()
+    if not base or not public_ip:
+        return None
+    if not portal_host_allowed(base):
+        logger.warning("portal heartbeat skipped: PORTAL_API_BASE_URL host not allowed")
+        record_portal_verify_failure()
+        return None
+
+    url = f"{base}/api/public/heartbeat"
+    payload: dict[str, str] = {
+        "public_ip": public_ip,
+        "version": _reported_version(),
+    }
+    if key:
+        payload["license_key"] = key
+    try:
+        async with httpx.AsyncClient(timeout=_HEARTBEAT_TIMEOUT_SEC) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 403:
+                logger.warning("portal heartbeat rejected: %s", resp.text[:500])
+                record_portal_verify_failure()
+                return None
+            resp.raise_for_status()
+            try:
+                raw = resp.json()
+            except Exception:  # noqa: BLE001
+                raw = None
+            policy = parse_verified_portal_body(raw if isinstance(raw, dict) else None, public_ip=public_ip)
+            if policy is None:
+                record_portal_verify_failure()
+                return None
+            update_from_verified_policy(policy, source="heartbeat")
+            return policy
+    except httpx.HTTPError as exc:
+        logger.warning("portal heartbeat request failed: %s", exc)
+        record_portal_verify_failure()
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("portal heartbeat unexpected error: %s", exc)
+        record_portal_verify_failure()
+        return None
+
+
+async def send_startup_heartbeat() -> bool:
+    """First portal check-in after DB/master init (before periodic loop)."""
+    policy = await post_heartbeat()
+    if policy:
+        _apply_policy_from_body(policy)
+        logger.info("portal startup heartbeat succeeded")
+        return True
+    logger.warning("portal startup heartbeat failed or skipped")
+    return False
+
+
+async def heartbeat_tick() -> int:
+    """Phone home; run upgrade when portal approves. Returns next sleep interval (seconds)."""
+    global _last_interval_sec
+
+    policy = await post_heartbeat()
+    if policy:
+        _apply_policy_from_body(policy)
+
+    if not policy:
+        return _last_interval_sec
+
+    if policy.get("status") != "OK":
+        logger.warning("portal heartbeat unexpected status: %s", policy.get("status"))
+        return _last_interval_sec
+
+    if policy.get("trigger_upgrade"):
+        if _upgrade_allowed(policy):
+            target_tag = policy.get("target_tag")
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, execute_upgrade, target_tag)
+        else:
+            logger.info("portal heartbeat upgrade deferred: outside operator upgrade window")
+
+    return _last_interval_sec
+
+
+def heartbeat_loop_enabled() -> bool:
+    if not (cfg.PORTAL_API_BASE_URL or "").strip():
+        return False
+    if not _public_ip_from_origin():
+        return False
+    return True
+
+
+async def run_heartbeat_loop() -> None:
+    """Periodic heartbeat loop (startup heartbeat runs separately in app lifespan)."""
+    global _last_interval_sec
+    _last_interval_sec = _clamp_interval(cfg.PORTAL_HEARTBEAT_INTERVAL_SEC)
+    logger.info("portal heartbeat loop started (interval=%ss)", _last_interval_sec)
+    while True:
+        try:
+            await asyncio.sleep(_last_interval_sec)
+            interval = await heartbeat_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("portal heartbeat tick error: %s", exc)
+            interval = _last_interval_sec
+        _last_interval_sec = _clamp_interval(interval)
+```
+
+## backend/src/icici_breeze_backend/app/services/portal_deployment_login.py
+
+```python
+"""Fire-and-forget login heartbeat to breeze-saas-portal for registered deployments."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from urllib.parse import urlparse
+
+import httpx
+
+import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services.deployment_license_status import (
+    record_portal_verify_failure,
+    update_from_verified_policy,
+)
+from icici_breeze_backend.app.services.portal_policy_token import (
+    parse_verified_portal_body,
+    portal_host_allowed,
+)
+
+logger = logging.getLogger(__name__)
+
+_IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+_LOGIN_TIMEOUT_SEC = 3.0
+
+
+def _public_ip_from_origin() -> str | None:
+    origin = (cfg.PUBLIC_FRONTEND_ORIGIN or "").strip()
+    if not origin:
+        return None
+    try:
+        host = urlparse(origin).hostname
+    except Exception:
+        return None
+    if not host or not _IPV4_RE.match(host):
+        return None
+    return host
+
+
+async def _post_deployment_login(
+    public_ip: str,
+    *,
+    icici_user_id: str | None = None,
+) -> None:
+    base = (cfg.PORTAL_API_BASE_URL or "").strip().rstrip("/")
+    key = (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
+    if not base:
+        return
+    if not portal_host_allowed(base):
+        logger.warning("portal deployment-login skipped: PORTAL_API_BASE_URL host not allowed")
+        record_portal_verify_failure()
+        return
+    url = f"{base}/api/public/deployment-login"
+    payload: dict[str, str] = {"public_ip": public_ip}
+    if key:
+        payload["license_key"] = key
+    if icici_user_id:
+        payload["icici_user_id"] = icici_user_id.strip().upper()
+    try:
+        async with httpx.AsyncClient(timeout=_LOGIN_TIMEOUT_SEC) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 403:
+                logger.warning("portal deployment-login rejected: %s", resp.text[:500])
+                record_portal_verify_failure()
+                return
+            if not resp.is_success:
+                record_portal_verify_failure()
+                return
+            try:
+                raw = resp.json()
+            except Exception:  # noqa: BLE001
+                raw = None
+            policy = parse_verified_portal_body(raw if isinstance(raw, dict) else None, public_ip=public_ip)
+            if policy is None:
+                record_portal_verify_failure()
+                return
+            update_from_verified_policy(policy, source="deployment-login")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("portal deployment-login failed: %s", exc)
+        record_portal_verify_failure()
+
+
+def notify_portal_deployment_login(*, icici_user_id: str | None = None) -> None:
+    """Schedule portal login heartbeat; no-op when env or public IP is unavailable."""
+    public_ip = _public_ip_from_origin()
+    if not public_ip:
+        return
+    if not (cfg.PORTAL_API_BASE_URL or "").strip():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(_post_deployment_login(public_ip, icici_user_id=icici_user_id))
+```
+
+## backend/src/icici_breeze_backend/app/services/portal_deployment_user_registration.py
+
+```python
+"""Fire-and-forget user-registration event to breeze-saas-portal for registered deployments."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from urllib.parse import urlparse
+
+import httpx
+
+import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services.deployment_license_status import (
+    record_portal_verify_failure,
+    update_from_verified_policy,
+)
+from icici_breeze_backend.app.services.portal_policy_token import (
+    parse_verified_portal_body,
+    portal_host_allowed,
+)
+
+logger = logging.getLogger(__name__)
+
+_IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+_REGISTRATION_TIMEOUT_SEC = 3.0
+
+
+def _public_ip_from_origin() -> str | None:
+    origin = (cfg.PUBLIC_FRONTEND_ORIGIN or "").strip()
+    if not origin:
+        return None
+    try:
+        host = urlparse(origin).hostname
+    except Exception:
+        return None
+    if not host or not _IPV4_RE.match(host):
+        return None
+    return host
+
+
+async def _post_deployment_user_registration(
+    public_ip: str,
+    *,
+    user_id: str | None = None,
+) -> None:
+    base = (cfg.PORTAL_API_BASE_URL or "").strip().rstrip("/")
+    key = (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
+    if not base:
+        return
+    if not portal_host_allowed(base):
+        logger.warning(
+            "portal deployment-user-registration skipped: PORTAL_API_BASE_URL host not allowed"
+        )
+        record_portal_verify_failure()
+        return
+    url = f"{base}/api/public/deployment-user-registration"
+    payload: dict[str, str] = {"public_ip": public_ip}
+    if key:
+        payload["license_key"] = key
+    if user_id:
+        payload["user_id"] = user_id.strip()
+    try:
+        async with httpx.AsyncClient(timeout=_REGISTRATION_TIMEOUT_SEC) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 403:
+                logger.warning(
+                    "portal deployment-user-registration rejected: %s", resp.text[:500]
+                )
+                record_portal_verify_failure()
+                return
+            if not resp.is_success:
+                record_portal_verify_failure()
+                return
+            try:
+                raw = resp.json()
+            except Exception:  # noqa: BLE001
+                raw = None
+            policy = parse_verified_portal_body(raw if isinstance(raw, dict) else None, public_ip=public_ip)
+            if policy is None:
+                record_portal_verify_failure()
+                return
+            update_from_verified_policy(policy, source="deployment-login")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("portal deployment-user-registration failed: %s", exc)
+        record_portal_verify_failure()
+
+
+def notify_portal_deployment_user_registration(*, user_id: str | None = None) -> None:
+    """Schedule portal user-registration event; no-op when env or public IP is unavailable."""
+    public_ip = _public_ip_from_origin()
+    if not public_ip:
+        return
+    if not (cfg.PORTAL_API_BASE_URL or "").strip():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(_post_deployment_user_registration(public_ip, user_id=user_id))
+```
+
+## backend/src/icici_breeze_backend/app/services/portal_license_activation.py
+
+```python
+"""Portal license activation after successful ICICI login (trial ledger)."""
+from __future__ import annotations
+
+import logging
+
+import httpx
+
+import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services.deployment_license_status import (
+    record_portal_verify_failure,
+    update_from_verified_policy,
+)
+from icici_breeze_backend.app.services.portal_deployment_login import _public_ip_from_origin
+from icici_breeze_backend.app.services.portal_policy_token import (
+    parse_verified_portal_body,
+    portal_host_allowed,
+)
+
+logger = logging.getLogger(__name__)
+
+_ACTIVATION_TIMEOUT_SEC = 10.0
+_TRIAL_DENIED_STATUSES = frozenset({"trial_denied"})
+
+
+def _portal_activation_configured() -> bool:
+    return bool((cfg.PORTAL_API_BASE_URL or "").strip()) and bool(
+        (cfg.DEPLOYMENT_LICENSE_KEY or "").strip()
+    )
+
+
+async def request_portal_license_activation(
+    customer_check: dict,
+    *,
+    fallback_user_id: str,
+) -> tuple[bool, str | None]:
+    """
+    Phone home to start or confirm trial for this ICICI user ID.
+
+    Returns (allowed, error_message). When allowed is False, login must not proceed.
+  """
+    from icici_breeze_backend.app.services.icici_customer_identity import (
+        parse_customer_details_identity,
+    )
+
+    icici_user_id, idirect_user_name = parse_customer_details_identity(
+        customer_check, fallback_user_id=fallback_user_id
+    )
+
+    if not _portal_activation_configured():
+        return True, None
+
+    public_ip = _public_ip_from_origin()
+    if not public_ip:
+        logger.warning("portal activate-license skipped: no IPv4 PUBLIC_FRONTEND_ORIGIN")
+        return True, None
+
+    base = (cfg.PORTAL_API_BASE_URL or "").strip().rstrip("/")
+    if not portal_host_allowed(base):
+        logger.warning("portal activate-license skipped: PORTAL_API_BASE_URL host not allowed")
+        record_portal_verify_failure()
+        return True, None
+
+    url = f"{base}/api/public/activate-license"
+    payload: dict[str, str] = {
+        "license_key": (cfg.DEPLOYMENT_LICENSE_KEY or "").strip(),
+        "public_ip": public_ip,
+        "icici_user_id": icici_user_id,
+    }
+    if not payload["icici_user_id"]:
+        return False, "ICICI User ID is required."
+    if idirect_user_name:
+        payload["idirect_user_name"] = idirect_user_name
+
+    try:
+        async with httpx.AsyncClient(timeout=_ACTIVATION_TIMEOUT_SEC) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 403:
+                detail = "Deployment not registered for this license."
+                try:
+                    body = resp.json()
+                    if isinstance(body, dict) and body.get("detail"):
+                        detail = str(body["detail"])
+                except Exception:  # noqa: BLE001
+                    pass
+                return False, detail
+            if not resp.is_success:
+                logger.warning(
+                    "portal activate-license HTTP %s: %s",
+                    resp.status_code,
+                    resp.text[:500],
+                )
+                record_portal_verify_failure()
+                return True, None
+            try:
+                raw = resp.json()
+            except Exception:  # noqa: BLE001
+                raw = None
+            policy = parse_verified_portal_body(
+                raw if isinstance(raw, dict) else None, public_ip=public_ip
+            )
+            if policy is None:
+                record_portal_verify_failure()
+                return True, None
+            update_from_verified_policy(policy, source="deployment-login")
+            status = policy.get("deployment_license_status")
+            if status in _TRIAL_DENIED_STATUSES:
+                reason = policy.get("activation_rejected_reason")
+                if reason == "icici_trial_consumed":
+                    return (
+                        False,
+                        "Your 14-day trial has already been used for this ICICI Direct User ID. "
+                        "Contact sales@breeze-ui.com to obtain a paid license.",
+                    )
+                return (
+                    False,
+                    "This ICICI Direct User ID cannot start a trial on this deployment. "
+                    "Contact sales@breeze-ui.com for assistance.",
+                )
+            return True, None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("portal activate-license failed: %s", exc)
+        record_portal_verify_failure()
+        return True, None
+```
+
+## backend/src/icici_breeze_backend/app/services/portal_policy_token.py
+
+```python
+"""Verify signed deployment heartbeat/login policy JWTs from breeze-saas-portal."""
+from __future__ import annotations
+
+import logging
+import os
+import re
+from typing import Any
+from urllib.parse import urlparse
+
+import jwt
+
+logger = logging.getLogger(__name__)
+
+JWT_ISSUER = "breeze-portal"
+JWT_AUDIENCE = "breeze-core-engine"
+JWT_ALGORITHM = "ES256"
+
+_PUBLIC_KEY_PATH = "/etc/breeze/portal_heartbeat_public.pem"
+_ALLOWED_HOSTS_PATH = "/etc/breeze/portal_allowed_hosts.txt"
+
+_POLICY_CLAIM_KEYS = (
+    "status",
+    "deployment_license_status",
+    "deployment_license_read_only",
+    "activation_rejected_reason",
+    "trigger_upgrade",
+    "target_tag",
+    "upgrade_allowed_now",
+    "heartbeat_interval_sec",
+    "latest_version",
+)
+
+_TARGET_TAG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
+
+
+def _load_public_key_pem() -> str | None:
+    path = (os.environ.get("PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PATH") or _PUBLIC_KEY_PATH).strip()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            pem = fh.read().strip()
+            return pem or None
+    except OSError:
+        return None
+
+
+def _load_allowed_hosts() -> frozenset[str]:
+    path = (os.environ.get("PORTAL_ALLOWED_HOSTS_PATH") or _ALLOWED_HOSTS_PATH).strip()
+    hosts: set[str] = set()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                host = line.strip().lower()
+                if host and not host.startswith("#"):
+                    hosts.add(host)
+    except OSError:
+        pass
+    return frozenset(hosts)
+
+
+def portal_host_allowed(portal_base_url: str) -> bool:
+    """True when portal URL hostname is on the image-baked allowlist."""
+    allowed = _load_allowed_hosts()
+    if not allowed:
+        logger.warning("portal allowed-hosts file missing or empty; rejecting portal URL")
+        return False
+    try:
+        host = (urlparse(portal_base_url.strip()).hostname or "").lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    return host in allowed
+
+
+def _policy_from_claims(claims: dict[str, Any]) -> dict[str, Any]:
+    policy: dict[str, Any] = {}
+    for key in _POLICY_CLAIM_KEYS:
+        if key in claims:
+            policy[key] = claims[key]
+    return policy
+
+
+def _validate_target_tag(tag: Any) -> None:
+    if tag is None:
+        return
+    text = str(tag).strip()
+    if not text:
+        return
+    if text != "latest" and not _TARGET_TAG_RE.match(text):
+        raise ValueError("invalid target_tag in policy token")
+
+
+def parse_verified_portal_body(body: dict[str, Any] | None, *, public_ip: str) -> dict[str, Any] | None:
+    """Verify ``policy_token`` in a portal JSON body; return trusted policy or None."""
+    if not isinstance(body, dict):
+        return None
+    token = body.get("policy_token")
+    if not isinstance(token, str) or not token.strip():
+        return None
+    try:
+        return verify_policy_token(token.strip(), public_ip=public_ip)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("portal policy token verification failed: %s", exc)
+        return None
+
+
+def verify_policy_token(token: str, *, public_ip: str) -> dict[str, Any]:
+    """
+    Validate JWT signature and claims; return trusted unsigned policy dict.
+
+    Raises jwt.PyJWTError or ValueError on failure.
+    """
+    pem = _load_public_key_pem()
+    if not pem:
+        raise ValueError("portal heartbeat public key is not configured")
+
+    claims = jwt.decode(
+        token,
+        pem,
+        algorithms=[JWT_ALGORITHM],
+        audience=JWT_AUDIENCE,
+        issuer=JWT_ISSUER,
+    )
+    bound_ip = str(claims.get("public_ip") or "").strip()
+    if bound_ip != public_ip.strip():
+        raise ValueError("policy token public_ip mismatch")
+
+    policy = _policy_from_claims(claims)
+    if policy.get("trigger_upgrade"):
+        _validate_target_tag(policy.get("target_tag"))
+    return policy
+```
+
 ## backend/src/icici_breeze_backend/app/services/processor.py
 
 ```python
@@ -12441,7 +14885,6 @@ class processor():
         try:
             from icici_breeze_backend.app.auth.context import get_broker_token_for_request, get_breeze_session_for_request, set_breeze_session_for_request
             from icici_breeze_backend.app.services.breeze_session_cache import get as cache_get, set as cache_set
-            from icici_breeze_backend.dev.mock_broker import MockBreezeSdk
 
             # Reuse session created earlier in this request
             cached = get_breeze_session_for_request()
@@ -12452,6 +14895,8 @@ class processor():
                 _logger.warning("get_session_breeze: no broker token in request (cookie missing or empty) user_id=%s", user_id)
                 return None
             if getattr(cfg, "ICICI_BROKER_MODE", "live") == "mock":
+                from icici_breeze_backend.dev.mock_broker import MockBreezeSdk
+
                 breeze = cache_get(user_id, broker_token)
                 if breeze is not None:
                     set_breeze_session_for_request(breeze)
@@ -14974,6 +17419,9 @@ class AuditLogger:
         Returns:
             True if logged successfully
         """
+        if not user_id:
+            user_id = "anonymous"
+
         # Persist audit entry into the audit_log table.
         try:
             import sqlite3
@@ -15287,6 +17735,27 @@ ICICI_MOCK_SYNTHETIC_BROKER_TOKEN = os.environ.get("ICICI_MOCK_SYNTHETIC_BROKER_
     "yes",
 )
 ICICI_MOCK_BROKER_COOKIE_VALUE = (os.environ.get("ICICI_MOCK_BROKER_COOKIE_VALUE") or "mock").strip() or "mock"
+
+# Console portal: report successful app login against registered deployment (EC2 stack .env).
+DEPLOYMENT_LICENSE_KEY = (os.environ.get("DEPLOYMENT_LICENSE_KEY") or "").strip()
+PORTAL_API_BASE_URL = (os.environ.get("PORTAL_API_BASE_URL") or "").strip().rstrip("/")
+DEPLOYMENT_GHCR_IMAGE = (os.environ.get("DEPLOYMENT_GHCR_IMAGE") or "").strip()
+DEPLOYMENT_CONTAINER_NAME = (os.environ.get("DEPLOYMENT_CONTAINER_NAME") or "breeze-core-engine").strip()
+# Host paths for in-place upgrade (docker.sock API on EC2; matches CFN bootstrap).
+DEPLOYMENT_ENV_FILE = (os.environ.get("DEPLOYMENT_ENV_FILE") or "/opt/breeze-core-engine/.env").strip()
+DEPLOYMENT_DATA_HOST_PATH = (
+    os.environ.get("DEPLOYMENT_DATA_HOST_PATH") or "/opt/breeze-core-engine/data"
+).strip()
+_DEPLOYMENT_PUBLISH_PORT_RAW = (os.environ.get("DEPLOYMENT_PUBLISH_PORT") or "80").strip()
+try:
+    DEPLOYMENT_PUBLISH_PORT = int(_DEPLOYMENT_PUBLISH_PORT_RAW)
+except ValueError:
+    DEPLOYMENT_PUBLISH_PORT = 80
+_PORTAL_HEARTBEAT_INTERVAL_RAW = (os.environ.get("PORTAL_HEARTBEAT_INTERVAL_SEC") or "300").strip()
+try:
+    PORTAL_HEARTBEAT_INTERVAL_SEC = max(60, int(_PORTAL_HEARTBEAT_INTERVAL_RAW))
+except ValueError:
+    PORTAL_HEARTBEAT_INTERVAL_SEC = 300
 
 EXPIRED = "Expired"
 CANCELLED = "Cancelled"
@@ -16110,14 +18579,131 @@ class MockBreezeSdk:
             "Success": {"total_margin": 125000, "span_margin_required": 118500},
             "Error": None,
         }
+
+    def get_order_detail(self, exchange_code: str = "", order_id: str = "", **kwargs):
+        rows = [dict(o) for o in fx.MOCK_ORDER_LIST_SAMPLE if str(o.get("order_id")) == str(order_id)]
+        if not rows and fx.MOCK_ORDER_LIST_SAMPLE:
+            rows = [dict(fx.MOCK_ORDER_LIST_SAMPLE[0])]
+        return {"Status": 200, "Success": rows, "Error": None}
+
+    def get_demat_holdings(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": [
+                {
+                    "stock_code": "UNITEC",
+                    "stock_ISIN": "INE694A01020",
+                    "quantity": "1",
+                    "demat_avail_quantity": "0",
+                }
+            ],
+            "Error": None,
+        }
+
+    def get_portfolio_holdings(self, **kwargs):
+        return {"Status": 200, "Success": [], "Error": None}
+
+    def modify_order(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"message": "Mock: order modified", "order_id": kwargs.get("order_id", "MOCK")},
+            "Error": None,
+        }
+
+    def square_off(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"order_id": "MOCK-SQ-1", "message": "Mock broker: square off not sent to ICICI."},
+            "Error": None,
+        }
+
+    def set_funds(self, **kwargs):
+        return {"Status": 200, "Success": {"status": "Success"}, "Error": None}
+
+    def get_historical_data(self, **kwargs):
+        return self.get_historical_data_v2(**kwargs)
+
+    def get_names(self, exchange_code: str = "", stock_code: str = "", **kwargs):
+        return {
+            "exchange_code": exchange_code or "NSE",
+            "exchange_stock_code": stock_code or "NIFTY",
+            "isec_stock_code": "MOCK",
+            "isec_token": "3499",
+            "company name": "Mock Company",
+            "isec_token_level1": "4.1!3499",
+        }
+
+    def preview_order(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"total_brokerage": 0.89, "brokerage": 0.31},
+            "Error": None,
+        }
+
+    def limit_calculator(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"limit_rate": "16", "order_margin": "0"},
+            "Error": None,
+        }
+
+    def gtt_three_leg_place_order(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"gtt_order_id": "MOCK-GTT-1", "message": "Mock GTT placed"},
+            "Error": None,
+        }
+
+    def gtt_three_leg_modify_order(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"gtt_order_id": kwargs.get("gtt_order_id", "MOCK-GTT-1"), "message": "Mock GTT modified"},
+            "Error": None,
+        }
+
+    def gtt_three_leg_cancel_order(self, **kwargs):
+        return {
+            "Status": 200,
+            "Success": {"gtt_order_id": kwargs.get("gtt_order_id", "MOCK-GTT-1"), "message": "Mock GTT cancelled"},
+            "Error": None,
+        }
+
+    def gtt_single_leg_place_order(self, **kwargs):
+        return self.gtt_three_leg_place_order(**kwargs)
+
+    def gtt_single_leg_modify_order(self, **kwargs):
+        return self.gtt_three_leg_modify_order(**kwargs)
+
+    def gtt_single_leg_cancel_order(self, **kwargs):
+        return self.gtt_three_leg_cancel_order(**kwargs)
+
+    def gtt_order_book(self, **kwargs):
+        return {"Status": 200, "Success": [], "Error": None}
+
+    def get_trade_detail(self, exchange_code: str = "", order_id: str = "", **kwargs):
+        return {"Status": 200, "Success": [], "Error": None}
+
+    def __getattr__(self, name: str):
+        """Safe stub for Breeze API Playground methods not explicitly mocked."""
+
+        def _stub(*args, **kwargs):
+            return {
+                "Status": 200,
+                "Success": {"message": f"Mock: {name} not fully implemented"},
+                "Error": None,
+            }
+
+        return _stub
 ```
 
 ## backend/src/icici_breeze_backend/main.py
 
 ```python
+import asyncio
 import os
 import sys
 import logging
+from contextlib import asynccontextmanager
 from typing import Optional
 
 _root = os.path.dirname(os.path.abspath(__file__))
@@ -16404,7 +18990,27 @@ def start_application():
     else:
         _logger.info("Skipping ICICI master download (ICICI_BROKER_MODE=mock).")
 
-    app = FastAPI(trust_env=True)
+    from icici_breeze_backend.app.services.portal_deployment_heartbeat import (
+        heartbeat_loop_enabled,
+        run_heartbeat_loop,
+        send_startup_heartbeat,
+    )
+
+    @asynccontextmanager
+    async def _portal_heartbeat_lifespan(_app: FastAPI):
+        task: asyncio.Task | None = None
+        if heartbeat_loop_enabled():
+            await send_startup_heartbeat()
+            task = asyncio.create_task(run_heartbeat_loop())
+        yield
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    app = FastAPI(trust_env=True, lifespan=_portal_heartbeat_lifespan)
     # CORS: allow web UI. .env uses ALLOWED_ORIGINS; CORS_ORIGINS overrides if set.
     _cors_raw = (
         os.environ.get("CORS_ORIGINS")
@@ -16477,6 +19083,596 @@ def start_application():
     return app
 
 app = start_application()
+```
+
+## backend/tests/conftest.py
+
+```python
+"""Shared pytest fixtures for breeze-core-engine backend tests."""
+from __future__ import annotations
+
+import pytest
+
+from tests.fixtures.portal_heartbeat_drm_keys import TEST_PUBLIC_KEY_PEM
+
+
+@pytest.fixture(autouse=True)
+def portal_heartbeat_verify_files(tmp_path, monkeypatch):
+    """Bake test public key and allowed portal host for DRM verification tests."""
+    pub = tmp_path / "portal_heartbeat_public.pem"
+    hosts = tmp_path / "portal_allowed_hosts.txt"
+    pub.write_text(TEST_PUBLIC_KEY_PEM, encoding="utf-8")
+    hosts.write_text("portal.example\nbreeze-ui.com\n", encoding="utf-8")
+    monkeypatch.setenv("PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PATH", str(pub))
+    monkeypatch.setenv("PORTAL_ALLOWED_HOSTS_PATH", str(hosts))
+```
+
+## backend/tests/fixtures/portal_heartbeat_drm_keys.py
+
+```python
+"""Fixed ES256 key pair for heartbeat policy token unit tests (not for production)."""
+
+TEST_PRIVATE_KEY_PEM = """-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg6dgB4iydlrEPShIm
+kac/w0uKoTI2LWefAZQt+QvgrY+hRANCAARtXSJ13MLWa+4a2vMxnaAl2l2uYXNK
+k68xdYaSi+F4OchVqTTvd79/ZARWGs3Wdu7hYKUPj1Q2WT59qZhbJ9GL
+-----END PRIVATE KEY-----"""
+
+TEST_PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbV0iddzC1mvuGtrzMZ2gJdpdrmFz
+SpOvMXWGkovheDnIVak073e/f2QEVhrN1nbu4WClD49UNlk+famYWyfRiw==
+-----END PUBLIC KEY-----"""
+
+
+def attach_test_policy_token(policy: dict, *, public_ip: str) -> dict:
+    """Sign a policy dict for core-engine tests (mirrors portal heartbeat_policy_token)."""
+    import time
+
+    import jwt
+
+    now = int(time.time())
+    claims = dict(policy)
+    claims["public_ip"] = public_ip
+    claims["iss"] = "breeze-portal"
+    claims["aud"] = "breeze-core-engine"
+    claims["iat"] = now
+    claims["exp"] = now + 600
+    out = dict(policy)
+    out["policy_token"] = jwt.encode(claims, TEST_PRIVATE_KEY_PEM, algorithm="ES256")
+    return out
+```
+
+## backend/tests/test_breeze_api_tester.py
+
+```python
+"""Breeze API Playground: catalog, risk ack, and mock invoke."""
+
+from __future__ import annotations
+
+import importlib
+import os
+import sqlite3
+import tempfile
+
+import pytest
+
+from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
+    ALLOWED_METHODS,
+    build_invoke_args,
+    get_catalog_entry,
+)
+from icici_breeze_backend.app.services import breeze_api_tester_risk as risk_mod
+
+
+@pytest.fixture
+def users_db_env(monkeypatch, tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    db_name = "users.sqlite3"
+    db_path = data_dir / db_name
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE user_account (
+                user_id TEXT PRIMARY KEY NOT NULL,
+                username TEXT NOT NULL,
+                email TEXT NOT NULL
+            );
+            INSERT INTO user_account (user_id, username, email)
+            VALUES ('u_play', 'u_play', 'u@test.local');
+            """
+        )
+    monkeypatch.setattr(risk_mod.cfg, "DATA_PATH", str(data_dir) + os.sep)
+    monkeypatch.setattr(risk_mod.cfg, "USERS_DB", db_name)
+    yield "u_play"
+
+
+def test_catalog_has_thirty_methods():
+    assert len(ALLOWED_METHODS) == 30
+    assert get_catalog_entry("place_order") is not None
+    assert get_catalog_entry("get_order_list") is not None
+
+
+def test_get_customer_details_has_no_params():
+    entry = get_catalog_entry("get_customer_details")
+    assert entry is not None
+    assert entry.params == ()
+
+
+def test_build_invoke_args_unknown_method():
+    with pytest.raises(ValueError, match="Unknown method"):
+        build_invoke_args("not_a_real_api", {})
+
+
+def test_build_invoke_args_invalid_json():
+    with pytest.raises(ValueError, match="Invalid JSON"):
+        build_invoke_args("margin_calculator", {"margin_list": "{not json"})
+
+
+def test_build_invoke_args_margin_calculator_positional():
+    legs = [{"stock_code": "NIFTY", "quantity": "75"}]
+    import json
+
+    pos, kw = build_invoke_args(
+        "margin_calculator",
+        {"margin_list": json.dumps(legs), "exchange_code": "NFO"},
+    )
+    assert len(pos) == 1
+    assert pos[0] == legs
+    assert kw["exchange_code"] == "NFO"
+
+
+def test_risk_not_accepted_by_default(users_db_env):
+    assert not risk_mod.is_breeze_api_tester_risk_accepted(users_db_env)
+
+
+def test_risk_accept_and_check(users_db_env):
+    ts = risk_mod.set_breeze_api_tester_risk_accepted(users_db_env)
+    assert ts
+    assert risk_mod.is_breeze_api_tester_risk_accepted(users_db_env)
+    assert risk_mod.get_breeze_api_tester_risk_accepted_at(users_db_env) == ts
+
+
+@pytest.fixture
+def mock_broker_env(monkeypatch):
+    monkeypatch.setenv("ICICI_BROKER_MODE", "mock")
+    import icici_breeze_backend.core.config as core_config
+    import icici_breeze_backend.app.core.config as app_config
+
+    importlib.reload(core_config)
+    importlib.reload(app_config)
+
+
+def test_mock_invoke_get_funds(mock_broker_env):
+    from icici_breeze_backend.dev.mock_broker import MockBreezeSdk
+
+    pos, kw = build_invoke_args("get_funds", {})
+    breeze = MockBreezeSdk()
+    out = breeze.get_funds(*pos, **kw)
+    assert out.get("Status") == 200
+    assert out.get("Success") is not None
+
+
+def test_mock_invoke_unknown_method_stub(mock_broker_env):
+    from icici_breeze_backend.dev.mock_broker import MockBreezeSdk
+
+    breeze = MockBreezeSdk()
+    fn = getattr(breeze, "get_trade_detail")
+    out = fn(exchange_code="NSE", order_id="1")
+    assert out.get("Status") == 200
+```
+
+## backend/tests/test_changelog_latest_version.py
+
+```python
+"""changelog-latest-version.mjs extracts the newest release version."""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_SCRIPT = _REPO_ROOT / "scripts" / "changelog-latest-version.mjs"
+_CHANGELOG = _REPO_ROOT / "frontend" / "src" / "lib" / "changelog.ts"
+
+
+def test_changelog_latest_version_script():
+    out = subprocess.check_output(
+        ["node", str(_SCRIPT), str(_CHANGELOG)],
+        text=True,
+        cwd=_REPO_ROOT,
+    ).strip()
+    assert out == "1.4.2-a"
+
+
+def test_reported_version_reads_baked_file(monkeypatch, tmp_path):
+    import sys
+
+    src = _REPO_ROOT / "backend" / "src"
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    from icici_breeze_backend.app.services import portal_deployment_heartbeat as hb
+
+    version_file = tmp_path / "app_version"
+    version_file.write_text("1.4.2-a\n", encoding="utf-8")
+    monkeypatch.delenv("APP_VERSION", raising=False)
+    monkeypatch.delenv("IMAGE_TAG", raising=False)
+    monkeypatch.delenv("DEPLOYMENT_VERSION", raising=False)
+    monkeypatch.setenv("APP_VERSION_FILE", str(version_file))
+    assert hb._reported_version() == "1.4.2-a"
+```
+
+## backend/tests/test_deployment_container_upgrade.py
+
+```python
+"""In-place deployment container upgrade (host .env preserved)."""
+from __future__ import annotations
+
+import sys
+import types
+from unittest.mock import MagicMock
+
+import pytest
+
+from icici_breeze_backend.app.services import deployment_container_upgrade as dcu
+
+
+@pytest.fixture(autouse=True)
+def _mock_docker_errors():
+    docker_errors = types.ModuleType("docker.errors")
+    docker_errors.NotFound = type("NotFound", (Exception,), {})
+    docker_errors.APIError = type("APIError", (Exception,), {})
+    docker_errors.DockerException = type("DockerException", (Exception,), {})
+    sys.modules["docker.errors"] = docker_errors
+    yield
+    sys.modules.pop("docker.errors", None)
+
+
+def test_parse_dotenv_file(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "JWT_ACCESS_TOKEN_EXPIRE_MINUTES=1440\n# comment\nCOOKIE_SECURE=false\n",
+        encoding="utf-8",
+    )
+    assert dcu.parse_dotenv_file(str(env_path)) == {
+        "JWT_ACCESS_TOKEN_EXPIRE_MINUTES": "1440",
+        "COOKIE_SECURE": "false",
+    }
+
+
+def test_read_host_env_file_via_docker_when_not_mounted(monkeypatch):
+    mock_client = MagicMock()
+    mock_client.containers.run.return_value = b"JWT_ACCESS_TOKEN_EXPIRE_MINUTES=1440\n"
+    monkeypatch.setattr(dcu, "parse_dotenv_file", lambda _path: {})
+    env = dcu.read_host_env_file(mock_client, "/opt/breeze-core-engine/.env")
+    assert env["JWT_ACCESS_TOKEN_EXPIRE_MINUTES"] == "1440"
+    mock_client.containers.run.assert_called_once()
+
+
+def test_resolve_recreate_environment_prefers_file(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text("JWT_ACCESS_TOKEN_EXPIRE_MINUTES=1440\n", encoding="utf-8")
+
+    mock_client = MagicMock()
+    mock_old = MagicMock()
+    mock_old.attrs = {"Config": {"Env": ["JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15", "PATH=/usr/bin"]}}
+    mock_client.containers.get.return_value = mock_old
+
+    monkeypatch.setattr(
+        dcu,
+        "read_host_env_file",
+        lambda _c, _p: dcu.parse_dotenv_file(str(env_path)),
+    )
+    env = dcu.resolve_recreate_environment(mock_client, "breeze-core-engine", str(env_path))
+    assert env["JWT_ACCESS_TOKEN_EXPIRE_MINUTES"] == "1440"
+    assert env["PATH"] == "/usr/bin"
+
+
+def test_format_dotenv_text_quotes_spaces():
+    text = dcu.format_dotenv_text({"JWT_SECRET": "abc", "ALLOWED_ORIGINS": "http://1.2.3.4 http://5.6.7.8"})
+    assert 'ALLOWED_ORIGINS="http://1.2.3.4 http://5.6.7.8"' in text
+    assert "JWT_SECRET=abc\n" in text
+
+
+def test_upgrade_shell_script_uses_env_file():
+    script = dcu.upgrade_shell_script(
+        image="ghcr.io/org/breeze-core-engine:latest",
+        container_name="breeze-core-engine",
+        env_file="/opt/breeze-core-engine/.upgrade.env",
+        data_host="/opt/breeze-core-engine/data",
+        host_port=80,
+    )
+    assert 'ENV_FILE=/opt/breeze-core-engine/.upgrade.env' in script
+    assert 'docker rm -f "$NAME"' in script
+    assert "still exists after docker rm" in script
+    assert "-p 80:3000" in script
+    assert "upgrade.log" in script
+
+
+def test_prepare_upgrade_env_file_writes_host(tmp_path, monkeypatch):
+    mock_client = MagicMock()
+    monkeypatch.setattr(
+        dcu,
+        "resolve_recreate_environment",
+        lambda _c, _n, _p: {"JWT_ACCESS_TOKEN_EXPIRE_MINUTES": "1440"},
+    )
+    monkeypatch.setattr(dcu, "write_host_file_via_docker", lambda _c, path, content, **_: path)
+
+    path = dcu.prepare_upgrade_env_file(mock_client, "breeze-core-engine")
+    assert path == dcu._UPGRADE_ENV_FILE
+
+
+def test_schedule_recreate_via_helper_detached_cli(monkeypatch):
+    mock_client = MagicMock()
+    mock_helper = MagicMock()
+    mock_helper.id = "helper123"
+    mock_client.containers.run.return_value = mock_helper
+    monkeypatch.setattr(dcu, "prepare_upgrade_env_file", lambda _c, _n: "/opt/breeze-core-engine/.upgrade.env")
+    monkeypatch.setattr(dcu, "deployment_data_host_path", lambda: "/opt/breeze-core-engine/data")
+    monkeypatch.setattr(dcu, "deployment_publish_port", lambda: 80)
+    monkeypatch.setattr(dcu, "pull_upgrade_helper_image", lambda _c: None)
+
+    dcu.schedule_recreate_via_helper(
+        mock_client,
+        image="ghcr.io/org/breeze-core-engine:latest",
+        container_name="breeze-core-engine",
+    )
+
+    mock_client.containers.run.assert_called_once()
+    args, kwargs = mock_client.containers.run.call_args
+    assert args[0] == "docker:cli"
+    assert kwargs["detach"] is True
+    assert kwargs["remove"] is False
+    assert "/var/run/docker.sock" in kwargs["volumes"]
+    assert dcu._DEPLOY_ROOT in kwargs["volumes"]
+    assert 'ENV_FILE=' in kwargs["command"][0]
+
+
+def test_recreate_deployment_container_stops_and_runs_with_env(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "JWT_ACCESS_TOKEN_EXPIRE_MINUTES=1440\nDEPLOYMENT_GHCR_IMAGE=ghcr.io/org/app:latest\n",
+        encoding="utf-8",
+    )
+    data_path = tmp_path / "data"
+    data_path.mkdir()
+
+    monkeypatch.setattr(dcu, "deployment_env_file_path", lambda: str(env_path))
+    monkeypatch.setattr(dcu, "deployment_data_host_path", lambda: str(data_path))
+    monkeypatch.setattr(dcu, "deployment_publish_port", lambda: 80)
+
+    mock_client = MagicMock()
+    mock_old = MagicMock()
+    mock_client.containers.get.return_value = mock_old
+
+    dcu.recreate_deployment_container(
+        mock_client,
+        image="ghcr.io/org/breeze-core-engine:latest",
+        container_name="breeze-core-engine",
+    )
+
+    mock_old.stop.assert_called_once()
+    mock_old.remove.assert_called_once_with(force=True)
+    mock_client.containers.run.assert_called_once()
+    _, kwargs = mock_client.containers.run.call_args
+    assert kwargs["name"] == "breeze-core-engine"
+    assert kwargs["environment"]["JWT_ACCESS_TOKEN_EXPIRE_MINUTES"] == "1440"
+    assert kwargs["ports"] == {"3000/tcp": 80}
+    assert str(data_path) in kwargs["volumes"]
+    assert str(env_path) in kwargs["volumes"]
+```
+
+## backend/tests/test_deployment_license_route.py
+
+```python
+"""Tests for GET /deployment/license-status handler."""
+
+import asyncio
+
+import pytest
+
+import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.api.v1.route_deployment import get_deployment_license_status
+from icici_breeze_backend.app.auth.context import RequestContext
+from icici_breeze_backend.app.services import deployment_license_status as dls
+
+
+@pytest.fixture(autouse=True)
+def _license_env(monkeypatch):
+    monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "test-license-key")
+    monkeypatch.setattr(cfg, "PORTAL_API_BASE_URL", "https://breeze-ui.com")
+    dls.reset_for_tests()
+    yield
+    dls.reset_for_tests()
+
+
+def test_license_status_returns_cached_fields_without_broker_token():
+    dls.update_from_verified_policy({"deployment_license_status": "expired"}, source="heartbeat")
+    ctx = RequestContext(
+        user_id="uid1",
+        username="uid1",
+        roles=["trader"],
+        is_authenticated=True,
+        broker_token=None,
+    )
+    resp = asyncio.run(get_deployment_license_status(ctx))
+    assert resp.deployment_license_status == "expired"
+    assert resp.deployment_license_read_only is False
+    assert resp.contact_sales is not None
+    assert resp.contact_sales.license_key == "test-license-key"
+
+
+def test_license_status_unlicensed_when_portal_without_key(monkeypatch):
+    monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "")
+    ctx = RequestContext(
+        user_id="uid1",
+        username="uid1",
+        roles=["trader"],
+        is_authenticated=True,
+    )
+    resp = asyncio.run(get_deployment_license_status(ctx))
+    assert resp.deployment_license_status == "unlicensed"
+    assert resp.deployment_license_read_only is True
+
+
+def test_license_status_empty_when_portal_not_configured(monkeypatch):
+    monkeypatch.setattr(cfg, "PORTAL_API_BASE_URL", "")
+    monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "")
+    ctx = RequestContext(
+        user_id="uid1",
+        username="uid1",
+        roles=["trader"],
+        is_authenticated=True,
+    )
+    resp = asyncio.run(get_deployment_license_status(ctx))
+    assert resp.deployment_license_status is None
+    assert resp.deployment_license_read_only is False
+```
+
+## backend/tests/test_deployment_license_status.py
+
+```python
+"""Tests for deployment license status cache."""
+
+import json
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services import deployment_license_status as dls
+
+
+@pytest.fixture(autouse=True)
+def _reset_license_state(monkeypatch):
+    monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "test-license-key")
+    monkeypatch.setattr(cfg, "PORTAL_API_BASE_URL", "https://portal.example")
+    dls.reset_for_tests()
+    yield
+    dls.reset_for_tests()
+
+
+def test_update_from_verified_policy_active():
+    dls.update_from_verified_policy(
+        {"deployment_license_status": "active", "heartbeat_interval_sec": 600},
+        source="heartbeat",
+    )
+    assert dls.get_license_status() == "active"
+
+
+@pytest.mark.parametrize(
+    "policy,expected,trading_allowed,read_only",
+    [
+        ({"deployment_license_status": "expired"}, "expired", True, False),
+        ({"deployment_license_status": "revoked"}, "revoked", False, True),
+        ({"deployment_license_status": "unlicensed"}, "unlicensed", False, True),
+        ({"deployment_license_status": "pending_activation"}, "pending_activation", False, True),
+        ({"deployment_license_status": "trial_denied"}, "trial_denied", False, True),
+    ],
+)
+def test_update_from_verified_policy_license_status(policy, expected, trading_allowed, read_only):
+    dls.update_from_verified_policy(policy, source="heartbeat")
+    assert dls.get_license_status() == expected
+    assert dls.trading_mutations_allowed() is trading_allowed
+    api = dls.get_license_status_for_api()
+    assert api is not None
+    assert api["deployment_license_status"] == expected
+    assert api["deployment_license_read_only"] is read_only
+    if expected in ("expired", "revoked", "unlicensed", "trial_denied"):
+        assert "contact_sales" in api
+
+
+def test_expired_allows_trading_mutations(monkeypatch):
+    monkeypatch.setattr(cfg, "PUBLIC_FRONTEND_ORIGIN", "http://203.0.113.10")
+    dls.update_from_verified_policy({"deployment_license_status": "expired"}, source="deployment-login")
+    assert dls.trading_mutations_allowed() is True
+    api = dls.get_license_status_for_api()
+    assert api["deployment_license_read_only"] is False
+    assert api["contact_sales"]["license_key"] == "test-license-key"
+    assert api["contact_sales"]["public_ip"] == "203.0.113.10"
+
+
+def test_revoked_blocks_trading_mutations():
+    dls.update_from_verified_policy({"deployment_license_status": "revoked"}, source="deployment-login")
+    assert dls.trading_mutations_allowed() is False
+    api = dls.get_license_status_for_api()
+    assert api["deployment_license_read_only"] is True
+
+
+def test_no_api_fields_when_portal_not_configured(monkeypatch):
+    monkeypatch.setattr(cfg, "PORTAL_API_BASE_URL", "")
+    monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "")
+    assert dls.get_license_status_for_api() is None
+    assert dls.trading_mutations_allowed() is True
+
+
+def test_portal_without_license_key_is_unlicensed_read_only(monkeypatch):
+    monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "")
+    monkeypatch.setattr(cfg, "PUBLIC_FRONTEND_ORIGIN", "http://203.0.113.10")
+    assert dls.get_license_status() == "unlicensed"
+    assert dls.trading_mutations_allowed() is False
+    api = dls.get_license_status_for_api()
+    assert api is not None
+    assert api["deployment_license_status"] == "unlicensed"
+    assert api["deployment_license_read_only"] is True
+    assert api["contact_sales"]["public_ip"] == "203.0.113.10"
+
+
+def test_unlicensed_from_heartbeat_blocks_trading():
+    dls.update_from_verified_policy({"deployment_license_status": "unlicensed"}, source="heartbeat")
+    assert dls.trading_mutations_allowed() is False
+
+
+def test_fail_closed_when_no_verified_policy_yet():
+    assert dls.get_license_status() is None
+    assert dls.trading_mutations_allowed() is False
+    api = dls.get_license_status_for_api()
+    assert api["deployment_license_status"] == "unlicensed"
+    assert api["deployment_license_read_only"] is True
+
+
+def test_stale_policy_blocks_trading(monkeypatch):
+    dls.update_from_verified_policy(
+        {"deployment_license_status": "active", "heartbeat_interval_sec": 300},
+        source="heartbeat",
+    )
+    stale = datetime.now(timezone.utc) - timedelta(seconds=700)
+    with dls._lock:
+        dls._verified_at = stale  # noqa: SLF001
+    assert dls.trading_mutations_allowed() is False
+    assert dls.get_license_status() == "unlicensed"
+
+
+def test_require_trading_not_revoked_raises_when_revoked():
+    from fastapi import HTTPException
+
+    from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
+
+    dls.update_from_verified_policy({"deployment_license_status": "revoked"}, source="heartbeat")
+    with pytest.raises(HTTPException) as exc:
+        require_trading_not_revoked()
+    assert exc.value.status_code == 403
+    assert "Read-only mode" in exc.value.detail
+
+
+def test_require_trading_not_revoked_allows_expired():
+    from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
+
+    dls.update_from_verified_policy({"deployment_license_status": "expired"}, source="heartbeat")
+    require_trading_not_revoked()
+
+
+def test_home_data_response_includes_license_fields():
+    from icici_breeze_backend.app.domain.responses import HomeDataResponse
+
+    dls.update_from_verified_policy({"deployment_license_status": "revoked"}, source="heartbeat")
+    license_fields = dls.get_license_status_for_api()
+    assert license_fields is not None
+
+    resp = HomeDataResponse(**license_fields)
+    assert resp.deployment_license_status == "revoked"
+    assert resp.deployment_license_read_only is True
 ```
 
 ## backend/tests/test_gemini_model_catalog_fetch.py
@@ -16562,6 +19758,32 @@ def test_models_list_for_user_tracked_order() -> None:
 def test_models_list_for_user_none_tracked_returns_catalog() -> None:
     cat = ["a", "b"]
     assert gmc.models_list_for_user(cat, None) == cat
+```
+
+## backend/tests/test_icici_customer_identity.py
+
+```python
+"""ICICI customer details identity parsing."""
+
+from icici_breeze_backend.app.services.icici_customer_identity import (
+    parse_customer_details_identity,
+)
+
+
+def test_parse_prefers_api_id_and_name():
+    customer = {
+        "Status": 200,
+        "Success": {"id": "vikrammh", "idirect_user_name": "VIKRAM M HATRE"},
+    }
+    uid, name = parse_customer_details_identity(customer, fallback_user_id="OTHER")
+    assert uid == "VIKRAMMH"
+    assert name == "VIKRAM M HATRE"
+
+
+def test_parse_falls_back_to_form_user_id():
+    uid, name = parse_customer_details_identity(None, fallback_user_id="formuser")
+    assert uid == "FORMUSER"
+    assert name is None
 ```
 
 ## backend/tests/test_icici_mock_mode.py
@@ -16873,6 +20095,492 @@ def test_gemini_does_not_chain_models_on_network_error():
         assert inst.post.call_count == 1
 ```
 
+## backend/tests/test_portal_deployment_heartbeat.py
+
+```python
+"""Unit tests for portal deployment heartbeat and IST market-hours guard."""
+
+import asyncio
+import sys
+import types
+from datetime import datetime
+from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from icici_breeze_backend.app.services import portal_deployment_heartbeat as hb
+
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def _ist(y, m, d, h, mi=0):
+    return datetime(y, m, d, h, mi, tzinfo=_IST)
+
+
+@pytest.mark.parametrize(
+    "dt,blocked",
+    [
+        (_ist(2026, 5, 23, 8, 59), False),
+        (_ist(2026, 5, 23, 9, 0), True),
+        (_ist(2026, 5, 23, 15, 59), True),
+        (_ist(2026, 5, 23, 16, 0), False),
+    ],
+)
+def test_is_ist_market_hours(dt, blocked):
+    assert hb.is_ist_market_hours(dt) is blocked
+
+
+def test_send_startup_heartbeat_success():
+    async def _run():
+        with patch.object(
+            hb,
+            "post_heartbeat",
+            return_value={"status": "OK", "heartbeat_interval_sec": 300},
+        ) as post:
+            ok = await hb.send_startup_heartbeat()
+            assert ok is True
+            post.assert_called_once()
+
+    asyncio.run(_run())
+
+
+def test_run_heartbeat_loop_sleeps_before_tick():
+    async def _run():
+        order: list[str] = []
+
+        async def fake_sleep(_n):
+            order.append("sleep")
+            raise asyncio.CancelledError()
+
+        async def fake_tick():
+            order.append("tick")
+            return 300
+
+        with patch.object(asyncio, "sleep", side_effect=fake_sleep):
+            with patch.object(hb, "heartbeat_tick", side_effect=fake_tick):
+                with pytest.raises(asyncio.CancelledError):
+                    await hb.run_heartbeat_loop()
+        assert order == ["sleep"]
+
+    asyncio.run(_run())
+
+
+def test_heartbeat_tick_always_posts():
+    async def _run():
+        with patch.object(
+            hb,
+            "post_heartbeat",
+            return_value={"status": "OK", "trigger_upgrade": False, "heartbeat_interval_sec": 600},
+        ) as post:
+            interval = await hb.heartbeat_tick()
+            post.assert_called_once()
+            assert interval == 600
+
+    asyncio.run(_run())
+
+
+def test_heartbeat_tick_defers_upgrade_when_not_allowed():
+    async def _run():
+        with patch.object(
+            hb,
+            "post_heartbeat",
+            return_value={
+                "status": "OK",
+                "trigger_upgrade": True,
+                "target_tag": "latest",
+                "upgrade_allowed_now": False,
+            },
+        ):
+            with patch.object(hb, "execute_upgrade") as upgrade:
+                await hb.heartbeat_tick()
+                upgrade.assert_not_called()
+
+    asyncio.run(_run())
+
+
+def test_heartbeat_tick_runs_upgrade_when_triggered(monkeypatch):
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/example/breeze-core-engine:latest")
+
+    async def _run():
+        with patch.object(
+            hb,
+            "post_heartbeat",
+            return_value={
+                "status": "OK",
+                "trigger_upgrade": True,
+                "target_tag": "latest",
+                "upgrade_allowed_now": True,
+            },
+        ):
+            with patch.object(hb, "execute_upgrade") as upgrade:
+                await hb.heartbeat_tick()
+                upgrade.assert_called_once_with("latest")
+
+    asyncio.run(_run())
+
+
+def test_post_heartbeat_403_does_not_update_unsigned_status(monkeypatch):
+    from icici_breeze_backend.app.services import deployment_license_status as dls
+
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_LICENSE_KEY", "key")
+    monkeypatch.setattr(hb.cfg, "PORTAL_API_BASE_URL", "https://portal.example")
+    monkeypatch.setattr(hb, "_public_ip_from_origin", lambda: "203.0.113.1")
+    dls.reset_for_tests()
+
+    class FakeResponse:
+        status_code = 403
+        text = '{"detail": "License revoked"}'
+
+        @staticmethod
+        def json():
+            return {"detail": "License revoked"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json):
+            return FakeResponse()
+
+    async def _run():
+        with patch.object(hb.httpx, "AsyncClient", FakeClient):
+            result = await hb.post_heartbeat()
+            assert result is None
+            assert dls.get_license_status() is None
+
+    asyncio.run(_run())
+
+
+def test_post_heartbeat_updates_license_status_on_200_expired(monkeypatch):
+    from icici_breeze_backend.app.services import deployment_license_status as dls
+    from tests.fixtures.portal_heartbeat_drm_keys import attach_test_policy_token
+
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_LICENSE_KEY", "key")
+    monkeypatch.setattr(hb.cfg, "PORTAL_API_BASE_URL", "https://portal.example")
+    monkeypatch.setattr(hb, "_public_ip_from_origin", lambda: "203.0.113.1")
+    dls.reset_for_tests()
+
+    signed_body = attach_test_policy_token(
+        {
+            "status": "OK",
+            "trigger_upgrade": False,
+            "deployment_license_status": "expired",
+        },
+        public_ip="203.0.113.1",
+    )
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return signed_body
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json):
+            return FakeResponse()
+
+    async def _run():
+        with patch.object(hb.httpx, "AsyncClient", FakeClient):
+            result = await hb.post_heartbeat()
+            assert result is not None
+            assert result["deployment_license_status"] == "expired"
+            assert dls.get_license_status() == "expired"
+
+    asyncio.run(_run())
+
+
+def test_heartbeat_loop_enabled_without_license_key(monkeypatch):
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_LICENSE_KEY", "")
+    monkeypatch.setattr(hb.cfg, "PORTAL_API_BASE_URL", "https://portal.example")
+    monkeypatch.setattr(hb, "_public_ip_from_origin", lambda: "203.0.113.1")
+    assert hb.heartbeat_loop_enabled() is True
+
+
+def test_post_heartbeat_omits_empty_license_key(monkeypatch):
+    from tests.fixtures.portal_heartbeat_drm_keys import attach_test_policy_token
+
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_LICENSE_KEY", "")
+    monkeypatch.setattr(hb.cfg, "PORTAL_API_BASE_URL", "https://portal.example")
+    monkeypatch.setattr(hb, "_public_ip_from_origin", lambda: "203.0.113.1")
+
+    captured: dict = {}
+    signed_body = attach_test_policy_token(
+        {
+            "status": "OK",
+            "deployment_license_status": "unlicensed",
+            "deployment_license_read_only": True,
+        },
+        public_ip="203.0.113.1",
+    )
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return signed_body
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json):
+            captured["json"] = json
+            return FakeResponse()
+
+    async def _run():
+        with patch.object(hb.httpx, "AsyncClient", FakeClient):
+            await hb.post_heartbeat()
+
+    asyncio.run(_run())
+    assert "license_key" not in captured["json"]
+    assert captured["json"]["public_ip"] == "203.0.113.1"
+
+
+def test_resolve_upgrade_image_replaces_tag(monkeypatch):
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/org/breeze-core-engine:v1.0.0")
+    assert hb._resolve_upgrade_image("latest") == "ghcr.io/org/breeze-core-engine:latest"
+
+
+def test_execute_upgrade_pulls_and_recreates_container(monkeypatch):
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/org/breeze-core-engine:latest")
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_CONTAINER_NAME", "breeze-core-engine")
+
+    mock_client = MagicMock()
+    docker_mod = types.ModuleType("docker")
+    docker_errors = types.ModuleType("docker.errors")
+    docker_errors.DockerException = Exception
+    docker_errors.APIError = Exception
+    docker_mod.from_env = MagicMock(return_value=mock_client)
+    docker_mod.errors = docker_errors
+    monkeypatch.setitem(sys.modules, "docker", docker_mod)
+    monkeypatch.setitem(sys.modules, "docker.errors", docker_errors)
+
+    with patch(
+        "icici_breeze_backend.app.services.deployment_container_upgrade.schedule_recreate_via_helper",
+    ) as schedule:
+        hb.execute_upgrade("latest")
+
+    mock_client.images.pull.assert_called_once_with("ghcr.io/org/breeze-core-engine:latest")
+    schedule.assert_called_once_with(
+        mock_client,
+        image="ghcr.io/org/breeze-core-engine:latest",
+        container_name="breeze-core-engine",
+    )
+```
+
+## backend/tests/test_portal_license_activation.py
+
+```python
+"""Portal license activation service."""
+
+import asyncio
+
+import pytest
+
+import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services import deployment_license_status as dls
+from icici_breeze_backend.app.services.portal_license_activation import (
+    request_portal_license_activation,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset(monkeypatch):
+    monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "test-key")
+    monkeypatch.setattr(cfg, "PORTAL_API_BASE_URL", "https://portal.example")
+    monkeypatch.setattr(cfg, "PUBLIC_FRONTEND_ORIGIN", "http://203.0.113.10")
+    dls.reset_for_tests()
+    yield
+    dls.reset_for_tests()
+
+
+def _sample_customer(user_id: str = "USER1", name: str = "Test User") -> dict:
+    return {
+        "Status": 200,
+        "Success": {"id": user_id, "idirect_user_name": name},
+    }
+
+
+def test_activation_skipped_when_portal_not_configured(monkeypatch):
+    monkeypatch.setattr(cfg, "PORTAL_API_BASE_URL", "")
+    allowed, err = asyncio.run(
+        request_portal_license_activation(_sample_customer(), fallback_user_id="USER1")
+    )
+    assert allowed is True
+    assert err is None
+
+
+def test_activation_denied_on_trial_denied_policy(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    mock_resp = MagicMock()
+    mock_resp.is_success = True
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "deployment_license_status": "trial_denied",
+        "activation_rejected_reason": "icici_trial_consumed",
+        "policy_token": "fake",
+    }
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    with patch(
+        "icici_breeze_backend.app.services.portal_license_activation.portal_host_allowed",
+        return_value=True,
+    ), patch(
+        "icici_breeze_backend.app.services.portal_license_activation.parse_verified_portal_body",
+        return_value={
+            "deployment_license_status": "trial_denied",
+            "activation_rejected_reason": "icici_trial_consumed",
+        },
+    ), patch(
+        "icici_breeze_backend.app.services.portal_license_activation.httpx.AsyncClient",
+        return_value=mock_client,
+    ):
+        allowed, err = asyncio.run(
+            request_portal_license_activation(_sample_customer(), fallback_user_id="USER1")
+        )
+
+    assert allowed is False
+    assert err and "14-day trial" in err
+    assert dls.get_license_status() == "trial_denied"
+
+
+def test_activation_post_includes_display_name(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    mock_resp = MagicMock()
+    mock_resp.is_success = True
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "deployment_license_status": "active",
+        "policy_token": "fake",
+    }
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    with patch(
+        "icici_breeze_backend.app.services.portal_license_activation.portal_host_allowed",
+        return_value=True,
+    ), patch(
+        "icici_breeze_backend.app.services.portal_license_activation.parse_verified_portal_body",
+        return_value={"deployment_license_status": "active"},
+    ), patch(
+        "icici_breeze_backend.app.services.portal_license_activation.httpx.AsyncClient",
+        return_value=mock_client,
+    ):
+        asyncio.run(
+            request_portal_license_activation(
+                _sample_customer("vikrammh", "VIKRAM M HATRE"),
+                fallback_user_id="OTHER",
+            )
+        )
+
+    call_kwargs = mock_client.post.call_args.kwargs
+    assert call_kwargs["json"]["icici_user_id"] == "VIKRAMMH"
+    assert call_kwargs["json"]["idirect_user_name"] == "VIKRAM M HATRE"
+```
+
+## backend/tests/test_portal_policy_token.py
+
+```python
+"""Unit tests for portal heartbeat policy JWT verification."""
+
+import time
+
+import jwt
+import pytest
+
+from icici_breeze_backend.app.services.portal_policy_token import (
+    parse_verified_portal_body,
+    portal_host_allowed,
+    verify_policy_token,
+)
+from tests.fixtures.portal_heartbeat_drm_keys import (
+    TEST_PRIVATE_KEY_PEM,
+    attach_test_policy_token,
+)
+
+
+def test_verify_policy_token_success():
+    body = attach_test_policy_token(
+        {"status": "OK", "deployment_license_status": "active", "trigger_upgrade": False},
+        public_ip="203.0.113.10",
+    )
+    policy = verify_policy_token(body["policy_token"], public_ip="203.0.113.10")
+    assert policy["deployment_license_status"] == "active"
+
+
+def test_verify_rejects_ip_mismatch():
+    body = attach_test_policy_token(
+        {"status": "OK", "deployment_license_status": "active"},
+        public_ip="203.0.113.10",
+    )
+    with pytest.raises(ValueError, match="public_ip mismatch"):
+        verify_policy_token(body["policy_token"], public_ip="198.51.100.1")
+
+
+def test_parse_verified_portal_body_missing_token():
+    assert parse_verified_portal_body({"status": "OK"}, public_ip="203.0.113.10") is None
+
+
+def test_portal_host_allowed():
+    assert portal_host_allowed("https://portal.example/api") is True
+    assert portal_host_allowed("https://evil.example/api") is False
+
+
+def test_verify_rejects_expired_token():
+    now = int(time.time())
+    claims = {
+        "status": "OK",
+        "deployment_license_status": "active",
+        "public_ip": "203.0.113.10",
+        "iss": "breeze-portal",
+        "aud": "breeze-core-engine",
+        "iat": now - 900,
+        "exp": now - 300,
+    }
+    token = jwt.encode(claims, TEST_PRIVATE_KEY_PEM, algorithm="ES256")
+    with pytest.raises(jwt.PyJWTError):
+        verify_policy_token(token, public_ip="203.0.113.10")
+```
+
 ## backend/tests/test_register_credential_flows.py
 
 ```python
@@ -16969,6 +20677,106 @@ def test_user_has_active_broker_credentials_and_password_update():
             assert not verify_direct_account_password(conn, "u1", "oldpassword12")
     finally:
         os.unlink(path)
+```
+
+## backend/tests/test_register_portal_notification.py
+
+```python
+"""Portal notification after direct user registration."""
+
+import sqlite3
+from unittest.mock import patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from icici_breeze_backend.app.api.v1 import route_register as rr
+
+
+def _schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE user_account (
+            user_id TEXT PRIMARY KEY NOT NULL,
+            google_id TEXT UNIQUE,
+            username TEXT NOT NULL,
+            email TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_active BOOLEAN DEFAULT 1,
+            roles TEXT DEFAULT '["trader"]',
+            is_admin INTEGER DEFAULT 0,
+            password_hash TEXT,
+            auth_provider TEXT NOT NULL DEFAULT 'google'
+        );
+        CREATE TABLE user_credentials (
+            credential_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            broker_api_key TEXT NOT NULL,
+            secret_fragment BLOB NOT NULL,
+            encryption_salt BLOB NOT NULL,
+            fragment_position TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            rotated_at TIMESTAMP
+        );
+        """
+    )
+
+
+@pytest.fixture
+def register_client(tmp_path, monkeypatch):
+    db_path = tmp_path / "users.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        _schema(conn)
+    monkeypatch.setattr(rr, "DB_PATH", str(db_path))
+    monkeypatch.setattr(rr.cfg, "JWT_SECRET", "unit-test-jwt-secret-key-32chars!!")
+    monkeypatch.setattr(rr.cfg, "DATA_PATH", str(tmp_path) + "/")
+    monkeypatch.setattr(rr.cfg, "USERS_DB", "users.sqlite3")
+
+    app = FastAPI()
+    app.include_router(rr.router)
+    with TestClient(app) as client:
+        yield client
+
+
+def test_register_direct_notifies_portal(register_client):
+    client = register_client
+    with patch.object(rr, "cred_manager") as cred_mgr:
+        cred_mgr.update_credentials.return_value = True
+        with patch(
+            "icici_breeze_backend.app.services.portal_deployment_user_registration.notify_portal_deployment_user_registration"
+        ) as notify:
+            r = client.post(
+                "/api/register/direct",
+                json={
+                    "user_id": "trader1",
+                    "password": "password123",
+                    "api_key": "api-key",
+                    "secret_fragment": "secret",
+                },
+            )
+    assert r.status_code == 200
+    notify.assert_called_once_with(user_id="trader1")
+
+
+def test_register_direct_conflict_does_not_notify_portal(register_client):
+    client = register_client
+    payload = {
+        "user_id": "trader1",
+        "password": "password123",
+        "api_key": "api-key",
+        "secret_fragment": "secret",
+    }
+    with patch.object(rr, "cred_manager") as cred_mgr:
+        cred_mgr.update_credentials.return_value = True
+        with patch(
+            "icici_breeze_backend.app.services.portal_deployment_user_registration.notify_portal_deployment_user_registration"
+        ) as notify:
+            assert client.post("/api/register/direct", json=payload).status_code == 200
+            assert client.post("/api/register/direct", json=payload).status_code == 409
+    notify.assert_called_once()
 ```
 
 ## backend/tests/test_strategy_builder_domain.py
@@ -17147,6 +20955,13 @@ def test_jwt_without_google_id_accepted():
         core_cfg.JWT_SECRET = prev_c
 ```
 
+## deploy/breeze/portal_allowed_hosts.txt
+
+```text
+# Populated at image build from CONSOLE_API_PUBLIC_BASE_URL (one hostname per line).
+# Local/test images may leave this empty; portal enforcement requires a non-empty allowlist.
+```
+
 ## deploy/nginx.all-in-one.conf
 
 ```nginx
@@ -17172,6 +20987,14 @@ http {
 
   server {
     listen 3000;
+
+    location = /health {
+      proxy_pass http://backend;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
 
     location ^~ /auth/ {
       proxy_pass http://backend;
@@ -18924,7 +22747,7 @@ function TrendChip({ pct }: { pct: number | null | undefined }) {
   .app-table-row {
     @apply border-t border-zinc-200 dark:border-zinc-800/80;
   }
-  /** Primary actions (matches sidebar “Breeze Core Engine” sky brand). */
+  /** Primary actions (matches sidebar “Breeze Modern” sky brand). */
   .app-btn-primary {
     @apply inline-flex items-center justify-center rounded-sm border border-sky-600 bg-sky-600 px-3.5 py-1.5 text-sm font-medium text-white transition hover:border-sky-500 hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-sky-800 disabled:bg-sky-800 disabled:text-white dark:border-sky-500 dark:bg-sky-500 dark:hover:border-sky-400 dark:hover:bg-sky-400 dark:disabled:border-sky-800 dark:disabled:bg-sky-800;
   }
@@ -18932,7 +22755,7 @@ function TrendChip({ pct }: { pct: number | null | undefined }) {
   .app-btn-outline {
     @apply inline-flex items-center justify-center rounded-sm border border-sky-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-800 transition hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:border-sky-800/70 dark:bg-zinc-900 dark:text-sky-200 dark:hover:border-sky-600 dark:hover:bg-sky-950/40 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500;
   }
-  /** Inline & text links (same brand blue as Breeze Core Engine). */
+  /** Inline & text links (same brand blue as Breeze Modern). */
   .app-link {
     @apply font-medium text-sky-600 underline-offset-2 transition-colors hover:text-sky-500 hover:underline dark:text-sky-400 dark:hover:text-sky-300;
   }
@@ -19238,8 +23061,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Breeze Core Engine",
-  description: "Trading dashboard for ICICI Breeze",
+  title: "Breeze Modern",
+  description: "ICICI Direct Breeze API trading dashboard",
 };
 
 export const viewport: Viewport = {
@@ -19283,9 +23106,13 @@ import Image from "next/image";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import breezeMark from "@/app/android-chrome-192x192.png";
+import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
+import { IciciRegistrationGuideLink } from "@/components/auth/IciciRegistrationGuideLink";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
+import { formatAppVersionLabel } from "@/lib/app-version";
+import { getLatestRelease } from "@/lib/changelog";
 
 function LoginContent() {
   const sp = useSearchParams();
@@ -19300,6 +23127,8 @@ function LoginContent() {
   const [directPassword, setDirectPassword] = useState("");
   const [directErr, setDirectErr] = useState<string | null>(null);
   const [directBusy, setDirectBusy] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
+  const latestVersionLabel = formatAppVersionLabel(getLatestRelease()?.version);
 
   let banner: string | null = null;
   let tone: "ok" | "warn" | "err" = "ok";
@@ -19349,9 +23178,22 @@ function LoginContent() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-background py-8 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] text-foreground">
-      <div className="absolute end-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))]">
+      <div className="absolute end-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setChangelogOpen(true)}
+          className="inline-flex min-h-9 shrink-0 items-center justify-center truncate rounded-md px-1.5 text-xs font-medium text-sky-700 underline-offset-2 hover:underline dark:text-sky-400"
+          aria-haspopup="dialog"
+          aria-label="Open changelog"
+        >
+          {latestVersionLabel || "Version"}
+        </button>
         <ThemeToggle />
       </div>
+      <ChangelogDialog
+        open={changelogOpen}
+        onClose={() => setChangelogOpen(false)}
+      />
       <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white/90 p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900/80 dark:shadow-xl dark:shadow-black/40">
         <div className="mb-6 flex gap-3">
           <div className="flex h-16 w-16 shrink-0 items-center justify-center">
@@ -19366,7 +23208,7 @@ function LoginContent() {
           </div>
           <div className="min-w-0 space-y-2">
             <h1 className="text-xl font-semibold tracking-tight text-sky-500 dark:text-sky-500">
-              Breeze Core Engine
+              Breeze Modern
             </h1>
             <p className="text-xs text-zinc-600 dark:text-zinc-400">
               Sign in with your ICICI user id and app password, then complete ICICI Direct login.
@@ -19396,6 +23238,8 @@ function LoginContent() {
             <a href="/register" className="app-link">
               Register
             </a>
+            {" · "}
+            <IciciRegistrationGuideLink />
           </p>
           <p className="text-center text-[11px] text-zinc-500">
             Wrong credentials?{" "}
@@ -19531,6 +23375,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
+import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import type { ExecutionPreviewLeg } from "@/components/order/OrderExecutionConfirmDialog";
 import { OrderBookDatePopover } from "@/components/order/OrderBookDatePopover";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
@@ -20908,7 +24753,9 @@ function OrdersBody() {
 export default function OrdersPage() {
   return (
     <AppShell contentWidth="wide">
-      <OrdersBody />
+      <RevokedTradingPageGuard>
+        <OrdersBody />
+      </RevokedTradingPageGuard>
     </AppShell>
   );
 }
@@ -21471,13 +25318,15 @@ import {
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
+import { ManualContractFieldWarningDialog } from "@/components/order/ManualContractFieldWarningDialog";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { StrikeSelectPill } from "@/components/strategy-builder/StrikeSelectPill";
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
-import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import { isValidExpiryDisplay, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import {
   consumePlaceOrderClonePayload,
   placeOrderPrefillFromSearchParams,
@@ -21494,6 +25343,52 @@ import type {
 } from "@/lib/strategy-builder/types";
 
 type Segment = "NFO" | "BFO";
+type FieldMode = "dropdown" | "manual";
+
+const fieldModeBtnClass =
+  "flex shrink-0 items-center justify-center self-center rounded-md p-2 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:pointer-events-none disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200";
+
+function EditIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function ListIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M8 6h13" />
+      <path d="M8 12h13" />
+      <path d="M8 18h13" />
+      <path d="M3 6h.01" />
+      <path d="M3 12h.01" />
+      <path d="M3 18h.01" />
+    </svg>
+  );
+}
 
 type ScripDetailsState = {
   ltp: number | null;
@@ -21559,6 +25454,11 @@ function PlaceOrderPageInner() {
   const [lockedOrderSide, setLockedOrderSide] = useState<OrderSide | null>(null);
   /** Exchange, scrip, expiry, strike, option fixed — only qty, price, and locked side editable. */
   const [contractFieldsLocked, setContractFieldsLocked] = useState(false);
+  const [expiryFieldMode, setExpiryFieldMode] = useState<FieldMode>("dropdown");
+  const [strikeFieldMode, setStrikeFieldMode] = useState<FieldMode>("dropdown");
+  const [manualEditPrompt, setManualEditPrompt] = useState<
+    "expiry" | "strike" | null
+  >(null);
 
   useEffect(() => {
     if (prefillConsumedRef.current) return;
@@ -21636,7 +25536,16 @@ function PlaceOrderPageInner() {
     return first != null && Number.isFinite(Number(first)) ? Number(first) : null;
   }, [chainSuccess]);
 
-  const effectiveStrike = strikeSelection ?? defaultStrike;
+  const effectiveStrike =
+    strikeFieldMode === "manual"
+      ? strikeSelection
+      : strikeSelection ?? defaultStrike;
+
+  function resetContractFieldModes() {
+    setExpiryFieldMode("dropdown");
+    setStrikeFieldMode("dropdown");
+    setManualEditPrompt(null);
+  }
 
   function resetOrderForm() {
     setStockCode("");
@@ -21647,6 +25556,28 @@ function PlaceOrderPageInner() {
     setPrice("");
     setLockedOrderSide(null);
     setContractFieldsLocked(false);
+    resetContractFieldModes();
+  }
+
+  function confirmManualEdit() {
+    if (manualEditPrompt === "expiry") {
+      setExpiryFieldMode("manual");
+    }
+    if (manualEditPrompt === "strike") {
+      const prefill = strikeSelection ?? defaultStrike;
+      if (prefill != null) setStrikeSelection(prefill);
+      setStrikeFieldMode("manual");
+    }
+    setManualEditPrompt(null);
+  }
+
+  function onExpiryChange(d: string) {
+    setExpiryDate(d);
+    setStrikeSelection(null);
+    setScripDetails(null);
+    setQuantity("");
+    setPrice("");
+    setLockedOrderSide(null);
   }
 
   const fetchDetailsMut = useMutation({
@@ -21842,8 +25773,26 @@ function PlaceOrderPageInner() {
 
   const spot = chainSuccess?.spot_price ?? null;
 
+  const expiryInvalid =
+    expiryFieldMode === "manual" &&
+    expiryDate.trim().length > 0 &&
+    !isValidExpiryDisplay(expiryDate);
+
+  const strikeDropdownDisabled =
+    !stockCode ||
+    !expiryDate ||
+    (chainQ.isFetching && !strikes.length) ||
+    !strikes.length ||
+    contractFieldsLocked;
+
+  const manualStrikeValue =
+    strikeSelection != null && Number.isFinite(strikeSelection)
+      ? String(strikeSelection)
+      : "";
+
   return (
     <AppShell contentWidth="default">
+      <RevokedTradingPageGuard>
       <div className="mx-auto max-w-md space-y-5">
         <header className="flex flex-col gap-3">
           <div>
@@ -21926,55 +25875,138 @@ function PlaceOrderPageInner() {
                   setQuantity("");
                   setPrice("");
                   setLockedOrderSide(null);
+                  resetContractFieldModes();
                 }}
               />
             </div>
 
             <div className="w-full min-w-0">
               <span className={sb.fieldLabel}>Expiry</span>
-              <ExpirySelectPill
-                layout="default"
-                tone="darkToolbar"
-                hideLabel
-                rootClassName={pillStretch}
-                dates={expiryOptions}
-                value={expiryDate}
-                disabled={!stockCode || contractFieldsLocked}
-                onChange={(d) => {
-                  setExpiryDate(d);
-                  setStrikeSelection(null);
-                  setScripDetails(null);
-                  setQuantity("");
-                  setPrice("");
-                  setLockedOrderSide(null);
-                }}
-              />
+              <div className="flex items-stretch gap-1.5">
+                <div className="min-w-0 flex-1">
+                  {expiryFieldMode === "dropdown" ? (
+                    <ExpirySelectPill
+                      layout="default"
+                      tone="darkToolbar"
+                      hideLabel
+                      rootClassName={pillStretch}
+                      dates={expiryOptions}
+                      value={expiryDate}
+                      disabled={!stockCode || contractFieldsLocked}
+                      onChange={onExpiryChange}
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      className={sb.input}
+                      value={expiryDate}
+                      disabled={!stockCode || contractFieldsLocked}
+                      placeholder="21-Mar-2026"
+                      aria-label="Expiry date"
+                      onChange={(e) => onExpiryChange(e.target.value)}
+                    />
+                  )}
+                </div>
+                {!contractFieldsLocked ? (
+                  expiryFieldMode === "dropdown" ? (
+                    <button
+                      type="button"
+                      className={fieldModeBtnClass}
+                      disabled={!stockCode}
+                      aria-label="Edit expiry manually"
+                      onClick={() => setManualEditPrompt("expiry")}
+                    >
+                      <EditIcon />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className={fieldModeBtnClass}
+                      aria-label="Choose expiry from list"
+                      onClick={() => setExpiryFieldMode("dropdown")}
+                    >
+                      <ListIcon />
+                    </button>
+                  )
+                ) : null}
+              </div>
+              {expiryInvalid ? (
+                <p className="mt-1 text-xs text-amber-800 dark:text-amber-200/90">
+                  Use DD-Mon-YYYY format (e.g. 21-Mar-2026).
+                </p>
+              ) : null}
             </div>
 
             <div className="w-full min-w-0">
               <span className={sb.fieldLabel}>Strike</span>
-              <StrikeSelectPill
-                layout="default"
-                tone="darkToolbar"
-                hideLabel
-                rootClassName={pillStretch}
-                strikes={strikes}
-                value={effectiveStrike}
-                busy={Boolean(
-                  stockCode && expiryDate && chainQ.isFetching && !strikes.length,
-                )}
-                disabled={
-                  !stockCode ||
-                  !expiryDate ||
-                  (chainQ.isFetching && !strikes.length) ||
-                  !strikes.length ||
-                  contractFieldsLocked
-                }
-                onChange={(k) => {
-                  setStrikeSelection(k);
-                  setScripDetails(null);
-                }}
-              />
+              <div className="flex items-stretch gap-1.5">
+                <div className="min-w-0 flex-1">
+                  {strikeFieldMode === "dropdown" ? (
+                    <StrikeSelectPill
+                      layout="default"
+                      tone="darkToolbar"
+                      hideLabel
+                      rootClassName={pillStretch}
+                      strikes={strikes}
+                      value={effectiveStrike}
+                      busy={Boolean(
+                        stockCode &&
+                          expiryDate &&
+                          chainQ.isFetching &&
+                          !strikes.length,
+                      )}
+                      disabled={strikeDropdownDisabled}
+                      onChange={(k) => {
+                        setStrikeSelection(k);
+                        setScripDetails(null);
+                      }}
+                    />
+                  ) : (
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      className={sb.input}
+                      value={manualStrikeValue}
+                      disabled={!stockCode || contractFieldsLocked}
+                      placeholder="24500"
+                      aria-label="Strike price"
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === "") {
+                          setStrikeSelection(null);
+                        } else {
+                          const n = parseNum(raw);
+                          setStrikeSelection(Number.isFinite(n) ? n : null);
+                        }
+                        setScripDetails(null);
+                      }}
+                    />
+                  )}
+                </div>
+                {!contractFieldsLocked ? (
+                  strikeFieldMode === "dropdown" ? (
+                    <button
+                      type="button"
+                      className={fieldModeBtnClass}
+                      disabled={!stockCode}
+                      aria-label="Edit strike manually"
+                      onClick={() => setManualEditPrompt("strike")}
+                    >
+                      <EditIcon />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className={fieldModeBtnClass}
+                      aria-label="Choose strike from list"
+                      onClick={() => setStrikeFieldMode("dropdown")}
+                    >
+                      <ListIcon />
+                    </button>
+                  )
+                ) : null}
+              </div>
             </div>
 
             <div
@@ -22208,6 +26240,13 @@ function PlaceOrderPageInner() {
           ) : null}
         </section>
       </div>
+      <ManualContractFieldWarningDialog
+        open={manualEditPrompt != null}
+        field={manualEditPrompt ?? "expiry"}
+        onCancel={() => setManualEditPrompt(null)}
+        onConfirm={confirmManualEdit}
+      />
+      </RevokedTradingPageGuard>
 
     </AppShell>
   );
@@ -22525,10 +26564,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { IciciRegistrationGuideLink } from "@/components/auth/IciciRegistrationGuideLink";
 import { apiClient } from "@/lib/api-client";
 
 type Session = {
   direct_registration_available?: boolean;
+  icici_handoff_url?: string | null;
 };
 
 export default function RegisterPage() {
@@ -22601,12 +26642,13 @@ export default function RegisterPage() {
       <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white/90 p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900/80 dark:shadow-xl dark:shadow-black/40">
         <h1 className="text-xl font-semibold tracking-tight">Register</h1>
         <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-          Link your ICICI Breeze API credentials and choose an app-only password for Breeze Core Engine.
+          Link your ICICI Breeze API credentials and choose an app-only password for Breeze Modern.
         </p>
         <h2 className="app-text-heading mt-6">Create account</h2>
         <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
           Your ICICI user id is your app username. Choose an app-only password (min 8 characters),
-          plus API key and secret fragment from Breeze API registration.
+          plus API key and secret fragment from ICICI Direct app registration. Need help? See the{" "}
+          <IciciRegistrationGuideLink />.
         </p>
         {err && (
           <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200">
@@ -24422,6 +28464,305 @@ export default function ApiUsageSettingsPage() {
 }
 ```
 
+## frontend/src/app/settings/breeze-api-playground/page.tsx
+
+```tsx
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+import { AppShell } from "@/components/layout/AppShell";
+import { BreezeApiMethodPicker } from "@/components/settings/BreezeApiMethodPicker";
+import { BreezeApiRiskGateDialog } from "@/components/settings/BreezeApiRiskGateDialog";
+import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import {
+  acknowledgeBreezeApiTesterRisk,
+  getBreezeApiTesterCatalog,
+  getBreezeApiTesterRiskStatus,
+  invokeBreezeApiTester,
+  RISK_GROUP_LABEL,
+  type BreezeApiCatalogEntry,
+  type BreezeApiInvokeResponse,
+} from "@/lib/breeze-api-tester";
+
+const inputCls =
+  "mt-1 w-full rounded-md border border-zinc-300/80 bg-white/95 px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition-all hover:border-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-blue-400 dark:focus:ring-blue-400/20";
+
+const RISK_ORDER: BreezeApiCatalogEntry["risk_level"][] = ["read", "funds", "trade", "gtt"];
+
+function formatResponse(payload: BreezeApiInvokeResponse | null, invokeError: string | null): string {
+  if (invokeError) return invokeError;
+  if (!payload) return "";
+  if (payload.error) {
+    return JSON.stringify({ error: payload.error, response: payload.response }, null, 2);
+  }
+  try {
+    return JSON.stringify(payload.response ?? payload, null, 2);
+  } catch {
+    return String(payload.response ?? payload);
+  }
+}
+
+export default function BreezeApiPlaygroundPage() {
+  const qc = useQueryClient();
+  const [selectedMethod, setSelectedMethod] = useState("");
+  const [paramValues, setParamValues] = useState<Record<string, string>>({});
+  const [lastResponse, setLastResponse] = useState<BreezeApiInvokeResponse | null>(null);
+  const [invokeError, setInvokeError] = useState<string | null>(null);
+
+  const riskQ = useQuery({
+    queryKey: ["settings", "breeze-api-tester", "risk"],
+    queryFn: getBreezeApiTesterRiskStatus,
+  });
+
+  const catalogQ = useQuery({
+    queryKey: ["settings", "breeze-api-tester", "catalog"],
+    queryFn: getBreezeApiTesterCatalog,
+    enabled: Boolean(riskQ.data?.accepted),
+  });
+
+  const ackM = useMutation({
+    mutationFn: acknowledgeBreezeApiTesterRisk,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["settings", "breeze-api-tester", "risk"] });
+    },
+  });
+
+  const invokeM = useMutation({
+    mutationFn: ({ method, params }: { method: string; params: Record<string, string> }) =>
+      invokeBreezeApiTester(method, params),
+    onSuccess: (data) => {
+      setLastResponse(data);
+      setInvokeError(null);
+    },
+    onError: (e) => {
+      setInvokeError(e instanceof Error ? e.message : "Invoke failed");
+      setLastResponse(null);
+    },
+  });
+
+  const entries = catalogQ.data?.entries ?? [];
+  const selected = useMemo(
+    () => entries.find((e) => e.method === selectedMethod) ?? null,
+    [entries, selectedMethod],
+  );
+
+  useEffect(() => {
+    if (!entries.length) return;
+    if (!selectedMethod || !entries.some((e) => e.method === selectedMethod)) {
+      setSelectedMethod(entries[0].method);
+    }
+  }, [entries, selectedMethod]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const next: Record<string, string> = {};
+    for (const p of selected.params) {
+      next[p.name] = paramValues[p.name] ?? "";
+    }
+    setParamValues(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset form when API changes
+  }, [selected?.method]);
+
+  const groupedOptions = useMemo(() => {
+    const groups = new Map<BreezeApiCatalogEntry["risk_level"], BreezeApiCatalogEntry[]>();
+    for (const level of RISK_ORDER) {
+      groups.set(level, []);
+    }
+    for (const e of entries) {
+      const list = groups.get(e.risk_level) ?? [];
+      list.push(e);
+      groups.set(e.risk_level, list);
+    }
+    return RISK_ORDER.map((level) => ({
+      level,
+      label: RISK_GROUP_LABEL[level],
+      items: (groups.get(level) ?? []).sort((a, b) => a.title.localeCompare(b.title)),
+    })).filter((g) => g.items.length > 0);
+  }, [entries]);
+
+  const buildParamsForInvoke = useCallback((): Record<string, string> => {
+    if (!selected) return {};
+    const out: Record<string, string> = {};
+    for (const p of selected.params) {
+      const v = (paramValues[p.name] ?? "").trim();
+      if (!v && !p.required) continue;
+      out[p.name] = paramValues[p.name] ?? "";
+    }
+    return out;
+  }, [selected, paramValues]);
+
+  const onFire = () => {
+    if (!selected) return;
+    setInvokeError(null);
+    invokeM.mutate({ method: selected.method, params: buildParamsForInvoke() });
+  };
+
+  const responseText = formatResponse(lastResponse, invokeError);
+  const showGate = riskQ.isSuccess && !riskQ.data?.accepted;
+
+  const copyResponse = async () => {
+    if (!responseText) return;
+    try {
+      await navigator.clipboard.writeText(responseText);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <AppShell>
+      <BreezeApiRiskGateDialog
+        open={showGate}
+        pending={ackM.isPending}
+        onAccept={() => ackM.mutate()}
+      />
+
+      <section
+        className={`app-card space-y-4 p-4 ${showGate ? "pointer-events-none select-none opacity-40" : ""}`}
+        aria-hidden={showGate}
+      >
+        <Link href="/settings" className="app-link text-xs inline-block">
+          Back to Settings
+        </Link>
+
+        <header className="space-y-1">
+          <h2 className="text-xl app-text-heading">Breeze API Playground</h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            Invoke ICICI Breeze REST APIs from the official breeze-connect client. Responses are
+            live from your broker session.
+          </p>
+        </header>
+
+        {catalogQ.isLoading && (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading API catalog…</p>
+        )}
+
+        {catalogQ.isError && (
+          <p className="text-sm text-red-700 dark:text-red-300">
+            Failed to load catalog. Ensure you are logged in.
+          </p>
+        )}
+
+        {selected && (
+          <>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-3">
+                <BreezeApiMethodPicker
+                  groups={groupedOptions}
+                  selectedMethod={selectedMethod}
+                  onSelect={setSelectedMethod}
+                />
+
+                {selected.description ? (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">{selected.description}</p>
+                ) : null}
+                {selected.notes ? (
+                  <p className="rounded-md border border-amber-200 bg-amber-50/80 px-2 py-1.5 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                    {selected.notes}
+                  </p>
+                ) : null}
+
+                {(selected.risk_level === "trade" ||
+                  selected.risk_level === "funds" ||
+                  selected.risk_level === "gtt") && (
+                  <p className="rounded-md border border-red-300 bg-red-50 px-2 py-1.5 text-xs font-medium text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200">
+                    This API can modify live orders, funds, or GTT triggers. Double-check every
+                    parameter before firing.
+                  </p>
+                )}
+
+                <div className="space-y-3 rounded-md border border-zinc-200/80 p-3 dark:border-zinc-800">
+                  <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    Parameters
+                  </div>
+                  {selected.params.length === 0 ? (
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">No parameters required.</p>
+                  ) : (
+                    selected.params.map((p) => (
+                      <label key={p.name} className="block text-xs">
+                        <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                          {p.label}
+                          {p.required ? " *" : ""}
+                        </span>
+                        {p.type === "json" ? (
+                          <textarea
+                            className={`${inputCls} min-h-[120px] font-mono text-xs`}
+                            value={paramValues[p.name] ?? ""}
+                            placeholder={p.placeholder}
+                            onChange={(e) =>
+                              setParamValues((prev) => ({ ...prev, [p.name]: e.target.value }))
+                            }
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            className={inputCls}
+                            value={paramValues[p.name] ?? ""}
+                            placeholder={p.placeholder}
+                            onChange={(e) =>
+                              setParamValues((prev) => ({ ...prev, [p.name]: e.target.value }))
+                            }
+                          />
+                        )}
+                        {p.help ? (
+                          <span className="mt-0.5 block text-zinc-500 dark:text-zinc-500">{p.help}</span>
+                        ) : null}
+                      </label>
+                    ))
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  className="app-btn-primary"
+                  disabled={invokeM.isPending || !riskQ.data?.accepted}
+                  onClick={onFire}
+                >
+                  <AsyncLabelSpan
+                    busy={invokeM.isPending}
+                    idleLabel="Fire API"
+                    busyLabel="Calling ICICI…"
+                  />
+                </button>
+              </div>
+
+              <div className="flex min-h-[280px] flex-col">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    Response
+                  </span>
+                  {responseText ? (
+                    <button
+                      type="button"
+                      className="app-btn-outline text-xs"
+                      onClick={() => void copyResponse()}
+                    >
+                      Copy
+                    </button>
+                  ) : null}
+                </div>
+                {lastResponse && (
+                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    {lastResponse.method} · {lastResponse.duration_ms} ms
+                    {lastResponse.ok === false ? " · non-200 Status in payload" : ""}
+                  </p>
+                )}
+                <pre className="mt-2 max-h-[50vh] min-h-[200px] flex-1 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-100">
+                  {responseText || "Response will appear here after you fire an API."}
+                </pre>
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+    </AppShell>
+  );
+}
+```
+
 ## frontend/src/app/settings/credentials/page.tsx
 
 ```tsx
@@ -24603,7 +28944,7 @@ export default function SettingsDeleteAccountPage() {
         <section className="app-card space-y-2 p-4">
           <h2 className="app-text-heading">Delete account</h2>
           <p className="app-text-muted max-w-2xl text-sm">
-            Remove your Breeze Core Engine account and stored broker API credentials. Confirm with your
+            Remove your Breeze Modern account and stored broker API credentials. Confirm with your
             ICICI user id and app password.
           </p>
         </section>
@@ -25144,12 +29485,25 @@ export default function SettingsPage() {
               Update scrip master
             </Link>
           </div>
+          <div className="rounded-md border border-red-300 bg-red-50/60 p-4 text-sm dark:border-red-900/50 dark:bg-red-950/20">
+            <div className="font-bold text-red-900 dark:text-red-200">Breeze API Playground</div>
+            <p className="mt-1 text-zinc-700 dark:text-zinc-400">
+              Test-fire raw ICICI Breeze REST APIs with your live session. Can place, modify, or cancel
+              real orders — use only if you understand the risk.
+            </p>
+            <Link
+              href="/settings/breeze-api-playground"
+              className="mt-3 inline-flex rounded-sm border border-red-800 bg-white px-3 py-2 text-sm font-medium text-red-900 hover:bg-red-50 dark:border-red-700 dark:bg-red-950/40 dark:text-red-100 dark:hover:bg-red-950/70"
+            >
+              Open API playground…
+            </Link>
+          </div>
           <div className="md:col-span-2 rounded-md border border-red-200 bg-red-50/50 p-4 text-sm dark:border-red-900/40 dark:bg-red-950/15">
             <div className="font-bold text-red-900 dark:text-red-200">
               Delete Account
             </div>
             <p className="mt-1 text-zinc-700 dark:text-zinc-400">
-              Permanently remove your account and stored credentials using your app password. This only removes your account from the Breeze Core Engine. It does not delete your account from ICICI nor does it release any AWS resources. To release your AWS resources, login to breeze-ui.com and follow the instructions in the license console to release your AWS resources.
+              Permanently remove your account and stored credentials using your app password. This only removes your account from Breeze Modern. It does not delete your account from ICICI nor does it release any AWS resources. To release your AWS resources, login to breeze-ui.com and follow the instructions in the license console to release your AWS resources.
             </p>
             <Link
               href="/settings/delete-account"
@@ -25536,6 +29890,7 @@ import type { ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import {
   OptionChainTable,
@@ -28918,6 +33273,7 @@ export default function StrategyBuilderPage() {
 
   return (
     <AppShell contentWidth="wide">
+      <RevokedTradingPageGuard>
       {secondsRemaining !== null ? (
         <RateLimitPauseOverlay secondsRemaining={secondsRemaining} />
       ) : null}
@@ -31608,6 +35964,7 @@ export default function StrategyBuilderPage() {
           </button>
         </>
       ) : null}
+      </RevokedTradingPageGuard>
     </AppShell>
   );
 }
@@ -31736,15 +36093,54 @@ export default function VerticalSpreadPage() {
 }
 ```
 
+## frontend/src/components/auth/IciciRegistrationGuideLink.tsx
+
+```tsx
+"use client";
+
+import { useEffect, useState } from "react";
+import { apiClient } from "@/lib/api-client";
+import { iciciHandoffGuideUrlForCurrentDeployment } from "@/lib/icici-handoff-url";
+
+type RegisterSession = {
+  icici_handoff_url?: string | null;
+};
+
+export function IciciRegistrationGuideLink({
+  className = "app-link",
+}: {
+  className?: string;
+}) {
+  const [href, setHref] = useState<string | null>(() => iciciHandoffGuideUrlForCurrentDeployment());
+
+  useEffect(() => {
+    if (href) return;
+    void apiClient
+      .get<RegisterSession>("/api/register/session", { sessionPolicy: "passive" })
+      .then((session) => setHref(session.icici_handoff_url ?? null))
+      .catch(() => {});
+  }, [href]);
+
+  if (!href) return null;
+
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={className}>
+      ICICI registration guide
+    </a>
+  );
+}
+```
+
 ## frontend/src/components/changelog/ChangelogDialog.tsx
 
 ```tsx
 "use client";
 
 import { useEffect } from "react";
+import { formatAppVersionForDisplay } from "@/lib/app-version";
 import {
   getHistoryReleases,
-  getLatestMajorRelease,
+  getLatestFeatureRelease,
   getLatestRelease,
   type ChangelogRelease,
   type ReleaseKind,
@@ -31755,18 +36151,42 @@ export type ChangelogDialogProps = {
   onClose: () => void;
 };
 
+const KIND_BADGE: Record<
+  ReleaseKind,
+  { label: string; className: string }
+> = {
+  major: {
+    label: "Major",
+    className:
+      "bg-sky-100 text-sky-900 dark:bg-sky-950/70 dark:text-sky-200",
+  },
+  minor: {
+    label: "Minor",
+    className:
+      "bg-slate-100 text-slate-900 dark:bg-slate-900/70 dark:text-slate-200",
+  },
+  patch: {
+    label: "Patch",
+    className:
+      "bg-zinc-200/90 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200",
+  },
+  prerelease: {
+    label: "Pre-release",
+    className:
+      "bg-amber-100 text-amber-950 dark:bg-amber-950/50 dark:text-amber-200",
+  },
+};
+
 function KindBadge({ kind }: { kind: ReleaseKind }) {
-  const isMajor = kind === "major";
+  const badge = KIND_BADGE[kind];
   return (
     <span
       className={[
         "inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-        isMajor
-          ? "bg-sky-100 text-sky-900 dark:bg-sky-950/70 dark:text-sky-200"
-          : "bg-zinc-200/90 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200",
+        badge.className,
       ].join(" ")}
     >
-      {isMajor ? "Major" : "Minor"}
+      {badge.label}
     </span>
   );
 }
@@ -31784,20 +36204,24 @@ function ReleaseBullets({ release }: { release: ChangelogRelease }) {
 }
 
 function formatReleaseHeading(release: ChangelogRelease) {
-  return `${release.version} · ${release.date}`;
+  return `${formatAppVersionForDisplay(release.version)} · ${release.date}`;
 }
 
-function MajorReleasePanel({ release }: { release: ChangelogRelease }) {
+function isFeatureReleaseKind(kind: ReleaseKind) {
+  return kind === "major" || kind === "minor";
+}
+
+function FeatureReleasePanel({ release }: { release: ChangelogRelease }) {
   return (
     <section
       className="rounded-lg border border-sky-200/90 bg-sky-50/80 p-4 dark:border-sky-900/45 dark:bg-sky-950/30"
-      aria-label="Major release"
+      aria-label="Feature release"
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium uppercase tracking-wide text-sky-800 dark:text-sky-300">
-          Major release
+          Feature release
         </span>
-        <KindBadge kind="major" />
+        <KindBadge kind={release.releaseKind} />
       </div>
       <div className="mt-2 text-base font-semibold text-zinc-900 dark:text-zinc-100">
         {formatReleaseHeading(release)}
@@ -31812,7 +36236,7 @@ function MajorReleasePanel({ release }: { release: ChangelogRelease }) {
   );
 }
 
-function MinorUpdatePanel({ release }: { release: ChangelogRelease }) {
+function LatestBuildPanel({ release }: { release: ChangelogRelease }) {
   return (
     <section
       className="rounded-md border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-900/35"
@@ -31822,7 +36246,7 @@ function MinorUpdatePanel({ release }: { release: ChangelogRelease }) {
         <span className="text-xs font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
           Latest update (your build)
         </span>
-        <KindBadge kind="minor" />
+        <KindBadge kind={release.releaseKind} />
       </div>
       <div className="mt-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
         {formatReleaseHeading(release)}
@@ -31838,11 +36262,11 @@ function MinorUpdatePanel({ release }: { release: ChangelogRelease }) {
 }
 
 function UnifiedLatestPanel({ release }: { release: ChangelogRelease }) {
-  const isMajor = release.releaseKind === "major";
+  const isFeature = isFeatureReleaseKind(release.releaseKind);
   return (
     <section
       className={
-        isMajor
+        isFeature
           ? "rounded-lg border border-sky-200/90 bg-sky-50/80 p-4 dark:border-sky-900/45 dark:bg-sky-950/30"
           : "rounded-md border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-700 dark:bg-zinc-900/35"
       }
@@ -31851,12 +36275,16 @@ function UnifiedLatestPanel({ release }: { release: ChangelogRelease }) {
       <div className="flex flex-wrap items-center gap-2">
         <span
           className={
-            isMajor
+            isFeature
               ? "text-xs font-medium uppercase tracking-wide text-sky-800 dark:text-sky-300"
               : "text-xs font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-400"
           }
         >
-          {isMajor ? "Latest major release" : "Latest release"}
+          {release.releaseKind === "major"
+            ? "Latest major release"
+            : release.releaseKind === "minor"
+              ? "Latest feature release"
+              : "Latest release"}
         </span>
         <KindBadge kind={release.releaseKind} />
       </div>
@@ -31866,7 +36294,7 @@ function UnifiedLatestPanel({ release }: { release: ChangelogRelease }) {
       {release.summary ? (
         <p
           className={
-            isMajor
+            isFeature
               ? "mt-1 text-sm text-zinc-700 dark:text-zinc-300"
               : "mt-1 text-sm text-zinc-600 dark:text-zinc-400"
           }
@@ -31901,24 +36329,23 @@ export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
   if (!open) return null;
 
   const latest = getLatestRelease();
-  const latestMajor = getLatestMajorRelease();
+  const latestFeature = getLatestFeatureRelease();
 
   const showSplitLayout = Boolean(
     latest &&
-      latest.releaseKind === "minor" &&
-      latestMajor &&
-      (latestMajor.version !== latest.version ||
-        latestMajor.date !== latest.date),
+      (latest.releaseKind === "patch" || latest.releaseKind === "prerelease") &&
+      latestFeature &&
+      (latestFeature.version !== latest.version ||
+        latestFeature.date !== latest.date),
   );
 
   const history = getHistoryReleases(
     latest,
-    showSplitLayout ? latestMajor : undefined,
+    showSplitLayout ? latestFeature : undefined,
   );
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex flex-col justify-end sm:items-center sm:justify-center sm:p-4"
+    <div className="fixed inset-0 z-50 flex flex-col justify-end sm:items-center sm:justify-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="changelog-dialog-title"
@@ -31945,8 +36372,8 @@ export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
               What&apos;s new
             </h2>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              Major milestones are highlighted; minor releases list fixes so you
-              can match your app version.
+              Feature releases are highlighted; patch and pre-release builds are
+              listed so you can match your app version.
             </p>
           </div>
           <button
@@ -31978,10 +36405,10 @@ export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               No release notes yet.
             </p>
-          ) : showSplitLayout && latestMajor ? (
+          ) : showSplitLayout && latestFeature ? (
             <>
-              <MajorReleasePanel release={latestMajor} />
-              <MinorUpdatePanel release={latest} />
+              <FeatureReleasePanel release={latestFeature} />
+              <LatestBuildPanel release={latest} />
               {history.length > 0 ? (
                 <HistorySection releases={history} />
               ) : null}
@@ -32672,8 +37099,11 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import breezeMark from "@/app/android-chrome-192x192.png";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
+import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
+import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { apiClient } from "@/lib/api-client";
+import { formatAppVersionLabel } from "@/lib/app-version";
 import { getLatestRelease } from "@/lib/changelog";
 import {
   getAvailableMargin,
@@ -32750,6 +37180,8 @@ export function AppShell({
     return () => window.cancelAnimationFrame(id);
   }, [mobileNavOpen]);
 
+  const { licenseStatus, contactSalesMailto } = useLicenseRestrictions();
+
   const homeQ = useQuery({
     queryKey: ["home", "data"],
     queryFn: () => apiClient.get<HomeDataResponse>("/home/data"),
@@ -32779,7 +37211,7 @@ export function AppShell({
       className: moneyToneClass(freeMargin),
     };
   }, [freeMargin]);
-  const latestReleaseVersion = getLatestRelease()?.version;
+  const latestVersionLabel = formatAppVersionLabel(getLatestRelease()?.version);
 
   return (
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
@@ -32796,7 +37228,7 @@ export function AppShell({
           </div>
           <div className="min-w-0 flex flex-col justify-center py-0.5">
             <div className="text-base font-semibold tracking-tight text-sky-600 dark:text-sky-500">
-              Breeze Core Engine
+              Breeze Modern
             </div>
             <div className="app-text-muted mt-0.5">
               Enabled by Breeze API
@@ -32904,7 +37336,7 @@ export function AppShell({
               aria-haspopup="dialog"
               aria-label="Open changelog"
             >
-              {latestReleaseVersion ? `v${latestReleaseVersion}` : "Version"}
+              {latestVersionLabel || "Version"}
             </button>
             <ThemeToggle />
             <Link
@@ -32941,7 +37373,7 @@ export function AppShell({
                     id={mobileNavTitleId}
                     className="truncate text-sm font-semibold text-sky-600 dark:text-sky-500"
                   >
-                    Breeze Core Engine
+                    Breeze Modern
                   </div>
                   <div className="app-text-muted">Menu</div>
                 </div>
@@ -32992,6 +37424,10 @@ export function AppShell({
         <ChangelogDialog
           open={changelogOpen}
           onClose={() => setChangelogOpen(false)}
+        />
+        <LicenseStatusBanner
+          status={licenseStatus}
+          contactSalesMailto={contactSalesMailto}
         />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-50 py-4 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-zinc-950 md:py-5 md:ps-5 md:pe-5">
           <div
@@ -33214,6 +37650,321 @@ function SettingsIcon() {
 }
 ```
 
+## frontend/src/components/license/LicenseRestrictionProvider.tsx
+
+```tsx
+"use client";
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  LICENSE_CONSOLE_URL,
+  licenseBannerMessage,
+  type DeploymentLicenseStatus,
+} from "@/lib/deployment-license";
+import { buildContactSalesMailtoForLicenseStatus } from "@/lib/contact-sales-mailto";
+import {
+  licenseStatusFromQuery,
+  tradingReadOnlyFromLicense,
+  useDeploymentLicense,
+} from "@/lib/use-deployment-license";
+
+type LicenseRestrictionContextValue = {
+  licenseStatus: DeploymentLicenseStatus | null;
+  tradingReadOnly: boolean;
+  contactSalesMailto: string | null;
+  showRevokedDialog: () => void;
+  guardTradingAction: (fn: () => void) => void;
+};
+
+const LicenseRestrictionContext =
+  createContext<LicenseRestrictionContextValue | null>(null);
+
+export function useLicenseRestrictions(): LicenseRestrictionContextValue {
+  const ctx = useContext(LicenseRestrictionContext);
+  if (!ctx) {
+    throw new Error(
+      "useLicenseRestrictions must be used within LicenseRestrictionProvider",
+    );
+  }
+  return ctx;
+}
+
+function RevokedLicenseDialog({
+  open,
+  onClose,
+  contactSalesMailto,
+  licenseStatus,
+}: {
+  open: boolean;
+  onClose: () => void;
+  contactSalesMailto: string | null;
+  licenseStatus: DeploymentLicenseStatus | null;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  const banner =
+    licenseBannerMessage(licenseStatus) ??
+    licenseBannerMessage("revoked") ??
+    "";
+  const [before, after] = banner.split("breeze-ui.com");
+  const title =
+    licenseStatus === "unlicensed" ? "No deployment license" : "License revoked";
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
+      role="presentation"
+      onClick={onClose}
+    >
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="license-revoked-title"
+        className="max-w-lg rounded-lg border border-red-200 bg-white p-5 shadow-xl dark:border-red-500/35 dark:bg-zinc-900"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2
+          id="license-revoked-title"
+          className="text-base font-semibold text-zinc-900 dark:text-zinc-100"
+        >
+          {title}
+        </h2>
+        <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
+          {before}
+          <a
+            href={LICENSE_CONSOLE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-red-800 underline underline-offset-2 dark:text-red-200"
+          >
+            breeze-ui.com
+          </a>
+          {after}
+        </p>
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          {contactSalesMailto ? (
+            <a
+              href={contactSalesMailto}
+              data-license-allow
+              className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-900 hover:bg-red-50 dark:border-red-500/40 dark:text-red-100 dark:hover:bg-red-950/40"
+            >
+              Contact Sales
+            </a>
+          ) : null}
+          <button
+            type="button"
+            data-license-allow
+            className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+            onClick={onClose}
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function LicenseRestrictionProvider({ children }: { children: ReactNode }) {
+  const licenseQ = useDeploymentLicense();
+
+  const licenseStatus = licenseStatusFromQuery(licenseQ.data);
+  const tradingReadOnly = tradingReadOnlyFromLicense(licenseQ.data);
+  const contactSalesMailto = buildContactSalesMailtoForLicenseStatus(
+    licenseStatus,
+    licenseQ.data?.contact_sales,
+  );
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  const showRevokedDialog = useCallback(() => {
+    setDialogOpen(true);
+  }, []);
+
+  const guardTradingAction = useCallback(
+    (fn: () => void) => {
+      if (tradingReadOnly) {
+        showRevokedDialog();
+        return;
+      }
+      fn();
+    },
+    [tradingReadOnly, showRevokedDialog],
+  );
+
+  const value = useMemo(
+    () => ({
+      licenseStatus,
+      tradingReadOnly,
+      contactSalesMailto,
+      showRevokedDialog,
+      guardTradingAction,
+    }),
+    [licenseStatus, tradingReadOnly, contactSalesMailto, showRevokedDialog, guardTradingAction],
+  );
+
+  return (
+    <LicenseRestrictionContext.Provider value={value}>
+      {children}
+      <RevokedLicenseDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        contactSalesMailto={contactSalesMailto}
+        licenseStatus={licenseStatus}
+      />
+    </LicenseRestrictionContext.Provider>
+  );
+}
+```
+
+## frontend/src/components/license/LicenseStatusBanner.tsx
+
+```tsx
+import {
+  licenseBannerMessage,
+  LICENSE_CONSOLE_URL,
+  shouldShowLicenseBanner,
+  type DeploymentLicenseStatus,
+} from "@/lib/deployment-license";
+
+export function LicenseStatusBanner({
+  status,
+  contactSalesMailto,
+}: {
+  status: DeploymentLicenseStatus | null | undefined;
+  contactSalesMailto?: string | null;
+}) {
+  if (!shouldShowLicenseBanner(status)) return null;
+
+  const message = licenseBannerMessage(status);
+  if (!message) return null;
+
+  const isExpired = status === "expired";
+  const isWarningOnly = status === "expired" || status === "pending_activation";
+  const linkInMessage = message.includes("breeze-ui.com");
+  const [before, after] = linkInMessage ? message.split("breeze-ui.com") : [message, ""];
+
+  return (
+    <div
+      role="status"
+      className={[
+        "border-b px-4 py-2 text-center text-sm",
+        isWarningOnly
+          ? "border-amber-500/60 bg-amber-500/10 text-amber-950 dark:text-amber-100"
+          : "border-red-500/60 bg-red-500/10 text-red-950 dark:text-red-100",
+      ].join(" ")}
+    >
+      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+        <span>
+          {before}
+          {linkInMessage ? (
+            <a
+              href={LICENSE_CONSOLE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={[
+                "font-medium underline underline-offset-2",
+                isWarningOnly
+                  ? "text-amber-900 hover:text-amber-950 dark:text-amber-50 dark:hover:text-white"
+                  : "text-red-900 hover:text-red-950 dark:text-red-50 dark:hover:text-white",
+              ].join(" ")}
+            >
+              breeze-ui.com
+            </a>
+          ) : null}
+          {after}
+        </span>
+        {contactSalesMailto ? (
+          <>
+            <span className="hidden sm:inline" aria-hidden="true">
+              ·
+            </span>
+            <a
+              href={contactSalesMailto}
+              className={[
+                "font-semibold underline underline-offset-2",
+                isWarningOnly
+                  ? "text-amber-900 hover:text-amber-950 dark:text-amber-50 dark:hover:text-white"
+                  : "text-red-900 hover:text-red-950 dark:text-red-50 dark:hover:text-white",
+              ].join(" ")}
+            >
+              Contact Sales
+            </a>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+```
+
+## frontend/src/components/license/RevokedTradingPageGuard.tsx
+
+```tsx
+"use client";
+
+import { type ReactNode, useCallback } from "react";
+import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
+
+function isBlockedInteractiveTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  const el = target.closest(
+    "button, [role='button'], input[type='submit'], input[type='button']",
+  );
+  if (!el) return false;
+  if (el.hasAttribute("data-license-allow")) return false;
+  if (el.closest("[data-license-allow]")) return false;
+  return true;
+}
+
+export function RevokedTradingPageGuard({ children }: { children: ReactNode }) {
+  const { tradingReadOnly, showRevokedDialog } = useLicenseRestrictions();
+
+  const onClickCapture = useCallback(
+    (event: React.MouseEvent) => {
+      if (!tradingReadOnly) return;
+      if (!isBlockedInteractiveTarget(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      showRevokedDialog();
+    },
+    [tradingReadOnly, showRevokedDialog],
+  );
+
+  if (!tradingReadOnly) {
+    return children;
+  }
+
+  return <div onClickCapture={onClickCapture}>{children}</div>;
+}
+```
+
 ## frontend/src/components/order/ChunkSizeOrderField.tsx
 
 ```tsx
@@ -33306,6 +38057,86 @@ export {
   OrderExecutionConfirmDialog as ExecutionPreviewModal,
   type ExecutionPreviewLeg,
 } from "./OrderExecutionConfirmDialog";
+```
+
+## frontend/src/components/order/ManualContractFieldWarningDialog.tsx
+
+```tsx
+"use client";
+
+import { useEffect } from "react";
+import { sb } from "@/lib/strategy-builder/ui";
+
+type ManualContractField = "expiry" | "strike";
+
+type Props = {
+  open: boolean;
+  field: ManualContractField;
+  onCancel: () => void;
+  onConfirm: () => void;
+};
+
+const FIELD_LABEL: Record<ManualContractField, string> = {
+  expiry: "expiry date",
+  strike: "strike price",
+};
+
+export function ManualContractFieldWarningDialog({
+  open,
+  field,
+  onCancel,
+  onConfirm,
+}: Props) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onCancel]);
+
+  if (!open) return null;
+
+  const label = FIELD_LABEL[field];
+
+  return (
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4 dark:bg-black/60"
+      role="presentation"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="manual-contract-field-warning-title"
+        className={`${sb.modalPanel} w-full max-w-md`}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <h3
+          id="manual-contract-field-warning-title"
+          className="text-base font-semibold text-amber-800 dark:text-amber-400"
+        >
+          Manual entry warning
+        </h3>
+        <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+          Manually editing the {label} instead of choosing from the dropdown may
+          lead to unpredictable trade transactions. The broker may reject the
+          order or fill an unintended contract.
+        </p>
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" className={sb.btnSecondary} onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className={sb.btnDanger} onClick={onConfirm}>
+            I understand — edit manually
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 ```
 
 ## frontend/src/components/order/OptionChainPlaceSection.tsx
@@ -35363,6 +40194,7 @@ import {
   type ReactNode,
 } from "react";
 import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
+import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import {
   OrderExecutionConfirmDialog,
   type ExecutionPreviewLeg,
@@ -35444,6 +40276,7 @@ function orderPayloadToLeg(base: OrderConfirmPayload): ExecutionPreviewLeg {
 
 export function OrderConfirmProvider({ children }: { children: ReactNode }) {
   const { secondsRemaining } = useRateLimitCountdown();
+  const { guardTradingAction } = useLicenseRestrictions();
   const [modal, setModal] = useState<ConfirmModalState>({ open: false });
 
   const close = useCallback(() => {
@@ -35452,30 +40285,34 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
 
   const openOrderConfirm = useCallback(
     (payload: OrderConfirmPayload, opts?: OpenOrderConfirmOptions) => {
-      setModal({
-        open: true,
-        mode: "single",
-        base: payload,
-        sourceParkedIds: [...(opts?.sourceParkedIds ?? [])],
+      guardTradingAction(() => {
+        setModal({
+          open: true,
+          mode: "single",
+          base: payload,
+          sourceParkedIds: [...(opts?.sourceParkedIds ?? [])],
+        });
       });
     },
-    [],
+    [guardTradingAction],
   );
 
   const openExecutionConfirm = useCallback(
     (args: OpenExecutionConfirmArgs) => {
-      setModal({
-        open: true,
-        mode: "multi",
-        stockCode: args.stockCode,
-        exchangeCode: args.exchangeCode,
-        expiryDisplay: args.expiryDisplay,
-        legs: args.legs,
-        sourceParkedIds: [...(args.sourceParkedIds ?? [])],
-        productType: args.productType ?? "Options",
+      guardTradingAction(() => {
+        setModal({
+          open: true,
+          mode: "multi",
+          stockCode: args.stockCode,
+          exchangeCode: args.exchangeCode,
+          expiryDisplay: args.expiryDisplay,
+          legs: args.legs,
+          sourceParkedIds: [...(args.sourceParkedIds ?? [])],
+          productType: args.productType ?? "Options",
+        });
       });
     },
-    [],
+    [guardTradingAction],
   );
 
   const value = useMemo(
@@ -37943,6 +42780,349 @@ export function PortfolioHedgeOrderSheet({
 }
 ```
 
+## frontend/src/components/settings/BreezeApiMethodPicker.tsx
+
+```tsx
+"use client";
+
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+
+import {
+  RISK_GROUP_LABEL,
+  type BreezeApiCatalogEntry,
+} from "@/lib/breeze-api-tester";
+
+type ApiGroup = {
+  level: BreezeApiCatalogEntry["risk_level"];
+  label: string;
+  items: BreezeApiCatalogEntry[];
+};
+
+const RISK_BADGE: Record<BreezeApiCatalogEntry["risk_level"], string> = {
+  read: "bg-emerald-500/15 text-emerald-700 ring-emerald-500/25 dark:bg-emerald-500/20 dark:text-emerald-300",
+  funds: "bg-amber-500/15 text-amber-800 ring-amber-500/25 dark:bg-amber-500/20 dark:text-amber-200",
+  trade: "bg-red-500/15 text-red-800 ring-red-500/25 dark:bg-red-500/20 dark:text-red-200",
+  gtt: "bg-violet-500/15 text-violet-800 ring-violet-500/25 dark:bg-violet-500/20 dark:text-violet-200",
+};
+
+const RISK_BADGE_SHORT: Record<BreezeApiCatalogEntry["risk_level"], string> = {
+  read: "Read",
+  funds: "Funds",
+  trade: "Trade",
+  gtt: "GTT",
+};
+
+function ChevronDown({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden
+      className={[
+        "shrink-0 text-zinc-500 transition-transform duration-200 dark:text-zinc-400",
+        open ? "-rotate-180" : "",
+      ].join(" ")}
+    >
+      <path
+        d="M4 6l4 4 4-4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function matchesQuery(entry: BreezeApiCatalogEntry, q: string): boolean {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  return (
+    entry.title.toLowerCase().includes(needle) || entry.method.toLowerCase().includes(needle)
+  );
+}
+
+export function BreezeApiMethodPicker({
+  groups,
+  selectedMethod,
+  onSelect,
+}: {
+  groups: ApiGroup[];
+  selectedMethod: string;
+  onSelect: (method: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const listId = useId();
+  const labelId = useId();
+
+  const selected = useMemo(() => {
+    for (const g of groups) {
+      const hit = g.items.find((e) => e.method === selectedMethod);
+      if (hit) return hit;
+    }
+    return null;
+  }, [groups, selectedMethod]);
+
+  const filteredGroups = useMemo(() => {
+    const q = query.trim();
+    return groups
+      .map((g) => ({
+        ...g,
+        items: g.items.filter((item) => matchesQuery(item, q)),
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [groups, query]);
+
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery("");
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = rootRef.current;
+      if (el && e.target instanceof Node && !el.contains(e.target)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, close]);
+
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => searchRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [open]);
+
+  const pick = (method: string) => {
+    onSelect(method);
+    close();
+  };
+
+  return (
+    <div ref={rootRef} className="relative w-full text-left">
+      <span id={labelId} className="font-medium text-zinc-800 dark:text-zinc-200">
+        API
+      </span>
+
+      <button
+        type="button"
+        className={[
+          "mt-1.5 flex w-full items-center gap-3 rounded-lg border border-zinc-300/80 bg-white/95 px-3.5 py-3 text-left shadow-sm outline-none transition-all",
+          "hover:border-zinc-400 hover:shadow-md",
+          "focus-visible:border-blue-500 focus-visible:ring-2 focus-visible:ring-blue-500/20",
+          "dark:border-zinc-700 dark:bg-zinc-950 dark:hover:border-zinc-600",
+          "dark:focus-visible:border-blue-400 dark:focus-visible:ring-blue-400/20",
+          open ? "border-blue-500 ring-2 ring-blue-500/20 dark:border-blue-400 dark:ring-blue-400/20" : "",
+        ].join(" ")}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-labelledby={labelId}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="min-w-0 flex-1">
+          {selected ? (
+            <>
+              <span className="block truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                {selected.title}
+              </span>
+              <span className="mt-0.5 block truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                {selected.method}
+              </span>
+            </>
+          ) : (
+            <span className="text-sm text-zinc-500 dark:text-zinc-400">Select an API…</span>
+          )}
+        </span>
+        {selected ? (
+          <span
+            className={[
+              "hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset sm:inline",
+              RISK_BADGE[selected.risk_level],
+            ].join(" ")}
+          >
+            {RISK_GROUP_LABEL[selected.risk_level]}
+          </span>
+        ) : null}
+        <ChevronDown open={open} />
+      </button>
+
+      {open ? (
+        <div
+          className={[
+            "absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-xl",
+            "dark:border-zinc-700 dark:bg-zinc-900",
+          ].join(" ")}
+        >
+          <div className="border-b border-zinc-200/80 p-2 dark:border-zinc-800">
+            <input
+              ref={searchRef}
+              type="search"
+              value={query}
+              placeholder="Search APIs…"
+              aria-label="Search APIs"
+              className={[
+                "w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none",
+                "placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15",
+                "dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500",
+                "dark:focus:border-blue-400 dark:focus:ring-blue-400/20",
+              ].join(" ")}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+
+          <ul
+            id={listId}
+            role="listbox"
+            aria-labelledby={labelId}
+            className="max-h-[min(22rem,55vh)] overflow-y-auto overscroll-contain p-1.5"
+          >
+            {filteredGroups.length === 0 ? (
+              <li className="px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                No APIs match your search.
+              </li>
+            ) : (
+              filteredGroups.map((g) => (
+                <li key={g.level} role="presentation" className="mb-2 last:mb-0">
+                  <div
+                    className="sticky top-0 z-[1] px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500"
+                    aria-hidden
+                  >
+                    {g.label}
+                  </div>
+                  <ul className="space-y-0.5">
+                    {g.items.map((item) => {
+                      const isSelected = item.method === selectedMethod;
+                      return (
+                        <li key={item.method} role="presentation">
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={isSelected}
+                            className={[
+                              "flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors",
+                              isSelected
+                                ? "bg-blue-500/10 ring-1 ring-inset ring-blue-500/30 dark:bg-blue-400/10 dark:ring-blue-400/30"
+                                : "hover:bg-zinc-100 dark:hover:bg-zinc-800/80",
+                            ].join(" ")}
+                            onClick={() => pick(item.method)}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                                {item.title}
+                              </span>
+                              <span className="mt-0.5 block truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                                {item.method}
+                              </span>
+                            </span>
+                            <span
+                              className={[
+                                "mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ring-1 ring-inset",
+                                RISK_BADGE[item.risk_level],
+                              ].join(" ")}
+                            >
+                              {RISK_BADGE_SHORT[item.risk_level]}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+```
+
+## frontend/src/components/settings/BreezeApiRiskGateDialog.tsx
+
+```tsx
+"use client";
+
+type Props = {
+  open: boolean;
+  pending: boolean;
+  onAccept: () => void;
+};
+
+export function BreezeApiRiskGateDialog({ open, pending, onAccept }: Props) {
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4 dark:bg-black/70"
+      role="presentation"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="breeze-api-risk-title"
+        className="w-full max-w-lg rounded-xl border-2 border-red-700 bg-white p-5 shadow-2xl dark:border-red-600 dark:bg-zinc-950"
+      >
+        <h2
+          id="breeze-api-risk-title"
+          className="text-lg font-bold uppercase tracking-wide text-red-800 dark:text-red-300"
+        >
+          Danger: raw ICICI Breeze APIs
+        </h2>
+        <div className="mt-3 space-y-3 text-sm leading-relaxed text-zinc-800 dark:text-zinc-300">
+          <p>
+            This playground calls the <strong>live Breeze REST APIs</strong> using your broker session.
+            Mistakes can have real consequences:
+          </p>
+          <ul className="list-disc space-y-1 pl-5 text-red-900 dark:text-red-200">
+            <li>
+              <strong>Place, modify, cancel, or square off</strong> orders unintentionally
+            </li>
+            <li>
+              <strong>Move or allocate funds</strong> between segments via set_funds
+            </li>
+            <li>
+              Trigger <strong>GTT orders</strong> that execute when conditions are met
+            </li>
+            <li>
+              Consume your <strong>daily ICICI API quota</strong> (5,000 calls/day)
+            </li>
+          </ul>
+          <p className="text-zinc-600 dark:text-zinc-400">
+            This tool is for debugging and exploration only. Use the app&apos;s order and portfolio
+            screens for normal trading workflows.
+          </p>
+        </div>
+        <div className="mt-5 flex justify-end">
+          <button
+            type="button"
+            disabled={pending}
+            onClick={onAccept}
+            className="rounded-md border border-red-900 bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-60 dark:border-red-700 dark:bg-red-800 dark:hover:bg-red-900"
+          >
+            {pending ? "Saving…" : "I accept the risk"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
 ## frontend/src/components/settings/DeleteAccountWidget.tsx
 
 ```tsx
@@ -39966,6 +45146,65 @@ export function AsyncLabelSpan({
 }
 ```
 
+## frontend/src/lib/api-client.test.ts
+
+```typescript
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { apiClient, ApiHttpError } from "@/lib/api-client";
+import * as authSession from "@/lib/auth-session-expired";
+
+vi.mock("@/lib/config", () => ({
+  getBackendBaseUrl: () => "http://localhost:3000",
+}));
+
+function mock401Fetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      headers: { get: (name: string) => (name === "content-type" ? "application/json" : null) },
+      json: async () => ({ detail: "Invalid or missing authentication token" }),
+    }),
+  );
+}
+
+describe("apiClient sessionPolicy", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("passive 401 does not trigger session expired redirect", async () => {
+    mock401Fetch();
+    const handleSpy = vi
+      .spyOn(authSession, "handleUnauthorizedApiResponse")
+      .mockResolvedValue(true);
+
+    await expect(
+      apiClient.get("/deployment/license-status", { sessionPolicy: "passive" }),
+    ).rejects.toBeInstanceOf(ApiHttpError);
+
+    expect(handleSpy).not.toHaveBeenCalled();
+  });
+
+  it("default 401 invokes handleUnauthorizedApiResponse", async () => {
+    mock401Fetch();
+    const handleSpy = vi
+      .spyOn(authSession, "handleUnauthorizedApiResponse")
+      .mockResolvedValue(true);
+
+    await expect(apiClient.get("/home/data")).rejects.toBeInstanceOf(ApiHttpError);
+
+    expect(handleSpy).toHaveBeenCalledWith(
+      "/home/data",
+      401,
+      "Invalid or missing authentication token",
+    );
+  });
+});
+```
+
 ## frontend/src/lib/api-client.ts
 
 ```typescript
@@ -39973,6 +45212,8 @@ import { getBackendBaseUrl } from "@/lib/config";
 import { handleUnauthorizedApiResponse } from "@/lib/auth-session-expired";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+export type SessionPolicy = "default" | "passive";
 
 /** Thrown when the backend returns a non-OK status; includes HTTP status when available. */
 export class ApiHttpError extends Error {
@@ -39985,6 +45226,18 @@ export class ApiHttpError extends Error {
     this.status = status;
     this.payload = payload;
   }
+}
+
+export type ApiRequestOpts = {
+  signal?: AbortSignal;
+  sessionPolicy?: SessionPolicy;
+  headers?: Record<string, string>;
+};
+
+function normalizeGetOpts(opts?: AbortSignal | ApiRequestOpts): ApiRequestOpts {
+  if (opts === undefined) return {};
+  if (opts instanceof AbortSignal) return { signal: opts };
+  return opts;
 }
 
 function formatErrorPayload(payload: unknown): string {
@@ -40021,6 +45274,7 @@ async function request<TResponse, TBody = unknown>(
     signal?: AbortSignal;
     credentials?: RequestCredentials;
     headers?: Record<string, string>;
+    sessionPolicy?: SessionPolicy;
   } = {},
 ): Promise<TResponse> {
   const url = new URL(path, getBackendBaseUrl());
@@ -40030,6 +45284,7 @@ async function request<TResponse, TBody = unknown>(
     signal,
     credentials = "include",
     headers: extraHeaders,
+    sessionPolicy = "default",
   } = options;
 
   const res = await fetch(url.toString(), {
@@ -40048,7 +45303,7 @@ async function request<TResponse, TBody = unknown>(
 
   if (!res.ok) {
     const message = formatErrorPayload(payload);
-    if (res.status === 401) {
+    if (res.status === 401 && sessionPolicy !== "passive") {
       await handleUnauthorizedApiResponse(path, res.status, message);
     }
     throw new ApiHttpError(res.status, message, payload);
@@ -40058,49 +45313,57 @@ async function request<TResponse, TBody = unknown>(
 }
 
 export const apiClient = {
-  get: <TResponse>(path: string, signal?: AbortSignal) =>
-    request<TResponse>(path, { method: "GET", signal }),
+  get: <TResponse>(path: string, opts?: AbortSignal | ApiRequestOpts) => {
+    const { signal, sessionPolicy, headers } = normalizeGetOpts(opts);
+    return request<TResponse>(path, { method: "GET", signal, sessionPolicy, headers });
+  },
   post: <TResponse, TBody = unknown>(
     path: string,
     body: TBody,
-    opts?: { signal?: AbortSignal; headers?: Record<string, string> },
+    opts?: { signal?: AbortSignal; headers?: Record<string, string>; sessionPolicy?: SessionPolicy },
   ) =>
     request<TResponse, TBody>(path, {
       method: "POST",
       body,
       signal: opts?.signal,
       headers: opts?.headers,
+      sessionPolicy: opts?.sessionPolicy,
     }),
   put: <TResponse, TBody = unknown>(
     path: string,
     body: TBody,
-    opts?: { signal?: AbortSignal; headers?: Record<string, string> },
+    opts?: { signal?: AbortSignal; headers?: Record<string, string>; sessionPolicy?: SessionPolicy },
   ) =>
     request<TResponse, TBody>(path, {
       method: "PUT",
       body,
       signal: opts?.signal,
       headers: opts?.headers,
+      sessionPolicy: opts?.sessionPolicy,
     }),
   patch: <TResponse, TBody = unknown>(
     path: string,
     body: TBody,
-    opts?: { signal?: AbortSignal; headers?: Record<string, string> },
+    opts?: { signal?: AbortSignal; headers?: Record<string, string>; sessionPolicy?: SessionPolicy },
   ) =>
     request<TResponse, TBody>(path, {
       method: "PATCH",
       body,
       signal: opts?.signal,
       headers: opts?.headers,
+      sessionPolicy: opts?.sessionPolicy,
     }),
-  delete: <TResponse>(path: string, signal?: AbortSignal) =>
-    request<TResponse>(path, { method: "DELETE", signal }),
+  delete: <TResponse>(path: string, opts?: AbortSignal | ApiRequestOpts) => {
+    const { signal, sessionPolicy, headers } = normalizeGetOpts(opts);
+    return request<TResponse>(path, { method: "DELETE", signal, sessionPolicy, headers });
+  },
   postForm: async <TResponse>(
     path: string,
     form: FormData,
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; sessionPolicy?: SessionPolicy },
   ): Promise<TResponse> => {
     const url = new URL(path, getBackendBaseUrl());
+    const sessionPolicy = opts?.sessionPolicy ?? "default";
     const res = await fetch(url.toString(), {
       method: "POST",
       credentials: "include",
@@ -40111,7 +45374,7 @@ export const apiClient = {
     const payload = isJson ? await res.json() : await res.text();
     if (!res.ok) {
       const message = formatErrorPayload(payload);
-      if (res.status === 401) {
+      if (res.status === 401 && sessionPolicy !== "passive") {
         await handleUnauthorizedApiResponse(path, res.status, message);
       }
       throw new ApiHttpError(res.status, message, payload);
@@ -40127,15 +45390,196 @@ export const apiClient = {
 "use client";
 
 import type { ReactNode } from "react";
+import { LicenseRestrictionProvider } from "@/components/license/LicenseRestrictionProvider";
 import { QueryProvider } from "@/lib/query-client";
 import { OrderConfirmProvider } from "@/components/order/OrderConfirmProvider";
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <QueryProvider>
-      <OrderConfirmProvider>{children}</OrderConfirmProvider>
+      <LicenseRestrictionProvider>
+        <OrderConfirmProvider>{children}</OrderConfirmProvider>
+      </LicenseRestrictionProvider>
     </QueryProvider>
   );
+}
+```
+
+## frontend/src/lib/app-version.test.ts
+
+```typescript
+import { describe, expect, it } from "vitest";
+import {
+  compareAppVersions,
+  formatAppVersionForDisplay,
+  formatAppVersionLabel,
+  isAppVersionBehind,
+  normalizeAppVersionForCompare,
+  parseAppVersion,
+} from "@/lib/app-version";
+
+describe("formatAppVersionForDisplay", () => {
+  it("keeps standard semver pre-release hyphen form", () => {
+    expect(formatAppVersionForDisplay("1.4.2-a")).toBe("1.4.2-a");
+    expect(formatAppVersionForDisplay("1.4.2")).toBe("1.4.2");
+  });
+
+  it("converts legacy dot suffix to hyphen form", () => {
+    expect(formatAppVersionForDisplay("1.4.2.a")).toBe("1.4.2-a");
+  });
+});
+
+describe("formatAppVersionLabel", () => {
+  it("prefixes v for display labels", () => {
+    expect(formatAppVersionLabel("1.4.2-a")).toBe("v1.4.2-a");
+    expect(formatAppVersionLabel("")).toBe("");
+  });
+});
+
+describe("normalizeAppVersionForCompare", () => {
+  it("normalizes dot suffix to hyphen form", () => {
+    expect(normalizeAppVersionForCompare("1.4.2.a")).toBe("1.4.2-a");
+    expect(normalizeAppVersionForCompare("1.4.2-a")).toBe("1.4.2-a");
+  });
+
+  it("extracts docker image tags", () => {
+    expect(normalizeAppVersionForCompare("ghcr.io/org/app:1.4.2-a")).toBe(
+      "1.4.2-a",
+    );
+  });
+});
+
+describe("parseAppVersion", () => {
+  it("parses semver components", () => {
+    expect(parseAppVersion("1.4.2-a")).toEqual({
+      major: 1,
+      minor: 4,
+      patch: 2,
+      prerelease: "a",
+    });
+    expect(parseAppVersion("1.4.2")).toEqual({
+      major: 1,
+      minor: 4,
+      patch: 2,
+    });
+  });
+});
+
+describe("compareAppVersions", () => {
+  it("orders versions like the portal backend", () => {
+    expect(compareAppVersions("1.4.1", "1.4.2")).toBeLessThan(0);
+    expect(compareAppVersions("1.4.2", "1.4.2")).toBe(0);
+    expect(compareAppVersions("1.4.2-a", "1.4.2")).toBeGreaterThan(0);
+    expect(compareAppVersions("1.4.2.a", "1.4.2")).toBeGreaterThan(0);
+    expect(compareAppVersions("unknown", "1.4.2")).toBeLessThan(0);
+    expect(isAppVersionBehind("unknown", "1.4.2")).toBe(true);
+  });
+});
+```
+
+## frontend/src/lib/app-version.ts
+
+```typescript
+/** Semver-like compare for core-engine app versions (supports 1.4.2-a). */
+
+export type ParsedAppVersion = {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease?: string;
+};
+
+/** Canonical semver display (1.4.2-a); accepts legacy dot suffix (1.4.2.a). */
+export function formatAppVersionForDisplay(
+  raw: string | null | undefined,
+): string {
+  const s = (raw || "").trim();
+  if (!s) return s;
+  const dotted = s.match(/^(\d+)\.(\d+)\.(\d+)\.([a-zA-Z0-9]+)$/);
+  if (dotted) {
+    return `${dotted[1]}.${dotted[2]}.${dotted[3]}-${dotted[4]}`;
+  }
+  return s;
+}
+
+export function formatAppVersionLabel(
+  raw: string | null | undefined,
+): string {
+  const display = formatAppVersionForDisplay(raw);
+  return display ? `v${display}` : "";
+}
+
+export function normalizeAppVersionForCompare(
+  raw: string | null | undefined,
+): string | null {
+  const s = (raw || "").trim();
+  if (!s || s.toLowerCase() === "unknown") return null;
+  if (s.includes("/") && s.includes(":")) {
+    const tag = s.split(":").pop()?.trim();
+    if (!tag) return null;
+    return normalizeAppVersionForCompare(tag);
+  }
+  if (!/^[0-9A-Za-z][0-9A-Za-z._-]*$/.test(s)) return null;
+  const dotted = s.match(/^(\d+)\.(\d+)\.(\d+)\.([a-zA-Z0-9]+)$/);
+  if (dotted) {
+    return `${dotted[1]}.${dotted[2]}.${dotted[3]}-${dotted[4]}`;
+  }
+  const main = s.split("-", 1)[0];
+  const parts = main.split(".");
+  if (parts.length !== 3 || !parts.every((p) => /^\d+$/.test(p))) return null;
+  return s;
+}
+
+export function parseAppVersion(
+  raw: string | null | undefined,
+): ParsedAppVersion | null {
+  const norm = normalizeAppVersionForCompare(raw);
+  if (!norm) return null;
+  const [main, prerelease = ""] = norm.includes("-")
+    ? norm.split("-", 2)
+    : [norm, ""];
+  const parts = main.split(".");
+  if (parts.length !== 3) return null;
+  const major = Number(parts[0]);
+  const minor = Number(parts[1]);
+  const patch = Number(parts[2]);
+  if (!Number.isFinite(major) || !Number.isFinite(minor) || !Number.isFinite(patch)) {
+    return null;
+  }
+  return {
+    major,
+    minor,
+    patch,
+    ...(prerelease ? { prerelease: prerelease.toLowerCase() } : {}),
+  };
+}
+
+function versionKey(
+  raw: string | null | undefined,
+): [number, number, number, string] | null {
+  const parsed = parseAppVersion(raw);
+  if (!parsed) return null;
+  return [parsed.major, parsed.minor, parsed.patch, parsed.prerelease ?? ""];
+}
+
+export function compareAppVersions(
+  running: string | null | undefined,
+  latest: string | null | undefined,
+): number {
+  const a = versionKey(running);
+  const b = versionKey(latest);
+  if (!b) return 0;
+  if (!a) return -1;
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+export function isAppVersionBehind(
+  running: string | null | undefined,
+  latest: string | null | undefined,
+): boolean {
+  return compareAppVersions(running, latest) < 0;
 }
 ```
 
@@ -40143,9 +45587,14 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
 ```typescript
 /**
- * When the backend returns 401 for authenticated routes, clear server session and
+ * When the backend returns 401 for authenticated app routes, clear server session and
  * send the user to login with a clear re-authentication message.
+ *
+ * License status probes use apiClient `sessionPolicy: "passive"` and must not call
+ * handleUnauthorizedApiResponse — deployment license expiry is unrelated to JWT auth.
  */
+
+import { isPublicUnauthenticatedPath } from "@/lib/public-auth-routes";
 
 export const LOGIN_REAUTH_REASON_QUERY = "session";
 
@@ -40157,7 +45606,11 @@ export function isSessionExpiredRedirectPending(): boolean {
 
 const UNAUTH_REDIRECT_PATH_PREFIXES = ["/api/register"];
 
-const UNAUTH_REDIRECT_EXACT_PATHS = new Set(["/auth/direct-login"]);
+const UNAUTH_REDIRECT_EXACT_PATHS = new Set([
+  "/auth/direct-login",
+  // Session probe: 401 means "not signed in yet", not "session expired".
+  "/auth/session",
+]);
 
 /** 401 cases where the user is not in an “logged in but stale” state. */
 function isBenignUnauthorizedMessage(message: string): boolean {
@@ -40189,7 +45642,7 @@ export async function handleUnauthorizedApiResponse(
 ): Promise<boolean> {
   if (typeof window === "undefined" || status !== 401) return false;
   if (!shouldAutoLogoutOn401(apiPath, message)) return false;
-  if (window.location.pathname === "/login") return false;
+  if (isPublicUnauthenticatedPath(window.location.pathname)) return false;
 
   if (sessionExpiredRedirectPending) return true;
   sessionExpiredRedirectPending = true;
@@ -40235,18 +45688,112 @@ export function fetchBreakChunkDefaults(args: {
 }
 ```
 
+## frontend/src/lib/breeze-api-tester.ts
+
+```typescript
+import { apiClient } from "@/lib/api-client";
+
+export type BreezeApiParamDef = {
+  name: string;
+  label: string;
+  type: "string" | "json";
+  required: boolean;
+  placeholder: string;
+  help: string;
+};
+
+export type BreezeApiCatalogEntry = {
+  method: string;
+  title: string;
+  risk_level: "read" | "trade" | "funds" | "gtt";
+  description: string;
+  notes: string;
+  params: BreezeApiParamDef[];
+};
+
+export type BreezeApiCatalogResponse = {
+  entries: BreezeApiCatalogEntry[];
+};
+
+export type BreezeApiRiskStatus = {
+  accepted: boolean;
+  accepted_at?: string | null;
+};
+
+export type BreezeApiInvokeResponse = {
+  ok: boolean;
+  method: string;
+  duration_ms: number;
+  response: unknown;
+  error?: string | null;
+};
+
+const BASE = "/api/settings/breeze-api-tester";
+
+export function getBreezeApiTesterCatalog() {
+  return apiClient.get<BreezeApiCatalogResponse>(`${BASE}/catalog`);
+}
+
+export function getBreezeApiTesterRiskStatus() {
+  return apiClient.get<BreezeApiRiskStatus>(`${BASE}/risk-status`);
+}
+
+export function acknowledgeBreezeApiTesterRisk() {
+  return apiClient.post<BreezeApiRiskStatus>(`${BASE}/acknowledge-risk`, {});
+}
+
+export function invokeBreezeApiTester(method: string, params: Record<string, string>) {
+  return apiClient.post<BreezeApiInvokeResponse, { method: string; params: Record<string, string> }>(
+    `${BASE}/invoke`,
+    { method, params },
+  );
+}
+
+export const RISK_GROUP_LABEL: Record<BreezeApiCatalogEntry["risk_level"], string> = {
+  read: "Read-only",
+  trade: "Trade (orders)",
+  funds: "Funds",
+  gtt: "GTT",
+};
+```
+
+## frontend/src/lib/changelog.test.ts
+
+```typescript
+import { describe, expect, it } from "vitest";
+import {
+  assertReleaseKindMatchesVersion,
+  changelogReleases,
+} from "@/lib/changelog";
+
+describe("changelog releaseKind consistency", () => {
+  it("matches semver rules for every entry", () => {
+    for (let i = 0; i < changelogReleases.length; i += 1) {
+      const release = changelogReleases[i];
+      const previous = changelogReleases[i + 1];
+      expect(() =>
+        assertReleaseKindMatchesVersion(release, previous),
+      ).not.toThrow();
+    }
+  });
+});
+```
+
 ## frontend/src/lib/changelog.ts
 
 ```typescript
-export type ReleaseKind = "major" | "minor";
+import { parseAppVersion } from "./app-version";
+
+export type ReleaseKind = "major" | "minor" | "patch" | "prerelease";
 
 export type ChangelogRelease = {
   version: string;
   /** ISO date (YYYY-MM-DD) for sorting/display */
   date: string;
   /**
-   * `major` — feature milestones; shown as the main story in What’s new.
-   * `minor` — patches / urgent fixes; always listed so users can match their build.
+   * Semver-aligned release label:
+   * `major` — major version bump; `minor` — minor bump (x.Y.0);
+   * `patch` — patch bump; `prerelease` — suffix build (e.g. 1.4.2-a).
    */
   releaseKind: ReleaseKind;
   /** Optional one-line headline for the release */
@@ -40257,9 +45804,45 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "1.6.2",
+    date: "5-Jun-2026",
+    releaseKind: "patch",
+    summary: "License Deployment Fixes",
+    changes: [
+      "License deployment now shows the correct status and message.",
+    ],
+  },
+  {
+    version: "1.6.1",
+    date: "4-Jun-2026",
+    releaseKind: "patch",
+    summary: "Login Timestamp Fix",
+    changes: [
+      "Console now shows the correct login timestamp.",
+    ],
+  },
+  {
+    version: "1.6.0",
+    date: "1-Jun-2026",
+    releaseKind: "prerelease",
+    summary: "DRM Hardening",
+    changes: [
+      "DRM Hardening: Improved DRM by adding a new layer of security to the application.",
+    ],
+  },
+  {
+    version: "1.5.0",
+    date: "31-May-2026",
+    releaseKind: "minor",
+    summary: "Allow invocation of raw ICICI Breeze APIs",
+    changes: [
+      "Allow invocation of raw ICICI Breeze APIs from the Settings page. This allows testing the APIs for their functionality and response times.",
+    ],
+  },
+  {
     version: "1.4.2",
     date: "12-Apr-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "Clone and Square-off Fixes",
     changes: [
       "Application doesn't 'lookup' scrip expiries and strikes on cloning and square-off. It just uses the expiry and strike from the order being cloned / squared-off",
@@ -40268,7 +45851,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.4.1",
     date: "11-Apr-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "Application Password Reset",
     changes: [
       "Application now allows resetting the app password if user can authenticate with ICICI",
@@ -40277,7 +45860,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.4.0",
     date: "11-Apr-2026",
-    releaseKind: "major",
+    releaseKind: "minor",
     summary: "Responsive Design",
     changes: [
       "Application now is responsive to smaller screens; although only tested on iPhone 13 Pro",
@@ -40286,7 +45869,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.3.1",
     date: "10-Apr-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "LLM Model Fallback Fix",
     changes: [
       "LLM model fallbacks can be configured in the Settings page",
@@ -40295,7 +45878,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.3.0",
     date: "10-Apr-2026",
-    releaseKind: "major",
+    releaseKind: "minor",
     summary: "Options Strategies Enabled",
     changes: [
       "All options strategies are now enabled",
@@ -40305,7 +45888,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.2.1",
     date: "9-Apr-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "Square-off and Cloning Fixes",
     changes: [
       "Square-off and cloning takes the user to the 'Place Order' page to allow them to change the price and quantity",
@@ -40314,7 +45897,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.2.0",
     date: "7-Apr-2026",
-    releaseKind: "major",
+    releaseKind: "minor",
     summary: "Advanced Order Management",
     changes: [
       "Clone orders from Order Book",
@@ -40324,7 +45907,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.1.1",
     date: "4-Apr-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "Rate Limit Fix",
     changes: [
       "Configurable delays for rate limiting when ICICI returns 429",
@@ -40333,7 +45916,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.1.0",
     date: "27-Mar-2026",
-    releaseKind: "major",
+    releaseKind: "minor",
     summary: "Gen AI Outlook & Portfolio Payoff",
     changes: [
       "Integration with Gemini and OpenAI APIs for Gen AI Outlook (BYOK)",
@@ -40356,9 +45939,11 @@ export function getLatestRelease(): ChangelogRelease | undefined {
   return changelogReleases[0];
 }
 
-/** Newest major release in the log (for highlighting when the latest build is a minor). */
-export function getLatestMajorRelease(): ChangelogRelease | undefined {
-  return changelogReleases.find((r) => r.releaseKind === "major");
+/** Newest feature release (major or minor) for highlighting when the latest build is a patch/pre-release. */
+export function getLatestFeatureRelease(): ChangelogRelease | undefined {
+  return changelogReleases.find(
+    (r) => r.releaseKind === "major" || r.releaseKind === "minor",
+  );
 }
 
 export function getOlderReleases(): ChangelogRelease[] {
@@ -40370,23 +45955,51 @@ function releaseKey(r: ChangelogRelease): string {
 }
 
 /**
- * Entries for the collapsible history: excludes the latest build and the major
- * row already shown in the featured major section (when those differ).
+ * Entries for the collapsible history: excludes the latest build and the feature
+ * row already shown in the featured section (when those differ).
  */
 export function getHistoryReleases(
   latest: ChangelogRelease | undefined,
-  featuredMajor: ChangelogRelease | undefined,
+  featuredRelease: ChangelogRelease | undefined,
 ): ChangelogRelease[] {
   if (!latest) return [];
   const skip = new Set<string>();
   skip.add(releaseKey(latest));
   if (
-    featuredMajor &&
-    releaseKey(featuredMajor) !== releaseKey(latest)
+    featuredRelease &&
+    releaseKey(featuredRelease) !== releaseKey(latest)
   ) {
-    skip.add(releaseKey(featuredMajor));
+    skip.add(releaseKey(featuredRelease));
   }
   return changelogReleases.filter((r) => !skip.has(releaseKey(r)));
+}
+
+export function inferReleaseKind(
+  version: string,
+  previousVersion?: string,
+): ReleaseKind | null {
+  const parsed = parseAppVersion(version);
+  if (!parsed) return null;
+  if (parsed.prerelease) return "prerelease";
+  if (!previousVersion) return "major";
+  const previous = parseAppVersion(previousVersion);
+  if (!previous) return null;
+  if (parsed.major > previous.major) return "major";
+  if (parsed.minor > previous.minor) return "minor";
+  if (parsed.patch > previous.patch) return "patch";
+  return null;
+}
+
+export function assertReleaseKindMatchesVersion(
+  release: ChangelogRelease,
+  previous?: ChangelogRelease,
+): void {
+  const expected = inferReleaseKind(release.version, previous?.version);
+  if (expected !== release.releaseKind) {
+    throw new Error(
+      `${release.version}: expected releaseKind "${expected}", got "${release.releaseKind}"`,
+    );
+  }
 }
 ```
 
@@ -40407,6 +46020,217 @@ export function getBackendBaseUrl(): string {
     return window.location.origin;
   }
   return "http://localhost:3000";
+}
+```
+
+## frontend/src/lib/contact-sales-mailto.test.ts
+
+```typescript
+import { describe, expect, it } from "vitest";
+import {
+  buildContactSalesMailto,
+  buildContactSalesMailtoBody,
+  buildContactSalesMailtoForLicenseStatus,
+} from "@/lib/contact-sales-mailto";
+
+describe("contact-sales-mailto", () => {
+  const fullParams = {
+    status: "expired" as const,
+    licenseId: 42,
+    deploymentName: "my-stack",
+    label: "paper",
+    licenseKey: "key-abc-123",
+    createdAt: "2025-01-01T00:00:00Z",
+    expiresAt: "2025-01-15T00:00:00Z",
+    revokedAt: null,
+    deploymentStatus: "deployed_successfully",
+    publicIp: "203.0.113.10",
+    accountEmail: "user@example.com",
+    deploymentOrigin: "http://203.0.113.10",
+    appVersion: "1.4.2",
+  };
+
+  it("builds subject and body with license fields", () => {
+    const body = buildContactSalesMailtoBody(fullParams);
+    expect(body).toContain("Status: Expired");
+    expect(body).toContain("License ID: 42");
+    expect(body).toContain("Deployment name: my-stack");
+    expect(body).toContain("License key: key-abc-123");
+    expect(body).toContain("Public IP: 203.0.113.10");
+    expect(body).toContain("Account email: user@example.com");
+    expect(body).toContain("App version: 1.4.2");
+  });
+
+  it("encodes mailto URL", () => {
+    const href = buildContactSalesMailto("sales@breeze-ui.com", fullParams);
+    expect(href.startsWith("mailto:sales%40breeze-ui.com?")).toBe(true);
+    expect(href).toContain("subject=");
+    expect(href).toContain("body=");
+    const decoded = decodeURIComponent(href);
+    expect(decoded).toContain("Breeze license assistance — my-stack (Expired)");
+    expect(decoded).toContain("License ID: 42");
+  });
+
+  it("returns null when sales email env is unset", () => {
+    const prev = process.env.NEXT_PUBLIC_SALES_EMAIL;
+    delete process.env.NEXT_PUBLIC_SALES_EMAIL;
+    expect(
+      buildContactSalesMailtoForLicenseStatus("revoked", {
+        license_key: "x",
+        public_ip: "1.2.3.4",
+      }),
+    ).toBeNull();
+    process.env.NEXT_PUBLIC_SALES_EMAIL = prev;
+  });
+
+  it("builds mailto from API contact_sales snapshot", () => {
+    process.env.NEXT_PUBLIC_SALES_EMAIL = "sales@breeze-ui.com";
+    const href = buildContactSalesMailtoForLicenseStatus("expired", {
+      license_key: "deploy-key",
+      public_ip: "203.0.113.10",
+      deployment_origin: "http://203.0.113.10",
+      app_version: "1.4.0",
+    });
+    expect(href).not.toBeNull();
+    const decoded = decodeURIComponent(href!);
+    expect(decoded).toContain("License key: deploy-key");
+    expect(decoded).toContain("Public IP: 203.0.113.10");
+  });
+});
+```
+
+## frontend/src/lib/contact-sales-mailto.ts
+
+```typescript
+import type { DeploymentLicenseStatus } from "@/lib/deployment-license";
+import type { DeploymentLicenseContactSales } from "@/lib/deployment-license-status";
+
+export type ContactSalesLicenseParams = {
+  status: DeploymentLicenseStatus;
+  licenseId?: number;
+  deploymentName?: string | null;
+  label?: string | null;
+  licenseKey?: string | null;
+  createdAt?: string | null;
+  expiresAt?: string | null;
+  revokedAt?: string | null;
+  deploymentStatus?: string | null;
+  publicIp?: string | null;
+  accountEmail?: string | null;
+  deploymentOrigin?: string | null;
+  appVersion?: string | null;
+};
+
+const IST_TIME_ZONE = "Asia/Kolkata";
+const IST_LOCALE = "en-IN";
+
+function parseApiDateTime(raw: string): Date | null {
+  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const d = new Date(normalized);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export function formatDisplayTimestamp(raw: string | null | undefined): string {
+  if (!raw) return "—";
+  try {
+    const d = parseApiDateTime(raw);
+    if (!d) return raw;
+    return `${d.toLocaleString(IST_LOCALE, {
+      timeZone: IST_TIME_ZONE,
+      dateStyle: "medium",
+      timeStyle: "short",
+    })} IST`;
+  } catch {
+    return raw;
+  }
+}
+
+export function getSalesEmail(): string | null {
+  const email = process.env.NEXT_PUBLIC_SALES_EMAIL?.trim();
+  return email || null;
+}
+
+function displayLabel(params: ContactSalesLicenseParams): string {
+  const name = (params.deploymentName || params.label || "").trim();
+  if (name) return name;
+  if (params.licenseId != null) return `License #${params.licenseId}`;
+  return "Deployment";
+}
+
+function statusLabel(status: DeploymentLicenseStatus): string {
+  return status === "expired" ? "Expired" : "Revoked";
+}
+
+function appendLine(lines: string[], label: string, value: string | null | undefined): void {
+  const text = (value ?? "").trim();
+  if (text) lines.push(`${label}: ${text}`);
+}
+
+export function buildContactSalesMailtoBody(
+  params: ContactSalesLicenseParams,
+): string {
+  const lines: string[] = [
+    "Hello Breeze Sales,",
+    "",
+    "Please help with my license.",
+    "",
+    "--- License details ---",
+    `Status: ${statusLabel(params.status)}`,
+  ];
+
+  if (params.licenseId != null) lines.push(`License ID: ${params.licenseId}`);
+  appendLine(lines, "Deployment name", params.deploymentName);
+  appendLine(lines, "Label", params.label);
+  appendLine(lines, "License key", params.licenseKey);
+  lines.push(`Created: ${formatDisplayTimestamp(params.createdAt)}`);
+  lines.push(`Expires: ${formatDisplayTimestamp(params.expiresAt)}`);
+  lines.push(`Revoked: ${formatDisplayTimestamp(params.revokedAt)}`);
+  appendLine(lines, "Deployment status", params.deploymentStatus);
+  appendLine(lines, "Public IP", params.publicIp);
+  appendLine(lines, "Account email", params.accountEmail);
+  appendLine(lines, "Deployment URL", params.deploymentOrigin);
+  appendLine(lines, "App version", params.appVersion);
+  lines.push("", "Thank you.");
+
+  return lines.join("\n");
+}
+
+export function buildContactSalesMailto(
+  salesEmail: string,
+  params: ContactSalesLicenseParams,
+): string {
+  const to = salesEmail.trim();
+  const subject = `Breeze license assistance — ${displayLabel(params)} (${statusLabel(params.status)})`;
+  const body = buildContactSalesMailtoBody(params);
+  return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+export function contactSalesParamsFromApi(
+  status: DeploymentLicenseStatus,
+  contact: DeploymentLicenseContactSales | null | undefined,
+): ContactSalesLicenseParams {
+  return {
+    status,
+    licenseKey: contact?.license_key ?? null,
+    publicIp: contact?.public_ip ?? null,
+    deploymentOrigin: contact?.deployment_origin ?? null,
+    appVersion: contact?.app_version ?? null,
+  };
+}
+
+export function buildContactSalesMailtoForLicenseStatus(
+  status: DeploymentLicenseStatus | null | undefined,
+  contact: DeploymentLicenseContactSales | null | undefined,
+): string | null {
+  if (status !== "expired" && status !== "revoked" && status !== "unlicensed") {
+    return null;
+  }
+  const salesEmail = getSalesEmail();
+  if (!salesEmail) return null;
+  return buildContactSalesMailto(
+    salesEmail,
+    contactSalesParamsFromApi(status, contact),
+  );
 }
 ```
 
@@ -40573,6 +46397,136 @@ export function interpretPcrOi(pcr: number): MetricInterpretation {
 }
 ```
 
+## frontend/src/lib/deployment-license-status.ts
+
+```typescript
+/** Response from GET /deployment/license-status (portal heartbeat cache). */
+
+import type { DeploymentLicenseStatus } from "@/lib/deployment-license";
+
+export type DeploymentLicenseContactSales = {
+  license_key?: string | null;
+  public_ip?: string | null;
+  deployment_origin?: string | null;
+  app_version?: string | null;
+};
+
+export type DeploymentLicenseStatusResponse = {
+  deployment_license_status?: DeploymentLicenseStatus | null;
+  deployment_license_read_only?: boolean;
+  contact_sales?: DeploymentLicenseContactSales | null;
+};
+```
+
+## frontend/src/lib/deployment-license.test.ts
+
+```typescript
+import { describe, expect, it } from "vitest";
+import {
+  isTradingReadOnly,
+  licenseBannerMessage,
+  shouldShowLicenseBanner,
+} from "@/lib/deployment-license";
+
+describe("deployment-license", () => {
+  it("shows banner for expired, revoked, and unlicensed", () => {
+    expect(shouldShowLicenseBanner("active")).toBe(false);
+    expect(shouldShowLicenseBanner(undefined)).toBe(false);
+    expect(shouldShowLicenseBanner("expired")).toBe(true);
+    expect(shouldShowLicenseBanner("revoked")).toBe(true);
+    expect(shouldShowLicenseBanner("unlicensed")).toBe(true);
+  });
+
+  it("returns banner copy for expired, revoked, and unlicensed", () => {
+    expect(licenseBannerMessage("expired")).toContain("License expired");
+    expect(licenseBannerMessage("revoked")).toContain("Read-only mode");
+    expect(licenseBannerMessage("unlicensed")).toContain("no valid license");
+    expect(licenseBannerMessage("active")).toBeNull();
+  });
+
+  it("treats revoked and unlicensed as trading read-only", () => {
+    expect(isTradingReadOnly("revoked")).toBe(true);
+    expect(isTradingReadOnly("unlicensed")).toBe(true);
+    expect(isTradingReadOnly("expired")).toBe(false);
+    expect(isTradingReadOnly("active")).toBe(false);
+  });
+});
+```
+
+## frontend/src/lib/deployment-license.ts
+
+```typescript
+/**
+ * Deployment license status from portal heartbeat cache.
+ * UI polling uses GET /deployment/license-status (passive session; does not affect JWT).
+ * GET /home/data may still include these fields for backward compatibility.
+ */
+
+export type DeploymentLicenseStatus =
+  | "active"
+  | "expired"
+  | "revoked"
+  | "unlicensed"
+  | "pending_activation"
+  | "trial_denied";
+
+export const LICENSE_CONSOLE_URL = "https://breeze-ui.com";
+
+export const LICENSE_EXPIRED_BANNER =
+  "License expired — sign in at breeze-ui.com and follow the instructions in the license console to extend your license.";
+
+export const LICENSE_REVOKED_BANNER =
+  "Read-only mode — you cannot define strategies or execute trades. Sign in at breeze-ui.com and follow the instructions for your license to reactivate this application.";
+
+export const LICENSE_UNLICENSED_BANNER =
+  "Read-only mode — this deployment has no valid license. Sign in at breeze-ui.com to obtain a deployment license and configure it on this instance.";
+
+export const LICENSE_PENDING_ACTIVATION_BANNER =
+  "Complete ICICI Direct login on this instance to start your 14-day trial. Trading stays read-only until activation succeeds.";
+
+export const LICENSE_TRIAL_DENIED_BANNER =
+  "Trial already used for this ICICI Direct User ID — contact sales@breeze-ui.com for a paid license.";
+
+export function isTradingReadOnly(
+  status: DeploymentLicenseStatus | null | undefined,
+): boolean {
+  return (
+    status === "revoked" ||
+    status === "unlicensed" ||
+    status === "pending_activation" ||
+    status === "trial_denied"
+  );
+}
+
+export function shouldShowLicenseBanner(
+  status: DeploymentLicenseStatus | null | undefined,
+): status is
+  | "expired"
+  | "revoked"
+  | "unlicensed"
+  | "pending_activation"
+  | "trial_denied" {
+  return (
+    status === "expired" ||
+    status === "revoked" ||
+    status === "unlicensed" ||
+    status === "pending_activation" ||
+    status === "trial_denied"
+  );
+}
+
+export function licenseBannerMessage(
+  status: DeploymentLicenseStatus | null | undefined,
+): string | null {
+  if (status === "expired") return LICENSE_EXPIRED_BANNER;
+  if (status === "revoked") return LICENSE_REVOKED_BANNER;
+  if (status === "unlicensed") return LICENSE_UNLICENSED_BANNER;
+  if (status === "pending_activation") return LICENSE_PENDING_ACTIVATION_BANNER;
+  if (status === "trial_denied") return LICENSE_TRIAL_DENIED_BANNER;
+  return null;
+}
+```
+
 ## frontend/src/lib/format-money-in.ts
 
 ```typescript
@@ -40624,6 +46578,8 @@ export type HomeDataResponse = {
   api_calls_today?: number;
   api_calls_limit?: number;
   api_usage_band?: "green" | "amber" | "red" | string;
+  deployment_license_status?: "active" | "expired" | "revoked";
+  deployment_license_read_only?: boolean;
 };
 
 function readSuccess(
@@ -40695,6 +46651,34 @@ function num(v: unknown): number | null {
     return Number.isFinite(n) ? n : null;
   }
   return null;
+}
+```
+
+## frontend/src/lib/icici-handoff-url.ts
+
+```typescript
+const ICICI_HANDOFF_CONSOLE_URL = "https://breeze-ui.com/console/icici-handoff";
+
+const _IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+export function isDeploymentPublicIpv4(value: string): boolean {
+  return _IPV4_RE.test(value.trim());
+}
+
+export function deploymentPublicIpFromWindow(): string | null {
+  if (typeof window === "undefined") return null;
+  const host = window.location.hostname.trim();
+  return isDeploymentPublicIpv4(host) ? host : null;
+}
+
+export function buildIciciHandoffGuideUrl(publicIp: string): string {
+  const ip = publicIp.trim();
+  return `${ICICI_HANDOFF_CONSOLE_URL}?ip=${encodeURIComponent(ip)}`;
+}
+
+export function iciciHandoffGuideUrlForCurrentDeployment(): string | null {
+  const ip = deploymentPublicIpFromWindow();
+  return ip ? buildIciciHandoffGuideUrl(ip) : null;
 }
 ```
 
@@ -41800,6 +47784,70 @@ export function buildPortfolioPositionGroups(
 }
 ```
 
+## frontend/src/lib/public-auth-routes.test.ts
+
+```typescript
+import { describe, expect, it } from "vitest";
+import {
+  isPublicUnauthenticatedPath,
+  shouldFetchLicenseHomeData,
+} from "@/lib/public-auth-routes";
+
+describe("public-auth-routes", () => {
+  it("skips license status polling on auth and register flows", () => {
+    for (const path of [
+      "/login",
+      "/challenge",
+      "/logout",
+      "/register",
+      "/register/correct",
+      "/register/forgot-password",
+      "/",
+    ]) {
+      expect(isPublicUnauthenticatedPath(path)).toBe(true);
+      expect(shouldFetchLicenseHomeData(path)).toBe(false);
+    }
+  });
+
+  it("fetches license status on authenticated app routes", () => {
+    expect(shouldFetchLicenseHomeData("/dashboard")).toBe(true);
+    expect(shouldFetchLicenseHomeData("/orders")).toBe(true);
+    expect(isPublicUnauthenticatedPath("/dashboard")).toBe(false);
+  });
+});
+```
+
+## frontend/src/lib/public-auth-routes.ts
+
+```typescript
+/**
+ * App routes where the user is often unauthenticated. Do not probe deployment license
+ * status or treat 401s as "session expired" (would eject ICICI challenge / register).
+ */
+const PUBLIC_UNAUTHENTICATED_PATH_PREFIXES = [
+  "/login",
+  "/challenge",
+  "/logout",
+  "/register",
+] as const;
+
+export function isPublicUnauthenticatedPath(
+  pathname: string | null | undefined,
+): boolean {
+  if (!pathname) return false;
+  if (pathname === "/") return true;
+  return PUBLIC_UNAUTHENTICATED_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+export function shouldFetchLicenseHomeData(
+  pathname: string | null | undefined,
+): boolean {
+  return !isPublicUnauthenticatedPath(pathname);
+}
+```
+
 ## frontend/src/lib/query-client.tsx
 
 ```tsx
@@ -42155,6 +48203,7 @@ export function atmSigmaFromChain(chain: ChainSuccess, T: number): number {
 import { describe, expect, it } from "vitest";
 import {
   formatExpiryChipShort,
+  isValidExpiryDisplay,
   sortExpiryDatesAsc,
 } from "@/lib/strategy-builder/expiry";
 
@@ -42166,6 +48215,16 @@ describe("sortExpiryDatesAsc", () => {
       "27-Feb-2025",
       "27-Mar-2025",
     ]);
+  });
+});
+
+describe("isValidExpiryDisplay", () => {
+  it("accepts valid DD-Mon-YYYY and rejects invalid strings", () => {
+    expect(isValidExpiryDisplay("21-Mar-2026")).toBe(true);
+    expect(isValidExpiryDisplay(" 30-Jan-2025 ")).toBe(true);
+    expect(isValidExpiryDisplay("")).toBe(false);
+    expect(isValidExpiryDisplay("2026-03-21")).toBe(false);
+    expect(isValidExpiryDisplay("31-Foo-2026")).toBe(false);
   });
 });
 
@@ -42220,6 +48279,11 @@ export function expiryDisplayToTimestamp(expiryDisplay: string): number {
   const mon = MONTHS[monKey];
   if (mon === undefined || !Number.isFinite(day)) return 0;
   return new Date(year, mon, day).getTime();
+}
+
+/** True when `expiryDisplay` is a valid DD-Mon-YYYY date. */
+export function isValidExpiryDisplay(expiryDisplay: string): boolean {
+  return expiryDisplayToTimestamp(expiryDisplay.trim()) > 0;
 }
 
 /** Earliest expiry first (DD-Mon-YYYY from scrip master). */
@@ -43201,6 +49265,65 @@ export function useBreakChunkQty(opts: {
 }
 ```
 
+## frontend/src/lib/use-deployment-license.ts
+
+```typescript
+"use client";
+
+import { usePathname } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "@/lib/api-client";
+import {
+  isTradingReadOnly,
+  type DeploymentLicenseStatus,
+} from "@/lib/deployment-license";
+import type { DeploymentLicenseStatusResponse } from "@/lib/deployment-license-status";
+import { shouldFetchLicenseHomeData } from "@/lib/public-auth-routes";
+
+export function useDeploymentLicense() {
+  const pathname = usePathname();
+  const enabled = shouldFetchLicenseHomeData(pathname);
+
+  return useQuery({
+    queryKey: ["deployment", "license-status"],
+    queryFn: () =>
+      apiClient.get<DeploymentLicenseStatusResponse>(
+        "/deployment/license-status",
+        { sessionPolicy: "passive" },
+      ),
+    staleTime: 30_000,
+    enabled,
+    retry: false,
+    placeholderData: (prev) => prev,
+    refetchInterval: (query) => {
+      const status = query.state.data?.deployment_license_status;
+      return status === "expired" ||
+        status === "revoked" ||
+        status === "unlicensed" ||
+        status === "pending_activation" ||
+        status === "trial_denied"
+        ? 60_000
+        : false;
+    },
+  });
+}
+
+export function licenseStatusFromQuery(
+  data: DeploymentLicenseStatusResponse | undefined,
+): DeploymentLicenseStatus | null {
+  return data?.deployment_license_status ?? null;
+}
+
+export function tradingReadOnlyFromLicense(
+  data: DeploymentLicenseStatusResponse | undefined,
+): boolean {
+  return (
+    data?.deployment_license_read_only === true ||
+    isTradingReadOnly(data?.deployment_license_status)
+  );
+}
+```
+
 ## frontend/src/lib/use-rate-limit-countdown.ts
 
 ```typescript
@@ -43253,6 +49376,14 @@ http {
     listen 3000;
 
     # JSON endpoints (backend) - keep narrow to avoid intercepting UI routes.
+    location = /health {
+      proxy_pass http://backend;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location ^~ /auth/ {
       proxy_pass http://backend;
       proxy_set_header Host $host;
