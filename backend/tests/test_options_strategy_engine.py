@@ -12,7 +12,7 @@ from icici_breeze_backend.app.services.options_strategy_engine import (
     _strike_window,
     calc_bull_call_spread,
 )
-from icici_breeze_backend.app.services.processor import Processor
+from icici_breeze_backend.app.services.processor import processor
 
 
 class TestStrikeWindow(unittest.TestCase):
@@ -108,8 +108,8 @@ class TestMarginBatching(unittest.TestCase):
 
 class TestProcessorStrikeInterval(unittest.TestCase):
     def test_min_gap(self):
-        self.assertEqual(Processor.strike_interval([23000, 23050, 23100]), 50)
-        self.assertEqual(Processor.strike_interval([23000]), 50)
+        self.assertEqual(processor.strike_interval([23000, 23050, 23100]), 50)
+        self.assertEqual(processor.strike_interval([23000]), 50)
 
 
 if __name__ == "__main__":

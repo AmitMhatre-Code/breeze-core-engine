@@ -9,10 +9,10 @@ from typing import Any, Callable, Literal, Optional
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.services.iv_compute import implied_volatility
 from icici_breeze_backend.app.services.processor import (
-    Processor,
     _annualized_carry_percent_on_span,
     _days_to_expiry,
     _expiry_display_to_api,
+    processor,
 )
 
 _logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class StrategyResult:
 
 @dataclass
 class EngineContext:
-    processor: Processor
+    processor: processor
     user_id: str
     stock_code: str
     exchange_code: str
@@ -163,7 +163,7 @@ def _quote_from_api(strike: int, right: Right, payload: dict) -> QuoteRow:
 
 
 def _fetch_quotes(
-    processor: Processor,
+    processor: processor,
     user_id: str,
     stock_code: str,
     exchange_code: str,
@@ -935,7 +935,7 @@ CALCULATORS: list[Callable[[EngineContext], StrategyResult]] = [
 
 
 def _attach_margins_and_returns(
-    processor: Processor,
+    processor: processor,
     user_id: str,
     exchange_code: str,
     stock_code: str,
@@ -974,7 +974,7 @@ def _attach_margins_and_returns(
 
 
 def run_propose_trades(
-    processor: Processor,
+    processor: processor,
     user_id: str,
     *,
     exchange_code: str,
