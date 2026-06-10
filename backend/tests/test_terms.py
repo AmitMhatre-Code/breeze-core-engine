@@ -1,4 +1,4 @@
-"""Core-engine terms proxy routes."""
+"""Core-engine terms proxy routes (read-only)."""
 
 import pytest
 from fastapi import FastAPI
@@ -26,13 +26,27 @@ def terms_client(monkeypatch):
         yield client
 
 
-def test_terms_status_skipped_when_portal_unconfigured(terms_client, monkeypatch):
+def test_terms_current_unconfigured(terms_client, monkeypatch):
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.portal_terms._portal_configured",
         lambda: False,
     )
-    r = terms_client.get("/api/terms/status")
+    r = terms_client.get("/api/terms/current")
+    assert r.status_code == 503
+
+
+def test_terms_current_proxy(terms_client, monkeypatch):
+    async def _fetch():
+        return {
+            "version": 1,
+            "content_markdown": "# Terms v1",
+            "effective_date": "2026-06-10",
+        }
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.portal_terms.fetch_portal_terms_current",
+        _fetch,
+    )
+    r = terms_client.get("/api/terms/current")
     assert r.status_code == 200
-    body = r.json()
-    assert body["needs_acceptance"] is False
-    assert body["portal_configured"] is False
+    assert r.json()["version"] == 1

@@ -1,21 +1,23 @@
 "use client";
 
+import { MarkdownContent } from "@/components/markdown/MarkdownContent";
+
 type Props = {
   open: boolean;
   pending: boolean;
   contentMarkdown: string;
   version: number | null;
   effectiveDate: string | null;
-  onAccept: () => void;
+  onProceed: () => void;
 };
 
-export function TermsAcceptanceDialog({
+export function LoginDisclosureDialog({
   open,
   pending,
   contentMarkdown,
   version,
   effectiveDate,
-  onAccept,
+  onProceed,
 }: Props) {
   if (!open) return null;
 
@@ -27,7 +29,7 @@ export function TermsAcceptanceDialog({
       <div
         role="dialog"
         aria-modal="true"
-        aria-labelledby="terms-acceptance-title"
+        aria-labelledby="login-disclosure-title"
         className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl border border-zinc-700 bg-zinc-950 shadow-2xl"
       >
         <header className="shrink-0 border-b border-zinc-800 px-5 py-4">
@@ -35,10 +37,10 @@ export function TermsAcceptanceDialog({
             Required
           </p>
           <h2
-            id="terms-acceptance-title"
+            id="login-disclosure-title"
             className="text-lg font-bold tracking-tight text-zinc-50"
           >
-            Terms and Conditions
+            SEBI Risk Disclosure
           </h2>
           {version != null ? (
             <p className="mt-1 text-xs text-zinc-500">
@@ -49,23 +51,24 @@ export function TermsAcceptanceDialog({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <div className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
-            {contentMarkdown}
-          </div>
+          <MarkdownContent
+            markdown={contentMarkdown}
+            className="text-sm leading-relaxed text-zinc-300"
+          />
         </div>
 
         <footer className="shrink-0 border-t border-zinc-800 px-5 py-4">
           <p className="mb-3 text-xs leading-relaxed text-zinc-500">
-            You must read and accept the Terms and Conditions before using Breeze Modern.
+            You must read and acknowledge the risk disclosure before using Breeze Modern.
           </p>
           <div className="flex justify-end">
             <button
               type="button"
               disabled={pending}
-              onClick={onAccept}
+              onClick={onProceed}
               className="app-btn-primary min-w-[10rem]"
             >
-              {pending ? "Saving…" : "I accept the Terms and Conditions"}
+              {pending ? "Saving…" : "Proceed"}
             </button>
           </div>
         </footer>

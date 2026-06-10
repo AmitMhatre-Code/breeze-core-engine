@@ -2,12 +2,14 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { clearSessionAck } from "@/lib/login-disclosure-session";
 
 export default function LogoutPage() {
   const router = useRouter();
 
   useEffect(() => {
     const run = async () => {
+      clearSessionAck();
       try {
         await fetch("/auth/logout", {
           method: "POST",

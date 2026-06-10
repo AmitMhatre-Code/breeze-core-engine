@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiClient } from "@/lib/api-client";
+import { clearSessionAck } from "@/lib/login-disclosure-session";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 
 type ChallengeCtx = { user_id: string | null };
@@ -51,6 +52,7 @@ function ChallengeForm() {
           action: "Submit",
         },
       );
+      clearSessionAck();
       window.location.href = res.redirect || "/dashboard";
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Sign-in failed");

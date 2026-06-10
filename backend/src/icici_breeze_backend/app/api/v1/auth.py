@@ -26,7 +26,8 @@ async def auth_session_status(request: Request):
     """Lightweight check: valid JWT + ICICI broker cookie. Used by SPA landing redirect."""
     ctx = get_optional_user(request)
     if ctx and ctx.broker_token:
-        return JSONResponse(content={"authenticated": True})
+        user_id = (ctx.user_id or "").strip().upper() or None
+        return JSONResponse(content={"authenticated": True, "user_id": user_id})
     return JSONResponse(content={"authenticated": False}, status_code=401)
 
 

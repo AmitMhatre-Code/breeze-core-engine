@@ -7,6 +7,7 @@
  */
 
 import { isPublicUnauthenticatedPath } from "@/lib/public-auth-routes";
+import { clearSessionAck } from "@/lib/login-disclosure-session";
 
 export const LOGIN_REAUTH_REASON_QUERY = "session";
 
@@ -58,6 +59,7 @@ export async function handleUnauthorizedApiResponse(
 
   if (sessionExpiredRedirectPending) return true;
   sessionExpiredRedirectPending = true;
+  clearSessionAck();
 
   try {
     await fetch("/auth/logout", {

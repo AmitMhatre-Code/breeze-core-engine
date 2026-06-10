@@ -27,6 +27,8 @@ export const changelogReleases: ChangelogRelease[] = [
     changes: [
       "New Strategy Builder (New) page generates all options strategies from range, margin, and risk parameters",
       "Proposed trades use batched market data with single-trade selection, editable legs, and payoff simulation",
+      "SEBI risk disclosure modal after each ICICI login; admin-configurable via Breeze Console",
+      "Terms & Conditions page at /terms-and-conditions linked from the login disclosure",
     ],
   },
   {
