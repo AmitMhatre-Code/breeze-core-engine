@@ -18,6 +18,7 @@ from icici_breeze_backend.app.api.v1 import route_admin
 from icici_breeze_backend.app.api.v1 import route_strategy_builder
 from icici_breeze_backend.app.api.v1 import route_dev_mock
 from icici_breeze_backend.app.api.v1 import route_deployment
+from icici_breeze_backend.app.api.v1 import route_terms
 
 v1_router = APIRouter()
 
@@ -26,6 +27,7 @@ v1_router.include_router(auth.router, prefix="", tags=["auth"], include_in_schem
 v1_router.include_router(route_register.router, prefix="", include_in_schema=False)
 v1_router.include_router(home.router, prefix="", tags=[""], include_in_schema=False)
 v1_router.include_router(route_deployment.router, prefix="", include_in_schema=False)
+v1_router.include_router(route_terms.router, prefix="", include_in_schema=False)
 v1_router.include_router(route_portfolio.router, prefix="/portfolio", tags=[""], include_in_schema=False)
 v1_router.include_router(route_order.router, prefix="/order", tags=[""], include_in_schema=False)
 v1_router.include_router(route_book.router, prefix="/book", tags=[""], include_in_schema=False)

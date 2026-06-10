@@ -1,11 +1,15 @@
 "use client";
 
 import { useMemo } from "react";
-import { estimateProbabilityOfProfit } from "@/lib/strategy-builder/payoff";
-import { proposedLegsToStrategyLegs } from "@/lib/strategy-builder/map-proposed-legs";
-import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
+import { OutlookIcon } from "@/components/strategy-builder/OutlookIcon";
+import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import { strategyOutlook } from "@/lib/strategy-builder/templates";
+import {
+  computeTradePop,
+  formatRiskRewardRatio,
+  isUnlimitedMaxLoss,
+} from "@/lib/strategy-builder/trade-metrics";
 import type { ProposedTrade } from "@/lib/strategy-builder/types";
-import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 
 const BOOK_LAKH = 100_000;
 
@@ -20,6 +24,16 @@ function formatBookQtyInL(n: number): string {
 function fmtPx(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+}
+
+function premiumCapsuleClass(premium: number | null | undefined): string {
+  if (premium == null || !Number.isFinite(premium)) {
+    return "bg-zinc-500/10 text-zinc-700 ring-zinc-500/20 dark:text-zinc-300 dark:ring-zinc-400/25";
+  }
+  if (premium < 0) {
+    return "bg-rose-500/14 text-rose-800 ring-rose-600/20 dark:bg-rose-500/12 dark:text-rose-300 dark:ring-rose-400/30";
+  }
+  return "bg-emerald-500/14 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-500/12 dark:text-emerald-300 dark:ring-emerald-400/30";
 }
 
 export function ProposedStrategyTradeCard({
@@ -40,14 +54,24 @@ export function ProposedStrategyTradeCard({
   onSelect: () => void;
 }) {
   const skipped = trade.status === "skipped";
-  const T = useMemo(() => expiryDisplayToYears(expiryDate), [expiryDate]);
-  const sigma = (atmIv != null && atmIv > 0 ? atmIv : 0.2);
+  const outlook = strategyOutlook(trade.strategy_id);
 
-  const pop = useMemo(() => {
-    if (skipped || spot == null || !trade.legs.length) return null;
-    const legs = proposedLegsToStrategyLegs(trade.legs, lotSize);
-    return estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
-  }, [skipped, spot, trade.legs, lotSize, T, sigma]);
+  const pop = useMemo(
+    () => computeTradePop(trade, spot, atmIv, expiryDate, lotSize),
+    [trade, spot, atmIv, expiryDate, lotSize],
+  );
+
+  const prem = trade.net_premium;
+  const premLabel =
+    prem != null ? formatIndianMoneyCompact(prem) : "—";
+  const roiLabel =
+    trade.annualized_return_pct != null
+      ? `${trade.annualized_return_pct.toFixed(1)}%`
+      : "—";
+  const rrLabel = formatRiskRewardRatio(
+    trade.risk_reward_ratio,
+    trade.max_loss,
+  );
 
   const vBar = (
     <span
@@ -58,21 +82,35 @@ export function ProposedStrategyTradeCard({
 
   return (
     <div
-      className={`w-full min-w-0 max-w-[min(100%,28rem)] rounded-md border p-2.5 shadow-sm backdrop-blur-sm ${
+      className={`group w-full min-w-0 max-w-[min(100%,28rem)] rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
         skipped
           ? "border-zinc-200/60 bg-zinc-100/50 opacity-70 dark:border-zinc-700/60 dark:bg-zinc-900/40"
           : selected
             ? "border-sky-500 ring-2 ring-sky-500/40 bg-white/95 dark:bg-zinc-950/70"
-            : "border-zinc-200/80 bg-white/90 dark:border-zinc-700/80 dark:bg-zinc-950/60"
+            : "border-zinc-200/80 bg-white/90 ring-1 ring-zinc-950/[0.03] hover:border-zinc-300 dark:border-zinc-700/80 dark:bg-zinc-950/60 dark:ring-white/[0.04] dark:hover:border-zinc-600"
       }`}
     >
       <div className="space-y-2">
-        <div className="flex min-w-0 items-center gap-x-2 overflow-hidden text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-          {trade.strategy_name}
-          {trade.structure_modified ? (
-            <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
-              Modified
-            </span>
+        <div className="relative flex min-w-0 items-start gap-2 pr-[min(100%,9rem)]">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            {outlook ? <OutlookIcon outlook={outlook} /> : null}
+            <span className="truncate">{trade.strategy_name}</span>
+            {trade.structure_modified ? (
+              <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
+                Modified
+              </span>
+            ) : null}
+          </div>
+          {!skipped && prem != null ? (
+            <div
+              className={`absolute right-0 top-0 shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ring-1 ${premiumCapsuleClass(prem)}`}
+              title="Net premium (annualised ROI)"
+            >
+              <span className={moneyToneClass(prem)}>{premLabel}</span>
+              {trade.annualized_return_pct != null ? (
+                <span className="font-normal opacity-90"> ({roiLabel})</span>
+              ) : null}
+            </div>
           ) : null}
         </div>
 
@@ -84,32 +122,17 @@ export function ProposedStrategyTradeCard({
           <>
             <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-600 dark:text-zinc-300">
               <span>
-                Net prem:{" "}
-                <strong className="tabular-nums text-zinc-900 dark:text-zinc-100">
-                  {trade.net_premium != null
-                    ? formatIndianMoneyCompact(trade.net_premium)
-                    : "—"}
+                Max loss:{" "}
+                <strong className="tabular-nums">
+                  {isUnlimitedMaxLoss(trade.max_loss)
+                    ? "∞"
+                    : formatIndianMoneyCompact(trade.max_loss!)}
                 </strong>
               </span>
               <span>
-                Max loss:{" "}
-                <strong className="tabular-nums">
-                  {trade.max_loss != null
-                    ? formatIndianMoneyCompact(trade.max_loss)
-                    : "Unlimited"}
-                </strong>
+                R:R{" "}
+                <strong className="tabular-nums">{rrLabel}</strong>
               </span>
-              {trade.annualized_return_pct != null ? (
-                <span>
-                  Ann. ROI:{" "}
-                  <strong className="tabular-nums text-emerald-700 dark:text-emerald-300">
-                    {trade.annualized_return_pct.toFixed(1)}%
-                  </strong>
-                </span>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
-              <span>R:R {trade.risk_reward_ratio ?? "—"}</span>
               {pop != null ? (
                 <span>
                   PoP:{" "}
@@ -147,9 +170,7 @@ export function ProposedStrategyTradeCard({
                         Bid {fmtPx(leg.best_bid_price)} / Offer{" "}
                         {fmtPx(leg.best_offer_price)}
                       </span>
-                      <span>
-                        B:S {ratioStr}
-                      </span>
+                      <span>B:S {ratioStr}</span>
                       <span>
                         Buy {formatBookQtyInL(leg.total_buy_qty ?? NaN)} / Sell{" "}
                         {formatBookQtyInL(leg.total_sell_qty ?? NaN)}

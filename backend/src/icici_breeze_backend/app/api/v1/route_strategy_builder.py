@@ -1,9 +1,11 @@
 """Strategy Builder JSON API: chain, underlyings, multi-leg margin, orchestrated execution."""
 import json
 import logging
+import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 
 from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
 from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend
@@ -26,6 +28,7 @@ from icici_breeze_backend.app.domain.strategy_builder import (
 from icici_breeze_backend.app.services.options_strategy_engine import run_propose_trades
 from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
+from icici_breeze_backend.audit.strategy_builder_audit import resolve_audit_file_for_user
 from icici_breeze_backend.concurrency.idempotency import idempotency_store
 import icici_breeze_backend.app.core.config as cfg
 
@@ -114,6 +117,26 @@ async def get_covered_shorts_scan(
     return out
 
 
+@router.get("/audit/{session_id}")
+async def get_strategy_builder_audit(
+    session_id: str,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Download the JSON audit log for a Strategy Builder (New) session owned by the caller."""
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    path = resolve_audit_file_for_user(session_id.strip(), ctx.user_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="Audit log not found")
+    fname = os.path.basename(path)
+    return FileResponse(
+        path,
+        media_type="application/json",
+        filename=fname,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.post("/propose-trades", response_model=ProposeTradesResponse)
 async def post_propose_trades(
     body: ProposeTradesRequest,
@@ -132,6 +155,7 @@ async def post_propose_trades(
         margin_lacs=body.margin_lacs,
         max_loss_lacs=body.max_loss_lacs,
         provision_elm=body.provision_elm,
+        request_id=ctx.request_id,
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderProposeTrades")
     return ProposeTradesResponse(**data)

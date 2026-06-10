@@ -50,6 +50,7 @@ class ProposeTradesSuccess(BaseModel):
     atm_iv: Optional[float] = None
     structure_modified: bool = False
     trades: List[ProposedTradeOut] = Field(default_factory=list)
+    audit_session_id: Optional[str] = None
 
 
 class ProposeTradesResponse(BaseModel):

@@ -199,6 +199,32 @@ export function templatesForOutlook(outlook: Outlook): StrategyTemplateMeta[] {
   return STRATEGY_TEMPLATES.filter((t) => t.outlook.includes(outlook));
 }
 
+const EXTRA_STRATEGY_OUTLOOK: Record<string, Outlook> = {
+  naked_ce_short: "bearish",
+  naked_pe_short: "bullish",
+};
+
+const strategyOutlookById = new Map<string, Outlook>(
+  STRATEGY_TEMPLATES.flatMap((t) =>
+    t.outlook.map((o) => [t.id, o] as const),
+  ),
+);
+
+/** Primary outlook for propose-trades strategy_id (filter + tile icon). */
+export function strategyOutlook(strategyId: string): Outlook | undefined {
+  return (
+    strategyOutlookById.get(strategyId) ??
+    EXTRA_STRATEGY_OUTLOOK[strategyId]
+  );
+}
+
+export const ALL_OUTLOOKS: Outlook[] = [
+  "bullish",
+  "bearish",
+  "neutral",
+  "volatile",
+];
+
 export type ApplyTemplateContext = {
   strikes: number[];
   atmIdx: number;

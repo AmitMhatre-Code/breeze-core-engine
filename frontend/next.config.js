@@ -40,6 +40,10 @@ const nextConfig = {
         destination: `${backendUpstream}/api/register/:path*`,
       },
       {
+        source: "/api/terms/:path*",
+        destination: `${backendUpstream}/api/terms/:path*`,
+      },
+      {
         source: "/api/settings/:path*",
         destination: `${backendUpstream}/api/settings/:path*`,
       },

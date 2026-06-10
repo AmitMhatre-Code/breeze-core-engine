@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
@@ -8,23 +8,36 @@ import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnder
 import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionConfirmDialog";
 import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
+import { OutlookFilterDropdown } from "@/components/strategy-builder/OutlookFilterDropdown";
 import { ProposedStrategyTradeCard } from "@/components/strategy-builder/ProposedStrategyTradeCard";
+import { SectionGate } from "@/components/strategy-builder/SectionGate";
+import { SpotRangeSlider } from "@/components/strategy-builder/SpotRangeSlider";
 import {
   StrategyLegsPanel,
   type LegMarginEntry,
 } from "@/components/strategy-builder/StrategyLegsPanel";
 import { StrategyPayoffPanel } from "@/components/strategy-builder/StrategyPayoffPanel";
 import { apiClient } from "@/lib/api-client";
-import { proposeTrades } from "@/lib/strategy-builder/api";
+import {
+  downloadStrategyBuilderAudit,
+  fetchStrategyBuilderChain,
+  proposeTrades,
+} from "@/lib/strategy-builder/api";
 import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import {
   legsQtySignature,
   parseSpanMarginFromResponse,
 } from "@/lib/strategy-builder/leg-ui-helpers";
 import { proposedLegsToStrategyLegs } from "@/lib/strategy-builder/map-proposed-legs";
+import {
+  ALL_OUTLOOKS,
+  strategyOutlook,
+} from "@/lib/strategy-builder/templates";
+import { computeTradePop } from "@/lib/strategy-builder/trade-metrics";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   MarginApiResponse,
+  Outlook,
   ProposedTrade,
   ProposeTradesSuccess,
   StrategyLeg,
@@ -35,9 +48,43 @@ import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 
 const MARGIN_LACS_MAX = 999_999;
 
+type TradeSortKey = "server" | "pop" | "net_premium" | "max_loss";
+
 function parsePositiveNum(v: string): number | null {
   const n = parseFloat(v.replace(/,/g, ""));
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function parseNum(raw: unknown): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string") {
+    const n = parseFloat(raw.replace(/,/g, ""));
+    return Number.isFinite(n) ? n : NaN;
+  }
+  return NaN;
+}
+
+function resetDownstream(
+  setters: {
+    setRangeLower: (v: string) => void;
+    setRangeUpper: (v: string) => void;
+    setLegs: (v: StrategyLeg[]) => void;
+    setProposedData: (v: ProposeTradesSuccess | null) => void;
+    setSelectedTradeId: (v: string | null) => void;
+    setGenerateError: (v: string | null) => void;
+    setOutlookFilter: (v: Set<Outlook>) => void;
+    setTradeSort: (v: TradeSortKey) => void;
+  },
+  clearError = false,
+) {
+  setters.setRangeLower("");
+  setters.setRangeUpper("");
+  setters.setLegs([]);
+  setters.setProposedData(null);
+  setters.setSelectedTradeId(null);
+  setters.setOutlookFilter(new Set(ALL_OUTLOOKS));
+  setters.setTradeSort("server");
+  if (clearError) setters.setGenerateError(null);
 }
 
 export default function StrategyBuilderNewPage() {
@@ -69,6 +116,22 @@ export default function StrategyBuilderNewPage() {
   const [strategyMarginValidSig, setStrategyMarginValidSig] = useState<
     string | null
   >(null);
+  const [outlookFilter, setOutlookFilter] = useState<Set<Outlook>>(
+    () => new Set(ALL_OUTLOOKS),
+  );
+  const [tradeSort, setTradeSort] = useState<TradeSortKey>("server");
+  const rangeInitKeyRef = useRef<string | null>(null);
+
+  const downstreamSetters = {
+    setRangeLower,
+    setRangeUpper,
+    setLegs,
+    setProposedData,
+    setSelectedTradeId,
+    setGenerateError,
+    setOutlookFilter,
+    setTradeSort,
+  };
 
   const uq = useQuery({
     queryKey: ["strategy-builder", "underlyings", segmentExchange],
@@ -78,14 +141,52 @@ export default function StrategyBuilderNewPage() {
       ),
   });
 
+  const chainQ = useQuery({
+    queryKey: [
+      "strategy-builder",
+      "chain",
+      stockCode,
+      expiryDate,
+      segmentExchange,
+    ],
+    queryFn: ({ signal }) =>
+      fetchStrategyBuilderChain(
+        {
+          stock_code: stockCode.trim(),
+          expiry_date: expiryDate.trim(),
+          exchange_code: segmentExchange,
+        },
+        signal,
+      ),
+    enabled: Boolean(stockCode.trim() && expiryDate.trim()),
+  });
+
+  const chainSuccess =
+    chainQ.data?.Status === 200 ? chainQ.data.Success : null;
+  const chainSpot = chainSuccess?.spot_price ?? null;
+
   const expiryOptions = useMemo(() => {
     const entry = uq.data?.underlyings?.find((u) => u.stock_code === stockCode);
     return sortExpiryDatesAsc(entry?.expiry_dates ?? []);
   }, [uq.data, stockCode]);
 
-  const lotSize = proposedData?.lot_size ?? 1;
-  const spot = proposedData?.spot_price ?? null;
+  const chainLotSize = useMemo(() => {
+    if (!chainSuccess?.chain_rows?.length) return 1;
+    const row = chainSuccess.chain_rows[0];
+    const ls = parseNum(row.call?.lot_size) || parseNum(row.put?.lot_size);
+    return Number.isFinite(ls) && ls > 0 ? Math.round(ls) : 1;
+  }, [chainSuccess]);
+
+  const lotSize = proposedData?.lot_size ?? chainLotSize;
+  const spot = chainSpot ?? proposedData?.spot_price ?? null;
   const atmIv = proposedData?.atm_iv ?? null;
+
+  const section1Complete = Boolean(stockCode.trim() && expiryDate.trim());
+  const section2Ready =
+    section1Complete && chainSpot != null && !chainQ.isFetching;
+  const trades: ProposedTrade[] = proposedData?.trades ?? [];
+  const section3Ready = proposedData != null && trades.length > 0;
+  const section4Ready = legs.length > 0 && selectedTradeId != null;
 
   const rangeLowerNum = parsePositiveNum(rangeLower);
   const rangeUpperNum = parsePositiveNum(rangeUpper);
@@ -96,6 +197,15 @@ export default function StrategyBuilderNewPage() {
     rangeLowerNum != null &&
     rangeUpperNum != null &&
     rangeLowerNum < rangeUpperNum;
+
+  useEffect(() => {
+    if (chainSpot == null || !section1Complete) return;
+    const key = `${segmentExchange}:${stockCode}:${expiryDate}:${chainSpot}`;
+    if (rangeInitKeyRef.current === key) return;
+    rangeInitKeyRef.current = key;
+    setRangeLower(String(Math.round(chainSpot * 0.9)));
+    setRangeUpper(String(Math.round(chainSpot * 1.1)));
+  }, [chainSpot, section1Complete, segmentExchange, stockCode, expiryDate]);
 
   const rangeBeyondSpotWarning = useMemo(() => {
     if (spot == null || !rangeValid || rangeLowerNum == null || rangeUpperNum == null)
@@ -109,7 +219,7 @@ export default function StrategyBuilderNewPage() {
   }, [spot, rangeValid, rangeLowerNum, rangeUpperNum]);
 
   const canGenerate =
-    Boolean(stockCode.trim() && expiryDate.trim()) &&
+    section2Ready &&
     rangeValid &&
     marginLacsNum != null &&
     maxLossLacsNum != null;
@@ -146,7 +256,41 @@ export default function StrategyBuilderNewPage() {
     },
   });
 
-  const trades: ProposedTrade[] = proposedData?.trades ?? [];
+  const displayedTrades = useMemo(() => {
+    let list = trades.filter((t) => {
+      const o = strategyOutlook(t.strategy_id);
+      return o ? outlookFilter.has(o) : true;
+    });
+
+    if (tradeSort === "server") return list;
+
+    const withPop = list.map((t) => ({
+      trade: t,
+      pop: computeTradePop(t, spot, atmIv, expiryDate, lotSize),
+    }));
+
+    if (tradeSort === "pop") {
+      withPop.sort((a, b) => (b.pop ?? -1) - (a.pop ?? -1));
+      return withPop.map((x) => x.trade);
+    }
+
+    if (tradeSort === "net_premium") {
+      list = [...list].sort(
+        (a, b) => (b.net_premium ?? -Infinity) - (a.net_premium ?? -Infinity),
+      );
+      return list;
+    }
+
+    list = [...list].sort((a, b) => {
+      const aLoss = a.max_loss;
+      const bLoss = b.max_loss;
+      if (aLoss == null && bLoss == null) return 0;
+      if (aLoss == null) return 1;
+      if (bLoss == null) return -1;
+      return aLoss - bLoss;
+    });
+    return list;
+  }, [trades, outlookFilter, tradeSort, spot, atmIv, expiryDate, lotSize]);
 
   const selectTrade = useCallback(
     (trade: ProposedTrade) => {
@@ -327,11 +471,17 @@ export default function StrategyBuilderNewPage() {
     setSegmentExchange(ex);
     setStockCode("");
     setExpiryDate("");
-    setLegs([]);
-    setProposedData(null);
-    setSelectedTradeId(null);
-    setGenerateError(null);
+    rangeInitKeyRef.current = null;
+    resetDownstream(downstreamSetters, true);
   };
+
+  const section2Hint = !section1Complete
+    ? "Select underlying and expiry to continue"
+    : chainQ.isFetching
+      ? "Fetching spot price…"
+      : chainQ.isError
+        ? "Could not load spot price — check underlying and expiry"
+        : "Waiting for spot price…";
 
   return (
     <AppShell>
@@ -384,9 +534,8 @@ export default function StrategyBuilderNewPage() {
                   onChange={(code) => {
                     setStockCode(code);
                     setExpiryDate("");
-                    setLegs([]);
-                    setProposedData(null);
-                    setSelectedTradeId(null);
+                    rangeInitKeyRef.current = null;
+                    resetDownstream(downstreamSetters);
                   }}
                 />
               </div>
@@ -399,182 +548,253 @@ export default function StrategyBuilderNewPage() {
                   disabled={!stockCode}
                   onChange={(d) => {
                     setExpiryDate(d);
-                    setLegs([]);
-                    setProposedData(null);
-                    setSelectedTradeId(null);
+                    rangeInitKeyRef.current = null;
+                    resetDownstream(downstreamSetters);
                   }}
                 />
               </div>
             </div>
           </section>
 
-          <section
-            id="strategy-builder-parameters"
-            className={`${sb.section} space-y-4`}
-          >
-            <h2 className={sb.sectionTitle}>2. Parameters</h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <label className="block">
-                <span className={sb.fieldLabel}>Range lower (absolute)</span>
-                <input
-                  type="number"
-                  className={sb.input}
-                  value={rangeLower}
-                  onChange={(e) => setRangeLower(e.target.value)}
-                  min={0}
-                  step={1}
-                />
-              </label>
-              <label className="block">
-                <span className={sb.fieldLabel}>Range upper (absolute)</span>
-                <input
-                  type="number"
-                  className={sb.input}
-                  value={rangeUpper}
-                  onChange={(e) => setRangeUpper(e.target.value)}
-                  min={0}
-                  step={1}
-                />
-              </label>
-              <label className="block">
-                <span className={sb.fieldLabel}>Margin to deploy (Lacs)</span>
-                <input
-                  type="number"
-                  className={sb.input}
-                  value={marginLacs}
-                  onChange={(e) => setMarginLacs(e.target.value)}
-                  min={0}
-                  max={MARGIN_LACS_MAX}
-                  step={0.1}
-                />
-              </label>
-              <label className="block">
-                <span className={sb.fieldLabel}>Maximum loss (Lacs)</span>
-                <input
-                  type="number"
-                  className={sb.input}
-                  value={maxLossLacs}
-                  onChange={(e) => setMaxLossLacs(e.target.value)}
-                  min={0}
-                  max={MARGIN_LACS_MAX}
-                  step={0.1}
-                />
-              </label>
-              <label className="block">
-                <span className={sb.fieldLabel}>Spot price (SPP)</span>
-                <input
-                  type="text"
-                  className={sb.input}
-                  readOnly
-                  value={spot != null ? spot.toLocaleString("en-IN") : "—"}
-                />
-              </label>
-              <div className="flex items-end">
-                <label className={`${sb.checkboxRow} pb-2.5`}>
-                  <input
-                    type="checkbox"
-                    className={sb.checkbox}
-                    checked={provisionElm}
-                    onChange={(e) => setProvisionElm(e.target.checked)}
-                  />
-                  Provision ELM (2%)
-                </label>
-              </div>
-            </div>
-            {rangeLowerNum != null &&
-            rangeUpperNum != null &&
-            rangeLowerNum >= rangeUpperNum ? (
-              <p className="text-sm text-red-600 dark:text-red-400">
-                Range lower must be less than range upper.
-              </p>
-            ) : null}
-            {rangeBeyondSpotWarning ? (
-              <p className="text-sm text-amber-700 dark:text-amber-300">
-                {rangeBeyondSpotWarning}
-              </p>
-            ) : null}
-            {generateError ? (
-              <p className="text-sm text-red-600 dark:text-red-400">
-                {generateError}
-              </p>
-            ) : null}
-            <button
-              type="button"
-              className={sb.btnPrimary}
-              disabled={!canGenerate || generateM.isPending}
-              onClick={() => generateM.mutate()}
+          <SectionGate locked={!section2Ready} hint={section2Hint}>
+            <section
+              id="strategy-builder-parameters"
+              className={`${sb.section} space-y-4`}
             >
-              {generateM.isPending ? "Generating…" : "Generate Trades"}
-            </button>
-          </section>
-
-          <section
-            id="strategy-builder-proposed-trades"
-            className={`${sb.section} space-y-4`}
-          >
-            <h2 className={sb.sectionTitle}>3. Proposed Trades</h2>
-            {!trades.length ? (
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                Fill parameters and click Generate Trades to see strategy
-                proposals.
-              </p>
-            ) : (
-              <div className="flex flex-wrap justify-center gap-3 sm:justify-start">
-                {trades.map((trade) => (
-                  <ProposedStrategyTradeCard
-                    key={trade.strategy_id}
-                    trade={trade}
-                    lotSize={lotSize}
-                    spot={spot}
-                    atmIv={atmIv}
-                    expiryDate={expiryDate}
-                    selected={selectedTradeId === trade.strategy_id}
-                    onSelect={() => selectTrade(trade)}
+              <h2 className={sb.sectionTitle}>2. Parameters</h2>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {chainSpot != null &&
+                rangeLowerNum != null &&
+                rangeUpperNum != null ? (
+                  <SpotRangeSlider
+                    spot={chainSpot}
+                    rangeLower={rangeLowerNum}
+                    rangeUpper={rangeUpperNum}
+                    onRangeLowerChange={(v) => setRangeLower(String(v))}
+                    onRangeUpperChange={(v) => setRangeUpper(String(v))}
                   />
-                ))}
+                ) : (
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <span className={sb.fieldLabel}>Strike range (from spot price)</span>
+                    <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                      Available once spot price is loaded.
+                    </p>
+                  </div>
+                )}
+                <label className="block">
+                  <span className={sb.fieldLabel}>Margin to deploy (Lacs)</span>
+                  <input
+                    type="number"
+                    className={sb.input}
+                    value={marginLacs}
+                    onChange={(e) => setMarginLacs(e.target.value)}
+                    min={0}
+                    max={MARGIN_LACS_MAX}
+                    step={0.1}
+                  />
+                </label>
+                <label className="block">
+                  <span className={sb.fieldLabel}>Maximum loss (Lacs)</span>
+                  <input
+                    type="number"
+                    className={sb.input}
+                    value={maxLossLacs}
+                    onChange={(e) => setMaxLossLacs(e.target.value)}
+                    min={0}
+                    max={MARGIN_LACS_MAX}
+                    step={0.1}
+                  />
+                </label>
+                <label className="block">
+                  <span className={sb.fieldLabel}>Spot price (SPP)</span>
+                  <input
+                    type="text"
+                    className={sb.input}
+                    readOnly
+                    value={
+                      chainSpot != null
+                        ? chainSpot.toLocaleString("en-IN")
+                        : "—"
+                    }
+                  />
+                </label>
+                <div className="flex items-end">
+                  <div
+                    className={`${sb.checkboxRow} pb-2.5 gap-2 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
+                  >
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={provisionElm}
+                      aria-label="Toggle Provision for ELM"
+                      onClick={() => setProvisionElm(!provisionElm)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${
+                        provisionElm
+                          ? "bg-sky-600"
+                          : "bg-zinc-300 dark:bg-zinc-700"
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                          provisionElm ? "translate-x-4" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
+                    Provision for ELM
+                  </div>
+                </div>
               </div>
-            )}
-          </section>
+              {rangeLowerNum != null &&
+              rangeUpperNum != null &&
+              rangeLowerNum >= rangeUpperNum ? (
+                <p className="text-sm text-red-600 dark:text-red-400">
+                  Range lower must be less than range upper.
+                </p>
+              ) : null}
+              {rangeBeyondSpotWarning ? (
+                <p className="text-sm text-amber-700 dark:text-amber-300">
+                  {rangeBeyondSpotWarning}
+                </p>
+              ) : null}
+              {generateError ? (
+                <p className="text-sm text-red-600 dark:text-red-400">
+                  {generateError}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                className={sb.btnPrimary}
+                disabled={!canGenerate || generateM.isPending}
+                onClick={() => generateM.mutate()}
+              >
+                {generateM.isPending ? "Generating…" : "Generate Trades"}
+              </button>
+            </section>
+          </SectionGate>
 
-          <StrategyLegsPanel
-            stockCode={stockCode}
-            expiryDate={expiryDate}
-            lotSize={lotSize}
-            legs={legs}
-            onLegsChange={setLegs}
-            legMarginCache={legMarginCache}
-            legMarginFetchingId={legMarginFetchingId}
-            onFetchLegMargin={(leg) => void fetchLegMargin(leg)}
-            totalsNetPremium={totalsNetPremium}
-            totalsMargin={totalsMargin}
-            onExecute={() => setExecutePreviewOpen(true)}
-            executeDisabled={
-              !legs.length ||
-              legs.some((x) => x.lots <= 0) ||
-              !stockCode ||
-              !expiryDate
-            }
-          />
+          <SectionGate
+            locked={!section3Ready}
+            hint="Fill parameters and click Generate Trades to continue"
+          >
+            <section
+              id="strategy-builder-proposed-trades"
+              className={`${sb.section} space-y-4`}
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-3">
+                <h2 className={sb.sectionTitle}>3. Proposed Trades</h2>
+                {proposedData?.audit_session_id ? (
+                  <button
+                    type="button"
+                    className="shrink-0 text-[11px] font-normal text-zinc-400 underline-offset-2 hover:text-zinc-600 hover:underline dark:text-zinc-500 dark:hover:text-zinc-400"
+                    title="Download build audit log (JSON)"
+                    onClick={() => {
+                      void downloadStrategyBuilderAudit(
+                        proposedData.audit_session_id!,
+                      );
+                    }}
+                  >
+                    download audit
+                  </button>
+                ) : null}
+              </div>
+              {trades.length > 0 ? (
+                <div className="flex flex-wrap items-end gap-3">
+                  <label className="block min-w-[10rem]">
+                    <span className={sb.fieldLabel}>Sort by</span>
+                    <select
+                      className={sb.select}
+                      value={tradeSort}
+                      onChange={(e) =>
+                        setTradeSort(e.target.value as TradeSortKey)
+                      }
+                    >
+                      <option value="server">Server order</option>
+                      <option value="pop">PoP (high → low)</option>
+                      <option value="net_premium">Net Premium (high → low)</option>
+                      <option value="max_loss">Max Loss (low → high)</option>
+                    </select>
+                  </label>
+                  <label className="block min-w-[10rem]">
+                    <span className={sb.fieldLabel}>Outlook</span>
+                    <OutlookFilterDropdown
+                      selected={outlookFilter}
+                      onChange={setOutlookFilter}
+                    />
+                  </label>
+                </div>
+              ) : null}
+              {!trades.length ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Fill parameters and click Generate Trades to see strategy
+                  proposals.
+                </p>
+              ) : displayedTrades.length === 0 ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  No strategies match the selected outlook filters.
+                </p>
+              ) : (
+                <div className="flex flex-wrap justify-center gap-3 sm:justify-start">
+                  {displayedTrades.map((trade) => (
+                    <ProposedStrategyTradeCard
+                      key={trade.strategy_id}
+                      trade={trade}
+                      lotSize={lotSize}
+                      spot={spot}
+                      atmIv={atmIv}
+                      expiryDate={expiryDate}
+                      selected={selectedTradeId === trade.strategy_id}
+                      onSelect={() => selectTrade(trade)}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          </SectionGate>
 
-          <StrategyPayoffPanel
-            legs={legs}
-            spot={spot}
-            atmIv={atmIv}
-            expiryDate={expiryDate}
-            lotSize={lotSize}
-            ivShockPct={ivShockPct}
-            onIvShockChange={setIvShockPct}
-            showToday={showToday}
-            onShowTodayChange={setShowToday}
-            showGreeks={showGreeks}
-            onShowGreeksChange={setShowGreeks}
-            spanMargin={spanMargin}
-            marginFetching={marginQ.isFetching}
-            marginQtyStale={strategyMarginQtyStale}
-            onRefreshMargin={() => void marginQ.refetch()}
-            marginError={marginQ.data?.Error ?? null}
-            marginWarnings={strategyBuilderMarginWarnings}
-          />
+          <SectionGate
+            locked={!section4Ready}
+            hint="Select a strategy to continue"
+          >
+            <StrategyLegsPanel
+              stockCode={stockCode}
+              expiryDate={expiryDate}
+              lotSize={lotSize}
+              legs={legs}
+              onLegsChange={setLegs}
+              legMarginCache={legMarginCache}
+              legMarginFetchingId={legMarginFetchingId}
+              onFetchLegMargin={(leg) => void fetchLegMargin(leg)}
+              totalsNetPremium={totalsNetPremium}
+              totalsMargin={totalsMargin}
+              onExecute={() => setExecutePreviewOpen(true)}
+              executeDisabled={
+                !legs.length ||
+                legs.some((x) => x.lots <= 0) ||
+                !stockCode ||
+                !expiryDate
+              }
+            />
+
+            <StrategyPayoffPanel
+              legs={legs}
+              spot={spot}
+              atmIv={atmIv}
+              expiryDate={expiryDate}
+              lotSize={lotSize}
+              ivShockPct={ivShockPct}
+              onIvShockChange={setIvShockPct}
+              showToday={showToday}
+              onShowTodayChange={setShowToday}
+              showGreeks={showGreeks}
+              onShowGreeksChange={setShowGreeks}
+              spanMargin={spanMargin}
+              marginFetching={marginQ.isFetching}
+              marginQtyStale={strategyMarginQtyStale}
+              onRefreshMargin={() => void marginQ.refetch()}
+              marginError={marginQ.data?.Error ?? null}
+              marginWarnings={strategyBuilderMarginWarnings}
+            />
+          </SectionGate>
         </div>
 
         <OrderExecutionConfirmDialog

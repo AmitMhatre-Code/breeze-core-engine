@@ -107,6 +107,8 @@ export type ProposeTradesSuccess = {
   atm_iv?: number | null;
   structure_modified?: boolean;
   trades: ProposedTrade[];
+  /** Server-side audit session id for downloading the build audit JSON. */
+  audit_session_id?: string | null;
 };
 
 export type ProposeTradesApiResponse = {
