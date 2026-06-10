@@ -10,6 +10,10 @@ from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend
 from icici_breeze_backend.app.auth.context import get_request_context, RequestContext
 from icici_breeze_backend.app.api.v1.covered_shorts_scan import run_covered_shorts_scan
 from icici_breeze_backend.app.domain.responses import UncoveredShortsScanResponse
+from icici_breeze_backend.app.domain.options_strategy import (
+    ProposeTradesRequest,
+    ProposeTradesResponse,
+)
 from icici_breeze_backend.app.domain.strategy_builder import (
     StrategyBuilderChainResponse,
     StrategyBuilderExecuteRequest,
@@ -19,6 +23,7 @@ from icici_breeze_backend.app.domain.strategy_builder import (
     StrategyBuilderMarginResponse,
     StrategyBuilderUnderlyingsResponse,
 )
+from icici_breeze_backend.app.services.options_strategy_engine import run_propose_trades
 from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 from icici_breeze_backend.concurrency.idempotency import idempotency_store
@@ -107,6 +112,29 @@ async def get_covered_shorts_scan(
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderCoveredShortsScan")
     return out
+
+
+@router.post("/propose-trades", response_model=ProposeTradesResponse)
+async def post_propose_trades(
+    body: ProposeTradesRequest,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    data = run_propose_trades(
+        breeze,
+        ctx.user_id,
+        exchange_code=body.exchange_code.strip() or cfg.NFO,
+        stock_code=body.stock_code.strip(),
+        expiry_date=body.expiry_date.strip(),
+        range_lower=body.range_lower,
+        range_upper=body.range_upper,
+        margin_lacs=body.margin_lacs,
+        max_loss_lacs=body.max_loss_lacs,
+        provision_elm=body.provision_elm,
+    )
+    AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderProposeTrades")
+    return ProposeTradesResponse(**data)
 
 
 @router.post("/margin", response_model=StrategyBuilderMarginResponse)

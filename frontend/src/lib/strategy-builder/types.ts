@@ -72,3 +72,45 @@ export type ExecuteApiResponse = {
   placed_count: number;
   failed_count: number;
 };
+
+export type ProposedTradeLeg = {
+  right: OptionRight;
+  side: OrderSide;
+  strike: number;
+  quantity: number;
+  premium_per_unit: number;
+  ltp?: number | null;
+  best_bid_price?: number | null;
+  best_offer_price?: number | null;
+  total_buy_qty?: number | null;
+  total_sell_qty?: number | null;
+  buy_sell_ratio?: number | string | null;
+};
+
+export type ProposedTrade = {
+  strategy_id: string;
+  strategy_name: string;
+  status: "ok" | "skipped";
+  skip_reason?: string | null;
+  structure_modified?: boolean;
+  net_premium?: number | null;
+  max_loss?: number | null;
+  annualized_return_pct?: number | null;
+  risk_reward_ratio?: string | null;
+  legs: ProposedTradeLeg[];
+};
+
+export type ProposeTradesSuccess = {
+  spot_price: number | null;
+  lot_size: number;
+  expiry_display: string;
+  atm_iv?: number | null;
+  structure_modified?: boolean;
+  trades: ProposedTrade[];
+};
+
+export type ProposeTradesApiResponse = {
+  Status: number;
+  Error?: string | null;
+  Success?: ProposeTradesSuccess | null;
+};

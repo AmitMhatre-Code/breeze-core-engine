@@ -20,6 +20,16 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.0.0-a",
+    date: "10-Jun-2026",
+    releaseKind: "patch",
+    summary: "Strategy Builder (New)",
+    changes: [
+      "New Strategy Builder (New) page generates all options strategies from range, margin, and risk parameters",
+      "Proposed trades use batched market data with single-trade selection, editable legs, and payoff simulation",
+    ],
+  },
+  {
     version: "1.6.3",
     date: "6-Jun-2026",
     releaseKind: "patch",
@@ -89,6 +99,16 @@ export const changelogReleases: ChangelogRelease[] = [
     summary: "Responsive Design",
     changes: [
       "Application now is responsive to smaller screens; although only tested on iPhone 13 Pro",
+    ],
+  },
+  {
+    version: "1.3.2",
+    date: "10-Jun-2026",
+    releaseKind: "minor",
+    summary: "Strategy Builder (New)",
+    changes: [
+      "New Strategy Builder (New) page generates all options strategies from range, margin, and risk parameters",
+      "Proposed trades use batched market data with single-trade selection, editable legs, and payoff simulation",
     ],
   },
   {

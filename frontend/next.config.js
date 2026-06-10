@@ -147,6 +147,10 @@ const nextConfig = {
         destination: `${backendUpstream}/strategy-builder/covered-shorts-scan`,
       },
       {
+        source: "/strategy-builder/propose-trades",
+        destination: `${backendUpstream}/strategy-builder/propose-trades`,
+      },
+      {
         source: "/strategy-builder/margin",
         destination: `${backendUpstream}/strategy-builder/margin`,
       },

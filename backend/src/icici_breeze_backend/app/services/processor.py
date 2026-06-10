@@ -2413,6 +2413,50 @@ class processor():
         self.errors = []
         return error_log
 
+    def list_option_strikes(
+        self, stock_code: str, expiry_date: str, exchange_code: str = cfg.NFO
+    ) -> list[int]:
+        """Distinct strike prices for an underlying + expiry from scrip_master."""
+        with _scrip_master_connection() as conn:
+            if exchange_code == cfg.NFO:
+                cursor = conn.execute(
+                    """
+                    SELECT DISTINCT StrikePrice FROM scrip_master
+                    WHERE ShortName = ? AND ExpiryDate = ?
+                      AND (SegmentCode = ? OR SegmentCode IS NULL)
+                      AND StrikePrice IS NOT NULL AND StrikePrice > 0
+                    ORDER BY StrikePrice
+                    """,
+                    (stock_code, expiry_date, exchange_code),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    SELECT DISTINCT StrikePrice FROM scrip_master
+                    WHERE ShortName = ? AND ExpiryDate = ?
+                      AND SegmentCode = ?
+                      AND StrikePrice IS NOT NULL AND StrikePrice > 0
+                    ORDER BY StrikePrice
+                    """,
+                    (stock_code, expiry_date, exchange_code),
+                )
+            rows = cursor.fetchall()
+        out: list[int] = []
+        for row in rows:
+            try:
+                out.append(int(float(row[0])))
+            except (TypeError, ValueError):
+                continue
+        return sorted(set(out))
+
+    @staticmethod
+    def strike_interval(strikes: list[int]) -> int:
+        """Minimum positive gap between adjacent strikes (fallback 50)."""
+        if len(strikes) < 2:
+            return 50
+        gaps = [strikes[i + 1] - strikes[i] for i in range(len(strikes) - 1) if strikes[i + 1] > strikes[i]]
+        return min(gaps) if gaps else 50
+
     def fetch_lot_size(self, stock_code, expiry_date, exchange_code: str = cfg.NFO):
         # Fetches the lot size for the provided stock_code from the scrip_master table.
         with _scrip_master_connection() as conn:

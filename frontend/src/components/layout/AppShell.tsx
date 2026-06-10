@@ -36,6 +36,11 @@ const navItems = [
   { href: "/orders", label: "Order Book", icon: OrdersIcon },
   { href: "/place-order", label: "Place Order", icon: PlaceOrderIcon },
   { href: "/strategy-builder", label: "Strategy Builder", icon: StrategyIcon },
+  {
+    href: "/strategy-builder-new",
+    label: "Strategy Builder (New)",
+    icon: StrategyIcon,
+  },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
