@@ -12,7 +12,7 @@ import requests
 import zipfile
 import os
 from pathlib import Path
-from collections import defaultdict
+from collections import Counter, defaultdict
 import sqlite3
 import csv
 import re
@@ -2456,6 +2456,22 @@ class processor():
             return 50
         gaps = [strikes[i + 1] - strikes[i] for i in range(len(strikes) - 1) if strikes[i + 1] > strikes[i]]
         return min(gaps) if gaps else 50
+
+    @staticmethod
+    def search_interval(strikes: list[int], spot: float) -> int:
+        """Modal strike gap near spot for range padding (fallback 50)."""
+        if len(strikes) < 2:
+            return 50
+        atm_idx = min(range(len(strikes)), key=lambda i: abs(strikes[i] - spot))
+        lo_idx = max(0, atm_idx - 10)
+        hi_idx = min(len(strikes) - 1, atm_idx + 10)
+        band = strikes[lo_idx : hi_idx + 1]
+        if len(band) < 2:
+            return processor.strike_interval(strikes)
+        gaps = [band[i + 1] - band[i] for i in range(len(band) - 1) if band[i + 1] > band[i]]
+        if not gaps:
+            return 50
+        return Counter(gaps).most_common(1)[0][0]
 
     def fetch_lot_size(self, stock_code, expiry_date, exchange_code: str = cfg.NFO):
         # Fetches the lot size for the provided stock_code from the scrip_master table.

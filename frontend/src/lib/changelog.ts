@@ -20,7 +20,7 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "2.0.0-b",
+    version: "2.0.0-c",
     date: "10-Jun-2026",
     releaseKind: "patch",
     summary: "Strategy Builder (New)",

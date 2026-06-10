@@ -9,8 +9,10 @@ from icici_breeze_backend.app.services.options_strategy_engine import (
     TradeLeg,
     _attach_margins_and_returns,
     _floor_lots,
+    _strategy_boundary_strikes,
     _strike_window,
     calc_bull_call_spread,
+    calc_naked_ce_short,
 )
 from icici_breeze_backend.app.services.processor import processor
 
@@ -62,6 +64,7 @@ class TestBullCallSpreadSizing(unittest.TestCase):
             lot_size=75,
             strikes=strikes,
             strike_step=50,
+            search_interval=50,
             spot=23500,
             atm_strike=23500,
             cache=cache,
@@ -110,6 +113,87 @@ class TestProcessorStrikeInterval(unittest.TestCase):
     def test_min_gap(self):
         self.assertEqual(processor.strike_interval([23000, 23050, 23100]), 50)
         self.assertEqual(processor.strike_interval([23000]), 50)
+
+    def test_search_interval_modal_near_spot(self):
+        strikes = [23000, 23050, 23100, 24000, 25000, 26000]
+        self.assertEqual(processor.search_interval(strikes, 23100), 50)
+
+    def test_search_interval_wider_padding_window(self):
+        strikes = list(range(22000, 26200, 50))
+        si = processor.search_interval(strikes, 23310)
+        window_min_gap = _strike_window(strikes, 22500, 24500, 23300, 50, pad_intervals=3)
+        window_search = _strike_window(strikes, 22500, 24500, 23300, si, pad_intervals=3)
+        self.assertGreaterEqual(max(window_search), max(window_min_gap))
+
+
+class TestStrategyBoundaryStrikes(unittest.TestCase):
+    def test_includes_first_ce_above_range_upper(self):
+        strikes = list(range(22000, 24600, 50)) + list(range(25000, 27000, 500))
+        boundaries = _strategy_boundary_strikes(strikes, 22500, 24500, 23310, 23300)
+        self.assertIn(25000, boundaries)
+
+    def test_includes_last_pe_below_range_lower(self):
+        strikes = list(range(21000, 24600, 50))
+        boundaries = _strategy_boundary_strikes(strikes, 22500, 24500, 23310, 23300)
+        self.assertIn(22450, boundaries)
+
+
+class TestNakedCeAboveRangeUpper(unittest.TestCase):
+    def test_selects_liquid_ce_above_range_when_only_boundary_quoted(self):
+        strikes = list(range(22000, 24600, 50)) + [25000, 25500, 26000]
+        cache: dict = {}
+        for s in range(22000, 24600, 50):
+            cache[(s, "Call")] = QuoteRow(
+                strike=s,
+                right="Call",
+                ltp=50.0,
+                best_bid_price=49.0,
+                best_offer_price=51.0,
+                total_buy_qty=0,
+                total_sell_qty=0,
+                buy_sell_ratio=0.0,
+                spot_price=23310.0,
+            )
+        cache[(25000, "Call")] = QuoteRow(
+            strike=25000,
+            right="Call",
+            ltp=30.0,
+            best_bid_price=29.0,
+            best_offer_price=31.0,
+            total_buy_qty=100,
+            total_sell_qty=100,
+            buy_sell_ratio=1.0,
+            spot_price=23310.0,
+        )
+        mock_processor = MagicMock()
+        mock_processor.strategy_builder_margin.return_value = {
+            "Status": 200,
+            "Success": {"span_margin_required": 200_000},
+        }
+        ctx = EngineContext(
+            processor=mock_processor,
+            user_id="u1",
+            stock_code="NIFTY",
+            exchange_code="NFO",
+            expiry_display="20-Jun-2026",
+            range_lower=22500,
+            range_upper=24500,
+            margin_rupees=1_000_000,
+            max_loss_rupees=500_000,
+            provision_elm=False,
+            lot_size=75,
+            strikes=strikes,
+            strike_step=50,
+            search_interval=50,
+            spot=23310,
+            atm_strike=23300,
+            cache=cache,
+        )
+        res = calc_naked_ce_short(ctx)
+        self.assertEqual(res.status, "ok")
+        self.assertEqual(len(res.legs), 1)
+        self.assertEqual(res.legs[0].strike, 25000)
+        self.assertEqual(res.legs[0].side, "Sell")
 
 
 if __name__ == "__main__":

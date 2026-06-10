@@ -109,6 +109,7 @@ class EngineContext:
     lot_size: int
     strikes: list[int]
     strike_step: int
+    search_interval: int
     spot: float
     atm_strike: int
     cache: dict[tuple[int, Right], QuoteRow] = field(default_factory=dict)
@@ -209,6 +210,94 @@ def _strike_window(
 
 def _nearest_atm(strikes: list[int], spot: float) -> int:
     return min(strikes, key=lambda s: abs(s - spot))
+
+
+def _strategy_boundary_strikes(
+    all_strikes: list[int],
+    range_lower: float,
+    range_upper: float,
+    spot: float,
+    atm: int,
+) -> set[int]:
+    """Candidate strikes from scrip master for strategy boundary selection."""
+    needed: set[int] = set()
+    if atm in all_strikes:
+        needed.add(atm)
+    needed.add(min(all_strikes, key=lambda s: abs(s - spot)))
+    needed.add(min(all_strikes, key=lambda s: abs(s - range_lower)))
+    needed.add(min(all_strikes, key=lambda s: abs(s - range_upper)))
+    ce_above = [s for s in all_strikes if s > range_upper]
+    if ce_above:
+        needed.add(ce_above[0])
+    pe_below = [s for s in all_strikes if s < range_lower]
+    if pe_below:
+        needed.add(pe_below[-1])
+    return needed
+
+
+def _fetch_pairs_for_strikes(ctx: EngineContext, strikes: set[int] | list[int]) -> None:
+    pairs: set[tuple[int, Right]] = set()
+    for s in strikes:
+        pairs.add((s, "Call"))
+        pairs.add((s, "Put"))
+    new_pairs = pairs - set(ctx.cache.keys())
+    if new_pairs:
+        ctx.cache.update(
+            _fetch_quotes(
+                ctx.processor,
+                ctx.user_id,
+                ctx.stock_code,
+                ctx.exchange_code,
+                ctx.expiry_display,
+                new_pairs,
+            )
+        )
+
+
+def _ensure_liquid_above(
+    ctx: EngineContext, level: float, right: Right, max_attempts: int = 3
+) -> int | None:
+    liquid = ctx.liquid_ce_strikes if right == "Call" else ctx.liquid_pe_strikes
+    hit = _first_liquid_above(liquid, level)
+    if hit is not None:
+        return hit
+    candidates = [s for s in ctx.strikes if s > level]
+    attempts = 0
+    for s in candidates:
+        q = ctx.cache.get((s, right))
+        if q and q.liquid:
+            return s
+        _fetch_pairs_for_strikes(ctx, {s})
+        attempts += 1
+        q = ctx.cache.get((s, right))
+        if q and q.liquid:
+            return s
+        if attempts >= max_attempts:
+            break
+    return None
+
+
+def _ensure_liquid_below(
+    ctx: EngineContext, level: float, right: Right, max_attempts: int = 3
+) -> int | None:
+    liquid = ctx.liquid_ce_strikes if right == "Call" else ctx.liquid_pe_strikes
+    hit = _first_liquid_below(liquid, level)
+    if hit is not None:
+        return hit
+    candidates = [s for s in reversed(ctx.strikes) if s < level]
+    attempts = 0
+    for s in candidates:
+        q = ctx.cache.get((s, right))
+        if q and q.liquid:
+            return s
+        _fetch_pairs_for_strikes(ctx, {s})
+        attempts += 1
+        q = ctx.cache.get((s, right))
+        if q and q.liquid:
+            return s
+        if attempts >= max_attempts:
+            break
+    return None
 
 
 def _first_liquid_above(strikes: list[int], level: float) -> int | None:
@@ -321,21 +410,25 @@ def _build_liquidity_cache(ctx: EngineContext) -> None:
     ctx.atm_strike = _nearest_atm(all_strikes, spot)
 
     def window_strikes(pad: int) -> list[int]:
-        return _strike_window(all_strikes, ctx.range_lower, ctx.range_upper, ctx.atm_strike, ctx.strike_step, pad)
+        return _strike_window(
+            all_strikes,
+            ctx.range_lower,
+            ctx.range_upper,
+            ctx.atm_strike,
+            ctx.search_interval,
+            pad,
+        )
 
     def fetch_window(pad: int) -> None:
-        ws = window_strikes(pad)
-        pairs: set[tuple[int, Right]] = set()
-        for s in ws:
-            pairs.add((s, "Call"))
-            pairs.add((s, "Put"))
-        new_pairs = pairs - set(ctx.cache.keys())
-        if new_pairs:
-            ctx.cache.update(
-                _fetch_quotes(ctx.processor, ctx.user_id, ctx.stock_code, ctx.exchange_code, ctx.expiry_display, new_pairs)
-            )
+        _fetch_pairs_for_strikes(ctx, window_strikes(pad))
 
     fetch_window(3)
+    _fetch_pairs_for_strikes(
+        ctx,
+        _strategy_boundary_strikes(
+            all_strikes, ctx.range_lower, ctx.range_upper, ctx.spot, ctx.atm_strike
+        ),
+    )
     def _has_liquid(ws: list[int]) -> list[int]:
         out: list[int] = []
         for s in ws:
@@ -430,7 +523,7 @@ def calc_naked_ce_short(ctx: EngineContext) -> StrategyResult:
     sid, name = "naked_ce_short", "Naked CE Short"
     if ctx.halted:
         return _skip(sid, name, ctx.halt_reason or "Market halted")
-    stp = _first_liquid_above(ctx.liquid_ce_strikes, ctx.range_upper)
+    stp = _ensure_liquid_above(ctx, ctx.range_upper, "Call")
     if stp is None:
         return _skip(sid, name, "No liquid CE strike above range upper bound.")
     q = ctx.cache.get((stp, "Call"))
@@ -465,7 +558,7 @@ def calc_naked_pe_short(ctx: EngineContext) -> StrategyResult:
     sid, name = "naked_pe_short", "Naked PE Short"
     if ctx.halted:
         return _skip(sid, name, ctx.halt_reason or "Market halted")
-    stp = _first_liquid_below(ctx.liquid_pe_strikes, ctx.range_lower)
+    stp = _ensure_liquid_below(ctx, ctx.range_lower, "Put")
     if stp is None:
         return _skip(sid, name, "No liquid PE strike below range lower bound.")
     q = ctx.cache.get((stp, "Put"))
@@ -607,7 +700,7 @@ def calc_bear_call_spread(ctx: EngineContext) -> StrategyResult:
     sid, name = "bear_call_spread", "Bear Call Spread"
     if ctx.halted:
         return _skip(sid, name, ctx.halt_reason or "Market halted")
-    stp_s = _first_liquid_above(ctx.liquid_ce_strikes, ctx.range_upper)
+    stp_s = _ensure_liquid_above(ctx, ctx.range_upper, "Call")
     if stp_s is None:
         return _skip(sid, name, "No liquid short CE above range.")
     wing = _credit_spread_wing(ctx, stp_s, "Call", ctx.liquid_ce_strikes, True)
@@ -637,7 +730,7 @@ def calc_bull_put_spread(ctx: EngineContext) -> StrategyResult:
     sid, name = "bull_put_spread", "Bull Put Spread"
     if ctx.halted:
         return _skip(sid, name, ctx.halt_reason or "Market halted")
-    stp_s = _first_liquid_below(ctx.liquid_pe_strikes, ctx.range_lower)
+    stp_s = _ensure_liquid_below(ctx, ctx.range_lower, "Put")
     if stp_s is None:
         return _skip(sid, name, "No liquid short PE below range.")
     wing = _credit_spread_wing(ctx, stp_s, "Put", ctx.liquid_pe_strikes, False)
@@ -739,8 +832,8 @@ def calc_short_strangle(ctx: EngineContext) -> StrategyResult:
     sid, name = "short_strangle", "Short Strangle"
     if ctx.halted:
         return _skip(sid, name, ctx.halt_reason or "Market halted")
-    stp_c = _first_liquid_above(ctx.liquid_ce_strikes, ctx.range_upper)
-    stp_p = _first_liquid_below(ctx.liquid_pe_strikes, ctx.range_lower)
+    stp_c = _ensure_liquid_above(ctx, ctx.range_upper, "Call")
+    stp_p = _ensure_liquid_below(ctx, ctx.range_lower, "Put")
     if stp_c is None or stp_p is None:
         return _skip(sid, name, "Could not resolve liquid strangle strikes.")
     ce, pe = ctx.cache[(stp_c, "Call")], ctx.cache[(stp_p, "Put")]
@@ -782,8 +875,14 @@ def calc_long_call_butterfly(ctx: EngineContext) -> StrategyResult:
     stp_m = min(ctx.liquid_ce_strikes, key=lambda s: abs(s - mid), default=None)
     if stp_m is None:
         return _skip(sid, name, "No liquid center strike for butterfly.")
-    stp_l = _first_liquid_below(ctx.liquid_ce_strikes, ctx.range_lower) or _nearest_liquid_le(ctx.liquid_ce_strikes, ctx.range_lower)
-    stp_h = _first_liquid_above(ctx.liquid_ce_strikes, ctx.range_upper) or _nearest_liquid_ge(ctx.liquid_ce_strikes, ctx.range_upper)
+    stp_l = (
+        _ensure_liquid_below(ctx, ctx.range_lower, "Call")
+        or _nearest_liquid_le(ctx.liquid_ce_strikes, ctx.range_lower)
+    )
+    stp_h = (
+        _ensure_liquid_above(ctx, ctx.range_upper, "Call")
+        or _nearest_liquid_ge(ctx.liquid_ce_strikes, ctx.range_upper)
+    )
     if stp_l is None or stp_h is None or not (stp_l < stp_m < stp_h):
         return _skip(sid, name, "Could not resolve butterfly wing strikes.")
     ql, qm, qh = ctx.cache[(stp_l, "Call")], ctx.cache[(stp_m, "Call")], ctx.cache[(stp_h, "Call")]
@@ -857,8 +956,8 @@ def calc_iron_condor(ctx: EngineContext) -> StrategyResult:
     sid, name = "iron_condor", "Iron Condor"
     if ctx.halted:
         return _skip(sid, name, ctx.halt_reason or "Market halted")
-    stp_sp = _first_liquid_below(ctx.liquid_pe_strikes, ctx.range_lower)
-    stp_sc = _first_liquid_above(ctx.liquid_ce_strikes, ctx.range_upper)
+    stp_sp = _ensure_liquid_below(ctx, ctx.range_lower, "Put")
+    stp_sc = _ensure_liquid_above(ctx, ctx.range_upper, "Call")
     if stp_sp is None or stp_sc is None:
         return _skip(sid, name, "Could not resolve iron condor short strikes.")
     wings = _iron_wings(ctx, stp_sp, stp_sc, True)
@@ -1000,6 +1099,7 @@ def run_propose_trades(
 
     step = processor.strike_interval(strikes)
     mid = (range_lower + range_upper) / 2
+    search_step = processor.search_interval(strikes, mid)
 
     ctx = EngineContext(
         processor=processor,
@@ -1015,6 +1115,7 @@ def run_propose_trades(
         lot_size=int(lot_size),
         strikes=strikes,
         strike_step=step,
+        search_interval=search_step,
         spot=mid,
         atm_strike=min(strikes, key=lambda s: abs(s - mid)),
     )
