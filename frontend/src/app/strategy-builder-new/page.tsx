@@ -121,6 +121,9 @@ export default function StrategyBuilderNewPage() {
   );
   const [tradeSort, setTradeSort] = useState<TradeSortKey>("server");
   const rangeInitKeyRef = useRef<string | null>(null);
+  const prevSection2ReadyRef = useRef(false);
+  const prevSection3ReadyRef = useRef(false);
+  const prevSection4ReadyRef = useRef(false);
 
   const downstreamSetters = {
     setRangeLower,
@@ -206,6 +209,33 @@ export default function StrategyBuilderNewPage() {
     setRangeLower(String(Math.round(chainSpot * 0.9)));
     setRangeUpper(String(Math.round(chainSpot * 1.1)));
   }, [chainSpot, section1Complete, segmentExchange, stockCode, expiryDate]);
+
+  useEffect(() => {
+    if (section2Ready && !prevSection2ReadyRef.current) {
+      document
+        .getElementById("strategy-builder-parameters")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    prevSection2ReadyRef.current = section2Ready;
+  }, [section2Ready]);
+
+  useEffect(() => {
+    if (section3Ready && !prevSection3ReadyRef.current) {
+      document
+        .getElementById("strategy-builder-proposed-trades")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    prevSection3ReadyRef.current = section3Ready;
+  }, [section3Ready]);
+
+  useEffect(() => {
+    if (section4Ready && !prevSection4ReadyRef.current) {
+      document
+        .getElementById("strategy-builder-legs")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    prevSection4ReadyRef.current = section4Ready;
+  }, [section4Ready]);
 
   const rangeBeyondSpotWarning = useMemo(() => {
     if (spot == null || !rangeValid || rangeLowerNum == null || rangeUpperNum == null)
@@ -475,14 +505,6 @@ export default function StrategyBuilderNewPage() {
     resetDownstream(downstreamSetters, true);
   };
 
-  const section2Hint = !section1Complete
-    ? "Select underlying and expiry to continue"
-    : chainQ.isFetching
-      ? "Fetching spot price…"
-      : chainQ.isError
-        ? "Could not load spot price — check underlying and expiry"
-        : "Waiting for spot price…";
-
   return (
     <AppShell>
       <RevokedTradingPageGuard>
@@ -556,91 +578,71 @@ export default function StrategyBuilderNewPage() {
             </div>
           </section>
 
-          <SectionGate locked={!section2Ready} hint={section2Hint}>
+          <SectionGate locked={!section2Ready}>
             <section
               id="strategy-builder-parameters"
               className={`${sb.section} space-y-4`}
             >
               <h2 className={sb.sectionTitle}>2. Parameters</h2>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {chainSpot != null &&
-                rangeLowerNum != null &&
-                rangeUpperNum != null ? (
+              <div className="space-y-4">
+                {chainSpot != null ? (
                   <SpotRangeSlider
                     spot={chainSpot}
-                    rangeLower={rangeLowerNum}
-                    rangeUpper={rangeUpperNum}
-                    onRangeLowerChange={(v) => setRangeLower(String(v))}
-                    onRangeUpperChange={(v) => setRangeUpper(String(v))}
+                    rangeLower={rangeLower}
+                    rangeUpper={rangeUpper}
+                    onRangeLowerChange={setRangeLower}
+                    onRangeUpperChange={setRangeUpper}
                   />
-                ) : (
-                  <div className="sm:col-span-2 lg:col-span-3">
-                    <span className={sb.fieldLabel}>Strike range (from spot price)</span>
-                    <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                      Available once spot price is loaded.
-                    </p>
-                  </div>
-                )}
-                <label className="block">
-                  <span className={sb.fieldLabel}>Margin to deploy (Lacs)</span>
-                  <input
-                    type="number"
-                    className={sb.input}
-                    value={marginLacs}
-                    onChange={(e) => setMarginLacs(e.target.value)}
-                    min={0}
-                    max={MARGIN_LACS_MAX}
-                    step={0.1}
-                  />
-                </label>
-                <label className="block">
-                  <span className={sb.fieldLabel}>Maximum loss (Lacs)</span>
-                  <input
-                    type="number"
-                    className={sb.input}
-                    value={maxLossLacs}
-                    onChange={(e) => setMaxLossLacs(e.target.value)}
-                    min={0}
-                    max={MARGIN_LACS_MAX}
-                    step={0.1}
-                  />
-                </label>
-                <label className="block">
-                  <span className={sb.fieldLabel}>Spot price (SPP)</span>
-                  <input
-                    type="text"
-                    className={sb.input}
-                    readOnly
-                    value={
-                      chainSpot != null
-                        ? chainSpot.toLocaleString("en-IN")
-                        : "—"
-                    }
-                  />
-                </label>
-                <div className="flex items-end">
-                  <div
-                    className={`${sb.checkboxRow} pb-2.5 gap-2 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
-                  >
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={provisionElm}
-                      aria-label="Toggle Provision for ELM"
-                      onClick={() => setProvisionElm(!provisionElm)}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${
-                        provisionElm
-                          ? "bg-sky-600"
-                          : "bg-zinc-300 dark:bg-zinc-700"
-                      }`}
+                ) : null}
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <label className="block">
+                    <span className={sb.fieldLabel}>Margin to deploy (Lacs)</span>
+                    <input
+                      type="number"
+                      className={sb.input}
+                      value={marginLacs}
+                      onChange={(e) => setMarginLacs(e.target.value)}
+                      min={0}
+                      max={MARGIN_LACS_MAX}
+                      step={0.1}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={sb.fieldLabel}>Maximum loss (Lacs)</span>
+                    <input
+                      type="number"
+                      className={sb.input}
+                      value={maxLossLacs}
+                      onChange={(e) => setMaxLossLacs(e.target.value)}
+                      min={0}
+                      max={MARGIN_LACS_MAX}
+                      step={0.1}
+                    />
+                  </label>
+                  <div className="flex items-end">
+                    <div
+                      className={`${sb.checkboxRow} gap-2 pb-2.5 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
                     >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
-                          provisionElm ? "translate-x-4" : "translate-x-0.5"
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={provisionElm}
+                        aria-label="Toggle Provision for ELM"
+                        onClick={() => setProvisionElm(!provisionElm)}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${
+                          provisionElm
+                            ? "bg-sky-600"
+                            : "bg-zinc-300 dark:bg-zinc-700"
                         }`}
-                      />
-                    </button>
-                    Provision for ELM
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                            provisionElm ? "translate-x-4" : "translate-x-0.5"
+                          }`}
+                        />
+                      </button>
+                      Provision for ELM
+                    </div>
                   </div>
                 </div>
               </div>
@@ -672,10 +674,7 @@ export default function StrategyBuilderNewPage() {
             </section>
           </SectionGate>
 
-          <SectionGate
-            locked={!section3Ready}
-            hint="Fill parameters and click Generate Trades to continue"
-          >
+          <SectionGate locked={!section3Ready}>
             <section
               id="strategy-builder-proposed-trades"
               className={`${sb.section} space-y-4`}
@@ -751,10 +750,7 @@ export default function StrategyBuilderNewPage() {
             </section>
           </SectionGate>
 
-          <SectionGate
-            locked={!section4Ready}
-            hint="Select a strategy to continue"
-          >
+          <SectionGate locked={!section4Ready}>
             <StrategyLegsPanel
               stockCode={stockCode}
               expiryDate={expiryDate}

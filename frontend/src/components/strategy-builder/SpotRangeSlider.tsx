@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { sb } from "@/lib/strategy-builder/ui";
 
 const PCT_MIN = -20;
@@ -19,26 +19,81 @@ function clampPct(pct: number): number {
   return Math.min(PCT_MAX, Math.max(PCT_MIN, pct));
 }
 
-function SpotRangeKnob({
-  value,
-  pct,
+function parsePositiveNum(v: string): number | null {
+  const n = parseFloat(v.replace(/,/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function formatPctLabel(pct: number): string {
+  const sign = pct >= 0 ? "+" : "−";
+  return `${sign}${Math.abs(pct).toFixed(1)}%`;
+}
+
+function SpotRangeHandle({
   variant,
+  pctPos,
+  committedAbs,
+  spot,
+  isEditing,
+  draft,
+  onDraftChange,
+  onStartEdit,
+  onCommit,
+  onCancel,
 }: {
-  value: number;
-  pct: number;
   variant: "lower" | "upper";
+  pctPos: number;
+  committedAbs: number;
+  spot: number;
+  isEditing: boolean;
+  draft: string;
+  onDraftChange: (v: string) => void;
+  onStartEdit: () => void;
+  onCommit: () => void;
+  onCancel: () => void;
 }) {
   const z = variant === "upper" ? "z-[45]" : "z-[40]";
-  const label = value.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+  const pctLabel = formatPctLabel(pctFromAbs(spot, committedAbs));
+  const displayValue = isEditing
+    ? draft
+    : committedAbs.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+
   return (
     <div
-      className={`pointer-events-none absolute top-1/2 ${z} flex h-8 min-w-[2.75rem] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-[3px] border-blue-600 bg-white px-1 text-[10px] font-bold tabular-nums leading-none text-zinc-900 shadow-[0_0_0_1px_rgb(37_99_235/0.12),0_3px_8px_rgb(15_23_42/0.16)] dark:border-blue-500 dark:bg-zinc-900 dark:text-zinc-50 dark:shadow-[0_0_0_1px_rgb(59_130_246/0.2),0_3px_8px_rgb(0_0_0/0.35)]`}
+      className={`pointer-events-none absolute top-1/2 ${z} -translate-x-1/2 -translate-y-1/2`}
       style={{
-        left: `clamp(1rem, ${pct}%, calc(100% - 1rem))`,
+        left: `clamp(1.25rem, ${pctPos}%, calc(100% - 1.25rem))`,
       }}
-      aria-hidden
     >
-      {label}
+      <div className="pointer-events-auto flex flex-col items-center gap-1">
+        <div className="flex h-8 min-w-[3rem] items-center justify-center rounded-full border-[3px] border-blue-600 bg-white px-1.5 shadow-sm shadow-blue-500/20 ring-2 ring-blue-500/30 transition-[box-shadow] duration-150 ease-out focus-within:ring-4 focus-within:ring-blue-500/35 dark:border-blue-500 dark:bg-zinc-900 dark:shadow-blue-500/15 dark:ring-blue-400/25 dark:focus-within:ring-blue-400/40">
+          <input
+            type="text"
+            inputMode="numeric"
+            aria-label={
+              variant === "lower" ? "Lower strike bound" : "Upper strike bound"
+            }
+            value={displayValue}
+            onFocus={onStartEdit}
+            onChange={(e) => onDraftChange(e.target.value)}
+            onBlur={onCommit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onCommit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                onCancel();
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            className="w-full min-w-0 border-0 bg-transparent p-0 text-center text-[10px] font-bold tabular-nums leading-none text-zinc-900 outline-none dark:text-zinc-50"
+          />
+        </div>
+        <span className="text-[10px] font-medium tabular-nums text-zinc-500 dark:text-zinc-400">
+          {pctLabel}
+        </span>
+      </div>
     </div>
   );
 }
@@ -51,25 +106,33 @@ export function SpotRangeSlider({
   onRangeUpperChange,
 }: {
   spot: number;
-  rangeLower: number;
-  rangeUpper: number;
-  onRangeLowerChange: (v: number) => void;
-  onRangeUpperChange: (v: number) => void;
+  rangeLower: string;
+  rangeUpper: string;
+  onRangeLowerChange: (v: string) => void;
+  onRangeUpperChange: (v: string) => void;
 }) {
+  const [editingLower, setEditingLower] = useState(false);
+  const [draftLower, setDraftLower] = useState("");
+  const [editingUpper, setEditingUpper] = useState(false);
+  const [draftUpper, setDraftUpper] = useState("");
+
   const absMin = useMemo(() => absFromPct(spot, PCT_MIN), [spot]);
   const absMax = useMemo(() => absFromPct(spot, PCT_MAX), [spot]);
 
+  const committedLower = parsePositiveNum(rangeLower) ?? absFromPct(spot, -10);
+  const committedUpper = parsePositiveNum(rangeUpper) ?? absFromPct(spot, 10);
+
   const lowerPct = useMemo(() => {
-    const p = clampPct(pctFromAbs(spot, rangeLower));
-    const upperP = clampPct(pctFromAbs(spot, rangeUpper));
+    const p = clampPct(pctFromAbs(spot, committedLower));
+    const upperP = clampPct(pctFromAbs(spot, committedUpper));
     return Math.min(p, upperP - 1);
-  }, [spot, rangeLower, rangeUpper]);
+  }, [spot, committedLower, committedUpper]);
 
   const upperPct = useMemo(() => {
-    const p = clampPct(pctFromAbs(spot, rangeUpper));
-    const lowerP = clampPct(pctFromAbs(spot, rangeLower));
+    const p = clampPct(pctFromAbs(spot, committedUpper));
+    const lowerP = clampPct(pctFromAbs(spot, committedLower));
     return Math.max(p, lowerP + 1);
-  }, [spot, rangeLower, rangeUpper]);
+  }, [spot, committedLower, committedUpper]);
 
   const minPctPos = ((lowerPct - PCT_MIN) / SPAN) * 100;
   const maxPctPos = ((upperPct - PCT_MIN) / SPAN) * 100;
@@ -78,38 +141,50 @@ export function SpotRangeSlider({
   const thumbInteractiveCls =
     "[&::-webkit-slider-thumb]:pointer-events-auto [&::-moz-range-thumb]:pointer-events-auto";
 
+  const commitLower = useCallback(() => {
+    const n = parseFloat(draftLower.replace(/,/g, ""));
+    if (Number.isFinite(n) && n > 0) {
+      const clamped = Math.min(
+        Math.max(Math.round(n), absMin),
+        committedUpper - 1,
+      );
+      onRangeLowerChange(String(clamped));
+    }
+    setEditingLower(false);
+  }, [draftLower, absMin, committedUpper, onRangeLowerChange]);
+
+  const commitUpper = useCallback(() => {
+    const n = parseFloat(draftUpper.replace(/,/g, ""));
+    if (Number.isFinite(n) && n > 0) {
+      const clamped = Math.max(
+        Math.min(Math.round(n), absMax),
+        committedLower + 1,
+      );
+      onRangeUpperChange(String(clamped));
+    }
+    setEditingUpper(false);
+  }, [draftUpper, absMax, committedLower, onRangeUpperChange]);
+
   const applyLowerPct = (pct: number) => {
+    if (editingLower) setEditingLower(false);
     const clamped = Math.min(pct, upperPct - 1);
-    onRangeLowerChange(absFromPct(spot, clamped));
+    onRangeLowerChange(String(absFromPct(spot, clamped)));
   };
 
   const applyUpperPct = (pct: number) => {
+    if (editingUpper) setEditingUpper(false);
     const clamped = Math.max(pct, lowerPct + 1);
-    onRangeUpperChange(absFromPct(spot, clamped));
-  };
-
-  const applyLowerAbs = (raw: string) => {
-    const n = parseFloat(raw.replace(/,/g, ""));
-    if (!Number.isFinite(n)) return;
-    const clamped = Math.min(Math.max(n, absMin), rangeUpper - 1);
-    onRangeLowerChange(Math.round(clamped));
-  };
-
-  const applyUpperAbs = (raw: string) => {
-    const n = parseFloat(raw.replace(/,/g, ""));
-    if (!Number.isFinite(n)) return;
-    const clamped = Math.max(Math.min(n, absMax), rangeLower + 1);
-    onRangeUpperChange(Math.round(clamped));
+    onRangeUpperChange(String(absFromPct(spot, clamped)));
   };
 
   return (
     <div className="min-w-0 space-y-3 sm:col-span-2 lg:col-span-3">
       <span className={sb.fieldLabel}>Strike range (from spot price)</span>
-      <div className="relative flex h-10 w-full shrink-0 items-center">
-        <div className="relative h-7 w-full overflow-visible">
-          <div className="pointer-events-none absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
+      <div className="relative flex h-14 w-full shrink-0 items-center">
+        <div className="relative h-10 w-full overflow-visible">
+          <div className="pointer-events-none absolute top-1/2 h-2 w-full -translate-y-1/2 rounded-full bg-zinc-200/80 dark:bg-zinc-700/60" />
           <div
-            className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
+            className="pointer-events-none absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-linear-to-r from-blue-600 to-blue-500 shadow-sm shadow-blue-500/25 dark:from-blue-500 dark:to-blue-400 dark:shadow-blue-500/20"
             style={{
               left: `${minPctPos}%`,
               width: `${Math.max(0, maxPctPos - minPctPos)}%`,
@@ -129,9 +204,9 @@ export function SpotRangeSlider({
             step={1}
             value={lowerPct}
             onChange={(e) => applyLowerPct(Number(e.target.value))}
-            className={`sb-range-slim sb-range-otm pointer-events-none absolute inset-0 z-20 w-full min-w-0 bg-transparent ${thumbInteractiveCls}`}
+            className={`sb-range-slim sb-range-otm absolute inset-0 z-20 w-full min-w-0 bg-transparent ${editingLower ? "pointer-events-none" : `pointer-events-none ${thumbInteractiveCls}`}`}
             aria-label="Range lower bound"
-            aria-valuetext={`${rangeLower}`}
+            aria-valuetext={`${committedLower}`}
           />
           <input
             type="range"
@@ -140,50 +215,48 @@ export function SpotRangeSlider({
             step={1}
             value={upperPct}
             onChange={(e) => applyUpperPct(Number(e.target.value))}
-            className={`sb-range-slim sb-range-otm pointer-events-none absolute inset-0 z-30 w-full min-w-0 bg-transparent ${thumbInteractiveCls}`}
+            className={`sb-range-slim sb-range-otm absolute inset-0 z-30 w-full min-w-0 bg-transparent ${editingUpper ? "pointer-events-none" : `pointer-events-none ${thumbInteractiveCls}`}`}
             aria-label="Range upper bound"
-            aria-valuetext={`${rangeUpper}`}
+            aria-valuetext={`${committedUpper}`}
           />
-          <SpotRangeKnob value={rangeLower} pct={minPctPos} variant="lower" />
-          <SpotRangeKnob value={rangeUpper} pct={maxPctPos} variant="upper" />
+          <SpotRangeHandle
+            variant="lower"
+            pctPos={minPctPos}
+            committedAbs={committedLower}
+            spot={spot}
+            isEditing={editingLower}
+            draft={draftLower}
+            onDraftChange={setDraftLower}
+            onStartEdit={() => {
+              setEditingLower(true);
+              setDraftLower(String(committedLower));
+            }}
+            onCommit={commitLower}
+            onCancel={() => setEditingLower(false)}
+          />
+          <SpotRangeHandle
+            variant="upper"
+            pctPos={maxPctPos}
+            committedAbs={committedUpper}
+            spot={spot}
+            isEditing={editingUpper}
+            draft={draftUpper}
+            onDraftChange={setDraftUpper}
+            onStartEdit={() => {
+              setEditingUpper(true);
+              setDraftUpper(String(committedUpper));
+            }}
+            onCommit={commitUpper}
+            onCancel={() => setEditingUpper(false)}
+          />
         </div>
       </div>
       <div className="flex justify-between gap-4 text-[10px] font-medium tabular-nums text-zinc-400 dark:text-zinc-500">
         <span>−20%</span>
-        <span className="text-zinc-600 dark:text-zinc-300">
+        <span className="rounded-full bg-zinc-100/80 px-2 py-0.5 text-zinc-600 backdrop-blur-sm dark:bg-zinc-800/60 dark:text-zinc-300">
           Spot {spot.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
         </span>
         <span>+20%</span>
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <label className="block">
-          <span className="mb-1 block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-            Lower bound
-          </span>
-          <input
-            type="number"
-            className={sb.input}
-            value={rangeLower}
-            min={absMin}
-            max={rangeUpper - 1}
-            step={1}
-            onChange={(e) => applyLowerAbs(e.target.value)}
-          />
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-            Upper bound
-          </span>
-          <input
-            type="number"
-            className={sb.input}
-            value={rangeUpper}
-            min={rangeLower + 1}
-            max={absMax}
-            step={1}
-            onChange={(e) => applyUpperAbs(e.target.value)}
-          />
-        </label>
       </div>
     </div>
   );

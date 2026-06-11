@@ -1060,13 +1060,13 @@ def _credit_spread_wing(
         if max_loss_u <= 0:
             continue
         if max_loss_u * qty_margin <= ctx.max_loss_rupees:
-            if ctx.audit:
-                ctx.audit.record_decision(
-                    "Credit spread wing",
-                    f"select {wing}",
-                    f"Widest liquid wing within risk budget ({risk_total:.2f} <= {ctx.max_loss_rupees:.2f}).",
-                    {"wing": wing, "credit": credit, "max_loss_u": max_loss_u},
-                )
+            _audit_decision(
+                ctx,
+                "Credit spread wing",
+                f"select {wing}",
+                f"Widest liquid wing within risk budget ({risk_total:.2f} <= {ctx.max_loss_rupees:.2f}).",
+                {"wing": wing, "credit": credit, "max_loss_u": max_loss_u},
+            )
             return wing, credit, max_loss_u
     if candidates:
         wing = candidates[0]
@@ -1075,21 +1075,21 @@ def _credit_spread_wing(
             credit = (qs.best_bid_price or qs.ltp) - (qw.best_offer_price or qw.ltp)
             width = abs(wing - short_stp)
             max_loss_u = width - credit
-            if ctx.audit:
-                ctx.audit.record_decision(
-                    "Credit spread wing",
-                    f"fallback narrowest {wing}",
-                    "No wing met risk budget; using narrowest liquid wing with downscaled qty.",
-                    {"credit": credit, "max_loss_u": max_loss_u},
-                )
+            _audit_decision(
+                ctx,
+                "Credit spread wing",
+                f"fallback narrowest {wing}",
+                "No wing met risk budget; using narrowest liquid wing with downscaled qty.",
+                {"credit": credit, "max_loss_u": max_loss_u},
+            )
             return wing, credit, max_loss_u
-    if ctx.audit:
-        ctx.audit.record_decision(
-            "Credit spread wing",
-            "none",
-            f"No liquid {short_right} wing candidates above/below short strike {short_stp}.",
-            {"candidates": candidates, "liquid_pool": wing_strikes},
-        )
+    _audit_decision(
+        ctx,
+        "Credit spread wing",
+        "none",
+        f"No liquid {short_right} wing candidates above/below short strike {short_stp}.",
+        {"candidates": candidates, "liquid_pool": wing_strikes},
+    )
     return None
 
 
@@ -1394,13 +1394,13 @@ def _iron_wings(
         if max_loss_u <= 0:
             continue
         if max_loss_u * qty_margin <= ctx.max_loss_rupees:
-            if ctx.audit:
-                ctx.audit.record_decision(
-                    "Iron symmetric wing",
-                    f"W={w} (LP {lp}, LC {lc})",
-                    f"Widest symmetric wing within risk budget.",
-                    {"credit": credit, "max_loss_u": max_loss_u},
-                )
+            _audit_decision(
+                ctx,
+                "Iron symmetric wing",
+                f"W={w} (LP {lp}, LC {lc})",
+                f"Widest symmetric wing within risk budget.",
+                {"credit": credit, "max_loss_u": max_loss_u},
+            )
             return lp, lc, credit, max_loss_u
     w = min(steps)
     lp, lc = short_put - w, short_call + w
@@ -1409,27 +1409,27 @@ def _iron_wings(
         lpq, lcq = ctx.cache[(lp, "Put")], ctx.cache[(lc, "Call")]
         credit = (sp.best_bid_price or sp.ltp) + (sc.best_bid_price or sc.ltp) - (lpq.best_offer_price or lpq.ltp) - (lcq.best_offer_price or lcq.ltp)
         max_loss_u = w - credit
-        if ctx.audit:
-            ctx.audit.record_decision(
-                "Iron symmetric wing",
-                f"fallback W={w} (LP {lp}, LC {lc})",
-                "No wing met risk budget; narrowest symmetric liquid pair with downscaled qty.",
-                {"credit": credit, "max_loss_u": max_loss_u},
-            )
-        return lp, lc, credit, max_loss_u
-    if ctx.audit:
-        ctx.audit.record_decision(
+        _audit_decision(
+            ctx,
             "Iron symmetric wing",
-            "none",
-            f"No symmetric liquid wing pair for PE short {short_put} / CE short {short_call}.",
-            {
-                "narrowest_w": w,
-                "long_put": lp,
-                "long_call": lc,
-                "long_put_liquid": lp in ctx.liquid_pe_strikes,
-                "long_call_liquid": lc in ctx.liquid_ce_strikes,
-            },
+            f"fallback W={w} (LP {lp}, LC {lc})",
+            "No wing met risk budget; narrowest symmetric liquid pair with downscaled qty.",
+            {"credit": credit, "max_loss_u": max_loss_u},
         )
+        return lp, lc, credit, max_loss_u
+    _audit_decision(
+        ctx,
+        "Iron symmetric wing",
+        "none",
+        f"No symmetric liquid wing pair for PE short {short_put} / CE short {short_call}.",
+        {
+            "narrowest_w": w,
+            "long_put": lp,
+            "long_call": lc,
+            "long_put_liquid": lp in ctx.liquid_pe_strikes,
+            "long_call_liquid": lc in ctx.liquid_ce_strikes,
+        },
+    )
     return None
 
 
