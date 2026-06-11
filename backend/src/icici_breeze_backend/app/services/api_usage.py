@@ -245,7 +245,8 @@ def get_daily_usage_by_api(user_id: str, days: int = 30) -> list[dict]:
                 {"usage_date": d, "api_name": n, "call_count": c}
                 for (d, n), c in merged.items()
             ]
-            out.sort(key=lambda r: (-r["usage_date"], -r["call_count"], r["api_name"]))
+            out.sort(key=lambda r: (-r["call_count"], r["api_name"]))
+            out.sort(key=lambda r: r["usage_date"], reverse=True)
             return out
     except sqlite3.OperationalError:
         return []
