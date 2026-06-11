@@ -20,31 +20,39 @@ from icici_breeze_backend.audit.strategy_builder_audit import (
     resolve_audit_file_for_user,
 )
 
-_QUOTE_SUCCESS = {
-    "Status": 200,
-    "Success": [
-        {
-            "ltp": 50.0,
-            "best_bid_price": 49.0,
-            "best_offer_price": 51.0,
-            "total_buy_qty": 100,
-            "total_sell_qty": 100,
-            "spot_price": 23500.0,
-        }
-    ],
-}
+def _chain_row(strike: int, right: str) -> dict:
+    return {
+        "strike_price": strike,
+        "ltp": 50.0,
+        "best_bid_price": 49.0,
+        "best_offer_price": 51.0,
+        "total_buy_qty": 100,
+        "total_sell_qty": 100,
+        "spot_price": 23500.0,
+        "right": right,
+    }
 
 
-def _mock_get_quote(*_args, **kwargs):
+def _mock_fetch_option_chain_quotes_sb(*_args, **kwargs):
     audit = kwargs.get("audit")
+    strike_price = kwargs.get("strike_price")
+    right = kwargs.get("right", "Call")
+    if strike_price is None:
+        strikes = list(range(23000, 24100, 50))
+        res = {"Status": 200, "Success": [_chain_row(s, right) for s in strikes]}
+        req = {"right": right, "full_chain": True}
+    else:
+        strike = int(strike_price)
+        res = {"Status": 200, "Success": [_chain_row(strike, right)]}
+        req = {"strike_price": strike_price, "right": right}
     if audit:
         audit.record_icici_api_call(
             "get_option_chain_quotes",
-            kwargs.get("audit_request") or {},
-            _QUOTE_SUCCESS,
+            req,
+            res,
             rationale=kwargs.get("audit_rationale"),
         )
-    return _QUOTE_SUCCESS
+    return res
 
 
 def _mock_strategy_builder_margin(*_args, **kwargs):
@@ -213,7 +221,7 @@ class TestEngineAuditIntegration(unittest.TestCase):
         proc.list_option_strikes.return_value = strikes
         proc.strike_interval.return_value = 50
         proc.search_interval.return_value = 50
-        proc.get_quote.side_effect = _mock_get_quote
+        proc.fetch_option_chain_quotes_sb.side_effect = _mock_fetch_option_chain_quotes_sb
         proc.strategy_builder_margin.side_effect = _mock_strategy_builder_margin
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -245,8 +253,9 @@ class TestEngineAuditIntegration(unittest.TestCase):
                 self.assertTrue(os.path.isfile(path))
                 with open(path, encoding="utf-8") as fh:
                     doc = json.load(fh)
-                self.assertGreater(doc["icici_api_calls"]["total"], 0)
-                self.assertIn("get_option_chain_quotes", doc["icici_api_calls"]["by_api"])
+                chain_stats = doc["icici_api_calls"]["by_api"]["get_option_chain_quotes"]
+                self.assertGreaterEqual(chain_stats["total"], 2)
+                self.assertLess(chain_stats["total"], 20)
                 self.assertIn("temp_liquid_cache", doc)
 
 

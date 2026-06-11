@@ -19,6 +19,7 @@ import re
 from markupsafe import Markup
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from icici_breeze_backend.app.repositories import parked_orders as parked_orders_repo
@@ -36,6 +37,21 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+@dataclass
+class OptionChainBackoff:
+    """Tracks consecutive 503 responses for strategy-builder chain fetches."""
+
+    consecutive_503: int = 0
+
+    def on_503(self) -> float:
+        self.consecutive_503 += 1
+        return 0.5 if self.consecutive_503 == 1 else 1.0
+
+    def on_success(self) -> None:
+        self.consecutive_503 = 0
+
 
 def _scrip_master_connection():
     """Return a new scrip_master DB connection (use in with-block to avoid shared connection)."""
@@ -1507,6 +1523,112 @@ class processor():
         """Retrieve and flush transient messages for user."""
         from icici_breeze_backend.app.repositories.message_repository import retrieve_and_flush_messages as _retrieve
         return _retrieve(user_id)
+
+    def fetch_option_chain_quotes_sb(
+        self,
+        user_id: str,
+        stock_code: str,
+        exchange_code: str,
+        expiry_api: str,
+        right: str,
+        *,
+        strike_price: str | None = None,
+        audit: "StrategyBuilderAuditSession | None" = None,
+        audit_rationale: str | None = None,
+        backoff: OptionChainBackoff,
+        max_attempts: int = 3,
+    ) -> dict[str, Any]:
+        """Strategy-builder option chain fetch with 503 backoff (0.5s then 1s, up to max_attempts)."""
+        breeze = self.get_session_breeze(user_id)
+        icici_request: dict[str, Any] = {
+            "stock_code": stock_code,
+            "exchange_code": exchange_code,
+            "expiry_date": expiry_api,
+            "product_type": cfg.OPTIONS,
+            "right": right,
+        }
+        if strike_price is not None:
+            icici_request["strike_price"] = strike_price
+
+        if breeze is None:
+            quote: dict[str, Any] = {
+                "Status": 400,
+                "Error": "Unable to connect to broker. Please check your credentials and re-login.",
+            }
+            if audit:
+                audit.record_icici_api_call(
+                    "get_option_chain_quotes",
+                    icici_request,
+                    quote,
+                    rationale=audit_rationale,
+                )
+            return quote
+
+        _pt, _rt = _icici_option_chain_enums(cfg.OPTIONS, right)
+        quote = {"Status": 400, "Error": "No response from get_option_chain_quotes"}
+        for attempt in range(max_attempts):
+            try:
+                if strike_price is not None:
+                    quote = breeze.get_option_chain_quotes(
+                        stock_code, exchange_code, expiry_api, _pt, _rt, strike_price
+                    )
+                else:
+                    quote = breeze.get_option_chain_quotes(
+                        stock_code=stock_code,
+                        exchange_code=exchange_code,
+                        product_type=_pt,
+                        expiry_date=expiry_api,
+                        right=_rt,
+                    )
+            except Exception as e:
+                quote = {
+                    "Status": 400,
+                    "Error": f"Error calling ICICI Breeze API get_option_chain_quotes: {e}",
+                }
+            if audit:
+                audit.record_icici_api_call(
+                    "get_option_chain_quotes",
+                    icici_request,
+                    quote if isinstance(quote, dict) else None,
+                    rationale=audit_rationale,
+                )
+            if not isinstance(quote, dict):
+                quote = {"Status": 400, "Error": "Invalid response from get_option_chain_quotes"}
+                backoff.on_success()
+                return quote
+
+            status = quote.get("Status")
+            if status == 200:
+                backoff.on_success()
+                if strike_price is not None:
+                    try:
+                        if int(quote["Success"][0]["total_sell_qty"]) > 0:
+                            quote["Success"][0]["buy_sell_ratio"] = int(
+                                quote["Success"][0]["total_buy_qty"]
+                            ) / int(quote["Success"][0]["total_sell_qty"])
+                        else:
+                            quote["Success"][0]["buy_sell_ratio"] = 0
+                    except (KeyError, IndexError, TypeError, ZeroDivisionError):
+                        pass
+                return quote
+
+            if status == 503 and attempt < max_attempts - 1:
+                time.sleep(backoff.on_503())
+                continue
+
+            if status != 503:
+                backoff.on_success()
+            if quote.get("Error"):
+                _logger.warning(
+                    "fetch_option_chain_quotes_sb failed: stock_code=%s right=%s strike=%s error=%s",
+                    stock_code,
+                    right,
+                    strike_price,
+                    quote["Error"],
+                )
+            return quote
+
+        return quote
 
     def get_quote(
         self,

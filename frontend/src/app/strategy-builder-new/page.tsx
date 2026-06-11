@@ -9,6 +9,7 @@ import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionCo
 import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { OutlookFilterButtons } from "@/components/strategy-builder/OutlookFilterButtons";
+import { MasonryGrid } from "@/components/strategy-builder/MasonryGrid";
 import { ProposedStrategyTradeCard } from "@/components/strategy-builder/ProposedStrategyTradeCard";
 import {
   TradeSortLink,
@@ -746,10 +747,11 @@ export default function StrategyBuilderNewPage() {
                   No strategies match the selected outlook filters.
                 </p>
               ) : (
-                <div className="flex flex-wrap justify-center gap-3 sm:justify-start">
-                  {displayedTrades.map((trade) => (
+                <MasonryGrid
+                  items={displayedTrades}
+                  getKey={(trade) => trade.strategy_id}
+                  renderItem={(trade) => (
                     <ProposedStrategyTradeCard
-                      key={trade.strategy_id}
                       trade={trade}
                       lotSize={lotSize}
                       spot={spot}
@@ -758,8 +760,8 @@ export default function StrategyBuilderNewPage() {
                       selected={selectedTradeId === trade.strategy_id}
                       onSelect={() => selectTrade(trade)}
                     />
-                  ))}
-                </div>
+                  )}
+                />
               )}
             </section>
           </SectionGate>

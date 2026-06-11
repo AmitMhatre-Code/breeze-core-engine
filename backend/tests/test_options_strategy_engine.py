@@ -1,6 +1,6 @@
 """Unit tests for options strategy engine helpers."""
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call, patch
 
 from icici_breeze_backend.app.services.options_strategy_engine import (
     EngineContext,
@@ -8,13 +8,15 @@ from icici_breeze_backend.app.services.options_strategy_engine import (
     StrategyResult,
     TradeLeg,
     _attach_margins_and_returns,
+    _build_liquidity_cache,
     _floor_lots,
     _strategy_boundary_strikes,
     _strike_window,
+    _tail_strikes_needed,
     calc_bull_call_spread,
     calc_naked_ce_short,
 )
-from icici_breeze_backend.app.services.processor import processor
+from icici_breeze_backend.app.services.processor import OptionChainBackoff, processor
 
 
 class TestStrikeWindow(unittest.TestCase):
@@ -136,6 +138,169 @@ class TestStrategyBoundaryStrikes(unittest.TestCase):
         strikes = list(range(21000, 24600, 50))
         boundaries = _strategy_boundary_strikes(strikes, 22500, 24500, 23310, 23300)
         self.assertIn(22450, boundaries)
+
+
+class TestTailStrikesNeeded(unittest.TestCase):
+    def test_returns_all_when_chain_empty(self):
+        needed = [23000, 23100, 23200]
+        self.assertEqual(_tail_strikes_needed(needed, set()), needed)
+
+    def test_ignores_in_range_gaps(self):
+        needed = [23000, 23100, 23200, 23300]
+        chain = {23100, 23300}
+        self.assertEqual(_tail_strikes_needed(needed, chain), [23000, 23200])
+
+    def test_includes_below_min_and_above_max(self):
+        needed = [22800, 23000, 23600, 23800]
+        chain = {23000, 23100, 23200, 23300, 23400, 23500, 23600}
+        self.assertEqual(_tail_strikes_needed(needed, chain), [22800, 23800])
+
+
+def _chain_row(strike: int, right: str) -> dict:
+    return {
+        "strike_price": strike,
+        "ltp": 50.0,
+        "best_bid_price": 49.0,
+        "best_offer_price": 51.0,
+        "total_buy_qty": 100,
+        "total_sell_qty": 100,
+        "spot_price": 23500.0,
+        "right": right,
+    }
+
+
+def _mock_fetch_chain_sb(*_args, **kwargs):
+    strike_price = kwargs.get("strike_price")
+    right = kwargs.get("right", "Call")
+    if strike_price is None:
+        strikes = list(range(23000, 24100, 50))
+        return {"Status": 200, "Success": [_chain_row(s, right) for s in strikes]}
+    return {"Status": 200, "Success": [_chain_row(int(strike_price), right)]}
+
+
+class TestBuildLiquidityCache(unittest.TestCase):
+    def _ctx(self, proc: MagicMock) -> EngineContext:
+        strikes = list(range(23000, 24100, 50))
+        return EngineContext(
+            processor=proc,
+            user_id="u1",
+            stock_code="NIFTY",
+            exchange_code="NFO",
+            expiry_display="09-Jun-2025",
+            range_lower=23400,
+            range_upper=23600,
+            margin_rupees=500_000,
+            max_loss_rupees=200_000,
+            provision_elm=False,
+            lot_size=75,
+            strikes=strikes,
+            strike_step=50,
+            search_interval=50,
+            spot=23500,
+            atm_strike=23500,
+        )
+
+    def test_two_full_chain_calls_when_range_within_chain(self):
+        proc = MagicMock()
+        proc.fetch_option_chain_quotes_sb.side_effect = _mock_fetch_chain_sb
+        ctx = self._ctx(proc)
+        _build_liquidity_cache(ctx)
+        full_chain_calls = [
+            c
+            for c in proc.fetch_option_chain_quotes_sb.call_args_list
+            if c.kwargs.get("strike_price") is None
+        ]
+        tail_calls = [
+            c
+            for c in proc.fetch_option_chain_quotes_sb.call_args_list
+            if c.kwargs.get("strike_price") is not None
+        ]
+        self.assertEqual(len(full_chain_calls), 2)
+        self.assertEqual(len(tail_calls), 0)
+        self.assertFalse(ctx.halted)
+        self.assertIn((23500, "Call"), ctx.cache)
+
+    def test_tail_calls_when_window_exceeds_chain(self):
+        proc = MagicMock()
+
+        def narrow_chain(*_args, **kwargs):
+            strike_price = kwargs.get("strike_price")
+            right = kwargs.get("right", "Call")
+            if strike_price is None:
+                strikes = [23400, 23500, 23600]
+                return {"Status": 200, "Success": [_chain_row(s, right) for s in strikes]}
+            return {"Status": 200, "Success": [_chain_row(int(strike_price), right)]}
+
+        proc.fetch_option_chain_quotes_sb.side_effect = narrow_chain
+        ctx = self._ctx(proc)
+        _build_liquidity_cache(ctx)
+        tail_calls = [
+            c
+            for c in proc.fetch_option_chain_quotes_sb.call_args_list
+            if c.kwargs.get("strike_price") is not None
+        ]
+        self.assertGreater(len(tail_calls), 0)
+        tail_strikes = {int(c.kwargs["strike_price"]) for c in tail_calls}
+        self.assertTrue(any(s < 23400 for s in tail_strikes) or any(s > 23600 for s in tail_strikes))
+
+
+class TestFetchOptionChainBackoff(unittest.TestCase):
+    def test_503_backoff_escalates_then_succeeds(self):
+        proc = processor()
+        backoff = OptionChainBackoff()
+        mock_breeze = MagicMock()
+        mock_breeze.get_option_chain_quotes.side_effect = [
+            {"Status": 503, "Error": "busy"},
+            {"Status": 503, "Error": "busy"},
+            {
+                "Status": 200,
+                "Success": [
+                    {
+                        "strike_price": 23500,
+                        "total_buy_qty": 10,
+                        "total_sell_qty": 10,
+                        "ltp": 1,
+                        "best_bid_price": 1,
+                        "best_offer_price": 1,
+                    }
+                ],
+            },
+        ]
+        with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch(
+            "icici_breeze_backend.app.services.processor.time.sleep"
+        ) as mock_sleep:
+            res = proc.fetch_option_chain_quotes_sb(
+                "u1",
+                "NIFTY",
+                "NFO",
+                "2025-06-09T06:00:00.000Z",
+                "Call",
+                backoff=backoff,
+            )
+        self.assertEqual(res["Status"], 200)
+        self.assertEqual(mock_sleep.call_args_list, [call(0.5), call(1.0)])
+        self.assertEqual(mock_breeze.get_option_chain_quotes.call_count, 3)
+        self.assertEqual(backoff.consecutive_503, 0)
+
+    def test_three_consecutive_503_returns_last(self):
+        proc = processor()
+        backoff = OptionChainBackoff()
+        mock_breeze = MagicMock()
+        mock_breeze.get_option_chain_quotes.return_value = {"Status": 503, "Error": "busy"}
+        with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch(
+            "icici_breeze_backend.app.services.processor.time.sleep"
+        ) as mock_sleep:
+            res = proc.fetch_option_chain_quotes_sb(
+                "u1",
+                "NIFTY",
+                "NFO",
+                "2025-06-09T06:00:00.000Z",
+                "Put",
+                backoff=backoff,
+            )
+        self.assertEqual(res["Status"], 503)
+        self.assertEqual(mock_breeze.get_option_chain_quotes.call_count, 3)
+        self.assertEqual(mock_sleep.call_args_list, [call(0.5), call(1.0)])
 
 
 class TestNakedCeAboveRangeUpper(unittest.TestCase):

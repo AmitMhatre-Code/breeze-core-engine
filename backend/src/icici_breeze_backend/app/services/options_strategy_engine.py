@@ -13,6 +13,7 @@ from icici_breeze_backend.audit.strategy_builder_audit import (
 )
 from icici_breeze_backend.app.services.iv_compute import implied_volatility
 from icici_breeze_backend.app.services.processor import (
+    OptionChainBackoff,
     _annualized_carry_percent_on_span,
     _days_to_expiry,
     _expiry_display_to_api,
@@ -121,6 +122,7 @@ class EngineContext:
     halted: bool = False
     halt_reason: str | None = None
     audit: StrategyBuilderAuditSession | None = None
+    chain_backoff: OptionChainBackoff | None = None
 
     @property
     def liquid_ce_strikes(self) -> list[int]:
@@ -192,6 +194,60 @@ def _quote_from_api(strike: int, right: Right, payload: dict) -> QuoteRow:
     )
 
 
+def _ingest_chain_rows(rows: list[Any], right: Right) -> dict[tuple[int, Right], QuoteRow]:
+    cache: dict[tuple[int, Right], QuoteRow] = {}
+    for row in rows:
+        try:
+            strike = int(float(row.get("strike_price", 0)))
+        except (TypeError, ValueError):
+            continue
+        cache[(strike, right)] = _quote_from_api(strike, right, row)
+    return cache
+
+
+def _chain_strikes_for_right(cache: dict[tuple[int, Right], QuoteRow], right: Right) -> set[int]:
+    return {s for (s, r) in cache if r == right}
+
+
+def _tail_strikes_needed(needed_strikes: list[int], chain_strikes: set[int]) -> list[int]:
+    if not chain_strikes:
+        return list(needed_strikes)
+    lo, hi = min(chain_strikes), max(chain_strikes)
+    return [s for s in needed_strikes if s < lo or s > hi]
+
+
+def _missing_tail_pairs(
+    ctx: EngineContext,
+    needed_strikes: list[int],
+) -> set[tuple[int, Right]]:
+    pairs: set[tuple[int, Right]] = set()
+    for right in ("Call", "Put"):
+        chain = _chain_strikes_for_right(ctx.cache, right)
+        for s in _tail_strikes_needed(needed_strikes, chain):
+            if (s, right) not in ctx.cache:
+                pairs.add((s, right))
+    return pairs
+
+
+def _record_ingested_strikes(
+    audit: StrategyBuilderAuditSession | None,
+    ingested: dict[tuple[int, Right], QuoteRow],
+    *,
+    context: str | None = None,
+) -> None:
+    if not audit:
+        return
+    for (strike, right), parsed in sorted(ingested.items()):
+        audit.record_strike(
+            strike,
+            right,
+            included=parsed.liquid,
+            reason="Two-sided depth (buy_qty>0 and sell_qty>0)" if parsed.liquid else "Missing bid or ask quantity",
+            quote=quote_row_to_audit(parsed),
+            context=context,
+        )
+
+
 def _fetch_quotes(
     processor: processor,
     user_id: str,
@@ -202,6 +258,7 @@ def _fetch_quotes(
     audit: StrategyBuilderAuditSession | None = None,
     *,
     fetch_reason: str | None = None,
+    backoff: OptionChainBackoff | None = None,
 ) -> dict[tuple[int, Right], QuoteRow]:
     cache: dict[tuple[int, Right], QuoteRow] = {}
     expiry_api = _expiry_display_to_api(expiry_display)
@@ -216,26 +273,30 @@ def _fetch_quotes(
             rationale=fetch_reason or "Populate quote cache for strike selection.",
         )
     for strike, right in sorted(pairs):
-        req = {
-            "stock_code": stock_code,
-            "exchange_code": exchange_code,
-            "expiry_date": expiry_api,
-            "product_type": cfg.OPTIONS,
-            "right": right,
-            "strike_price": str(strike),
-        }
-        quote = processor.get_quote(
-            user_id,
-            stock_code,
-            expiry_api,
-            cfg.OPTIONS,
-            right,
-            str(strike),
-            exchange_code=exchange_code,
-            audit=audit,
-            audit_rationale=fetch_reason or "Live option quote for liquidity and premium.",
-            audit_request=req,
-        )
+        if backoff is not None:
+            quote = processor.fetch_option_chain_quotes_sb(
+                user_id,
+                stock_code,
+                exchange_code,
+                expiry_api,
+                right,
+                strike_price=str(strike),
+                audit=audit,
+                audit_rationale=fetch_reason or "Live option quote for liquidity and premium.",
+                backoff=backoff,
+            )
+        else:
+            quote = processor.get_quote(
+                user_id,
+                stock_code,
+                expiry_api,
+                cfg.OPTIONS,
+                right,
+                str(strike),
+                exchange_code=exchange_code,
+                audit=audit,
+                audit_rationale=fetch_reason or "Live option quote for liquidity and premium.",
+            )
         if audit:
             row = (quote.get("Success") or [None])[0]
             parsed = _quote_from_api(strike, right, row) if row else None
@@ -255,6 +316,66 @@ def _fetch_quotes(
             continue
         cache[(strike, right)] = _quote_from_api(strike, right, rows[0])
     return cache
+
+
+def _fetch_full_chain_side(
+    ctx: EngineContext,
+    right: Right,
+    *,
+    fetch_reason: str,
+) -> None:
+    if ctx.chain_backoff is None:
+        return
+    expiry_api = _expiry_display_to_api(ctx.expiry_display)
+    quote = ctx.processor.fetch_option_chain_quotes_sb(
+        ctx.user_id,
+        ctx.stock_code,
+        ctx.exchange_code,
+        expiry_api,
+        right,
+        audit=ctx.audit,
+        audit_rationale=fetch_reason,
+        backoff=ctx.chain_backoff,
+    )
+    if quote.get("Status") != 200:
+        return
+    ingested = _ingest_chain_rows(quote.get("Success") or [], right)
+    ctx.cache.update(ingested)
+    _record_ingested_strikes(ctx.audit, ingested, context=fetch_reason)
+
+
+def _fetch_missing_tails(
+    ctx: EngineContext,
+    needed_strikes: list[int],
+    *,
+    fetch_reason: str,
+) -> None:
+    pairs = _missing_tail_pairs(ctx, needed_strikes)
+    if not pairs:
+        return
+    if ctx.audit:
+        ctx.audit.record(
+            "liquidity_protocol",
+            "Fetch missing tail strikes",
+            {
+                "needed_strikes": needed_strikes,
+                "tail_pairs": [{"strike": s, "right": r} for s, r in sorted(pairs)],
+            },
+            rationale=fetch_reason,
+        )
+    ctx.cache.update(
+        _fetch_quotes(
+            ctx.processor,
+            ctx.user_id,
+            ctx.stock_code,
+            ctx.exchange_code,
+            ctx.expiry_display,
+            pairs,
+            ctx.audit,
+            fetch_reason=fetch_reason,
+            backoff=ctx.chain_backoff,
+        )
+    )
 
 
 def _strike_window(
@@ -322,6 +443,7 @@ def _fetch_pairs_for_strikes(
                 new_pairs,
                 ctx.audit,
                 fetch_reason=fetch_reason,
+                backoff=ctx.chain_backoff,
             )
         )
 
@@ -561,31 +683,18 @@ def _build_liquidity_cache(ctx: EngineContext) -> None:
         return
 
     mid = (ctx.range_lower + ctx.range_upper) / 2
-    seed_strike = min(all_strikes, key=lambda s: abs(s - mid))
-    seed_pairs = {(seed_strike, "Call"), (seed_strike, "Put")}
+    ctx.chain_backoff = OptionChainBackoff()
+
     if ctx.audit:
         ctx.audit.record(
             "liquidity_protocol",
-            "Step A: seed quote at range midpoint",
-            {
-                "range_mid": mid,
-                "seed_strike": seed_strike,
-                "strike_count_master": len(all_strikes),
-            },
-            rationale="Seed spot/ATM from quote nearest to range midpoint (docs §4).",
+            "Fetch full CE and PE option chains",
+            {"strike_count_master": len(all_strikes), "range_mid": mid},
+            rationale="Two chain-wide quotes replace per-strike window batching.",
         )
-    ctx.cache.update(
-        _fetch_quotes(
-            ctx.processor,
-            ctx.user_id,
-            ctx.stock_code,
-            ctx.exchange_code,
-            ctx.expiry_display,
-            seed_pairs,
-            ctx.audit,
-            fetch_reason="Liquidity protocol step A: seed at range midpoint",
-        )
-    )
+
+    _fetch_full_chain_side(ctx, "Call", fetch_reason="Fetch full CE chain")
+    _fetch_full_chain_side(ctx, "Put", fetch_reason="Fetch full PE chain")
 
     spot = ctx.spot
     for q in ctx.cache.values():
@@ -599,9 +708,9 @@ def _build_liquidity_cache(ctx: EngineContext) -> None:
     _audit_calc(
         ctx,
         "Spot and ATM resolution",
-        {"range_mid_fallback": mid, "seed_strike": seed_strike},
+        {"range_mid_fallback": mid},
         {"spot": spot, "atm_strike": ctx.atm_strike},
-        rationale="Spot from quote payload when available, else range midpoint.",
+        rationale="Spot from chain quote payload when available, else range midpoint.",
     )
 
     def window_strikes(pad: int) -> list[int]:
@@ -630,28 +739,14 @@ def _build_liquidity_cache(ctx: EngineContext) -> None:
             )
         return ws
 
-    def fetch_window(pad: int) -> None:
-        _fetch_pairs_for_strikes(
-            ctx,
-            window_strikes(pad),
-            fetch_reason=f"Liquidity protocol: fetch padded window (pad={pad})",
-        )
-
-    fetch_window(3)
     boundaries = _strategy_boundary_strikes(
         all_strikes, ctx.range_lower, ctx.range_upper, ctx.spot, ctx.atm_strike
     )
-    if ctx.audit:
-        ctx.audit.record(
-            "liquidity_protocol",
-            "Fetch strategy boundary strikes",
-            {"boundary_strikes": sorted(boundaries)},
-            rationale="Ensure first CE above range and first PE below range are quoted.",
-        )
-    _fetch_pairs_for_strikes(
+    needed_pad3 = sorted(set(window_strikes(3)) | boundaries)
+    _fetch_missing_tails(
         ctx,
-        boundaries,
-        fetch_reason="Strategy boundary strikes (first CE above / PE below range)",
+        needed_pad3,
+        fetch_reason="Fetch missing tail strikes for pad=3 window and boundaries",
     )
 
     def _has_liquid(ws: list[int]) -> list[int]:
@@ -684,7 +779,12 @@ def _build_liquidity_cache(ctx: EngineContext) -> None:
                 {"liquid_strikes_pad3": liquid},
                 rationale="No liquid strikes in pad=3 window; widen per docs §4 fallback.",
             )
-        fetch_window(6)
+        needed_pad6 = sorted(set(window_strikes(6)) | boundaries)
+        _fetch_missing_tails(
+            ctx,
+            needed_pad6,
+            fetch_reason="Fetch missing tail strikes for pad=6 expanded window",
+        )
         ctx.structure_modified = True
         liquid = _has_liquid(window_strikes(6))
 
@@ -694,25 +794,15 @@ def _build_liquidity_cache(ctx: EngineContext) -> None:
                 "liquidity_protocol",
                 "Step B: compress toward ATM",
                 {},
-                rationale="Still no liquid strikes in window; fetch rings around ATM.",
+                rationale="Still no liquid strikes in window; fetch tail strikes around ATM.",
             )
         for pad in [1, 2, 3, 4, 5, 6]:
-            near = [s for s in all_strikes if abs(s - ctx.atm_strike) <= pad * ctx.strike_step]
-            pairs = {(s, r) for s in near for r in ("Call", "Put")}
-            new_pairs = pairs - set(ctx.cache.keys())
-            if new_pairs:
-                ctx.cache.update(
-                    _fetch_quotes(
-                        ctx.processor,
-                        ctx.user_id,
-                        ctx.stock_code,
-                        ctx.exchange_code,
-                        ctx.expiry_display,
-                        new_pairs,
-                        ctx.audit,
-                        fetch_reason=f"Liquidity protocol step B: ATM ring pad={pad}",
-                    )
-                )
+            near = sorted(s for s in all_strikes if abs(s - ctx.atm_strike) <= pad * ctx.strike_step)
+            _fetch_missing_tails(
+                ctx,
+                near,
+                fetch_reason=f"Liquidity protocol step B: ATM ring pad={pad}",
+            )
             if ctx.liquid_ce_strikes or ctx.liquid_pe_strikes:
                 ctx.structure_modified = True
                 if ctx.audit:
@@ -735,18 +825,21 @@ def _build_liquidity_cache(ctx: EngineContext) -> None:
                 rationale="Last resort — quote ATM straddle for metrics only.",
             )
         pairs = {(ctx.atm_strike, "Call"), (ctx.atm_strike, "Put")}
-        ctx.cache.update(
-            _fetch_quotes(
-                ctx.processor,
-                ctx.user_id,
-                ctx.stock_code,
-                ctx.exchange_code,
-                ctx.expiry_display,
-                pairs,
-                ctx.audit,
-                fetch_reason="Liquidity protocol step C: ATM straddle",
+        missing = pairs - set(ctx.cache.keys())
+        if missing:
+            ctx.cache.update(
+                _fetch_quotes(
+                    ctx.processor,
+                    ctx.user_id,
+                    ctx.stock_code,
+                    ctx.exchange_code,
+                    ctx.expiry_display,
+                    missing,
+                    ctx.audit,
+                    fetch_reason="Liquidity protocol step C: ATM straddle",
+                    backoff=ctx.chain_backoff,
+                )
             )
-        )
         if not any(ctx.cache.get((ctx.atm_strike, r)) and ctx.cache[(ctx.atm_strike, r)].liquid for r in ("Call", "Put")):
             ctx.halted = True
             ctx.halt_reason = "Insufficient market depth: no liquid strikes found."

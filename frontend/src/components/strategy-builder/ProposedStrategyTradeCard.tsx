@@ -26,6 +26,14 @@ function fmtPx(n: number | null | undefined): string {
   return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 
+function InfinitySymbol() {
+  return (
+    <span className="inline-block text-[1.8em] leading-none" aria-hidden>
+      ∞
+    </span>
+  );
+}
+
 function premiumCapsuleClass(premium: number | null | undefined): string {
   if (premium == null || !Number.isFinite(premium)) {
     return "bg-zinc-500/10 text-zinc-700 ring-zinc-500/20 dark:text-zinc-300 dark:ring-zinc-400/25";
@@ -82,7 +90,7 @@ export function ProposedStrategyTradeCard({
 
   return (
     <div
-      className={`group w-full min-w-0 max-w-[min(100%,28rem)] rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
+      className={`group w-full min-w-0 rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
         skipped
           ? "border-zinc-200/60 bg-zinc-100/50 opacity-70 dark:border-zinc-700/60 dark:bg-zinc-900/40"
           : selected
@@ -124,14 +132,18 @@ export function ProposedStrategyTradeCard({
               <span>
                 Max loss:{" "}
                 <strong className="tabular-nums">
-                  {isUnlimitedMaxLoss(trade.max_loss)
-                    ? "∞"
-                    : formatIndianMoneyCompact(trade.max_loss!)}
+                  {isUnlimitedMaxLoss(trade.max_loss) ? (
+                    <InfinitySymbol />
+                  ) : (
+                    formatIndianMoneyCompact(trade.max_loss!)
+                  )}
                 </strong>
               </span>
               <span>
                 R:R{" "}
-                <strong className="tabular-nums">{rrLabel}</strong>
+                <strong className="tabular-nums">
+                  {rrLabel === "∞" ? <InfinitySymbol /> : rrLabel}
+                </strong>
               </span>
               {pop != null ? (
                 <span>

@@ -13,6 +13,13 @@ const SCALES_PATH =
 const BOLT_PATH =
   "M18,11.74a1,1,0,0,0-.52-.63L14.09,9.43,15,3.14a1,1,0,0,0-1.78-.75l-7,9a1,1,0,0,0-.18.87,1.05,1.05,0,0,0,.6.67l4.27,1.71L10,20.86a1,1,0,0,0,.63,1.07A.92.92,0,0,0,11,22a1,1,0,0,0,.83-.45l6-9A1,1,0,0,0,18,11.74Z";
 
+/** Bear icon is 75% larger than the requested size token. */
+function bearishSizeClass(className: string): string {
+  return className
+    .replace(/\bsize-5\b/, "size-[2.1875rem]")
+    .replace(/\bsize-6\b/, "size-[2.625rem]");
+}
+
 export function OutlookIcon({
   outlook,
   className = "size-5 shrink-0",
@@ -40,7 +47,7 @@ export function OutlookIcon({
     return (
       <svg
         viewBox="-20 0 190 190"
-        className={svgClass}
+        className={`${bearishSizeClass(className)} ${fillClass}`}
         aria-hidden
         fill="currentColor"
       >
