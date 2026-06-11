@@ -238,8 +238,8 @@ export function SpotRangeSlider({
             onCancel={() => setEditingUpper(false)}
           />
 
-          <div className="absolute inset-x-0 top-1/2 -translate-y-1/2">
-            <div className="pointer-events-none absolute top-1/2 h-1 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
+          <div className="absolute inset-x-0 top-1/2 h-6 w-full -translate-y-1/2">
+            <div className="pointer-events-none absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
             <div
               className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
               style={{

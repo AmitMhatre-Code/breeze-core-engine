@@ -19,7 +19,12 @@ import re
 from markupsafe import Markup
 
 import logging
+from typing import TYPE_CHECKING, Any
+
 from icici_breeze_backend.app.repositories import parked_orders as parked_orders_repo
+
+if TYPE_CHECKING:
+    from icici_breeze_backend.audit.strategy_builder_audit import StrategyBuilderAuditSession
 from icici_breeze_backend.app.domain.order import ParkedOrderItem, ParkedOrderListItem
 
 # Import ICICI client for real-time portfolio/orders fetch (Phase 5 US3)
@@ -1503,24 +1508,73 @@ class processor():
         from icici_breeze_backend.app.repositories.message_repository import retrieve_and_flush_messages as _retrieve
         return _retrieve(user_id)
 
-    def get_quote(self, user_id, stock_code, expiry_date, product_type, right, strike_price, exchange_code: str = cfg.NFO):
+    def get_quote(
+        self,
+        user_id,
+        stock_code,
+        expiry_date,
+        product_type,
+        right,
+        strike_price,
+        exchange_code: str = cfg.NFO,
+        *,
+        audit: "StrategyBuilderAuditSession | None" = None,
+        audit_rationale: str | None = None,
+        audit_request: dict[str, Any] | None = None,
+    ):
         breeze = self.get_session_breeze(user_id)
-        try:
-            _pt, _rt = _icici_option_chain_enums(product_type, right)
-            quote = breeze.get_option_chain_quotes(stock_code, exchange_code, expiry_date, _pt, _rt, strike_price)
-        except Exception as e:
-            quote = {'Status': 400, 'Error': f"Error calling ICICI Breeze API get_option_chain_quotes: {e}"}
+        icici_request = audit_request or {
+            "stock_code": stock_code,
+            "exchange_code": exchange_code,
+            "expiry_date": expiry_date,
+            "product_type": product_type,
+            "right": right,
+            "strike_price": strike_price,
+        }
+        quote: dict[str, Any]
+        if breeze is None:
+            quote = {
+                "Status": 400,
+                "Error": "Unable to connect to broker. Please check your credentials and re-login.",
+            }
+        else:
+            try:
+                _pt, _rt = _icici_option_chain_enums(product_type, right)
+                quote = breeze.get_option_chain_quotes(
+                    stock_code, exchange_code, expiry_date, _pt, _rt, strike_price
+                )
+                if audit:
+                    audit.record_icici_api_call(
+                        "get_option_chain_quotes",
+                        icici_request,
+                        quote if isinstance(quote, dict) else None,
+                        rationale=audit_rationale,
+                    )
+            except Exception as e:
+                quote = {
+                    "Status": 400,
+                    "Error": f"Error calling ICICI Breeze API get_option_chain_quotes: {e}",
+                }
+                if audit:
+                    audit.record_icici_api_call(
+                        "get_option_chain_quotes",
+                        icici_request,
+                        quote,
+                        rationale=audit_rationale,
+                    )
         if not isinstance(quote, dict):
-            quote = {'Status': 400, 'Error': "Invalid response from get_option_chain_quotes"}
-        if quote.get('Status') != 200:
-            if quote.get('Error'):
-                _logger.warning("get_quote failed: stock_code=%s error=%s", stock_code, quote['Error'])
+            quote = {"Status": 400, "Error": "Invalid response from get_option_chain_quotes"}
+        if quote.get("Status") != 200:
+            if quote.get("Error"):
+                _logger.warning("get_quote failed: stock_code=%s error=%s", stock_code, quote["Error"])
             return quote
         try:
-            if int(quote['Success'][0]['total_sell_qty']) > 0:
-                quote['Success'][0]['buy_sell_ratio'] = int(quote['Success'][0]['total_buy_qty']) / int(quote['Success'][0]['total_sell_qty'])
+            if int(quote["Success"][0]["total_sell_qty"]) > 0:
+                quote["Success"][0]["buy_sell_ratio"] = int(quote["Success"][0]["total_buy_qty"]) / int(
+                    quote["Success"][0]["total_sell_qty"]
+                )
             else:
-                quote['Success'][0]['buy_sell_ratio'] = 0
+                quote["Success"][0]["buy_sell_ratio"] = 0
         except (KeyError, IndexError, TypeError, ZeroDivisionError):
             pass
         return quote
@@ -2740,7 +2794,16 @@ class processor():
         else:
             return Markup(f'<span>{formatted}</span>')
 
-    def strategy_builder_margin(self, user_id: str, exchange_code: str, legs: list):
+    def strategy_builder_margin(
+        self,
+        user_id: str,
+        exchange_code: str,
+        legs: list,
+        *,
+        audit: "StrategyBuilderAuditSession | None" = None,
+        audit_context: dict[str, Any] | None = None,
+        audit_rationale: str | None = None,
+    ):
         """Compute SPAN margin for strategy-builder legs using selected source."""
         breeze = self.get_session_breeze(user_id)
         if breeze is None:
@@ -2817,10 +2880,34 @@ class processor():
                     "warnings": warnings,
                 },
             }
+        margin_rationale = (
+            audit_rationale or "Batch SPAN margin for unique proposed leg structure."
+        )
+        icici_request: dict[str, Any] = {
+            "exchange_code": exchange_code,
+            "margin_list": margin_input,
+        }
+        if audit_context:
+            icici_request.update(audit_context)
         try:
             margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
+            if audit:
+                audit.record_icici_api_call(
+                    "margin_calculator",
+                    icici_request,
+                    margins if isinstance(margins, dict) else None,
+                    rationale=margin_rationale,
+                )
         except Exception as e:
-            return _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
+            err = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
+            if audit:
+                audit.record_icici_api_call(
+                    "margin_calculator",
+                    icici_request,
+                    err,
+                    rationale=margin_rationale,
+                )
+            return err
         self._maybe_evict_session(user_id, margins)
         if margins.get("Status") == 200:
             base_span = float((margins.get("Success") or {}).get("span_margin_required") or 0.0)

@@ -57,7 +57,7 @@ class StrategyBuilderAuditSession:
         self.request = request
         self.events: list[dict[str, Any]] = []
         self._seq = 0
-        self._api_call_counts: dict[str, int] = {}
+        self._api_call_stats: dict[str, dict[str, int]] = {}
         self._temp_liquid_cache: dict[str, Any] | None = None
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         fname = (
@@ -87,6 +87,42 @@ class StrategyBuilderAuditSession:
             entry["data"] = data
         self.events.append(entry)
 
+    def _bump_api_stat(self, api: str, *, success: bool) -> None:
+        stats = self._api_call_stats.setdefault(
+            api, {"total": 0, "success": 0, "failed": 0}
+        )
+        stats["total"] += 1
+        if success:
+            stats["success"] += 1
+        else:
+            stats["failed"] += 1
+
+    def record_icici_api_call(
+        self,
+        api: str,
+        request: dict[str, Any],
+        response: dict[str, Any] | None,
+        *,
+        rationale: str | None = None,
+        error: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        """Record one breeze-connect SDK method invocation (e.g. get_option_chain_quotes)."""
+        ok = (response or {}).get("Status") == 200
+        self._bump_api_stat(api, success=ok)
+        payload: dict[str, Any] = {
+            "api": api,
+            "success": ok,
+            "request": request,
+            "response_status": (response or {}).get("Status"),
+            "response": response,
+        }
+        if context:
+            payload["context"] = context
+        if error:
+            payload["error"] = error
+        self.record("api_call", f"API {api}", payload, rationale=rationale)
+
     def record_api_call(
         self,
         api: str,
@@ -96,16 +132,10 @@ class StrategyBuilderAuditSession:
         rationale: str | None = None,
         error: str | None = None,
     ) -> None:
-        self._api_call_counts[api] = self._api_call_counts.get(api, 0) + 1
-        payload: dict[str, Any] = {
-            "api": api,
-            "request": request,
-            "response_status": (response or {}).get("Status"),
-            "response": response,
-        }
-        if error:
-            payload["error"] = error
-        self.record("api_call", f"API {api}", payload, rationale=rationale)
+        """Backward-compatible alias for record_icici_api_call."""
+        self.record_icici_api_call(
+            api, request, response, rationale=rationale, error=error
+        )
 
     def set_temp_liquid_cache(self, snapshot: dict[str, Any]) -> None:
         """Snapshot of the in-memory quote cache used for strategy construction."""
@@ -167,10 +197,15 @@ class StrategyBuilderAuditSession:
 
     @property
     def icici_api_call_stats(self) -> dict[str, Any]:
-        total = sum(self._api_call_counts.values())
+        by_api = dict(sorted(self._api_call_stats.items()))
+        total = sum(s["total"] for s in by_api.values())
+        total_success = sum(s["success"] for s in by_api.values())
+        total_failed = sum(s["failed"] for s in by_api.values())
         return {
             "total": total,
-            "by_api": dict(sorted(self._api_call_counts.items())),
+            "total_success": total_success,
+            "total_failed": total_failed,
+            "by_api": by_api,
         }
 
     def finalize(self, summary: dict[str, Any]) -> str:

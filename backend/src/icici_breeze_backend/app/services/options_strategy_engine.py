@@ -232,16 +232,13 @@ def _fetch_quotes(
             right,
             str(strike),
             exchange_code=exchange_code,
+            audit=audit,
+            audit_rationale=fetch_reason or "Live option quote for liquidity and premium.",
+            audit_request=req,
         )
         if audit:
             row = (quote.get("Success") or [None])[0]
             parsed = _quote_from_api(strike, right, row) if row else None
-            audit.record_api_call(
-                "get_quote",
-                req,
-                quote,
-                rationale=fetch_reason or "Live option quote for liquidity and premium.",
-            )
             if parsed:
                 audit.record_strike(
                     strike,
@@ -1584,18 +1581,16 @@ def _attach_margins_and_returns(
     span_by_key: dict[tuple, float] = {}
     for key, legs in unique.items():
         margin_input = _legs_to_margin_input(legs, stock_code, exchange_code, expiry_display)
-        res = processor.strategy_builder_margin(user_id, exchange_code, margin_input)
-        if audit:
-            audit.record_api_call(
-                "strategy_builder_margin",
-                {
-                    "exchange_code": exchange_code,
-                    "strategy_id": strategy_by_key.get(key),
-                    "legs": margin_input,
-                },
-                res,
-                rationale="Batch SPAN margin for unique proposed leg structure.",
-            )
+        res = processor.strategy_builder_margin(
+            user_id,
+            exchange_code,
+            margin_input,
+            audit=audit,
+            audit_context={
+                "strategy_id": strategy_by_key.get(key),
+                "legs": margin_input,
+            },
+        )
         span = _parse_float((res.get("Success") or {}).get("span_margin_required"))
         span_by_key[key] = span
 

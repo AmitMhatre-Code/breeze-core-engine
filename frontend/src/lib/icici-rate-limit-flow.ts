@@ -78,7 +78,7 @@ export async function runBreakOrderChunks(
     if (res.rate_limited) {
       const sec = Math.max(
         1,
-        Math.floor(Number(res.rate_limit_pause_seconds) || 5),
+        Math.floor(Number(res.rate_limit_pause_seconds) || 1),
       );
       await args.onRateLimitWait(sec);
       continue;
@@ -134,7 +134,7 @@ export async function runCancelOrdersWithPacing(args: {
       if (res.rate_limited) {
         const sec = Math.max(
           1,
-          Math.floor(Number(res.rate_limit_pause_seconds) || 5),
+          Math.floor(Number(res.rate_limit_pause_seconds) || 1),
         );
         await args.onRateLimitWait(sec);
         continue;

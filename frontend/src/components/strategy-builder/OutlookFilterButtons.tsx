@@ -19,7 +19,14 @@ export function OutlookFilterButtons({
   };
 
   return (
-    <div className="flex items-center gap-3" role="group" aria-label="Filter by outlook">
+    <div
+      className="flex flex-wrap items-center gap-3"
+      role="group"
+      aria-label="Filter by outlook"
+    >
+      <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+        Select / Unselect Outlook
+      </span>
       {ALL_OUTLOOKS.map((o) => {
         const on = selected.has(o);
         return (

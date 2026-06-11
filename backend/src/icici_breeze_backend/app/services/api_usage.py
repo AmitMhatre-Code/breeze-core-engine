@@ -29,8 +29,27 @@ def _is_breeze_url(url: str) -> bool:
     return bool(u and "api.icicidirect.com" in u and "breezeapi" in u)
 
 
-def _extract_api_name(url: str) -> str:
-    """Map Breeze URL to endpoint name used for API-wise aggregates."""
+# Breeze REST path segment → breeze-connect SDK method (see breeze_connect.config.APIEndPoint).
+_ENDPOINT_TO_METHOD: dict[str, str] = {
+    "customerdetails": "get_customer_details",
+    "dematholdings": "get_demat_holdings",
+    "funds": "get_funds",
+    "historicalcharts": "get_historical_data",
+    "margin": "get_margin",
+    "order": "order",
+    "portfolioholdings": "get_portfolio_holdings",
+    "portfoliopositions": "get_portfolio_positions",
+    "quotes": "get_quotes",
+    "trades": "get_trade_list",
+    "optionchain": "get_option_chain_quotes",
+    "squareoff": "square_off",
+    "fnolmtpriceandqtycal": "limit_calculator",
+    "margincalculator": "margin_calculator",
+    "gttorder": "gtt_order_book",
+}
+
+
+def _path_segment_from_url(url: str) -> str:
     try:
         parsed = urlparse(url or "")
         parts = [p for p in (parsed.path or "").split("/") if p]
@@ -43,6 +62,26 @@ def _extract_api_name(url: str) -> str:
         return (parts[-1] or "unknown").lower()
     except Exception:
         return "unknown"
+
+
+def _sdk_method_name(url: str, path_segment: str) -> str:
+    """Map Breeze URL path segment to breeze-connect SDK method name."""
+    seg = (path_segment or "").lower()
+    if seg == "historicalcharts" and "breezeapi.icicidirect.com/api/v2" in (url or "").lower():
+        return "get_historical_data_v2"
+    return _ENDPOINT_TO_METHOD.get(seg, seg)
+
+
+def _normalize_api_name(api_name: str) -> str:
+    """Normalize stored path segments (legacy rows) to SDK method names."""
+    key = (api_name or "").strip().lower()
+    return _ENDPOINT_TO_METHOD.get(key, api_name)
+
+
+def _extract_api_name(url: str) -> str:
+    """Map Breeze URL to breeze-connect SDK method used for API-wise aggregates."""
+    path_segment = _path_segment_from_url(url)
+    return _sdk_method_name(url, path_segment)
 
 
 def _ensure_usage_tables(conn: sqlite3.Connection) -> None:
@@ -197,7 +236,17 @@ def get_daily_usage_by_api(user_id: str, days: int = 30) -> list[dict]:
                 """,
                 (uid, cutoff),
             ).fetchall()
-            return [{"usage_date": r[0], "api_name": r[1], "call_count": int(r[2] or 0)} for r in rows]
+            merged: dict[tuple[str, str], int] = {}
+            for usage_date, api_name, call_count in rows:
+                name = _normalize_api_name(str(api_name or ""))
+                key = (str(usage_date), name)
+                merged[key] = merged.get(key, 0) + int(call_count or 0)
+            out = [
+                {"usage_date": d, "api_name": n, "call_count": c}
+                for (d, n), c in merged.items()
+            ]
+            out.sort(key=lambda r: (-r["usage_date"], -r["call_count"], r["api_name"]))
+            return out
     except sqlite3.OperationalError:
         return []
 

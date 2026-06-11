@@ -14,7 +14,7 @@ def ensure_icici_rate_limit_pause_column() -> None:
         try:
             conn.execute(
                 "ALTER TABLE user_account ADD COLUMN icici_rate_limit_pause_seconds "
-                "INTEGER NOT NULL DEFAULT 5"
+                "INTEGER NOT NULL DEFAULT 1"
             )
             conn.commit()
         except sqlite3.OperationalError:
