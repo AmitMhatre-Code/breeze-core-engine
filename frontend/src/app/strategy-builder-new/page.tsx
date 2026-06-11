@@ -16,7 +16,6 @@ import {
   type TradeSortKey,
 } from "@/components/strategy-builder/TradeSortLink";
 import { SectionGate } from "@/components/strategy-builder/SectionGate";
-import { SpotRangeSlider } from "@/components/strategy-builder/SpotRangeSlider";
 import {
   StrategyLegsPanel,
   type LegMarginEntry,
@@ -38,7 +37,11 @@ import {
   ALL_OUTLOOKS,
   strategyOutlook,
 } from "@/lib/strategy-builder/templates";
-import { computeTradePop } from "@/lib/strategy-builder/trade-metrics";
+import {
+  computeTradePop,
+  computeTradeScore,
+  isUnlimitedMaxLoss,
+} from "@/lib/strategy-builder/trade-metrics";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   MarginApiResponse,
@@ -48,6 +51,8 @@ import type {
   StrategyLeg,
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
+
+const DEFAULT_MIN_POP_PCT = 65;
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
 import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 
@@ -69,8 +74,7 @@ function parseNum(raw: unknown): number {
 
 function resetDownstream(
   setters: {
-    setRangeLower: (v: string) => void;
-    setRangeUpper: (v: string) => void;
+    setMinPopPct: (v: string) => void;
     setLegs: (v: StrategyLeg[]) => void;
     setProposedData: (v: ProposeTradesSuccess | null) => void;
     setSelectedTradeId: (v: string | null) => void;
@@ -80,13 +84,12 @@ function resetDownstream(
   },
   clearError = false,
 ) {
-  setters.setRangeLower("");
-  setters.setRangeUpper("");
+  setters.setMinPopPct(String(DEFAULT_MIN_POP_PCT));
   setters.setLegs([]);
   setters.setProposedData(null);
   setters.setSelectedTradeId(null);
   setters.setOutlookFilter(new Set(ALL_OUTLOOKS));
-  setters.setTradeSort("server");
+  setters.setTradeSort("score");
   if (clearError) setters.setGenerateError(null);
 }
 
@@ -95,8 +98,7 @@ export default function StrategyBuilderNewPage() {
   const [segmentExchange, setSegmentExchange] = useState<"NFO" | "BFO">("NFO");
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
-  const [rangeLower, setRangeLower] = useState("");
-  const [rangeUpper, setRangeUpper] = useState("");
+  const [minPopPct, setMinPopPct] = useState(String(DEFAULT_MIN_POP_PCT));
   const [marginLacs, setMarginLacs] = useState("");
   const [maxLossLacs, setMaxLossLacs] = useState("");
   const [provisionElm, setProvisionElm] = useState(false);
@@ -122,17 +124,18 @@ export default function StrategyBuilderNewPage() {
   const [outlookFilter, setOutlookFilter] = useState<Set<Outlook>>(
     () => new Set(ALL_OUTLOOKS),
   );
-  const [tradeSort, setTradeSort] = useState<TradeSortKey>("server");
+  const [tradeSort, setTradeSort] = useState<TradeSortKey>("score");
   const [auditDownloading, setAuditDownloading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
-  const rangeInitKeyRef = useRef<string | null>(null);
+  const [unlimitedRiskTrade, setUnlimitedRiskTrade] = useState<ProposedTrade | null>(
+    null,
+  );
   const prevSection2ReadyRef = useRef(false);
   const prevSection3ReadyRef = useRef(false);
   const prevSection4ReadyRef = useRef(false);
 
   const downstreamSetters = {
-    setRangeLower,
-    setRangeUpper,
+    setMinPopPct,
     setLegs,
     setProposedData,
     setSelectedTradeId,
@@ -196,24 +199,13 @@ export default function StrategyBuilderNewPage() {
   const section3Ready = proposedData != null && trades.length > 0;
   const section4Ready = legs.length > 0 && selectedTradeId != null;
 
-  const rangeLowerNum = parsePositiveNum(rangeLower);
-  const rangeUpperNum = parsePositiveNum(rangeUpper);
   const marginLacsNum = parsePositiveNum(marginLacs);
   const maxLossLacsNum = parsePositiveNum(maxLossLacs);
-
-  const rangeValid =
-    rangeLowerNum != null &&
-    rangeUpperNum != null &&
-    rangeLowerNum < rangeUpperNum;
-
-  useEffect(() => {
-    if (chainSpot == null || !section1Complete) return;
-    const key = `${segmentExchange}:${stockCode}:${expiryDate}:${chainSpot}`;
-    if (rangeInitKeyRef.current === key) return;
-    rangeInitKeyRef.current = key;
-    setRangeLower(String(Math.round(chainSpot * 0.9)));
-    setRangeUpper(String(Math.round(chainSpot * 1.1)));
-  }, [chainSpot, section1Complete, segmentExchange, stockCode, expiryDate]);
+  const minPopPctNum = (() => {
+    const n = parseFloat(minPopPct.replace(/,/g, ""));
+    if (!Number.isFinite(n)) return null;
+    return Math.min(99, Math.max(1, n));
+  })();
 
   useEffect(() => {
     if (section2Ready && !prevSection2ReadyRef.current) {
@@ -242,22 +234,11 @@ export default function StrategyBuilderNewPage() {
     prevSection4ReadyRef.current = section4Ready;
   }, [section4Ready]);
 
-  const rangeBeyondSpotWarning = useMemo(() => {
-    if (spot == null || !rangeValid || rangeLowerNum == null || rangeUpperNum == null)
-      return null;
-    const loPct = Math.abs(rangeLowerNum - spot) / spot;
-    const hiPct = Math.abs(rangeUpperNum - spot) / spot;
-    if (loPct > 0.1 || hiPct > 0.1) {
-      return "Range bound is more than 10% away from spot price.";
-    }
-    return null;
-  }, [spot, rangeValid, rangeLowerNum, rangeUpperNum]);
-
   const canGenerate =
     section2Ready &&
-    rangeValid &&
     marginLacsNum != null &&
-    maxLossLacsNum != null;
+    maxLossLacsNum != null &&
+    minPopPctNum != null;
 
   const generateM = useMutation({
     mutationFn: () =>
@@ -265,10 +246,9 @@ export default function StrategyBuilderNewPage() {
         exchange_code: segmentExchange,
         stock_code: stockCode.trim(),
         expiry_date: expiryDate.trim(),
-        range_lower: rangeLowerNum!,
-        range_upper: rangeUpperNum!,
         margin_lacs: marginLacsNum!,
         max_loss_lacs: maxLossLacsNum!,
+        min_pop_pct: minPopPctNum!,
         provision_elm: provisionElm,
       }),
     onSuccess: (res) => {
@@ -299,14 +279,23 @@ export default function StrategyBuilderNewPage() {
 
     if (tradeSort === "server") return list;
 
-    const withPop = list.map((t) => ({
-      trade: t,
-      pop: computeTradePop(t, spot, atmIv, expiryDate, lotSize),
-    }));
+    const withMetrics = list.map((t) => {
+      const pop = computeTradePop(t, spot, atmIv, expiryDate, lotSize);
+      return {
+        trade: t,
+        pop,
+        score: computeTradeScore(t, pop),
+      };
+    });
+
+    if (tradeSort === "score") {
+      withMetrics.sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
+      return withMetrics.map((x) => x.trade);
+    }
 
     if (tradeSort === "pop") {
-      withPop.sort((a, b) => (b.pop ?? -1) - (a.pop ?? -1));
-      return withPop.map((x) => x.trade);
+      withMetrics.sort((a, b) => (b.pop ?? -1) - (a.pop ?? -1));
+      return withMetrics.map((x) => x.trade);
     }
 
     if (tradeSort === "net_premium") {
@@ -327,15 +316,26 @@ export default function StrategyBuilderNewPage() {
     return list;
   }, [trades, outlookFilter, tradeSort, spot, atmIv, expiryDate, lotSize]);
 
-  const selectTrade = useCallback(
+  const applySelectedTrade = useCallback(
     (trade: ProposedTrade) => {
-      if (trade.status !== "ok" || !trade.legs.length) return;
       setSelectedTradeId(trade.strategy_id);
       setLegs(proposedLegsToStrategyLegs(trade.legs, lotSize));
       setLegMarginCache({});
       setStrategyMarginValidSig(null);
     },
     [lotSize],
+  );
+
+  const selectTrade = useCallback(
+    (trade: ProposedTrade) => {
+      if (trade.status !== "ok" || !trade.legs.length) return;
+      if (isUnlimitedMaxLoss(trade.max_loss)) {
+        setUnlimitedRiskTrade(trade);
+        return;
+      }
+      applySelectedTrade(trade);
+    },
+    [applySelectedTrade],
   );
 
   const legsWithQtyForMargin = useMemo(
@@ -506,7 +506,6 @@ export default function StrategyBuilderNewPage() {
     setSegmentExchange(ex);
     setStockCode("");
     setExpiryDate("");
-    rangeInitKeyRef.current = null;
     resetDownstream(downstreamSetters, true);
   };
 
@@ -561,7 +560,6 @@ export default function StrategyBuilderNewPage() {
                   onChange={(code) => {
                     setStockCode(code);
                     setExpiryDate("");
-                    rangeInitKeyRef.current = null;
                     resetDownstream(downstreamSetters);
                   }}
                 />
@@ -575,7 +573,6 @@ export default function StrategyBuilderNewPage() {
                   disabled={!stockCode}
                   onChange={(d) => {
                     setExpiryDate(d);
-                    rangeInitKeyRef.current = null;
                     resetDownstream(downstreamSetters);
                   }}
                 />
@@ -590,16 +587,19 @@ export default function StrategyBuilderNewPage() {
             >
               <h2 className={sb.sectionTitle}>2. Parameters</h2>
               <div className="space-y-4">
-                {chainSpot != null ? (
-                  <SpotRangeSlider
-                    spot={chainSpot}
-                    rangeLower={rangeLower}
-                    rangeUpper={rangeUpper}
-                    onRangeLowerChange={setRangeLower}
-                    onRangeUpperChange={setRangeUpper}
-                  />
-                ) : null}
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <label className="block">
+                    <span className={sb.fieldLabel}>Minimum PoP (%)</span>
+                    <input
+                      type="number"
+                      className={sb.input}
+                      value={minPopPct}
+                      onChange={(e) => setMinPopPct(e.target.value)}
+                      min={1}
+                      max={99}
+                      step={1}
+                    />
+                  </label>
                   <label className="block">
                     <span className={sb.fieldLabel}>Margin to deploy (Lacs)</span>
                     <input
@@ -651,16 +651,9 @@ export default function StrategyBuilderNewPage() {
                   </div>
                 </div>
               </div>
-              {rangeLowerNum != null &&
-              rangeUpperNum != null &&
-              rangeLowerNum >= rangeUpperNum ? (
+              {minPopPctNum == null && minPopPct.trim() !== "" ? (
                 <p className="text-sm text-red-600 dark:text-red-400">
-                  Range lower must be less than range upper.
-                </p>
-              ) : null}
-              {rangeBeyondSpotWarning ? (
-                <p className="text-sm text-amber-700 dark:text-amber-300">
-                  {rangeBeyondSpotWarning}
+                  Minimum PoP must be between 1 and 99.
                 </p>
               ) : null}
               {generateError ? (
@@ -823,6 +816,53 @@ export default function StrategyBuilderNewPage() {
             chunkReady,
           }}
         />
+
+        {unlimitedRiskTrade ? (
+          <div
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4"
+            role="presentation"
+            onClick={() => setUnlimitedRiskTrade(null)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setUnlimitedRiskTrade(null);
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              className={`${sb.modalPanel} w-full max-w-md`}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-base font-semibold text-red-700 dark:text-red-400">
+                Risk warning — unlimited loss
+              </h3>
+              <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+                {unlimitedRiskTrade.strategy_name} can have large or unlimited
+                loss if the market moves against you. Confirm you understand the
+                exposure before selecting this strategy.
+              </p>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  className={sb.btnSecondary}
+                  onClick={() => setUnlimitedRiskTrade(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className={sb.btnDanger}
+                  onClick={() => {
+                    applySelectedTrade(unlimitedRiskTrade);
+                    setUnlimitedRiskTrade(null);
+                  }}
+                >
+                  I understand — select
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </RevokedTradingPageGuard>
     </AppShell>
   );

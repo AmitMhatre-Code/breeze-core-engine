@@ -62,6 +62,7 @@ class TestBullCallSpreadSizing(unittest.TestCase):
             range_upper=23600,
             margin_rupees=500_000,
             max_loss_rupees=200_000,
+            min_pop_pct=1.0,
             provision_elm=False,
             lot_size=75,
             strikes=strikes,
@@ -69,6 +70,7 @@ class TestBullCallSpreadSizing(unittest.TestCase):
             search_interval=50,
             spot=23500,
             atm_strike=23500,
+            atm_iv=0.18,
             cache=cache,
         )
 
@@ -191,6 +193,7 @@ class TestBuildLiquidityCache(unittest.TestCase):
             range_upper=23600,
             margin_rupees=500_000,
             max_loss_rupees=200_000,
+            min_pop_pct=65.0,
             provision_elm=False,
             lot_size=75,
             strikes=strikes,
@@ -345,6 +348,7 @@ class TestNakedCeAboveRangeUpper(unittest.TestCase):
             range_upper=24500,
             margin_rupees=1_000_000,
             max_loss_rupees=500_000,
+            min_pop_pct=1.0,
             provision_elm=False,
             lot_size=75,
             strikes=strikes,
@@ -352,6 +356,7 @@ class TestNakedCeAboveRangeUpper(unittest.TestCase):
             search_interval=50,
             spot=23310,
             atm_strike=23300,
+            atm_iv=0.18,
             cache=cache,
         )
         res = calc_naked_ce_short(ctx)

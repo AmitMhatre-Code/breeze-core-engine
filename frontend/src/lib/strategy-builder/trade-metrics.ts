@@ -29,9 +29,22 @@ export function computeTradePop(
   expiryDate: string,
   lotSize: number,
 ): number | null {
-  if (trade.status === "skipped" || spot == null || !trade.legs.length) return null;
+  if (trade.status === "skipped" || !trade.legs.length) return null;
+  if (trade.pop_pct != null && Number.isFinite(trade.pop_pct)) return trade.pop_pct;
+  if (spot == null) return null;
   const T = expiryDisplayToYears(expiryDate);
   const sigma = atmIv != null && atmIv > 0 ? atmIv : 0.2;
   const legs = proposedLegsToStrategyLegs(trade.legs, lotSize);
   return estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
+}
+
+/** Score = net premium × PoP (PoP as fraction). */
+export function computeTradeScore(
+  trade: ProposedTrade,
+  pop: number | null,
+): number | null {
+  if (trade.status === "skipped" || pop == null || !Number.isFinite(pop)) return null;
+  const prem = trade.net_premium;
+  if (prem == null || !Number.isFinite(prem)) return null;
+  return prem * (pop / 100);
 }

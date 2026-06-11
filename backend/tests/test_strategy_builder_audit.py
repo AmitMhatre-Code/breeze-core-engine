@@ -187,6 +187,7 @@ class TestEngineAuditIntegration(unittest.TestCase):
             range_upper=23600,
             margin_rupees=500_000,
             max_loss_rupees=200_000,
+            min_pop_pct=1.0,
             provision_elm=False,
             lot_size=75,
             strikes=strikes,
@@ -194,6 +195,7 @@ class TestEngineAuditIntegration(unittest.TestCase):
             search_interval=50,
             spot=23500,
             atm_strike=23500,
+            atm_iv=0.18,
             cache=cache,
             audit=audit,
         )
@@ -235,10 +237,9 @@ class TestEngineAuditIntegration(unittest.TestCase):
                     exchange_code="NFO",
                     stock_code="NIFTY",
                     expiry_date="09-Jun-2025",
-                    range_lower=23400,
-                    range_upper=23600,
                     margin_lacs=5.0,
                     max_loss_lacs=2.0,
+                    min_pop_pct=1.0,
                     provision_elm=False,
                     request_id="req-1",
                 )

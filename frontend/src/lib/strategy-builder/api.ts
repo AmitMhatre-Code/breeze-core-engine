@@ -28,10 +28,9 @@ export type ProposeTradesParams = {
   exchange_code: string;
   stock_code: string;
   expiry_date: string;
-  range_lower: number;
-  range_upper: number;
   margin_lacs: number;
   max_loss_lacs: number;
+  min_pop_pct: number;
   provision_elm: boolean;
 };
 

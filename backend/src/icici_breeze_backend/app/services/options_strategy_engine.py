@@ -12,6 +12,7 @@ from icici_breeze_backend.audit.strategy_builder_audit import (
     quote_row_to_audit,
 )
 from icici_breeze_backend.app.services.iv_compute import implied_volatility
+from icici_breeze_backend.app.services.strategy_builder_pop import estimate_probability_of_profit
 from icici_breeze_backend.app.services.processor import (
     OptionChainBackoff,
     _annualized_carry_percent_on_span,
@@ -94,6 +95,7 @@ class StrategyResult:
     max_loss: float | None = None
     annualized_return_pct: float | None = None
     risk_reward_ratio: str | None = None
+    pop_pct: float | None = None
     legs: list[TradeLeg] = field(default_factory=list)
     margin_key: tuple | None = None
     span_margin: float | None = None
@@ -110,6 +112,7 @@ class EngineContext:
     range_upper: float
     margin_rupees: float
     max_loss_rupees: float
+    min_pop_pct: float
     provision_elm: bool
     lot_size: int
     strikes: list[int]
@@ -117,6 +120,7 @@ class EngineContext:
     search_interval: int
     spot: float
     atm_strike: int
+    atm_iv: float | None = None
     cache: dict[tuple[int, Right], QuoteRow] = field(default_factory=dict)
     structure_modified: bool = False
     halted: bool = False
@@ -672,6 +676,77 @@ def _net_premium(legs: list[TradeLeg]) -> float:
     return round(total, 2)
 
 
+def _years_to_expiry(expiry_display: str) -> float:
+    return max(_days_to_expiry(expiry_display), 1) / 365.0
+
+
+def _sigma_for_pop(ctx: EngineContext) -> float:
+    if ctx.atm_iv and ctx.atm_iv > 0:
+        return ctx.atm_iv
+    return 0.20
+
+
+def _pop_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> float:
+    if not legs or ctx.spot <= 0:
+        return 0.0
+    return estimate_probability_of_profit(
+        ctx.spot,
+        _years_to_expiry(ctx.expiry_display),
+        _sigma_for_pop(ctx),
+        legs,
+        ctx.lot_size,
+    )
+
+
+def _apply_auto_range(ctx: EngineContext, *, sigma: float | None = None) -> None:
+    sig = sigma if sigma and sigma > 0 else _sigma_for_pop(ctx)
+    std_move = ctx.spot * sig * math.sqrt(_years_to_expiry(ctx.expiry_display))
+    ctx.range_lower = max(0.0, ctx.spot - std_move)
+    ctx.range_upper = ctx.spot + std_move
+    if ctx.audit:
+        ctx.audit.record_calculation(
+            "Auto outlook range",
+            {"spot": ctx.spot, "sigma": sig, "min_pop_pct": ctx.min_pop_pct},
+            {"range_lower": ctx.range_lower, "range_upper": ctx.range_upper, "std_move": std_move},
+            formula="range = spot ± σ√T",
+            rationale="IV-based expected move replaces user strike-range input.",
+        )
+
+
+def _ok_with_pop(
+    ctx: EngineContext,
+    strategy_id: str,
+    name: str,
+    legs: list[TradeLeg],
+    *,
+    max_loss: float | None,
+    rr: str,
+    modified: bool = False,
+    net_premium: float | None = None,
+) -> StrategyResult:
+    pop = _pop_for_legs(ctx, legs)
+    if pop < ctx.min_pop_pct:
+        return _skip(
+            strategy_id,
+            name,
+            f"PoP {pop:.1f}% below minimum {ctx.min_pop_pct:.1f}%.",
+            modified,
+        )
+    prem = net_premium if net_premium is not None else _net_premium(legs)
+    return StrategyResult(
+        strategy_id=strategy_id,
+        strategy_name=name,
+        status="ok",
+        legs=legs,
+        net_premium=prem,
+        max_loss=max_loss,
+        risk_reward_ratio=rr,
+        pop_pct=round(pop, 2),
+        structure_modified=modified,
+        margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
+    )
+
+
 def _build_liquidity_cache(ctx: EngineContext) -> None:
     """Populate quote cache with fallback protocol (doc §4)."""
     all_strikes = ctx.strikes
@@ -705,6 +780,7 @@ def _build_liquidity_cache(ctx: EngineContext) -> None:
         spot = mid
     ctx.spot = spot
     ctx.atm_strike = _nearest_atm(all_strikes, spot)
+    _apply_auto_range(ctx)
     _audit_calc(
         ctx,
         "Spot and ATM resolution",
@@ -937,12 +1013,12 @@ def calc_naked_ce_short(ctx: EngineContext) -> StrategyResult:
         return _skip(sid, name, "Insufficient margin for one lot.")
     legs = [TradeLeg("Call", "Sell", stp, qty, prem)]
     max_profit = prem * qty
-    return StrategyResult(
-        sid, name, "ok", legs=legs, net_premium=max_profit,
+    return _ok_with_pop(
+        ctx, sid, name, legs,
         max_loss=None,
-        risk_reward_ratio=f"Unlimited : {max_profit:.0f}",
-        structure_modified=ctx.structure_modified,
-        margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
+        rr=f"Unlimited : {max_profit:.0f}",
+        modified=ctx.structure_modified,
+        net_premium=max_profit,
     )
 
 
@@ -973,12 +1049,14 @@ def calc_naked_pe_short(ctx: EngineContext) -> StrategyResult:
     legs = [TradeLeg("Put", "Sell", stp, qty, prem)]
     max_profit = prem * qty
     max_risk = (stp - prem) * qty
-    return StrategyResult(
-        sid, name, "ok", legs=legs, net_premium=max_profit,
+    if max_risk > ctx.max_loss_rupees:
+        return _skip(sid, name, "Naked PE max risk exceeds user max loss budget.")
+    return _ok_with_pop(
+        ctx, sid, name, legs,
         max_loss=max_risk,
-        risk_reward_ratio=f"{max_risk:.0f} : {max_profit:.0f}",
-        structure_modified=ctx.structure_modified,
-        margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
+        rr=f"{max_risk:.0f} : {max_profit:.0f}",
+        modified=ctx.structure_modified,
+        net_premium=max_profit,
     )
 
 
@@ -986,51 +1064,55 @@ def calc_bull_call_spread(ctx: EngineContext) -> StrategyResult:
     sid, name = "bull_call_spread", "Bull Call Spread"
     if ctx.halted:
         return _skip(sid, name, ctx.halt_reason or "Market halted")
-    stp_l = _nearest_liquid_ge(ctx.liquid_ce_strikes, ctx.spot)
     stp_h = _nearest_liquid_ge(ctx.liquid_ce_strikes, ctx.range_upper)
-    if stp_l is None or stp_h is None or stp_h <= stp_l:
-        _audit_decision(
-            ctx,
-            "Bull call spread strikes",
-            "skip",
-            "Need liquid long CE at/above spot and short CE at/above range upper with long < short.",
-            {"stp_l": stp_l, "stp_h": stp_h, "spot": ctx.spot, "range_upper": ctx.range_upper},
-        )
-        return _skip(sid, name, "Could not resolve liquid long/short CE strikes.")
-    ql, qh = ctx.cache[(stp_l, "Call")], ctx.cache[(stp_h, "Call")]
-    net_per = (ql.best_offer_price or ql.ltp) - (qh.best_bid_price or qh.ltp)
+    if stp_h is None:
+        return _skip(sid, name, "Could not resolve liquid short CE at/above range upper.")
+    qh = ctx.cache[(stp_h, "Call")]
+    sell_prem = qh.best_bid_price or qh.ltp
+    buy_candidates = [s for s in ctx.liquid_ce_strikes if ctx.spot <= s < stp_h]
+    buy_candidates.sort()
     L = ctx.lot_size
-    max_loss_lot = net_per * L
-    if max_loss_lot <= 0:
-        return _skip(sid, name, "Non-debit bull call spread.")
-    qty_m = _floor_lots(ctx.margin_rupees, (ql.best_offer_price or ql.ltp) * L, L)
-    qty_l = _floor_lots(ctx.max_loss_rupees, max_loss_lot, L)
-    qty = min(qty_m, qty_l) if qty_m and qty_l else 0
+    best: tuple[float, int, int, float, list[TradeLeg], float, float] | None = None
+    for stp_l in buy_candidates:
+        ql = ctx.cache[(stp_l, "Call")]
+        buy_prem = ql.best_offer_price or ql.ltp
+        net_per = buy_prem - sell_prem
+        if net_per <= 0:
+            continue
+        max_loss_lot = net_per * L
+        qty_m = _floor_lots(ctx.margin_rupees, buy_prem * L, L)
+        qty_l = _floor_lots(ctx.max_loss_rupees, max_loss_lot, L)
+        qty = min(qty_m, qty_l) if qty_m and qty_l else 0
+        if qty < L:
+            continue
+        legs = [
+            TradeLeg("Call", "Buy", stp_l, qty, buy_prem),
+            TradeLeg("Call", "Sell", stp_h, qty, sell_prem),
+        ]
+        max_loss = net_per * qty
+        if max_loss > ctx.max_loss_rupees:
+            continue
+        pop = _pop_for_legs(ctx, legs)
+        if pop < ctx.min_pop_pct:
+            continue
+        net_premium = -max_loss
+        if best is None or net_premium > best[0]:
+            max_profit = ((stp_h - stp_l) - net_per) * qty
+            best = (net_premium, stp_l, qty, pop, legs, max_loss, max_profit)
+    if not best:
+        return _skip(sid, name, "No bull call spread meets minimum PoP within risk limits.")
+    net_premium, stp_l, qty, pop, legs, max_loss, max_profit = best
     _audit_calc(
         ctx,
-        "Bull call spread sizing",
-        {
-            "long_strike": stp_l,
-            "short_strike": stp_h,
-            "net_debit_per_unit": net_per,
-            "margin_rupees": ctx.margin_rupees,
-            "max_loss_rupees": ctx.max_loss_rupees,
-        },
-        {"qty_from_margin": qty_m, "qty_from_max_loss": qty_l, "final_qty": qty},
-        formula="qty = min(floor(margin/debit_lot), floor(max_loss/max_loss_lot)) * L",
-        rationale="Long CE nearest liquid >= spot; short CE nearest liquid >= range upper.",
+        "Bull call spread selection",
+        {"short_strike": stp_h, "long_strike": stp_l, "min_pop_pct": ctx.min_pop_pct},
+        {"qty": qty, "pop_pct": pop, "net_premium": net_premium},
+        rationale="Maximize net premium (minimize debit) among spreads meeting PoP and max-loss caps.",
     )
-    if qty < L:
-        return _skip(sid, name, "Insufficient risk appetite for one lot.")
-    legs = [
-        TradeLeg("Call", "Buy", stp_l, qty, ql.best_offer_price or ql.ltp),
-        TradeLeg("Call", "Sell", stp_h, qty, qh.best_bid_price or qh.ltp),
-    ]
-    max_loss = net_per * qty
-    max_profit = ((stp_h - stp_l) - net_per) * qty
     return StrategyResult(
-        sid, name, "ok", legs=legs, net_premium=-max_loss, max_loss=max_loss,
+        sid, name, "ok", legs=legs, net_premium=net_premium, max_loss=max_loss,
         risk_reward_ratio=f"{max_loss:.0f} : {max_profit:.0f}",
+        pop_pct=round(pop, 2),
         structure_modified=ctx.structure_modified,
         margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
     )
@@ -1040,30 +1122,48 @@ def calc_bear_put_spread(ctx: EngineContext) -> StrategyResult:
     sid, name = "bear_put_spread", "Bear Put Spread"
     if ctx.halted:
         return _skip(sid, name, ctx.halt_reason or "Market halted")
-    stp_h = _nearest_liquid_le(ctx.liquid_pe_strikes, ctx.spot)
     stp_l = _nearest_liquid_le(ctx.liquid_pe_strikes, ctx.range_lower)
-    if stp_l is None or stp_h is None or stp_h <= stp_l:
-        return _skip(sid, name, "Could not resolve liquid long/short PE strikes.")
-    qh, ql = ctx.cache[(stp_h, "Put")], ctx.cache[(stp_l, "Put")]
-    net_per = (qh.best_offer_price or qh.ltp) - (ql.best_bid_price or ql.ltp)
+    if stp_l is None:
+        return _skip(sid, name, "Could not resolve liquid short PE at/below range lower.")
+    ql = ctx.cache[(stp_l, "Put")]
+    sell_prem = ql.best_bid_price or ql.ltp
+    buy_candidates = [s for s in ctx.liquid_pe_strikes if stp_l < s <= ctx.spot]
+    buy_candidates.sort(reverse=True)
     L = ctx.lot_size
-    max_loss_lot = net_per * L
-    if max_loss_lot <= 0:
-        return _skip(sid, name, "Non-debit bear put spread.")
-    qty_m = _floor_lots(ctx.margin_rupees, (qh.best_offer_price or qh.ltp) * L, L)
-    qty_l = _floor_lots(ctx.max_loss_rupees, max_loss_lot, L)
-    qty = min(qty_m, qty_l) if qty_m and qty_l else 0
-    if qty < L:
-        return _skip(sid, name, "Insufficient risk appetite for one lot.")
-    legs = [
-        TradeLeg("Put", "Buy", stp_h, qty, qh.best_offer_price or qh.ltp),
-        TradeLeg("Put", "Sell", stp_l, qty, ql.best_bid_price or ql.ltp),
-    ]
-    max_loss = net_per * qty
-    max_profit = ((stp_h - stp_l) - net_per) * qty
+    best: tuple[float, int, int, float, list[TradeLeg], float, float] | None = None
+    for stp_h in buy_candidates:
+        qh = ctx.cache[(stp_h, "Put")]
+        buy_prem = qh.best_offer_price or qh.ltp
+        net_per = buy_prem - sell_prem
+        if net_per <= 0:
+            continue
+        max_loss_lot = net_per * L
+        qty_m = _floor_lots(ctx.margin_rupees, buy_prem * L, L)
+        qty_l = _floor_lots(ctx.max_loss_rupees, max_loss_lot, L)
+        qty = min(qty_m, qty_l) if qty_m and qty_l else 0
+        if qty < L:
+            continue
+        legs = [
+            TradeLeg("Put", "Buy", stp_h, qty, buy_prem),
+            TradeLeg("Put", "Sell", stp_l, qty, sell_prem),
+        ]
+        max_loss = net_per * qty
+        if max_loss > ctx.max_loss_rupees:
+            continue
+        pop = _pop_for_legs(ctx, legs)
+        if pop < ctx.min_pop_pct:
+            continue
+        net_premium = -max_loss
+        if best is None or net_premium > best[0]:
+            max_profit = ((stp_h - stp_l) - net_per) * qty
+            best = (net_premium, stp_h, qty, pop, legs, max_loss, max_profit)
+    if not best:
+        return _skip(sid, name, "No bear put spread meets minimum PoP within risk limits.")
+    net_premium, stp_h, qty, pop, legs, max_loss, max_profit = best
     return StrategyResult(
-        sid, name, "ok", legs=legs, net_premium=-max_loss, max_loss=max_loss,
+        sid, name, "ok", legs=legs, net_premium=net_premium, max_loss=max_loss,
         risk_reward_ratio=f"{max_loss:.0f} : {max_profit:.0f}",
+        pop_pct=round(pop, 2),
         structure_modified=ctx.structure_modified,
         margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
     )
@@ -1077,8 +1177,8 @@ def _credit_spread_wing(
     wing_is_higher: bool,
     *,
     strategy_id: str | None = None,
-) -> tuple[int, float, float] | None:
-    """Return (wing_stp, net_credit_per_unit, max_loss_per_unit) or None."""
+) -> tuple[int, float, float, int, float] | None:
+    """Return (wing_stp, credit_per_unit, max_loss_per_unit, qty, pop) maximizing net credit under PoP + risk."""
     L = ctx.lot_size
     qs = ctx.cache.get((short_stp, short_right))
     if not qs:
@@ -1097,7 +1197,7 @@ def _credit_spread_wing(
         candidates.sort()
     else:
         candidates.sort(reverse=True)
-    qty_margin = _floor_lots(ctx.margin_rupees, max(qs.best_bid_price, 0.05) * L * 2, L) or L
+    short_prem = qs.best_bid_price or qs.ltp
     if ctx.audit:
         ctx.audit.record(
             "wing_search",
@@ -1107,77 +1207,73 @@ def _credit_spread_wing(
                 "short_strike": short_stp,
                 "right": short_right,
                 "candidates": candidates,
-                "qty_margin": qty_margin,
+                "min_pop_pct": ctx.min_pop_pct,
                 "max_loss_rupees": ctx.max_loss_rupees,
             },
-            rationale="Walk liquid strikes away from short; pick widest wing within max-loss budget.",
+            rationale="Enumerate wings; maximize net credit with PoP >= min and max loss within budget.",
         )
+    best: tuple[int, float, float, int, float, float] | None = None
     for wing in candidates:
         qw = ctx.cache.get((wing, short_right))
         if not qw:
-            if ctx.audit:
-                ctx.audit.record_strike(
-                    wing,
-                    short_right,
-                    included=False,
-                    reason="Candidate wing not in quote cache",
-                    context=strategy_id,
-                )
             continue
-        credit = (qs.best_bid_price or qs.ltp) - (qw.best_offer_price or qw.ltp)
+        wing_prem = qw.best_offer_price or qw.ltp
+        credit = short_prem - wing_prem
         width = abs(wing - short_stp)
         max_loss_u = width - credit
-        risk_total = max_loss_u * qty_margin
-        accepted = max_loss_u > 0 and risk_total <= ctx.max_loss_rupees
+        if max_loss_u <= 0:
+            continue
+        qty = _floor_lots(ctx.max_loss_rupees, max_loss_u * L, L)
+        if qty < L:
+            continue
+        if max_loss_u * qty > ctx.max_loss_rupees:
+            continue
+        if wing_is_higher:
+            legs = [
+                TradeLeg(short_right, "Sell", short_stp, qty, short_prem),
+                TradeLeg(short_right, "Buy", wing, qty, wing_prem),
+            ]
+        else:
+            legs = [
+                TradeLeg(short_right, "Sell", short_stp, qty, short_prem),
+                TradeLeg(short_right, "Buy", wing, qty, wing_prem),
+            ]
+        pop = _pop_for_legs(ctx, legs)
+        net_collected = credit * qty
+        accepted = pop >= ctx.min_pop_pct
         if ctx.audit:
             ctx.audit.record_calculation(
                 f"Wing candidate {short_right} {wing}",
-                {
-                    "short_bid": qs.best_bid_price or qs.ltp,
-                    "wing_ask": qw.best_offer_price or qw.ltp,
-                    "width": width,
-                    "qty_margin": qty_margin,
-                },
+                {"short_bid": short_prem, "wing_ask": wing_prem, "width": width, "qty": qty},
                 {
                     "credit_per_unit": credit,
                     "max_loss_per_unit": max_loss_u,
-                    "risk_at_qty_margin": risk_total,
+                    "max_loss_total": max_loss_u * qty,
+                    "net_premium": net_collected,
+                    "pop_pct": pop,
                     "accepted": accepted,
                 },
                 formula="credit = short_bid - wing_ask; max_loss_u = width - credit",
-                rationale="Rejected if max_loss_u<=0 or risk exceeds max_loss_rupees.",
+                rationale="Rejected if risk exceeds budget or PoP below minimum.",
             )
-        if max_loss_u <= 0:
+        if not accepted:
             continue
-        if max_loss_u * qty_margin <= ctx.max_loss_rupees:
-            _audit_decision(
-                ctx,
-                "Credit spread wing",
-                f"select {wing}",
-                f"Widest liquid wing within risk budget ({risk_total:.2f} <= {ctx.max_loss_rupees:.2f}).",
-                {"wing": wing, "credit": credit, "max_loss_u": max_loss_u},
-            )
-            return wing, credit, max_loss_u
-    if candidates:
-        wing = candidates[0]
-        qw = ctx.cache.get((wing, short_right))
-        if qw:
-            credit = (qs.best_bid_price or qs.ltp) - (qw.best_offer_price or qw.ltp)
-            width = abs(wing - short_stp)
-            max_loss_u = width - credit
-            _audit_decision(
-                ctx,
-                "Credit spread wing",
-                f"fallback narrowest {wing}",
-                "No wing met risk budget; using narrowest liquid wing with downscaled qty.",
-                {"credit": credit, "max_loss_u": max_loss_u},
-            )
-            return wing, credit, max_loss_u
+        if best is None or net_collected > best[4]:
+            best = (wing, credit, max_loss_u, qty, net_collected, pop)
+    if best:
+        _audit_decision(
+            ctx,
+            "Credit spread wing",
+            f"select {best[0]}",
+            f"Highest net credit ({best[4]:.2f}) with PoP {best[5]:.1f}% >= {ctx.min_pop_pct:.1f}%.",
+            {"wing": best[0], "credit": best[1], "max_loss_u": best[2], "qty": best[3], "pop": best[5]},
+        )
+        return best[0], best[1], best[2], best[3], best[5]
     _audit_decision(
         ctx,
         "Credit spread wing",
         "none",
-        f"No liquid {short_right} wing candidates above/below short strike {short_stp}.",
+        f"No liquid {short_right} wing meets PoP >= {ctx.min_pop_pct:.1f}% within max loss budget.",
         {"candidates": candidates, "liquid_pool": wing_strikes},
     )
     return None
@@ -1194,12 +1290,8 @@ def calc_bear_call_spread(ctx: EngineContext) -> StrategyResult:
         return _skip(sid, name, "No liquid short CE above range.")
     wing = _credit_spread_wing(ctx, stp_s, "Call", ctx.liquid_ce_strikes, True, strategy_id=sid)
     if not wing:
-        return _skip(sid, name, "No viable call wing within risk limits.")
-    stp_l, credit, max_loss_u = wing
-    L = ctx.lot_size
-    qty = _floor_lots(ctx.max_loss_rupees, max_loss_u * L, L)
-    if qty < L:
-        qty = L
+        return _skip(sid, name, "No viable call wing meets minimum PoP within risk limits.")
+    stp_l, credit, max_loss_u, qty, pop = wing
     qs, ql = ctx.cache[(stp_s, "Call")], ctx.cache[(stp_l, "Call")]
     legs = [
         TradeLeg("Call", "Sell", stp_s, qty, qs.best_bid_price or qs.ltp),
@@ -1210,6 +1302,7 @@ def calc_bear_call_spread(ctx: EngineContext) -> StrategyResult:
     return StrategyResult(
         sid, name, "ok", legs=legs, net_premium=net_collected, max_loss=max_loss,
         risk_reward_ratio=f"{max_loss:.0f} : {net_collected:.0f}",
+        pop_pct=round(pop, 2),
         structure_modified=ctx.structure_modified,
         margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
     )
@@ -1226,12 +1319,8 @@ def calc_bull_put_spread(ctx: EngineContext) -> StrategyResult:
         return _skip(sid, name, "No liquid short PE below range.")
     wing = _credit_spread_wing(ctx, stp_s, "Put", ctx.liquid_pe_strikes, False, strategy_id=sid)
     if not wing:
-        return _skip(sid, name, "No viable put wing within risk limits.")
-    stp_l, credit, max_loss_u = wing
-    L = ctx.lot_size
-    qty = _floor_lots(ctx.max_loss_rupees, max_loss_u * L, L)
-    if qty < L:
-        qty = L
+        return _skip(sid, name, "No viable put wing meets minimum PoP within risk limits.")
+    stp_l, credit, max_loss_u, qty, pop = wing
     qs, ql = ctx.cache[(stp_s, "Put")], ctx.cache[(stp_l, "Put")]
     legs = [
         TradeLeg("Put", "Sell", stp_s, qty, qs.best_bid_price or qs.ltp),
@@ -1242,6 +1331,7 @@ def calc_bull_put_spread(ctx: EngineContext) -> StrategyResult:
     return StrategyResult(
         sid, name, "ok", legs=legs, net_premium=net_collected, max_loss=max_loss,
         risk_reward_ratio=f"{max_loss:.0f} : {net_collected:.0f}",
+        pop_pct=round(pop, 2),
         structure_modified=ctx.structure_modified,
         margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
     )
@@ -1273,11 +1363,14 @@ def calc_long_straddle(ctx: EngineContext) -> StrategyResult:
         TradeLeg("Put", "Buy", stp, qty, pe.best_offer_price or pe.ltp),
     ]
     max_loss = debit_lot * (qty // ctx.lot_size)
-    return StrategyResult(
-        sid, name, "ok", legs=legs, net_premium=-max_loss, max_loss=max_loss,
-        risk_reward_ratio=f"{max_loss:.0f} : Unlimited",
-        structure_modified=ctx.structure_modified,
-        margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
+    if max_loss > ctx.max_loss_rupees:
+        return _skip(sid, name, "Long straddle debit exceeds user max loss budget.")
+    return _ok_with_pop(
+        ctx, sid, name, legs,
+        max_loss=max_loss,
+        rr=f"{max_loss:.0f} : Unlimited",
+        modified=ctx.structure_modified,
+        net_premium=-max_loss,
     )
 
 
@@ -1311,11 +1404,12 @@ def calc_short_straddle(ctx: EngineContext) -> StrategyResult:
         TradeLeg("Put", "Sell", stp, qty, prem_p),
     ]
     max_profit = (prem_c + prem_p) * qty
-    return StrategyResult(
-        sid, name, "ok", legs=legs, net_premium=max_profit, max_loss=None,
-        risk_reward_ratio=f"Unlimited : {max_profit:.0f}",
-        structure_modified=ctx.structure_modified,
-        margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
+    return _ok_with_pop(
+        ctx, sid, name, legs,
+        max_loss=None,
+        rr=f"Unlimited : {max_profit:.0f}",
+        modified=ctx.structure_modified,
+        net_premium=max_profit,
     )
 
 
@@ -1350,11 +1444,12 @@ def calc_short_strangle(ctx: EngineContext) -> StrategyResult:
         TradeLeg("Put", "Sell", stp_p, qty, prem_p),
     ]
     max_profit = (prem_c + prem_p) * qty
-    return StrategyResult(
-        sid, name, "ok", legs=legs, net_premium=max_profit, max_loss=None,
-        risk_reward_ratio=f"Unlimited : {max_profit:.0f}",
-        structure_modified=ctx.structure_modified,
-        margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
+    return _ok_with_pop(
+        ctx, sid, name, legs,
+        max_loss=None,
+        rr=f"Unlimited : {max_profit:.0f}",
+        modified=ctx.structure_modified,
+        net_premium=max_profit,
     )
 
 
@@ -1398,11 +1493,14 @@ def calc_long_call_butterfly(ctx: EngineContext) -> StrategyResult:
     ]
     max_loss = net_per * qty + extra_risk * (qty // L) * L
     max_profit = (left_w - net_per) * qty
-    return StrategyResult(
-        sid, name, "ok", legs=legs, net_premium=-(net_per * qty), max_loss=max_loss,
-        risk_reward_ratio=f"{max_loss:.0f} : {max_profit:.0f}",
-        structure_modified=ctx.structure_modified,
-        margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
+    if max_loss > ctx.max_loss_rupees:
+        return _skip(sid, name, "Butterfly max loss exceeds user max loss budget.")
+    return _ok_with_pop(
+        ctx, sid, name, legs,
+        max_loss=max_loss,
+        rr=f"{max_loss:.0f} : {max_profit:.0f}",
+        modified=ctx.structure_modified,
+        net_premium=-(net_per * qty),
     )
 
 
@@ -1413,10 +1511,9 @@ def _iron_wings(
     symmetric: bool,
     *,
     strategy_id: str | None = None,
-) -> tuple[int, int, float, float] | None:
-    """Return (long_put, long_call, credit_per_unit, max_loss_per_unit)."""
+) -> tuple[int, int, float, float, int, float] | None:
+    """Return (long_put, long_call, credit_per_unit, max_loss_per_unit, qty, pop)."""
     L = ctx.lot_size
-    qty_margin = _floor_lots(ctx.margin_rupees, ctx.margin_rupees / 4, L) or L
     steps = sorted({s - short_put for s in ctx.liquid_pe_strikes if s < short_put} | {s - short_call for s in ctx.liquid_ce_strikes if s > short_call})
     steps = [abs(x) for x in steps if x != 0]
     if not steps:
@@ -1430,95 +1527,73 @@ def _iron_wings(
                 "short_put": short_put,
                 "short_call": short_call,
                 "wing_width_candidates": sorted(set(steps), reverse=True),
-                "qty_margin": qty_margin,
+                "min_pop_pct": ctx.min_pop_pct,
                 "max_loss_rupees": ctx.max_loss_rupees,
             },
-            rationale="Both long PE and long CE must be liquid at the same wing width W.",
+            rationale="Enumerate symmetric wings; maximize net credit with PoP >= min and max loss within budget.",
         )
+    best: tuple[int, int, float, float, int, float, float] | None = None
     for w in sorted(set(steps), reverse=True):
         lp = short_put - w
         lc = short_call + w
-        lp_liq = lp in ctx.liquid_pe_strikes
-        lc_liq = lc in ctx.liquid_ce_strikes
-        if not lp_liq or not lc_liq:
-            if ctx.audit:
-                ctx.audit.record(
-                    "iron_wing_rejected",
-                    f"W={w}: LP {lp} / LC {lc}",
-                    {
-                        "wing_width": w,
-                        "long_put": lp,
-                        "long_call": lc,
-                        "long_put_liquid": lp_liq,
-                        "long_call_liquid": lc_liq,
-                    },
-                    rationale="Symmetric iron condor/butterfly requires BOTH wings liquid at same W.",
-                )
+        if lp not in ctx.liquid_pe_strikes or lc not in ctx.liquid_ce_strikes:
             continue
         sp, sc = ctx.cache[(short_put, "Put")], ctx.cache[(short_call, "Call")]
         lpq, lcq = ctx.cache[(lp, "Put")], ctx.cache[(lc, "Call")]
-        credit = (sp.best_bid_price or sp.ltp) + (sc.best_bid_price or sc.ltp) - (lpq.best_offer_price or lpq.ltp) - (lcq.best_offer_price or lcq.ltp)
+        sp_prem = sp.best_bid_price or sp.ltp
+        sc_prem = sc.best_bid_price or sc.ltp
+        lp_prem = lpq.best_offer_price or lpq.ltp
+        lc_prem = lcq.best_offer_price or lcq.ltp
+        credit = sp_prem + sc_prem - lp_prem - lc_prem
         max_loss_u = w - credit
-        risk_total = max_loss_u * qty_margin
-        accepted = max_loss_u > 0 and risk_total <= ctx.max_loss_rupees
+        if max_loss_u <= 0:
+            continue
+        qty = _floor_lots(ctx.max_loss_rupees, max_loss_u * L, L)
+        if qty < L or max_loss_u * qty > ctx.max_loss_rupees:
+            continue
+        legs = [
+            TradeLeg("Put", "Sell", short_put, qty, sp_prem),
+            TradeLeg("Put", "Buy", lp, qty, lp_prem),
+            TradeLeg("Call", "Sell", short_call, qty, sc_prem),
+            TradeLeg("Call", "Buy", lc, qty, lc_prem),
+        ]
+        pop = _pop_for_legs(ctx, legs)
+        net_collected = credit * qty
+        accepted = pop >= ctx.min_pop_pct
         if ctx.audit:
             ctx.audit.record_calculation(
                 f"Iron wing W={w}",
-                {
-                    "short_put_bid": sp.best_bid_price or sp.ltp,
-                    "short_call_bid": sc.best_bid_price or sc.ltp,
-                    "long_put_ask": lpq.best_offer_price or lpq.ltp,
-                    "long_call_ask": lcq.best_offer_price or lcq.ltp,
-                    "qty_margin": qty_margin,
-                },
+                {"short_put_bid": sp_prem, "short_call_bid": sc_prem, "qty": qty},
                 {
                     "long_put": lp,
                     "long_call": lc,
                     "credit_per_unit": credit,
                     "max_loss_per_unit": max_loss_u,
-                    "risk_at_qty_margin": risk_total,
+                    "net_premium": net_collected,
+                    "pop_pct": pop,
                     "accepted": accepted,
                 },
                 formula="credit = short_put_bid + short_call_bid - long_put_ask - long_call_ask; max_loss_u = W - credit",
             )
-        if max_loss_u <= 0:
+        if not accepted:
             continue
-        if max_loss_u * qty_margin <= ctx.max_loss_rupees:
-            _audit_decision(
-                ctx,
-                "Iron symmetric wing",
-                f"W={w} (LP {lp}, LC {lc})",
-                f"Widest symmetric wing within risk budget.",
-                {"credit": credit, "max_loss_u": max_loss_u},
-            )
-            return lp, lc, credit, max_loss_u
-    w = min(steps)
-    lp, lc = short_put - w, short_call + w
-    if lp in ctx.liquid_pe_strikes and lc in ctx.liquid_ce_strikes:
-        sp, sc = ctx.cache[(short_put, "Put")], ctx.cache[(short_call, "Call")]
-        lpq, lcq = ctx.cache[(lp, "Put")], ctx.cache[(lc, "Call")]
-        credit = (sp.best_bid_price or sp.ltp) + (sc.best_bid_price or sc.ltp) - (lpq.best_offer_price or lpq.ltp) - (lcq.best_offer_price or lcq.ltp)
-        max_loss_u = w - credit
+        if best is None or net_collected > best[5]:
+            best = (lp, lc, credit, max_loss_u, qty, net_collected, pop)
+    if best:
         _audit_decision(
             ctx,
             "Iron symmetric wing",
-            f"fallback W={w} (LP {lp}, LC {lc})",
-            "No wing met risk budget; narrowest symmetric liquid pair with downscaled qty.",
-            {"credit": credit, "max_loss_u": max_loss_u},
+            f"LP {best[0]} / LC {best[1]}",
+            f"Highest net credit ({best[5]:.2f}) with PoP {best[6]:.1f}% >= {ctx.min_pop_pct:.1f}%.",
+            {"credit": best[2], "max_loss_u": best[3], "qty": best[4], "pop": best[6]},
         )
-        return lp, lc, credit, max_loss_u
+        return best[0], best[1], best[2], best[3], best[4], best[6]
     _audit_decision(
         ctx,
         "Iron symmetric wing",
         "none",
-        f"No symmetric liquid wing pair for PE short {short_put} / CE short {short_call}.",
-        {
-            "narrowest_w": w,
-            "long_put": lp,
-            "long_call": lc,
-            "long_put_liquid": lp in ctx.liquid_pe_strikes,
-            "long_call_liquid": lc in ctx.liquid_ce_strikes,
-        },
+        f"No symmetric wing meets PoP >= {ctx.min_pop_pct:.1f}% within max loss budget.",
+        {"short_put": short_put, "short_call": short_call},
     )
     return None
 
@@ -1537,12 +1612,8 @@ def calc_iron_condor(ctx: EngineContext) -> StrategyResult:
         return _skip(sid, name, "Could not resolve iron condor short strikes.")
     wings = _iron_wings(ctx, stp_sp, stp_sc, True, strategy_id=sid)
     if not wings:
-        return _skip(sid, name, "No symmetric wings within risk limits.")
-    lp, lc, credit, max_loss_u = wings
-    L = ctx.lot_size
-    qty = _floor_lots(ctx.max_loss_rupees, max_loss_u * L, L)
-    if qty < L:
-        qty = L
+        return _skip(sid, name, "No symmetric wings meet minimum PoP within risk limits.")
+    lp, lc, credit, max_loss_u, qty, pop = wings
     sp, sc, lpq, lcq = ctx.cache[(stp_sp, "Put")], ctx.cache[(stp_sc, "Call")], ctx.cache[(lp, "Put")], ctx.cache[(lc, "Call")]
     legs = [
         TradeLeg("Put", "Sell", stp_sp, qty, sp.best_bid_price or sp.ltp),
@@ -1555,6 +1626,7 @@ def calc_iron_condor(ctx: EngineContext) -> StrategyResult:
     return StrategyResult(
         sid, name, "ok", legs=legs, net_premium=net_collected, max_loss=max_loss,
         risk_reward_ratio=f"{max_loss:.0f} : {net_collected:.0f}",
+        pop_pct=round(pop, 2),
         structure_modified=ctx.structure_modified,
         margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
     )
@@ -1569,12 +1641,8 @@ def calc_iron_butterfly(ctx: EngineContext) -> StrategyResult:
         return _skip(sid, name, "No liquid ATM for iron butterfly.")
     wings = _iron_wings(ctx, stp, stp, True, strategy_id=sid)
     if not wings:
-        return _skip(sid, name, "No symmetric wings within risk limits.")
-    lp, lc, credit, max_loss_u = wings
-    L = ctx.lot_size
-    qty = _floor_lots(ctx.max_loss_rupees, max_loss_u * L, L)
-    if qty < L:
-        qty = L
+        return _skip(sid, name, "No symmetric wings meet minimum PoP within risk limits.")
+    lp, lc, credit, max_loss_u, qty, pop = wings
     ce, pe, lpq, lcq = ctx.cache[(stp, "Call")], ctx.cache[(stp, "Put")], ctx.cache[(lp, "Put")], ctx.cache[(lc, "Call")]
     legs = [
         TradeLeg("Put", "Sell", stp, qty, pe.best_bid_price or pe.ltp),
@@ -1587,6 +1655,7 @@ def calc_iron_butterfly(ctx: EngineContext) -> StrategyResult:
     return StrategyResult(
         sid, name, "ok", legs=legs, net_premium=net_collected, max_loss=max_loss,
         risk_reward_ratio=f"{max_loss:.0f} : {net_collected:.0f}",
+        pop_pct=round(pop, 2),
         structure_modified=ctx.structure_modified,
         margin_key=_margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
     )
@@ -1713,14 +1782,14 @@ def run_propose_trades(
     exchange_code: str,
     stock_code: str,
     expiry_date: str,
-    range_lower: float,
-    range_upper: float,
     margin_lacs: float,
     max_loss_lacs: float,
+    min_pop_pct: float = 65.0,
     provision_elm: bool,
     request_id: str | None = None,
     enable_audit: bool = True,
 ) -> dict[str, Any]:
+    min_pop_pct = min(99.0, max(1.0, min_pop_pct))
     audit: StrategyBuilderAuditSession | None = None
     if enable_audit:
         audit = StrategyBuilderAuditSession(
@@ -1730,10 +1799,9 @@ def run_propose_trades(
                 "exchange_code": exchange_code,
                 "stock_code": stock_code.strip(),
                 "expiry_date": expiry_date.strip(),
-                "range_lower": range_lower,
-                "range_upper": range_upper,
                 "margin_lacs": margin_lacs,
                 "max_loss_lacs": max_loss_lacs,
+                "min_pop_pct": min_pop_pct,
                 "provision_elm": provision_elm,
             },
         )
@@ -1749,9 +1817,6 @@ def run_propose_trades(
             audit.record("session_error", error, {"status": status})
             audit.finalize({"status": "error", "error": error})
         return {"Status": status, "Error": error, "Success": None}
-
-    if range_lower >= range_upper:
-        return _fail(400, "range_lower must be less than range_upper.")
 
     expiry_display = _normalize_expiry_display(expiry_date)
     lot_size = processor.fetch_lot_size(stock_code, expiry_display, exchange_code=exchange_code)
@@ -1786,12 +1851,14 @@ def run_propose_trades(
         return _fail(400, "No strikes in scrip master for this expiry.")
 
     step = processor.strike_interval(strikes)
-    mid = (range_lower + range_upper) / 2
+    mid = float(strikes[len(strikes) // 2])
     search_step = processor.search_interval(strikes, mid)
+    placeholder_lo = mid * 0.9
+    placeholder_hi = mid * 1.1
     if audit:
         audit.record_calculation(
             "Engine parameters",
-            {"range_lower": range_lower, "range_upper": range_upper, "mid": mid},
+            {"strike_mid": mid, "min_pop_pct": min_pop_pct},
             {
                 "expiry_display": expiry_display,
                 "strike_step": step,
@@ -1809,10 +1876,11 @@ def run_propose_trades(
         stock_code=stock_code.strip(),
         exchange_code=exchange_code,
         expiry_display=expiry_display,
-        range_lower=range_lower,
-        range_upper=range_upper,
+        range_lower=placeholder_lo,
+        range_upper=placeholder_hi,
         margin_rupees=margin_lacs * 100_000,
         max_loss_rupees=max_loss_lacs * 100_000,
+        min_pop_pct=min_pop_pct,
         provision_elm=provision_elm,
         lot_size=int(lot_size),
         strikes=strikes,
@@ -1827,6 +1895,10 @@ def run_propose_trades(
 
     if ctx.halted:
         return _fail(400, ctx.halt_reason or "Insufficient market depth.")
+
+    atm_iv_pre = _compute_atm_iv(ctx)
+    ctx.atm_iv = atm_iv_pre
+    _apply_auto_range(ctx, sigma=atm_iv_pre)
 
     results: list[StrategyResult] = []
     for calc in CALCULATORS:
@@ -1864,6 +1936,7 @@ def run_propose_trades(
                 "annualized_return_pct": r.annualized_return_pct,
                 "risk_reward_ratio": r.risk_reward_ratio,
                 "span_margin": getattr(r, "span_margin", None),
+                "pop_pct": r.pop_pct,
                 "legs": [leg.to_out(ctx.cache) for leg in r.legs],
             }
         )

@@ -97,6 +97,7 @@ export type ProposedTrade = {
   max_loss?: number | null;
   annualized_return_pct?: number | null;
   risk_reward_ratio?: string | null;
+  pop_pct?: number | null;
   legs: ProposedTradeLeg[];
 };
 

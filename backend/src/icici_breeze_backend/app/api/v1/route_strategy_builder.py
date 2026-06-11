@@ -150,10 +150,9 @@ async def post_propose_trades(
         exchange_code=body.exchange_code.strip() or cfg.NFO,
         stock_code=body.stock_code.strip(),
         expiry_date=body.expiry_date.strip(),
-        range_lower=body.range_lower,
-        range_upper=body.range_upper,
         margin_lacs=body.margin_lacs,
         max_loss_lacs=body.max_loss_lacs,
+        min_pop_pct=body.min_pop_pct,
         provision_elm=body.provision_elm,
         request_id=ctx.request_id,
     )

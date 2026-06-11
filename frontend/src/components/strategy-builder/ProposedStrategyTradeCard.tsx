@@ -28,7 +28,10 @@ function fmtPx(n: number | null | undefined): string {
 
 function InfinitySymbol() {
   return (
-    <span className="inline-block text-[1.8em] leading-none" aria-hidden>
+    <span
+      className="inline-flex h-4 w-4 items-center justify-center text-base leading-none"
+      aria-hidden
+    >
       ∞
     </span>
   );
@@ -90,7 +93,7 @@ export function ProposedStrategyTradeCard({
 
   return (
     <div
-      className={`group w-full min-w-0 rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
+      className={`group w-fit max-w-full min-w-0 rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
         skipped
           ? "border-zinc-200/60 bg-zinc-100/50 opacity-70 dark:border-zinc-700/60 dark:bg-zinc-900/40"
           : selected
@@ -99,7 +102,7 @@ export function ProposedStrategyTradeCard({
       }`}
     >
       <div className="space-y-2">
-        <div className="relative flex min-w-0 items-start gap-2 pr-[min(100%,9rem)]">
+        <div className="relative flex min-w-0 items-start gap-2 pr-[min(100%,8rem)]">
           <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
             {outlook ? <OutlookIcon outlook={outlook} /> : null}
             <span className="truncate">{trade.strategy_name}</span>
@@ -128,10 +131,10 @@ export function ProposedStrategyTradeCard({
           </p>
         ) : (
           <>
-            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-600 dark:text-zinc-300">
-              <span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-600 dark:text-zinc-300">
+              <span className="inline-flex items-center gap-1">
                 Max loss:{" "}
-                <strong className="tabular-nums">
+                <strong className="inline-flex items-center tabular-nums">
                   {isUnlimitedMaxLoss(trade.max_loss) ? (
                     <InfinitySymbol />
                   ) : (
@@ -139,9 +142,9 @@ export function ProposedStrategyTradeCard({
                   )}
                 </strong>
               </span>
-              <span>
+              <span className="inline-flex items-center gap-1">
                 R:R{" "}
-                <strong className="tabular-nums">
+                <strong className="inline-flex items-center tabular-nums">
                   {rrLabel === "∞" ? <InfinitySymbol /> : rrLabel}
                 </strong>
               </span>

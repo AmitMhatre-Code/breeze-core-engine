@@ -8,10 +8,9 @@ class ProposeTradesRequest(BaseModel):
     exchange_code: str = "NFO"
     stock_code: str
     expiry_date: str
-    range_lower: float = Field(gt=0)
-    range_upper: float = Field(gt=0)
     margin_lacs: float = Field(gt=0)
     max_loss_lacs: float = Field(gt=0)
+    min_pop_pct: float = Field(default=65, ge=1, le=99)
     provision_elm: bool = False
 
 
@@ -40,6 +39,7 @@ class ProposedTradeOut(BaseModel):
     annualized_return_pct: Optional[float] = None
     risk_reward_ratio: Optional[str] = None
     span_margin: Optional[float] = None
+    pop_pct: Optional[float] = None
     legs: List[ProposedTradeLegOut] = Field(default_factory=list)
 
 

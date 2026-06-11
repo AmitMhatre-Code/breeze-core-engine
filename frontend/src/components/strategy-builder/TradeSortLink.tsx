@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 
-export type TradeSortKey = "server" | "pop" | "net_premium" | "max_loss";
+export type TradeSortKey = "score" | "server" | "pop" | "net_premium" | "max_loss";
 
 const SORT_OPTIONS: { key: TradeSortKey; label: string }[] = [
+  { key: "score", label: "Score (high → low)" },
   { key: "server", label: "Server order" },
   { key: "pop", label: "PoP (high → low)" },
   { key: "net_premium", label: "Net Premium (high → low)" },
