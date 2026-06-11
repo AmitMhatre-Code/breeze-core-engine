@@ -8,8 +8,12 @@ import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnder
 import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionConfirmDialog";
 import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
-import { OutlookFilterDropdown } from "@/components/strategy-builder/OutlookFilterDropdown";
+import { OutlookFilterButtons } from "@/components/strategy-builder/OutlookFilterButtons";
 import { ProposedStrategyTradeCard } from "@/components/strategy-builder/ProposedStrategyTradeCard";
+import {
+  TradeSortLink,
+  type TradeSortKey,
+} from "@/components/strategy-builder/TradeSortLink";
 import { SectionGate } from "@/components/strategy-builder/SectionGate";
 import { SpotRangeSlider } from "@/components/strategy-builder/SpotRangeSlider";
 import {
@@ -47,8 +51,6 @@ import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
 import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 
 const MARGIN_LACS_MAX = 999_999;
-
-type TradeSortKey = "server" | "pop" | "net_premium" | "max_loss";
 
 function parsePositiveNum(v: string): number | null {
   const n = parseFloat(v.replace(/,/g, ""));
@@ -120,6 +122,8 @@ export default function StrategyBuilderNewPage() {
     () => new Set(ALL_OUTLOOKS),
   );
   const [tradeSort, setTradeSort] = useState<TradeSortKey>("server");
+  const [auditDownloading, setAuditDownloading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
   const rangeInitKeyRef = useRef<string | null>(null);
   const prevSection2ReadyRef = useRef(false);
   const prevSection3ReadyRef = useRef(false);
@@ -681,46 +685,56 @@ export default function StrategyBuilderNewPage() {
             >
               <div className="flex flex-wrap items-baseline justify-between gap-3">
                 <h2 className={sb.sectionTitle}>3. Proposed Trades</h2>
-                {proposedData?.audit_session_id ? (
-                  <button
-                    type="button"
-                    className="shrink-0 text-[11px] font-normal text-zinc-400 underline-offset-2 hover:text-zinc-600 hover:underline dark:text-zinc-500 dark:hover:text-zinc-400"
-                    title="Download build audit log (JSON)"
-                    onClick={() => {
-                      void downloadStrategyBuilderAudit(
-                        proposedData.audit_session_id!,
-                      );
-                    }}
-                  >
-                    download audit
-                  </button>
+                {trades.length > 0 || proposedData?.audit_session_id ? (
+                  <div className="flex shrink-0 items-center gap-3 text-[11px]">
+                    {trades.length > 0 ? (
+                      <TradeSortLink value={tradeSort} onChange={setTradeSort} />
+                    ) : null}
+                    {trades.length > 0 && proposedData?.audit_session_id ? (
+                      <span className="text-zinc-400 dark:text-zinc-500" aria-hidden>
+                        ·
+                      </span>
+                    ) : null}
+                    {proposedData?.audit_session_id ? (
+                      <button
+                        type="button"
+                        className="font-normal text-sky-600 underline underline-offset-2 hover:text-sky-500 disabled:cursor-wait disabled:opacity-60 dark:text-sky-400 dark:hover:text-sky-300"
+                        title="Download build audit log (JSON)"
+                        disabled={auditDownloading}
+                        onClick={() => {
+                          void (async () => {
+                            setAuditError(null);
+                            setAuditDownloading(true);
+                            try {
+                              await downloadStrategyBuilderAudit(
+                                proposedData.audit_session_id!,
+                              );
+                            } catch (e) {
+                              const msg =
+                                e instanceof Error
+                                  ? e.message
+                                  : "Failed to download audit log";
+                              setAuditError(msg);
+                            } finally {
+                              setAuditDownloading(false);
+                            }
+                          })();
+                        }}
+                      >
+                        {auditDownloading ? "downloading…" : "download audit"}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
+              {auditError ? (
+                <p className="text-sm text-red-600 dark:text-red-400">{auditError}</p>
+              ) : null}
               {trades.length > 0 ? (
-                <div className="flex flex-wrap items-end gap-3">
-                  <label className="block min-w-[10rem]">
-                    <span className={sb.fieldLabel}>Sort by</span>
-                    <select
-                      className={sb.select}
-                      value={tradeSort}
-                      onChange={(e) =>
-                        setTradeSort(e.target.value as TradeSortKey)
-                      }
-                    >
-                      <option value="server">Server order</option>
-                      <option value="pop">PoP (high → low)</option>
-                      <option value="net_premium">Net Premium (high → low)</option>
-                      <option value="max_loss">Max Loss (low → high)</option>
-                    </select>
-                  </label>
-                  <label className="block min-w-[10rem]">
-                    <span className={sb.fieldLabel}>Outlook</span>
-                    <OutlookFilterDropdown
-                      selected={outlookFilter}
-                      onChange={setOutlookFilter}
-                    />
-                  </label>
-                </div>
+                <OutlookFilterButtons
+                  selected={outlookFilter}
+                  onChange={setOutlookFilter}
+                />
               ) : null}
               {!trades.length ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">

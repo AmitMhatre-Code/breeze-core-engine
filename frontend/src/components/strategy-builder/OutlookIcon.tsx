@@ -1,45 +1,29 @@
 import type { Outlook } from "@/lib/strategy-builder/types";
-import { outlookPillClassName } from "@/lib/strategy-builder/templates";
+import { outlookIconFillClass } from "@/lib/strategy-builder/templates";
 
 export function OutlookIcon({
   outlook,
-  className = "size-4 shrink-0",
+  className = "size-5 shrink-0",
 }: {
   outlook: Outlook;
   className?: string;
 }) {
-  const ring = outlookPillClassName(outlook).split(" ").find((c) => c.startsWith("text-")) ?? "";
+  const fillClass = outlookIconFillClass(outlook);
   return (
     <svg
-      viewBox="0 0 16 16"
-      className={`${className} ${ring}`}
+      viewBox="0 0 24 24"
+      className={`${className} ${fillClass}`}
       aria-hidden
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      fill="currentColor"
     >
       {outlook === "bullish" ? (
-        <>
-          <path d="M2 12 L8 4 L14 12" />
-          <path d="M8 4 L8 14" opacity="0.35" />
-        </>
+        <path d="M4 17.5c2.2-3.8 5.2-6.2 9-7.5 1.6-.5 3.2-.6 4.6-.2-.6 1.6-1.5 3-2.7 4.1-1.2 1.1-2.7 1.9-4.4 2.3-2.3.6-4.8.7-7.2.5-.1-.4-.1-.9-.3-1.2zM13.5 7.5c.9-.7 2-1.1 3.2-1.2.2 1.3-.1 2.5-.8 3.6-.7 1.1-1.7 1.9-3 2.2-.4-1.1-.3-2.2.2-3.2.1-.3.2-.8.4-1.4zM8 10.5c-.8.5-1.5 1.2-2.1 2-.3-.8-.2-1.6.2-2.3.6-1 1.5-1.7 2.6-2 .3.8.2 1.6-.7 2.3z" />
       ) : outlook === "bearish" ? (
-        <>
-          <path d="M2 4 L8 12 L14 4" />
-          <path d="M8 2 L8 12" opacity="0.35" />
-        </>
+        <path d="M5 15.5c1.8-1.2 3.8-1.8 6-1.8 1.4 0 2.7.3 3.9.9 1.2.6 2.2 1.5 2.9 2.6.7 1.1 1.1 2.4 1.2 3.8-1.9-.2-3.6-.9-5.1-2-1.5-1.1-2.7-2.6-3.5-4.3-.3-.7-.5-1.4-.6-2.1-.3.4-.6.7-.8 1.1zM16.5 8.5c.7-.9 1.6-1.5 2.7-1.8 1.1-.3 2.2-.2 3.2.2-.3 1.5-1 2.8-2 3.8-1 .9-2.2 1.4-3.5 1.4-.3-1.2-.1-2.3.6-3.2.3-.3.6-.6.8-.4zM7.5 12c-.6.4-1.1 1-1.5 1.7-.2-.7 0-1.4.5-2 .5-.6 1.2-1 2-1.2-.2.6-.3 1.2-.5 1.5z" />
       ) : outlook === "neutral" ? (
-        <>
-          <path d="M2 8 L14 8" />
-          <path d="M5 5 L5 11" opacity="0.4" />
-          <path d="M11 5 L11 11" opacity="0.4" />
-        </>
+        <path d="M12 3c.55 0 1 .45 1 1v1.2c1.6.3 2.9 1.1 3.8 2.4.5.7.3 1.7-.4 2.1-.7.4-1.7.2-2.1-.5-.6-.9-1.5-1.4-2.6-1.6v7.8c1.1.2 2 .7 2.6 1.6.6.9.4 2-.5 2.5-.9.5-2 .3-2.5-.6-.9-1.4-2.2-2.2-3.8-2.4V8.1c-1.2.2-2.1.7-2.6 1.6-.5.9-1.6 1.2-2.5.6-.9-.5-1.2-1.5-.7-2.4.9-1.3 2.2-2.1 3.8-2.4V4c0-.55.45-1 1-1zm-4.5 14.5h9v1.5c0 .55-.45 1-1 1h-7c-.55 0-1-.45-1-1v-1.5z" />
       ) : (
-        <>
-          <path d="M2 8 L5 4 L8 10 L11 6 L14 12" />
-        </>
+        <path d="M13 2 7.5 14H11l-1.5 8L17 10h-3.5L13 2z" />
       )}
     </svg>
   );

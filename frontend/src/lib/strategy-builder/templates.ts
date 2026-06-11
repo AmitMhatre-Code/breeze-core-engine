@@ -83,6 +83,19 @@ export function outlookPillLabel(o: Outlook): string {
   }
 }
 
+export function outlookIconFillClass(o: Outlook): string {
+  switch (o) {
+    case "bullish":
+      return "text-emerald-500";
+    case "bearish":
+      return "text-rose-500";
+    case "neutral":
+      return "text-sky-500";
+    case "volatile":
+      return "text-violet-500";
+  }
+}
+
 export function outlookPillClassName(o: Outlook): string {
   switch (o) {
     case "bullish":

@@ -163,6 +163,10 @@ const nextConfig = {
         destination: `${backendUpstream}/strategy-builder/execute`,
       },
       {
+        source: "/strategy-builder/audit/:path*",
+        destination: `${backendUpstream}/strategy-builder/audit/:path*`,
+      },
+      {
         source: "/admin/data",
         destination: `${backendUpstream}/admin/data`,
       },
