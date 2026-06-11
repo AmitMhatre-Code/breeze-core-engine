@@ -16,6 +16,7 @@ import {
   type TradeSortKey,
 } from "@/components/strategy-builder/TradeSortLink";
 import { SectionGate } from "@/components/strategy-builder/SectionGate";
+import { SpotRangeSlider } from "@/components/strategy-builder/SpotRangeSlider";
 import {
   StrategyLegsPanel,
   type LegMarginEntry,
@@ -48,6 +49,7 @@ import type {
   Outlook,
   ProposedTrade,
   ProposeTradesSuccess,
+  StrategyCategory,
   StrategyLeg,
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
@@ -57,6 +59,19 @@ import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
 import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 
 const MARGIN_LACS_MAX = 999_999;
+
+const CATEGORY_LABELS: Record<StrategyCategory, string> = {
+  income: "Income Strategies",
+  directional: "Directional Strategies",
+  volatility: "Volatility Strategies",
+};
+
+function defaultRangeFromSpot(spot: number): { lower: string; upper: string } {
+  return {
+    lower: String(Math.round(spot * 0.9)),
+    upper: String(Math.round(spot * 1.1)),
+  };
+}
 
 function parsePositiveNum(v: string): number | null {
   const n = parseFloat(v.replace(/,/g, ""));
@@ -81,6 +96,7 @@ function resetDownstream(
     setGenerateError: (v: string | null) => void;
     setOutlookFilter: (v: Set<Outlook>) => void;
     setTradeSort: (v: TradeSortKey) => void;
+    setActiveCategory: (v: StrategyCategory | null) => void;
   },
   clearError = false,
 ) {
@@ -90,6 +106,7 @@ function resetDownstream(
   setters.setSelectedTradeId(null);
   setters.setOutlookFilter(new Set(ALL_OUTLOOKS));
   setters.setTradeSort("score");
+  setters.setActiveCategory(null);
   if (clearError) setters.setGenerateError(null);
 }
 
@@ -99,9 +116,14 @@ export default function StrategyBuilderNewPage() {
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [minPopPct, setMinPopPct] = useState(String(DEFAULT_MIN_POP_PCT));
+  const [rangeLower, setRangeLower] = useState("");
+  const [rangeUpper, setRangeUpper] = useState("");
   const [marginLacs, setMarginLacs] = useState("");
   const [maxLossLacs, setMaxLossLacs] = useState("");
   const [provisionElm, setProvisionElm] = useState(false);
+  const [activeCategory, setActiveCategory] = useState<StrategyCategory | null>(
+    null,
+  );
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
   const [proposedData, setProposedData] = useState<ProposeTradesSuccess | null>(
     null,
@@ -142,6 +164,7 @@ export default function StrategyBuilderNewPage() {
     setGenerateError,
     setOutlookFilter,
     setTradeSort,
+    setActiveCategory,
   };
 
   const uq = useQuery({
@@ -201,6 +224,8 @@ export default function StrategyBuilderNewPage() {
 
   const marginLacsNum = parsePositiveNum(marginLacs);
   const maxLossLacsNum = parsePositiveNum(maxLossLacs);
+  const rangeLowerNum = parsePositiveNum(rangeLower);
+  const rangeUpperNum = parsePositiveNum(rangeUpper);
   const minPopPctNum = (() => {
     const n = parseFloat(minPopPct.replace(/,/g, ""));
     if (!Number.isFinite(n)) return null;
@@ -234,14 +259,25 @@ export default function StrategyBuilderNewPage() {
     prevSection4ReadyRef.current = section4Ready;
   }, [section4Ready]);
 
+  useEffect(() => {
+    if (chainSpot != null && chainSpot > 0) {
+      const { lower, upper } = defaultRangeFromSpot(chainSpot);
+      setRangeLower(lower);
+      setRangeUpper(upper);
+    }
+  }, [chainSpot, stockCode, expiryDate]);
+
   const canGenerate =
     section2Ready &&
     marginLacsNum != null &&
     maxLossLacsNum != null &&
-    minPopPctNum != null;
+    minPopPctNum != null &&
+    rangeLowerNum != null &&
+    rangeUpperNum != null &&
+    rangeLowerNum < rangeUpperNum;
 
   const generateM = useMutation({
-    mutationFn: () =>
+    mutationFn: (category: StrategyCategory) =>
       proposeTrades({
         exchange_code: segmentExchange,
         stock_code: stockCode.trim(),
@@ -250,8 +286,11 @@ export default function StrategyBuilderNewPage() {
         max_loss_lacs: maxLossLacsNum!,
         min_pop_pct: minPopPctNum!,
         provision_elm: provisionElm,
+        strategy_category: category,
+        range_lower: rangeLowerNum!,
+        range_upper: rangeUpperNum!,
       }),
-    onSuccess: (res) => {
+    onSuccess: (res, category) => {
       if (res.Status !== 200 || !res.Success) {
         setGenerateError(res.Error ?? "Failed to generate trades.");
         setProposedData(null);
@@ -261,6 +300,7 @@ export default function StrategyBuilderNewPage() {
       }
       setGenerateError(null);
       setProposedData(res.Success);
+      setActiveCategory(category);
       setSelectedTradeId(null);
       setLegs([]);
       setLegMarginCache({});
@@ -587,6 +627,15 @@ export default function StrategyBuilderNewPage() {
             >
               <h2 className={sb.sectionTitle}>2. Parameters</h2>
               <div className="space-y-4">
+                {spot != null && spot > 0 ? (
+                  <SpotRangeSlider
+                    spot={spot}
+                    rangeLower={rangeLower}
+                    rangeUpper={rangeUpper}
+                    onRangeLowerChange={setRangeLower}
+                    onRangeUpperChange={setRangeUpper}
+                  />
+                ) : null}
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <label className="block">
                     <span className={sb.fieldLabel}>Minimum PoP (%)</span>
@@ -656,19 +705,39 @@ export default function StrategyBuilderNewPage() {
                   Minimum PoP must be between 1 and 99.
                 </p>
               ) : null}
+              {rangeLowerNum != null &&
+              rangeUpperNum != null &&
+              rangeLowerNum >= rangeUpperNum ? (
+                <p className="text-sm text-red-600 dark:text-red-400">
+                  Strike range lower bound must be below the upper bound.
+                </p>
+              ) : null}
               {generateError ? (
                 <p className="text-sm text-red-600 dark:text-red-400">
                   {generateError}
                 </p>
               ) : null}
-              <button
-                type="button"
-                className={sb.btnPrimary}
-                disabled={!canGenerate || generateM.isPending}
-                onClick={() => generateM.mutate()}
-              >
-                {generateM.isPending ? "Generating…" : "Generate Trades"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    "income",
+                    "directional",
+                    "volatility",
+                  ] as const satisfies StrategyCategory[]
+                ).map((category) => (
+                  <button
+                    key={category}
+                    type="button"
+                    className={sb.btnPrimary}
+                    disabled={!canGenerate || generateM.isPending}
+                    onClick={() => generateM.mutate(category)}
+                  >
+                    {generateM.isPending && generateM.variables === category
+                      ? "Generating…"
+                      : CATEGORY_LABELS[category]}
+                  </button>
+                ))}
+              </div>
             </section>
           </SectionGate>
 
@@ -678,7 +747,14 @@ export default function StrategyBuilderNewPage() {
               className={`${sb.section} space-y-4`}
             >
               <div className="flex flex-wrap items-baseline justify-between gap-3">
-                <h2 className={sb.sectionTitle}>3. Proposed Trades</h2>
+                <h2 className={sb.sectionTitle}>
+                  3. Proposed Trades
+                  {activeCategory ? (
+                    <span className="ml-2 text-sm font-normal text-zinc-500 dark:text-zinc-400">
+                      — {CATEGORY_LABELS[activeCategory]}
+                    </span>
+                  ) : null}
+                </h2>
                 {trades.length > 0 || proposedData?.audit_session_id ? (
                   <div className="flex shrink-0 items-center gap-3 text-[11px]">
                     {trades.length > 0 ? (
@@ -732,7 +808,7 @@ export default function StrategyBuilderNewPage() {
               ) : null}
               {!trades.length ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  Fill parameters and click Generate Trades to see strategy
+                  Fill parameters and choose a strategy category to see
                   proposals.
                 </p>
               ) : displayedTrades.length === 0 ? (

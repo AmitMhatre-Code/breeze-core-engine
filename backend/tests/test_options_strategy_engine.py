@@ -9,6 +9,8 @@ from icici_breeze_backend.app.services.options_strategy_engine import (
     TradeLeg,
     _attach_margins_and_returns,
     _build_liquidity_cache,
+    _expand_chain_to_liquidity_boundary,
+    _fetch_full_chain_side,
     _floor_lots,
     _strategy_boundary_strikes,
     _strike_window,
@@ -64,6 +66,7 @@ class TestBullCallSpreadSizing(unittest.TestCase):
             max_loss_rupees=200_000,
             min_pop_pct=1.0,
             provision_elm=False,
+            strategy_category="directional",
             lot_size=75,
             strikes=strikes,
             strike_step=50,
@@ -107,8 +110,28 @@ class TestMarginBatching(unittest.TestCase):
             StrategyResult("a", "A", "ok", legs=legs_a),
             StrategyResult("b", "B", "ok", legs=legs_b),
         ]
+        margin_ctx = EngineContext(
+            processor=processor,
+            user_id="u1",
+            stock_code="NIFTY",
+            exchange_code="NFO",
+            expiry_display="09-Jun-2025",
+            range_lower=23400,
+            range_upper=23600,
+            margin_rupees=500_000,
+            max_loss_rupees=200_000,
+            min_pop_pct=65.0,
+            provision_elm=False,
+            strategy_category="income",
+            lot_size=75,
+            strikes=list(range(23000, 24100, 50)),
+            strike_step=50,
+            search_interval=50,
+            spot=23500,
+            atm_strike=23500,
+        )
         _attach_margins_and_returns(
-            processor, "u1", "NFO", "NIFTY", "09-Jun-2025", results
+            processor, "u1", "NFO", "NIFTY", "09-Jun-2025", results, margin_ctx
         )
         self.assertEqual(processor.strategy_builder_margin.call_count, 2)
 
@@ -195,6 +218,7 @@ class TestBuildLiquidityCache(unittest.TestCase):
             max_loss_rupees=200_000,
             min_pop_pct=65.0,
             provision_elm=False,
+            strategy_category="income",
             lot_size=75,
             strikes=strikes,
             strike_step=50,
@@ -245,6 +269,69 @@ class TestBuildLiquidityCache(unittest.TestCase):
         self.assertGreater(len(tail_calls), 0)
         tail_strikes = {int(c.kwargs["strike_price"]) for c in tail_calls}
         self.assertTrue(any(s < 23400 for s in tail_strikes) or any(s > 23600 for s in tail_strikes))
+
+
+class TestExpandChainToLiquidityBoundary(unittest.TestCase):
+    def test_steps_out_one_strike_at_a_time_beyond_initial_chain(self):
+        proc = MagicMock()
+        strikes = list(range(23000, 26200, 50))
+
+        def fetch_chain(*_args, **kwargs):
+            strike_price = kwargs.get("strike_price")
+            right = kwargs.get("right", "Call")
+            if strike_price is None:
+                return {
+                    "Status": 200,
+                    "Success": [_chain_row(s, right) for s in range(23000, 24700, 50)],
+                }
+            sp = int(strike_price)
+            if sp > 26100:
+                return {
+                    "Status": 200,
+                    "Success": [
+                        {
+                            **_chain_row(sp, right),
+                            "total_buy_qty": 0,
+                            "total_sell_qty": 0,
+                        }
+                    ],
+                }
+            return {"Status": 200, "Success": [_chain_row(sp, right)]}
+
+        proc.fetch_option_chain_quotes_sb.side_effect = fetch_chain
+        ctx = EngineContext(
+            processor=proc,
+            user_id="u1",
+            stock_code="NIFTY",
+            exchange_code="NFO",
+            expiry_display="09-Jun-2025",
+            range_lower=23400,
+            range_upper=23600,
+            margin_rupees=500_000,
+            max_loss_rupees=200_000,
+            min_pop_pct=65.0,
+            provision_elm=False,
+            strategy_category="income",
+            lot_size=75,
+            strikes=strikes,
+            strike_step=50,
+            search_interval=50,
+            spot=23500,
+            atm_strike=23500,
+        )
+        ctx.chain_backoff = OptionChainBackoff()
+        _fetch_full_chain_side(ctx, "Call", fetch_reason="test CE")
+        _fetch_full_chain_side(ctx, "Put", fetch_reason="test PE")
+        _expand_chain_to_liquidity_boundary(ctx)
+        per_strike_calls = [
+            c
+            for c in proc.fetch_option_chain_quotes_sb.call_args_list
+            if c.kwargs.get("strike_price") is not None
+        ]
+        self.assertGreater(len(per_strike_calls), 0)
+        self.assertIn((26100, "Call"), ctx.cache)
+        self.assertTrue(ctx.cache[(26100, "Call")].liquid)
+        self.assertNotIn((26150, "Call"), ctx.cache)
 
 
 class TestFetchOptionChainBackoff(unittest.TestCase):
@@ -350,6 +437,7 @@ class TestNakedCeAboveRangeUpper(unittest.TestCase):
             max_loss_rupees=500_000,
             min_pop_pct=1.0,
             provision_elm=False,
+            strategy_category="income",
             lot_size=75,
             strikes=strikes,
             strike_step=50,

@@ -67,3 +67,42 @@ def estimate_probability_of_profit(
         if portfolio_payoff_at_expiry(st, legs, lot_size) > 0:
             wins += 1
     return (100.0 * wins) / samples
+
+
+def estimate_expected_payoff(
+    spot: float,
+    t_years: float,
+    sigma: float,
+    legs: list[PopLeg],
+    lot_size: int,
+    *,
+    r: float = DEFAULT_R,
+    q: float = DEFAULT_Q,
+    samples: int = DEFAULT_SAMPLES,
+    rng: random.Random | None = None,
+) -> float:
+    """Monte Carlo mean portfolio P&L at expiry (same model as PoP)."""
+    if t_years <= 0 or sigma <= 0 or spot <= 0 or samples < 1 or not legs:
+        return 0.0
+    gen = rng or random
+    drift = (r - q - 0.5 * sigma * sigma) * t_years
+    vol = sigma * math.sqrt(t_years)
+    total = 0.0
+    for _ in range(samples):
+        z = gen.gauss(0.0, 1.0)
+        st = spot * math.exp(drift + vol * z)
+        total += portfolio_payoff_at_expiry(st, legs, lot_size)
+    return total / samples
+
+
+def estimate_expected_value_heuristic(
+    pop_pct: float,
+    max_profit: float,
+    max_loss: float,
+) -> float:
+    """PoP × profit − probability of loss × loss."""
+    pop = max(0.0, min(100.0, pop_pct)) / 100.0
+    pol = 1.0 - pop
+    profit = max(0.0, max_profit)
+    loss = max(0.0, max_loss)
+    return pop * profit - pol * loss

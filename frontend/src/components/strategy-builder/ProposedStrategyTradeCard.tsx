@@ -93,7 +93,7 @@ export function ProposedStrategyTradeCard({
 
   return (
     <div
-      className={`group w-fit max-w-full min-w-0 rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
+      className={`group w-full min-w-[18rem] max-w-full rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
         skipped
           ? "border-zinc-200/60 bg-zinc-100/50 opacity-70 dark:border-zinc-700/60 dark:bg-zinc-900/40"
           : selected
@@ -105,7 +105,7 @@ export function ProposedStrategyTradeCard({
         <div className="relative flex min-w-0 items-start gap-2 pr-[min(100%,8rem)]">
           <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
             {outlook ? <OutlookIcon outlook={outlook} /> : null}
-            <span className="truncate">{trade.strategy_name}</span>
+            <span className="break-words leading-snug">{trade.strategy_name}</span>
             {trade.structure_modified ? (
               <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
                 Modified
@@ -156,6 +156,22 @@ export function ProposedStrategyTradeCard({
                   </strong>
                 </span>
               ) : null}
+              <span className="inline-flex items-center gap-1">
+                SPAN:{" "}
+                <strong className="tabular-nums">
+                  {trade.span_margin != null
+                    ? formatIndianMoneyCompact(trade.span_margin)
+                    : "—"}
+                </strong>
+              </span>
+              <span className="inline-flex items-center gap-1">
+                ELM:{" "}
+                <strong className="tabular-nums">
+                  {trade.elm_requirement != null && trade.elm_requirement > 0
+                    ? formatIndianMoneyCompact(trade.elm_requirement)
+                    : "—"}
+                </strong>
+              </span>
             </div>
 
             <div className="space-y-1.5 border-t border-zinc-100 pt-1.5 dark:border-zinc-800">

@@ -3,6 +3,7 @@ import { getBackendBaseUrl } from "@/lib/config";
 import type {
   ChainApiResponse,
   ProposeTradesApiResponse,
+  StrategyCategory,
 } from "@/lib/strategy-builder/types";
 
 export async function fetchStrategyBuilderChain(
@@ -32,6 +33,9 @@ export type ProposeTradesParams = {
   max_loss_lacs: number;
   min_pop_pct: number;
   provision_elm: boolean;
+  strategy_category: StrategyCategory;
+  range_lower: number;
+  range_upper: number;
 };
 
 export async function proposeTrades(

@@ -189,6 +189,7 @@ class TestEngineAuditIntegration(unittest.TestCase):
             max_loss_rupees=200_000,
             min_pop_pct=1.0,
             provision_elm=False,
+            strategy_category="income",
             lot_size=75,
             strikes=strikes,
             strike_step=50,
@@ -241,6 +242,9 @@ class TestEngineAuditIntegration(unittest.TestCase):
                     max_loss_lacs=2.0,
                     min_pop_pct=1.0,
                     provision_elm=False,
+                    strategy_category="income",
+                    range_lower=23400,
+                    range_upper=23600,
                     request_id="req-1",
                 )
                 self.assertEqual(out["Status"], 200)

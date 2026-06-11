@@ -215,6 +215,11 @@ export function templatesForOutlook(outlook: Outlook): StrategyTemplateMeta[] {
 const EXTRA_STRATEGY_OUTLOOK: Record<string, Outlook> = {
   naked_ce_short: "bearish",
   naked_pe_short: "bullish",
+  long_call: "bullish",
+  long_put: "bearish",
+  long_butterfly: "neutral",
+  long_condor: "volatile",
+  long_call_butterfly: "neutral",
 };
 
 const strategyOutlookById = new Map<string, Outlook>(

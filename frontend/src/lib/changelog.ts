@@ -20,7 +20,18 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "2.0.0-j",
+    version: "2.0.0-l",
+    date: "11-Jun-2026",
+    releaseKind: "patch",
+    summary: "Strategy Builder (New) categories",
+    changes: [
+      "Strategy Builder (New) restores the strike-range slider alongside minimum PoP input",
+      "Income, Directional, and Volatility strategy buttons each generate category-specific trades with tailored objectives",
+      "Full options chain is built incrementally to liquidity boundaries; trade tiles show SPAN and ELM requirements",
+    ],
+  },
+  {
+    version: "2.0.0-k",
     date: "10-Jun-2026",
     releaseKind: "patch",
     summary: "Strategy Builder (New)",

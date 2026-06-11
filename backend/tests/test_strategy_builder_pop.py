@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from icici_breeze_backend.app.services.strategy_builder_pop import (
+    estimate_expected_payoff,
+    estimate_expected_value_heuristic,
     estimate_probability_of_profit,
     portfolio_payoff_at_expiry,
 )
@@ -50,3 +52,19 @@ class TestStrategyBuilderPop(unittest.TestCase):
         legs = [_Leg("Call", "Buy", 100, 1, 5.0)]
         self.assertEqual(estimate_probability_of_profit(0, 0.1, 0.2, legs, 1), 0.0)
         self.assertEqual(estimate_probability_of_profit(100, 0, 0.2, legs, 1), 0.0)
+
+    def test_expected_payoff_reproducible_with_seed(self):
+        legs = [_Leg("Call", "Buy", 23500, 75, 100.0)]
+        rng = random.Random(7)
+        ep1 = estimate_expected_payoff(
+            23500.0, 30 / 365.0, 0.18, legs, 75, samples=1500, rng=rng
+        )
+        rng2 = random.Random(7)
+        ep2 = estimate_expected_payoff(
+            23500.0, 30 / 365.0, 0.18, legs, 75, samples=1500, rng=rng2
+        )
+        self.assertEqual(ep1, ep2)
+
+    def test_expected_value_heuristic(self):
+        ev = estimate_expected_value_heuristic(60.0, 10_000.0, 5_000.0)
+        self.assertAlmostEqual(ev, 0.6 * 10_000 - 0.4 * 5_000)

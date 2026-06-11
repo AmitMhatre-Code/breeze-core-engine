@@ -3,6 +3,8 @@ from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+StrategyCategory = Literal["income", "directional", "volatility"]
+
 
 class ProposeTradesRequest(BaseModel):
     exchange_code: str = "NFO"
@@ -12,6 +14,9 @@ class ProposeTradesRequest(BaseModel):
     max_loss_lacs: float = Field(gt=0)
     min_pop_pct: float = Field(default=65, ge=1, le=99)
     provision_elm: bool = False
+    strategy_category: StrategyCategory
+    range_lower: float = Field(gt=0)
+    range_upper: float = Field(gt=0)
 
 
 class ProposedTradeLegOut(BaseModel):
@@ -39,6 +44,7 @@ class ProposedTradeOut(BaseModel):
     annualized_return_pct: Optional[float] = None
     risk_reward_ratio: Optional[str] = None
     span_margin: Optional[float] = None
+    elm_requirement: Optional[float] = None
     pop_pct: Optional[float] = None
     legs: List[ProposedTradeLegOut] = Field(default_factory=list)
 
