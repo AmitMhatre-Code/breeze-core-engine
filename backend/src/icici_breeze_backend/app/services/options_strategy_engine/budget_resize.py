@@ -29,7 +29,6 @@ def resize_results_to_budgets(
     audit: Any | None = None,
 ) -> None:
     """Size each ok trade from one-lot SPAN margin and dual margin/max-loss budgets."""
-    unit_span_cache: dict[tuple, float] = {}
     L = ctx.lot_size
 
     for result in results:
@@ -37,7 +36,7 @@ def resize_results_to_budgets(
             continue
 
         struct_key = structural_margin_key(result.legs)
-        if struct_key not in unit_span_cache:
+        if struct_key not in ctx.unit_span_by_structure:
             one_lot_legs = legs_at_lots(result.legs, L, lots=1)
             margin_input = legs_to_margin_input(
                 one_lot_legs, stock_code, exchange_code, expiry_display
@@ -53,11 +52,11 @@ def resize_results_to_budgets(
                     "phase": "unit_span_sizing",
                 },
             )
-            unit_span_cache[struct_key] = parse_float(
+            ctx.unit_span_by_structure[struct_key] = parse_float(
                 (res.get("Success") or {}).get("span_margin_required")
             )
 
-        unit_span = unit_span_cache[struct_key]
+        unit_span = ctx.unit_span_by_structure[struct_key]
         if unit_span <= 0:
             result.status = "skipped"
             result.skip_reason = "Could not resolve SPAN margin for one lot."

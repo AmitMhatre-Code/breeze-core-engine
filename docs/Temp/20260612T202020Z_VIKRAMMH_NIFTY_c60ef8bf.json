@@ -1,12 +1,12 @@
 {
-  "session_id": "6ef58513-4743-425a-94dd-2b151d7d2ebc",
+  "session_id": "c60ef8bf-f852-4050-ba05-525115c5be05",
   "user_id": "VIKRAMMH",
   "request_id": null,
   "source": "strategy_builder_new",
-  "started_at": "2026-06-12T18:24:12.967Z",
-  "finished_at": "2026-06-12T18:24:25.803Z",
-  "duration_ms": 12836,
-  "audit_file": "/app/backend/data/strategy-builder-audit/20260612T182412Z_VIKRAMMH_NIFTY_6ef58513.json",
+  "started_at": "2026-06-12T20:20:20.121Z",
+  "finished_at": "2026-06-12T20:20:51.923Z",
+  "duration_ms": 31801,
+  "audit_file": "/app/backend/data/strategy-builder-audit/20260612T202020Z_VIKRAMMH_NIFTY_c60ef8bf.json",
   "request": {
     "exchange_code": "NFO",
     "stock_code": "NIFTY",
@@ -19,8 +19,8 @@
     "risk_reward_profile": "moderate"
   },
   "icici_api_calls": {
-    "total": 12,
-    "total_success": 12,
+    "total": 27,
+    "total_success": 27,
     "total_failed": 0,
     "by_api": {
       "get_option_chain_quotes": {
@@ -29,8 +29,8 @@
         "failed": 0
       },
       "margin_calculator": {
-        "total": 10,
-        "success": 10,
+        "total": 25,
+        "success": 25,
         "failed": 0
       }
     }
@@ -1609,11 +1609,11 @@
       }
     ]
   },
-  "event_count": 167,
+  "event_count": 198,
   "events": [
     {
       "seq": 1,
-      "ts": "2026-06-12T18:24:12.967Z",
+      "ts": "2026-06-12T20:20:20.121Z",
       "category": "session_start",
       "message": "Strategy Builder (New) propose-trades",
       "rationale": "Full decision audit for this build session.",
@@ -1624,7 +1624,7 @@
     },
     {
       "seq": 2,
-      "ts": "2026-06-12T18:24:12.968Z",
+      "ts": "2026-06-12T20:20:20.122Z",
       "category": "scrip_master",
       "message": "fetch_lot_size",
       "rationale": "Lot size from scrip master drives quantity snapping.",
@@ -1637,7 +1637,7 @@
     },
     {
       "seq": 3,
-      "ts": "2026-06-12T18:24:12.978Z",
+      "ts": "2026-06-12T20:20:20.132Z",
       "category": "scrip_master",
       "message": "list_option_strikes",
       "rationale": "Available strikes bound all strategy construction.",
@@ -1649,7 +1649,7 @@
     },
     {
       "seq": 4,
-      "ts": "2026-06-12T18:24:12.978Z",
+      "ts": "2026-06-12T20:20:20.132Z",
       "category": "calculation",
       "message": "Engine parameters",
       "rationale": "Delta-anchored template parameters (no user strike range).",
@@ -1672,7 +1672,7 @@
     },
     {
       "seq": 5,
-      "ts": "2026-06-12T18:24:12.979Z",
+      "ts": "2026-06-12T20:20:20.133Z",
       "category": "liquidity_protocol",
       "message": "Fetch full CE and PE option chains",
       "rationale": "Two chain-wide quotes populate the bulk strike cache (~60 strikes per side).",
@@ -1683,7 +1683,7 @@
     },
     {
       "seq": 6,
-      "ts": "2026-06-12T18:24:13.126Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "api_call",
       "message": "API get_option_chain_quotes",
       "rationale": "Fetch full CE chain",
@@ -3388,7 +3388,7 @@
     },
     {
       "seq": 7,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3414,7 +3414,7 @@
     },
     {
       "seq": 8,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3440,7 +3440,7 @@
     },
     {
       "seq": 9,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3466,7 +3466,7 @@
     },
     {
       "seq": 10,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3492,7 +3492,7 @@
     },
     {
       "seq": 11,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3518,7 +3518,7 @@
     },
     {
       "seq": 12,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3544,7 +3544,7 @@
     },
     {
       "seq": 13,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3570,7 +3570,7 @@
     },
     {
       "seq": 14,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3596,7 +3596,7 @@
     },
     {
       "seq": 15,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3622,7 +3622,7 @@
     },
     {
       "seq": 16,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3648,7 +3648,7 @@
     },
     {
       "seq": 17,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3674,7 +3674,7 @@
     },
     {
       "seq": 18,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3700,7 +3700,7 @@
     },
     {
       "seq": 19,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3726,7 +3726,7 @@
     },
     {
       "seq": 20,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3752,7 +3752,7 @@
     },
     {
       "seq": 21,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3778,7 +3778,7 @@
     },
     {
       "seq": 22,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3804,7 +3804,7 @@
     },
     {
       "seq": 23,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 22950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3830,7 +3830,7 @@
     },
     {
       "seq": 24,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 23000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3856,7 +3856,7 @@
     },
     {
       "seq": 25,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 23050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3882,7 +3882,7 @@
     },
     {
       "seq": 26,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 23100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3908,7 +3908,7 @@
     },
     {
       "seq": 27,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 23150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3934,7 +3934,7 @@
     },
     {
       "seq": 28,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.287Z",
       "category": "strike_selected",
       "message": "Call 23200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3960,7 +3960,7 @@
     },
     {
       "seq": 29,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3986,7 +3986,7 @@
     },
     {
       "seq": 30,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4012,7 +4012,7 @@
     },
     {
       "seq": 31,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4038,7 +4038,7 @@
     },
     {
       "seq": 32,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4064,7 +4064,7 @@
     },
     {
       "seq": 33,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4090,7 +4090,7 @@
     },
     {
       "seq": 34,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4116,7 +4116,7 @@
     },
     {
       "seq": 35,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4142,7 +4142,7 @@
     },
     {
       "seq": 36,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4168,7 +4168,7 @@
     },
     {
       "seq": 37,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4194,7 +4194,7 @@
     },
     {
       "seq": 38,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4220,7 +4220,7 @@
     },
     {
       "seq": 39,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4246,7 +4246,7 @@
     },
     {
       "seq": 40,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4272,7 +4272,7 @@
     },
     {
       "seq": 41,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4298,7 +4298,7 @@
     },
     {
       "seq": 42,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4324,7 +4324,7 @@
     },
     {
       "seq": 43,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 23950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4350,7 +4350,7 @@
     },
     {
       "seq": 44,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4376,7 +4376,7 @@
     },
     {
       "seq": 45,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4402,7 +4402,7 @@
     },
     {
       "seq": 46,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4428,7 +4428,7 @@
     },
     {
       "seq": 47,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4454,7 +4454,7 @@
     },
     {
       "seq": 48,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4480,7 +4480,7 @@
     },
     {
       "seq": 49,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4506,7 +4506,7 @@
     },
     {
       "seq": 50,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4532,7 +4532,7 @@
     },
     {
       "seq": 51,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4558,7 +4558,7 @@
     },
     {
       "seq": 52,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4584,7 +4584,7 @@
     },
     {
       "seq": 53,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4610,7 +4610,7 @@
     },
     {
       "seq": 54,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4636,7 +4636,7 @@
     },
     {
       "seq": 55,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4662,7 +4662,7 @@
     },
     {
       "seq": 56,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4688,7 +4688,7 @@
     },
     {
       "seq": 57,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4714,7 +4714,7 @@
     },
     {
       "seq": 58,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4740,7 +4740,7 @@
     },
     {
       "seq": 59,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4766,7 +4766,7 @@
     },
     {
       "seq": 60,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4792,7 +4792,7 @@
     },
     {
       "seq": 61,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4818,7 +4818,7 @@
     },
     {
       "seq": 62,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4844,7 +4844,7 @@
     },
     {
       "seq": 63,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 24950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4870,7 +4870,7 @@
     },
     {
       "seq": 64,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 25000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4896,7 +4896,7 @@
     },
     {
       "seq": 65,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 25050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4922,7 +4922,7 @@
     },
     {
       "seq": 66,
-      "ts": "2026-06-12T18:24:13.127Z",
+      "ts": "2026-06-12T20:20:20.288Z",
       "category": "strike_selected",
       "message": "Call 25100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4948,7 +4948,7 @@
     },
     {
       "seq": 67,
-      "ts": "2026-06-12T18:24:14.270Z",
+      "ts": "2026-06-12T20:20:21.428Z",
       "category": "api_call",
       "message": "API get_option_chain_quotes",
       "rationale": "Fetch full PE chain",
@@ -6653,7 +6653,7 @@
     },
     {
       "seq": 68,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.429Z",
       "category": "strike_selected",
       "message": "Put 22150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6679,7 +6679,7 @@
     },
     {
       "seq": 69,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.429Z",
       "category": "strike_selected",
       "message": "Put 22200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6705,7 +6705,7 @@
     },
     {
       "seq": 70,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.429Z",
       "category": "strike_selected",
       "message": "Put 22250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6731,7 +6731,7 @@
     },
     {
       "seq": 71,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.429Z",
       "category": "strike_selected",
       "message": "Put 22300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6757,7 +6757,7 @@
     },
     {
       "seq": 72,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.429Z",
       "category": "strike_selected",
       "message": "Put 22350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6783,7 +6783,7 @@
     },
     {
       "seq": 73,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.429Z",
       "category": "strike_selected",
       "message": "Put 22400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6809,7 +6809,7 @@
     },
     {
       "seq": 74,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.429Z",
       "category": "strike_selected",
       "message": "Put 22450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6835,7 +6835,7 @@
     },
     {
       "seq": 75,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.429Z",
       "category": "strike_selected",
       "message": "Put 22500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6861,7 +6861,7 @@
     },
     {
       "seq": 76,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.429Z",
       "category": "strike_selected",
       "message": "Put 22550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6887,7 +6887,7 @@
     },
     {
       "seq": 77,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 22600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6913,7 +6913,7 @@
     },
     {
       "seq": 78,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 22650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6939,7 +6939,7 @@
     },
     {
       "seq": 79,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 22700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6965,7 +6965,7 @@
     },
     {
       "seq": 80,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 22750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6991,7 +6991,7 @@
     },
     {
       "seq": 81,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 22800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7017,7 +7017,7 @@
     },
     {
       "seq": 82,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 22850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7043,7 +7043,7 @@
     },
     {
       "seq": 83,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 22900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7069,7 +7069,7 @@
     },
     {
       "seq": 84,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 22950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7095,7 +7095,7 @@
     },
     {
       "seq": 85,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7121,7 +7121,7 @@
     },
     {
       "seq": 86,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7147,7 +7147,7 @@
     },
     {
       "seq": 87,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7173,7 +7173,7 @@
     },
     {
       "seq": 88,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7199,7 +7199,7 @@
     },
     {
       "seq": 89,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7225,7 +7225,7 @@
     },
     {
       "seq": 90,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7251,7 +7251,7 @@
     },
     {
       "seq": 91,
-      "ts": "2026-06-12T18:24:14.271Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7277,7 +7277,7 @@
     },
     {
       "seq": 92,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7303,7 +7303,7 @@
     },
     {
       "seq": 93,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7329,7 +7329,7 @@
     },
     {
       "seq": 94,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7355,7 +7355,7 @@
     },
     {
       "seq": 95,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7381,7 +7381,7 @@
     },
     {
       "seq": 96,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7407,7 +7407,7 @@
     },
     {
       "seq": 97,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7433,7 +7433,7 @@
     },
     {
       "seq": 98,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7459,7 +7459,7 @@
     },
     {
       "seq": 99,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7485,7 +7485,7 @@
     },
     {
       "seq": 100,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7511,7 +7511,7 @@
     },
     {
       "seq": 101,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7537,7 +7537,7 @@
     },
     {
       "seq": 102,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7563,7 +7563,7 @@
     },
     {
       "seq": 103,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7589,7 +7589,7 @@
     },
     {
       "seq": 104,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 23950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7615,7 +7615,7 @@
     },
     {
       "seq": 105,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7641,7 +7641,7 @@
     },
     {
       "seq": 106,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7667,7 +7667,7 @@
     },
     {
       "seq": 107,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7693,7 +7693,7 @@
     },
     {
       "seq": 108,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7719,7 +7719,7 @@
     },
     {
       "seq": 109,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7745,7 +7745,7 @@
     },
     {
       "seq": 110,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7771,7 +7771,7 @@
     },
     {
       "seq": 111,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7797,7 +7797,7 @@
     },
     {
       "seq": 112,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7823,7 +7823,7 @@
     },
     {
       "seq": 113,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7849,7 +7849,7 @@
     },
     {
       "seq": 114,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7875,7 +7875,7 @@
     },
     {
       "seq": 115,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7901,7 +7901,7 @@
     },
     {
       "seq": 116,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7927,7 +7927,7 @@
     },
     {
       "seq": 117,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7953,7 +7953,7 @@
     },
     {
       "seq": 118,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7979,7 +7979,7 @@
     },
     {
       "seq": 119,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8005,7 +8005,7 @@
     },
     {
       "seq": 120,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8031,7 +8031,7 @@
     },
     {
       "seq": 121,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8057,7 +8057,7 @@
     },
     {
       "seq": 122,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8083,7 +8083,7 @@
     },
     {
       "seq": 123,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8109,7 +8109,7 @@
     },
     {
       "seq": 124,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 24950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8135,7 +8135,7 @@
     },
     {
       "seq": 125,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 25000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8161,7 +8161,7 @@
     },
     {
       "seq": 126,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 25050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8187,7 +8187,7 @@
     },
     {
       "seq": 127,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "strike_selected",
       "message": "Put 25100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8213,7 +8213,7 @@
     },
     {
       "seq": 128,
-      "ts": "2026-06-12T18:24:14.272Z",
+      "ts": "2026-06-12T20:20:21.431Z",
       "category": "calculation",
       "message": "Spot and ATM resolution",
       "rationale": "Spot from chain quote payload when available, else scrip midpoint.",
@@ -8229,10 +8229,10 @@
     },
     {
       "seq": 129,
-      "ts": "2026-06-12T18:24:14.732Z",
+      "ts": "2026-06-12T20:20:21.866Z",
       "category": "strike_planner",
       "message": "Planned targeted strike fetches",
-      "rationale": "Fetch only outer/target strikes missing from bulk chain cache.",
+      "rationale": "Union per-strategy prefetch hooks for the active category.",
       "data": {
         "strategy_category": "income",
         "required_count": 34,
@@ -8381,7 +8381,7 @@
     },
     {
       "seq": 130,
-      "ts": "2026-06-12T18:24:14.732Z",
+      "ts": "2026-06-12T20:20:21.866Z",
       "category": "liquidity_cache_complete",
       "message": "Quote cache ready for strategy evaluation",
       "rationale": "Bulk cache plus targeted wing fetches drive delta-anchored strategy picks.",
@@ -8518,7 +8518,7 @@
     },
     {
       "seq": 131,
-      "ts": "2026-06-12T18:24:14.732Z",
+      "ts": "2026-06-12T20:20:21.866Z",
       "category": "strategy_eval_start",
       "message": "calc_naked_ce_short",
       "data": {
@@ -8527,7 +8527,7 @@
     },
     {
       "seq": 132,
-      "ts": "2026-06-12T18:24:14.733Z",
+      "ts": "2026-06-12T20:20:21.867Z",
       "category": "strategy_eval_start",
       "message": "calc_naked_pe_short",
       "data": {
@@ -8536,7 +8536,7 @@
     },
     {
       "seq": 133,
-      "ts": "2026-06-12T18:24:14.733Z",
+      "ts": "2026-06-12T20:20:21.868Z",
       "category": "strategy_eval_start",
       "message": "calc_iron_condor",
       "data": {
@@ -8545,7 +8545,2728 @@
     },
     {
       "seq": 134,
-      "ts": "2026-06-12T18:24:14.733Z",
+      "ts": "2026-06-12T20:20:21.902Z",
+      "category": "calculation",
+      "message": "Iron condor candidate search",
+      "rationale": "Credit pct relaxed to 1.5% to find survivors; enumerated top-K short pairs × all wing widths with ROR scoring.",
+      "data": {
+        "inputs": {
+          "pairs_evaluated": 25,
+          "survivors": 29,
+          "strangle_seed": [
+            22650,
+            24500
+          ],
+          "min_credit_pct_used": 0.015
+        },
+        "outputs": {
+          "top_scores": [
+            {
+              "short_put": 22500,
+              "short_call": 24400,
+              "wing_width": 100,
+              "credit": 1.8500000000000005,
+              "pop": 98.31,
+              "final_score": 0.0082
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24400,
+              "wing_width": 100,
+              "credit": 1.9000000000000004,
+              "pop": 98.06,
+              "final_score": 0.0072
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24500,
+              "wing_width": 100,
+              "credit": 1.5000000000000004,
+              "pop": 99.16,
+              "final_score": 0.0069
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24400,
+              "wing_width": 200,
+              "credit": 3.4000000000000004,
+              "pop": 98.33,
+              "final_score": 0.0067
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24400,
+              "wing_width": 200,
+              "credit": 3.3500000000000005,
+              "pop": 98.08,
+              "final_score": 0.0066
+            }
+          ],
+          "rejection_counts": {
+            "min_credit": 61,
+            "debit_put_wing": 10
+          },
+          "combos_tried": 71,
+          "rejection_samples": [
+            {
+              "reason": "min_credit",
+              "short_put": 22650,
+              "short_call": 24500,
+              "wing_width": 50,
+              "required": 0.75
+            },
+            {
+              "reason": "min_credit",
+              "short_put": 22650,
+              "short_call": 24500,
+              "wing_width": 100,
+              "required": 1.5
+            },
+            {
+              "reason": "min_credit",
+              "short_put": 22650,
+              "short_call": 24500,
+              "wing_width": 150,
+              "required": 2.25
+            },
+            {
+              "reason": "min_credit",
+              "short_put": 22650,
+              "short_call": 24500,
+              "wing_width": 200,
+              "required": 3.0
+            },
+            {
+              "reason": "min_credit",
+              "short_put": 22650,
+              "short_call": 24450,
+              "wing_width": 50,
+              "required": 0.75
+            },
+            {
+              "reason": "min_credit",
+              "short_put": 22650,
+              "short_call": 24450,
+              "wing_width": 150,
+              "required": 2.25
+            },
+            {
+              "reason": "min_credit",
+              "short_put": 22650,
+              "short_call": 24450,
+              "wing_width": 200,
+              "required": 3.0
+            },
+            {
+              "reason": "min_credit",
+              "short_put": 22650,
+              "short_call": 24550,
+              "wing_width": 50,
+              "required": 0.75
+            },
+            {
+              "reason": "min_credit",
+              "short_put": 22650,
+              "short_call": 24550,
+              "wing_width": 100,
+              "required": 1.5
+            },
+            {
+              "reason": "min_credit",
+              "short_put": 22650,
+              "short_call": 24550,
+              "wing_width": 150,
+              "required": 2.25
+            }
+          ],
+          "pair_wing_plans": [
+            {
+              "short_put": 22650,
+              "short_call": 24500,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24450,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24550,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24600,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24400,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24500,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24450,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24550,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24600,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24400,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24500,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24450,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24550,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24600,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24400,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24500,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24450,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24550,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24600,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24400,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24500,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24450,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24550,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24600,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24400,
+              "wing_widths_attempted": [
+                50,
+                100,
+                150,
+                200
+              ]
+            }
+          ],
+          "candidates_evaluated": [
+            {
+              "short_put": 22650,
+              "short_call": 24500,
+              "wing_width": 50,
+              "long_put": 22600,
+              "long_call": 24550,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.65,
+              "put_credit": 0.1,
+              "call_credit": 0.55,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24500,
+              "wing_width": 100,
+              "long_put": 22550,
+              "long_call": 24600,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.35,
+              "put_credit": 0.25,
+              "call_credit": 1.1,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24500,
+              "wing_width": 150,
+              "long_put": 22500,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.8,
+              "put_credit": 0.35,
+              "call_credit": 1.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24500,
+              "wing_width": 200,
+              "long_put": 22450,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.45,
+              "put_credit": 0.6,
+              "call_credit": 1.85,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24450,
+              "wing_width": 50,
+              "long_put": 22600,
+              "long_call": 24500,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.7,
+              "put_credit": 0.1,
+              "call_credit": 0.6,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24450,
+              "wing_width": 100,
+              "long_put": 22550,
+              "long_call": 24550,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 1.5,
+              "put_credit": 0.25,
+              "call_credit": 1.25,
+              "pop_pct": 98.6543,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22648.5,
+              "upper_breakeven": 24451.5,
+              "net_credit_per_unit": 1.5
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24450,
+              "wing_width": 150,
+              "long_put": 22500,
+              "long_call": 24600,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.15,
+              "put_credit": 0.35,
+              "call_credit": 1.8,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24450,
+              "wing_width": 200,
+              "long_put": 22450,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.75,
+              "put_credit": 0.6,
+              "call_credit": 2.15,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24550,
+              "wing_width": 50,
+              "long_put": 22600,
+              "long_call": 24600,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.55,
+              "put_credit": 0.1,
+              "call_credit": 0.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24550,
+              "wing_width": 100,
+              "long_put": 22550,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.05,
+              "put_credit": 0.25,
+              "call_credit": 0.8,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24550,
+              "wing_width": 150,
+              "long_put": 22500,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.55,
+              "put_credit": 0.35,
+              "call_credit": 1.2,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24550,
+              "wing_width": 200,
+              "long_put": 22450,
+              "long_call": 24750,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.05,
+              "put_credit": 0.6,
+              "call_credit": 1.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24600,
+              "wing_width": 50,
+              "long_put": 22600,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.35,
+              "put_credit": 0.1,
+              "call_credit": 0.25,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24600,
+              "wing_width": 100,
+              "long_put": 22550,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.9,
+              "put_credit": 0.25,
+              "call_credit": 0.65,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24600,
+              "wing_width": 150,
+              "long_put": 22500,
+              "long_call": 24750,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.25,
+              "put_credit": 0.35,
+              "call_credit": 0.9,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24600,
+              "wing_width": 200,
+              "long_put": 22450,
+              "long_call": 24800,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.65,
+              "put_credit": 0.6,
+              "call_credit": 1.05,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24400,
+              "wing_width": 50,
+              "long_put": 22600,
+              "long_call": 24450,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 0.8,
+              "put_credit": 0.1,
+              "call_credit": 0.7,
+              "pop_pct": 98.1545,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22649.2,
+              "upper_breakeven": 24400.8,
+              "net_credit_per_unit": 0.8
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24400,
+              "wing_width": 100,
+              "long_put": 22550,
+              "long_call": 24500,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 1.7,
+              "put_credit": 0.25,
+              "call_credit": 1.45,
+              "pop_pct": 98.1664,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22648.3,
+              "upper_breakeven": 24401.7,
+              "net_credit_per_unit": 1.7
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24400,
+              "wing_width": 150,
+              "long_put": 22500,
+              "long_call": 24550,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 2.45,
+              "put_credit": 0.35,
+              "call_credit": 2.1,
+              "pop_pct": 98.1762,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22647.55,
+              "upper_breakeven": 24402.45,
+              "net_credit_per_unit": 2.45
+            },
+            {
+              "short_put": 22650,
+              "short_call": 24400,
+              "wing_width": 200,
+              "long_put": 22450,
+              "long_call": 24600,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 3.25,
+              "put_credit": 0.6,
+              "call_credit": 2.65,
+              "pop_pct": 98.1866,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22646.75,
+              "upper_breakeven": 24403.25,
+              "net_credit_per_unit": 3.25
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24500,
+              "wing_width": 50,
+              "long_put": 22550,
+              "long_call": 24550,
+              "outcome": "rejected",
+              "reject_reason": "debit_put_wing",
+              "credit": null,
+              "put_credit": -0.05,
+              "call_credit": 0.55,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24500,
+              "wing_width": 100,
+              "long_put": 22500,
+              "long_call": 24600,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.15,
+              "put_credit": 0.05,
+              "call_credit": 1.1,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24500,
+              "wing_width": 150,
+              "long_put": 22450,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.75,
+              "put_credit": 0.3,
+              "call_credit": 1.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24500,
+              "wing_width": 200,
+              "long_put": 22400,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.35,
+              "put_credit": 0.5,
+              "call_credit": 1.85,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24450,
+              "wing_width": 50,
+              "long_put": 22550,
+              "long_call": 24500,
+              "outcome": "rejected",
+              "reject_reason": "debit_put_wing",
+              "credit": null,
+              "put_credit": -0.05,
+              "call_credit": 0.6,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24450,
+              "wing_width": 100,
+              "long_put": 22500,
+              "long_call": 24550,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.3,
+              "put_credit": 0.05,
+              "call_credit": 1.25,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24450,
+              "wing_width": 150,
+              "long_put": 22450,
+              "long_call": 24600,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.1,
+              "put_credit": 0.3,
+              "call_credit": 1.8,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24450,
+              "wing_width": 200,
+              "long_put": 22400,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.65,
+              "put_credit": 0.5,
+              "call_credit": 2.15,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24550,
+              "wing_width": 50,
+              "long_put": 22550,
+              "long_call": 24600,
+              "outcome": "rejected",
+              "reject_reason": "debit_put_wing",
+              "credit": null,
+              "put_credit": -0.05,
+              "call_credit": 0.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24550,
+              "wing_width": 100,
+              "long_put": 22500,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.85,
+              "put_credit": 0.05,
+              "call_credit": 0.8,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24550,
+              "wing_width": 150,
+              "long_put": 22450,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.5,
+              "put_credit": 0.3,
+              "call_credit": 1.2,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24550,
+              "wing_width": 200,
+              "long_put": 22400,
+              "long_call": 24750,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.95,
+              "put_credit": 0.5,
+              "call_credit": 1.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24600,
+              "wing_width": 50,
+              "long_put": 22550,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "debit_put_wing",
+              "credit": null,
+              "put_credit": -0.05,
+              "call_credit": 0.25,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24600,
+              "wing_width": 100,
+              "long_put": 22500,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.7,
+              "put_credit": 0.05,
+              "call_credit": 0.65,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24600,
+              "wing_width": 150,
+              "long_put": 22450,
+              "long_call": 24750,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.2,
+              "put_credit": 0.3,
+              "call_credit": 0.9,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24600,
+              "wing_width": 200,
+              "long_put": 22400,
+              "long_call": 24800,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.55,
+              "put_credit": 0.5,
+              "call_credit": 1.05,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24400,
+              "wing_width": 50,
+              "long_put": 22550,
+              "long_call": 24450,
+              "outcome": "rejected",
+              "reject_reason": "debit_put_wing",
+              "credit": null,
+              "put_credit": -0.05,
+              "call_credit": 0.7,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24400,
+              "wing_width": 100,
+              "long_put": 22500,
+              "long_call": 24500,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.5,
+              "put_credit": 0.05,
+              "call_credit": 1.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24400,
+              "wing_width": 150,
+              "long_put": 22450,
+              "long_call": 24550,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 2.4,
+              "put_credit": 0.3,
+              "call_credit": 2.1,
+              "pop_pct": 98.2466,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22597.6,
+              "upper_breakeven": 24402.4,
+              "net_credit_per_unit": 2.4
+            },
+            {
+              "short_put": 22600,
+              "short_call": 24400,
+              "wing_width": 200,
+              "long_put": 22400,
+              "long_call": 24600,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 3.15,
+              "put_credit": 0.5,
+              "call_credit": 2.65,
+              "pop_pct": 98.2559,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22596.85,
+              "upper_breakeven": 24403.15,
+              "net_credit_per_unit": 3.15
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24500,
+              "wing_width": 50,
+              "long_put": 22650,
+              "long_call": 24550,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.7,
+              "put_credit": 0.15,
+              "call_credit": 0.55,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24500,
+              "wing_width": 100,
+              "long_put": 22600,
+              "long_call": 24600,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 1.55,
+              "put_credit": 0.45,
+              "call_credit": 1.1,
+              "pop_pct": 98.9028,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22698.45,
+              "upper_breakeven": 24501.55,
+              "net_credit_per_unit": 1.55
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24500,
+              "wing_width": 150,
+              "long_put": 22550,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.05,
+              "put_credit": 0.6,
+              "call_credit": 1.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24500,
+              "wing_width": 200,
+              "long_put": 22500,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.55,
+              "put_credit": 0.7,
+              "call_credit": 1.85,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24450,
+              "wing_width": 50,
+              "long_put": 22650,
+              "long_call": 24500,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 0.75,
+              "put_credit": 0.15,
+              "call_credit": 0.6,
+              "pop_pct": 98.536,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22699.25,
+              "upper_breakeven": 24450.75,
+              "net_credit_per_unit": 0.75
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24450,
+              "wing_width": 100,
+              "long_put": 22600,
+              "long_call": 24550,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 1.7,
+              "put_credit": 0.45,
+              "call_credit": 1.25,
+              "pop_pct": 98.5465,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22698.3,
+              "upper_breakeven": 24451.7,
+              "net_credit_per_unit": 1.7
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24450,
+              "wing_width": 150,
+              "long_put": 22550,
+              "long_call": 24600,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 2.4,
+              "put_credit": 0.6,
+              "call_credit": 1.8,
+              "pop_pct": 98.5542,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22697.6,
+              "upper_breakeven": 24452.4,
+              "net_credit_per_unit": 2.4
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24450,
+              "wing_width": 200,
+              "long_put": 22500,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.85,
+              "put_credit": 0.7,
+              "call_credit": 2.15,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24550,
+              "wing_width": 50,
+              "long_put": 22650,
+              "long_call": 24600,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.6,
+              "put_credit": 0.15,
+              "call_credit": 0.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24550,
+              "wing_width": 100,
+              "long_put": 22600,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.25,
+              "put_credit": 0.45,
+              "call_credit": 0.8,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24550,
+              "wing_width": 150,
+              "long_put": 22550,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.8,
+              "put_credit": 0.6,
+              "call_credit": 1.2,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24550,
+              "wing_width": 200,
+              "long_put": 22500,
+              "long_call": 24750,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.15,
+              "put_credit": 0.7,
+              "call_credit": 1.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24600,
+              "wing_width": 50,
+              "long_put": 22650,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.4,
+              "put_credit": 0.15,
+              "call_credit": 0.25,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24600,
+              "wing_width": 100,
+              "long_put": 22600,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.1,
+              "put_credit": 0.45,
+              "call_credit": 0.65,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24600,
+              "wing_width": 150,
+              "long_put": 22550,
+              "long_call": 24750,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.5,
+              "put_credit": 0.6,
+              "call_credit": 0.9,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24600,
+              "wing_width": 200,
+              "long_put": 22500,
+              "long_call": 24800,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.75,
+              "put_credit": 0.7,
+              "call_credit": 1.05,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24400,
+              "wing_width": 50,
+              "long_put": 22650,
+              "long_call": 24450,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 0.85,
+              "put_credit": 0.15,
+              "call_credit": 0.7,
+              "pop_pct": 98.0446,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22699.15,
+              "upper_breakeven": 24400.85,
+              "net_credit_per_unit": 0.85
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24400,
+              "wing_width": 100,
+              "long_put": 22600,
+              "long_call": 24500,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 1.9,
+              "put_credit": 0.45,
+              "call_credit": 1.45,
+              "pop_pct": 98.0593,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22698.1,
+              "upper_breakeven": 24401.9,
+              "net_credit_per_unit": 1.9
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24400,
+              "wing_width": 150,
+              "long_put": 22550,
+              "long_call": 24550,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 2.7,
+              "put_credit": 0.6,
+              "call_credit": 2.1,
+              "pop_pct": 98.0705,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22697.3,
+              "upper_breakeven": 24402.7,
+              "net_credit_per_unit": 2.7
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24400,
+              "wing_width": 200,
+              "long_put": 22500,
+              "long_call": 24600,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 3.35,
+              "put_credit": 0.7,
+              "call_credit": 2.65,
+              "pop_pct": 98.0796,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22696.65,
+              "upper_breakeven": 24403.35,
+              "net_credit_per_unit": 3.35
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24500,
+              "wing_width": 50,
+              "long_put": 22500,
+              "long_call": 24550,
+              "outcome": "rejected",
+              "reject_reason": "debit_put_wing",
+              "credit": null,
+              "put_credit": 0.0,
+              "call_credit": 0.55,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24500,
+              "wing_width": 100,
+              "long_put": 22450,
+              "long_call": 24600,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.35,
+              "put_credit": 0.25,
+              "call_credit": 1.1,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24500,
+              "wing_width": 150,
+              "long_put": 22400,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.9,
+              "put_credit": 0.45,
+              "call_credit": 1.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24500,
+              "wing_width": 200,
+              "long_put": 22350,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.4,
+              "put_credit": 0.55,
+              "call_credit": 1.85,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24450,
+              "wing_width": 50,
+              "long_put": 22500,
+              "long_call": 24500,
+              "outcome": "rejected",
+              "reject_reason": "debit_put_wing",
+              "credit": null,
+              "put_credit": 0.0,
+              "call_credit": 0.6,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24450,
+              "wing_width": 100,
+              "long_put": 22450,
+              "long_call": 24550,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 1.5,
+              "put_credit": 0.25,
+              "call_credit": 1.25,
+              "pop_pct": 98.7715,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22548.5,
+              "upper_breakeven": 24451.5,
+              "net_credit_per_unit": 1.5
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24450,
+              "wing_width": 150,
+              "long_put": 22400,
+              "long_call": 24600,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 2.25,
+              "put_credit": 0.45,
+              "call_credit": 1.8,
+              "pop_pct": 98.7783,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22547.75,
+              "upper_breakeven": 24452.25,
+              "net_credit_per_unit": 2.25
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24450,
+              "wing_width": 200,
+              "long_put": 22350,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.7,
+              "put_credit": 0.55,
+              "call_credit": 2.15,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24550,
+              "wing_width": 50,
+              "long_put": 22500,
+              "long_call": 24600,
+              "outcome": "rejected",
+              "reject_reason": "debit_put_wing",
+              "credit": null,
+              "put_credit": 0.0,
+              "call_credit": 0.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24550,
+              "wing_width": 100,
+              "long_put": 22450,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.05,
+              "put_credit": 0.25,
+              "call_credit": 0.8,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24550,
+              "wing_width": 150,
+              "long_put": 22400,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.65,
+              "put_credit": 0.45,
+              "call_credit": 1.2,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24550,
+              "wing_width": 200,
+              "long_put": 22350,
+              "long_call": 24750,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.0,
+              "put_credit": 0.55,
+              "call_credit": 1.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24600,
+              "wing_width": 50,
+              "long_put": 22500,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "debit_put_wing",
+              "credit": null,
+              "put_credit": 0.0,
+              "call_credit": 0.25,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24600,
+              "wing_width": 100,
+              "long_put": 22450,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.9,
+              "put_credit": 0.25,
+              "call_credit": 0.65,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24600,
+              "wing_width": 150,
+              "long_put": 22400,
+              "long_call": 24750,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.35,
+              "put_credit": 0.45,
+              "call_credit": 0.9,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24600,
+              "wing_width": 200,
+              "long_put": 22350,
+              "long_call": 24800,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.6,
+              "put_credit": 0.55,
+              "call_credit": 1.05,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24400,
+              "wing_width": 50,
+              "long_put": 22500,
+              "long_call": 24450,
+              "outcome": "rejected",
+              "reject_reason": "debit_put_wing",
+              "credit": null,
+              "put_credit": 0.0,
+              "call_credit": 0.7,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24400,
+              "wing_width": 100,
+              "long_put": 22450,
+              "long_call": 24500,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 1.7,
+              "put_credit": 0.25,
+              "call_credit": 1.45,
+              "pop_pct": 98.2833,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22548.3,
+              "upper_breakeven": 24401.7,
+              "net_credit_per_unit": 1.7
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24400,
+              "wing_width": 150,
+              "long_put": 22400,
+              "long_call": 24550,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 2.55,
+              "put_credit": 0.45,
+              "call_credit": 2.1,
+              "pop_pct": 98.2935,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22547.45,
+              "upper_breakeven": 24402.55,
+              "net_credit_per_unit": 2.55
+            },
+            {
+              "short_put": 22550,
+              "short_call": 24400,
+              "wing_width": 200,
+              "long_put": 22350,
+              "long_call": 24600,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 3.2,
+              "put_credit": 0.55,
+              "call_credit": 2.65,
+              "pop_pct": 98.3013,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22546.8,
+              "upper_breakeven": 24403.2,
+              "net_credit_per_unit": 3.2
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24500,
+              "wing_width": 50,
+              "long_put": 22450,
+              "long_call": 24550,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 0.75,
+              "put_credit": 0.2,
+              "call_credit": 0.55,
+              "pop_pct": 99.1529,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22499.25,
+              "upper_breakeven": 24500.75,
+              "net_credit_per_unit": 0.75
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24500,
+              "wing_width": 100,
+              "long_put": 22400,
+              "long_call": 24600,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 1.5,
+              "put_credit": 0.4,
+              "call_credit": 1.1,
+              "pop_pct": 99.1578,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22498.5,
+              "upper_breakeven": 24501.5,
+              "net_credit_per_unit": 1.5
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24500,
+              "wing_width": 150,
+              "long_put": 22350,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.95,
+              "put_credit": 0.5,
+              "call_credit": 1.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24500,
+              "wing_width": 200,
+              "long_put": 22300,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.6,
+              "put_credit": 0.75,
+              "call_credit": 1.85,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24450,
+              "wing_width": 50,
+              "long_put": 22450,
+              "long_call": 24500,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 0.8,
+              "put_credit": 0.2,
+              "call_credit": 0.6,
+              "pop_pct": 98.7936,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22499.2,
+              "upper_breakeven": 24450.8,
+              "net_credit_per_unit": 0.8
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24450,
+              "wing_width": 100,
+              "long_put": 22400,
+              "long_call": 24550,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 1.65,
+              "put_credit": 0.4,
+              "call_credit": 1.25,
+              "pop_pct": 98.8011,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22498.35,
+              "upper_breakeven": 24451.65,
+              "net_credit_per_unit": 1.65
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24450,
+              "wing_width": 150,
+              "long_put": 22350,
+              "long_call": 24600,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 2.3,
+              "put_credit": 0.5,
+              "call_credit": 1.8,
+              "pop_pct": 98.8068,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22497.7,
+              "upper_breakeven": 24452.3,
+              "net_credit_per_unit": 2.3
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24450,
+              "wing_width": 200,
+              "long_put": 22300,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.9,
+              "put_credit": 0.75,
+              "call_credit": 2.15,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24550,
+              "wing_width": 50,
+              "long_put": 22450,
+              "long_call": 24600,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.65,
+              "put_credit": 0.2,
+              "call_credit": 0.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24550,
+              "wing_width": 100,
+              "long_put": 22400,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.2,
+              "put_credit": 0.4,
+              "call_credit": 0.8,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24550,
+              "wing_width": 150,
+              "long_put": 22350,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.7,
+              "put_credit": 0.5,
+              "call_credit": 1.2,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24550,
+              "wing_width": 200,
+              "long_put": 22300,
+              "long_call": 24750,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 2.2,
+              "put_credit": 0.75,
+              "call_credit": 1.45,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24600,
+              "wing_width": 50,
+              "long_put": 22450,
+              "long_call": 24650,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 0.45,
+              "put_credit": 0.2,
+              "call_credit": 0.25,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24600,
+              "wing_width": 100,
+              "long_put": 22400,
+              "long_call": 24700,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.05,
+              "put_credit": 0.4,
+              "call_credit": 0.65,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24600,
+              "wing_width": 150,
+              "long_put": 22350,
+              "long_call": 24750,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.4,
+              "put_credit": 0.5,
+              "call_credit": 0.9,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24600,
+              "wing_width": 200,
+              "long_put": 22300,
+              "long_call": 24800,
+              "outcome": "rejected",
+              "reject_reason": "min_credit",
+              "credit": 1.8,
+              "put_credit": 0.75,
+              "call_credit": 1.05,
+              "pop_pct": null,
+              "pop_basis": null
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24400,
+              "wing_width": 50,
+              "long_put": 22450,
+              "long_call": 24450,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 0.9,
+              "put_credit": 0.2,
+              "call_credit": 0.7,
+              "pop_pct": 98.3021,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22499.1,
+              "upper_breakeven": 24400.9,
+              "net_credit_per_unit": 0.9
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24400,
+              "wing_width": 100,
+              "long_put": 22400,
+              "long_call": 24500,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 1.85,
+              "put_credit": 0.4,
+              "call_credit": 1.45,
+              "pop_pct": 98.3133,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22498.15,
+              "upper_breakeven": 24401.85,
+              "net_credit_per_unit": 1.85
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24400,
+              "wing_width": 150,
+              "long_put": 22350,
+              "long_call": 24550,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 2.6,
+              "put_credit": 0.5,
+              "call_credit": 2.1,
+              "pop_pct": 98.3221,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22497.4,
+              "upper_breakeven": 24402.6,
+              "net_credit_per_unit": 2.6
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24400,
+              "wing_width": 200,
+              "long_put": 22300,
+              "long_call": 24600,
+              "outcome": "accepted",
+              "reject_reason": null,
+              "credit": 3.4,
+              "put_credit": 0.75,
+              "call_credit": 2.65,
+              "pop_pct": 98.3315,
+              "pop_basis": "breakevens_from_short_strikes",
+              "lower_breakeven": 22496.6,
+              "upper_breakeven": 24403.4,
+              "net_credit_per_unit": 3.4
+            }
+          ]
+        }
+      }
+    },
+    {
+      "seq": 135,
+      "ts": "2026-06-12T20:20:22.623Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "65",
+              "price": "4.5",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22400",
+              "quantity": "65",
+              "price": "4.1",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "65",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24500",
+              "quantity": "65",
+              "price": "3.95",
+              "action": "Buy"
+            }
+          ],
+          "phase": "ic_candidate_span"
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24500",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22400",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "254749.54",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 68975.16,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 136,
+      "ts": "2026-06-12T20:20:23.803Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22700,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22600,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22700",
+              "quantity": "65",
+              "price": "5.25",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22600",
+              "quantity": "65",
+              "price": "4.8",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "65",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24500",
+              "quantity": "65",
+              "price": "3.95",
+              "action": "Buy"
+            }
+          ],
+          "phase": "ic_candidate_span"
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24500",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22600",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22700",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "267436.05",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 68945.07,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 137,
+      "ts": "2026-06-12T20:20:24.985Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24600,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "65",
+              "price": "4.5",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22400",
+              "quantity": "65",
+              "price": "4.1",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24500",
+              "quantity": "65",
+              "price": "3.85",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24600",
+              "quantity": "65",
+              "price": "2.75",
+              "action": "Buy"
+            }
+          ],
+          "phase": "ic_candidate_span"
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24600",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22400",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24500",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "248238.37",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 68955.27,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 138,
+      "ts": "2026-06-12T20:20:26.157Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22300,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24600,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "65",
+              "price": "4.5",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22300",
+              "quantity": "65",
+              "price": "3.75",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "65",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24600",
+              "quantity": "65",
+              "price": "2.75",
+              "action": "Buy"
+            }
+          ],
+          "phase": "ic_candidate_span"
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24600",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22300",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "254749.54",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 75584.51,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 139,
+      "ts": "2026-06-12T20:20:28.562Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22700,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24600,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22700",
+              "quantity": "65",
+              "price": "5.25",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "65",
+              "price": "4.55",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "65",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24600",
+              "quantity": "65",
+              "price": "2.75",
+              "action": "Buy"
+            }
+          ],
+          "phase": "ic_candidate_span"
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24600",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22700",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "267436.05",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 75533.25,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 140,
+      "ts": "2026-06-12T20:20:28.562Z",
+      "category": "calculation",
+      "message": "Iron condor SPAN refinement",
+      "rationale": "Ranked finalists by ROR score; SPAN annualized return breaks near-ties.",
+      "data": {
+        "inputs": {
+          "finalists": 5
+        },
+        "outputs": {
+          "scores": [
+            {
+              "short_put": 22500,
+              "short_call": 24400,
+              "wing_width": 100,
+              "final_score": 0.0082,
+              "unit_span": 68975.16,
+              "annualized_return_pct": 12.73,
+              "net_collected": 120.25000000000003
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24400,
+              "wing_width": 100,
+              "final_score": 0.0072,
+              "unit_span": 68945.07,
+              "annualized_return_pct": 13.08,
+              "net_collected": 123.50000000000003
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24500,
+              "wing_width": 100,
+              "final_score": 0.0069,
+              "unit_span": 68955.27,
+              "annualized_return_pct": 10.32,
+              "net_collected": 97.50000000000003
+            },
+            {
+              "short_put": 22500,
+              "short_call": 24400,
+              "wing_width": 200,
+              "final_score": 0.0067,
+              "unit_span": 75584.51,
+              "annualized_return_pct": 21.34,
+              "net_collected": 221.00000000000003
+            },
+            {
+              "short_put": 22700,
+              "short_call": 24400,
+              "wing_width": 200,
+              "final_score": 0.0066,
+              "unit_span": 75533.25,
+              "annualized_return_pct": 21.04,
+              "net_collected": 217.75000000000003
+            }
+          ]
+        }
+      }
+    },
+    {
+      "seq": 141,
+      "ts": "2026-06-12T20:20:28.562Z",
       "category": "strategy_eval_start",
       "message": "calc_iron_butterfly",
       "data": {
@@ -8553,8 +11274,8 @@
       }
     },
     {
-      "seq": 135,
-      "ts": "2026-06-12T18:24:14.734Z",
+      "seq": 142,
+      "ts": "2026-06-12T20:20:28.563Z",
       "category": "strategy_eval_start",
       "message": "calc_short_strangle",
       "data": {
@@ -8562,8 +11283,8 @@
       }
     },
     {
-      "seq": 136,
-      "ts": "2026-06-12T18:24:14.749Z",
+      "seq": 143,
+      "ts": "2026-06-12T20:20:28.582Z",
       "category": "strategy_eval_start",
       "message": "calc_short_straddle",
       "data": {
@@ -8571,8 +11292,8 @@
       }
     },
     {
-      "seq": 137,
-      "ts": "2026-06-12T18:24:14.749Z",
+      "seq": 144,
+      "ts": "2026-06-12T20:20:28.582Z",
       "category": "strategy_eval_start",
       "message": "calc_bull_put_spread",
       "data": {
@@ -8580,8 +11301,8 @@
       }
     },
     {
-      "seq": 138,
-      "ts": "2026-06-12T18:24:14.753Z",
+      "seq": 145,
+      "ts": "2026-06-12T20:20:28.585Z",
       "category": "strategy_eval_start",
       "message": "calc_bear_call_spread",
       "data": {
@@ -8589,8 +11310,8 @@
       }
     },
     {
-      "seq": 139,
-      "ts": "2026-06-12T18:24:15.413Z",
+      "seq": 146,
+      "ts": "2026-06-12T20:20:29.703Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -8655,8 +11376,8 @@
       }
     },
     {
-      "seq": 140,
-      "ts": "2026-06-12T18:24:15.413Z",
+      "seq": 147,
+      "ts": "2026-06-12T20:20:29.703Z",
       "category": "calculation",
       "message": "SPAN sizing (naked_ce_short)",
       "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
@@ -8675,8 +11396,8 @@
       }
     },
     {
-      "seq": 141,
-      "ts": "2026-06-12T18:24:16.572Z",
+      "seq": 148,
+      "ts": "2026-06-12T20:20:30.844Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -8741,8 +11462,8 @@
       }
     },
     {
-      "seq": 142,
-      "ts": "2026-06-12T18:24:16.572Z",
+      "seq": 149,
+      "ts": "2026-06-12T20:20:30.844Z",
       "category": "calculation",
       "message": "SPAN sizing (naked_pe_short)",
       "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
@@ -8761,8 +11482,888 @@
       }
     },
     {
-      "seq": 143,
-      "ts": "2026-06-12T18:24:17.722Z",
+      "seq": 150,
+      "ts": "2026-06-12T20:20:32.047Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "65",
+              "price": "4.5",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22400",
+              "quantity": "65",
+              "price": "4.1",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "65",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24500",
+              "quantity": "65",
+              "price": "3.95",
+              "action": "Buy"
+            }
+          ],
+          "phase": "unit_span_sizing"
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24500",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22400",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "254749.54",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 68975.16,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 151,
+      "ts": "2026-06-12T20:20:32.047Z",
+      "category": "calculation",
+      "message": "SPAN sizing (iron_condor)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
+      "data": {
+        "inputs": {
+          "unit_span_margin": 68975.16,
+          "unit_short_lots": 2,
+          "unit_max_loss_per_lot": 6379.75,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 5500000.0
+        },
+        "outputs": {
+          "lots": 383,
+          "quantity": 24895
+        }
+      }
+    },
+    {
+      "seq": 152,
+      "ts": "2026-06-12T20:20:33.222Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22700,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22600,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22700",
+              "quantity": "65",
+              "price": "5.25",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22600",
+              "quantity": "65",
+              "price": "4.8",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "65",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24500",
+              "quantity": "65",
+              "price": "3.95",
+              "action": "Buy"
+            }
+          ],
+          "phase": "unit_span_sizing"
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24500",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22600",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22700",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "267436.05",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 68945.07,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 153,
+      "ts": "2026-06-12T20:20:33.222Z",
+      "category": "calculation",
+      "message": "SPAN sizing (iron_condor)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
+      "data": {
+        "inputs": {
+          "unit_span_margin": 68945.07,
+          "unit_short_lots": 2,
+          "unit_max_loss_per_lot": 6376.5,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 5500000.0
+        },
+        "outputs": {
+          "lots": 383,
+          "quantity": 24895
+        }
+      }
+    },
+    {
+      "seq": 154,
+      "ts": "2026-06-12T20:20:34.411Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24600,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "65",
+              "price": "4.5",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22400",
+              "quantity": "65",
+              "price": "4.1",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24500",
+              "quantity": "65",
+              "price": "3.85",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24600",
+              "quantity": "65",
+              "price": "2.75",
+              "action": "Buy"
+            }
+          ],
+          "phase": "unit_span_sizing"
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24600",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22400",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24500",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "248238.37",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 68955.27,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 155,
+      "ts": "2026-06-12T20:20:34.411Z",
+      "category": "calculation",
+      "message": "SPAN sizing (iron_condor)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
+      "data": {
+        "inputs": {
+          "unit_span_margin": 68955.27,
+          "unit_short_lots": 2,
+          "unit_max_loss_per_lot": 6402.5,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 5500000.0
+        },
+        "outputs": {
+          "lots": 383,
+          "quantity": 24895
+        }
+      }
+    },
+    {
+      "seq": 156,
+      "ts": "2026-06-12T20:20:35.604Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22300,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24600,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "65",
+              "price": "4.5",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22300",
+              "quantity": "65",
+              "price": "3.75",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "65",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24600",
+              "quantity": "65",
+              "price": "2.75",
+              "action": "Buy"
+            }
+          ],
+          "phase": "unit_span_sizing"
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24600",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22300",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "254749.54",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 75584.51,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 157,
+      "ts": "2026-06-12T20:20:35.604Z",
+      "category": "calculation",
+      "message": "SPAN sizing (iron_condor)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
+      "data": {
+        "inputs": {
+          "unit_span_margin": 75584.51,
+          "unit_short_lots": 2,
+          "unit_max_loss_per_lot": 12779.0,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 5500000.0
+        },
+        "outputs": {
+          "lots": 364,
+          "quantity": 23660
+        }
+      }
+    },
+    {
+      "seq": 158,
+      "ts": "2026-06-12T20:20:36.783Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22700,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22500,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24600,
+              "quantity": 65,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22700",
+              "quantity": "65",
+              "price": "5.25",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "65",
+              "price": "4.55",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "65",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24600",
+              "quantity": "65",
+              "price": "2.75",
+              "action": "Buy"
+            }
+          ],
+          "phase": "unit_span_sizing"
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24600",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22700",
+                "quantity": "65",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "267436.05",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 75533.25,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 159,
+      "ts": "2026-06-12T20:20:36.783Z",
+      "category": "calculation",
+      "message": "SPAN sizing (iron_condor)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
+      "data": {
+        "inputs": {
+          "unit_span_margin": 75533.25,
+          "unit_short_lots": 2,
+          "unit_max_loss_per_lot": 12782.25,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 5500000.0
+        },
+        "outputs": {
+          "lots": 365,
+          "quantity": 23725
+        }
+      }
+    },
+    {
+      "seq": 160,
+      "ts": "2026-06-12T20:20:37.944Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -8857,8 +12458,8 @@
       }
     },
     {
-      "seq": 144,
-      "ts": "2026-06-12T18:24:17.722Z",
+      "seq": 161,
+      "ts": "2026-06-12T20:20:37.944Z",
       "category": "calculation",
       "message": "SPAN sizing (short_strangle)",
       "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
@@ -8877,8 +12478,8 @@
       }
     },
     {
-      "seq": 145,
-      "ts": "2026-06-12T18:24:18.877Z",
+      "seq": 162,
+      "ts": "2026-06-12T20:20:39.106Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -8973,8 +12574,8 @@
       }
     },
     {
-      "seq": 146,
-      "ts": "2026-06-12T18:24:18.877Z",
+      "seq": 163,
+      "ts": "2026-06-12T20:20:39.106Z",
       "category": "calculation",
       "message": "SPAN sizing (bull_put_spread)",
       "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
@@ -8993,8 +12594,8 @@
       }
     },
     {
-      "seq": 147,
-      "ts": "2026-06-12T18:24:20.027Z",
+      "seq": 164,
+      "ts": "2026-06-12T20:20:40.278Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -9089,8 +12690,8 @@
       }
     },
     {
-      "seq": 148,
-      "ts": "2026-06-12T18:24:20.027Z",
+      "seq": 165,
+      "ts": "2026-06-12T20:20:40.278Z",
       "category": "calculation",
       "message": "SPAN sizing (bear_call_spread)",
       "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
@@ -9109,8 +12710,8 @@
       }
     },
     {
-      "seq": 149,
-      "ts": "2026-06-12T18:24:20.027Z",
+      "seq": 166,
+      "ts": "2026-06-12T20:20:40.278Z",
       "category": "strategy",
       "message": "Naked CE Short: ok",
       "data": {
@@ -9134,8 +12735,8 @@
       }
     },
     {
-      "seq": 150,
-      "ts": "2026-06-12T18:24:20.027Z",
+      "seq": 167,
+      "ts": "2026-06-12T20:20:40.278Z",
       "category": "strategy",
       "message": "Naked PE Short: ok",
       "data": {
@@ -9159,25 +12760,238 @@
       }
     },
     {
-      "seq": 151,
-      "ts": "2026-06-12T18:24:20.027Z",
+      "seq": 168,
+      "ts": "2026-06-12T20:20:40.278Z",
       "category": "strategy",
-      "message": "Iron Condor: skipped",
+      "message": "Iron Condor: ok",
       "data": {
         "strategy_id": "iron_condor",
         "strategy_name": "Iron Condor",
-        "phase": "skipped",
-        "skip_reason": "No iron condor meets minimum PoP within risk limits.",
+        "phase": "ok",
+        "skip_reason": null,
         "structure_modified": false,
-        "net_premium": null,
-        "max_loss": null,
-        "risk_reward_ratio": null,
-        "legs": []
+        "net_premium": 46055.75,
+        "max_loss": 2443444.25,
+        "risk_reward_ratio": "2443444 : 45960",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Put",
+            "strike": 22500,
+            "quantity": 24895,
+            "premium_per_unit": 4.5
+          },
+          {
+            "side": "Buy",
+            "right": "Put",
+            "strike": 22400,
+            "quantity": 24895,
+            "premium_per_unit": 4.1
+          },
+          {
+            "side": "Sell",
+            "right": "Call",
+            "strike": 24400,
+            "quantity": 24895,
+            "premium_per_unit": 5.4
+          },
+          {
+            "side": "Buy",
+            "right": "Call",
+            "strike": 24500,
+            "quantity": 24895,
+            "premium_per_unit": 3.95
+          }
+        ]
       }
     },
     {
-      "seq": 152,
-      "ts": "2026-06-12T18:24:20.027Z",
+      "seq": 169,
+      "ts": "2026-06-12T20:20:40.278Z",
+      "category": "strategy",
+      "message": "Iron Condor #2: ok",
+      "data": {
+        "strategy_id": "iron_condor",
+        "strategy_name": "Iron Condor #2",
+        "phase": "ok",
+        "skip_reason": null,
+        "structure_modified": false,
+        "net_premium": 47300.5,
+        "max_loss": 2442199.5,
+        "risk_reward_ratio": "2442200 : 47492",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Put",
+            "strike": 22700,
+            "quantity": 24895,
+            "premium_per_unit": 5.25
+          },
+          {
+            "side": "Buy",
+            "right": "Put",
+            "strike": 22600,
+            "quantity": 24895,
+            "premium_per_unit": 4.8
+          },
+          {
+            "side": "Sell",
+            "right": "Call",
+            "strike": 24400,
+            "quantity": 24895,
+            "premium_per_unit": 5.4
+          },
+          {
+            "side": "Buy",
+            "right": "Call",
+            "strike": 24500,
+            "quantity": 24895,
+            "premium_per_unit": 3.95
+          }
+        ]
+      }
+    },
+    {
+      "seq": 170,
+      "ts": "2026-06-12T20:20:40.278Z",
+      "category": "strategy",
+      "message": "Iron Condor #3: ok",
+      "data": {
+        "strategy_id": "iron_condor",
+        "strategy_name": "Iron Condor #3",
+        "phase": "ok",
+        "skip_reason": null,
+        "structure_modified": false,
+        "net_premium": 37342.5,
+        "max_loss": 2452157.5,
+        "risk_reward_ratio": "2452158 : 37534",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Put",
+            "strike": 22500,
+            "quantity": 24895,
+            "premium_per_unit": 4.5
+          },
+          {
+            "side": "Buy",
+            "right": "Put",
+            "strike": 22400,
+            "quantity": 24895,
+            "premium_per_unit": 4.1
+          },
+          {
+            "side": "Sell",
+            "right": "Call",
+            "strike": 24500,
+            "quantity": 24895,
+            "premium_per_unit": 3.85
+          },
+          {
+            "side": "Buy",
+            "right": "Call",
+            "strike": 24600,
+            "quantity": 24895,
+            "premium_per_unit": 2.75
+          }
+        ]
+      }
+    },
+    {
+      "seq": 171,
+      "ts": "2026-06-12T20:20:40.278Z",
+      "category": "strategy",
+      "message": "Iron Condor #4: ok",
+      "data": {
+        "strategy_id": "iron_condor",
+        "strategy_name": "Iron Condor #4",
+        "phase": "ok",
+        "skip_reason": null,
+        "structure_modified": false,
+        "net_premium": 80444.0,
+        "max_loss": 4651556.0,
+        "risk_reward_ratio": "4651556 : 80444",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Put",
+            "strike": 22500,
+            "quantity": 23660,
+            "premium_per_unit": 4.5
+          },
+          {
+            "side": "Buy",
+            "right": "Put",
+            "strike": 22300,
+            "quantity": 23660,
+            "premium_per_unit": 3.75
+          },
+          {
+            "side": "Sell",
+            "right": "Call",
+            "strike": 24400,
+            "quantity": 23660,
+            "premium_per_unit": 5.4
+          },
+          {
+            "side": "Buy",
+            "right": "Call",
+            "strike": 24600,
+            "quantity": 23660,
+            "premium_per_unit": 2.75
+          }
+        ]
+      }
+    },
+    {
+      "seq": 172,
+      "ts": "2026-06-12T20:20:40.278Z",
+      "category": "strategy",
+      "message": "Iron Condor #5: ok",
+      "data": {
+        "strategy_id": "iron_condor",
+        "strategy_name": "Iron Condor #5",
+        "phase": "ok",
+        "skip_reason": null,
+        "structure_modified": false,
+        "net_premium": 79478.75,
+        "max_loss": 4665521.25,
+        "risk_reward_ratio": "4665521 : 79570",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Put",
+            "strike": 22700,
+            "quantity": 23725,
+            "premium_per_unit": 5.25
+          },
+          {
+            "side": "Buy",
+            "right": "Put",
+            "strike": 22500,
+            "quantity": 23725,
+            "premium_per_unit": 4.55
+          },
+          {
+            "side": "Sell",
+            "right": "Call",
+            "strike": 24400,
+            "quantity": 23725,
+            "premium_per_unit": 5.4
+          },
+          {
+            "side": "Buy",
+            "right": "Call",
+            "strike": 24600,
+            "quantity": 23725,
+            "premium_per_unit": 2.75
+          }
+        ]
+      }
+    },
+    {
+      "seq": 173,
+      "ts": "2026-06-12T20:20:40.278Z",
       "category": "strategy",
       "message": "Iron Butterfly: skipped",
       "data": {
@@ -9193,8 +13007,8 @@
       }
     },
     {
-      "seq": 153,
-      "ts": "2026-06-12T18:24:20.027Z",
+      "seq": 174,
+      "ts": "2026-06-12T20:20:40.278Z",
       "category": "strategy",
       "message": "Short Strangle: ok",
       "data": {
@@ -9225,8 +13039,8 @@
       }
     },
     {
-      "seq": 154,
-      "ts": "2026-06-12T18:24:20.027Z",
+      "seq": 175,
+      "ts": "2026-06-12T20:20:40.278Z",
       "category": "strategy",
       "message": "Short Straddle: skipped",
       "data": {
@@ -9242,8 +13056,8 @@
       }
     },
     {
-      "seq": 155,
-      "ts": "2026-06-12T18:24:20.027Z",
+      "seq": 176,
+      "ts": "2026-06-12T20:20:40.278Z",
       "category": "strategy",
       "message": "Bull Put Spread: ok",
       "data": {
@@ -9274,8 +13088,8 @@
       }
     },
     {
-      "seq": 156,
-      "ts": "2026-06-12T18:24:20.027Z",
+      "seq": 177,
+      "ts": "2026-06-12T20:20:40.278Z",
       "category": "strategy",
       "message": "Bear Call Spread: ok",
       "data": {
@@ -9306,8 +13120,8 @@
       }
     },
     {
-      "seq": 157,
-      "ts": "2026-06-12T18:24:21.173Z",
+      "seq": 178,
+      "ts": "2026-06-12T20:20:41.425Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -9371,8 +13185,8 @@
       }
     },
     {
-      "seq": 158,
-      "ts": "2026-06-12T18:24:22.328Z",
+      "seq": 179,
+      "ts": "2026-06-12T20:20:42.570Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -9436,8 +13250,783 @@
       }
     },
     {
-      "seq": 159,
-      "ts": "2026-06-12T18:24:23.490Z",
+      "seq": 180,
+      "ts": "2026-06-12T20:20:43.762Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22500,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22400,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24500,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "24895",
+              "price": "4.5",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22400",
+              "quantity": "24895",
+              "price": "4.1",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "24895",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24500",
+              "quantity": "24895",
+              "price": "3.95",
+              "action": "Buy"
+            }
+          ]
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24500",
+                "quantity": "24895",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22400",
+                "quantity": "24895",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "24895",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "24895",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "97569273.64",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 26417352.7,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 181,
+      "ts": "2026-06-12T20:20:44.939Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22700,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22600,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24500,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22700",
+              "quantity": "24895",
+              "price": "5.25",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22600",
+              "quantity": "24895",
+              "price": "4.8",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "24895",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24500",
+              "quantity": "24895",
+              "price": "3.95",
+              "action": "Buy"
+            }
+          ]
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24500",
+                "quantity": "24895",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22600",
+                "quantity": "24895",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "24895",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22700",
+                "quantity": "24895",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "102428205.06",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 26405926.15,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 182,
+      "ts": "2026-06-12T20:20:46.116Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22500,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22400,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24500,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24600,
+              "quantity": 24895,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "24895",
+              "price": "4.5",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22400",
+              "quantity": "24895",
+              "price": "4.1",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24500",
+              "quantity": "24895",
+              "price": "3.85",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24600",
+              "quantity": "24895",
+              "price": "2.75",
+              "action": "Buy"
+            }
+          ]
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24600",
+                "quantity": "24895",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22400",
+                "quantity": "24895",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24500",
+                "quantity": "24895",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "24895",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "95075183.41",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 26409734.83,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 183,
+      "ts": "2026-06-12T20:20:47.295Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22500,
+              "quantity": 23660,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22300,
+              "quantity": 23660,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 23660,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24600,
+              "quantity": 23660,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "23660",
+              "price": "4.5",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22300",
+              "quantity": "23660",
+              "price": "3.75",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "23660",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24600",
+              "quantity": "23660",
+              "price": "2.75",
+              "action": "Buy"
+            }
+          ]
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24600",
+                "quantity": "23660",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22300",
+                "quantity": "23660",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "23660",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "23660",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "92729022.96",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 27512669.94,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 184,
+      "ts": "2026-06-12T20:20:48.465Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22700,
+              "quantity": 23725,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22500,
+              "quantity": 23725,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 23725,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24600,
+              "quantity": 23725,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22700",
+              "quantity": "23725",
+              "price": "5.25",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22500",
+              "quantity": "23725",
+              "price": "4.55",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "23725",
+              "price": "5.4",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24600",
+              "quantity": "23725",
+              "price": "2.75",
+              "action": "Buy"
+            }
+          ]
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24600",
+                "quantity": "23725",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22500",
+                "quantity": "23725",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24400",
+                "quantity": "23725",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22700",
+                "quantity": "23725",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "97614346.84",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 27569620.84,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 185,
+      "ts": "2026-06-12T20:20:49.623Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -9531,8 +14120,8 @@
       }
     },
     {
-      "seq": 160,
-      "ts": "2026-06-12T18:24:24.643Z",
+      "seq": 186,
+      "ts": "2026-06-12T20:20:50.774Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -9626,8 +14215,8 @@
       }
     },
     {
-      "seq": 161,
-      "ts": "2026-06-12T18:24:25.802Z",
+      "seq": 187,
+      "ts": "2026-06-12T20:20:51.922Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -9721,8 +14310,8 @@
       }
     },
     {
-      "seq": 162,
-      "ts": "2026-06-12T18:24:25.802Z",
+      "seq": 188,
+      "ts": "2026-06-12T20:20:51.922Z",
       "category": "calculation",
       "message": "Annualized return (naked_ce_short)",
       "rationale": "Carry return on SPAN for credit strategies.",
@@ -9730,16 +14319,16 @@
         "inputs": {
           "net_premium": 137904.0,
           "span_margin": 40267458.36,
-          "dte": 6
+          "dte": 5
         },
         "outputs": {
-          "annualized_return_pct": 20.83
+          "annualized_return_pct": 25.0
         }
       }
     },
     {
-      "seq": 163,
-      "ts": "2026-06-12T18:24:25.802Z",
+      "seq": 189,
+      "ts": "2026-06-12T20:20:51.922Z",
       "category": "calculation",
       "message": "Annualized return (naked_pe_short)",
       "rationale": "Carry return on SPAN for credit strategies.",
@@ -9747,16 +14336,101 @@
         "inputs": {
           "net_premium": 151580.0,
           "span_margin": 41702473.77,
-          "dte": 6
+          "dte": 5
         },
         "outputs": {
-          "annualized_return_pct": 22.11
+          "annualized_return_pct": 26.53
         }
       }
     },
     {
-      "seq": 164,
-      "ts": "2026-06-12T18:24:25.802Z",
+      "seq": 190,
+      "ts": "2026-06-12T20:20:51.922Z",
+      "category": "calculation",
+      "message": "Annualized return (iron_condor)",
+      "rationale": "Carry return on SPAN for credit strategies.",
+      "data": {
+        "inputs": {
+          "net_premium": 46055.75,
+          "span_margin": 26417352.7,
+          "dte": 5
+        },
+        "outputs": {
+          "annualized_return_pct": 12.73
+        }
+      }
+    },
+    {
+      "seq": 191,
+      "ts": "2026-06-12T20:20:51.922Z",
+      "category": "calculation",
+      "message": "Annualized return (iron_condor)",
+      "rationale": "Carry return on SPAN for credit strategies.",
+      "data": {
+        "inputs": {
+          "net_premium": 47300.5,
+          "span_margin": 26405926.15,
+          "dte": 5
+        },
+        "outputs": {
+          "annualized_return_pct": 13.08
+        }
+      }
+    },
+    {
+      "seq": 192,
+      "ts": "2026-06-12T20:20:51.922Z",
+      "category": "calculation",
+      "message": "Annualized return (iron_condor)",
+      "rationale": "Carry return on SPAN for credit strategies.",
+      "data": {
+        "inputs": {
+          "net_premium": 37342.5,
+          "span_margin": 26409734.83,
+          "dte": 5
+        },
+        "outputs": {
+          "annualized_return_pct": 10.32
+        }
+      }
+    },
+    {
+      "seq": 193,
+      "ts": "2026-06-12T20:20:51.922Z",
+      "category": "calculation",
+      "message": "Annualized return (iron_condor)",
+      "rationale": "Carry return on SPAN for credit strategies.",
+      "data": {
+        "inputs": {
+          "net_premium": 80444.0,
+          "span_margin": 27512669.94,
+          "dte": 5
+        },
+        "outputs": {
+          "annualized_return_pct": 21.34
+        }
+      }
+    },
+    {
+      "seq": 194,
+      "ts": "2026-06-12T20:20:51.922Z",
+      "category": "calculation",
+      "message": "Annualized return (iron_condor)",
+      "rationale": "Carry return on SPAN for credit strategies.",
+      "data": {
+        "inputs": {
+          "net_premium": 79478.75,
+          "span_margin": 27569620.84,
+          "dte": 5
+        },
+        "outputs": {
+          "annualized_return_pct": 21.04
+        }
+      }
+    },
+    {
+      "seq": 195,
+      "ts": "2026-06-12T20:20:51.922Z",
       "category": "calculation",
       "message": "Annualized return (short_strangle)",
       "rationale": "Carry return on SPAN for credit strategies.",
@@ -9764,16 +14438,16 @@
         "inputs": {
           "net_premium": 122850.0,
           "span_margin": 36659444.82,
-          "dte": 6
+          "dte": 5
         },
         "outputs": {
-          "annualized_return_pct": 20.39
+          "annualized_return_pct": 24.46
         }
       }
     },
     {
-      "seq": 165,
-      "ts": "2026-06-12T18:24:25.802Z",
+      "seq": 196,
+      "ts": "2026-06-12T20:20:51.922Z",
       "category": "calculation",
       "message": "Annualized return (bull_put_spread)",
       "rationale": "Carry return on SPAN for credit strategies.",
@@ -9781,16 +14455,16 @@
         "inputs": {
           "net_premium": 47362.25,
           "span_margin": 26403021.93,
-          "dte": 6
+          "dte": 5
         },
         "outputs": {
-          "annualized_return_pct": 10.91
+          "annualized_return_pct": 13.09
         }
       }
     },
     {
-      "seq": 166,
-      "ts": "2026-06-12T18:24:25.802Z",
+      "seq": 197,
+      "ts": "2026-06-12T20:20:51.922Z",
       "category": "calculation",
       "message": "Annualized return (bear_call_spread)",
       "rationale": "Carry return on SPAN for credit strategies.",
@@ -9798,16 +14472,16 @@
         "inputs": {
           "net_premium": 62318.75,
           "span_margin": 26438618.4,
-          "dte": 6
+          "dte": 5
         },
         "outputs": {
-          "annualized_return_pct": 14.34
+          "annualized_return_pct": 17.21
         }
       }
     },
     {
-      "seq": 167,
-      "ts": "2026-06-12T18:24:25.803Z",
+      "seq": 198,
+      "ts": "2026-06-12T20:20:51.922Z",
       "category": "calculation",
       "message": "ATM implied volatility",
       "rationale": "Average IV from ATM call and put when both quoted.",
@@ -9817,7 +14491,7 @@
           "spot": 23622.9
         },
         "outputs": {
-          "atm_iv": 0.11533299999999999
+          "atm_iv": 0.126553
         }
       }
     }
@@ -9826,7 +14500,7 @@
     "status": "ok",
     "spot_price": 23622.9,
     "atm_strike": 23600,
-    "atm_iv": 0.11533299999999999,
+    "atm_iv": 0.126553,
     "structure_modified": false,
     "liquid_ce_strikes": [
       22150,
@@ -9953,8 +14627,8 @@
       25100
     ],
     "icici_api_calls": {
-      "total": 12,
-      "total_success": 12,
+      "total": 27,
+      "total_success": 27,
       "total_failed": 0,
       "by_api": {
         "get_option_chain_quotes": {
@@ -9963,8 +14637,8 @@
           "failed": 0
         },
         "margin_calculator": {
-          "total": 10,
-          "success": 10,
+          "total": 25,
+          "success": 25,
           "failed": 0
         }
       }
@@ -9972,15 +14646,16 @@
     "strategies_ok": [
       "naked_ce_short",
       "naked_pe_short",
+      "iron_condor",
+      "iron_condor",
+      "iron_condor",
+      "iron_condor",
+      "iron_condor",
       "short_strangle",
       "bull_put_spread",
       "bear_call_spread"
     ],
     "strategies_skipped": [
-      {
-        "strategy_id": "iron_condor",
-        "skip_reason": "No iron condor meets minimum PoP within risk limits."
-      },
       {
         "strategy_id": "iron_butterfly",
         "skip_reason": "No symmetric wings meet minimum PoP within risk limits."

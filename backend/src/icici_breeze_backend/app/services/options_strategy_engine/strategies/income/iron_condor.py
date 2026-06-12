@@ -24,7 +24,11 @@ from icici_breeze_backend.app.services.options_strategy_engine.pop import (
 )
 from icici_breeze_backend.app.services.options_strategy_engine.pruning import passes_economic_prune
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_credit_trade
-from icici_breeze_backend.app.services.options_strategy_engine.sizing import legs_at_lots, min_qty_for_one_lot
+from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
+    legs_at_lots,
+    min_qty_for_one_lot,
+    structural_margin_key,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import all_liquid, make_result
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
@@ -43,7 +47,6 @@ MIN_WING_CREDIT = 0.05
 MIN_IC_CREDIT_PCT_OF_WIDTH = 0.03
 IC_CREDIT_PCT_RELAXATION_SCHEDULE: tuple[float, ...] = (0.03, 0.025, 0.02, 0.015, 0.01)
 MIN_IC_ANNUALIZED_RETURN_PCT = 5.0
-IC_SPAN_REFINE_TOP_N = 5
 IC_RETURN_TOP_N = 5
 
 
@@ -571,6 +574,11 @@ def _unit_span_margin(
     strategy_id: str,
 ) -> float:
     one_lot_legs = legs_at_lots(legs, ctx.lot_size, lots=1)
+    struct_key = structural_margin_key(one_lot_legs)
+    cached = ctx.unit_span_by_structure.get(struct_key)
+    if cached is not None:
+        return cached
+
     margin_input = legs_to_margin_input(
         one_lot_legs, ctx.stock_code, ctx.exchange_code, ctx.expiry_display
     )
@@ -585,7 +593,9 @@ def _unit_span_margin(
             "phase": "ic_candidate_span",
         },
     )
-    return parse_float((res.get("Success") or {}).get("span_margin_required"))
+    span = parse_float((res.get("Success") or {}).get("span_margin_required"))
+    ctx.unit_span_by_structure[struct_key] = span
+    return span
 
 
 def _best_strangle_short_pair(ctx: EngineContext) -> tuple[int, int] | None:
@@ -728,19 +738,20 @@ def _pick_top_candidates(
     strategy_id: str,
     top_n: int = IC_RETURN_TOP_N,
 ) -> tuple[list[tuple[IronCondorCandidate, float]], list[dict]]:
-    """Rank by ROR composite score; SPAN annualized return breaks near-ties."""
-    span_pool = sorted(candidates, key=lambda c: c.final_score, reverse=True)[:IC_SPAN_REFINE_TOP_N]
+    """Proxy-shortlist finalists, margin only those, then rank by SPAN-informed return."""
     dte = days_to_expiry(ctx.expiry_display)
+    shortlist = sorted(
+        candidates, key=lambda c: (c.final_score, c.net_collected), reverse=True
+    )[:top_n]
 
     span_scores: list[dict] = []
-    ann_by_id: dict[int, float] = {}
+    scored: list[tuple[IronCondorCandidate, float]] = []
 
-    for cand in span_pool:
+    for cand in shortlist:
         unit_span = _unit_span_margin(ctx, cand.legs, strategy_id=strategy_id)
         ann_return = score_iron_condor_candidate(
             cand.pop, cand.net_collected, cand.max_loss_u * cand.qty, unit_span, dte
         )
-        ann_by_id[id(cand)] = ann_return
         span_scores.append(
             {
                 "short_put": cand.short_put,
@@ -752,21 +763,13 @@ def _pick_top_candidates(
                 "net_collected": cand.net_collected,
             }
         )
+        scored.append((cand, ann_return))
 
-    def rank_key(c: IronCondorCandidate) -> tuple[float, float, float]:
-        return (c.final_score, ann_by_id.get(id(c), 0.0), c.net_collected)
+    def rank_key(item: tuple[IronCondorCandidate, float]) -> tuple[float, float, float]:
+        cand, ann = item
+        return (cand.final_score, ann, cand.net_collected)
 
-    ranked = sorted(candidates, key=rank_key, reverse=True)
-
-    winners: list[tuple[IronCondorCandidate, float]] = []
-    for cand in ranked[:top_n]:
-        ann = ann_by_id.get(id(cand))
-        if ann is None:
-            ann = score_iron_condor_candidate(
-                cand.pop, cand.net_collected, cand.max_loss_u * cand.qty, None, dte
-            )
-        winners.append((cand, ann))
-
+    winners = sorted(scored, key=rank_key, reverse=True)
     return winners, span_scores
 
 
@@ -876,7 +879,9 @@ def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
             "Iron condor SPAN refinement",
             {"finalists": len(span_scores)},
             {"scores": span_scores},
-            rationale="Ranked finalists by ROR score; SPAN annualized return breaks near-ties.",
+            rationale=(
+                "Proxy-shortlisted delivered finalists; SPAN annualized return breaks near-ties."
+            ),
         )
 
     best_ann = winners[0][1]

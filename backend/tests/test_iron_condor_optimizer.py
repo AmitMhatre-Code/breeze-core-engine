@@ -4,15 +4,18 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
+from icici_breeze_backend.app.services.options_strategy_engine.budget_resize import resize_results_to_budgets
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_detail_for_legs, pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
     IC_CREDIT_PCT_RELAXATION_SCHEDULE,
+    IC_RETURN_TOP_N,
     IC_TOP_K_SHORT_STRIKES,
     WING_WIDTH_MULTIPLIERS,
     IronCondorCandidate,
     IronCondorRejectionStats,
     _collect_candidates,
     _pick_top_candidates,
+    _unit_span_margin,
     build_ranking_summary,
     calc_iron_condor,
     enumerate_symmetric_iron_condors,
@@ -26,6 +29,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.strategies.income
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
     QuoteRow,
+    StrategyResult,
     TradeLeg,
 )
 
@@ -279,9 +283,9 @@ class TestCalcIronCondor(unittest.TestCase):
         low_span = _cand(22900, final=100.0, premium=8_000.0)
 
         winners, scores = _pick_top_candidates(
-            ctx, [high_score, low_span], strategy_id="iron_condor", top_n=1
+            ctx, [high_score, low_span], strategy_id="iron_condor", top_n=2
         )
-        self.assertEqual(len(winners), 1)
+        self.assertEqual(len(winners), 2)
         winner, best_return = winners[0]
         self.assertEqual(winner.short_put, 22900)
         self.assertGreater(best_return, 0)
@@ -336,6 +340,95 @@ class TestCalcIronCondor(unittest.TestCase):
         if len(ok) > 1:
             self.assertEqual(ok[1].variant_rank, 2)
             self.assertIsNotNone(ok[1].ranking_summary)
+
+    def test_pick_top_candidates_margins_only_shortlist(self):
+        proc = MagicMock()
+        proc.strategy_builder_margin.return_value = {
+            "Success": {"span_margin_required": 50_000.0}
+        }
+        ctx = _ctx_from_cache({}, processor=proc)
+
+        def _cand(short_put: int, final: float) -> IronCondorCandidate:
+            trade_legs = [
+                TradeLeg("Put", "Sell", short_put, 65, 8.0),
+                TradeLeg("Put", "Buy", short_put - 100, 65, 5.0),
+                TradeLeg("Call", "Sell", 24400, 65, 8.0),
+                TradeLeg("Call", "Buy", 24500, 65, 5.0),
+            ]
+            return IronCondorCandidate(
+                short_put=short_put,
+                short_call=24400,
+                long_put=short_put - 100,
+                long_call=24500,
+                credit=6.0,
+                put_credit=3.0,
+                call_credit=3.0,
+                max_loss_u=44.0,
+                qty=65,
+                pop=95.0,
+                wing_width=100,
+                legs=trade_legs,
+                proxy_score=final,
+                net_collected=final * 100,
+                final_score=final,
+                score_factors={"ror": 0.1},
+            )
+
+        candidates = [_cand(22800 + i * 50, float(100 - i)) for i in range(8)]
+        _pick_top_candidates(ctx, candidates, strategy_id="iron_condor", top_n=IC_RETURN_TOP_N)
+        self.assertEqual(proc.strategy_builder_margin.call_count, IC_RETURN_TOP_N)
+
+    def test_unit_span_margin_uses_session_cache(self):
+        proc = MagicMock()
+        proc.strategy_builder_margin.return_value = {
+            "Success": {"span_margin_required": 42_000.0}
+        }
+        ctx = _ctx_from_cache({}, processor=proc)
+        legs = [
+            TradeLeg("Put", "Sell", 22800, 65, 8.0),
+            TradeLeg("Put", "Buy", 22700, 65, 5.0),
+            TradeLeg("Call", "Sell", 24400, 65, 8.0),
+            TradeLeg("Call", "Buy", 24500, 65, 5.0),
+        ]
+        span_a = _unit_span_margin(ctx, legs, strategy_id="iron_condor")
+        span_b = _unit_span_margin(ctx, legs, strategy_id="iron_condor")
+        self.assertEqual(span_a, 42_000.0)
+        self.assertEqual(span_b, 42_000.0)
+        self.assertEqual(proc.strategy_builder_margin.call_count, 1)
+
+    def test_resize_reuses_ic_unit_span_cache(self):
+        proc = MagicMock()
+        proc.strategy_builder_margin.return_value = {
+            "Success": {"span_margin_required": 55_000.0}
+        }
+        ctx = _ctx_from_cache(
+            {},
+            margin_rupees=50_000_000,
+            max_loss_rupees=4_000_000,
+            processor=proc,
+        )
+        legs = [
+            TradeLeg("Put", "Sell", 22800, 65, 8.0),
+            TradeLeg("Put", "Buy", 22700, 65, 5.0),
+            TradeLeg("Call", "Sell", 24400, 65, 8.0),
+            TradeLeg("Call", "Buy", 24500, 65, 5.0),
+        ]
+        _unit_span_margin(ctx, legs, strategy_id="iron_condor")
+        results = [
+            StrategyResult(
+                "iron_condor",
+                "Iron Condor",
+                "ok",
+                net_premium=6.0 * 65,
+                max_loss=44.0 * 65,
+                legs=legs,
+            )
+        ]
+        resize_results_to_budgets(
+            proc, "u1", "NFO", "NIFTY", "16-Jun-2026", results, ctx
+        )
+        self.assertEqual(proc.strategy_builder_margin.call_count, 1)
+        self.assertEqual(results[0].status, "ok")
 
 
 class TestAuditQuoteRegression(unittest.TestCase):
