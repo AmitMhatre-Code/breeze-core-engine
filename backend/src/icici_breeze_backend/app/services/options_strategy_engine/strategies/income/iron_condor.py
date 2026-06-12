@@ -6,7 +6,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import sk
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.pruning import iron_condor_candidates
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_credit_trade
-from icici_breeze_backend.app.services.options_strategy_engine.sizing import size_quantity_loss_only
+from icici_breeze_backend.app.services.options_strategy_engine.sizing import min_qty_for_one_lot
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import (
     all_liquid,
     iron_wings_symmetric,
@@ -34,7 +34,7 @@ def calc_iron_condor(ctx: EngineContext) -> StrategyResult:
         max_loss_u = w - credit
         if max_loss_u <= 0:
             continue
-        qty = size_quantity_loss_only(ctx.max_loss_rupees, max_loss_u * L, L)
+        qty = min_qty_for_one_lot(L)
         if qty < L:
             continue
         legs = [

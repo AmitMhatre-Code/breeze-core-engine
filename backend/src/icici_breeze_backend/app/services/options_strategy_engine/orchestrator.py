@@ -17,6 +17,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     normalize_expiry_display,
     parse_float,
 )
+from icici_breeze_backend.app.services.options_strategy_engine.budget_resize import resize_results_to_budgets
 from icici_breeze_backend.app.services.options_strategy_engine.registry import CATEGORY_CALCULATORS
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
@@ -283,8 +284,13 @@ async def run_propose_trades(
             sid = calc.__name__.replace("calc_", "")
             audit.record("strategy_eval_start", calc.__name__, {"strategy_id": sid})
         res = calc(ctx)
-        log_strategy_result(ctx, res)
         results.append(res)
+
+    resize_results_to_budgets(
+        proc, user_id, exchange_code, ctx.stock_code, expiry_display, results, ctx, audit
+    )
+    for res in results:
+        log_strategy_result(ctx, res)
 
     attach_margins_and_returns(
         proc, user_id, exchange_code, ctx.stock_code, expiry_display, results, ctx, audit

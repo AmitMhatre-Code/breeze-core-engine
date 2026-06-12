@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import best_strike_near_delta
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import skip
-from icici_breeze_backend.app.services.options_strategy_engine.sizing import size_quantity_margin_only
+from icici_breeze_backend.app.services.options_strategy_engine.sizing import min_qty_for_one_lot
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import all_liquid, ok_with_pop
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import short_delta
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyResult, TradeLeg
@@ -28,7 +28,7 @@ def calc_naked_pe_short(ctx: EngineContext) -> StrategyResult:
         return skip(sid, name, "Quote missing for selected strike.")
     prem = q.best_bid_price or q.ltp
     L = ctx.lot_size
-    qty = size_quantity_margin_only(ctx.margin_rupees, prem * L * 2, L)
+    qty = min_qty_for_one_lot(L)
     if qty < L:
         return skip(sid, name, "Insufficient margin for one lot.")
     legs = [TradeLeg("Put", "Sell", stp, qty, prem)]

@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import math
 
-from icici_breeze_backend.app.services.options_strategy_engine.helpers import elm_addon, floor_lots
-from icici_breeze_backend.app.services.options_strategy_engine.types import UNDEFINED_RISK_STRATEGIES
+from icici_breeze_backend.app.services.options_strategy_engine.helpers import elm_addon, floor_lots, net_premium
+from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    UNDEFINED_RISK_STRATEGIES,
+    StrategyResult,
+    TradeLeg,
+)
 
 
 def size_lots(
@@ -85,3 +89,62 @@ def size_quantity_margin_only(
 
 def min_qty_for_one_lot(lot_size: int) -> int:
     return lot_size
+
+
+def structural_margin_key(legs: list[TradeLeg]) -> tuple:
+    return tuple(sorted((leg.right, leg.side, leg.strike) for leg in legs))
+
+
+def legs_at_lots(legs: list[TradeLeg], lot_size: int, lots: int = 1) -> list[TradeLeg]:
+    qty = lots * lot_size
+    return [
+        TradeLeg(leg.right, leg.side, leg.strike, qty, leg.premium_per_unit)
+        for leg in legs
+    ]
+
+
+def unit_max_loss_per_lot(result: StrategyResult, lot_size: int) -> float:
+    if result.max_loss is None or not result.legs or lot_size <= 0:
+        return 0.0
+    old_base = result.legs[0].quantity
+    if old_base <= 0:
+        return 0.0
+    return result.max_loss / old_base * lot_size
+
+
+def _update_risk_reward_after_scale(result: StrategyResult, scale: float) -> None:
+    if result.risk_reward_ratio is None:
+        return
+    if result.max_loss is None:
+        if result.net_premium is not None:
+            result.risk_reward_ratio = f"Unlimited : {result.net_premium:.0f}"
+        return
+    parts = result.risk_reward_ratio.split(":")
+    if len(parts) != 2:
+        return
+    try:
+        gain = float(parts[1].strip()) * scale
+        result.risk_reward_ratio = f"{result.max_loss:.0f} : {gain:.0f}"
+    except ValueError:
+        if result.net_premium is not None and result.net_premium > 0:
+            result.risk_reward_ratio = f"{result.max_loss:.0f} : {result.net_premium:.0f}"
+
+
+def rescale_result_to_lots(result: StrategyResult, *, lot_size: int, lots: int) -> None:
+    """Scale leg quantities to `lots`, preserving per-leg quantity ratios."""
+    if not result.legs or lot_size <= 0 or lots < 1:
+        return
+    L = lot_size
+    old_base = result.legs[0].quantity
+    if old_base <= 0:
+        return
+    ratios = [leg.quantity / old_base for leg in result.legs]
+    new_base = lots * L
+    scale = new_base / old_base
+    for leg, ratio in zip(result.legs, ratios):
+        leg_qty = int(round(new_base * ratio))
+        leg.quantity = max(L, (leg_qty // L) * L) if leg_qty > 0 else 0
+    if result.max_loss is not None:
+        result.max_loss = round(result.max_loss * scale, 2)
+    result.net_premium = net_premium(result.legs)
+    _update_risk_reward_after_scale(result, scale)

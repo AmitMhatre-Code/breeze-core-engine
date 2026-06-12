@@ -22,9 +22,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.pruning import (
     top_m_wings,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_credit_trade, score_debit_trade
-from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
-    size_quantity_loss_only as size_by_loss,
-)
+from icici_breeze_backend.app.services.options_strategy_engine.sizing import min_qty_for_one_lot
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     TOP_K_SHORT_STRIKES,
     TOP_M_WING_STRIKES,
@@ -228,9 +226,7 @@ def credit_spread_wing(
             min_pop_pct=ctx.min_pop_pct,
         ):
             continue
-        qty = size_by_loss(ctx.max_loss_rupees, max_loss_u * L, L)
-        if qty < L:
-            continue
+        qty = min_qty_for_one_lot(L)
         legs = [
             TradeLeg(short_right, "Sell", short_stp, qty, short_prem),
             TradeLeg(short_right, "Buy", wing, qty, wing_prem),
@@ -285,9 +281,7 @@ def iron_wings_symmetric(
             min_pop_pct=ctx.min_pop_pct,
         ):
             continue
-        qty = size_by_loss(ctx.max_loss_rupees, max_loss_u * L, L)
-        if qty < L:
-            continue
+        qty = min_qty_for_one_lot(L)
         legs = [
             TradeLeg("Put", "Sell", short_put, qty, sp_prem),
             TradeLeg("Put", "Buy", lp, qty, lp_prem),
@@ -367,9 +361,7 @@ def credit_spread_wing_full(
             min_pop_pct=ctx.min_pop_pct,
         ):
             continue
-        qty = size_by_loss(ctx.max_loss_rupees, max_loss_u * L, L)
-        if qty < L:
-            continue
+        qty = min_qty_for_one_lot(L)
         legs = [
             TradeLeg(short_right, "Sell", short_stp, qty, short_prem),
             TradeLeg(short_right, "Buy", wing, qty, wing_prem),
