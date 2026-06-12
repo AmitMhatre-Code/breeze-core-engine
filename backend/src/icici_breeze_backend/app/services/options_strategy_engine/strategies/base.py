@@ -34,9 +34,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     StrategyResult,
     TradeLeg,
 )
-from icici_breeze_backend.audit.strategy_builder_audit import quote_row_to_audit
-
-
 def anchors_for(ctx: EngineContext) -> AnchorIndex:
     return build_anchor_index(ctx.strikes, ctx.spot, ctx.strike_step)
 
@@ -77,6 +74,7 @@ def ensure_liquid_above(
     *,
     purpose: str | None = None,
 ) -> int | None:
+    del max_attempts
     liquid = ctx.liquid_ce_strikes if right == "Call" else ctx.liquid_pe_strikes
     hit = first_liquid_above(liquid, level)
     if hit is not None:
@@ -88,34 +86,12 @@ def ensure_liquid_above(
             {"level": level, "liquid_pool": liquid, "purpose": purpose},
         )
         return hit
-    candidates = [s for s in ctx.strikes if s > level]
-    attempts = 0
-    for s in candidates:
+    for s in ctx.strikes:
+        if s <= level:
+            continue
         q = ctx.cache.get((s, right))
         if q and q.liquid:
             return s
-        from icici_breeze_backend.app.services.options_strategy_engine.universe import fetch_pairs_for_strikes
-
-        fetch_pairs_for_strikes(
-            ctx,
-            {s},
-            fetch_reason=purpose or f"On-demand quote for {right} {s} (first liquid above {level})",
-        )
-        attempts += 1
-        q = ctx.cache.get((s, right))
-        if q and q.liquid:
-            return s
-        if ctx.audit:
-            ctx.audit.record_strike(
-                s,
-                right,
-                included=False,
-                reason="Still illiquid after on-demand fetch",
-                quote=quote_row_to_audit(q) if q else None,
-                context=purpose,
-            )
-        if attempts >= max_attempts:
-            break
     return None
 
 
@@ -127,29 +103,17 @@ def ensure_liquid_below(
     *,
     purpose: str | None = None,
 ) -> int | None:
+    del max_attempts, purpose
     liquid = ctx.liquid_ce_strikes if right == "Call" else ctx.liquid_pe_strikes
     hit = first_liquid_below(liquid, level)
     if hit is not None:
         return hit
-    candidates = [s for s in reversed(ctx.strikes) if s < level]
-    attempts = 0
-    for s in candidates:
+    for s in reversed(ctx.strikes):
+        if s >= level:
+            continue
         q = ctx.cache.get((s, right))
         if q and q.liquid:
             return s
-        from icici_breeze_backend.app.services.options_strategy_engine.universe import fetch_pairs_for_strikes
-
-        fetch_pairs_for_strikes(
-            ctx,
-            {s},
-            fetch_reason=purpose or f"On-demand quote for {right} {s} (first liquid below {level})",
-        )
-        attempts += 1
-        q = ctx.cache.get((s, right))
-        if q and q.liquid:
-            return s
-        if attempts >= max_attempts:
-            break
     return None
 
 

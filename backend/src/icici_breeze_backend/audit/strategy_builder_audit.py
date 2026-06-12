@@ -1,11 +1,13 @@
 """Per-session audit log for Strategy Builder (New) propose-trades runs."""
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
 import re
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,6 +16,7 @@ import icici_breeze_backend.app.core.config as cfg
 _logger = logging.getLogger(__name__)
 
 _AUDIT_SUBDIR = "strategy-builder-audit"
+_MAX_AUDIT_LOGS_PER_USER = 10
 
 
 def audit_log_dir() -> str:
@@ -228,6 +231,7 @@ class StrategyBuilderAuditSession:
             "summary": summary,
         }
         try:
+            enforce_audit_retention(self.user_id)
             with open(self.file_path, "w", encoding="utf-8") as fh:
                 json.dump(document, fh, indent=2, default=_json_default, ensure_ascii=False)
                 fh.write("\n")
@@ -240,6 +244,101 @@ class StrategyBuilderAuditSession:
         except OSError as exc:
             _logger.warning("Failed to write strategy builder audit %s: %s", self.file_path, exc)
         return self.file_path
+
+
+def _read_audit_doc(path: str) -> dict[str, Any] | None:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        return doc if isinstance(doc, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _audit_files_for_user(user_id: str) -> list[tuple[str, float]]:
+    """Return (path, mtime) for audit JSON files owned by user_id."""
+    if not user_id:
+        return []
+    root = audit_log_dir()
+    if not os.path.isdir(root):
+        return []
+    out: list[tuple[str, float]] = []
+    for fname in os.listdir(root):
+        if not fname.endswith(".json"):
+            continue
+        path = os.path.join(root, fname)
+        if not os.path.isfile(path):
+            continue
+        doc = _read_audit_doc(path)
+        if doc and doc.get("user_id") == user_id:
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            out.append((path, mtime))
+    return out
+
+
+def list_audit_files_for_user(user_id: str) -> list[str]:
+    """Return absolute paths for user's audit logs, newest first."""
+    files = _audit_files_for_user(user_id)
+    files.sort(key=lambda item: item[1], reverse=True)
+    return [path for path, _mtime in files]
+
+
+def list_audit_log_index_for_user(user_id: str) -> list[dict[str, Any]]:
+    """Metadata for each retained audit log, newest first."""
+    entries: list[tuple[float, dict[str, Any]]] = []
+    for path, mtime in _audit_files_for_user(user_id):
+        doc = _read_audit_doc(path)
+        if not doc:
+            continue
+        request = doc.get("request") or {}
+        entries.append(
+            (
+                mtime,
+                {
+                    "session_id": doc.get("session_id"),
+                    "started_at": doc.get("started_at"),
+                    "finished_at": doc.get("finished_at"),
+                    "stock_code": request.get("stock_code"),
+                    "event_count": doc.get("event_count"),
+                    "filename": os.path.basename(path),
+                },
+            )
+        )
+    entries.sort(key=lambda item: item[0], reverse=True)
+    return [meta for _mtime, meta in entries]
+
+
+def enforce_audit_retention(
+    user_id: str, *, max_logs: int = _MAX_AUDIT_LOGS_PER_USER
+) -> None:
+    """Delete oldest audit files so at most max_logs - 1 remain before a new write."""
+    if not user_id or max_logs < 1:
+        return
+    files = _audit_files_for_user(user_id)
+    files.sort(key=lambda item: item[1])
+    while len(files) >= max_logs:
+        path, _mtime = files.pop(0)
+        try:
+            os.remove(path)
+            _logger.info("Removed old strategy builder audit: %s", path)
+        except OSError as exc:
+            _logger.warning("Failed to remove old strategy builder audit %s: %s", path, exc)
+
+
+def build_audit_zip_for_user(user_id: str) -> tuple[bytes, str]:
+    """Zip all retained audit JSON files for user_id."""
+    paths = list_audit_files_for_user(user_id)
+    if not paths:
+        raise FileNotFoundError(f"No strategy builder audit logs for user {user_id}")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in paths:
+            zf.write(path, arcname=os.path.basename(path))
+    token = _safe_token(user_id, 16)
+    return buf.getvalue(), f"strategy-builder-audits-{token}.zip"
 
 
 def resolve_audit_file_for_user(session_id: str, user_id: str) -> str | None:

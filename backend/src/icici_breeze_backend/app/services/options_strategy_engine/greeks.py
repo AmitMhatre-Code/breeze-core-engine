@@ -2,14 +2,23 @@
 from __future__ import annotations
 
 import math
+from typing import Literal
 
 from icici_breeze_backend.app.services.iv_compute import DEFAULT_Q, DEFAULT_R, implied_volatility
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import sigma_for_pop
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, QuoteRow, Right
 
+SnapPrefer = Literal["floor", "ceil", "nearest"]
+
 
 def _norm_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def norm_ppf(p: float) -> float:
+    """Inverse standard normal CDF (Acklam approximation via erfinv)."""
+    p = min(max(p, 1e-12), 1.0 - 1e-12)
+    return math.sqrt(2.0) * math.erfinv(2.0 * p - 1.0)
 
 
 def bs_delta(
@@ -30,6 +39,48 @@ def bs_delta(
     d1 = (math.log(spot / strike) + (r - q + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
     call_delta = _norm_cdf(d1)
     return call_delta if right == "Call" else call_delta - 1.0
+
+
+def strike_for_abs_delta(
+    spot: float,
+    t: float,
+    sigma: float,
+    right: Right,
+    target_abs_delta: float,
+    *,
+    r: float = DEFAULT_R,
+    q: float = DEFAULT_Q,
+) -> float:
+    """Invert Black-Scholes delta to an expected strike (continuous K)."""
+    if t <= 0 or sigma <= 0 or spot <= 0 or target_abs_delta <= 0:
+        return spot
+    target = min(max(target_abs_delta, 1e-6), 0.999)
+    if right == "Call":
+        d1 = norm_ppf(target)
+    else:
+        d1 = norm_ppf(1.0 - target)
+    sqrt_t = math.sqrt(t)
+    ln_sk = d1 * sigma * sqrt_t - (r - q + 0.5 * sigma * sigma) * t
+    return spot * math.exp(-ln_sk)
+
+
+def snap_strike(
+    strikes: list[int],
+    k: float,
+    *,
+    prefer: SnapPrefer = "nearest",
+) -> int | None:
+    """Map continuous strike K to the scrip-master grid."""
+    if not strikes:
+        return None
+    if prefer == "nearest":
+        return min(strikes, key=lambda s: abs(s - k))
+    ordered = sorted(strikes)
+    if prefer == "floor":
+        candidates = [s for s in ordered if s <= k]
+        return candidates[-1] if candidates else ordered[0]
+    candidates = [s for s in ordered if s >= k]
+    return candidates[0] if candidates else ordered[-1]
 
 
 def prob_above_strike(

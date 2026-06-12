@@ -22,7 +22,10 @@ _LAZY_EXPORTS = {
     "CATEGORY_CALCULATORS",
     "attach_margins_and_returns",
     "run_propose_trades",
+    "build_bulk_chain_cache",
     "build_liquidity_cache",
+    "finalize_liquidity_cache",
+    "plan_targeted_fetches",
     "expand_chain_to_liquidity_boundary",
     "fetch_full_chain_side",
     "calc_bear_call_spread",
@@ -75,6 +78,18 @@ def _resolve_lazy(name: str) -> Any:
         from icici_breeze_backend.app.services.options_strategy_engine.universe import build_liquidity_cache
 
         return build_liquidity_cache
+    if name == "build_bulk_chain_cache":
+        from icici_breeze_backend.app.services.options_strategy_engine.universe import build_bulk_chain_cache
+
+        return build_bulk_chain_cache
+    if name == "finalize_liquidity_cache":
+        from icici_breeze_backend.app.services.options_strategy_engine.universe import finalize_liquidity_cache
+
+        return finalize_liquidity_cache
+    if name == "plan_targeted_fetches":
+        from icici_breeze_backend.app.services.options_strategy_engine.strike_planner import plan_targeted_fetches
+
+        return plan_targeted_fetches
     if name in ("expand_chain_to_liquidity_boundary", "_expand_chain_to_liquidity_boundary"):
         from icici_breeze_backend.app.services.options_strategy_engine.universe import expand_chain_to_liquidity_boundary
 
@@ -126,7 +141,10 @@ __all__ = [
     "StrategyResult",
     "TradeLeg",
     "attach_margins_and_returns",
+    "build_bulk_chain_cache",
     "build_liquidity_cache",
+    "finalize_liquidity_cache",
+    "plan_targeted_fetches",
     "calc_bear_call_spread",
     "calc_bear_put_spread",
     "calc_bull_call_spread",

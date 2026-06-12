@@ -1,4 +1,5 @@
 """Unit tests for options strategy engine helpers."""
+import asyncio
 import unittest
 from unittest.mock import MagicMock, call, patch
 
@@ -17,7 +18,13 @@ from icici_breeze_backend.app.services.options_strategy_engine import (
     _tail_strikes_needed,
     calc_bull_call_spread,
     calc_naked_ce_short,
+    run_propose_trades,
 )
+from icici_breeze_backend.app.services.options_strategy_engine.greeks import (
+    snap_strike,
+    strike_for_abs_delta,
+)
+from icici_breeze_backend.app.services.options_strategy_engine.icici_async_fetch import IciciCallBudget
 from icici_breeze_backend.app.services.processor import OptionChainBackoff, processor
 
 
@@ -244,28 +251,57 @@ class TestBuildLiquidityCache(unittest.TestCase):
         self.assertFalse(ctx.halted)
         self.assertIn((23500, "Call"), ctx.cache)
 
-    def test_tail_calls_when_window_exceeds_chain(self):
+    def test_targeted_fetches_bounded_when_bulk_chain_narrow(self):
         proc = MagicMock()
+        strikes = list(range(23000, 24100, 50))
 
         def narrow_chain(*_args, **kwargs):
             strike_price = kwargs.get("strike_price")
             right = kwargs.get("right", "Call")
             if strike_price is None:
-                strikes = [23400, 23500, 23600]
-                return {"Status": 200, "Success": [_chain_row(s, right) for s in strikes]}
+                narrow = [23400, 23500, 23600]
+                return {"Status": 200, "Success": [_chain_row(s, right) for s in narrow]}
             return {"Status": 200, "Success": [_chain_row(int(strike_price), right)]}
 
+        proc.fetch_lot_size.return_value = 75
+        proc.list_option_strikes.return_value = strikes
+        proc.strike_interval.return_value = 50
+        proc.search_interval.return_value = 50
         proc.fetch_option_chain_quotes_sb.side_effect = narrow_chain
-        ctx = self._ctx(proc)
-        _build_liquidity_cache(ctx)
-        tail_calls = [
+        proc.strategy_builder_margin.return_value = {
+            "Status": 200,
+            "Success": {"span_margin_required": 100_000},
+        }
+
+        out = asyncio.run(
+            run_propose_trades(
+                proc,
+                "u1",
+                exchange_code="NFO",
+                stock_code="NIFTY",
+                expiry_date="09-Jun-2025",
+                margin_lacs=5.0,
+                max_loss_lacs=2.0,
+                min_pop_pct=85.0,
+                provision_elm=False,
+                strategy_category="income",
+                enable_audit=False,
+            )
+        )
+        self.assertEqual(out["Status"], 200)
+        targeted_calls = [
             c
             for c in proc.fetch_option_chain_quotes_sb.call_args_list
             if c.kwargs.get("strike_price") is not None
         ]
-        self.assertGreater(len(tail_calls), 0)
-        tail_strikes = {int(c.kwargs["strike_price"]) for c in tail_calls}
-        self.assertTrue(any(s < 23400 for s in tail_strikes) or any(s > 23600 for s in tail_strikes))
+        bulk_calls = [
+            c
+            for c in proc.fetch_option_chain_quotes_sb.call_args_list
+            if c.kwargs.get("strike_price") is None
+        ]
+        self.assertEqual(len(bulk_calls), 2)
+        self.assertGreater(len(targeted_calls), 0)
+        self.assertLessEqual(len(targeted_calls), 20)
 
 
 class TestExpandChainToLiquidityBoundary(unittest.TestCase):
@@ -464,12 +500,59 @@ class TestBuildLiquidityCacheUserBackoff(unittest.TestCase):
             atm_strike=23500,
         )
         with patch(
-            "icici_breeze_backend.app.services.options_strategy_engine.get_icici_rate_limit_pause_seconds",
+            "icici_breeze_backend.app.services.options_strategy_engine.universe.get_icici_rate_limit_pause_seconds",
             return_value=3,
         ):
             _build_liquidity_cache(ctx)
         self.assertIsNotNone(ctx.chain_backoff)
         self.assertEqual(ctx.chain_backoff.pause_seconds, 3)
+
+
+class TestStrikeForAbsDelta(unittest.TestCase):
+    def test_snaps_otm_call_above_spot(self):
+        strikes = list(range(23000, 24100, 50))
+        k = strike_for_abs_delta(23500.0, 30 / 365.0, 0.18, "Call", 0.15)
+        snapped = snap_strike(strikes, k, prefer="ceil")
+        self.assertIsNotNone(snapped)
+        self.assertGreater(snapped, 23500)
+
+    def test_snaps_otm_put_below_spot(self):
+        strikes = list(range(23000, 24100, 50))
+        k = strike_for_abs_delta(23500.0, 30 / 365.0, 0.18, "Put", 0.15)
+        snapped = snap_strike(strikes, k, prefer="floor")
+        self.assertIsNotNone(snapped)
+        self.assertLess(snapped, 23500)
+
+
+class TestIciciCallBudget(unittest.IsolatedAsyncioTestCase):
+    async def test_blocks_when_minute_budget_exhausted(self):
+        clock = [0.0]
+
+        def fake_monotonic() -> float:
+            return clock[0]
+
+        async def advance(sec: float) -> None:
+            clock[0] += sec
+
+        budget = IciciCallBudget(max_per_minute=2, max_concurrent=2)
+        with patch(
+            "icici_breeze_backend.app.services.options_strategy_engine.icici_async_fetch.time.monotonic",
+            side_effect=fake_monotonic,
+        ), patch(
+            "icici_breeze_backend.app.services.options_strategy_engine.icici_async_fetch.asyncio.sleep",
+            new=advance,
+        ):
+            await budget.acquire()
+            budget.release()
+            await budget.acquire()
+            budget.release()
+
+            task = asyncio.create_task(budget.acquire())
+            await advance(0.01)
+            self.assertFalse(task.done())
+            await advance(60.0)
+            await task
+            budget.release()
 
 
 class TestNakedCeDeltaAnchor(unittest.TestCase):

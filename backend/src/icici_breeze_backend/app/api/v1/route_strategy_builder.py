@@ -144,7 +144,7 @@ async def post_propose_trades(
 ):
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
-    data = run_propose_trades(
+    data = await run_propose_trades(
         breeze,
         ctx.user_id,
         exchange_code=body.exchange_code.strip() or cfg.NFO,

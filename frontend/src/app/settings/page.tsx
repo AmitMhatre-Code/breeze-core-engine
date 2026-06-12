@@ -72,6 +72,17 @@ export default function SettingsPage() {
               Update scrip master
             </Link>
           </div>
+          <div className="app-card-muted space-y-2 p-4 text-sm">
+            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Strategy Builder Audit Logs
+            </div>
+            <p className="app-text-muted">
+              Download up to 10 recent propose-trades audit logs stored on your server.
+            </p>
+            <Link href="/settings/strategy-audit-logs" className="app-btn-outline">
+              View audit logs
+            </Link>
+          </div>
           <div className="rounded-md border border-red-300 bg-red-50/60 p-4 text-sm dark:border-red-900/50 dark:bg-red-950/20">
             <div className="font-bold text-red-900 dark:text-red-200">Breeze API Playground</div>
             <p className="mt-1 text-zinc-700 dark:text-zinc-400">

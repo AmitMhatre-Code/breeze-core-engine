@@ -259,12 +259,8 @@ def expand_chain_to_liquidity_boundary(ctx: EngineContext) -> None:
         )
 
 
-def _atm_ring_strikes(ctx: EngineContext, pad: int) -> list[int]:
-    return sorted(s for s in ctx.strikes if abs(s - ctx.atm_strike) <= pad * ctx.strike_step)
-
-
-def build_liquidity_cache(ctx: EngineContext) -> None:
-    """Populate quote cache with full-chain protocol (no user strike range)."""
+def build_bulk_chain_cache(ctx: EngineContext) -> None:
+    """Primary core fetch: two chain-wide quotes (CE + PE) without strike_price."""
     all_strikes = ctx.strikes
     if not all_strikes:
         ctx.halted = True
@@ -283,7 +279,7 @@ def build_liquidity_cache(ctx: EngineContext) -> None:
             "liquidity_protocol",
             "Fetch full CE and PE option chains",
             {"strike_count_master": len(all_strikes), "initial_spot_guess": mid},
-            rationale="Two chain-wide quotes for the full liquid universe.",
+            rationale="Two chain-wide quotes populate the bulk strike cache (~60 strikes per side).",
         )
 
     fetch_full_chain_side(ctx, "Call", fetch_reason="Fetch full CE chain")
@@ -305,67 +301,16 @@ def build_liquidity_cache(ctx: EngineContext) -> None:
         {"spot": spot, "atm_strike": ctx.atm_strike},
         rationale="Spot from chain quote payload when available, else scrip midpoint.",
     )
-    expand_chain_to_liquidity_boundary(ctx)
 
-    fetch_missing_tails(
-        ctx,
-        all_strikes,
-        fetch_reason="Ensure scrip-master strikes missing from chain responses are quoted",
-    )
 
+def finalize_liquidity_cache(ctx: EngineContext) -> None:
+    """Halt when no liquid strikes remain after bulk + targeted ingestion."""
     if not ctx.liquid_ce_strikes and not ctx.liquid_pe_strikes:
+        ctx.halted = True
+        ctx.halt_reason = "Insufficient market depth: no liquid strikes found."
         if ctx.audit:
-            ctx.audit.record(
-                "liquidity_protocol",
-                "Compress toward ATM rings",
-                {"atm_strike": ctx.atm_strike},
-                rationale="No liquid strikes after full chain; fetch ATM rings.",
-            )
-        for pad in [1, 2, 3, 4, 5, 6]:
-            near = _atm_ring_strikes(ctx, pad)
-            fetch_missing_tails(
-                ctx,
-                near,
-                fetch_reason=f"Liquidity protocol: ATM ring pad={pad}",
-            )
-            if ctx.liquid_ce_strikes or ctx.liquid_pe_strikes:
-                ctx.structure_modified = True
-                break
-
-    if not ctx.liquid_ce_strikes and not ctx.liquid_pe_strikes:
-        if ctx.audit:
-            ctx.audit.record(
-                "liquidity_protocol",
-                "ATM straddle only",
-                {"atm_strike": ctx.atm_strike},
-                rationale="Last resort — quote ATM straddle for metrics only.",
-            )
-        pairs = {(ctx.atm_strike, "Call"), (ctx.atm_strike, "Put")}
-        missing = pairs - set(ctx.cache.keys())
-        if missing:
-            ctx.cache.update(
-                fetch_quotes(
-                    ctx.processor,
-                    ctx.user_id,
-                    ctx.stock_code,
-                    ctx.exchange_code,
-                    ctx.expiry_display,
-                    missing,
-                    ctx.audit,
-                    fetch_reason="Liquidity protocol: ATM straddle",
-                    backoff=ctx.chain_backoff,
-                )
-            )
-        if not any(
-            ctx.cache.get((ctx.atm_strike, r)) and ctx.cache[(ctx.atm_strike, r)].liquid
-            for r in ("Call", "Put")
-        ):
-            ctx.halted = True
-            ctx.halt_reason = "Insufficient market depth: no liquid strikes found."
-            if ctx.audit:
-                ctx.audit.record("halt", ctx.halt_reason, {"phase": "liquidity_cache_step_c"})
-            return
-        ctx.structure_modified = True
+            ctx.audit.record("halt", ctx.halt_reason, {"phase": "liquidity_cache"})
+        return
 
     if ctx.audit:
         ctx.audit.record(
@@ -379,5 +324,10 @@ def build_liquidity_cache(ctx: EngineContext) -> None:
                 "spot": ctx.spot,
                 "atm_strike": ctx.atm_strike,
             },
-            rationale="Full liquid strike pools drive delta-anchored strategy picks.",
+            rationale="Bulk cache plus targeted wing fetches drive delta-anchored strategy picks.",
         )
+
+
+def build_liquidity_cache(ctx: EngineContext) -> None:
+    """Bulk chain ingest only; targeted fetches run in orchestrator."""
+    build_bulk_chain_cache(ctx)

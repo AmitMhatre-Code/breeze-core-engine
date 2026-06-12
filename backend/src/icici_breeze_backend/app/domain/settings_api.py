@@ -261,3 +261,18 @@ class BreezeApiTesterInvokeResponse(BaseModel):
     duration_ms: int
     response: Any = None
     error: Optional[str] = None
+
+
+class StrategyBuilderAuditLogItem(BaseModel):
+    session_id: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    stock_code: Optional[str] = None
+    event_count: Optional[int] = None
+    filename: str = ""
+
+
+class StrategyBuilderAuditLogsResponse(BaseModel):
+    user_id: str = ""
+    max_logs: int = 10
+    logs: list[StrategyBuilderAuditLogItem] = Field(default_factory=list)

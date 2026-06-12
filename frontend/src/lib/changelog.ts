@@ -20,11 +20,12 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "2.0.0-p",
+    version: "2.0.0-q",
     date: "12-Jun-2026",
     releaseKind: "patch",
     summary: "Delta-anchored Strategy Builder",
     changes: [
+      "Settings adds Strategy Builder Audit Logs: view and download up to 10 recent propose-trades audit JSON files as a ZIP from your persistent data volume",
       "Strategy Builder (New) removes the strike-range slider; income strategies anchor at ATM and select OTM wings by delta from minimum PoP",
       "Bullish and Bearish generation buttons replace Directional; risk/reward profile (Conservative, Moderate, Aggressive) maps to fixed delta buckets and CER ranking",
       "Full liquid options chain is explored without K/M strike caps; naked shorts and short straddle/strangle ignore max-loss budget",

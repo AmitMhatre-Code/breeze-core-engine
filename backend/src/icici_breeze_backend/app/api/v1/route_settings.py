@@ -7,7 +7,7 @@ from typing import Any, List
 import httpx
 import time
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.auth.ai_provider_keys import AiProviderKeyManager
@@ -58,6 +58,8 @@ from icici_breeze_backend.app.domain.settings_api import (
     BreezeApiTesterCatalogResponse,
     BreezeApiTesterInvokeBody,
     BreezeApiTesterInvokeResponse,
+    StrategyBuilderAuditLogItem,
+    StrategyBuilderAuditLogsResponse,
     BreezeApiTesterRiskStatusResponse,
     QuantityLimitsStateResponse,
     QuantityLimitsUpdateBody,
@@ -85,6 +87,11 @@ from icici_breeze_backend.app.services.gemini_model_catalog import (
     dedupe_model_ids,
     fetch_gemini_model_catalog,
     models_list_for_user,
+)
+from icici_breeze_backend.audit.strategy_builder_audit import (
+    _MAX_AUDIT_LOGS_PER_USER,
+    build_audit_zip_for_user,
+    list_audit_log_index_for_user,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -1225,4 +1232,39 @@ async def settings_breeze_api_tester_invoke(
         duration_ms=duration_ms,
         response=result,
         error=None,
+    )
+
+
+@router.get(
+    "/strategy-builder-audit-logs",
+    response_model=StrategyBuilderAuditLogsResponse,
+)
+async def get_strategy_builder_audit_logs(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """List retained Strategy Builder audit logs for the current user."""
+    rows = list_audit_log_index_for_user(ctx.user_id)
+    return StrategyBuilderAuditLogsResponse(
+        user_id=ctx.user_id,
+        max_logs=_MAX_AUDIT_LOGS_PER_USER,
+        logs=[StrategyBuilderAuditLogItem(**row) for row in rows],
+    )
+
+
+@router.get("/strategy-builder-audit-logs/download")
+async def download_strategy_builder_audit_logs(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Download all retained Strategy Builder audit logs as a ZIP archive."""
+    try:
+        payload, filename = build_audit_zip_for_user(ctx.user_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
     )

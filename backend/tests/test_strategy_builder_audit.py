@@ -2,7 +2,10 @@
 import json
 import os
 import tempfile
+import time
 import unittest
+import zipfile
+from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 from icici_breeze_backend.app.services.options_strategy_engine import (
@@ -15,7 +18,11 @@ from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_EXCHANGE
 from icici_breeze_backend.audit.strategy_builder_audit import (
     StrategyBuilderAuditSession,
+    _MAX_AUDIT_LOGS_PER_USER,
     audit_log_dir,
+    build_audit_zip_for_user,
+    enforce_audit_retention,
+    list_audit_files_for_user,
     quote_row_to_audit,
     resolve_audit_file_for_user,
 )
@@ -230,19 +237,23 @@ class TestEngineAuditIntegration(unittest.TestCase):
                 "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
                 return_value=tmp,
             ):
-                out = run_propose_trades(
-                    proc,
-                    "u1",
-                    exchange_code="NFO",
-                    stock_code="NIFTY",
-                    expiry_date="09-Jun-2025",
-                    margin_lacs=5.0,
-                    max_loss_lacs=2.0,
-                    min_pop_pct=1.0,
-                    provision_elm=False,
-                    strategy_category="income",
-                    risk_reward_profile="moderate",
-                    request_id="req-1",
+                import asyncio
+
+                out = asyncio.run(
+                    run_propose_trades(
+                        proc,
+                        "u1",
+                        exchange_code="NFO",
+                        stock_code="NIFTY",
+                        expiry_date="09-Jun-2025",
+                        margin_lacs=5.0,
+                        max_loss_lacs=2.0,
+                        min_pop_pct=1.0,
+                        provision_elm=False,
+                        strategy_category="income",
+                        risk_reward_profile="moderate",
+                        request_id="req-1",
+                    )
                 )
                 self.assertEqual(out["Status"], 200)
                 success = out["Success"]
@@ -259,6 +270,84 @@ class TestEngineAuditIntegration(unittest.TestCase):
                 self.assertGreaterEqual(chain_stats["total"], 2)
                 self.assertLess(chain_stats["total"], 20)
                 self.assertIn("temp_liquid_cache", doc)
+
+
+class TestAuditRetention(unittest.TestCase):
+    def _write_session(self, user_id: str, stock: str, tag: str) -> str:
+        session = StrategyBuilderAuditSession(
+            user_id=user_id,
+            request={"stock_code": stock, "tag": tag},
+        )
+        session.record("test", tag)
+        return session.finalize({"status": "ok", "tag": tag})
+
+    def test_retention_keeps_last_ten_for_user(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
+                return_value=tmp,
+            ):
+                paths = []
+                for i in range(11):
+                    path = self._write_session("user-a", "NIFTY", f"run-{i}")
+                    paths.append(path)
+                    if i < 10:
+                        time.sleep(0.01)
+                remaining = list_audit_files_for_user("user-a")
+                self.assertEqual(len(remaining), _MAX_AUDIT_LOGS_PER_USER)
+                self.assertNotIn(paths[0], remaining)
+                self.assertIn(paths[-1], remaining)
+
+    def test_retention_does_not_delete_other_users(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
+                return_value=tmp,
+            ):
+                user_b_path = self._write_session("user-b", "BANKNIFTY", "b-only")
+                for i in range(11):
+                    self._write_session("user-a", "NIFTY", f"a-{i}")
+                    time.sleep(0.01)
+                self.assertEqual(len(list_audit_files_for_user("user-a")), 10)
+                self.assertEqual(list_audit_files_for_user("user-b"), [user_b_path])
+
+    def test_list_audit_files_newest_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
+                return_value=tmp,
+            ):
+                first = self._write_session("user-a", "NIFTY", "first")
+                time.sleep(0.02)
+                second = self._write_session("user-a", "NIFTY", "second")
+                ordered = list_audit_files_for_user("user-a")
+                self.assertEqual(ordered, [second, first])
+
+    def test_build_audit_zip_contains_expected_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
+                return_value=tmp,
+            ):
+                p1 = self._write_session("user-a", "NIFTY", "one")
+                p2 = self._write_session("user-a", "NIFTY", "two")
+                payload, filename = build_audit_zip_for_user("user-a")
+                self.assertTrue(filename.startswith("strategy-builder-audits-"))
+                with zipfile.ZipFile(BytesIO(payload)) as zf:
+                    names = set(zf.namelist())
+                self.assertEqual(names, {os.path.basename(p1), os.path.basename(p2)})
+
+    def test_enforce_retention_repair_when_over_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
+                return_value=tmp,
+            ):
+                for i in range(12):
+                    self._write_session("user-a", "NIFTY", f"run-{i}")
+                    time.sleep(0.01)
+                enforce_audit_retention("user-a")
+                self.assertEqual(len(list_audit_files_for_user("user-a")), 9)
 
 
 class TestProcessorIciciAudit(unittest.TestCase):

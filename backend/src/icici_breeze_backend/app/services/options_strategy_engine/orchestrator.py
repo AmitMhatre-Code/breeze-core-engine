@@ -25,7 +25,12 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     StrategyResult,
     TradeLeg,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.universe import build_liquidity_cache
+from icici_breeze_backend.app.services.options_strategy_engine.icici_async_fetch import fetch_strike_pairs_async
+from icici_breeze_backend.app.services.options_strategy_engine.strike_planner import plan_targeted_fetches
+from icici_breeze_backend.app.services.options_strategy_engine.universe import (
+    build_bulk_chain_cache,
+    finalize_liquidity_cache,
+)
 
 
 def temp_liquid_cache_snapshot(ctx: EngineContext) -> dict[str, Any]:
@@ -128,7 +133,7 @@ def attach_margins_and_returns(
                 )
 
 
-def run_propose_trades(
+async def run_propose_trades(
     proc: processor,
     user_id: str,
     *,
@@ -254,12 +259,22 @@ def run_propose_trades(
         audit=audit,
     )
 
-    build_liquidity_cache(ctx)
+    build_bulk_chain_cache(ctx)
     if ctx.halted:
         return _fail(400, ctx.halt_reason or "Insufficient market depth.")
 
     ctx.atm_iv = compute_atm_iv(ctx)
     enrich_greeks(ctx)
+
+    to_fetch = plan_targeted_fetches(ctx)
+    if to_fetch:
+        ctx.cache.update(await fetch_strike_pairs_async(ctx, to_fetch))
+        ctx.atm_iv = compute_atm_iv(ctx) or ctx.atm_iv
+        enrich_greeks(ctx)
+
+    finalize_liquidity_cache(ctx)
+    if ctx.halted:
+        return _fail(400, ctx.halt_reason or "Insufficient market depth.")
 
     results: list[StrategyResult] = []
     calculators = CATEGORY_CALCULATORS[strategy_category]
