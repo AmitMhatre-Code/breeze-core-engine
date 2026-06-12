@@ -20,12 +20,17 @@ function bearishSizeClass(className: string): string {
 export function OutlookIcon({
   outlook,
   className = "size-5 shrink-0",
+  uniformSize = false,
 }: {
   outlook: Outlook;
   className?: string;
+  /** When true, all outlook glyphs use the same bounding box (no bear enlargement). */
+  uniformSize?: boolean;
 }) {
   const fillClass = outlookIconFillClass(outlook);
-  const svgClass = `${className} ${fillClass}`;
+  const resolvedClass =
+    outlook === "bearish" && !uniformSize ? bearishSizeClass(className) : className;
+  const svgClass = `${resolvedClass} ${fillClass}`;
 
   if (outlook === "bullish") {
     return (
@@ -44,7 +49,7 @@ export function OutlookIcon({
     return (
       <svg
         viewBox="-20 0 190 190"
-        className={`${bearishSizeClass(className)} ${fillClass}`}
+        className={svgClass}
         aria-hidden
         fill="currentColor"
       >

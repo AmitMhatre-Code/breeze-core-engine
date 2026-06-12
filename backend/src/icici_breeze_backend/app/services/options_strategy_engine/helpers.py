@@ -180,15 +180,22 @@ def net_premium(legs: list[TradeLeg]) -> float:
 
 
 def elm_addon(spot: float, lot_size: int, short_lots: int, provision_elm: bool) -> float:
-    if not provision_elm:
+    if not provision_elm or short_lots <= 0:
         return 0.0
     return spot * lot_size * short_lots * 0.02
+
+
+def short_lots_in_legs(legs: list[TradeLeg], lot_size: int) -> int:
+    """Count short lots across all sell legs (ELM applies per short leg)."""
+    if lot_size <= 0:
+        return 0
+    return sum(leg.quantity // lot_size for leg in legs if leg.side == "Sell")
 
 
 def elm_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> float | None:
     if not ctx.provision_elm or not legs:
         return None
-    short_lots = sum(leg.quantity // ctx.lot_size for leg in legs if leg.side == "Sell")
+    short_lots = short_lots_in_legs(legs, ctx.lot_size)
     if short_lots <= 0:
         return None
     return round(elm_addon(ctx.spot, ctx.lot_size, short_lots, True), 2)

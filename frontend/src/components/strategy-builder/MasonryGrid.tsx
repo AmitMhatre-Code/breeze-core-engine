@@ -1,13 +1,21 @@
 "use client";
 
 import type { ReactNode } from "react";
+import Masonry from "react-masonry-css";
 
-const GAP_STYLES: Record<string, { column: string; item: string }> = {
-  "gap-2": { column: "gap-x-2", item: "mb-2" },
-  "gap-3": { column: "gap-x-3", item: "mb-3" },
-  "gap-4": { column: "gap-x-4", item: "mb-4" },
-  "gap-5": { column: "gap-x-5", item: "mb-5" },
-  "gap-6": { column: "gap-x-6", item: "mb-6" },
+const BREAKPOINT_COLS = {
+  default: 3,
+  1536: 3,
+  1280: 2,
+  640: 1,
+};
+
+const GAP_CLASS: Record<string, string> = {
+  "gap-2": "masonry-grid--gap-2",
+  "gap-3": "masonry-grid--gap-3",
+  "gap-4": "masonry-grid--gap-4",
+  "gap-5": "masonry-grid--gap-5",
+  "gap-6": "masonry-grid--gap-6",
 };
 
 export function MasonryGrid<T>({
@@ -23,20 +31,19 @@ export function MasonryGrid<T>({
   getKey: (item: T, index: number) => string | number;
   renderItem: (item: T, index: number) => ReactNode;
 }) {
-  const { column, item } = GAP_STYLES[gapClassName] ?? GAP_STYLES["gap-3"];
+  const gapModifier = GAP_CLASS[gapClassName] ?? GAP_CLASS["gap-3"];
 
   return (
-    <div
-      className={`columns-1 sm:columns-2 lg:columns-3 xl:columns-4 ${column} ${className}`}
+    <Masonry
+      breakpointCols={BREAKPOINT_COLS}
+      className={`masonry-grid ${gapModifier} ${className}`.trim()}
+      columnClassName={`masonry-grid_column ${gapModifier}`}
     >
       {items.map((itemData, index) => (
-        <div
-          key={getKey(itemData, index)}
-          className={`w-full min-w-0 break-inside-avoid ${item}`}
-        >
+        <div key={getKey(itemData, index)} className="w-full">
           {renderItem(itemData, index)}
         </div>
       ))}
-    </div>
+    </Masonry>
   );
 }

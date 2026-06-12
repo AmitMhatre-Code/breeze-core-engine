@@ -1,12 +1,12 @@
 {
-  "session_id": "89658aea-5c5c-49be-af0a-bc03f6a114b0",
+  "session_id": "4ee48bed-c396-444e-9cab-d1efc8966e3f",
   "user_id": "VIKRAMMH",
   "request_id": null,
   "source": "strategy_builder_new",
-  "started_at": "2026-06-12T13:37:12.347Z",
-  "finished_at": "2026-06-12T13:37:22.925Z",
-  "duration_ms": 10578,
-  "audit_file": "/app/backend/data/strategy-builder-audit/20260612T133712Z_VIKRAMMH_NIFTY_89658aea.json",
+  "started_at": "2026-06-12T14:18:48.329Z",
+  "finished_at": "2026-06-12T14:19:05.845Z",
+  "duration_ms": 17515,
+  "audit_file": "/app/backend/data/strategy-builder-audit/20260612T141848Z_VIKRAMMH_NIFTY_4ee48bed.json",
   "request": {
     "exchange_code": "NFO",
     "stock_code": "NIFTY",
@@ -19,8 +19,8 @@
     "risk_reward_profile": "moderate"
   },
   "icici_api_calls": {
-    "total": 10,
-    "total_success": 10,
+    "total": 16,
+    "total_success": 16,
     "total_failed": 0,
     "by_api": {
       "get_option_chain_quotes": {
@@ -29,8 +29,8 @@
         "failed": 0
       },
       "margin_calculator": {
-        "total": 8,
-        "success": 8,
+        "total": 14,
+        "success": 14,
         "failed": 0
       }
     }
@@ -1609,11 +1609,11 @@
       }
     ]
   },
-  "event_count": 163,
+  "event_count": 175,
   "events": [
     {
       "seq": 1,
-      "ts": "2026-06-12T13:37:12.347Z",
+      "ts": "2026-06-12T14:18:48.329Z",
       "category": "session_start",
       "message": "Strategy Builder (New) propose-trades",
       "rationale": "Full decision audit for this build session.",
@@ -1624,7 +1624,7 @@
     },
     {
       "seq": 2,
-      "ts": "2026-06-12T13:37:12.348Z",
+      "ts": "2026-06-12T14:18:48.330Z",
       "category": "scrip_master",
       "message": "fetch_lot_size",
       "rationale": "Lot size from scrip master drives quantity snapping.",
@@ -1637,7 +1637,7 @@
     },
     {
       "seq": 3,
-      "ts": "2026-06-12T13:37:12.357Z",
+      "ts": "2026-06-12T14:18:48.339Z",
       "category": "scrip_master",
       "message": "list_option_strikes",
       "rationale": "Available strikes bound all strategy construction.",
@@ -1649,7 +1649,7 @@
     },
     {
       "seq": 4,
-      "ts": "2026-06-12T13:37:12.357Z",
+      "ts": "2026-06-12T14:18:48.340Z",
       "category": "calculation",
       "message": "Engine parameters",
       "rationale": "Delta-anchored template parameters (no user strike range).",
@@ -1672,7 +1672,7 @@
     },
     {
       "seq": 5,
-      "ts": "2026-06-12T13:37:12.358Z",
+      "ts": "2026-06-12T14:18:48.341Z",
       "category": "liquidity_protocol",
       "message": "Fetch full CE and PE option chains",
       "rationale": "Two chain-wide quotes populate the bulk strike cache (~60 strikes per side).",
@@ -1683,7 +1683,7 @@
     },
     {
       "seq": 6,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "api_call",
       "message": "API get_option_chain_quotes",
       "rationale": "Fetch full CE chain",
@@ -1835,8 +1835,8 @@
               "total_quantity_traded": "14570530",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 2072460.0,
-              "chnge_oi": 155155.0,
+              "open_interest": 2069795.0,
+              "chnge_oi": 152490.0,
               "total_buy_qty": "1245530",
               "total_sell_qty": "20930"
             },
@@ -1891,8 +1891,8 @@
               "total_quantity_traded": "19476405",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 2617290.0,
-              "chnge_oi": 472420.0,
+              "open_interest": 2616250.0,
+              "chnge_oi": 471380.0,
               "total_buy_qty": "1729910",
               "total_sell_qty": "33280"
             },
@@ -1919,8 +1919,8 @@
               "total_quantity_traded": "8497255",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 808275.0,
-              "chnge_oi": 20930.0,
+              "open_interest": 807300.0,
+              "chnge_oi": 19955.0,
               "total_buy_qty": "535210",
               "total_sell_qty": "38220"
             },
@@ -1947,8 +1947,8 @@
               "total_quantity_traded": "28189070",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 3104530.0,
-              "chnge_oi": 538200.0,
+              "open_interest": 3102385.0,
+              "chnge_oi": 536055.0,
               "total_buy_qty": "1219205",
               "total_sell_qty": "40495"
             },
@@ -2003,8 +2003,8 @@
               "total_quantity_traded": "38953525",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 3637725.0,
-              "chnge_oi": 303875.0,
+              "open_interest": 3636685.0,
+              "chnge_oi": 302835.0,
               "total_buy_qty": "721175",
               "total_sell_qty": "70915"
             },
@@ -2031,8 +2031,8 @@
               "total_quantity_traded": "18551260",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 711295.0,
-              "chnge_oi": 51870.0,
+              "open_interest": 709280.0,
+              "chnge_oi": 49855.0,
               "total_buy_qty": "228280",
               "total_sell_qty": "26325"
             },
@@ -2059,8 +2059,8 @@
               "total_quantity_traded": "81210610",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 7154680.0,
-              "chnge_oi": 97630.0,
+              "open_interest": 6905730.0,
+              "chnge_oi": -151320.0,
               "total_buy_qty": "1980290",
               "total_sell_qty": "201175"
             },
@@ -2087,8 +2087,8 @@
               "total_quantity_traded": "22132045",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 719290.0,
-              "chnge_oi": 11765.0,
+              "open_interest": 713505.0,
+              "chnge_oi": 5980.0,
               "total_buy_qty": "135005",
               "total_sell_qty": "40560"
             },
@@ -2115,8 +2115,8 @@
               "total_quantity_traded": "49071685",
               "spot_price": "23622.9",
               "ltq": "260",
-              "open_interest": 2529410.0,
-              "chnge_oi": 512460.0,
+              "open_interest": 2524535.0,
+              "chnge_oi": 507585.0,
               "total_buy_qty": "410345",
               "total_sell_qty": "66495"
             },
@@ -2143,8 +2143,8 @@
               "total_quantity_traded": "27374490",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1147380.0,
-              "chnge_oi": 523445.0,
+              "open_interest": 1140360.0,
+              "chnge_oi": 516425.0,
               "total_buy_qty": "101270",
               "total_sell_qty": "22425"
             },
@@ -2171,8 +2171,8 @@
               "total_quantity_traded": "64458030",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 3451240.0,
-              "chnge_oi": 961220.0,
+              "open_interest": 3449940.0,
+              "chnge_oi": 959920.0,
               "total_buy_qty": "174850",
               "total_sell_qty": "69680"
             },
@@ -2199,8 +2199,8 @@
               "total_quantity_traded": "36690940",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1066195.0,
-              "chnge_oi": -214435.0,
+              "open_interest": 1056575.0,
+              "chnge_oi": -224055.0,
               "total_buy_qty": "188370",
               "total_sell_qty": "61425"
             },
@@ -2227,8 +2227,8 @@
               "total_quantity_traded": "79172405",
               "spot_price": "23622.9",
               "ltq": "520",
-              "open_interest": 4840810.0,
-              "chnge_oi": 534820.0,
+              "open_interest": 4679545.0,
+              "chnge_oi": 373555.0,
               "total_buy_qty": "687375",
               "total_sell_qty": "126555"
             },
@@ -2255,8 +2255,8 @@
               "total_quantity_traded": "38039495",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1412775.0,
-              "chnge_oi": 35295.0,
+              "open_interest": 1410240.0,
+              "chnge_oi": 32760.0,
               "total_buy_qty": "135590",
               "total_sell_qty": "43875"
             },
@@ -2283,8 +2283,8 @@
               "total_quantity_traded": "80367430",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 3190655.0,
-              "chnge_oi": 85085.0,
+              "open_interest": 3175640.0,
+              "chnge_oi": 70070.0,
               "total_buy_qty": "221910",
               "total_sell_qty": "100945"
             },
@@ -2311,8 +2311,8 @@
               "total_quantity_traded": "60732360",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 1786850.0,
-              "chnge_oi": 209495.0,
+              "open_interest": 1783470.0,
+              "chnge_oi": 206115.0,
               "total_buy_qty": "154505",
               "total_sell_qty": "65195"
             },
@@ -2339,8 +2339,8 @@
               "total_quantity_traded": "191797060",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 10629450.0,
-              "chnge_oi": 1466010.0,
+              "open_interest": 10501595.0,
+              "chnge_oi": 1338155.0,
               "total_buy_qty": "1907555",
               "total_sell_qty": "391950"
             },
@@ -2367,8 +2367,8 @@
               "total_quantity_traded": "59496255",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1593670.0,
-              "chnge_oi": 229060.0,
+              "open_interest": 1562860.0,
+              "chnge_oi": 198250.0,
               "total_buy_qty": "149760",
               "total_sell_qty": "45435"
             },
@@ -2395,8 +2395,8 @@
               "total_quantity_traded": "115245845",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 4060940.0,
-              "chnge_oi": 472810.0,
+              "open_interest": 4017455.0,
+              "chnge_oi": 429325.0,
               "total_buy_qty": "311350",
               "total_sell_qty": "83135"
             },
@@ -2423,8 +2423,8 @@
               "total_quantity_traded": "77180740",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1763125.0,
-              "chnge_oi": -325130.0,
+              "open_interest": 1732445.0,
+              "chnge_oi": -355810.0,
               "total_buy_qty": "182260",
               "total_sell_qty": "142285"
             },
@@ -2451,8 +2451,8 @@
               "total_quantity_traded": "185348735",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 6411730.0,
-              "chnge_oi": 252070.0,
+              "open_interest": 6348485.0,
+              "chnge_oi": 188825.0,
               "total_buy_qty": "354380",
               "total_sell_qty": "154310"
             },
@@ -2479,8 +2479,8 @@
               "total_quantity_traded": "111487870",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1896765.0,
-              "chnge_oi": 337805.0,
+              "open_interest": 1884935.0,
+              "chnge_oi": 325975.0,
               "total_buy_qty": "152880",
               "total_sell_qty": "101205"
             },
@@ -2507,8 +2507,8 @@
               "total_quantity_traded": "218468185",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 4359680.0,
-              "chnge_oi": -1753700.0,
+              "open_interest": 4118465.0,
+              "chnge_oi": -1994915.0,
               "total_buy_qty": "272025",
               "total_sell_qty": "132015"
             },
@@ -2535,8 +2535,8 @@
               "total_quantity_traded": "142100270",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 2137720.0,
-              "chnge_oi": 29250.0,
+              "open_interest": 2099240.0,
+              "chnge_oi": -9230.0,
               "total_buy_qty": "135200",
               "total_sell_qty": "89960"
             },
@@ -2563,8 +2563,8 @@
               "total_quantity_traded": "268653125",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 4429815.0,
-              "chnge_oi": -1982370.0,
+              "open_interest": 3922880.0,
+              "chnge_oi": -2489305.0,
               "total_buy_qty": "309010",
               "total_sell_qty": "88530"
             },
@@ -2591,8 +2591,8 @@
               "total_quantity_traded": "168452375",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1673750.0,
-              "chnge_oi": -559000.0,
+              "open_interest": 1671150.0,
+              "chnge_oi": -561600.0,
               "total_buy_qty": "109460",
               "total_sell_qty": "29770"
             },
@@ -2619,8 +2619,8 @@
               "total_quantity_traded": "351619515",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 4772365.0,
-              "chnge_oi": -2447640.0,
+              "open_interest": 4732845.0,
+              "chnge_oi": -2487160.0,
               "total_buy_qty": "369265",
               "total_sell_qty": "76180"
             },
@@ -2647,8 +2647,8 @@
               "total_quantity_traded": "189877675",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1387685.0,
-              "chnge_oi": -699595.0,
+              "open_interest": 1382160.0,
+              "chnge_oi": -705120.0,
               "total_buy_qty": "107185",
               "total_sell_qty": "22035"
             },
@@ -2675,8 +2675,8 @@
               "total_quantity_traded": "344967220",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 3617510.0,
-              "chnge_oi": -1759875.0,
+              "open_interest": 3419975.0,
+              "chnge_oi": -1957410.0,
               "total_buy_qty": "330980",
               "total_sell_qty": "36140"
             },
@@ -2703,8 +2703,8 @@
               "total_quantity_traded": "181204075",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1019655.0,
-              "chnge_oi": -1115075.0,
+              "open_interest": 1006655.0,
+              "chnge_oi": -1128075.0,
               "total_buy_qty": "79495",
               "total_sell_qty": "22490"
             },
@@ -2731,8 +2731,8 @@
               "total_quantity_traded": "150769775",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 2675530.0,
-              "chnge_oi": -3153280.0,
+              "open_interest": 2632565.0,
+              "chnge_oi": -3196245.0,
               "total_buy_qty": "155545",
               "total_sell_qty": "26325"
             },
@@ -2759,8 +2759,8 @@
               "total_quantity_traded": "31709210",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 662155.0,
-              "chnge_oi": -1723735.0,
+              "open_interest": 652600.0,
+              "chnge_oi": -1733290.0,
               "total_buy_qty": "45435",
               "total_sell_qty": "15860"
             },
@@ -2787,8 +2787,8 @@
               "total_quantity_traded": "44702320",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 2181010.0,
-              "chnge_oi": -4254315.0,
+              "open_interest": 2100800.0,
+              "chnge_oi": -4334525.0,
               "total_buy_qty": "137215",
               "total_sell_qty": "34710"
             },
@@ -2815,8 +2815,8 @@
               "total_quantity_traded": "8622900",
               "spot_price": "23622.9",
               "ltq": "260",
-              "open_interest": 469755.0,
-              "chnge_oi": -1164020.0,
+              "open_interest": 452660.0,
+              "chnge_oi": -1181115.0,
               "total_buy_qty": "30095",
               "total_sell_qty": "12480"
             },
@@ -2843,8 +2843,8 @@
               "total_quantity_traded": "12915370",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 660595.0,
-              "chnge_oi": -1091025.0,
+              "open_interest": 585260.0,
+              "chnge_oi": -1166360.0,
               "total_buy_qty": "35490",
               "total_sell_qty": "15145"
             },
@@ -2871,8 +2871,8 @@
               "total_quantity_traded": "1955655",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 165685.0,
-              "chnge_oi": -275015.0,
+              "open_interest": 165230.0,
+              "chnge_oi": -275470.0,
               "total_buy_qty": "24960",
               "total_sell_qty": "14040"
             },
@@ -2899,8 +2899,8 @@
               "total_quantity_traded": "10653825",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1002040.0,
-              "chnge_oi": -436865.0,
+              "open_interest": 996385.0,
+              "chnge_oi": -442520.0,
               "total_buy_qty": "112710",
               "total_sell_qty": "14170"
             },
@@ -2955,8 +2955,8 @@
               "total_quantity_traded": "1049230",
               "spot_price": "23622.9",
               "ltq": "195",
-              "open_interest": 227565.0,
-              "chnge_oi": -106470.0,
+              "open_interest": 226980.0,
+              "chnge_oi": -107055.0,
               "total_buy_qty": "42510",
               "total_sell_qty": "10985"
             },
@@ -3011,8 +3011,8 @@
               "total_quantity_traded": "596830",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 132795.0,
-              "chnge_oi": -61165.0,
+              "open_interest": 132665.0,
+              "chnge_oi": -61295.0,
               "total_buy_qty": "58175",
               "total_sell_qty": "8840"
             },
@@ -3067,8 +3067,8 @@
               "total_quantity_traded": "189930",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 101010.0,
-              "chnge_oi": -13910.0,
+              "open_interest": 100815.0,
+              "chnge_oi": -14105.0,
               "total_buy_qty": "58955",
               "total_sell_qty": "7930"
             },
@@ -3388,7 +3388,7 @@
     },
     {
       "seq": 7,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3414,7 +3414,7 @@
     },
     {
       "seq": 8,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3440,7 +3440,7 @@
     },
     {
       "seq": 9,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3466,7 +3466,7 @@
     },
     {
       "seq": 10,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3492,7 +3492,7 @@
     },
     {
       "seq": 11,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3518,7 +3518,7 @@
     },
     {
       "seq": 12,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3544,7 +3544,7 @@
     },
     {
       "seq": 13,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3570,7 +3570,7 @@
     },
     {
       "seq": 14,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3596,7 +3596,7 @@
     },
     {
       "seq": 15,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3622,7 +3622,7 @@
     },
     {
       "seq": 16,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3648,7 +3648,7 @@
     },
     {
       "seq": 17,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3674,7 +3674,7 @@
     },
     {
       "seq": 18,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3700,7 +3700,7 @@
     },
     {
       "seq": 19,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3726,7 +3726,7 @@
     },
     {
       "seq": 20,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3752,7 +3752,7 @@
     },
     {
       "seq": 21,
-      "ts": "2026-06-12T13:37:12.509Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3778,7 +3778,7 @@
     },
     {
       "seq": 22,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3804,7 +3804,7 @@
     },
     {
       "seq": 23,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 22950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3830,7 +3830,7 @@
     },
     {
       "seq": 24,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3856,7 +3856,7 @@
     },
     {
       "seq": 25,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3882,7 +3882,7 @@
     },
     {
       "seq": 26,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3908,7 +3908,7 @@
     },
     {
       "seq": 27,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3934,7 +3934,7 @@
     },
     {
       "seq": 28,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3960,7 +3960,7 @@
     },
     {
       "seq": 29,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -3986,7 +3986,7 @@
     },
     {
       "seq": 30,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4012,7 +4012,7 @@
     },
     {
       "seq": 31,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4038,7 +4038,7 @@
     },
     {
       "seq": 32,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4064,7 +4064,7 @@
     },
     {
       "seq": 33,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4090,7 +4090,7 @@
     },
     {
       "seq": 34,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4116,7 +4116,7 @@
     },
     {
       "seq": 35,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4142,7 +4142,7 @@
     },
     {
       "seq": 36,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4168,7 +4168,7 @@
     },
     {
       "seq": 37,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4194,7 +4194,7 @@
     },
     {
       "seq": 38,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4220,7 +4220,7 @@
     },
     {
       "seq": 39,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4246,7 +4246,7 @@
     },
     {
       "seq": 40,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4272,7 +4272,7 @@
     },
     {
       "seq": 41,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4298,7 +4298,7 @@
     },
     {
       "seq": 42,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4324,7 +4324,7 @@
     },
     {
       "seq": 43,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 23950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4350,7 +4350,7 @@
     },
     {
       "seq": 44,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 24000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4376,7 +4376,7 @@
     },
     {
       "seq": 45,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 24050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4402,7 +4402,7 @@
     },
     {
       "seq": 46,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 24100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4428,7 +4428,7 @@
     },
     {
       "seq": 47,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 24150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4454,7 +4454,7 @@
     },
     {
       "seq": 48,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 24200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4480,7 +4480,7 @@
     },
     {
       "seq": 49,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 24250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4506,7 +4506,7 @@
     },
     {
       "seq": 50,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 24300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4532,7 +4532,7 @@
     },
     {
       "seq": 51,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 24350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4558,7 +4558,7 @@
     },
     {
       "seq": 52,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 24400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4584,7 +4584,7 @@
     },
     {
       "seq": 53,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.474Z",
       "category": "strike_selected",
       "message": "Call 24450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4610,7 +4610,7 @@
     },
     {
       "seq": 54,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 24500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4636,7 +4636,7 @@
     },
     {
       "seq": 55,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 24550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4662,7 +4662,7 @@
     },
     {
       "seq": 56,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 24600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4688,7 +4688,7 @@
     },
     {
       "seq": 57,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 24650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4714,7 +4714,7 @@
     },
     {
       "seq": 58,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 24700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4740,7 +4740,7 @@
     },
     {
       "seq": 59,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 24750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4766,7 +4766,7 @@
     },
     {
       "seq": 60,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 24800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4792,7 +4792,7 @@
     },
     {
       "seq": 61,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 24850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4818,7 +4818,7 @@
     },
     {
       "seq": 62,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 24900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4844,7 +4844,7 @@
     },
     {
       "seq": 63,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 24950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4870,7 +4870,7 @@
     },
     {
       "seq": 64,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 25000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4896,7 +4896,7 @@
     },
     {
       "seq": 65,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 25050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4922,7 +4922,7 @@
     },
     {
       "seq": 66,
-      "ts": "2026-06-12T13:37:12.510Z",
+      "ts": "2026-06-12T14:18:48.475Z",
       "category": "strike_selected",
       "message": "Call 25100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -4948,7 +4948,7 @@
     },
     {
       "seq": 67,
-      "ts": "2026-06-12T13:37:13.656Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "api_call",
       "message": "API get_option_chain_quotes",
       "rationale": "Fetch full PE chain",
@@ -5464,8 +5464,8 @@
               "total_quantity_traded": "10985",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 4030.0,
-              "chnge_oi": 1625.0,
+              "open_interest": 3900.0,
+              "chnge_oi": 1495.0,
               "total_buy_qty": "17225",
               "total_sell_qty": "13390"
             },
@@ -5492,8 +5492,8 @@
               "total_quantity_traded": "208390",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 83135.0,
-              "chnge_oi": 17225.0,
+              "open_interest": 82550.0,
+              "chnge_oi": 16640.0,
               "total_buy_qty": "14300",
               "total_sell_qty": "10790"
             },
@@ -5520,8 +5520,8 @@
               "total_quantity_traded": "34580",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 8190.0,
-              "chnge_oi": 5915.0,
+              "open_interest": 7930.0,
+              "chnge_oi": 5655.0,
               "total_buy_qty": "13195",
               "total_sell_qty": "10920"
             },
@@ -5548,8 +5548,8 @@
               "total_quantity_traded": "184080",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 61490.0,
-              "chnge_oi": 14690.0,
+              "open_interest": 60840.0,
+              "chnge_oi": 14040.0,
               "total_buy_qty": "19110",
               "total_sell_qty": "8125"
             },
@@ -5576,8 +5576,8 @@
               "total_quantity_traded": "142610",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 24700.0,
-              "chnge_oi": 18330.0,
+              "open_interest": 23855.0,
+              "chnge_oi": 17485.0,
               "total_buy_qty": "17225",
               "total_sell_qty": "10400"
             },
@@ -5604,8 +5604,8 @@
               "total_quantity_traded": "3143595",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 762385.0,
-              "chnge_oi": 147485.0,
+              "open_interest": 760045.0,
+              "chnge_oi": 145145.0,
               "total_buy_qty": "23855",
               "total_sell_qty": "73320"
             },
@@ -5632,8 +5632,8 @@
               "total_quantity_traded": "405405",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 59345.0,
-              "chnge_oi": 38740.0,
+              "open_interest": 57460.0,
+              "chnge_oi": 36855.0,
               "total_buy_qty": "16185",
               "total_sell_qty": "20020"
             },
@@ -5660,8 +5660,8 @@
               "total_quantity_traded": "2003235",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 333125.0,
-              "chnge_oi": 147420.0,
+              "open_interest": 330980.0,
+              "chnge_oi": 145275.0,
               "total_buy_qty": "19110",
               "total_sell_qty": "27300"
             },
@@ -5688,8 +5688,8 @@
               "total_quantity_traded": "1279460",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 119080.0,
-              "chnge_oi": 87035.0,
+              "open_interest": 114595.0,
+              "chnge_oi": 82550.0,
               "total_buy_qty": "20280",
               "total_sell_qty": "16575"
             },
@@ -5716,8 +5716,8 @@
               "total_quantity_traded": "10627305",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 900705.0,
-              "chnge_oi": 513045.0,
+              "open_interest": 849615.0,
+              "chnge_oi": 461955.0,
               "total_buy_qty": "29250",
               "total_sell_qty": "89245"
             },
@@ -5744,8 +5744,8 @@
               "total_quantity_traded": "5104905",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 319865.0,
-              "chnge_oi": 251160.0,
+              "open_interest": 278785.0,
+              "chnge_oi": 210080.0,
               "total_buy_qty": "45565",
               "total_sell_qty": "36205"
             },
@@ -5772,8 +5772,8 @@
               "total_quantity_traded": "26689650",
               "spot_price": "23622.9",
               "ltq": "520",
-              "open_interest": 1659320.0,
-              "chnge_oi": 1190345.0,
+              "open_interest": 1647035.0,
+              "chnge_oi": 1178060.0,
               "total_buy_qty": "156975",
               "total_sell_qty": "116350"
             },
@@ -5800,8 +5800,8 @@
               "total_quantity_traded": "27557010",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1678885.0,
-              "chnge_oi": 1475370.0,
+              "open_interest": 1616355.0,
+              "chnge_oi": 1412840.0,
               "total_buy_qty": "93340",
               "total_sell_qty": "104455"
             },
@@ -5828,8 +5828,8 @@
               "total_quantity_traded": "94914365",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 4640870.0,
-              "chnge_oi": 4040660.0,
+              "open_interest": 4635800.0,
+              "chnge_oi": 4035590.0,
               "total_buy_qty": "272415",
               "total_sell_qty": "435890"
             },
@@ -5856,8 +5856,8 @@
               "total_quantity_traded": "70755100",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 2384915.0,
-              "chnge_oi": 2212470.0,
+              "open_interest": 2251080.0,
+              "chnge_oi": 2078635.0,
               "total_buy_qty": "57980",
               "total_sell_qty": "324675"
             },
@@ -5884,8 +5884,8 @@
               "total_quantity_traded": "211831880",
               "spot_price": "23622.9",
               "ltq": "195",
-              "open_interest": 8917090.0,
-              "chnge_oi": 7182110.0,
+              "open_interest": 8489390.0,
+              "chnge_oi": 6754410.0,
               "total_buy_qty": "159315",
               "total_sell_qty": "957970"
             },
@@ -5912,8 +5912,8 @@
               "total_quantity_traded": "149280560",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 4648995.0,
-              "chnge_oi": 4314050.0,
+              "open_interest": 4522115.0,
+              "chnge_oi": 4187170.0,
               "total_buy_qty": "90220",
               "total_sell_qty": "566930"
             },
@@ -5940,8 +5940,8 @@
               "total_quantity_traded": "357213545",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 9710415.0,
-              "chnge_oi": 8016645.0,
+              "open_interest": 9325680.0,
+              "chnge_oi": 7631910.0,
               "total_buy_qty": "612755",
               "total_sell_qty": "1137565"
             },
@@ -5968,8 +5968,8 @@
               "total_quantity_traded": "238281615",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 4577560.0,
-              "chnge_oi": 3854500.0,
+              "open_interest": 4477265.0,
+              "chnge_oi": 3754205.0,
               "total_buy_qty": "69940",
               "total_sell_qty": "626145"
             },
@@ -5996,8 +5996,8 @@
               "total_quantity_traded": "303842110",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 9170980.0,
-              "chnge_oi": 6221995.0,
+              "open_interest": 8855730.0,
+              "chnge_oi": 5906745.0,
               "total_buy_qty": "182910",
               "total_sell_qty": "1075425"
             },
@@ -6024,8 +6024,8 @@
               "total_quantity_traded": "134105985",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 3113955.0,
-              "chnge_oi": 1841970.0,
+              "open_interest": 3064750.0,
+              "chnge_oi": 1792765.0,
               "total_buy_qty": "69095",
               "total_sell_qty": "360945"
             },
@@ -6052,8 +6052,8 @@
               "total_quantity_traded": "211212235",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 8050120.0,
-              "chnge_oi": 2109705.0,
+              "open_interest": 7873775.0,
+              "chnge_oi": 1933360.0,
               "total_buy_qty": "204880",
               "total_sell_qty": "752700"
             },
@@ -6080,8 +6080,8 @@
               "total_quantity_traded": "95801810",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 4691180.0,
-              "chnge_oi": 1670175.0,
+              "open_interest": 4654585.0,
+              "chnge_oi": 1633580.0,
               "total_buy_qty": "118365",
               "total_sell_qty": "364260"
             },
@@ -6108,8 +6108,8 @@
               "total_quantity_traded": "147868435",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 6096285.0,
-              "chnge_oi": 900705.0,
+              "open_interest": 6033495.0,
+              "chnge_oi": 837915.0,
               "total_buy_qty": "119080",
               "total_sell_qty": "634530"
             },
@@ -6136,8 +6136,8 @@
               "total_quantity_traded": "71369610",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 2411110.0,
-              "chnge_oi": 754000.0,
+              "open_interest": 2393365.0,
+              "chnge_oi": 736255.0,
               "total_buy_qty": "80730",
               "total_sell_qty": "253240"
             },
@@ -6164,8 +6164,8 @@
               "total_quantity_traded": "199281550",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 11816025.0,
-              "chnge_oi": 4778670.0,
+              "open_interest": 11694410.0,
+              "chnge_oi": 4657055.0,
               "total_buy_qty": "445965",
               "total_sell_qty": "1041235"
             },
@@ -6192,8 +6192,8 @@
               "total_quantity_traded": "64683775",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 2315040.0,
-              "chnge_oi": 903370.0,
+              "open_interest": 2305485.0,
+              "chnge_oi": 893815.0,
               "total_buy_qty": "91325",
               "total_sell_qty": "169260"
             },
@@ -6220,8 +6220,8 @@
               "total_quantity_traded": "91434850",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 5954390.0,
-              "chnge_oi": 2040350.0,
+              "open_interest": 5388890.0,
+              "chnge_oi": 1474850.0,
               "total_buy_qty": "132990",
               "total_sell_qty": "248690"
             },
@@ -6248,8 +6248,8 @@
               "total_quantity_traded": "46105995",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 4225000.0,
-              "chnge_oi": 1273220.0,
+              "open_interest": 4207450.0,
+              "chnge_oi": 1255670.0,
               "total_buy_qty": "102960",
               "total_sell_qty": "116675"
             },
@@ -6276,8 +6276,8 @@
               "total_quantity_traded": "82257240",
               "spot_price": "23622.9",
               "ltq": "390",
-              "open_interest": 7396090.0,
-              "chnge_oi": 3193450.0,
+              "open_interest": 7338825.0,
+              "chnge_oi": 3136185.0,
               "total_buy_qty": "151255",
               "total_sell_qty": "273780"
             },
@@ -6304,8 +6304,8 @@
               "total_quantity_traded": "38341550",
               "spot_price": "23622.9",
               "ltq": "260",
-              "open_interest": 3305770.0,
-              "chnge_oi": 710710.0,
+              "open_interest": 3262870.0,
+              "chnge_oi": 667810.0,
               "total_buy_qty": "101270",
               "total_sell_qty": "94380"
             },
@@ -6332,8 +6332,8 @@
               "total_quantity_traded": "62182705",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 3835715.0,
-              "chnge_oi": -218530.0,
+              "open_interest": 3608410.0,
+              "chnge_oi": -445835.0,
               "total_buy_qty": "141245",
               "total_sell_qty": "118560"
             },
@@ -6360,8 +6360,8 @@
               "total_quantity_traded": "32370000",
               "spot_price": "23622.9",
               "ltq": "260",
-              "open_interest": 1477970.0,
-              "chnge_oi": 113490.0,
+              "open_interest": 1461785.0,
+              "chnge_oi": 97305.0,
               "total_buy_qty": "89700",
               "total_sell_qty": "51805"
             },
@@ -6388,8 +6388,8 @@
               "total_quantity_traded": "60598135",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 5097430.0,
-              "chnge_oi": 696865.0,
+              "open_interest": 4869800.0,
+              "chnge_oi": 469235.0,
               "total_buy_qty": "220805",
               "total_sell_qty": "113360"
             },
@@ -6416,8 +6416,8 @@
               "total_quantity_traded": "27763450",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1769495.0,
-              "chnge_oi": 337805.0,
+              "open_interest": 1767740.0,
+              "chnge_oi": 336050.0,
               "total_buy_qty": "124735",
               "total_sell_qty": "28015"
             },
@@ -6444,8 +6444,8 @@
               "total_quantity_traded": "90538175",
               "spot_price": "23622.9",
               "ltq": "585",
-              "open_interest": 14348035.0,
-              "chnge_oi": 7343245.0,
+              "open_interest": 13968175.0,
+              "chnge_oi": 6963385.0,
               "total_buy_qty": "758745",
               "total_sell_qty": "131040"
             },
@@ -6472,8 +6472,8 @@
               "total_quantity_traded": "24584950",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 1339715.0,
-              "chnge_oi": 207350.0,
+              "open_interest": 1324830.0,
+              "chnge_oi": 192465.0,
               "total_buy_qty": "108225",
               "total_sell_qty": "36075"
             },
@@ -6500,8 +6500,8 @@
               "total_quantity_traded": "55730090",
               "spot_price": "23622.9",
               "ltq": "455",
-              "open_interest": 4899700.0,
-              "chnge_oi": 1260155.0,
+              "open_interest": 4892485.0,
+              "chnge_oi": 1252940.0,
               "total_buy_qty": "208845",
               "total_sell_qty": "77675"
             },
@@ -6528,8 +6528,8 @@
               "total_quantity_traded": "29012360",
               "spot_price": "23622.9",
               "ltq": "455",
-              "open_interest": 1587235.0,
-              "chnge_oi": 459420.0,
+              "open_interest": 1583595.0,
+              "chnge_oi": 455780.0,
               "total_buy_qty": "148135",
               "total_sell_qty": "18525"
             },
@@ -6556,8 +6556,8 @@
               "total_quantity_traded": "62156900",
               "spot_price": "23622.9",
               "ltq": "65",
-              "open_interest": 5402150.0,
-              "chnge_oi": -400985.0,
+              "open_interest": 5082090.0,
+              "chnge_oi": -721045.0,
               "total_buy_qty": "610350",
               "total_sell_qty": "42705"
             },
@@ -6612,8 +6612,8 @@
               "total_quantity_traded": "35206015",
               "spot_price": "23622.9",
               "ltq": "130",
-              "open_interest": 5312645.0,
-              "chnge_oi": 2741115.0,
+              "open_interest": 5282160.0,
+              "chnge_oi": 2710630.0,
               "total_buy_qty": "235950",
               "total_sell_qty": "25155"
             },
@@ -6653,7 +6653,7 @@
     },
     {
       "seq": 68,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6679,7 +6679,7 @@
     },
     {
       "seq": 69,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6705,7 +6705,7 @@
     },
     {
       "seq": 70,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6731,7 +6731,7 @@
     },
     {
       "seq": 71,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6757,7 +6757,7 @@
     },
     {
       "seq": 72,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6783,7 +6783,7 @@
     },
     {
       "seq": 73,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6809,7 +6809,7 @@
     },
     {
       "seq": 74,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6835,7 +6835,7 @@
     },
     {
       "seq": 75,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6861,7 +6861,7 @@
     },
     {
       "seq": 76,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6887,7 +6887,7 @@
     },
     {
       "seq": 77,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6913,7 +6913,7 @@
     },
     {
       "seq": 78,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6939,7 +6939,7 @@
     },
     {
       "seq": 79,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6965,7 +6965,7 @@
     },
     {
       "seq": 80,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -6991,7 +6991,7 @@
     },
     {
       "seq": 81,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7017,7 +7017,7 @@
     },
     {
       "seq": 82,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7043,7 +7043,7 @@
     },
     {
       "seq": 83,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7069,7 +7069,7 @@
     },
     {
       "seq": 84,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 22950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7095,7 +7095,7 @@
     },
     {
       "seq": 85,
-      "ts": "2026-06-12T13:37:13.657Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7121,7 +7121,7 @@
     },
     {
       "seq": 86,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7147,7 +7147,7 @@
     },
     {
       "seq": 87,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7173,7 +7173,7 @@
     },
     {
       "seq": 88,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7199,7 +7199,7 @@
     },
     {
       "seq": 89,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7225,7 +7225,7 @@
     },
     {
       "seq": 90,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7251,7 +7251,7 @@
     },
     {
       "seq": 91,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7277,7 +7277,7 @@
     },
     {
       "seq": 92,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7303,7 +7303,7 @@
     },
     {
       "seq": 93,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7329,7 +7329,7 @@
     },
     {
       "seq": 94,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7355,7 +7355,7 @@
     },
     {
       "seq": 95,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7381,7 +7381,7 @@
     },
     {
       "seq": 96,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7407,7 +7407,7 @@
     },
     {
       "seq": 97,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7433,7 +7433,7 @@
     },
     {
       "seq": 98,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7459,7 +7459,7 @@
     },
     {
       "seq": 99,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7485,7 +7485,7 @@
     },
     {
       "seq": 100,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7511,7 +7511,7 @@
     },
     {
       "seq": 101,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7537,7 +7537,7 @@
     },
     {
       "seq": 102,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7563,7 +7563,7 @@
     },
     {
       "seq": 103,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7589,7 +7589,7 @@
     },
     {
       "seq": 104,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 23950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7615,7 +7615,7 @@
     },
     {
       "seq": 105,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7641,7 +7641,7 @@
     },
     {
       "seq": 106,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7667,7 +7667,7 @@
     },
     {
       "seq": 107,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7693,7 +7693,7 @@
     },
     {
       "seq": 108,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24150",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7719,7 +7719,7 @@
     },
     {
       "seq": 109,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24200",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7745,7 +7745,7 @@
     },
     {
       "seq": 110,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24250",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7771,7 +7771,7 @@
     },
     {
       "seq": 111,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24300",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7797,7 +7797,7 @@
     },
     {
       "seq": 112,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24350",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7823,7 +7823,7 @@
     },
     {
       "seq": 113,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24400",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7849,7 +7849,7 @@
     },
     {
       "seq": 114,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24450",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7875,7 +7875,7 @@
     },
     {
       "seq": 115,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24500",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7901,7 +7901,7 @@
     },
     {
       "seq": 116,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24550",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7927,7 +7927,7 @@
     },
     {
       "seq": 117,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24600",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7953,7 +7953,7 @@
     },
     {
       "seq": 118,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24650",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -7979,7 +7979,7 @@
     },
     {
       "seq": 119,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24700",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8005,7 +8005,7 @@
     },
     {
       "seq": 120,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24750",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8031,7 +8031,7 @@
     },
     {
       "seq": 121,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24800",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8057,7 +8057,7 @@
     },
     {
       "seq": 122,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24850",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8083,7 +8083,7 @@
     },
     {
       "seq": 123,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24900",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8109,7 +8109,7 @@
     },
     {
       "seq": 124,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 24950",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8135,7 +8135,7 @@
     },
     {
       "seq": 125,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 25000",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8161,7 +8161,7 @@
     },
     {
       "seq": 126,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 25050",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8187,7 +8187,7 @@
     },
     {
       "seq": 127,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.620Z",
       "category": "strike_selected",
       "message": "Put 25100",
       "rationale": "Two-sided depth (buy_qty>0 and sell_qty>0)",
@@ -8213,7 +8213,7 @@
     },
     {
       "seq": 128,
-      "ts": "2026-06-12T13:37:13.658Z",
+      "ts": "2026-06-12T14:18:49.621Z",
       "category": "calculation",
       "message": "Spot and ATM resolution",
       "rationale": "Spot from chain quote payload when available, else scrip midpoint.",
@@ -8229,7 +8229,7 @@
     },
     {
       "seq": 129,
-      "ts": "2026-06-12T13:37:14.098Z",
+      "ts": "2026-06-12T14:18:50.184Z",
       "category": "strike_planner",
       "message": "Planned targeted strike fetches",
       "rationale": "Fetch only outer/target strikes missing from bulk chain cache.",
@@ -8381,7 +8381,7 @@
     },
     {
       "seq": 130,
-      "ts": "2026-06-12T13:37:14.098Z",
+      "ts": "2026-06-12T14:18:50.185Z",
       "category": "liquidity_cache_complete",
       "message": "Quote cache ready for strategy evaluation",
       "rationale": "Bulk cache plus targeted wing fetches drive delta-anchored strategy picks.",
@@ -8518,7 +8518,7 @@
     },
     {
       "seq": 131,
-      "ts": "2026-06-12T13:37:14.098Z",
+      "ts": "2026-06-12T14:18:50.185Z",
       "category": "strategy_eval_start",
       "message": "calc_naked_ce_short",
       "data": {
@@ -8527,32 +8527,7 @@
     },
     {
       "seq": 132,
-      "ts": "2026-06-12T13:37:14.098Z",
-      "category": "strategy",
-      "message": "Naked CE Short: ok",
-      "data": {
-        "strategy_id": "naked_ce_short",
-        "strategy_name": "Naked CE Short",
-        "phase": "ok",
-        "skip_reason": null,
-        "structure_modified": false,
-        "net_premium": 24999607.75,
-        "max_loss": null,
-        "risk_reward_ratio": "Unlimited : 24999608",
-        "legs": [
-          {
-            "side": "Sell",
-            "right": "Call",
-            "strike": 24300,
-            "quantity": 2993965,
-            "premium_per_unit": 8.35
-          }
-        ]
-      }
-    },
-    {
-      "seq": 133,
-      "ts": "2026-06-12T13:37:14.098Z",
+      "ts": "2026-06-12T14:18:50.185Z",
       "category": "strategy_eval_start",
       "message": "calc_naked_pe_short",
       "data": {
@@ -8560,33 +8535,8 @@
       }
     },
     {
-      "seq": 134,
-      "ts": "2026-06-12T13:37:14.098Z",
-      "category": "strategy",
-      "message": "Naked PE Short: ok",
-      "data": {
-        "strategy_id": "naked_pe_short",
-        "strategy_name": "Naked PE Short",
-        "phase": "ok",
-        "skip_reason": null,
-        "structure_modified": false,
-        "net_premium": 24999832.000000004,
-        "max_loss": null,
-        "risk_reward_ratio": "Unlimited : 24999832",
-        "legs": [
-          {
-            "side": "Sell",
-            "right": "Put",
-            "strike": 22950,
-            "quantity": 2840890,
-            "premium_per_unit": 8.8
-          }
-        ]
-      }
-    },
-    {
-      "seq": 135,
-      "ts": "2026-06-12T13:37:14.098Z",
+      "seq": 133,
+      "ts": "2026-06-12T14:18:50.185Z",
       "category": "strategy_eval_start",
       "message": "calc_iron_condor",
       "data": {
@@ -8594,54 +8544,8 @@
       }
     },
     {
-      "seq": 136,
-      "ts": "2026-06-12T13:37:14.099Z",
-      "category": "strategy",
-      "message": "Iron Condor: ok",
-      "data": {
-        "strategy_id": "iron_condor",
-        "strategy_name": "Iron Condor",
-        "phase": "ok",
-        "skip_reason": null,
-        "structure_modified": false,
-        "net_premium": 282496.50000000006,
-        "max_loss": 3997753.5000000005,
-        "risk_reward_ratio": "3997754 : 282497",
-        "legs": [
-          {
-            "side": "Sell",
-            "right": "Put",
-            "strike": 22200,
-            "quantity": 85605,
-            "premium_per_unit": 3.35
-          },
-          {
-            "side": "Buy",
-            "right": "Put",
-            "strike": 22150,
-            "quantity": 85605,
-            "premium_per_unit": 3.45
-          },
-          {
-            "side": "Sell",
-            "right": "Call",
-            "strike": 24150,
-            "quantity": 85605,
-            "premium_per_unit": 16.7
-          },
-          {
-            "side": "Buy",
-            "right": "Call",
-            "strike": 24200,
-            "quantity": 85605,
-            "premium_per_unit": 13.3
-          }
-        ]
-      }
-    },
-    {
-      "seq": 137,
-      "ts": "2026-06-12T13:37:14.099Z",
+      "seq": 134,
+      "ts": "2026-06-12T14:18:50.186Z",
       "category": "strategy_eval_start",
       "message": "calc_iron_butterfly",
       "data": {
@@ -8649,54 +8553,8 @@
       }
     },
     {
-      "seq": 138,
-      "ts": "2026-06-12T13:37:14.099Z",
-      "category": "strategy",
-      "message": "Iron Butterfly: ok",
-      "data": {
-        "strategy_id": "iron_butterfly",
-        "strategy_name": "Iron Butterfly",
-        "phase": "ok",
-        "skip_reason": null,
-        "structure_modified": false,
-        "net_premium": 40941251.00000001,
-        "max_loss": 3999748.9999999898,
-        "risk_reward_ratio": "3999749 : 40941251",
-        "legs": [
-          {
-            "side": "Sell",
-            "right": "Put",
-            "strike": 23600,
-            "quantity": 898820,
-            "premium_per_unit": 102.0
-          },
-          {
-            "side": "Buy",
-            "right": "Put",
-            "strike": 23550,
-            "quantity": 898820,
-            "premium_per_unit": 83.6
-          },
-          {
-            "side": "Sell",
-            "right": "Call",
-            "strike": 23600,
-            "quantity": 898820,
-            "premium_per_unit": 178.5
-          },
-          {
-            "side": "Buy",
-            "right": "Call",
-            "strike": 23650,
-            "quantity": 898820,
-            "premium_per_unit": 151.35
-          }
-        ]
-      }
-    },
-    {
-      "seq": 139,
-      "ts": "2026-06-12T13:37:14.099Z",
+      "seq": 135,
+      "ts": "2026-06-12T14:18:50.186Z",
       "category": "strategy_eval_start",
       "message": "calc_short_strangle",
       "data": {
@@ -8704,40 +8562,8 @@
       }
     },
     {
-      "seq": 140,
-      "ts": "2026-06-12T13:37:14.116Z",
-      "category": "strategy",
-      "message": "Short Strangle: ok",
-      "data": {
-        "strategy_id": "short_strangle",
-        "strategy_name": "Short Strangle",
-        "phase": "ok",
-        "skip_reason": null,
-        "structure_modified": false,
-        "net_premium": 16666650.0,
-        "max_loss": null,
-        "risk_reward_ratio": "Unlimited : 16666650",
-        "legs": [
-          {
-            "side": "Sell",
-            "right": "Call",
-            "strike": 24500,
-            "quantity": 1904760,
-            "premium_per_unit": 3.85
-          },
-          {
-            "side": "Sell",
-            "right": "Put",
-            "strike": 22650,
-            "quantity": 1904760,
-            "premium_per_unit": 4.9
-          }
-        ]
-      }
-    },
-    {
-      "seq": 141,
-      "ts": "2026-06-12T13:37:14.116Z",
+      "seq": 136,
+      "ts": "2026-06-12T14:18:50.201Z",
       "category": "strategy_eval_start",
       "message": "calc_short_straddle",
       "data": {
@@ -8745,40 +8571,8 @@
       }
     },
     {
-      "seq": 142,
-      "ts": "2026-06-12T13:37:14.116Z",
-      "category": "strategy",
-      "message": "Short Straddle: ok",
-      "data": {
-        "strategy_id": "short_straddle",
-        "strategy_name": "Short Straddle",
-        "phase": "ok",
-        "skip_reason": null,
-        "structure_modified": false,
-        "net_premium": 16664505.0,
-        "max_loss": null,
-        "risk_reward_ratio": "Unlimited : 16664505",
-        "legs": [
-          {
-            "side": "Sell",
-            "right": "Call",
-            "strike": 23600,
-            "quantity": 59410,
-            "premium_per_unit": 178.5
-          },
-          {
-            "side": "Sell",
-            "right": "Put",
-            "strike": 23600,
-            "quantity": 59410,
-            "premium_per_unit": 102.0
-          }
-        ]
-      }
-    },
-    {
-      "seq": 143,
-      "ts": "2026-06-12T13:37:14.116Z",
+      "seq": 137,
+      "ts": "2026-06-12T14:18:50.202Z",
       "category": "strategy_eval_start",
       "message": "calc_bull_put_spread",
       "data": {
@@ -8786,40 +8580,8 @@
       }
     },
     {
-      "seq": 144,
-      "ts": "2026-06-12T13:37:14.119Z",
-      "category": "strategy",
-      "message": "Bull Put Spread: ok",
-      "data": {
-        "strategy_id": "bull_put_spread",
-        "strategy_name": "Bull Put Spread",
-        "phase": "ok",
-        "skip_reason": null,
-        "structure_modified": false,
-        "net_premium": 77434.50000000009,
-        "max_loss": 3998065.5,
-        "risk_reward_ratio": "3998066 : 77435",
-        "legs": [
-          {
-            "side": "Sell",
-            "right": "Put",
-            "strike": 22950,
-            "quantity": 81510,
-            "premium_per_unit": 8.8
-          },
-          {
-            "side": "Buy",
-            "right": "Put",
-            "strike": 22900,
-            "quantity": 81510,
-            "premium_per_unit": 7.85
-          }
-        ]
-      }
-    },
-    {
-      "seq": 145,
-      "ts": "2026-06-12T13:37:14.119Z",
+      "seq": 138,
+      "ts": "2026-06-12T14:18:50.205Z",
       "category": "strategy_eval_start",
       "message": "calc_bear_call_spread",
       "data": {
@@ -8827,40 +8589,8 @@
       }
     },
     {
-      "seq": 146,
-      "ts": "2026-06-12T13:37:14.123Z",
-      "category": "strategy",
-      "message": "Bear Call Spread: ok",
-      "data": {
-        "strategy_id": "bear_call_spread",
-        "strategy_name": "Bear Call Spread",
-        "phase": "ok",
-        "skip_reason": null,
-        "structure_modified": false,
-        "net_premium": 102537.5,
-        "max_loss": 3998962.5,
-        "risk_reward_ratio": "3998962 : 102538",
-        "legs": [
-          {
-            "side": "Sell",
-            "right": "Call",
-            "strike": 24350,
-            "quantity": 82030,
-            "premium_per_unit": 6.8
-          },
-          {
-            "side": "Buy",
-            "right": "Call",
-            "strike": 24400,
-            "quantity": 82030,
-            "premium_per_unit": 5.55
-          }
-        ]
-      }
-    },
-    {
-      "seq": 147,
-      "ts": "2026-06-12T13:37:14.805Z",
+      "seq": 139,
+      "ts": "2026-06-12T14:18:50.764Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -8872,7 +8602,7 @@
           "margin_list": [
             {
               "strike_price": 24300,
-              "quantity": 2993965,
+              "quantity": 65,
               "product": "Options",
               "action": "Sell",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -8889,11 +8619,12 @@
               "product_type": "Options",
               "right": "Call",
               "strike_price": "24300",
-              "quantity": "2993965",
+              "quantity": "65",
               "price": "8.35",
               "action": "Sell"
             }
-          ]
+          ],
+          "phase": "unit_span_sizing"
         },
         "response_status": 200,
         "response": {
@@ -8901,7 +8632,7 @@
             "margin_calulation": [
               {
                 "strike_price": "24300",
-                "quantity": "2993965",
+                "quantity": "65",
                 "right": "Call",
                 "product": "Options",
                 "action": "Sell",
@@ -8911,11 +8642,11 @@
               }
             ],
             "non_span_margin_required": "0",
-            "order_value": "4841937411.83",
+            "order_value": "105119.9",
             "order_margin": "0",
             "trade_margin": null,
             "block_trade_margin": "0",
-            "span_margin_required": 4841937411.83,
+            "span_margin_required": 105119.9,
             "margin_source": "breeze_api"
           },
           "Status": 200,
@@ -8924,8 +8655,27 @@
       }
     },
     {
-      "seq": 148,
-      "ts": "2026-06-12T13:37:15.944Z",
+      "seq": 140,
+      "ts": "2026-06-12T14:18:50.764Z",
+      "category": "calculation",
+      "message": "SPAN sizing (naked_ce_short)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
+      "data": {
+        "inputs": {
+          "unit_span_margin": 105119.9,
+          "unit_max_loss_per_lot": 0.0,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 4000000.0
+        },
+        "outputs": {
+          "lots": 368,
+          "quantity": 23920
+        }
+      }
+    },
+    {
+      "seq": 141,
+      "ts": "2026-06-12T14:18:51.913Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -8937,7 +8687,7 @@
           "margin_list": [
             {
               "strike_price": 22950,
-              "quantity": 2840890,
+              "quantity": 65,
               "product": "Options",
               "action": "Sell",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -8954,11 +8704,12 @@
               "product_type": "Options",
               "right": "Put",
               "strike_price": "22950",
-              "quantity": "2840890",
+              "quantity": "65",
               "price": "8.8",
               "action": "Sell"
             }
-          ]
+          ],
+          "phase": "unit_span_sizing"
         },
         "response_status": 200,
         "response": {
@@ -8966,7 +8717,7 @@
             "margin_calulation": [
               {
                 "strike_price": "22950",
-                "quantity": "2840890",
+                "quantity": "65",
                 "right": "Put",
                 "product": "Options",
                 "action": "Sell",
@@ -8976,11 +8727,11 @@
               }
             ],
             "non_span_margin_required": "0",
-            "order_value": "6877918183.28",
+            "order_value": "157367.62",
             "order_margin": "0",
             "trade_margin": null,
             "block_trade_margin": "0",
-            "span_margin_required": 6877918183.28,
+            "span_margin_required": 157367.62,
             "margin_source": "breeze_api"
           },
           "Status": 200,
@@ -8989,8 +8740,27 @@
       }
     },
     {
-      "seq": 149,
-      "ts": "2026-06-12T13:37:17.119Z",
+      "seq": 142,
+      "ts": "2026-06-12T14:18:51.913Z",
+      "category": "calculation",
+      "message": "SPAN sizing (naked_pe_short)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
+      "data": {
+        "inputs": {
+          "unit_span_margin": 157367.62,
+          "unit_max_loss_per_lot": 0.0,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 4000000.0
+        },
+        "outputs": {
+          "lots": 265,
+          "quantity": 17225
+        }
+      }
+    },
+    {
+      "seq": 143,
+      "ts": "2026-06-12T14:18:53.110Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -9002,7 +8772,7 @@
           "margin_list": [
             {
               "strike_price": 22200,
-              "quantity": 85605,
+              "quantity": 65,
               "product": "Options",
               "action": "Sell",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9011,7 +8781,7 @@
             },
             {
               "strike_price": 22150,
-              "quantity": 85605,
+              "quantity": 65,
               "product": "Options",
               "action": "Buy",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9019,8 +8789,8 @@
               "right": "Put"
             },
             {
-              "strike_price": 24150,
-              "quantity": 85605,
+              "strike_price": 24550,
+              "quantity": 65,
               "product": "Options",
               "action": "Sell",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9028,8 +8798,8 @@
               "right": "Call"
             },
             {
-              "strike_price": 24200,
-              "quantity": 85605,
+              "strike_price": 24600,
+              "quantity": 65,
               "product": "Options",
               "action": "Buy",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9046,7 +8816,7 @@
               "product_type": "Options",
               "right": "Put",
               "strike_price": "22200",
-              "quantity": "85605",
+              "quantity": "65",
               "price": "3.35",
               "action": "Sell"
             },
@@ -9057,7 +8827,7 @@
               "product_type": "Options",
               "right": "Put",
               "strike_price": "22150",
-              "quantity": "85605",
+              "quantity": "65",
               "price": "3.45",
               "action": "Buy"
             },
@@ -9067,9 +8837,9 @@
               "expiry_date": "16-Jun-2026",
               "product_type": "Options",
               "right": "Call",
-              "strike_price": "24150",
-              "quantity": "85605",
-              "price": "16.7",
+              "strike_price": "24550",
+              "quantity": "65",
+              "price": "3.2",
               "action": "Sell"
             },
             {
@@ -9078,20 +8848,21 @@
               "expiry_date": "16-Jun-2026",
               "product_type": "Options",
               "right": "Call",
-              "strike_price": "24200",
-              "quantity": "85605",
-              "price": "13.3",
+              "strike_price": "24600",
+              "quantity": "65",
+              "price": "2.75",
               "action": "Buy"
             }
-          ]
+          ],
+          "phase": "unit_span_sizing"
         },
         "response_status": 200,
         "response": {
           "Success": {
             "margin_calulation": [
               {
-                "strike_price": "24200",
-                "quantity": "85605",
+                "strike_price": "24600",
+                "quantity": "65",
                 "right": "Call",
                 "product": "Options",
                 "action": "Buy",
@@ -9101,7 +8872,7 @@
               },
               {
                 "strike_price": "22150",
-                "quantity": "85605",
+                "quantity": "65",
                 "right": "Put",
                 "product": "Options",
                 "action": "Buy",
@@ -9110,8 +8881,8 @@
                 "stock_code": "NIFTY "
               },
               {
-                "strike_price": "24150",
-                "quantity": "85605",
+                "strike_price": "24550",
+                "quantity": "65",
                 "right": "Call",
                 "product": "Options",
                 "action": "Sell",
@@ -9121,7 +8892,7 @@
               },
               {
                 "strike_price": "22200",
-                "quantity": "85605",
+                "quantity": "65",
                 "right": "Put",
                 "product": "Options",
                 "action": "Sell",
@@ -9131,11 +8902,11 @@
               }
             ],
             "non_span_margin_required": "0",
-            "order_value": "288141545.32",
+            "order_value": "208790.89",
             "order_margin": "0",
             "trade_margin": null,
             "block_trade_margin": "0",
-            "span_margin_required": 86425946.76,
+            "span_margin_required": 65630.58,
             "margin_source": "breeze_api"
           },
           "Status": 200,
@@ -9144,163 +8915,27 @@
       }
     },
     {
-      "seq": 150,
-      "ts": "2026-06-12T13:37:18.319Z",
-      "category": "api_call",
-      "message": "API margin_calculator",
-      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "seq": 144,
+      "ts": "2026-06-12T14:18:53.110Z",
+      "category": "calculation",
+      "message": "SPAN sizing (iron_condor)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
       "data": {
-        "api": "margin_calculator",
-        "success": true,
-        "request": {
-          "exchange_code": "NFO",
-          "margin_list": [
-            {
-              "strike_price": 23600,
-              "quantity": 898820,
-              "product": "Options",
-              "action": "Sell",
-              "expiry_date": "2026-06-16T06:00:00.000Z",
-              "stock_code": "NIFTY",
-              "right": "Put"
-            },
-            {
-              "strike_price": 23550,
-              "quantity": 898820,
-              "product": "Options",
-              "action": "Buy",
-              "expiry_date": "2026-06-16T06:00:00.000Z",
-              "stock_code": "NIFTY",
-              "right": "Put"
-            },
-            {
-              "strike_price": 23600,
-              "quantity": 898820,
-              "product": "Options",
-              "action": "Sell",
-              "expiry_date": "2026-06-16T06:00:00.000Z",
-              "stock_code": "NIFTY",
-              "right": "Call"
-            },
-            {
-              "strike_price": 23650,
-              "quantity": 898820,
-              "product": "Options",
-              "action": "Buy",
-              "expiry_date": "2026-06-16T06:00:00.000Z",
-              "stock_code": "NIFTY",
-              "right": "Call"
-            }
-          ],
-          "strategy_id": "iron_butterfly",
-          "legs": [
-            {
-              "stock_code": "NIFTY",
-              "exchange_code": "NFO",
-              "expiry_date": "16-Jun-2026",
-              "product_type": "Options",
-              "right": "Put",
-              "strike_price": "23600",
-              "quantity": "898820",
-              "price": "102.0",
-              "action": "Sell"
-            },
-            {
-              "stock_code": "NIFTY",
-              "exchange_code": "NFO",
-              "expiry_date": "16-Jun-2026",
-              "product_type": "Options",
-              "right": "Put",
-              "strike_price": "23550",
-              "quantity": "898820",
-              "price": "83.6",
-              "action": "Buy"
-            },
-            {
-              "stock_code": "NIFTY",
-              "exchange_code": "NFO",
-              "expiry_date": "16-Jun-2026",
-              "product_type": "Options",
-              "right": "Call",
-              "strike_price": "23600",
-              "quantity": "898820",
-              "price": "178.5",
-              "action": "Sell"
-            },
-            {
-              "stock_code": "NIFTY",
-              "exchange_code": "NFO",
-              "expiry_date": "16-Jun-2026",
-              "product_type": "Options",
-              "right": "Call",
-              "strike_price": "23650",
-              "quantity": "898820",
-              "price": "151.35",
-              "action": "Buy"
-            }
-          ]
+        "inputs": {
+          "unit_span_margin": 65630.58,
+          "unit_max_loss_per_lot": 3227.25,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 4000000.0
         },
-        "response_status": 200,
-        "response": {
-          "Success": {
-            "margin_calulation": [
-              {
-                "strike_price": "23650",
-                "quantity": "898820",
-                "right": "Call",
-                "product": "Options",
-                "action": "Buy",
-                "price": "0",
-                "expiry_date": "16-Jun-2026",
-                "stock_code": "NIFTY "
-              },
-              {
-                "strike_price": "23550",
-                "quantity": "898820",
-                "right": "Put",
-                "product": "Options",
-                "action": "Buy",
-                "price": "0",
-                "expiry_date": "16-Jun-2026",
-                "stock_code": "NIFTY "
-              },
-              {
-                "strike_price": "23600",
-                "quantity": "898820",
-                "right": "Call",
-                "product": "Options",
-                "action": "Sell",
-                "price": "0",
-                "expiry_date": "16-Jun-2026",
-                "stock_code": "NIFTY "
-              },
-              {
-                "strike_price": "23600",
-                "quantity": "898820",
-                "right": "Put",
-                "product": "Options",
-                "action": "Sell",
-                "price": "0",
-                "expiry_date": "16-Jun-2026",
-                "stock_code": "NIFTY "
-              }
-            ],
-            "non_span_margin_required": "0",
-            "order_value": "4776146246.14",
-            "order_margin": "0",
-            "trade_margin": null,
-            "block_trade_margin": "0",
-            "span_margin_required": 911216831.44,
-            "margin_source": "breeze_api"
-          },
-          "Status": 200,
-          "Error": null
+        "outputs": {
+          "lots": 393,
+          "quantity": 25545
         }
       }
     },
     {
-      "seq": 151,
-      "ts": "2026-06-12T13:37:19.469Z",
+      "seq": 145,
+      "ts": "2026-06-12T14:18:54.269Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -9312,7 +8947,7 @@
           "margin_list": [
             {
               "strike_price": 24500,
-              "quantity": 1904760,
+              "quantity": 65,
               "product": "Options",
               "action": "Sell",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9321,7 +8956,7 @@
             },
             {
               "strike_price": 22650,
-              "quantity": 1904760,
+              "quantity": 65,
               "product": "Options",
               "action": "Sell",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9338,7 +8973,7 @@
               "product_type": "Options",
               "right": "Call",
               "strike_price": "24500",
-              "quantity": "1904760",
+              "quantity": "65",
               "price": "3.85",
               "action": "Sell"
             },
@@ -9349,11 +8984,12 @@
               "product_type": "Options",
               "right": "Put",
               "strike_price": "22650",
-              "quantity": "1904760",
+              "quantity": "65",
               "price": "4.9",
               "action": "Sell"
             }
-          ]
+          ],
+          "phase": "unit_span_sizing"
         },
         "response_status": 200,
         "response": {
@@ -9361,7 +8997,7 @@
             "margin_calulation": [
               {
                 "strike_price": "24500",
-                "quantity": "1904760",
+                "quantity": "65",
                 "right": "Call",
                 "product": "Options",
                 "action": "Sell",
@@ -9371,7 +9007,7 @@
               },
               {
                 "strike_price": "22650",
-                "quantity": "1904760",
+                "quantity": "65",
                 "right": "Put",
                 "product": "Options",
                 "action": "Sell",
@@ -9381,11 +9017,11 @@
               }
             ],
             "non_span_margin_required": "0",
-            "order_value": "7002524311.14",
+            "order_value": "238961.48",
             "order_margin": "0",
             "trade_margin": null,
             "block_trade_margin": "0",
-            "span_margin_required": 4973464626.12,
+            "span_margin_required": 169719.8,
             "margin_source": "breeze_api"
           },
           "Status": 200,
@@ -9394,8 +9030,27 @@
       }
     },
     {
-      "seq": 152,
-      "ts": "2026-06-12T13:37:20.616Z",
+      "seq": 146,
+      "ts": "2026-06-12T14:18:54.269Z",
+      "category": "calculation",
+      "message": "SPAN sizing (short_strangle)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
+      "data": {
+        "inputs": {
+          "unit_span_margin": 169719.8,
+          "unit_max_loss_per_lot": 0.0,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 4000000.0
+        },
+        "outputs": {
+          "lots": 249,
+          "quantity": 16185
+        }
+      }
+    },
+    {
+      "seq": 147,
+      "ts": "2026-06-12T14:18:55.424Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -9407,7 +9062,7 @@
           "margin_list": [
             {
               "strike_price": 23600,
-              "quantity": 59410,
+              "quantity": 65,
               "product": "Options",
               "action": "Sell",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9416,7 +9071,7 @@
             },
             {
               "strike_price": 23600,
-              "quantity": 59410,
+              "quantity": 65,
               "product": "Options",
               "action": "Sell",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9433,7 +9088,7 @@
               "product_type": "Options",
               "right": "Call",
               "strike_price": "23600",
-              "quantity": "59410",
+              "quantity": "65",
               "price": "178.5",
               "action": "Sell"
             },
@@ -9444,11 +9099,12 @@
               "product_type": "Options",
               "right": "Put",
               "strike_price": "23600",
-              "quantity": "59410",
+              "quantity": "65",
               "price": "102.0",
               "action": "Sell"
             }
-          ]
+          ],
+          "phase": "unit_span_sizing"
         },
         "response_status": 200,
         "response": {
@@ -9456,7 +9112,7 @@
             "margin_calulation": [
               {
                 "strike_price": "23600",
-                "quantity": "59410",
+                "quantity": "65",
                 "right": "Call",
                 "product": "Options",
                 "action": "Sell",
@@ -9466,7 +9122,7 @@
               },
               {
                 "strike_price": "23600",
-                "quantity": "59410",
+                "quantity": "65",
                 "right": "Put",
                 "product": "Options",
                 "action": "Sell",
@@ -9476,11 +9132,11 @@
               }
             ],
             "non_span_margin_required": "0",
-            "order_value": "315692628.97",
+            "order_value": "345396.69",
             "order_margin": "0",
             "trade_margin": null,
             "block_trade_margin": "0",
-            "span_margin_required": 212496923.78,
+            "span_margin_required": 232490.85,
             "margin_source": "breeze_api"
           },
           "Status": 200,
@@ -9489,8 +9145,27 @@
       }
     },
     {
-      "seq": 153,
-      "ts": "2026-06-12T13:37:21.774Z",
+      "seq": 148,
+      "ts": "2026-06-12T14:18:55.424Z",
+      "category": "calculation",
+      "message": "SPAN sizing (short_straddle)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
+      "data": {
+        "inputs": {
+          "unit_span_margin": 232490.85,
+          "unit_max_loss_per_lot": 0.0,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 4000000.0
+        },
+        "outputs": {
+          "lots": 189,
+          "quantity": 12285
+        }
+      }
+    },
+    {
+      "seq": 149,
+      "ts": "2026-06-12T14:18:56.580Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -9502,7 +9177,7 @@
           "margin_list": [
             {
               "strike_price": 22950,
-              "quantity": 81510,
+              "quantity": 65,
               "product": "Options",
               "action": "Sell",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9511,7 +9186,7 @@
             },
             {
               "strike_price": 22900,
-              "quantity": 81510,
+              "quantity": 65,
               "product": "Options",
               "action": "Buy",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9528,7 +9203,7 @@
               "product_type": "Options",
               "right": "Put",
               "strike_price": "22950",
-              "quantity": "81510",
+              "quantity": "65",
               "price": "8.8",
               "action": "Sell"
             },
@@ -9539,11 +9214,12 @@
               "product_type": "Options",
               "right": "Put",
               "strike_price": "22900",
-              "quantity": "81510",
+              "quantity": "65",
               "price": "7.85",
               "action": "Buy"
             }
-          ]
+          ],
+          "phase": "unit_span_sizing"
         },
         "response_status": 200,
         "response": {
@@ -9551,7 +9227,7 @@
             "margin_calulation": [
               {
                 "strike_price": "22900",
-                "quantity": "81510",
+                "quantity": "65",
                 "right": "Put",
                 "product": "Options",
                 "action": "Buy",
@@ -9561,7 +9237,7 @@
               },
               {
                 "strike_price": "22950",
-                "quantity": "81510",
+                "quantity": "65",
                 "right": "Put",
                 "product": "Options",
                 "action": "Sell",
@@ -9571,11 +9247,11 @@
               }
             ],
             "non_span_margin_required": "0",
-            "order_value": "197339253.44",
+            "order_value": "157367.62",
             "order_margin": "0",
             "trade_margin": null,
             "block_trade_margin": "0",
-            "span_margin_required": 43070949.23,
+            "span_margin_required": 34346.69,
             "margin_source": "breeze_api"
           },
           "Status": 200,
@@ -9584,8 +9260,27 @@
       }
     },
     {
-      "seq": 154,
-      "ts": "2026-06-12T13:37:22.924Z",
+      "seq": 150,
+      "ts": "2026-06-12T14:18:56.580Z",
+      "category": "calculation",
+      "message": "SPAN sizing (bull_put_spread)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
+      "data": {
+        "inputs": {
+          "unit_span_margin": 34346.69,
+          "unit_max_loss_per_lot": 3188.25,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 4000000.0
+        },
+        "outputs": {
+          "lots": 768,
+          "quantity": 49920
+        }
+      }
+    },
+    {
+      "seq": 151,
+      "ts": "2026-06-12T14:18:57.746Z",
       "category": "api_call",
       "message": "API margin_calculator",
       "rationale": "Batch SPAN margin for unique proposed leg structure.",
@@ -9597,7 +9292,7 @@
           "margin_list": [
             {
               "strike_price": 24350,
-              "quantity": 82030,
+              "quantity": 65,
               "product": "Options",
               "action": "Sell",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9606,7 +9301,7 @@
             },
             {
               "strike_price": 24400,
-              "quantity": 82030,
+              "quantity": 65,
               "product": "Options",
               "action": "Buy",
               "expiry_date": "2026-06-16T06:00:00.000Z",
@@ -9623,7 +9318,7 @@
               "product_type": "Options",
               "right": "Call",
               "strike_price": "24350",
-              "quantity": "82030",
+              "quantity": "65",
               "price": "6.8",
               "action": "Sell"
             },
@@ -9634,7 +9329,933 @@
               "product_type": "Options",
               "right": "Call",
               "strike_price": "24400",
-              "quantity": "82030",
+              "quantity": "65",
+              "price": "5.55",
+              "action": "Buy"
+            }
+          ],
+          "phase": "unit_span_sizing"
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24400",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24350",
+                "quantity": "65",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "103960.42",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 34469.86,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 152,
+      "ts": "2026-06-12T14:18:57.746Z",
+      "category": "calculation",
+      "message": "SPAN sizing (bear_call_spread)",
+      "rationale": "Dual-constraint sizing: min(margin, max_loss) using one-lot SPAN.",
+      "data": {
+        "inputs": {
+          "unit_span_margin": 34469.86,
+          "unit_max_loss_per_lot": 3168.75,
+          "margin_rupees": 50000000.0,
+          "max_loss_rupees": 4000000.0
+        },
+        "outputs": {
+          "lots": 767,
+          "quantity": 49855
+        }
+      }
+    },
+    {
+      "seq": 153,
+      "ts": "2026-06-12T14:18:57.746Z",
+      "category": "strategy",
+      "message": "Naked CE Short: ok",
+      "data": {
+        "strategy_id": "naked_ce_short",
+        "strategy_name": "Naked CE Short",
+        "phase": "ok",
+        "skip_reason": null,
+        "structure_modified": false,
+        "net_premium": 199732.0,
+        "max_loss": null,
+        "risk_reward_ratio": "Unlimited : 199732",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Call",
+            "strike": 24300,
+            "quantity": 23920,
+            "premium_per_unit": 8.35
+          }
+        ]
+      }
+    },
+    {
+      "seq": 154,
+      "ts": "2026-06-12T14:18:57.746Z",
+      "category": "strategy",
+      "message": "Naked PE Short: ok",
+      "data": {
+        "strategy_id": "naked_pe_short",
+        "strategy_name": "Naked PE Short",
+        "phase": "ok",
+        "skip_reason": null,
+        "structure_modified": false,
+        "net_premium": 151580.0,
+        "max_loss": null,
+        "risk_reward_ratio": "Unlimited : 151580",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Put",
+            "strike": 22950,
+            "quantity": 17225,
+            "premium_per_unit": 8.8
+          }
+        ]
+      }
+    },
+    {
+      "seq": 155,
+      "ts": "2026-06-12T14:18:57.746Z",
+      "category": "strategy",
+      "message": "Iron Condor: ok",
+      "data": {
+        "strategy_id": "iron_condor",
+        "strategy_name": "Iron Condor",
+        "phase": "ok",
+        "skip_reason": null,
+        "structure_modified": false,
+        "net_premium": 8940.75,
+        "max_loss": 1268309.25,
+        "risk_reward_ratio": "1268309 : 9039",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Put",
+            "strike": 22200,
+            "quantity": 25545,
+            "premium_per_unit": 3.35
+          },
+          {
+            "side": "Buy",
+            "right": "Put",
+            "strike": 22150,
+            "quantity": 25545,
+            "premium_per_unit": 3.45
+          },
+          {
+            "side": "Sell",
+            "right": "Call",
+            "strike": 24550,
+            "quantity": 25545,
+            "premium_per_unit": 3.2
+          },
+          {
+            "side": "Buy",
+            "right": "Call",
+            "strike": 24600,
+            "quantity": 25545,
+            "premium_per_unit": 2.75
+          }
+        ]
+      }
+    },
+    {
+      "seq": 156,
+      "ts": "2026-06-12T14:18:57.746Z",
+      "category": "strategy",
+      "message": "Iron Butterfly: skipped",
+      "data": {
+        "strategy_id": "iron_butterfly",
+        "strategy_name": "Iron Butterfly",
+        "phase": "skipped",
+        "skip_reason": "No symmetric wings meet minimum PoP within risk limits.",
+        "structure_modified": false,
+        "net_premium": null,
+        "max_loss": null,
+        "risk_reward_ratio": null,
+        "legs": []
+      }
+    },
+    {
+      "seq": 157,
+      "ts": "2026-06-12T14:18:57.746Z",
+      "category": "strategy",
+      "message": "Short Strangle: ok",
+      "data": {
+        "strategy_id": "short_strangle",
+        "strategy_name": "Short Strangle",
+        "phase": "ok",
+        "skip_reason": null,
+        "structure_modified": false,
+        "net_premium": 141618.75,
+        "max_loss": null,
+        "risk_reward_ratio": "Unlimited : 141619",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Call",
+            "strike": 24500,
+            "quantity": 16185,
+            "premium_per_unit": 3.85
+          },
+          {
+            "side": "Sell",
+            "right": "Put",
+            "strike": 22650,
+            "quantity": 16185,
+            "premium_per_unit": 4.9
+          }
+        ]
+      }
+    },
+    {
+      "seq": 158,
+      "ts": "2026-06-12T14:18:57.746Z",
+      "category": "strategy",
+      "message": "Short Straddle: ok",
+      "data": {
+        "strategy_id": "short_straddle",
+        "strategy_name": "Short Straddle",
+        "phase": "ok",
+        "skip_reason": null,
+        "structure_modified": false,
+        "net_premium": 3445942.5,
+        "max_loss": null,
+        "risk_reward_ratio": "Unlimited : 3445942",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Call",
+            "strike": 23600,
+            "quantity": 12285,
+            "premium_per_unit": 178.5
+          },
+          {
+            "side": "Sell",
+            "right": "Put",
+            "strike": 23600,
+            "quantity": 12285,
+            "premium_per_unit": 102.0
+          }
+        ]
+      }
+    },
+    {
+      "seq": 159,
+      "ts": "2026-06-12T14:18:57.746Z",
+      "category": "strategy",
+      "message": "Bull Put Spread: ok",
+      "data": {
+        "strategy_id": "bull_put_spread",
+        "strategy_name": "Bull Put Spread",
+        "phase": "ok",
+        "skip_reason": null,
+        "structure_modified": false,
+        "net_premium": 47424.0,
+        "max_loss": 2448576.0,
+        "risk_reward_ratio": "2448576 : 47616",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Put",
+            "strike": 22950,
+            "quantity": 49920,
+            "premium_per_unit": 8.8
+          },
+          {
+            "side": "Buy",
+            "right": "Put",
+            "strike": 22900,
+            "quantity": 49920,
+            "premium_per_unit": 7.85
+          }
+        ]
+      }
+    },
+    {
+      "seq": 160,
+      "ts": "2026-06-12T14:18:57.746Z",
+      "category": "strategy",
+      "message": "Bear Call Spread: ok",
+      "data": {
+        "strategy_id": "bear_call_spread",
+        "strategy_name": "Bear Call Spread",
+        "phase": "ok",
+        "skip_reason": null,
+        "structure_modified": false,
+        "net_premium": 62318.75,
+        "max_loss": 2430431.25,
+        "risk_reward_ratio": "2430431 : 62127",
+        "legs": [
+          {
+            "side": "Sell",
+            "right": "Call",
+            "strike": 24350,
+            "quantity": 49855,
+            "premium_per_unit": 6.8
+          },
+          {
+            "side": "Buy",
+            "right": "Call",
+            "strike": 24400,
+            "quantity": 49855,
+            "premium_per_unit": 5.55
+          }
+        ]
+      }
+    },
+    {
+      "seq": 161,
+      "ts": "2026-06-12T14:18:58.881Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 24300,
+              "quantity": 23920,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "naked_ce_short",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24300",
+              "quantity": "23920",
+              "price": "8.35",
+              "action": "Sell"
+            }
+          ]
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24300",
+                "quantity": "23920",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "38684201.09",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 38684201.09,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 162,
+      "ts": "2026-06-12T14:19:00.028Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22950,
+              "quantity": 17225,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            }
+          ],
+          "strategy_id": "naked_pe_short",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22950",
+              "quantity": "17225",
+              "price": "8.8",
+              "action": "Sell"
+            }
+          ]
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "22950",
+                "quantity": "17225",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "41702473.77",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 41702473.77,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 163,
+      "ts": "2026-06-12T14:19:01.228Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22200,
+              "quantity": 25545,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22150,
+              "quantity": 25545,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 24550,
+              "quantity": 25545,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24600,
+              "quantity": 25545,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "iron_condor",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22200",
+              "quantity": "25545",
+              "price": "3.35",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22150",
+              "quantity": "25545",
+              "price": "3.45",
+              "action": "Buy"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24550",
+              "quantity": "25545",
+              "price": "3.2",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24600",
+              "quantity": "25545",
+              "price": "2.75",
+              "action": "Buy"
+            }
+          ]
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24600",
+                "quantity": "25545",
+                "right": "Call",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22150",
+                "quantity": "25545",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "24550",
+                "quantity": "25545",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22200",
+                "quantity": "25545",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "82054824.91",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 25792841.52,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 164,
+      "ts": "2026-06-12T14:19:02.384Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 24500,
+              "quantity": 16185,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 22650,
+              "quantity": 16185,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            }
+          ],
+          "strategy_id": "short_strangle",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24500",
+              "quantity": "16185",
+              "price": "3.85",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22650",
+              "quantity": "16185",
+              "price": "4.9",
+              "action": "Sell"
+            }
+          ]
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "24500",
+                "quantity": "16185",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22650",
+                "quantity": "16185",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "59501383.78",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 42260193.23,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 165,
+      "ts": "2026-06-12T14:19:03.544Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 23600,
+              "quantity": 12285,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 23600,
+              "quantity": 12285,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            }
+          ],
+          "strategy_id": "short_straddle",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "23600",
+              "quantity": "12285",
+              "price": "178.5",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "23600",
+              "quantity": "12285",
+              "price": "102.0",
+              "action": "Sell"
+            }
+          ]
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "23600",
+                "quantity": "12285",
+                "right": "Call",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "23600",
+                "quantity": "12285",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "65279985.11",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 43940830.32,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 166,
+      "ts": "2026-06-12T14:19:04.695Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 22950,
+              "quantity": 49920,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            },
+            {
+              "strike_price": 22900,
+              "quantity": 49920,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Put"
+            }
+          ],
+          "strategy_id": "bull_put_spread",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22950",
+              "quantity": "49920",
+              "price": "8.8",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Put",
+              "strike_price": "22900",
+              "quantity": "49920",
+              "price": "7.85",
+              "action": "Buy"
+            }
+          ]
+        },
+        "response_status": 200,
+        "response": {
+          "Success": {
+            "margin_calulation": [
+              {
+                "strike_price": "22900",
+                "quantity": "49920",
+                "right": "Put",
+                "product": "Options",
+                "action": "Buy",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              },
+              {
+                "strike_price": "22950",
+                "quantity": "49920",
+                "right": "Put",
+                "product": "Options",
+                "action": "Sell",
+                "price": "0",
+                "expiry_date": "16-Jun-2026",
+                "stock_code": "NIFTY "
+              }
+            ],
+            "non_span_margin_required": "0",
+            "order_value": "120858490.43",
+            "order_margin": "0",
+            "trade_margin": null,
+            "block_trade_margin": "0",
+            "span_margin_required": 26378380.25,
+            "margin_source": "breeze_api"
+          },
+          "Status": 200,
+          "Error": null
+        }
+      }
+    },
+    {
+      "seq": 167,
+      "ts": "2026-06-12T14:19:05.844Z",
+      "category": "api_call",
+      "message": "API margin_calculator",
+      "rationale": "Batch SPAN margin for unique proposed leg structure.",
+      "data": {
+        "api": "margin_calculator",
+        "success": true,
+        "request": {
+          "exchange_code": "NFO",
+          "margin_list": [
+            {
+              "strike_price": 24350,
+              "quantity": 49855,
+              "product": "Options",
+              "action": "Sell",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            },
+            {
+              "strike_price": 24400,
+              "quantity": 49855,
+              "product": "Options",
+              "action": "Buy",
+              "expiry_date": "2026-06-16T06:00:00.000Z",
+              "stock_code": "NIFTY",
+              "right": "Call"
+            }
+          ],
+          "strategy_id": "bear_call_spread",
+          "legs": [
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24350",
+              "quantity": "49855",
+              "price": "6.8",
+              "action": "Sell"
+            },
+            {
+              "stock_code": "NIFTY",
+              "exchange_code": "NFO",
+              "expiry_date": "16-Jun-2026",
+              "product_type": "Options",
+              "right": "Call",
+              "strike_price": "24400",
+              "quantity": "49855",
               "price": "5.55",
               "action": "Buy"
             }
@@ -9646,7 +10267,7 @@
             "margin_calulation": [
               {
                 "strike_price": "24400",
-                "quantity": "82030",
+                "quantity": "49855",
                 "right": "Call",
                 "product": "Options",
                 "action": "Buy",
@@ -9656,7 +10277,7 @@
               },
               {
                 "strike_price": "24350",
-                "quantity": "82030",
+                "quantity": "49855",
                 "right": "Call",
                 "product": "Options",
                 "action": "Sell",
@@ -9666,11 +10287,11 @@
               }
             ],
             "non_span_margin_required": "0",
-            "order_value": "131198180.51",
+            "order_value": "79737721.86",
             "order_margin": "0",
             "trade_margin": null,
             "block_trade_margin": "0",
-            "span_margin_required": 43501351.85,
+            "span_margin_required": 26438618.4,
             "margin_source": "breeze_api"
           },
           "Status": 200,
@@ -9679,15 +10300,15 @@
       }
     },
     {
-      "seq": 155,
-      "ts": "2026-06-12T13:37:22.924Z",
+      "seq": 168,
+      "ts": "2026-06-12T14:19:05.844Z",
       "category": "calculation",
       "message": "Annualized return (naked_ce_short)",
       "rationale": "Carry return on SPAN for credit strategies.",
       "data": {
         "inputs": {
-          "net_premium": 24999607.75,
-          "span_margin": 4841937411.83,
+          "net_premium": 199732.0,
+          "span_margin": 38684201.09,
           "dte": 6
         },
         "outputs": {
@@ -9696,15 +10317,15 @@
       }
     },
     {
-      "seq": 156,
-      "ts": "2026-06-12T13:37:22.924Z",
+      "seq": 169,
+      "ts": "2026-06-12T14:19:05.844Z",
       "category": "calculation",
       "message": "Annualized return (naked_pe_short)",
       "rationale": "Carry return on SPAN for credit strategies.",
       "data": {
         "inputs": {
-          "net_premium": 24999832.000000004,
-          "span_margin": 6877918183.28,
+          "net_premium": 151580.0,
+          "span_margin": 41702473.77,
           "dte": 6
         },
         "outputs": {
@@ -9713,49 +10334,32 @@
       }
     },
     {
-      "seq": 157,
-      "ts": "2026-06-12T13:37:22.924Z",
+      "seq": 170,
+      "ts": "2026-06-12T14:19:05.844Z",
       "category": "calculation",
       "message": "Annualized return (iron_condor)",
       "rationale": "Carry return on SPAN for credit strategies.",
       "data": {
         "inputs": {
-          "net_premium": 282496.50000000006,
-          "span_margin": 86425946.76,
+          "net_premium": 8940.75,
+          "span_margin": 25792841.52,
           "dte": 6
         },
         "outputs": {
-          "annualized_return_pct": 19.88
+          "annualized_return_pct": 2.11
         }
       }
     },
     {
-      "seq": 158,
-      "ts": "2026-06-12T13:37:22.924Z",
-      "category": "calculation",
-      "message": "Annualized return (iron_butterfly)",
-      "rationale": "Carry return on SPAN for credit strategies.",
-      "data": {
-        "inputs": {
-          "net_premium": 40941251.00000001,
-          "span_margin": 911216831.44,
-          "dte": 6
-        },
-        "outputs": {
-          "annualized_return_pct": 273.33
-        }
-      }
-    },
-    {
-      "seq": 159,
-      "ts": "2026-06-12T13:37:22.924Z",
+      "seq": 171,
+      "ts": "2026-06-12T14:19:05.844Z",
       "category": "calculation",
       "message": "Annualized return (short_strangle)",
       "rationale": "Carry return on SPAN for credit strategies.",
       "data": {
         "inputs": {
-          "net_premium": 16666650.0,
-          "span_margin": 4973464626.12,
+          "net_premium": 141618.75,
+          "span_margin": 42260193.23,
           "dte": 6
         },
         "outputs": {
@@ -9764,15 +10368,15 @@
       }
     },
     {
-      "seq": 160,
-      "ts": "2026-06-12T13:37:22.924Z",
+      "seq": 172,
+      "ts": "2026-06-12T14:19:05.844Z",
       "category": "calculation",
       "message": "Annualized return (short_straddle)",
       "rationale": "Carry return on SPAN for credit strategies.",
       "data": {
         "inputs": {
-          "net_premium": 16664505.0,
-          "span_margin": 212496923.78,
+          "net_premium": 3445942.5,
+          "span_margin": 43940830.32,
           "dte": 6
         },
         "outputs": {
@@ -9781,15 +10385,15 @@
       }
     },
     {
-      "seq": 161,
-      "ts": "2026-06-12T13:37:22.924Z",
+      "seq": 173,
+      "ts": "2026-06-12T14:19:05.844Z",
       "category": "calculation",
       "message": "Annualized return (bull_put_spread)",
       "rationale": "Carry return on SPAN for credit strategies.",
       "data": {
         "inputs": {
-          "net_premium": 77434.50000000009,
-          "span_margin": 43070949.23,
+          "net_premium": 47424.0,
+          "span_margin": 26378380.25,
           "dte": 6
         },
         "outputs": {
@@ -9798,15 +10402,15 @@
       }
     },
     {
-      "seq": 162,
-      "ts": "2026-06-12T13:37:22.924Z",
+      "seq": 174,
+      "ts": "2026-06-12T14:19:05.845Z",
       "category": "calculation",
       "message": "Annualized return (bear_call_spread)",
       "rationale": "Carry return on SPAN for credit strategies.",
       "data": {
         "inputs": {
-          "net_premium": 102537.5,
-          "span_margin": 43501351.85,
+          "net_premium": 62318.75,
+          "span_margin": 26438618.4,
           "dte": 6
         },
         "outputs": {
@@ -9815,8 +10419,8 @@
       }
     },
     {
-      "seq": 163,
-      "ts": "2026-06-12T13:37:22.924Z",
+      "seq": 175,
+      "ts": "2026-06-12T14:19:05.845Z",
       "category": "calculation",
       "message": "ATM implied volatility",
       "rationale": "Average IV from ATM call and put when both quoted.",
@@ -9962,8 +10566,8 @@
       25100
     ],
     "icici_api_calls": {
-      "total": 10,
-      "total_success": 10,
+      "total": 16,
+      "total_success": 16,
       "total_failed": 0,
       "by_api": {
         "get_option_chain_quotes": {
@@ -9972,8 +10576,8 @@
           "failed": 0
         },
         "margin_calculator": {
-          "total": 8,
-          "success": 8,
+          "total": 14,
+          "success": 14,
           "failed": 0
         }
       }
@@ -9982,12 +10586,16 @@
       "naked_ce_short",
       "naked_pe_short",
       "iron_condor",
-      "iron_butterfly",
       "short_strangle",
       "short_straddle",
       "bull_put_spread",
       "bear_call_spread"
     ],
-    "strategies_skipped": []
+    "strategies_skipped": [
+      {
+        "strategy_id": "iron_butterfly",
+        "skip_reason": "No symmetric wings meet minimum PoP within risk limits."
+      }
+    ]
   }
 }

@@ -109,6 +109,25 @@ export function outlookPillClassName(o: Outlook): string {
   }
 }
 
+/** Bordered icon toggle for outlook filters (fixed 40×40px). */
+export function outlookFilterBtnClassName(o: Outlook, on: boolean): string {
+  const base =
+    "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40";
+  if (!on) {
+    return `${base} border-zinc-200 bg-white/40 opacity-50 shadow-sm hover:border-zinc-300 hover:bg-zinc-50 hover:opacity-75 dark:border-zinc-700 dark:bg-zinc-900/40 dark:hover:border-zinc-600 dark:hover:bg-zinc-800/60`;
+  }
+  switch (o) {
+    case "bullish":
+      return `${base} border-emerald-500 bg-emerald-500/15 opacity-100 shadow-sm ring-1 ring-emerald-500/25 dark:border-emerald-400 dark:bg-emerald-500/20 dark:ring-emerald-400/20`;
+    case "bearish":
+      return `${base} border-rose-500 bg-rose-500/15 opacity-100 shadow-sm ring-1 ring-rose-500/25 dark:border-rose-400 dark:bg-rose-500/20 dark:ring-rose-400/20`;
+    case "neutral":
+      return `${base} border-sky-500 bg-sky-500/15 opacity-100 shadow-sm ring-1 ring-sky-500/25 dark:border-sky-400 dark:bg-sky-500/20 dark:ring-sky-400/20`;
+    case "volatile":
+      return `${base} border-violet-500 bg-violet-500/15 opacity-100 shadow-sm ring-1 ring-violet-500/25 dark:border-violet-400 dark:bg-violet-500/20 dark:ring-violet-400/20`;
+  }
+}
+
 export const STRATEGY_TEMPLATES: StrategyTemplateMeta[] = [
   {
     id: "bull_call_spread",

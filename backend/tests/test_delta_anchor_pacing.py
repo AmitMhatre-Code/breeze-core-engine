@@ -65,7 +65,7 @@ class TestUndefinedRiskSizing(unittest.TestCase):
             margin_rupees=500_000,
             max_loss_rupees=50_000,
             lot_size=75,
-            leg_count=1,
+            unit_short_lots=1,
             spot=23310,
             provision_elm=False,
         )

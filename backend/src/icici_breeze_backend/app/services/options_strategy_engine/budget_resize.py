@@ -6,6 +6,7 @@ from typing import Any
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     legs_to_margin_input,
     parse_float,
+    short_lots_in_legs,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
     legs_at_lots,
@@ -64,6 +65,7 @@ def resize_results_to_budgets(
             continue
 
         unit_max_loss = unit_max_loss_per_lot(result, L)
+        unit_short_lots = short_lots_in_legs(result.legs, L)
         lots = size_lots(
             result.strategy_id,
             unit_span,
@@ -71,7 +73,7 @@ def resize_results_to_budgets(
             margin_rupees=ctx.margin_rupees,
             max_loss_rupees=ctx.max_loss_rupees,
             lot_size=L,
-            leg_count=len(result.legs),
+            unit_short_lots=unit_short_lots,
             spot=ctx.spot,
             provision_elm=ctx.provision_elm,
         )
@@ -87,6 +89,7 @@ def resize_results_to_budgets(
                 f"SPAN sizing ({result.strategy_id})",
                 {
                     "unit_span_margin": unit_span,
+                    "unit_short_lots": unit_short_lots,
                     "unit_max_loss_per_lot": unit_max_loss,
                     "margin_rupees": ctx.margin_rupees,
                     "max_loss_rupees": ctx.max_loss_rupees,

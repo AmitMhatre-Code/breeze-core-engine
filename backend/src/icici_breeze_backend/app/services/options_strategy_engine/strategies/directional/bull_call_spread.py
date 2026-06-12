@@ -52,7 +52,7 @@ def calc_bull_call_spread(ctx: EngineContext) -> StrategyResult:
                 margin_rupees=ctx.margin_rupees,
                 max_loss_rupees=ctx.max_loss_rupees,
                 lot_size=L,
-                leg_count=2,
+                unit_short_lots=1,
                 spot=ctx.spot,
                 provision_elm=ctx.provision_elm,
             )

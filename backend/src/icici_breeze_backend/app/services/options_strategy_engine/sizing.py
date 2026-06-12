@@ -1,8 +1,6 @@
 """Dual-constraint position sizing (Gemini §6, OpenAI §11)."""
 from __future__ import annotations
 
-import math
-
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import elm_addon, floor_lots, net_premium
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     UNDEFINED_RISK_STRATEGIES,
@@ -19,13 +17,12 @@ def size_lots(
     margin_rupees: float,
     max_loss_rupees: float,
     lot_size: int,
-    leg_count: int,
+    unit_short_lots: int,
     spot: float,
     provision_elm: bool,
 ) -> int:
     """Return number of lots (not contracts)."""
-    short_lots_equiv = max(1, leg_count // 2) if leg_count > 1 else 1
-    unit_elm = elm_addon(spot, lot_size, short_lots_equiv, provision_elm)
+    unit_elm = elm_addon(spot, lot_size, unit_short_lots, provision_elm)
     total_unit_margin = unit_span_margin + unit_elm
 
     if total_unit_margin > 0:
@@ -52,7 +49,7 @@ def size_quantity_from_budgets(
     margin_rupees: float,
     max_loss_rupees: float,
     lot_size: int,
-    leg_count: int,
+    unit_short_lots: int,
     spot: float,
     provision_elm: bool,
 ) -> int:
@@ -64,7 +61,7 @@ def size_quantity_from_budgets(
         margin_rupees=margin_rupees,
         max_loss_rupees=max_loss_rupees,
         lot_size=lot_size,
-        leg_count=leg_count,
+        unit_short_lots=unit_short_lots,
         spot=spot,
         provision_elm=provision_elm,
     )

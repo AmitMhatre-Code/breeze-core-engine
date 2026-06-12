@@ -13,6 +13,9 @@ import type { ProposedTrade } from "@/lib/strategy-builder/types";
 
 const BOOK_LAKH = 100_000;
 
+const rowClass =
+  "flex flex-nowrap items-center gap-x-2 whitespace-nowrap text-xs";
+
 function formatBookQtyInL(n: number): string {
   if (!Number.isFinite(n)) return "—";
   return `${(n / BOOK_LAKH).toLocaleString("en-IN", {
@@ -93,7 +96,7 @@ export function ProposedStrategyTradeCard({
 
   return (
     <div
-      className={`group w-full min-w-[18rem] max-w-full rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
+      className={`group w-full min-w-[32rem] max-w-full rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
         skipped
           ? "border-zinc-200/60 bg-zinc-100/50 opacity-70 dark:border-zinc-700/60 dark:bg-zinc-900/40"
           : selected
@@ -102,37 +105,43 @@ export function ProposedStrategyTradeCard({
       }`}
     >
       <div className="space-y-2">
-        <div className="relative flex min-w-0 items-start gap-2 pr-[min(100%,8rem)]">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-            {outlook ? <OutlookIcon outlook={outlook} /> : null}
-            <span className="break-words leading-snug">{trade.strategy_name}</span>
-            {trade.structure_modified ? (
-              <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
-                Modified
-              </span>
-            ) : null}
-          </div>
+        <div
+          className={`${rowClass} gap-x-1.5 text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50`}
+        >
+          {outlook ? (
+            <span className="shrink-0">
+              <OutlookIcon outlook={outlook} />
+            </span>
+          ) : null}
+          <span className="shrink-0 leading-snug">{trade.strategy_name}</span>
+          {trade.structure_modified ? (
+            <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
+              Modified
+            </span>
+          ) : null}
           {!skipped && prem != null ? (
-            <div
-              className={`absolute right-0 top-0 shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ring-1 ${premiumCapsuleClass(prem)}`}
+            <span
+              className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ring-1 ${premiumCapsuleClass(prem)}`}
               title="Net premium (annualised ROI)"
             >
               <span className={moneyToneClass(prem)}>{premLabel}</span>
               {trade.annualized_return_pct != null ? (
                 <span className="font-normal opacity-90"> ({roiLabel})</span>
               ) : null}
-            </div>
+            </span>
           ) : null}
         </div>
 
         {skipped ? (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400">
             {trade.skip_reason ?? "Not available"}
           </p>
         ) : (
           <>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-600 dark:text-zinc-300">
-              <span className="inline-flex items-center gap-1">
+            <div
+              className={`${rowClass} gap-x-3 text-zinc-600 dark:text-zinc-300`}
+            >
+              <span className="inline-flex shrink-0 items-center gap-1">
                 Max loss:{" "}
                 <strong className="inline-flex items-center tabular-nums">
                   {isUnlimitedMaxLoss(trade.max_loss) ? (
@@ -142,21 +151,21 @@ export function ProposedStrategyTradeCard({
                   )}
                 </strong>
               </span>
-              <span className="inline-flex items-center gap-1">
+              <span className="inline-flex shrink-0 items-center gap-1">
                 R:R{" "}
                 <strong className="inline-flex items-center tabular-nums">
                   {rrLabel === "∞" ? <InfinitySymbol /> : rrLabel}
                 </strong>
               </span>
               {pop != null ? (
-                <span>
+                <span className="shrink-0">
                   PoP:{" "}
                   <strong className="text-zinc-800 dark:text-zinc-200">
                     {pop.toFixed(1)}%
                   </strong>
                 </span>
               ) : null}
-              <span className="inline-flex items-center gap-1">
+              <span className="inline-flex shrink-0 items-center gap-1">
                 SPAN:{" "}
                 <strong className="tabular-nums">
                   {trade.span_margin != null
@@ -164,7 +173,7 @@ export function ProposedStrategyTradeCard({
                     : "—"}
                 </strong>
               </span>
-              <span className="inline-flex items-center gap-1">
+              <span className="inline-flex shrink-0 items-center gap-1">
                 ELM:{" "}
                 <strong className="tabular-nums">
                   {trade.elm_requirement != null && trade.elm_requirement > 0
@@ -188,21 +197,25 @@ export function ProposedStrategyTradeCard({
                     key={`${leg.strike}-${leg.right}-${leg.side}-${i}`}
                     className="rounded border border-zinc-100 bg-zinc-50/80 px-2 py-1.5 text-[11px] dark:border-zinc-800 dark:bg-zinc-900/50"
                   >
-                    <div className="flex flex-wrap items-center gap-x-2 font-medium text-zinc-800 dark:text-zinc-200">
-                      <span>
+                    <div
+                      className={`${rowClass} gap-x-2 font-medium text-zinc-800 dark:text-zinc-200`}
+                    >
+                      <span className="shrink-0">
                         {leg.side} {leg.strike.toLocaleString("en-IN")} {abbr}
                       </span>
                       {vBar}
-                      <span className="tabular-nums">×{leg.quantity}</span>
+                      <span className="shrink-0 tabular-nums">×{leg.quantity}</span>
                     </div>
-                    <div className="mt-0.5 flex flex-wrap gap-x-2 text-zinc-500 dark:text-zinc-400">
-                      <span>LTP {fmtPx(leg.ltp)}</span>
-                      <span>
+                    <div
+                      className={`${rowClass} mt-0.5 gap-x-2 text-zinc-500 dark:text-zinc-400`}
+                    >
+                      <span className="shrink-0">LTP {fmtPx(leg.ltp)}</span>
+                      <span className="shrink-0">
                         Bid {fmtPx(leg.best_bid_price)} / Offer{" "}
                         {fmtPx(leg.best_offer_price)}
                       </span>
-                      <span>B:S {ratioStr}</span>
-                      <span>
+                      <span className="shrink-0">B:S {ratioStr}</span>
+                      <span className="shrink-0">
                         Buy {formatBookQtyInL(leg.total_buy_qty ?? NaN)} / Sell{" "}
                         {formatBookQtyInL(leg.total_sell_qty ?? NaN)}
                       </span>

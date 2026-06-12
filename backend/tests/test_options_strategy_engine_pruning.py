@@ -17,7 +17,9 @@ from icici_breeze_backend.app.services.options_strategy_engine.pruning import (
     top_k_strikes,
     wing_strikes_from_multipliers,
 )
+from icici_breeze_backend.app.services.options_strategy_engine.helpers import short_lots_in_legs
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import size_lots
+from icici_breeze_backend.app.services.options_strategy_engine.types import TradeLeg
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     MAX_IRON_CONDOR_CANDIDATES,
     WING_WIDTH_MULTIPLIERS,
@@ -111,6 +113,19 @@ class TestPruning(unittest.TestCase):
 
 
 class TestSizing(unittest.TestCase):
+    def test_short_lots_in_legs_counts_each_sell_leg(self):
+        lot_size = 65
+        straddle = [
+            TradeLeg("Call", "Sell", 23600, lot_size, 100.0),
+            TradeLeg("Put", "Sell", 23600, lot_size, 80.0),
+        ]
+        spread = [
+            TradeLeg("Put", "Sell", 22950, lot_size, 8.0),
+            TradeLeg("Put", "Buy", 22900, lot_size, 7.0),
+        ]
+        self.assertEqual(short_lots_in_legs(straddle, lot_size), 2)
+        self.assertEqual(short_lots_in_legs(spread, lot_size), 1)
+
     def test_undefined_risk_ignores_max_loss(self):
         lots = size_lots(
             "short_straddle",
@@ -119,11 +134,38 @@ class TestSizing(unittest.TestCase):
             margin_rupees=500_000,
             max_loss_rupees=50_000,
             lot_size=75,
-            leg_count=2,
+            unit_short_lots=2,
             spot=23310,
             provision_elm=False,
         )
         self.assertEqual(lots, 5)
+
+    def test_straddle_elm_counts_both_short_legs(self):
+        lots_one_short_elm = size_lots(
+            "short_straddle",
+            100_000,
+            999_999,
+            margin_rupees=500_000,
+            max_loss_rupees=50_000,
+            lot_size=75,
+            unit_short_lots=1,
+            spot=23_310,
+            provision_elm=True,
+        )
+        lots_two_short_elm = size_lots(
+            "short_straddle",
+            100_000,
+            999_999,
+            margin_rupees=500_000,
+            max_loss_rupees=50_000,
+            lot_size=75,
+            unit_short_lots=2,
+            spot=23_310,
+            provision_elm=True,
+        )
+        self.assertEqual(lots_one_short_elm, 3)
+        self.assertEqual(lots_two_short_elm, 2)
+        self.assertLess(lots_two_short_elm, lots_one_short_elm)
 
     def test_defined_risk_uses_min_constraint(self):
         lots = size_lots(
@@ -133,7 +175,7 @@ class TestSizing(unittest.TestCase):
             margin_rupees=500_000,
             max_loss_rupees=200_000,
             lot_size=75,
-            leg_count=2,
+            unit_short_lots=1,
             spot=23310,
             provision_elm=False,
         )
