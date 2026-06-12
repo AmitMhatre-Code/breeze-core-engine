@@ -31,7 +31,7 @@ export function LoginDisclosureProvider({ children }: { children: ReactNode }) {
   const onTermsPage =
     pathname === "/terms-and-conditions" || pathname?.startsWith("/terms-and-conditions/");
   const enabled = shouldFetchLicenseHomeData(pathname);
-  const [sessionAcked, setSessionAcked] = useState(false);
+  const [justAccepted, setJustAccepted] = useState(false);
 
   const sessionQ = useQuery({
     queryKey: ["auth", "session"],
@@ -56,12 +56,12 @@ export function LoginDisclosureProvider({ children }: { children: ReactNode }) {
   const version = disclosureQ.data?.version ?? null;
 
   useEffect(() => {
-    if (!userId || version == null) {
-      setSessionAcked(false);
-      return;
-    }
-    setSessionAcked(hasSessionAck(userId, version));
+    setJustAccepted(false);
   }, [userId, version]);
+
+  const sessionAcked =
+    justAccepted ||
+    (userId && version != null ? hasSessionAck(userId, version) : false);
 
   const acceptMut = useMutation({
     mutationFn: async () => {
@@ -71,7 +71,7 @@ export function LoginDisclosureProvider({ children }: { children: ReactNode }) {
     onSuccess: () => {
       if (userId && version != null) {
         setSessionAck(userId, version);
-        setSessionAcked(true);
+        setJustAccepted(true);
       }
     },
   });
