@@ -173,6 +173,11 @@ def _ensure_app_database() -> None:
             ensure_ai_provider_table(db_path)
             ensure_outlook_preferences_table(db_path)
             ensure_parked_orders_table(db_path)
+            from icici_breeze_backend.app.services.user_rate_limit_prefs import (
+                migrate_legacy_rate_limit_pause_default,
+            )
+
+            migrate_legacy_rate_limit_pause_default()
         except Exception:
             _logger.exception("user_account schema migration failed")
 

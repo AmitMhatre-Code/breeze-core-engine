@@ -124,9 +124,10 @@ export default function ApiUsageSettingsPage() {
             Rate limit backoff
           </h3>
           <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-            If ICICI returns HTTP 429 (too many requests) while placing or cancelling orders, the app
-            pauses and shows a countdown for this many seconds before retrying the same request. No
-            pacing is applied until a 429 occurs.
+            When ICICI returns HTTP 429 or 503 (rate throttling), the app waits this many seconds
+            before retrying. For order place and cancel flows, a countdown is shown on screen. For
+            Strategy Builder option-chain fetches, the pause happens on the server. No pacing is
+            applied until a throttle response occurs.
           </p>
           <div className="mt-4">
             <label

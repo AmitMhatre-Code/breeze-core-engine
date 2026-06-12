@@ -335,9 +335,9 @@ class TestExpandChainToLiquidityBoundary(unittest.TestCase):
 
 
 class TestFetchOptionChainBackoff(unittest.TestCase):
-    def test_503_backoff_escalates_then_succeeds(self):
+    def test_503_backoff_waits_user_pause_then_succeeds(self):
         proc = processor()
-        backoff = OptionChainBackoff()
+        backoff = OptionChainBackoff(pause_seconds=2)
         mock_breeze = MagicMock()
         mock_breeze.get_option_chain_quotes.side_effect = [
             {"Status": 503, "Error": "busy"},
@@ -368,13 +368,13 @@ class TestFetchOptionChainBackoff(unittest.TestCase):
                 backoff=backoff,
             )
         self.assertEqual(res["Status"], 200)
-        self.assertEqual(mock_sleep.call_args_list, [call(0.5), call(1.0)])
+        self.assertEqual(mock_sleep.call_args_list, [call(2.0), call(2.0)])
         self.assertEqual(mock_breeze.get_option_chain_quotes.call_count, 3)
-        self.assertEqual(backoff.consecutive_503, 0)
+        self.assertEqual(backoff.consecutive_rate_limited, 0)
 
     def test_three_consecutive_503_returns_last(self):
         proc = processor()
-        backoff = OptionChainBackoff()
+        backoff = OptionChainBackoff(pause_seconds=1)
         mock_breeze = MagicMock()
         mock_breeze.get_option_chain_quotes.return_value = {"Status": 503, "Error": "busy"}
         with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch(
@@ -390,7 +390,88 @@ class TestFetchOptionChainBackoff(unittest.TestCase):
             )
         self.assertEqual(res["Status"], 503)
         self.assertEqual(mock_breeze.get_option_chain_quotes.call_count, 3)
-        self.assertEqual(mock_sleep.call_args_list, [call(0.5), call(1.0)])
+        self.assertEqual(mock_sleep.call_args_list, [call(1.0), call(1.0)])
+
+    def test_429_uses_same_user_pause(self):
+        proc = processor()
+        backoff = OptionChainBackoff(pause_seconds=3)
+        mock_breeze = MagicMock()
+        mock_breeze.get_option_chain_quotes.side_effect = [
+            {"Status": 429, "Error": "too many"},
+            {
+                "Status": 200,
+                "Success": [
+                    {
+                        "strike_price": 23500,
+                        "total_buy_qty": 10,
+                        "total_sell_qty": 10,
+                        "ltp": 1,
+                        "best_bid_price": 1,
+                        "best_offer_price": 1,
+                    }
+                ],
+            },
+        ]
+        with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch(
+            "icici_breeze_backend.app.services.processor.time.sleep"
+        ) as mock_sleep:
+            res = proc.fetch_option_chain_quotes_sb(
+                "u1",
+                "NIFTY",
+                "NFO",
+                "2025-06-09T06:00:00.000Z",
+                "Call",
+                backoff=backoff,
+            )
+        self.assertEqual(res["Status"], 200)
+        self.assertEqual(mock_sleep.call_args_list, [call(3.0)])
+
+
+class TestBuildLiquidityCacheUserBackoff(unittest.TestCase):
+    def test_chain_backoff_uses_settings_pause_seconds(self):
+        strikes = list(range(23400, 23700, 50))
+        proc = MagicMock()
+        proc.fetch_option_chain_quotes_sb.return_value = {
+            "Status": 200,
+            "Success": [
+                {
+                    "strike_price": 23500,
+                    "total_buy_qty": 10,
+                    "total_sell_qty": 10,
+                    "ltp": 1,
+                    "best_bid_price": 1,
+                    "best_offer_price": 1,
+                    "spot_price": 23500,
+                }
+            ],
+        }
+        ctx = EngineContext(
+            processor=proc,
+            user_id="VIKRAMMH",
+            stock_code="NIFTY",
+            exchange_code="NFO",
+            expiry_display="09-Jun-2025",
+            range_lower=23400,
+            range_upper=23600,
+            margin_rupees=500_000,
+            max_loss_rupees=200_000,
+            min_pop_pct=65.0,
+            provision_elm=False,
+            strategy_category="income",
+            lot_size=75,
+            strikes=strikes,
+            strike_step=50,
+            search_interval=50,
+            spot=23500,
+            atm_strike=23500,
+        )
+        with patch(
+            "icici_breeze_backend.app.services.options_strategy_engine.get_icici_rate_limit_pause_seconds",
+            return_value=3,
+        ):
+            _build_liquidity_cache(ctx)
+        self.assertIsNotNone(ctx.chain_backoff)
+        self.assertEqual(ctx.chain_backoff.pause_seconds, 3)
 
 
 class TestNakedCeAboveRangeUpper(unittest.TestCase):

@@ -24,6 +24,9 @@ from icici_breeze_backend.app.services.processor import (
     _expiry_display_to_api,
     processor,
 )
+from icici_breeze_backend.app.services.user_rate_limit_prefs import (
+    get_icici_rate_limit_pause_seconds,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -871,7 +874,9 @@ def _build_liquidity_cache(ctx: EngineContext) -> None:
         return
 
     mid = (ctx.range_lower + ctx.range_upper) / 2
-    ctx.chain_backoff = OptionChainBackoff()
+    ctx.chain_backoff = OptionChainBackoff(
+        pause_seconds=get_icici_rate_limit_pause_seconds(ctx.user_id),
+    )
 
     if ctx.audit:
         ctx.audit.record(

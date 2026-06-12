@@ -1,4 +1,4 @@
-"""Per-user pause duration when ICICI returns HTTP 429 during order flows."""
+"""Per-user pause duration when ICICI rate-limits (HTTP 429/503) during order or strategy-builder flows."""
 
 import sqlite3
 
@@ -47,3 +47,14 @@ def set_icici_rate_limit_pause_seconds(user_id: str, seconds: int) -> int:
         )
         conn.commit()
     return v
+
+
+def migrate_legacy_rate_limit_pause_default() -> None:
+    """Reset legacy factory default (5s) to the current default (1s)."""
+    ensure_icici_rate_limit_pause_column()
+    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+        conn.execute(
+            "UPDATE user_account SET icici_rate_limit_pause_seconds = 1 "
+            "WHERE icici_rate_limit_pause_seconds = 5"
+        )
+        conn.commit()

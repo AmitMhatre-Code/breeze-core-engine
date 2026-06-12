@@ -20,7 +20,7 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "2.0.0-l",
+    version: "2.0.0-m",
     date: "11-Jun-2026",
     releaseKind: "patch",
     summary: "Strategy Builder (New) categories",
@@ -28,6 +28,7 @@ export const changelogReleases: ChangelogRelease[] = [
       "Strategy Builder (New) restores the strike-range slider alongside minimum PoP input",
       "Income, Directional, and Volatility strategy buttons each generate category-specific trades with tailored objectives",
       "Full options chain is built incrementally to liquidity boundaries; trade tiles show SPAN and ELM requirements",
+      "Strategy Builder option-chain retries use the API Usage rate-limit backoff setting (default 1 second)",
     ],
   },
   {

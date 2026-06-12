@@ -41,16 +41,17 @@ _logger = logging.getLogger(__name__)
 
 @dataclass
 class OptionChainBackoff:
-    """Tracks consecutive 503 responses for strategy-builder chain fetches."""
+    """Tracks consecutive rate-limit responses for strategy-builder chain fetches."""
 
-    consecutive_503: int = 0
+    pause_seconds: int = 1
+    consecutive_rate_limited: int = 0
 
-    def on_503(self) -> float:
-        self.consecutive_503 += 1
-        return 0.5 if self.consecutive_503 == 1 else 1.0
+    def on_rate_limit(self) -> float:
+        self.consecutive_rate_limited += 1
+        return float(max(1, self.pause_seconds))
 
     def on_success(self) -> None:
-        self.consecutive_503 = 0
+        self.consecutive_rate_limited = 0
 
 
 def _scrip_master_connection():
@@ -1538,7 +1539,7 @@ class processor():
         backoff: OptionChainBackoff,
         max_attempts: int = 3,
     ) -> dict[str, Any]:
-        """Strategy-builder option chain fetch with 503 backoff (0.5s then 1s, up to max_attempts)."""
+        """Strategy-builder option chain fetch with user-configured pause on 429/503 (up to max_attempts)."""
         breeze = self.get_session_breeze(user_id)
         icici_request: dict[str, Any] = {
             "stock_code": stock_code,
@@ -1612,11 +1613,11 @@ class processor():
                         pass
                 return quote
 
-            if status == 503 and attempt < max_attempts - 1:
-                time.sleep(backoff.on_503())
+            if status in (429, 503) and attempt < max_attempts - 1:
+                time.sleep(backoff.on_rate_limit())
                 continue
 
-            if status != 503:
+            if status not in (429, 503):
                 backoff.on_success()
             if quote.get("Error"):
                 _logger.warning(
