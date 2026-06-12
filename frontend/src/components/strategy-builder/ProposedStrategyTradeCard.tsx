@@ -115,6 +115,11 @@ export function ProposedStrategyTradeCard({
               </span>
             ) : null}
             <span className="shrink-0 leading-snug">{trade.strategy_name}</span>
+            {trade.variant_rank != null && trade.variant_rank > 0 ? (
+              <span className="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-200">
+                #{trade.variant_rank}
+              </span>
+            ) : null}
             {trade.structure_modified ? (
               <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
                 Modified
@@ -140,6 +145,11 @@ export function ProposedStrategyTradeCard({
           </p>
         ) : (
           <>
+            {trade.ranking_summary ? (
+              <p className="text-xs leading-snug text-zinc-500 dark:text-zinc-400">
+                {trade.ranking_summary}
+              </p>
+            ) : null}
             <div
               className={`${rowClass} gap-x-3 text-zinc-600 dark:text-zinc-300`}
             >

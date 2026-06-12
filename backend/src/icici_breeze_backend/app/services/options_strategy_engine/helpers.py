@@ -234,3 +234,14 @@ def meets_pop_floor(ctx: EngineContext, pop: float) -> bool:
     if not requires_pop_gate(ctx):
         return True
     return pop >= ctx.min_pop_pct
+
+
+def meets_ic_pop_floor(ctx: EngineContext, pop: float) -> bool:
+    """Iron condor soft PoP floor: target minus tolerance."""
+    if not requires_pop_gate(ctx):
+        return True
+    from icici_breeze_backend.app.services.options_strategy_engine.types import (
+        IC_POP_FLOOR_TOLERANCE_PCT,
+    )
+
+    return pop >= ctx.min_pop_pct - IC_POP_FLOOR_TOLERANCE_PCT

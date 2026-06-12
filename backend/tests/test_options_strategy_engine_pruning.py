@@ -91,13 +91,17 @@ class TestPruning(unittest.TestCase):
     def test_wing_multipliers_only_spec_values(self):
         liquid = {22000, 22100, 22200}
         wings = wing_strikes_from_multipliers(22500, 100, liquid, wing_is_higher=False)
-        self.assertEqual(wings, [22200, 22000])
+        self.assertEqual(wings, [22200, 22100])
 
     def test_iron_condor_short_pairs_bounded(self):
+        from icici_breeze_backend.app.services.options_strategy_engine.types import (
+            IC_TOP_K_SHORT_STRIKES,
+        )
+
         ctx = _mock_ctx()
         ctx.min_pop_pct = 25.0
         pairs = iron_condor_short_pairs(ctx)
-        self.assertLessEqual(len(pairs), TOP_K_SHORT_STRIKES * TOP_K_SHORT_STRIKES)
+        self.assertLessEqual(len(pairs), IC_TOP_K_SHORT_STRIKES * IC_TOP_K_SHORT_STRIKES)
         self.assertGreater(len(pairs), 0)
 
     def test_top_k_truncates(self):

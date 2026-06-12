@@ -105,7 +105,19 @@ export type ProposedTrade = {
   elm_requirement?: number | null;
   pop_pct?: number | null;
   legs: ProposedTradeLeg[];
+  variant_rank?: number | null;
+  engine_score?: number | null;
+  ranking_summary?: string | null;
+  score_breakdown?: Record<string, number> | null;
 };
+
+/** Unique key for trade card selection (supports multiple iron condor variants). */
+export function tradeSelectionKey(trade: ProposedTrade): string {
+  if (trade.variant_rank != null && trade.variant_rank > 0) {
+    return `${trade.strategy_id}#${trade.variant_rank}`;
+  }
+  return trade.strategy_id;
+}
 
 export type ProposeTradesSuccess = {
   spot_price: number | null;

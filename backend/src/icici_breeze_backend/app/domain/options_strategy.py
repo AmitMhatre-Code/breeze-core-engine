@@ -53,6 +53,10 @@ class ProposedTradeOut(BaseModel):
     elm_requirement: Optional[float] = None
     pop_pct: Optional[float] = None
     legs: List[ProposedTradeLegOut] = Field(default_factory=list)
+    variant_rank: Optional[int] = None
+    engine_score: Optional[float] = None
+    ranking_summary: Optional[str] = None
+    score_breakdown: Optional[dict[str, float]] = None
 
 
 class ProposeTradesSuccess(BaseModel):

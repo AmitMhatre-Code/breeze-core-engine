@@ -9,16 +9,20 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     skip,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.pruning import iron_condor_short_pairs
-from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_iron_condor_candidate
+from icici_breeze_backend.app.services.options_strategy_engine.ranking import (
+    build_ranking_summary,
+    score_iron_condor_candidate,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import legs_at_lots
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import (
     IronCondorCandidate,
     all_liquid,
-    evaluate_symmetric_iron_condor,
+    enumerate_symmetric_iron_condors,
     make_result,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import short_delta
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    IC_RETURN_TOP_N,
     IC_SPAN_REFINE_TOP_N,
     MIN_IC_ANNUALIZED_RETURN_PCT,
     EngineContext,
@@ -57,9 +61,7 @@ def _collect_candidates(
         pairs = iron_condor_short_pairs(ctx)
     candidates: list[IronCondorCandidate] = []
     for sp, sc in pairs:
-        cand = evaluate_symmetric_iron_condor(ctx, sp, sc)
-        if cand:
-            candidates.append(cand)
+        candidates.extend(enumerate_symmetric_iron_condors(ctx, sp, sc))
 
     if candidates:
         return candidates
@@ -73,118 +75,166 @@ def _collect_candidates(
     )
     if stp_sp is None or stp_sc is None:
         return []
-    cand = evaluate_symmetric_iron_condor(ctx, stp_sp, stp_sc)
-    return [cand] if cand else []
+    return enumerate_symmetric_iron_condors(ctx, stp_sp, stp_sc)
 
 
-def _pick_winner(
+def _pick_top_candidates(
     ctx: EngineContext,
     candidates: list[IronCondorCandidate],
     *,
     strategy_id: str,
-) -> tuple[IronCondorCandidate | None, float, list[dict]]:
-    candidates.sort(key=lambda c: (c.proxy_score, c.net_collected), reverse=True)
-    finalists = candidates[:IC_SPAN_REFINE_TOP_N]
+    top_n: int = IC_RETURN_TOP_N,
+) -> tuple[list[tuple[IronCondorCandidate, float]], list[dict]]:
+    """Rank by ROR composite score; SPAN annualized return breaks near-ties."""
+    span_pool = sorted(candidates, key=lambda c: c.final_score, reverse=True)[:IC_SPAN_REFINE_TOP_N]
     dte = days_to_expiry(ctx.expiry_display)
 
     span_scores: list[dict] = []
-    best: IronCondorCandidate | None = None
-    best_return = -1.0
+    ann_by_id: dict[int, float] = {}
 
-    for cand in finalists:
+    for cand in span_pool:
         unit_span = _unit_span_margin(ctx, cand.legs, strategy_id=strategy_id)
         ann_return = score_iron_condor_candidate(
             cand.pop, cand.net_collected, cand.max_loss_u * cand.qty, unit_span, dte
         )
+        ann_by_id[id(cand)] = ann_return
         span_scores.append(
             {
                 "short_put": cand.short_put,
                 "short_call": cand.short_call,
                 "wing_width": cand.wing_width,
-                "proxy_score": round(cand.proxy_score, 4),
+                "final_score": round(cand.final_score, 4),
                 "unit_span": unit_span,
                 "annualized_return_pct": round(ann_return, 2),
                 "net_collected": cand.net_collected,
             }
         )
-        if unit_span <= 0:
-            continue
-        if ann_return > best_return:
-            best_return = ann_return
-            best = cand
-        elif (
-            ann_return == best_return
-            and best is not None
-            and cand.net_collected > best.net_collected
-        ):
-            best = cand
 
-    if best is None and finalists:
-        best = finalists[0]
-        best_return = score_iron_condor_candidate(
-            best.pop, best.net_collected, best.max_loss_u * best.qty, None, dte
-        )
+    def rank_key(c: IronCondorCandidate) -> tuple[float, float, float]:
+        return (c.final_score, ann_by_id.get(id(c), 0.0), c.net_collected)
 
-    return best, best_return, span_scores
+    ranked = sorted(candidates, key=rank_key, reverse=True)
+
+    winners: list[tuple[IronCondorCandidate, float]] = []
+    for cand in ranked[:top_n]:
+        ann = ann_by_id.get(id(cand))
+        if ann is None:
+            ann = score_iron_condor_candidate(
+                cand.pop, cand.net_collected, cand.max_loss_u * cand.qty, None, dte
+            )
+        winners.append((cand, ann))
+
+    return winners, span_scores
 
 
-def calc_iron_condor(ctx: EngineContext) -> StrategyResult:
+def _candidate_to_result(
+    ctx: EngineContext,
+    cand: IronCondorCandidate,
+    *,
+    rank: int,
+    ann_return: float,
+    ranking_summary: str | None,
+) -> StrategyResult:
+    sid = "iron_condor"
+    name = "Iron Condor" if rank == 1 else f"Iron Condor #{rank}"
+    max_loss = cand.max_loss_u * cand.qty
+    result = make_result(
+        ctx,
+        sid,
+        name,
+        cand.legs,
+        max_loss=max_loss,
+        rr=f"{max_loss:.0f} : {cand.credit * cand.qty:.0f}",
+        pop=cand.pop,
+        net_premium_val=cand.net_collected,
+        variant_rank=rank,
+        engine_score=round(cand.final_score, 6),
+        ranking_summary=ranking_summary,
+        score_breakdown=cand.score_factors,
+    )
+    result.annualized_return_pct = round(ann_return, 2)
+    return result
+
+
+def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
     sid, name = "iron_condor", "Iron Condor"
     if ctx.halted:
-        return skip(sid, name, ctx.halt_reason or "Market halted")
+        return [skip(sid, name, ctx.halt_reason or "Market halted")]
 
     pairs = iron_condor_short_pairs(ctx)
     candidates = _collect_candidates(ctx, pairs)
     if not candidates:
-        return skip(sid, name, "No iron condor meets minimum PoP within risk limits.")
+        return [skip(sid, name, "No iron condor meets minimum PoP within risk limits.")]
 
     if ctx.audit:
         ctx.audit.record_calculation(
             "Iron condor candidate search",
             {"pairs_evaluated": len(pairs), "survivors": len(candidates)},
             {
-                "top_proxy": [
+                "top_scores": [
                     {
                         "short_put": c.short_put,
                         "short_call": c.short_call,
                         "wing_width": c.wing_width,
                         "credit": c.credit,
-                        "proxy_score": round(c.proxy_score, 4),
+                        "final_score": round(c.final_score, 4),
                     }
-                    for c in sorted(candidates, key=lambda x: x.proxy_score, reverse=True)[:5]
+                    for c in sorted(candidates, key=lambda x: x.final_score, reverse=True)[:5]
                 ]
             },
-            rationale="Enumerated top-K short pairs × wing multipliers with per-wing credit gate.",
+            rationale="Enumerated top-K short pairs × all wing widths with ROR scoring.",
         )
 
-    winner, best_return, span_scores = _pick_winner(ctx, candidates, strategy_id=sid)
-    if winner is None:
-        return skip(sid, name, "Could not resolve SPAN margin for iron condor finalists.")
+    winners, span_scores = _pick_top_candidates(ctx, candidates, strategy_id=sid)
+    if not winners:
+        return [skip(sid, name, "Could not resolve iron condor finalists.")]
 
     if ctx.audit:
         ctx.audit.record_calculation(
             "Iron condor SPAN refinement",
             {"finalists": len(span_scores)},
-            {"scores": span_scores, "winner_short_put": winner.short_put, "winner_short_call": winner.short_call},
-            rationale="Ranked top finalists by annualized return on one-lot SPAN.",
+            {"scores": span_scores},
+            rationale="Ranked finalists by ROR score; SPAN annualized return breaks near-ties.",
         )
 
-    if best_return < MIN_IC_ANNUALIZED_RETURN_PCT:
-        return skip(
-            sid,
-            name,
-            f"Best iron condor annualized return {best_return:.1f}% below minimum "
-            f"{MIN_IC_ANNUALIZED_RETURN_PCT:.1f}%.",
+    best_ann = winners[0][1]
+    if best_ann < MIN_IC_ANNUALIZED_RETURN_PCT:
+        return [
+            skip(
+                sid,
+                name,
+                f"Best iron condor annualized return {best_ann:.1f}% below minimum "
+                f"{MIN_IC_ANNUALIZED_RETURN_PCT:.1f}%.",
+            )
+        ]
+
+    results: list[StrategyResult] = []
+    for rank, (cand, ann_return) in enumerate(winners, start=1):
+        summary: str | None = None
+        if rank == 1 and len(winners) > 1:
+            runner = winners[1][0]
+            summary = build_ranking_summary(
+                cand.net_collected,
+                cand.pop,
+                cand.score_factors.get("ror", 0.0),
+                runner.net_collected,
+                runner.pop,
+                runner.score_factors.get("ror", 0.0),
+            )
+        elif rank > 1:
+            prev = winners[rank - 2][0]
+            summary = build_ranking_summary(
+                prev.net_collected,
+                prev.pop,
+                prev.score_factors.get("ror", 0.0),
+                cand.net_collected,
+                cand.pop,
+                cand.score_factors.get("ror", 0.0),
+            )
+        results.append(
+            _candidate_to_result(
+                ctx, cand, rank=rank, ann_return=ann_return, ranking_summary=summary
+            )
         )
 
-    max_loss = winner.max_loss_u * winner.qty
-    return make_result(
-        ctx,
-        sid,
-        name,
-        winner.legs,
-        max_loss=max_loss,
-        rr=f"{max_loss:.0f} : {winner.credit * winner.qty:.0f}",
-        pop=winner.pop,
-        net_premium_val=winner.net_collected,
-    )
+    return results

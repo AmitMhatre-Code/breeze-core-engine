@@ -1,7 +1,7 @@
 """Strategy calculator registry by category."""
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Union
 
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional import (
     calc_bear_put_spread,
@@ -21,7 +21,9 @@ from icici_breeze_backend.app.services.options_strategy_engine.strategies.income
 )
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyCategory, StrategyResult
 
-CATEGORY_CALCULATORS: dict[StrategyCategory, list[Callable[[EngineContext], StrategyResult]]] = {
+StrategyCalcResult = Union[StrategyResult, list[StrategyResult]]
+
+CATEGORY_CALCULATORS: dict[StrategyCategory, list[Callable[[EngineContext], StrategyCalcResult]]] = {
     "income": [
         calc_naked_ce_short,
         calc_naked_pe_short,

@@ -9,6 +9,9 @@ export const sb = {
     "text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50",
   fieldLabel:
     "mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400",
+  fieldRow: "flex items-center gap-3",
+  fieldLabelInline:
+    "shrink-0 text-xs font-medium text-zinc-600 dark:text-zinc-400",
   select:
     "w-full min-w-[10rem] cursor-pointer rounded-lg border border-zinc-200 bg-white px-3.5 py-2.5 text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus:border-sky-500 focus:ring-4 focus:ring-sky-500/15 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-sky-400 dark:focus:ring-sky-400/20 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500",
   input:

@@ -1,7 +1,7 @@
 """Shared strategy construction helpers."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from icici_breeze_backend.app.services.options_strategy_engine.anchors import (
     AnchorIndex,
@@ -12,6 +12,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.anchors import (
 from icici_breeze_backend.app.services.options_strategy_engine.audit_helpers import audit_calc, audit_decision
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     margin_key,
+    meets_ic_pop_floor,
     meets_pop_floor,
     net_premium,
     requires_pop_gate,
@@ -23,14 +24,19 @@ from icici_breeze_backend.app.services.options_strategy_engine.pruning import (
     passes_economic_prune,
     top_m_wings,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_credit_trade, score_debit_trade
+from icici_breeze_backend.app.services.options_strategy_engine.ranking import (
+    score_credit_trade,
+    score_debit_trade,
+    score_iron_condor_ror,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import min_qty_for_one_lot
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
-    MIN_WING_CREDIT,
+    MIN_IC_CREDIT_PCT_OF_WIDTH,
     TOP_K_SHORT_STRIKES,
     TOP_M_WING_STRIKES,
     WING_WIDTH_MULTIPLIERS,
     EngineContext,
+    QuoteRow,
     Right,
     StrategyResult,
     TradeLeg,
@@ -53,6 +59,10 @@ class IronCondorCandidate:
     legs: list[TradeLeg]
     proxy_score: float
     net_collected: float
+    final_score: float = 0.0
+    score_factors: dict[str, float] = field(default_factory=dict)
+
+
 def anchors_for(ctx: EngineContext) -> AnchorIndex:
     return build_anchor_index(ctx.strikes, ctx.spot, ctx.strike_step)
 
@@ -191,6 +201,10 @@ def make_result(
     rr: str,
     pop: float,
     net_premium_val: float | None = None,
+    variant_rank: int | None = None,
+    engine_score: float | None = None,
+    ranking_summary: str | None = None,
+    score_breakdown: dict | None = None,
 ) -> StrategyResult:
     return StrategyResult(
         sid,
@@ -203,6 +217,10 @@ def make_result(
         pop_pct=round(pop, 2),
         structure_modified=ctx.structure_modified,
         margin_key=margin_key(legs, ctx.stock_code, ctx.expiry_display, ctx.exchange_code),
+        variant_rank=variant_rank,
+        engine_score=engine_score,
+        ranking_summary=ranking_summary,
+        score_breakdown=score_breakdown,
     )
 
 
@@ -265,19 +283,16 @@ def credit_spread_wing(
     return wing, credit, max_loss_u, qty, pop
 
 
-def evaluate_symmetric_iron_condor(
+def enumerate_symmetric_iron_condors(
     ctx: EngineContext,
     short_put: int,
     short_call: int,
-    *,
-    strategy_id: str | None = None,
-) -> IronCondorCandidate | None:
-    """Best symmetric-wing iron condor for a short put/call pair, or None."""
-    del strategy_id
+) -> list[IronCondorCandidate]:
+    """All feasible symmetric-wing iron condors for a short put/call pair."""
     L = ctx.lot_size
     liquid_pe = set(ctx.liquid_pe_strikes)
     liquid_ce = set(ctx.liquid_ce_strikes)
-    best: IronCondorCandidate | None = None
+    out: list[IronCondorCandidate] = []
 
     for mult in WING_WIDTH_MULTIPLIERS:
         w = mult * ctx.strike_step
@@ -297,17 +312,17 @@ def evaluate_symmetric_iron_condor(
         lc_prem = lcq.best_offer_price or lcq.ltp
         put_credit = sp_prem - lp_prem
         call_credit = sc_prem - lc_prem
-        if put_credit < MIN_WING_CREDIT or call_credit < MIN_WING_CREDIT:
+        if put_credit <= 0 or call_credit <= 0:
             continue
         credit = put_credit + call_credit
+        if credit < MIN_IC_CREDIT_PCT_OF_WIDTH * w:
+            continue
         max_loss_u = w - credit
         if not passes_economic_prune(
             net_credit=credit,
             max_loss_per_unit=max_loss_u,
             max_loss_total=max_loss_u * L,
             max_loss_budget=ctx.max_loss_rupees,
-            require_pop=requires_pop_gate(ctx),
-            min_pop_pct=ctx.min_pop_pct,
         ):
             continue
         qty = min_qty_for_one_lot(L)
@@ -320,30 +335,51 @@ def evaluate_symmetric_iron_condor(
             TradeLeg("Call", "Buy", lc, qty, lc_prem),
         ]
         pop = pop_for_legs(ctx, legs)
-        if not meets_pop_floor(ctx, pop):
+        if not meets_ic_pop_floor(ctx, pop):
             continue
         net_collected = credit * qty
-        proxy_score = score_credit_trade(pop, net_collected, max_loss_u * qty)
-        candidate = IronCondorCandidate(
-            short_put=short_put,
-            short_call=short_call,
-            long_put=lp,
-            long_call=lc,
-            credit=credit,
-            put_credit=put_credit,
-            call_credit=call_credit,
-            max_loss_u=max_loss_u,
-            qty=qty,
-            pop=pop,
-            wing_width=w,
-            legs=legs,
-            proxy_score=proxy_score,
-            net_collected=net_collected,
+        leg_quotes: list[QuoteRow] = [sp, lpq, sc, lcq]
+        final_score, score_factors = score_iron_condor_ror(
+            pop, net_collected, max_loss_u * qty, ctx.min_pop_pct, leg_quotes
         )
-        if best is None or proxy_score > best.proxy_score:
-            best = candidate
+        proxy_score = score_credit_trade(pop, net_collected, max_loss_u * qty)
+        out.append(
+            IronCondorCandidate(
+                short_put=short_put,
+                short_call=short_call,
+                long_put=lp,
+                long_call=lc,
+                credit=credit,
+                put_credit=put_credit,
+                call_credit=call_credit,
+                max_loss_u=max_loss_u,
+                qty=qty,
+                pop=pop,
+                wing_width=w,
+                legs=legs,
+                proxy_score=proxy_score,
+                net_collected=net_collected,
+                final_score=final_score,
+                score_factors=score_factors,
+            )
+        )
 
-    return best
+    return out
+
+
+def evaluate_symmetric_iron_condor(
+    ctx: EngineContext,
+    short_put: int,
+    short_call: int,
+    *,
+    strategy_id: str | None = None,
+) -> IronCondorCandidate | None:
+    """Best symmetric-wing iron condor for a short put/call pair, or None."""
+    del strategy_id
+    candidates = enumerate_symmetric_iron_condors(ctx, short_put, short_call)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda c: (c.final_score, c.net_collected))
 
 
 def iron_wings_symmetric(

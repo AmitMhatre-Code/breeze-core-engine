@@ -53,6 +53,7 @@ import type {
   StrategyLeg,
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
+import { tradeSelectionKey } from "@/lib/strategy-builder/types";
 
 const DEFAULT_MIN_POP_PCT = 65;
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
@@ -379,7 +380,7 @@ export default function StrategyBuilderNewPage() {
 
   const applySelectedTrade = useCallback(
     (trade: ProposedTrade) => {
-      setSelectedTradeId(trade.strategy_id);
+      setSelectedTradeId(tradeSelectionKey(trade));
       setLegs(proposedLegsToStrategyLegs(trade.legs, lotSize));
       setLegMarginCache({});
       setStrategyMarginValidSig(null);
@@ -649,11 +650,13 @@ export default function StrategyBuilderNewPage() {
               <h2 className={sb.sectionTitle}>2. Parameters</h2>
               <div className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  <label className="block">
-                    <span className={sb.fieldLabel}>Margin to deploy (Lacs)</span>
+                  <label className={sb.fieldRow}>
+                    <span className={`${sb.fieldLabelInline} min-w-[9.5rem]`}>
+                      Margin to deploy (Lacs)
+                    </span>
                     <input
                       type="number"
-                      className={sb.input}
+                      className={`${sb.input} min-w-0 flex-1`}
                       value={marginLacs}
                       onChange={(e) => setMarginLacs(e.target.value)}
                       min={0}
@@ -661,11 +664,13 @@ export default function StrategyBuilderNewPage() {
                       step={0.1}
                     />
                   </label>
-                  <label className="block">
-                    <span className={sb.fieldLabel}>Maximum loss (Lacs)</span>
+                  <label className={sb.fieldRow}>
+                    <span className={`${sb.fieldLabelInline} min-w-[9.5rem]`}>
+                      Maximum loss (Lacs)
+                    </span>
                     <input
                       type="number"
-                      className={sb.input}
+                      className={`${sb.input} min-w-0 flex-1`}
                       value={maxLossLacs}
                       onChange={(e) => setMaxLossLacs(e.target.value)}
                       min={0}
@@ -673,9 +678,9 @@ export default function StrategyBuilderNewPage() {
                       step={0.1}
                     />
                   </label>
-                  <div className="flex items-end">
+                  <div className={sb.fieldRow}>
                     <div
-                      className={`${sb.checkboxRow} gap-2 pb-2.5 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
+                      className={`${sb.checkboxRow} gap-2 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
                     >
                       <button
                         type="button"
@@ -703,14 +708,16 @@ export default function StrategyBuilderNewPage() {
                 <div className="grid gap-4 lg:grid-cols-2">
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Income strategies</h3>
-                    <label className="block">
-                      <span className={`${sb.fieldLabel} mb-0 flex items-center gap-1.5`}>
+                    <label className={sb.fieldRow}>
+                      <span
+                        className={`${sb.fieldLabelInline} flex min-w-[9.5rem] items-center gap-1.5`}
+                      >
                         Minimum PoP (%)
                         <FieldHint text={MIN_POP_HINT} />
                       </span>
                       <input
                         type="number"
-                        className={`${sb.input} mt-1.5`}
+                        className={`${sb.input} min-w-0 flex-1`}
                         value={minPopPct}
                         onChange={(e) => setMinPopPct(e.target.value)}
                         min={1}
@@ -737,15 +744,17 @@ export default function StrategyBuilderNewPage() {
 
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Directional strategies</h3>
-                    <div>
-                      <span className={sb.fieldLabel}>Risk / reward profile</span>
-                      <div className="mt-1.5 flex flex-wrap gap-2">
+                    <div className={sb.fieldRow}>
+                      <span className={`${sb.fieldLabelInline} min-w-[9.5rem]`}>
+                        Risk / reward profile
+                      </span>
+                      <div className="flex min-w-0 flex-1 flex-wrap gap-2">
                         {RISK_PROFILE_OPTIONS.map((opt) => (
                           <button
                             key={opt.id}
                             type="button"
                             title={opt.tooltip}
-                            className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                            className={`inline-flex items-center rounded-lg border px-3.5 py-2.5 text-sm font-medium transition ${
                               riskRewardProfile === opt.id
                                 ? "border-sky-600 bg-sky-50 text-sky-800 dark:border-sky-500 dark:bg-sky-950/50 dark:text-sky-200"
                                 : "border-zinc-300/80 bg-white/95 text-zinc-700 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300"
@@ -869,7 +878,7 @@ export default function StrategyBuilderNewPage() {
                 <MasonryGrid
                   items={displayedTrades}
                   gapClassName="gap-4"
-                  getKey={(trade) => trade.strategy_id}
+                  getKey={(trade) => tradeSelectionKey(trade)}
                   renderItem={(trade) => (
                     <ProposedStrategyTradeCard
                       trade={trade}
@@ -877,7 +886,7 @@ export default function StrategyBuilderNewPage() {
                       spot={spot}
                       atmIv={atmIv}
                       expiryDate={expiryDate}
-                      selected={selectedTradeId === trade.strategy_id}
+                      selected={selectedTradeId === tradeSelectionKey(trade)}
                       onSelect={() => selectTrade(trade)}
                     />
                   )}

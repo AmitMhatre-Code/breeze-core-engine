@@ -1,8 +1,22 @@
 "use client";
 
 import type { ReactNode } from "react";
+import Masonry from "react-masonry-css";
 
-/** Content-sized tiles in a wrapping row with uniform horizontal and vertical gaps. */
+/** Max 2 columns — tiles share column width (widest content sets column size). */
+const BREAKPOINT_COLS = {
+  default: 2,
+  640: 1,
+};
+
+const GAP_CLASS: Record<string, string> = {
+  "gap-2": "masonry-grid--gap-2",
+  "gap-3": "masonry-grid--gap-3",
+  "gap-4": "masonry-grid--gap-4",
+  "gap-5": "masonry-grid--gap-5",
+  "gap-6": "masonry-grid--gap-6",
+};
+
 export function MasonryGrid<T>({
   items,
   className = "",
@@ -16,15 +30,19 @@ export function MasonryGrid<T>({
   getKey: (item: T, index: number) => string | number;
   renderItem: (item: T, index: number) => ReactNode;
 }) {
+  const gapModifier = GAP_CLASS[gapClassName] ?? GAP_CLASS["gap-4"];
+
   return (
-    <div
-      className={`flex flex-wrap items-start ${gapClassName} ${className}`.trim()}
+    <Masonry
+      breakpointCols={BREAKPOINT_COLS}
+      className={`masonry-grid ${gapModifier} ${className}`.trim()}
+      columnClassName={`masonry-grid_column ${gapModifier}`}
     >
       {items.map((itemData, index) => (
-        <div key={getKey(itemData, index)} className="w-fit max-w-full">
+        <div key={getKey(itemData, index)} className="w-full">
           {renderItem(itemData, index)}
         </div>
       ))}
-    </div>
+    </Masonry>
   );
 }

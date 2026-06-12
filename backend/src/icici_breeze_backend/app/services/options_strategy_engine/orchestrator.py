@@ -284,7 +284,10 @@ async def run_propose_trades(
             sid = calc.__name__.replace("calc_", "")
             audit.record("strategy_eval_start", calc.__name__, {"strategy_id": sid})
         res = calc(ctx)
-        results.append(res)
+        if isinstance(res, list):
+            results.extend(res)
+        else:
+            results.append(res)
 
     resize_results_to_budgets(
         proc, user_id, exchange_code, ctx.stock_code, expiry_display, results, ctx, audit
@@ -322,6 +325,10 @@ async def run_propose_trades(
                 "elm_requirement": getattr(r, "elm_requirement", None),
                 "pop_pct": r.pop_pct,
                 "legs": [leg.to_out(ctx.cache) for leg in r.legs],
+                "variant_rank": r.variant_rank,
+                "engine_score": r.engine_score,
+                "ranking_summary": r.ranking_summary,
+                "score_breakdown": r.score_breakdown,
             }
         )
 
