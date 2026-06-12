@@ -31,5 +31,4 @@ def calc_short_straddle(ctx: EngineContext) -> StrategyResult:
         rr=f"Unlimited : {max_profit:.0f}",
         modified=ctx.structure_modified,
         net_premium_val=max_profit,
-        require_pop=False,
     )

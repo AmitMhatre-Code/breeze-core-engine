@@ -10,11 +10,18 @@ const BEAR_PATH =
 const BOLT_PATH =
   "M18,11.74a1,1,0,0,0-.52-.63L14.09,9.43,15,3.14a1,1,0,0,0-1.78-.75l-7,9a1,1,0,0,0-.18.87,1.05,1.05,0,0,0,.6.67l4.27,1.71L10,20.86a1,1,0,0,0,.63,1.07A.92.92,0,0,0,11,22a1,1,0,0,0,.83-.45l6-9A1,1,0,0,0,18,11.74Z";
 
-/** Bear icon is 75% larger than the requested size token. */
+/** Bear glyph is visually smaller than bull at the same size token; scale up to match. */
 function bearishSizeClass(className: string): string {
   return className
     .replace(/\bsize-5\b/, "size-[2.1875rem]")
     .replace(/\bsize-6\b/, "size-[2.625rem]");
+}
+
+/** Fixed-size outlook filter buttons: enlarge bear to match bull footprint. */
+function bearishUniformSizeClass(className: string): string {
+  return className
+    .replace(/\bsize-5\b/, "size-7")
+    .replace(/\bsize-6\b/, "size-8");
 }
 
 export function OutlookIcon({
@@ -24,12 +31,16 @@ export function OutlookIcon({
 }: {
   outlook: Outlook;
   className?: string;
-  /** When true, all outlook glyphs use the same bounding box (no bear enlargement). */
+  /** When true, icons sit in a fixed button box; bear is still scaled to match bull visually. */
   uniformSize?: boolean;
 }) {
   const fillClass = outlookIconFillClass(outlook);
   const resolvedClass =
-    outlook === "bearish" && !uniformSize ? bearishSizeClass(className) : className;
+    outlook === "bearish"
+      ? uniformSize
+        ? bearishUniformSizeClass(className)
+        : bearishSizeClass(className)
+      : className;
   const svgClass = `${resolvedClass} ${fillClass}`;
 
   if (outlook === "bullish") {

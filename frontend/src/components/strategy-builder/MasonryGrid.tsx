@@ -3,10 +3,9 @@
 import type { ReactNode } from "react";
 import Masonry from "react-masonry-css";
 
+/** Max 2 columns — tiles keep natural height and stack per column (masonry). */
 const BREAKPOINT_COLS = {
-  default: 3,
-  1536: 3,
-  1280: 2,
+  default: 2,
   640: 1,
 };
 
@@ -21,7 +20,7 @@ const GAP_CLASS: Record<string, string> = {
 export function MasonryGrid<T>({
   items,
   className = "",
-  gapClassName = "gap-3",
+  gapClassName = "gap-4",
   getKey,
   renderItem,
 }: {
@@ -31,7 +30,7 @@ export function MasonryGrid<T>({
   getKey: (item: T, index: number) => string | number;
   renderItem: (item: T, index: number) => ReactNode;
 }) {
-  const gapModifier = GAP_CLASS[gapClassName] ?? GAP_CLASS["gap-3"];
+  const gapModifier = GAP_CLASS[gapClassName] ?? GAP_CLASS["gap-4"];
 
   return (
     <Masonry

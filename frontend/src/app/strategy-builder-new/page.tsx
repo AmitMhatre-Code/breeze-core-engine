@@ -802,6 +802,7 @@ export default function StrategyBuilderNewPage() {
               ) : (
                 <MasonryGrid
                   items={displayedTrades}
+                  gapClassName="gap-4"
                   getKey={(trade) => trade.strategy_id}
                   renderItem={(trade) => (
                     <ProposedStrategyTradeCard

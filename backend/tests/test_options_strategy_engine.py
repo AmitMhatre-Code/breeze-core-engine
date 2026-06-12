@@ -20,6 +20,9 @@ from icici_breeze_backend.app.services.options_strategy_engine import (
     calc_naked_ce_short,
     run_propose_trades,
 )
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.short_straddle import (
+    calc_short_straddle,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.greeks import (
     norm_ppf,
     snap_strike,
@@ -623,6 +626,66 @@ class TestNakedCeDeltaAnchor(unittest.TestCase):
         self.assertEqual(len(res.legs), 1)
         self.assertEqual(res.legs[0].strike, 25000)
         self.assertEqual(res.legs[0].side, "Sell")
+
+
+class TestIncomePopGate(unittest.TestCase):
+    def test_short_straddle_skips_when_pop_below_minimum(self):
+        stp = 23300
+        strikes = list(range(23000, 23600, 50))
+        cache = {
+            (stp, "Call"): QuoteRow(
+                strike=stp,
+                right="Call",
+                ltp=100.0,
+                best_bid_price=99.0,
+                best_offer_price=101.0,
+                total_buy_qty=100,
+                total_sell_qty=100,
+                buy_sell_ratio=1.0,
+                spot_price=23310.0,
+            ),
+            (stp, "Put"): QuoteRow(
+                strike=stp,
+                right="Put",
+                ltp=95.0,
+                best_bid_price=94.0,
+                best_offer_price=96.0,
+                total_buy_qty=100,
+                total_sell_qty=100,
+                buy_sell_ratio=1.0,
+                spot_price=23310.0,
+            ),
+        }
+        mock_processor = MagicMock()
+        mock_processor.strategy_builder_margin.return_value = {
+            "Status": 200,
+            "Success": {"span_margin_required": 200_000},
+        }
+        ctx = EngineContext(
+            processor=mock_processor,
+            user_id="u1",
+            stock_code="NIFTY",
+            exchange_code="NFO",
+            expiry_display="20-Jun-2026",
+            margin_rupees=1_000_000,
+            max_loss_rupees=500_000,
+            min_pop_pct=95.0,
+            provision_elm=False,
+            strategy_category="income",
+            lot_size=75,
+            strikes=strikes,
+            strike_step=50,
+            search_interval=50,
+            spot=23310,
+            atm_strike=stp,
+            atm_iv=0.18,
+            cache=cache,
+        )
+        res = calc_short_straddle(ctx)
+        self.assertEqual(res.status, "skipped")
+        self.assertIsNotNone(res.skip_reason)
+        self.assertIn("PoP", res.skip_reason)
+        self.assertIn("95.0%", res.skip_reason)
 
 
 if __name__ == "__main__":

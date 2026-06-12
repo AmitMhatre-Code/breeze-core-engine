@@ -96,7 +96,7 @@ export function ProposedStrategyTradeCard({
 
   return (
     <div
-      className={`group w-full min-w-[32rem] max-w-full rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
+      className={`group w-full min-w-0 rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
         skipped
           ? "border-zinc-200/60 bg-zinc-100/50 opacity-70 dark:border-zinc-700/60 dark:bg-zinc-900/40"
           : selected
