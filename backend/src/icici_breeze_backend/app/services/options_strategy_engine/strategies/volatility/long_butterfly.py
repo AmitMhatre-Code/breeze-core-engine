@@ -3,11 +3,16 @@ from __future__ import annotations
 
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import skip
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_for_legs
-from icici_breeze_backend.app.services.options_strategy_engine.pruning import WING_WIDTH_MULTIPLIERS
+WING_WIDTH_MULTIPLIERS: tuple[int, ...] = (1, 2, 3, 4)
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_debit_trade
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import size_quantity_loss_only
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import make_result, windowed_liquid
-from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyResult, TradeLeg
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import make_result, windowed_liquid
+from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    EngineContext,
+    Right,
+    StrategyResult,
+    TradeLeg,
+)
 
 
 def calc_long_butterfly(ctx: EngineContext) -> StrategyResult:
@@ -63,3 +68,14 @@ def calc_long_butterfly(ctx: EngineContext) -> StrategyResult:
         pop=pop,
         net_premium_val=-(max_loss if max_loss > 0 else 0),
     )
+
+
+def prefetch_long_butterfly(ctx: EngineContext) -> set[tuple[int, Right]]:
+    pairs: set[tuple[int, Right]] = set()
+    for strike in windowed_liquid(ctx, "long_butterfly", "Call"):
+        if ctx.range_lower <= strike <= ctx.range_upper:
+            pairs.add((strike, "Call"))
+            for mult in WING_WIDTH_MULTIPLIERS:
+                pairs.add((strike - mult * ctx.strike_step, "Call"))
+                pairs.add((strike + mult * ctx.strike_step, "Call"))
+    return pairs

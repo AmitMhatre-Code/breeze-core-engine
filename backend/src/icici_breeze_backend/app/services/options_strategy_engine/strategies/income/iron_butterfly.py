@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import skip
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import (
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import (
     atm_with_liquidity,
-    iron_wings_symmetric,
     make_result,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyResult, TradeLeg
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
+    iron_wings_symmetric,
+)
+from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    EngineContext,
+    Right,
+    StrategyResult,
+    TradeLeg,
+)
 
 
 def calc_iron_butterfly(ctx: EngineContext) -> StrategyResult:
@@ -36,3 +43,12 @@ def calc_iron_butterfly(ctx: EngineContext) -> StrategyResult:
         pop=pop,
         net_premium_val=credit * qty,
     )
+
+
+def prefetch_iron_butterfly(ctx: EngineContext) -> set[tuple[int, Right]]:
+    from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import prefetch_atm_pairs
+    from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
+        prefetch_iron_condor_strikes,
+    )
+
+    return prefetch_atm_pairs(ctx) | prefetch_iron_condor_strikes(ctx)

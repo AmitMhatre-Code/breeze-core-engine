@@ -20,14 +20,6 @@ def pop_to_short_delta(min_pop_pct: float, short_legs: int = 1) -> float:
     return (100.0 - min_pop_pct) / 100.0 / max(1, short_legs)
 
 
-def iron_condor_short_delta_window(min_pop_pct: float) -> tuple[float, float]:
-    """PoP-targeted absolute delta window for iron condor short legs."""
-    target = pop_to_short_delta(min_pop_pct, short_legs=2)
-    lo = max(0.02, target * 0.8)
-    hi = min(0.40, max(target * 3.2, lo + 0.02))
-    return lo, hi
-
-
 def profile_deltas(profile: str) -> tuple[float, float]:
     return _PROFILE_DELTAS.get(profile, _PROFILE_DELTAS["moderate"])
 

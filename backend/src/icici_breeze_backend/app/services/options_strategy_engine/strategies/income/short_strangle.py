@@ -1,21 +1,28 @@
 """Short strangle strategy calculator."""
 from __future__ import annotations
 
-from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import strikes_ranked_by_delta
+from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import (
+    pop_to_short_delta,
+    strikes_ranked_by_delta,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import skip
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_credit_trade
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import min_qty_for_one_lot
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import all_liquid, ok_with_pop
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import short_delta
-from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyResult, TradeLeg
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import all_liquid, ok_with_pop
+from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    EngineContext,
+    Right,
+    StrategyResult,
+    TradeLeg,
+)
 
 
 def calc_short_strangle(ctx: EngineContext) -> StrategyResult:
     sid, name = "short_strangle", "Short Strangle"
     if ctx.halted:
         return skip(sid, name, ctx.halt_reason or "Market halted")
-    target = short_delta(ctx, 2)
+    target = pop_to_short_delta(ctx.min_pop_pct, 2)
     L = ctx.lot_size
     ce_strikes = strikes_ranked_by_delta(
         all_liquid(ctx, "Call"),
@@ -67,3 +74,20 @@ def calc_short_strangle(ctx: EngineContext) -> StrategyResult:
         modified=ctx.structure_modified,
         net_premium_val=max_profit,
     )
+
+
+def prefetch_short_strangle(ctx: EngineContext) -> set[tuple[int, Right]]:
+    from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import (
+        estimate_strike_for_abs_delta,
+        prefetch_atm_pairs,
+    )
+
+    d2 = pop_to_short_delta(ctx.min_pop_pct, 2)
+    pairs = prefetch_atm_pairs(ctx)
+    for strike, right in (
+        (estimate_strike_for_abs_delta(ctx, "Put", d2), "Put"),
+        (estimate_strike_for_abs_delta(ctx, "Call", d2), "Call"),
+    ):
+        if strike is not None:
+            pairs.add((strike, right))
+    return pairs

@@ -239,6 +239,8 @@ async def run_propose_trades(
             rationale="Delta-anchored template parameters (no user strike range).",
         )
 
+    atm_strike = min(strikes, key=lambda s: abs(s - mid))
+    range_pad = 3 * step
     ctx = EngineContext(
         processor=proc,
         user_id=user_id,
@@ -256,7 +258,9 @@ async def run_propose_trades(
         strike_step=step,
         search_interval=search_step,
         spot=mid,
-        atm_strike=min(strikes, key=lambda s: abs(s - mid)),
+        atm_strike=atm_strike,
+        range_lower=float(atm_strike) - range_pad,
+        range_upper=float(atm_strike) + range_pad,
         audit=audit,
     )
 

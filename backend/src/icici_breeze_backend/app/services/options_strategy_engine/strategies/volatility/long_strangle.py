@@ -6,8 +6,13 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import sk
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_debit_trade
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import size_quantity_loss_only
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import anchors_for, make_result
-from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyResult, TradeLeg
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import anchors_for, make_result
+from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    EngineContext,
+    Right,
+    StrategyResult,
+    TradeLeg,
+)
 
 
 def calc_long_strangle(ctx: EngineContext) -> StrategyResult:
@@ -54,3 +59,16 @@ def calc_long_strangle(ctx: EngineContext) -> StrategyResult:
         pop=pop,
         net_premium_val=-max_loss,
     )
+
+
+def prefetch_long_strangle(ctx: EngineContext) -> set[tuple[int, Right]]:
+    anchors = anchors_for(ctx)
+    pairs: set[tuple[int, Right]] = set()
+    for ce_step, pe_step in STRANGLE_OTM_PAIRS:
+        stp_c = anchors.otm_ce.get(ce_step)
+        stp_p = anchors.otm_pe.get(pe_step)
+        if stp_c is not None:
+            pairs.add((stp_c, "Call"))
+        if stp_p is not None:
+            pairs.add((stp_p, "Put"))
+    return pairs

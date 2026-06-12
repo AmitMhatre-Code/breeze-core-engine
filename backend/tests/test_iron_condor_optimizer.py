@@ -4,33 +4,27 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import (
-    iron_condor_short_delta_window,
-)
-from icici_breeze_backend.app.services.options_strategy_engine.pruning import (
-    iron_condor_delta_window,
-    iron_condor_short_pairs,
-)
-from icici_breeze_backend.app.services.options_strategy_engine.ranking import (
+from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_detail_for_legs, pop_for_legs
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
+    IC_TOP_K_SHORT_STRIKES,
+    WING_WIDTH_MULTIPLIERS,
+    IronCondorCandidate,
+    IronCondorRejectionStats,
+    _pick_top_candidates,
     build_ranking_summary,
+    calc_iron_condor,
+    enumerate_symmetric_iron_condors,
+    evaluate_symmetric_iron_condor,
+    iron_condor_short_delta_window,
+    iron_condor_short_pairs,
+    passes_ic_wing_credit,
     score_iron_condor_candidate,
     score_iron_condor_ror,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import (
-    IronCondorCandidate,
-    enumerate_symmetric_iron_condors,
-    evaluate_symmetric_iron_condor,
-)
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
-    _pick_top_candidates,
-    calc_iron_condor,
-)
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
-    IC_TOP_K_SHORT_STRIKES,
     QuoteRow,
     TradeLeg,
-    WING_WIDTH_MULTIPLIERS,
 )
 
 
@@ -226,7 +220,7 @@ class TestCalcIronCondor(unittest.TestCase):
             "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_ANNUALIZED_RETURN_PCT",
             0.0,
         ), patch(
-            "icici_breeze_backend.app.services.options_strategy_engine.strategies.base.MIN_IC_CREDIT_PCT_OF_WIDTH",
+            "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_CREDIT_PCT_OF_WIDTH",
             0.01,
         ):
             results = calc_iron_condor(ctx)
@@ -305,7 +299,11 @@ class TestCalcIronCondor(unittest.TestCase):
             "Success": {"span_margin_required": 500_000.0}
         }
         ctx = _ctx_from_cache(cache, min_pop_pct=30.0, processor=proc)
-        results = calc_iron_condor(ctx)
+        with patch(
+            "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_ANNUALIZED_RETURN_PCT",
+            500.0,
+        ):
+            results = calc_iron_condor(ctx)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].status, "skipped")
         self.assertIn("annualized return", (results[0].skip_reason or "").lower())
@@ -338,6 +336,140 @@ class TestCalcIronCondor(unittest.TestCase):
             self.assertIsNotNone(ok[1].ranking_summary)
 
 
+class TestAuditQuoteRegression(unittest.TestCase):
+    def test_far_otm_condor_survives_relaxed_credit_gate(self):
+        """Audit-cache style 22850/24400 condor at 95% PoP / 55L max loss."""
+        strikes = list(range(22600, 24650, 50))
+        cache = _fill_strikes(
+            strikes,
+            23622.9,
+            bid_fn=lambda s, r: 3.0,
+            ask_fn=lambda s, r: 3.1,
+            delta_fn=lambda s, r: 0.025,
+        )
+        cache[(22850, "Put")] = _quote(22850, "Put", bid=6.80, ask=6.95, delta=0.02)
+        cache[(22750, "Put")] = _quote(22750, "Put", bid=5.65, ask=5.80, delta=0.018)
+        cache[(24400, "Call")] = _quote(24400, "Call", bid=5.40, ask=5.55, delta=0.02)
+        cache[(24500, "Call")] = _quote(24500, "Call", bid=3.85, ask=3.95, delta=0.018)
+        ctx = _ctx_from_cache(
+            cache,
+            spot=23622.9,
+            min_pop_pct=95.0,
+            max_loss_rupees=5_500_000,
+        )
+        variants = enumerate_symmetric_iron_condors(ctx, 22850, 24400)
+        self.assertGreater(len(variants), 0)
+        widths = {v.wing_width for v in variants}
+        self.assertIn(50, widths)
+
+    def test_strangle_seed_pair_included_at_95_pop(self):
+        strikes = list(range(22500, 24700, 50))
+
+        def delta_fn(s, r):
+            if s == 22650 and r == "Put":
+                return 0.025
+            if s == 24500 and r == "Call":
+                return 0.025
+            return 0.08
+
+        cache = _fill_strikes(
+            strikes,
+            23622.9,
+            bid_fn=lambda s, r: 4.0 if s in (22650, 24500) else 2.0,
+            ask_fn=lambda s, r: 4.1 if s in (22650, 24500) else 2.1,
+            delta_fn=delta_fn,
+        )
+        ctx = _ctx_from_cache(cache, spot=23622.9, min_pop_pct=95.0)
+        pairs = iron_condor_short_pairs(ctx)
+        self.assertTrue(any(sp == 22650 and sc == 24500 for sp, sc in pairs))
+
+
+class TestIronCondorEvalAudit(unittest.TestCase):
+    def test_enumeration_logs_every_candidate_with_pop_basis(self):
+        cache = {
+            (22850, "Put"): _quote(22850, "Put", bid=6.80, ask=6.95, delta=0.02),
+            (22750, "Put"): _quote(22750, "Put", bid=5.65, ask=5.80, delta=0.018),
+            (24400, "Call"): _quote(24400, "Call", bid=5.40, ask=5.55, delta=0.02),
+            (24500, "Call"): _quote(24500, "Call", bid=3.85, ask=3.95, delta=0.018),
+        }
+        ctx = _ctx_from_cache(cache, spot=23622.9, min_pop_pct=50.0)
+        stats = IronCondorRejectionStats()
+        enumerate_symmetric_iron_condors(ctx, 22850, 24400, stats=stats)
+        self.assertEqual(len(stats.pair_wing_plans), 1)
+        self.assertEqual(stats.pair_wing_plans[0]["wing_widths_attempted"], [50, 100, 150, 200])
+        self.assertGreater(len(stats.evaluations), 0)
+        for ev in stats.evaluations:
+            self.assertIn(ev["wing_width"], [50, 100, 150, 200])
+            if ev["outcome"] == "accepted":
+                self.assertEqual(ev["pop_basis"], "breakevens_from_short_strikes")
+                self.assertIsNotNone(ev["pop_pct"])
+                self.assertIsNotNone(ev["lower_breakeven"])
+                self.assertIsNotNone(ev["upper_breakeven"])
+
+
+class TestPopBreakevenParity(unittest.TestCase):
+    def test_ic_pop_uses_short_strike_breakevens(self):
+        from icici_breeze_backend.app.services.options_strategy_engine.helpers import sigma_for_pop
+        from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_between_breakevens
+
+        cache = {
+            (22850, "Put"): _quote(22850, "Put", bid=6.80, ask=6.95, delta=0.02),
+            (22750, "Put"): _quote(22750, "Put", bid=5.65, ask=5.80, delta=0.018),
+            (24400, "Call"): _quote(24400, "Call", bid=5.40, ask=5.55, delta=0.02),
+            (24500, "Call"): _quote(24500, "Call", bid=3.85, ask=3.95, delta=0.018),
+        }
+        ctx = _ctx_from_cache(cache, spot=23622.9, min_pop_pct=95.0)
+        qty = 65
+        ic_legs = [
+            TradeLeg("Put", "Sell", 22850, qty, 6.80),
+            TradeLeg("Put", "Buy", 22750, qty, 5.80),
+            TradeLeg("Call", "Sell", 24400, qty, 5.40),
+            TradeLeg("Call", "Buy", 24500, qty, 3.95),
+        ]
+        net_credit = 6.80 - 5.80 + 5.40 - 3.95
+        expected = pop_between_breakevens(
+            ctx.spot,
+            22850 - net_credit,
+            24400 + net_credit,
+            ctx.t_years,
+            sigma_for_pop(ctx),
+        )
+        detail = pop_detail_for_legs(ctx, ic_legs)
+        ic_pop = detail.pop_pct
+        self.assertEqual(detail.basis, "breakevens_from_short_strikes")
+        self.assertEqual(detail.short_put, 22850)
+        self.assertEqual(detail.short_call, 24400)
+        self.assertAlmostEqual(ic_pop, expected, places=2)
+        self.assertAlmostEqual(ic_pop, pop_for_legs(ctx, ic_legs), places=4)
+        long_wing_pop = pop_between_breakevens(
+            ctx.spot,
+            22750 - net_credit,
+            24500 + net_credit,
+            ctx.t_years,
+            sigma_for_pop(ctx),
+        )
+        self.assertLess(ic_pop, long_wing_pop)
+
+
+class TestSkipMessage(unittest.TestCase):
+    def test_skip_message_reports_dominant_filter(self):
+        stats = IronCondorRejectionStats()
+        stats.record("min_credit", wing_width=50)
+        stats.record("min_credit", wing_width=100)
+        stats.record("pop_floor", wing_width=50)
+        msg = stats.skip_message()
+        self.assertIn("min_credit", msg)
+        self.assertIn("rejected", msg.lower())
+
+
+class TestWingCreditGate(unittest.TestCase):
+    def test_per_spread_floor_blocks_tiny_wings(self):
+        self.assertFalse(passes_ic_wing_credit(0.04, 0.06, 50))
+
+    def test_audit_style_credit_passes_50pt_wing(self):
+        self.assertTrue(passes_ic_wing_credit(1.0, 1.45, 50))
+
+
 class TestSearchBounds(unittest.TestCase):
     def test_delta_window_for_95_pop(self):
         lo, hi = iron_condor_short_delta_window(95.0)
@@ -358,15 +490,6 @@ class TestSearchBounds(unittest.TestCase):
         pairs = iron_condor_short_pairs(ctx)
         max_pairs = IC_TOP_K_SHORT_STRIKES * IC_TOP_K_SHORT_STRIKES
         self.assertLessEqual(len(pairs), max_pairs)
-
-        window = iron_condor_delta_window(ctx)
-        for sp, sc in pairs:
-            qp = ctx.cache[(sp, "Put")]
-            qc = ctx.cache[(sc, "Call")]
-            self.assertGreaterEqual(abs(qp.delta or 0), window.lo)
-            self.assertLessEqual(abs(qp.delta or 0), window.hi)
-            self.assertGreaterEqual(abs(qc.delta or 0), window.lo)
-            self.assertLessEqual(abs(qc.delta or 0), window.hi)
 
         max_evals = max_pairs * len(WING_WIDTH_MULTIPLIERS)
         survivors = sum(

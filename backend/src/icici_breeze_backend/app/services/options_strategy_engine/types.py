@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 Right = Literal["Call", "Put"]
 Side = Literal["Buy", "Sell"]
-StrategyCategory = Literal["income", "bullish", "bearish"]
+StrategyCategory = Literal["income", "bullish", "bearish", "volatility"]
 RiskRewardProfile = Literal["conservative", "moderate", "aggressive"]
 StrategyId = str
 
@@ -33,20 +33,10 @@ UNDEFINED_RISK_STRATEGIES: frozenset[str] = frozenset(
     {"naked_ce_short", "naked_pe_short", "short_strangle", "short_straddle"}
 )
 
-WING_WIDTH_MULTIPLIERS: tuple[int, ...] = (1, 2, 3, 4)
 TOP_K_SHORT_STRIKES = 8
-IC_TOP_K_SHORT_STRIKES = 5
 TOP_M_WING_STRIKES = 3
 MAX_CANDIDATES_PER_STRATEGY = 30
-MAX_IRON_CONDOR_CANDIDATES = 15
 POP_TOLERANCE_PCT = 7.0
-IC_POP_FLOOR_TOLERANCE_PCT = 2.0
-MIN_WING_CREDIT = 0.05
-MIN_IC_CREDIT_PCT_OF_WIDTH = 0.10
-MIN_IC_ANNUALIZED_RETURN_PCT = 5.0
-IC_SPAN_REFINE_TOP_N = 5
-IC_RETURN_TOP_N = 5
-IC_SCORE_TIE_EPSILON = 0.01
 
 
 @dataclass
@@ -155,6 +145,8 @@ class EngineContext:
     halt_reason: str | None = None
     audit: Any | None = None
     chain_backoff: Any | None = None
+    range_lower: float = 0.0
+    range_upper: float = 0.0
 
     @property
     def liquid_ce_strikes(self) -> list[int]:

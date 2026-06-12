@@ -9,23 +9,29 @@ from icici_breeze_backend.app.services.options_strategy_engine.anchors import (
     max_steps_for_strategy,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.pruning import (
-    DELTA_INCOME_SHORT,
+    DEFAULT_WING_WIDTH_MULTIPLIERS,
+    DeltaWindow,
+    WING_WIDTH_MULTIPLIERS,
     delta_in_window,
-    iron_condor_short_pairs,
     passes_economic_prune,
     pop_within_tolerance,
     top_k_strikes,
     wing_strikes_from_multipliers,
+)
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
+    IC_TOP_K_SHORT_STRIKES,
+    iron_condor_short_pairs,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import short_lots_in_legs
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import size_lots
 from icici_breeze_backend.app.services.options_strategy_engine.types import TradeLeg
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     TOP_K_SHORT_STRIKES,
-    WING_WIDTH_MULTIPLIERS,
     EngineContext,
     QuoteRow,
 )
+
+DELTA_INCOME_SHORT = DeltaWindow(0.13, 0.32)
 
 
 def _mock_ctx() -> EngineContext:
@@ -94,10 +100,6 @@ class TestPruning(unittest.TestCase):
         self.assertEqual(wings, [22200, 22100])
 
     def test_iron_condor_short_pairs_bounded(self):
-        from icici_breeze_backend.app.services.options_strategy_engine.types import (
-            IC_TOP_K_SHORT_STRIKES,
-        )
-
         ctx = _mock_ctx()
         ctx.min_pop_pct = 25.0
         pairs = iron_condor_short_pairs(ctx)
@@ -197,4 +199,4 @@ class TestPackageLazyImport(unittest.TestCase):
     def test_pruning_submodule_without_processor(self):
         mod = importlib.import_module("icici_breeze_backend.app.services.options_strategy_engine.pruning")
         self.assertEqual(mod.TOP_K_SHORT_STRIKES, 8)
-        self.assertEqual(mod.WING_WIDTH_MULTIPLIERS, WING_WIDTH_MULTIPLIERS)
+        self.assertEqual(mod.WING_WIDTH_MULTIPLIERS, DEFAULT_WING_WIDTH_MULTIPLIERS)

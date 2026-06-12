@@ -6,12 +6,23 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import sk
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_directional_candidate
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import size_quantity_from_budgets
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import all_liquid, make_result
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import all_liquid, make_result
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional._common import (
     delta_match,
     long_short_targets,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyResult, TradeLeg
+from icici_breeze_backend.app.services.options_strategy_engine.anchors import (
+    build_anchor_index,
+    max_steps_for_strategy,
+    strikes_in_window,
+)
+from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import profile_deltas
+from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    EngineContext,
+    Right,
+    StrategyResult,
+    TradeLeg,
+)
 
 
 def calc_bear_put_spread(ctx: EngineContext) -> StrategyResult:
@@ -81,3 +92,22 @@ def calc_bear_put_spread(ctx: EngineContext) -> StrategyResult:
         pop=pop,
         net_premium_val=-max_loss,
     )
+
+
+def prefetch_bear_put_spread(ctx: EngineContext) -> set[tuple[int, Right]]:
+    from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import (
+        estimate_strike_for_abs_delta,
+    )
+
+    long_target, short_target = profile_deltas(ctx.risk_reward_profile)
+    pairs: set[tuple[int, Right]] = set()
+    for target in (long_target, short_target):
+        strike = estimate_strike_for_abs_delta(ctx, "Put", target)
+        if strike is not None:
+            pairs.add((strike, "Put"))
+    anchors = build_anchor_index(ctx.strikes, ctx.spot, ctx.strike_step)
+    for strike in strikes_in_window(
+        ctx.strikes, anchors, "Put", max_steps_for_strategy("bear_put_spread")
+    ):
+        pairs.add((strike, "Put"))
+    return pairs

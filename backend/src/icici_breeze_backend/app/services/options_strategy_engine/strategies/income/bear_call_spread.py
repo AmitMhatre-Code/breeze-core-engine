@@ -4,20 +4,29 @@ from __future__ import annotations
 from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import strikes_ranked_by_delta
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import skip
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_credit_trade
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import (
-    all_liquid,
+from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import pop_to_short_delta
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import all_liquid, make_result
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.credit_spread import (
     credit_spread_wing_full,
-    make_result,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import short_delta
-from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyResult, TradeLeg
+from icici_breeze_backend.app.services.options_strategy_engine.anchors import (
+    build_anchor_index,
+    max_steps_for_strategy,
+    strikes_in_window,
+)
+from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    EngineContext,
+    Right,
+    StrategyResult,
+    TradeLeg,
+)
 
 
 def calc_bear_call_spread(ctx: EngineContext) -> StrategyResult:
     sid, name = "bear_call_spread", "Bear Call Spread"
     if ctx.halted:
         return skip(sid, name, ctx.halt_reason or "Market halted")
-    target = short_delta(ctx, 1)
+    target = pop_to_short_delta(ctx.min_pop_pct, 1)
     short_candidates = strikes_ranked_by_delta(
         all_liquid(ctx, "Call"),
         ctx.cache,
@@ -50,3 +59,14 @@ def calc_bear_call_spread(ctx: EngineContext) -> StrategyResult:
         pop=pop,
         net_premium_val=credit * qty,
     )
+
+
+def prefetch_bear_call_spread(ctx: EngineContext) -> set[tuple[int, Right]]:
+    anchors = build_anchor_index(ctx.strikes, ctx.spot, ctx.strike_step)
+    pairs: set[tuple[int, Right]] = set()
+    for right in ("Call", "Put"):
+        for strike in strikes_in_window(
+            ctx.strikes, anchors, right, max_steps_for_strategy("bear_call_spread")
+        ):
+            pairs.add((strike, right))
+    return pairs

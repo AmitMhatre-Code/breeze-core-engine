@@ -3,15 +3,20 @@ from __future__ import annotations
 
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import skip
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_for_legs
-from icici_breeze_backend.app.services.options_strategy_engine.pruning import WING_WIDTH_MULTIPLIERS
+WING_WIDTH_MULTIPLIERS: tuple[int, ...] = (1, 2, 3, 4)
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_debit_trade
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import size_quantity_loss_only
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import (
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import (
     ensure_liquid_above,
     ensure_liquid_below,
     make_result,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyResult, TradeLeg
+from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    EngineContext,
+    Right,
+    StrategyResult,
+    TradeLeg,
+)
 
 
 def _long_condor_wings(
@@ -93,3 +98,20 @@ def calc_long_condor(ctx: EngineContext) -> StrategyResult:
         pop=pop,
         net_premium_val=-(debit * qty),
     )
+
+
+def prefetch_long_condor(ctx: EngineContext) -> set[tuple[int, Right]]:
+    pairs: set[tuple[int, Right]] = set()
+    for strike in ctx.strikes:
+        if strike <= ctx.range_lower:
+            pairs.add((strike, "Put"))
+        if strike >= ctx.range_upper:
+            pairs.add((strike, "Call"))
+    for mult in WING_WIDTH_MULTIPLIERS:
+        spread = mult * ctx.strike_step
+        for strike in ctx.strikes:
+            if strike <= ctx.range_lower:
+                pairs.add((strike - spread, "Put"))
+            if strike >= ctx.range_upper:
+                pairs.add((strike + spread, "Call"))
+    return pairs

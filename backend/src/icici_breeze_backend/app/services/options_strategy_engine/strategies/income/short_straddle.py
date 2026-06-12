@@ -3,8 +3,13 @@ from __future__ import annotations
 
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import skip
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import min_qty_for_one_lot
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import atm_with_liquidity, ok_with_pop
-from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyResult, TradeLeg
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import atm_with_liquidity, ok_with_pop
+from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    EngineContext,
+    Right,
+    StrategyResult,
+    TradeLeg,
+)
 
 
 def calc_short_straddle(ctx: EngineContext) -> StrategyResult:
@@ -32,3 +37,9 @@ def calc_short_straddle(ctx: EngineContext) -> StrategyResult:
         modified=ctx.structure_modified,
         net_premium_val=max_profit,
     )
+
+
+def prefetch_short_straddle(ctx: EngineContext) -> set[tuple[int, Right]]:
+    from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import prefetch_atm_pairs
+
+    return prefetch_atm_pairs(ctx)

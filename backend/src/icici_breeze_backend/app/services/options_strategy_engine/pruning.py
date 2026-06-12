@@ -3,22 +3,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import (
-    iron_condor_short_delta_window,
-)
-from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_iron_condor_short_pair
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
-    IC_POP_FLOOR_TOLERANCE_PCT,
-    IC_TOP_K_SHORT_STRIKES,
     MAX_CANDIDATES_PER_STRATEGY,
     POP_TOLERANCE_PCT,
     TOP_K_SHORT_STRIKES,
     TOP_M_WING_STRIKES,
-    WING_WIDTH_MULTIPLIERS,
-    EngineContext,
     QuoteRow,
     Right,
 )
+
+DEFAULT_WING_WIDTH_MULTIPLIERS: tuple[int, ...] = (1, 2, 3, 4)
+WING_WIDTH_MULTIPLIERS = DEFAULT_WING_WIDTH_MULTIPLIERS
 
 
 @dataclass(frozen=True)
@@ -27,8 +22,6 @@ class DeltaWindow:
     hi: float
 
 
-DELTA_INCOME_SHORT = DeltaWindow(0.13, 0.32)
-DELTA_INCOME_HEDGE = DeltaWindow(0.02, 0.10)
 DELTA_DIRECTIONAL_LONG = DeltaWindow(0.45, 0.65)
 DELTA_DIRECTIONAL_SHORT = DeltaWindow(0.20, 0.35)
 
@@ -81,7 +74,7 @@ def top_m_wings(
     m: int,
     *,
     wing_is_higher: bool,
-    delta_window: DeltaWindow | None = DELTA_INCOME_HEDGE,
+    delta_window: DeltaWindow | None = None,
 ) -> list[int]:
     candidates = [s for s in wing_strikes if (s > short_strike if wing_is_higher else s < short_strike)]
     if wing_is_higher:
@@ -106,9 +99,10 @@ def wing_strikes_from_multipliers(
     liquid_strikes: set[int],
     *,
     wing_is_higher: bool,
+    multipliers: tuple[int, ...] = DEFAULT_WING_WIDTH_MULTIPLIERS,
 ) -> list[int]:
     out: list[int] = []
-    for mult in WING_WIDTH_MULTIPLIERS:
+    for mult in multipliers:
         w = mult * step
         s = short_strike + w if wing_is_higher else short_strike - w
         if s in liquid_strikes:
@@ -144,65 +138,6 @@ def passes_economic_prune(
 
 def pop_within_tolerance(estimated_pop: float, target_pop: float, tolerance: float = POP_TOLERANCE_PCT) -> bool:
     return abs(estimated_pop - target_pop) <= tolerance
-
-
-def iron_condor_delta_window(ctx: EngineContext) -> DeltaWindow:
-    lo, hi = iron_condor_short_delta_window(ctx.min_pop_pct)
-    return DeltaWindow(lo, hi)
-
-
-def iron_condor_short_pairs(ctx: EngineContext) -> list[tuple[int, int]]:
-    """Return (short_put, short_call) shortlists for iron condor optimization."""
-    delta_window = iron_condor_delta_window(ctx)
-    short_puts = top_k_strikes(
-        [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
-        ctx.cache,
-        "Put",
-        IC_TOP_K_SHORT_STRIKES,
-        credit=True,
-        delta_window=delta_window,
-    )
-    short_calls = top_k_strikes(
-        [s for s in ctx.liquid_ce_strikes if s > ctx.spot],
-        ctx.cache,
-        "Call",
-        IC_TOP_K_SHORT_STRIKES,
-        credit=True,
-        delta_window=delta_window,
-    )
-    if not short_puts:
-        short_puts = top_k_strikes(
-            [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
-            ctx.cache,
-            "Put",
-            IC_TOP_K_SHORT_STRIKES,
-            credit=True,
-        )
-    if not short_calls:
-        short_calls = top_k_strikes(
-            [s for s in ctx.liquid_ce_strikes if s > ctx.spot],
-            ctx.cache,
-            "Call",
-            IC_TOP_K_SHORT_STRIKES,
-            credit=True,
-        )
-
-    pop_floor = ctx.min_pop_pct - IC_POP_FLOOR_TOLERANCE_PCT
-    out: list[tuple[int, int]] = []
-    for sp in short_puts:
-        qp = ctx.cache.get((sp, "Put"))
-        for sc in short_calls:
-            if sp >= sc:
-                continue
-            qc = ctx.cache.get((sc, "Call"))
-            est_pop = pop_iron_condor_short_pair(
-                qp.delta if qp else None,
-                qc.delta if qc else None,
-            )
-            if ctx.strategy_category == "income" and est_pop < pop_floor:
-                continue
-            out.append((sp, sc))
-    return out
 
 
 def cap_candidates(candidates: list, max_n: int = MAX_CANDIDATES_PER_STRATEGY) -> list:

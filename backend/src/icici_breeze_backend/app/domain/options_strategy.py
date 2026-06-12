@@ -3,7 +3,7 @@ from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-StrategyCategory = Literal["income", "bullish", "bearish"]
+StrategyCategory = Literal["income", "bullish", "bearish", "volatility"]
 RiskRewardProfile = Literal["conservative", "moderate", "aggressive"]
 
 

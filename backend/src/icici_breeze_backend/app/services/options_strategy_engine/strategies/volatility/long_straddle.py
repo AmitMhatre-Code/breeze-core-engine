@@ -5,8 +5,13 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import sk
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_debit_trade
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import size_quantity_loss_only
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import make_result, windowed_liquid
-from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyResult, TradeLeg
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import make_result, windowed_liquid
+from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    EngineContext,
+    Right,
+    StrategyResult,
+    TradeLeg,
+)
 
 
 def calc_long_straddle(ctx: EngineContext) -> StrategyResult:
@@ -51,3 +56,12 @@ def calc_long_straddle(ctx: EngineContext) -> StrategyResult:
         pop=pop,
         net_premium_val=-max_loss,
     )
+
+
+def prefetch_long_straddle(ctx: EngineContext) -> set[tuple[int, Right]]:
+    pairs: set[tuple[int, Right]] = set()
+    for strike in ctx.strikes:
+        if ctx.range_lower <= strike <= ctx.range_upper:
+            pairs.add((strike, "Call"))
+            pairs.add((strike, "Put"))
+    return pairs
