@@ -1,13 +1,14 @@
 """Volatility strategy calculators (Gemini §4.3)."""
 from __future__ import annotations
 
-from icici_breeze_backend.app.services.options_strategy_engine.anchors import STRANGLE_OTM_PAIRS, anchors_for
+from icici_breeze_backend.app.services.options_strategy_engine.anchors import STRANGLE_OTM_PAIRS
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import skip
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.pruning import WING_WIDTH_MULTIPLIERS
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_debit_trade
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import size_quantity_loss_only
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import (
+    anchors_for,
     ensure_liquid_above,
     ensure_liquid_below,
     make_result,

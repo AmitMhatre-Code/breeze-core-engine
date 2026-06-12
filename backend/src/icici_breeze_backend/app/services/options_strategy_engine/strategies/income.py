@@ -1,7 +1,7 @@
 """Income strategy calculators (Gemini §4.1)."""
 from __future__ import annotations
 
-from icici_breeze_backend.app.services.options_strategy_engine.anchors import STRANGLE_OTM_PAIRS, anchors_for
+from icici_breeze_backend.app.services.options_strategy_engine.anchors import STRANGLE_OTM_PAIRS
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import skip
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.pruning import (
@@ -15,6 +15,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
     size_quantity_margin_only,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.base import (
+    anchors_for,
     atm_with_liquidity,
     credit_spread_wing,
     ensure_liquid_above,
