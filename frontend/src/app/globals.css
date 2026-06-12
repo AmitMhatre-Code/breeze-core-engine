@@ -94,60 +94,6 @@
     color: rgb(212 212 216);
   }
 
-  /** react-masonry-css gutters for strategy-builder trade tiles */
-  .masonry-grid {
-    display: flex;
-    width: auto;
-  }
-  .masonry-grid_column {
-    background-clip: padding-box;
-  }
-  .masonry-grid--gap-2 {
-    margin-left: -0.5rem;
-  }
-  .masonry-grid--gap-2.masonry-grid_column {
-    padding-left: 0.5rem;
-  }
-  .masonry-grid--gap-2.masonry-grid_column > div {
-    margin-bottom: 0.5rem;
-  }
-  .masonry-grid--gap-3 {
-    margin-left: -0.75rem;
-  }
-  .masonry-grid--gap-3.masonry-grid_column {
-    padding-left: 0.75rem;
-  }
-  .masonry-grid--gap-3.masonry-grid_column > div {
-    margin-bottom: 0.75rem;
-  }
-  .masonry-grid--gap-4 {
-    margin-left: -1rem;
-  }
-  .masonry-grid--gap-4.masonry-grid_column {
-    padding-left: 1rem;
-  }
-  .masonry-grid--gap-4.masonry-grid_column > div {
-    margin-bottom: 1rem;
-  }
-  .masonry-grid--gap-5 {
-    margin-left: -1.25rem;
-  }
-  .masonry-grid--gap-5.masonry-grid_column {
-    padding-left: 1.25rem;
-  }
-  .masonry-grid--gap-5.masonry-grid_column > div {
-    margin-bottom: 1.25rem;
-  }
-  .masonry-grid--gap-6 {
-    margin-left: -1.5rem;
-  }
-  .masonry-grid--gap-6.masonry-grid_column {
-    padding-left: 1.5rem;
-  }
-  .masonry-grid--gap-6.masonry-grid_column > div {
-    margin-bottom: 1.5rem;
-  }
-
   /**
    * Order book date range surface + fetch button: html.dark descendants so styling
    * survives if `dark:*` utilities are missed or variant ordering shifts.

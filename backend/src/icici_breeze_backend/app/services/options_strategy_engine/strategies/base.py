@@ -1,6 +1,8 @@
 """Shared strategy construction helpers."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from icici_breeze_backend.app.services.options_strategy_engine.anchors import (
     AnchorIndex,
     build_anchor_index,
@@ -24,6 +26,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.pruning import (
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_credit_trade, score_debit_trade
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import min_qty_for_one_lot
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    MIN_WING_CREDIT,
     TOP_K_SHORT_STRIKES,
     TOP_M_WING_STRIKES,
     WING_WIDTH_MULTIPLIERS,
@@ -32,6 +35,24 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     StrategyResult,
     TradeLeg,
 )
+
+
+@dataclass(frozen=True)
+class IronCondorCandidate:
+    short_put: int
+    short_call: int
+    long_put: int
+    long_call: int
+    credit: float
+    put_credit: float
+    call_credit: float
+    max_loss_u: float
+    qty: int
+    pop: float
+    wing_width: int
+    legs: list[TradeLeg]
+    proxy_score: float
+    net_collected: float
 def anchors_for(ctx: EngineContext) -> AnchorIndex:
     return build_anchor_index(ctx.strikes, ctx.spot, ctx.strike_step)
 
@@ -244,17 +265,19 @@ def credit_spread_wing(
     return wing, credit, max_loss_u, qty, pop
 
 
-def iron_wings_symmetric(
+def evaluate_symmetric_iron_condor(
     ctx: EngineContext,
     short_put: int,
     short_call: int,
     *,
     strategy_id: str | None = None,
-) -> tuple[int, int, float, float, int, float] | None:
+) -> IronCondorCandidate | None:
+    """Best symmetric-wing iron condor for a short put/call pair, or None."""
+    del strategy_id
     L = ctx.lot_size
     liquid_pe = set(ctx.liquid_pe_strikes)
     liquid_ce = set(ctx.liquid_ce_strikes)
-    best: tuple[float, int, int, float, float, int, float] | None = None
+    best: IronCondorCandidate | None = None
 
     for mult in WING_WIDTH_MULTIPLIERS:
         w = mult * ctx.strike_step
@@ -262,15 +285,21 @@ def iron_wings_symmetric(
         lc = short_call + w
         if lp not in liquid_pe or lc not in liquid_ce:
             continue
-        sp = ctx.cache[(short_put, "Put")]
-        sc = ctx.cache[(short_call, "Call")]
-        lpq = ctx.cache[(lp, "Put")]
-        lcq = ctx.cache[(lc, "Call")]
+        sp = ctx.cache.get((short_put, "Put"))
+        sc = ctx.cache.get((short_call, "Call"))
+        lpq = ctx.cache.get((lp, "Put"))
+        lcq = ctx.cache.get((lc, "Call"))
+        if not sp or not sc or not lpq or not lcq:
+            continue
         sp_prem = sp.best_bid_price or sp.ltp
         sc_prem = sc.best_bid_price or sc.ltp
         lp_prem = lpq.best_offer_price or lpq.ltp
         lc_prem = lcq.best_offer_price or lcq.ltp
-        credit = sp_prem + sc_prem - lp_prem - lc_prem
+        put_credit = sp_prem - lp_prem
+        call_credit = sc_prem - lc_prem
+        if put_credit < MIN_WING_CREDIT or call_credit < MIN_WING_CREDIT:
+            continue
+        credit = put_credit + call_credit
         max_loss_u = w - credit
         if not passes_economic_prune(
             net_credit=credit,
@@ -282,6 +311,8 @@ def iron_wings_symmetric(
         ):
             continue
         qty = min_qty_for_one_lot(L)
+        if qty < L:
+            continue
         legs = [
             TradeLeg("Put", "Sell", short_put, qty, sp_prem),
             TradeLeg("Put", "Buy", lp, qty, lp_prem),
@@ -292,14 +323,49 @@ def iron_wings_symmetric(
         if not meets_pop_floor(ctx, pop):
             continue
         net_collected = credit * qty
-        score = score_credit_trade(pop, net_collected, max_loss_u * qty)
-        if best is None or score > best[0]:
-            best = (score, lp, lc, credit, max_loss_u, qty, pop)
+        proxy_score = score_credit_trade(pop, net_collected, max_loss_u * qty)
+        candidate = IronCondorCandidate(
+            short_put=short_put,
+            short_call=short_call,
+            long_put=lp,
+            long_call=lc,
+            credit=credit,
+            put_credit=put_credit,
+            call_credit=call_credit,
+            max_loss_u=max_loss_u,
+            qty=qty,
+            pop=pop,
+            wing_width=w,
+            legs=legs,
+            proxy_score=proxy_score,
+            net_collected=net_collected,
+        )
+        if best is None or proxy_score > best.proxy_score:
+            best = candidate
 
-    if not best:
+    return best
+
+
+def iron_wings_symmetric(
+    ctx: EngineContext,
+    short_put: int,
+    short_call: int,
+    *,
+    strategy_id: str | None = None,
+) -> tuple[int, int, float, float, int, float] | None:
+    cand = evaluate_symmetric_iron_condor(
+        ctx, short_put, short_call, strategy_id=strategy_id
+    )
+    if not cand:
         return None
-    _, lp, lc, credit, max_loss_u, qty, pop = best
-    return lp, lc, credit, max_loss_u, qty, pop
+    return (
+        cand.long_put,
+        cand.long_call,
+        cand.credit,
+        cand.max_loss_u,
+        cand.qty,
+        cand.pop,
+    )
 
 
 def all_liquid(ctx: EngineContext, right: Right) -> list[int]:

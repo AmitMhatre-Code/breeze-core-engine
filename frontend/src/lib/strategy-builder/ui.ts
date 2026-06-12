@@ -59,4 +59,8 @@ export const sb = {
     "flex cursor-pointer items-center gap-2.5 text-xs font-medium text-zinc-700 dark:text-zinc-300",
   radio:
     "size-4 shrink-0 border-zinc-300 text-sky-600 focus:ring-sky-500/30 dark:border-zinc-600 dark:bg-zinc-950",
+  parameterCard:
+    "flex flex-col gap-4 rounded-lg border border-zinc-200/80 bg-zinc-50/50 p-4 dark:border-zinc-700/80 dark:bg-zinc-950/40",
+  parameterCardTitle:
+    "text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400",
 } as const;

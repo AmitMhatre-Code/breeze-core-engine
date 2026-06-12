@@ -50,6 +50,21 @@ def years_to_expiry(expiry_display: str) -> float:
     return max(days_to_expiry(expiry_display), 1) / 365.0
 
 
+def annualized_carry_percent_on_span(
+    premium: float, days_to_expiry: int, span_margin: float
+) -> float:
+    """(Premium / DTE) * 365 / Span Margin, as a display percentage."""
+    dte = max(1, int(days_to_expiry))
+    try:
+        sm = float(span_margin)
+        pr = float(premium)
+    except (TypeError, ValueError):
+        return 0.0
+    if sm <= 0 or not math.isfinite(sm) or not math.isfinite(pr):
+        return 0.0
+    return (pr / dte) * (365.0 / sm) * 100.0
+
+
 def quote_from_api(strike: int, right: Right, payload: dict) -> QuoteRow:
     tb = int(payload.get("total_buy_qty") or 0)
     ts = int(payload.get("total_sell_qty") or 0)

@@ -1,6 +1,9 @@
 """Candidate ranking and capital efficiency (Gemini §7.1)."""
 from __future__ import annotations
 
+from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
+    annualized_carry_percent_on_span,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.pop import expected_value_heuristic
 
 
@@ -38,3 +41,16 @@ def score_directional_candidate(
     ev = expected_value_heuristic(pop_pct, max_profit, max_loss)
     capital = max(max_loss, 1.0)
     return capital_efficiency_ratio(ev, capital)
+
+
+def score_iron_condor_candidate(
+    pop_pct: float,
+    net_premium: float,
+    max_loss: float,
+    unit_span: float | None,
+    dte: int | None,
+) -> float:
+    """Rank iron condor finalists: annualized carry on SPAN when available, else proxy score."""
+    if unit_span and unit_span > 0 and dte is not None and dte > 0:
+        return annualized_carry_percent_on_span(net_premium, dte, unit_span)
+    return score_credit_trade(pop_pct, net_premium, max_loss, span_margin=unit_span)

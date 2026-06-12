@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_iron_condor_short_pair
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     MAX_CANDIDATES_PER_STRATEGY,
-    MAX_IRON_CONDOR_CANDIDATES,
     POP_TOLERANCE_PCT,
     TOP_K_SHORT_STRIKES,
     TOP_M_WING_STRIKES,
@@ -142,40 +141,30 @@ def pop_within_tolerance(estimated_pop: float, target_pop: float, tolerance: flo
     return abs(estimated_pop - target_pop) <= tolerance
 
 
-def iron_condor_candidates(
-    ctx: EngineContext,
-) -> list[tuple[int, int, int, int]]:
-    """Return (long_put, short_put, short_call, long_call) over full liquid chain."""
-    from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import pop_to_short_delta
-
-    target_delta = pop_to_short_delta(ctx.min_pop_pct, 2)
-    short_puts = [
-        s
-        for s in ctx.liquid_pe_strikes
-        if s < ctx.spot
-        and (q := ctx.cache.get((s, "Put")))
-        and q.liquid
-        and q.delta is not None
-        and abs(abs(q.delta) - target_delta) <= POP_TOLERANCE_PCT / 100.0 + 0.05
-    ]
-    short_calls = [
-        s
-        for s in ctx.liquid_ce_strikes
-        if s > ctx.spot
-        and (q := ctx.cache.get((s, "Call")))
-        and q.liquid
-        and q.delta is not None
-        and abs(abs(q.delta) - target_delta) <= POP_TOLERANCE_PCT / 100.0 + 0.05
-    ]
+def iron_condor_short_pairs(ctx: EngineContext) -> list[tuple[int, int]]:
+    """Return (short_put, short_call) shortlists for iron condor optimization."""
+    short_puts = top_k_strikes(
+        [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
+        ctx.cache,
+        "Put",
+        TOP_K_SHORT_STRIKES,
+        credit=True,
+        delta_window=DELTA_INCOME_SHORT,
+    )
+    short_calls = top_k_strikes(
+        [s for s in ctx.liquid_ce_strikes if s > ctx.spot],
+        ctx.cache,
+        "Call",
+        TOP_K_SHORT_STRIKES,
+        credit=True,
+        delta_window=DELTA_INCOME_SHORT,
+    )
     if not short_puts:
         short_puts = [s for s in ctx.liquid_pe_strikes if s < ctx.spot]
     if not short_calls:
         short_calls = [s for s in ctx.liquid_ce_strikes if s > ctx.spot]
 
-    liquid_pe = set(ctx.liquid_pe_strikes)
-    liquid_ce = set(ctx.liquid_ce_strikes)
-    out: list[tuple[int, int, int, int]] = []
-
+    out: list[tuple[int, int]] = []
     for sp in short_puts:
         qp = ctx.cache.get((sp, "Put"))
         for sc in short_calls:
@@ -188,20 +177,8 @@ def iron_condor_candidates(
             )
             if ctx.strategy_category == "income" and est_pop < ctx.min_pop_pct - POP_TOLERANCE_PCT:
                 continue
-
-            wing_puts = wing_strikes_from_multipliers(sp, ctx.strike_step, liquid_pe, wing_is_higher=False)
-            wing_calls = wing_strikes_from_multipliers(sc, ctx.strike_step, liquid_ce, wing_is_higher=True)
-
-            for lp in wing_puts:
-                spread = sp - lp
-                lc = sc + spread
-                if lc not in liquid_ce:
-                    continue
-                out.append((lp, sp, sc, lc))
-                if len(out) >= MAX_IRON_CONDOR_CANDIDATES:
-                    return out
-
-    return out[:MAX_IRON_CONDOR_CANDIDATES]
+            out.append((sp, sc))
+    return out
 
 
 def cap_candidates(candidates: list, max_n: int = MAX_CANDIDATES_PER_STRATEGY) -> list:

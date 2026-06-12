@@ -96,7 +96,7 @@ export function ProposedStrategyTradeCard({
 
   return (
     <div
-      className={`group w-full min-w-0 rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
+      className={`group relative w-full min-w-0 rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
         skipped
           ? "border-zinc-200/60 bg-zinc-100/50 opacity-70 dark:border-zinc-700/60 dark:bg-zinc-900/40"
           : selected
@@ -105,20 +105,22 @@ export function ProposedStrategyTradeCard({
       }`}
     >
       <div className="space-y-2">
-        <div
-          className={`${rowClass} gap-x-1.5 text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50`}
-        >
-          {outlook ? (
-            <span className="shrink-0">
-              <OutlookIcon outlook={outlook} />
-            </span>
-          ) : null}
-          <span className="shrink-0 leading-snug">{trade.strategy_name}</span>
-          {trade.structure_modified ? (
-            <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
-              Modified
-            </span>
-          ) : null}
+        <div className="flex items-start justify-between gap-2">
+          <div
+            className={`${rowClass} min-w-0 gap-x-1.5 text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50`}
+          >
+            {outlook ? (
+              <span className="shrink-0">
+                <OutlookIcon outlook={outlook} />
+              </span>
+            ) : null}
+            <span className="shrink-0 leading-snug">{trade.strategy_name}</span>
+            {trade.structure_modified ? (
+              <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
+                Modified
+              </span>
+            ) : null}
+          </div>
           {!skipped && prem != null ? (
             <span
               className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ring-1 ${premiumCapsuleClass(prem)}`}

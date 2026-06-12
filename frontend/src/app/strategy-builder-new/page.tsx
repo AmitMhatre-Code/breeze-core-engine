@@ -66,11 +66,45 @@ const CATEGORY_LABELS: Record<StrategyCategory, string> = {
   bearish: "Bearish Strategies",
 };
 
-const RISK_PROFILE_OPTIONS: { id: RiskRewardProfile; label: string }[] = [
-  { id: "conservative", label: "Conservative" },
-  { id: "moderate", label: "Moderate" },
-  { id: "aggressive", label: "Aggressive" },
+const MIN_POP_HINT =
+  "Sets how far OTM income shorts are placed. Higher PoP → further OTM (lower delta).";
+
+const RISK_PROFILE_OPTIONS: {
+  id: RiskRewardProfile;
+  label: string;
+  tooltip: string;
+}[] = [
+  {
+    id: "conservative",
+    label: "Conservative",
+    tooltip:
+      "Long leg ~0.40Δ, short leg ~0.20Δ on spreads. Lower premium, needs a larger move.",
+  },
+  {
+    id: "moderate",
+    label: "Moderate",
+    tooltip:
+      "Long leg ~0.50Δ, short leg ~0.30Δ on spreads. Balanced directional exposure.",
+  },
+  {
+    id: "aggressive",
+    label: "Aggressive",
+    tooltip:
+      "Long leg ~0.60Δ, short leg ~0.35Δ on spreads. Higher premium, profits on a smaller move.",
+  },
 ];
+
+function FieldHint({ text }: { text: string }) {
+  return (
+    <span
+      title={text}
+      aria-label={text}
+      className="inline-flex size-4 shrink-0 cursor-help items-center justify-center rounded-full text-[10px] font-bold leading-none text-zinc-400 ring-1 ring-zinc-300/80 dark:text-zinc-500 dark:ring-zinc-600"
+    >
+      i
+    </span>
+  );
+}
 
 function parsePositiveNum(v: string): number | null {
   const n = parseFloat(v.replace(/,/g, ""));
@@ -256,11 +290,10 @@ export default function StrategyBuilderNewPage() {
     prevSection4ReadyRef.current = section4Ready;
   }, [section4Ready]);
 
-  const canGenerate =
-    section2Ready &&
-    marginLacsNum != null &&
-    maxLossLacsNum != null &&
-    minPopPctNum != null;
+  const canGenerateShared =
+    section2Ready && marginLacsNum != null && maxLossLacsNum != null;
+  const canGenerateIncome = canGenerateShared && minPopPctNum != null;
+  const canGenerateDirectional = canGenerateShared;
 
   const generateM = useMutation({
     mutationFn: (category: StrategyCategory) =>
@@ -270,7 +303,10 @@ export default function StrategyBuilderNewPage() {
         expiry_date: expiryDate.trim(),
         margin_lacs: marginLacsNum!,
         max_loss_lacs: maxLossLacsNum!,
-        min_pop_pct: minPopPctNum!,
+        min_pop_pct:
+          category === "income"
+            ? minPopPctNum!
+            : (minPopPctNum ?? DEFAULT_MIN_POP_PCT),
         provision_elm: provisionElm,
         strategy_category: category,
         risk_reward_profile: riskRewardProfile,
@@ -614,18 +650,6 @@ export default function StrategyBuilderNewPage() {
               <div className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <label className="block">
-                    <span className={sb.fieldLabel}>Minimum PoP (%) — Income</span>
-                    <input
-                      type="number"
-                      className={sb.input}
-                      value={minPopPct}
-                      onChange={(e) => setMinPopPct(e.target.value)}
-                      min={1}
-                      max={99}
-                      step={1}
-                    />
-                  </label>
-                  <label className="block">
                     <span className={sb.fieldLabel}>Margin to deploy (Lacs)</span>
                     <input
                       type="number"
@@ -675,53 +699,87 @@ export default function StrategyBuilderNewPage() {
                     </div>
                   </div>
                 </div>
-                <div>
-                  <span className={sb.fieldLabel}>Risk / reward profile — Bullish &amp; Bearish</span>
-                  <div className="mt-1.5 flex flex-wrap gap-2">
-                    {RISK_PROFILE_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
-                          riskRewardProfile === opt.id
-                            ? "border-sky-600 bg-sky-50 text-sky-800 dark:border-sky-500 dark:bg-sky-950/50 dark:text-sky-200"
-                            : "border-zinc-300/80 bg-white/95 text-zinc-700 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300"
-                        }`}
-                        onClick={() => setRiskRewardProfile(opt.id)}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className={sb.parameterCard}>
+                    <h3 className={sb.parameterCardTitle}>Income strategies</h3>
+                    <label className="block">
+                      <span className={`${sb.fieldLabel} mb-0 flex items-center gap-1.5`}>
+                        Minimum PoP (%)
+                        <FieldHint text={MIN_POP_HINT} />
+                      </span>
+                      <input
+                        type="number"
+                        className={`${sb.input} mt-1.5`}
+                        value={minPopPct}
+                        onChange={(e) => setMinPopPct(e.target.value)}
+                        min={1}
+                        max={99}
+                        step={1}
+                      />
+                    </label>
+                    {minPopPctNum == null && minPopPct.trim() !== "" ? (
+                      <p className="text-sm text-red-600 dark:text-red-400">
+                        Minimum PoP must be between 1 and 99.
+                      </p>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={`${sb.btnPrimary} w-full`}
+                      disabled={!canGenerateIncome || generateM.isPending}
+                      onClick={() => generateM.mutate("income")}
+                    >
+                      {generateM.isPending && generateM.variables === "income"
+                        ? "Generating…"
+                        : CATEGORY_LABELS.income}
+                    </button>
+                  </div>
+
+                  <div className={sb.parameterCard}>
+                    <h3 className={sb.parameterCardTitle}>Directional strategies</h3>
+                    <div>
+                      <span className={sb.fieldLabel}>Risk / reward profile</span>
+                      <div className="mt-1.5 flex flex-wrap gap-2">
+                        {RISK_PROFILE_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            title={opt.tooltip}
+                            className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                              riskRewardProfile === opt.id
+                                ? "border-sky-600 bg-sky-50 text-sky-800 dark:border-sky-500 dark:bg-sky-950/50 dark:text-sky-200"
+                                : "border-zinc-300/80 bg-white/95 text-zinc-700 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300"
+                            }`}
+                            onClick={() => setRiskRewardProfile(opt.id)}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {(["bullish", "bearish"] as const).map((category) => (
+                        <button
+                          key={category}
+                          type="button"
+                          className={sb.btnPrimary}
+                          disabled={!canGenerateDirectional || generateM.isPending}
+                          onClick={() => generateM.mutate(category)}
+                        >
+                          {generateM.isPending && generateM.variables === category
+                            ? "Generating…"
+                            : CATEGORY_LABELS[category]}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
-              {minPopPctNum == null && minPopPct.trim() !== "" ? (
-                <p className="text-sm text-red-600 dark:text-red-400">
-                  Minimum PoP must be between 1 and 99.
-                </p>
-              ) : null}
               {generateError ? (
-                <p className="text-sm text-red-600 dark:text-red-400">
+                <p className="mt-4 text-sm text-red-600 dark:text-red-400">
                   {generateError}
                 </p>
               ) : null}
-              <div className="flex flex-wrap gap-2">
-                {(
-                  ["income", "bullish", "bearish"] as const satisfies StrategyCategory[]
-                ).map((category) => (
-                  <button
-                    key={category}
-                    type="button"
-                    className={sb.btnPrimary}
-                    disabled={!canGenerate || generateM.isPending}
-                    onClick={() => generateM.mutate(category)}
-                  >
-                    {generateM.isPending && generateM.variables === category
-                      ? "Generating…"
-                      : CATEGORY_LABELS[category]}
-                  </button>
-                ))}
-              </div>
             </section>
           </SectionGate>
 
@@ -740,7 +798,21 @@ export default function StrategyBuilderNewPage() {
                   ) : null}
                 </h2>
                 {trades.length > 0 || proposedData?.audit_session_id ? (
-                  <div className="flex shrink-0 items-center gap-3 text-[11px]">
+                  <div className="flex shrink-0 flex-wrap items-center gap-3 text-[11px]">
+                    {trades.length > 0 ? (
+                      <>
+                        <OutlookFilterButtons
+                          selected={outlookFilter}
+                          onChange={setOutlookFilter}
+                        />
+                        <span
+                          className="text-zinc-400 dark:text-zinc-500"
+                          aria-hidden
+                        >
+                          ·
+                        </span>
+                      </>
+                    ) : null}
                     {trades.length > 0 ? (
                       <TradeSortLink value={tradeSort} onChange={setTradeSort} />
                     ) : null}
@@ -783,12 +855,6 @@ export default function StrategyBuilderNewPage() {
               </div>
               {auditError ? (
                 <p className="text-sm text-red-600 dark:text-red-400">{auditError}</p>
-              ) : null}
-              {trades.length > 0 ? (
-                <OutlookFilterButtons
-                  selected={outlookFilter}
-                  onChange={setOutlookFilter}
-                />
               ) : null}
               {!trades.length ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
