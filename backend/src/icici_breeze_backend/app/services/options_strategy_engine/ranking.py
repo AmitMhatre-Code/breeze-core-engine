@@ -27,3 +27,14 @@ def score_debit_trade(
     max_loss: float,
 ) -> float:
     return expected_value_heuristic(pop_pct, max_profit, max_loss)
+
+
+def score_directional_candidate(
+    pop_pct: float,
+    max_profit: float,
+    max_loss: float,
+) -> float:
+    """Capital Efficiency Ratio for directional debit structures."""
+    ev = expected_value_heuristic(pop_pct, max_profit, max_loss)
+    capital = max(max_loss, 1.0)
+    return capital_efficiency_ratio(ev, capital)

@@ -124,10 +124,9 @@ export default function ApiUsageSettingsPage() {
             Rate limit backoff
           </h3>
           <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-            When ICICI returns HTTP 429 or 503 (rate throttling), the app waits this many seconds
-            before retrying. For order place and cancel flows, a countdown is shown on screen. For
-            Strategy Builder option-chain fetches, the pause happens on the server. No pacing is
-            applied until a throttle response occurs.
+            Minimum seconds between ICICI API calls (proactive pacing). On HTTP 429 or 503 the app
+            also applies exponential backoff (capped at 3 seconds) before retrying. Order place and
+            cancel flows show a countdown on screen; Strategy Builder pacing runs on the server.
           </p>
           <div className="mt-4">
             <label
@@ -140,9 +139,9 @@ export default function ApiUsageSettingsPage() {
               <input
                 id="rate-limit-pause-seconds"
                 type="number"
-                min={1}
+                min={0.25}
                 max={300}
-                step={1}
+                step={0.25}
                 inputMode="numeric"
                 className="min-h-[2.25rem] w-[6.5rem] rounded-lg border border-zinc-300/80 bg-white/95 px-3 py-2 text-sm font-medium tabular-nums text-zinc-900 shadow-sm outline-none transition-[border-color,box-shadow] [-moz-appearance:textfield] [appearance:textfield] hover:border-zinc-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/25 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-sky-400 dark:focus:ring-sky-400/20 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 value={pauseDraft}
@@ -159,9 +158,9 @@ export default function ApiUsageSettingsPage() {
                 }
                 aria-busy={savePause.isPending}
                 onClick={() => {
-                  const n = parseInt(pauseDraft.trim(), 10);
-                  if (!Number.isFinite(n) || n < 1 || n > 300) {
-                    alert("Enter a whole number between 1 and 300.");
+                  const n = parseFloat(pauseDraft.trim());
+                  if (!Number.isFinite(n) || n < 0.25 || n > 300) {
+                    alert("Enter a number between 0.25 and 300.");
                     return;
                   }
                   savePause.mutate(n, {

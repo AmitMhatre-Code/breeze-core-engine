@@ -19,12 +19,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.strategies.income
     calc_short_straddle,
     calc_short_strangle,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.volatility import (
-    calc_long_butterfly,
-    calc_long_condor,
-    calc_long_straddle,
-    calc_long_strangle,
-)
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyCategory, StrategyResult
 
 CATEGORY_CALCULATORS: dict[StrategyCategory, list[Callable[[EngineContext], StrategyResult]]] = {
@@ -38,16 +32,12 @@ CATEGORY_CALCULATORS: dict[StrategyCategory, list[Callable[[EngineContext], Stra
         calc_bull_put_spread,
         calc_bear_call_spread,
     ],
-    "directional": [
+    "bullish": [
         calc_bull_call_spread,
-        calc_bear_put_spread,
         calc_long_call,
-        calc_long_put,
     ],
-    "volatility": [
-        calc_long_straddle,
-        calc_long_strangle,
-        calc_long_butterfly,
-        calc_long_condor,
+    "bearish": [
+        calc_bear_put_spread,
+        calc_long_put,
     ],
 }

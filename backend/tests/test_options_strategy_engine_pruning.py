@@ -52,8 +52,6 @@ def _mock_ctx() -> EngineContext:
         stock_code="NIFTY",
         exchange_code="NFO",
         expiry_display="20-Jun-2026",
-        range_lower=22500,
-        range_upper=24500,
         margin_rupees=1_000_000,
         max_loss_rupees=500_000,
         min_pop_pct=65.0,

@@ -16,11 +16,11 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     margin_key,
     normalize_expiry_display,
     parse_float,
-    snap_user_range,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.registry import CATEGORY_CALCULATORS
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
+    RiskRewardProfile,
     StrategyCategory,
     StrategyResult,
     TradeLeg,
@@ -140,14 +140,11 @@ def run_propose_trades(
     min_pop_pct: float = 65.0,
     provision_elm: bool,
     strategy_category: StrategyCategory,
-    range_lower: float,
-    range_upper: float,
+    risk_reward_profile: RiskRewardProfile = "moderate",
     request_id: str | None = None,
     enable_audit: bool = True,
 ) -> dict[str, Any]:
     min_pop_pct = min(99.0, max(1.0, min_pop_pct))
-    if range_lower >= range_upper:
-        return {"Status": 400, "Error": "range_lower must be less than range_upper.", "Success": None}
     if strategy_category not in CATEGORY_CALCULATORS:
         return {"Status": 400, "Error": f"Unknown strategy category: {strategy_category}", "Success": None}
 
@@ -165,8 +162,7 @@ def run_propose_trades(
                 "min_pop_pct": min_pop_pct,
                 "provision_elm": provision_elm,
                 "strategy_category": strategy_category,
-                "range_lower": range_lower,
-                "range_upper": range_upper,
+                "risk_reward_profile": risk_reward_profile,
             },
         )
         audit.record(
@@ -217,7 +213,6 @@ def run_propose_trades(
     step = proc.strike_interval(strikes)
     mid = float(strikes[len(strikes) // 2])
     search_step = proc.search_interval(strikes, mid)
-    snapped_lo, snapped_hi = snap_user_range(strikes, range_lower, range_upper)
     if audit:
         audit.record_calculation(
             "Engine parameters",
@@ -225,8 +220,7 @@ def run_propose_trades(
                 "strike_mid": mid,
                 "min_pop_pct": min_pop_pct,
                 "strategy_category": strategy_category,
-                "range_lower_input": range_lower,
-                "range_upper_input": range_upper,
+                "risk_reward_profile": risk_reward_profile,
             },
             {
                 "expiry_display": expiry_display,
@@ -235,10 +229,8 @@ def run_propose_trades(
                 "margin_rupees": margin_lacs * 100_000,
                 "max_loss_rupees": max_loss_lacs * 100_000,
                 "lot_size": int(lot_size),
-                "range_lower": snapped_lo,
-                "range_upper": snapped_hi,
             },
-            rationale="User outlook range snapped to nearest scrip-master strikes.",
+            rationale="Delta-anchored template parameters (no user strike range).",
         )
 
     ctx = EngineContext(
@@ -247,13 +239,12 @@ def run_propose_trades(
         stock_code=stock_code.strip(),
         exchange_code=exchange_code,
         expiry_display=expiry_display,
-        range_lower=snapped_lo,
-        range_upper=snapped_hi,
         margin_rupees=margin_lacs * 100_000,
         max_loss_rupees=max_loss_lacs * 100_000,
         min_pop_pct=min_pop_pct,
         provision_elm=provision_elm,
         strategy_category=strategy_category,
+        risk_reward_profile=risk_reward_profile,
         lot_size=int(lot_size),
         strikes=strikes,
         strike_step=step,

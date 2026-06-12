@@ -3,6 +3,7 @@ import { getBackendBaseUrl } from "@/lib/config";
 import type {
   ChainApiResponse,
   ProposeTradesApiResponse,
+  RiskRewardProfile,
   StrategyCategory,
 } from "@/lib/strategy-builder/types";
 
@@ -34,8 +35,7 @@ export type ProposeTradesParams = {
   min_pop_pct: number;
   provision_elm: boolean;
   strategy_category: StrategyCategory;
-  range_lower: number;
-  range_upper: number;
+  risk_reward_profile: RiskRewardProfile;
 };
 
 export async function proposeTrades(

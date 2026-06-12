@@ -20,6 +20,18 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.0.0-p",
+    date: "12-Jun-2026",
+    releaseKind: "patch",
+    summary: "Delta-anchored Strategy Builder",
+    changes: [
+      "Strategy Builder (New) removes the strike-range slider; income strategies anchor at ATM and select OTM wings by delta from minimum PoP",
+      "Bullish and Bearish generation buttons replace Directional; risk/reward profile (Conservative, Moderate, Aggressive) maps to fixed delta buckets and CER ranking",
+      "Full liquid options chain is explored without K/M strike caps; naked shorts and short straddle/strangle ignore max-loss budget",
+      "Universal ICICI API pacing enforces minimum spacing between all broker calls (Settings backoff down to 0.25s; 503 exponential backoff capped at 3s)",
+    ],
+  },
+  {
     version: "2.0.0-o",
     date: "11-Jun-2026",
     releaseKind: "patch",

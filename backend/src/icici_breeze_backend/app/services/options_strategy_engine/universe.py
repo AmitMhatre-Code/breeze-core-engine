@@ -1,7 +1,6 @@
 """Data ingestion and liquidity filtering (Gemini §2, OpenAI §4)."""
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
@@ -12,11 +11,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.audit_helpers imp
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     nearest_atm,
     quote_from_api,
-    sigma_for_pop,
-    strategy_boundary_strikes,
-    strike_window,
     tail_strikes_needed,
-    years_to_expiry,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, QuoteRow, Right
 
@@ -231,21 +226,6 @@ def ensure_quote(ctx: EngineContext, strike: int, right: Right, *, fetch_reason:
     return ctx.cache.get(key)
 
 
-def apply_auto_range(ctx: EngineContext, *, sigma: float | None = None) -> None:
-    sig = sigma if sigma and sigma > 0 else sigma_for_pop(ctx)
-    std_move = ctx.spot * sig * math.sqrt(years_to_expiry(ctx.expiry_display))
-    ctx.range_lower = max(0.0, ctx.spot - std_move)
-    ctx.range_upper = ctx.spot + std_move
-    if ctx.audit:
-        ctx.audit.record_calculation(
-            "Auto outlook range",
-            {"spot": ctx.spot, "sigma": sig, "min_pop_pct": ctx.min_pop_pct},
-            {"range_lower": ctx.range_lower, "range_upper": ctx.range_upper, "std_move": std_move},
-            formula="range = spot ± σ√T",
-            rationale="IV-based expected move replaces user strike-range input.",
-        )
-
-
 def expand_chain_to_liquidity_boundary(ctx: EngineContext) -> None:
     step = ctx.search_interval
     for right in ("Call", "Put"):
@@ -279,8 +259,12 @@ def expand_chain_to_liquidity_boundary(ctx: EngineContext) -> None:
         )
 
 
+def _atm_ring_strikes(ctx: EngineContext, pad: int) -> list[int]:
+    return sorted(s for s in ctx.strikes if abs(s - ctx.atm_strike) <= pad * ctx.strike_step)
+
+
 def build_liquidity_cache(ctx: EngineContext) -> None:
-    """Populate quote cache with fallback protocol."""
+    """Populate quote cache with full-chain protocol (no user strike range)."""
     all_strikes = ctx.strikes
     if not all_strikes:
         ctx.halted = True
@@ -289,7 +273,7 @@ def build_liquidity_cache(ctx: EngineContext) -> None:
             ctx.audit.record("halt", ctx.halt_reason, {"phase": "liquidity_cache"})
         return
 
-    mid = (ctx.range_lower + ctx.range_upper) / 2
+    mid = float(all_strikes[len(all_strikes) // 2])
     ctx.chain_backoff = OptionChainBackoff(
         pause_seconds=get_icici_rate_limit_pause_seconds(ctx.user_id),
     )
@@ -298,8 +282,8 @@ def build_liquidity_cache(ctx: EngineContext) -> None:
         ctx.audit.record(
             "liquidity_protocol",
             "Fetch full CE and PE option chains",
-            {"strike_count_master": len(all_strikes), "range_mid": mid},
-            rationale="Two chain-wide quotes replace per-strike window batching.",
+            {"strike_count_master": len(all_strikes), "initial_spot_guess": mid},
+            rationale="Two chain-wide quotes for the full liquid universe.",
         )
 
     fetch_full_chain_side(ctx, "Call", fetch_reason="Fetch full CE chain")
@@ -314,108 +298,45 @@ def build_liquidity_cache(ctx: EngineContext) -> None:
         spot = mid
     ctx.spot = spot
     ctx.atm_strike = nearest_atm(all_strikes, spot)
-    apply_auto_range(ctx)
     audit_calc(
         ctx,
         "Spot and ATM resolution",
-        {"range_mid_fallback": mid},
+        {"initial_guess": mid},
         {"spot": spot, "atm_strike": ctx.atm_strike},
-        rationale="Spot from chain quote payload when available, else range midpoint.",
+        rationale="Spot from chain quote payload when available, else scrip midpoint.",
     )
     expand_chain_to_liquidity_boundary(ctx)
 
-    def window_strikes(pad: int) -> list[int]:
-        return strike_window(
-            all_strikes,
-            ctx.range_lower,
-            ctx.range_upper,
-            ctx.atm_strike,
-            ctx.search_interval,
-            pad,
-        )
-
-    boundaries = strategy_boundary_strikes(
-        all_strikes, ctx.range_lower, ctx.range_upper, ctx.spot, ctx.atm_strike
-    )
-    needed_pad3 = sorted(set(window_strikes(3)) | boundaries)
     fetch_missing_tails(
         ctx,
-        needed_pad3,
-        fetch_reason="Fetch missing tail strikes for pad=3 window and boundaries",
+        all_strikes,
+        fetch_reason="Ensure scrip-master strikes missing from chain responses are quoted",
     )
 
-    def _has_liquid(ws: list[int]) -> list[int]:
-        out: list[int] = []
-        for s in ws:
-            ce = ctx.cache.get((s, "Call"))
-            pe = ctx.cache.get((s, "Put"))
-            if (ce and ce.liquid) or (pe and pe.liquid):
-                out.append(s)
-            elif ctx.audit:
-                for right, q in (("Call", ce), ("Put", pe)):
-                    if q and not q.liquid:
-                        ctx.audit.record_strike(
-                            s,
-                            right,
-                            included=False,
-                            reason="Inside window but illiquid (missing bid or ask qty)",
-                            quote=quote_row_to_audit(q),
-                            context="liquidity_window_scan",
-                        )
-        return out
-
-    liquid = _has_liquid(window_strikes(3))
-
-    if not liquid:
+    if not ctx.liquid_ce_strikes and not ctx.liquid_pe_strikes:
         if ctx.audit:
             ctx.audit.record(
                 "liquidity_protocol",
-                "Expand window pad 3 → 6",
-                {"liquid_strikes_pad3": liquid},
-                rationale="No liquid strikes in pad=3 window; widen per docs §4 fallback.",
-            )
-        needed_pad6 = sorted(set(window_strikes(6)) | boundaries)
-        fetch_missing_tails(
-            ctx,
-            needed_pad6,
-            fetch_reason="Fetch missing tail strikes for pad=6 expanded window",
-        )
-        ctx.structure_modified = True
-        liquid = _has_liquid(window_strikes(6))
-
-    if not liquid:
-        if ctx.audit:
-            ctx.audit.record(
-                "liquidity_protocol",
-                "Step B: compress toward ATM",
-                {},
-                rationale="Still no liquid strikes in window; fetch tail strikes around ATM.",
+                "Compress toward ATM rings",
+                {"atm_strike": ctx.atm_strike},
+                rationale="No liquid strikes after full chain; fetch ATM rings.",
             )
         for pad in [1, 2, 3, 4, 5, 6]:
-            near = sorted(s for s in all_strikes if abs(s - ctx.atm_strike) <= pad * ctx.strike_step)
+            near = _atm_ring_strikes(ctx, pad)
             fetch_missing_tails(
                 ctx,
                 near,
-                fetch_reason=f"Liquidity protocol step B: ATM ring pad={pad}",
+                fetch_reason=f"Liquidity protocol: ATM ring pad={pad}",
             )
             if ctx.liquid_ce_strikes or ctx.liquid_pe_strikes:
                 ctx.structure_modified = True
-                if ctx.audit:
-                    ctx.audit.record(
-                        "liquidity_protocol",
-                        f"Step B succeeded at ATM ring pad={pad}",
-                        {
-                            "liquid_ce": ctx.liquid_ce_strikes,
-                            "liquid_pe": ctx.liquid_pe_strikes,
-                        },
-                    )
                 break
 
     if not ctx.liquid_ce_strikes and not ctx.liquid_pe_strikes:
         if ctx.audit:
             ctx.audit.record(
                 "liquidity_protocol",
-                "Step C: ATM straddle only",
+                "ATM straddle only",
                 {"atm_strike": ctx.atm_strike},
                 rationale="Last resort — quote ATM straddle for metrics only.",
             )
@@ -431,7 +352,7 @@ def build_liquidity_cache(ctx: EngineContext) -> None:
                     ctx.expiry_display,
                     missing,
                     ctx.audit,
-                    fetch_reason="Liquidity protocol step C: ATM straddle",
+                    fetch_reason="Liquidity protocol: ATM straddle",
                     backoff=ctx.chain_backoff,
                 )
             )
@@ -458,5 +379,5 @@ def build_liquidity_cache(ctx: EngineContext) -> None:
                 "spot": ctx.spot,
                 "atm_strike": ctx.atm_strike,
             },
-            rationale="Liquid strike pools drive all downstream strategy strike picks.",
+            rationale="Full liquid strike pools drive delta-anchored strategy picks.",
         )

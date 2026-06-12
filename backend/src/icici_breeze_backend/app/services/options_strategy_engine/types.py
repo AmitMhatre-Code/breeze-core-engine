@@ -6,7 +6,8 @@ from typing import Any, Literal
 
 Right = Literal["Call", "Put"]
 Side = Literal["Buy", "Sell"]
-StrategyCategory = Literal["income", "directional", "volatility"]
+StrategyCategory = Literal["income", "bullish", "bearish"]
+RiskRewardProfile = Literal["conservative", "moderate", "aggressive"]
 StrategyId = str
 
 STRATEGY_CATALOG: list[tuple[str, str]] = [
@@ -123,8 +124,6 @@ class EngineContext:
     stock_code: str
     exchange_code: str
     expiry_display: str
-    range_lower: float
-    range_upper: float
     margin_rupees: float
     max_loss_rupees: float
     min_pop_pct: float
@@ -136,6 +135,7 @@ class EngineContext:
     search_interval: int
     spot: float
     atm_strike: int
+    risk_reward_profile: RiskRewardProfile = "moderate"
     atm_iv: float | None = None
     cache: dict[tuple[int, Right], QuoteRow] = field(default_factory=dict)
     structure_modified: bool = False

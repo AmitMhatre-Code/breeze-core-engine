@@ -16,7 +16,6 @@ import {
   type TradeSortKey,
 } from "@/components/strategy-builder/TradeSortLink";
 import { SectionGate } from "@/components/strategy-builder/SectionGate";
-import { SpotRangeSlider } from "@/components/strategy-builder/SpotRangeSlider";
 import {
   StrategyLegsPanel,
   type LegMarginEntry,
@@ -49,6 +48,7 @@ import type {
   Outlook,
   ProposedTrade,
   ProposeTradesSuccess,
+  RiskRewardProfile,
   StrategyCategory,
   StrategyLeg,
   UnderlyingsApiResponse,
@@ -62,16 +62,15 @@ const MARGIN_LACS_MAX = 999_999;
 
 const CATEGORY_LABELS: Record<StrategyCategory, string> = {
   income: "Income Strategies",
-  directional: "Directional Strategies",
-  volatility: "Volatility Strategies",
+  bullish: "Bullish Strategies",
+  bearish: "Bearish Strategies",
 };
 
-function defaultRangeFromSpot(spot: number): { lower: string; upper: string } {
-  return {
-    lower: String(Math.round(spot * 0.9)),
-    upper: String(Math.round(spot * 1.1)),
-  };
-}
+const RISK_PROFILE_OPTIONS: { id: RiskRewardProfile; label: string }[] = [
+  { id: "conservative", label: "Conservative" },
+  { id: "moderate", label: "Moderate" },
+  { id: "aggressive", label: "Aggressive" },
+];
 
 function parsePositiveNum(v: string): number | null {
   const n = parseFloat(v.replace(/,/g, ""));
@@ -116,8 +115,8 @@ export default function StrategyBuilderNewPage() {
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [minPopPct, setMinPopPct] = useState(String(DEFAULT_MIN_POP_PCT));
-  const [rangeLower, setRangeLower] = useState("");
-  const [rangeUpper, setRangeUpper] = useState("");
+  const [riskRewardProfile, setRiskRewardProfile] =
+    useState<RiskRewardProfile>("moderate");
   const [marginLacs, setMarginLacs] = useState("");
   const [maxLossLacs, setMaxLossLacs] = useState("");
   const [provisionElm, setProvisionElm] = useState(false);
@@ -224,8 +223,6 @@ export default function StrategyBuilderNewPage() {
 
   const marginLacsNum = parsePositiveNum(marginLacs);
   const maxLossLacsNum = parsePositiveNum(maxLossLacs);
-  const rangeLowerNum = parsePositiveNum(rangeLower);
-  const rangeUpperNum = parsePositiveNum(rangeUpper);
   const minPopPctNum = (() => {
     const n = parseFloat(minPopPct.replace(/,/g, ""));
     if (!Number.isFinite(n)) return null;
@@ -259,22 +256,11 @@ export default function StrategyBuilderNewPage() {
     prevSection4ReadyRef.current = section4Ready;
   }, [section4Ready]);
 
-  useEffect(() => {
-    if (chainSpot != null && chainSpot > 0) {
-      const { lower, upper } = defaultRangeFromSpot(chainSpot);
-      setRangeLower(lower);
-      setRangeUpper(upper);
-    }
-  }, [chainSpot, stockCode, expiryDate]);
-
   const canGenerate =
     section2Ready &&
     marginLacsNum != null &&
     maxLossLacsNum != null &&
-    minPopPctNum != null &&
-    rangeLowerNum != null &&
-    rangeUpperNum != null &&
-    rangeLowerNum < rangeUpperNum;
+    minPopPctNum != null;
 
   const generateM = useMutation({
     mutationFn: (category: StrategyCategory) =>
@@ -287,8 +273,7 @@ export default function StrategyBuilderNewPage() {
         min_pop_pct: minPopPctNum!,
         provision_elm: provisionElm,
         strategy_category: category,
-        range_lower: rangeLowerNum!,
-        range_upper: rangeUpperNum!,
+        risk_reward_profile: riskRewardProfile,
       }),
     onSuccess: (res, category) => {
       if (res.Status !== 200 || !res.Success) {
@@ -627,18 +612,9 @@ export default function StrategyBuilderNewPage() {
             >
               <h2 className={sb.sectionTitle}>2. Parameters</h2>
               <div className="space-y-4">
-                {spot != null && spot > 0 ? (
-                  <SpotRangeSlider
-                    spot={spot}
-                    rangeLower={rangeLower}
-                    rangeUpper={rangeUpper}
-                    onRangeLowerChange={setRangeLower}
-                    onRangeUpperChange={setRangeUpper}
-                  />
-                ) : null}
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <label className="block">
-                    <span className={sb.fieldLabel}>Minimum PoP (%)</span>
+                    <span className={sb.fieldLabel}>Minimum PoP (%) — Income</span>
                     <input
                       type="number"
                       className={sb.input}
@@ -699,17 +675,29 @@ export default function StrategyBuilderNewPage() {
                     </div>
                   </div>
                 </div>
+                <div>
+                  <span className={sb.fieldLabel}>Risk / reward profile — Bullish &amp; Bearish</span>
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    {RISK_PROFILE_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                          riskRewardProfile === opt.id
+                            ? "border-sky-600 bg-sky-50 text-sky-800 dark:border-sky-500 dark:bg-sky-950/50 dark:text-sky-200"
+                            : "border-zinc-300/80 bg-white/95 text-zinc-700 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300"
+                        }`}
+                        onClick={() => setRiskRewardProfile(opt.id)}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
               {minPopPctNum == null && minPopPct.trim() !== "" ? (
                 <p className="text-sm text-red-600 dark:text-red-400">
                   Minimum PoP must be between 1 and 99.
-                </p>
-              ) : null}
-              {rangeLowerNum != null &&
-              rangeUpperNum != null &&
-              rangeLowerNum >= rangeUpperNum ? (
-                <p className="text-sm text-red-600 dark:text-red-400">
-                  Strike range lower bound must be below the upper bound.
                 </p>
               ) : null}
               {generateError ? (
@@ -719,11 +707,7 @@ export default function StrategyBuilderNewPage() {
               ) : null}
               <div className="flex flex-wrap gap-2">
                 {(
-                  [
-                    "income",
-                    "directional",
-                    "volatility",
-                  ] as const satisfies StrategyCategory[]
+                  ["income", "bullish", "bearish"] as const satisfies StrategyCategory[]
                 ).map((category) => (
                   <button
                     key={category}

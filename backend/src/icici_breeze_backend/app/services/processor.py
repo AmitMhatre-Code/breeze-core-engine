@@ -38,17 +38,20 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
 
 _logger = logging.getLogger(__name__)
 
+from icici_breeze_backend.app.services.icici_api_pacing import GlobalIciciApiPacer
+from icici_breeze_backend.app.services.user_rate_limit_prefs import get_icici_rate_limit_pause_seconds
+
 
 @dataclass
 class OptionChainBackoff:
-    """Tracks consecutive rate-limit responses for strategy-builder chain fetches."""
+    """Legacy holder for per-run pause config; pacing uses GlobalIciciApiPacer."""
 
-    pause_seconds: int = 1
+    pause_seconds: float = 1.0
     consecutive_rate_limited: int = 0
 
     def on_rate_limit(self) -> float:
         self.consecutive_rate_limited += 1
-        return float(max(1, self.pause_seconds))
+        return float(max(0.25, self.pause_seconds))
 
     def on_success(self) -> None:
         self.consecutive_rate_limited = 0
@@ -1567,7 +1570,10 @@ class processor():
 
         _pt, _rt = _icici_option_chain_enums(cfg.OPTIONS, right)
         quote = {"Status": 400, "Error": "No response from get_option_chain_quotes"}
+        base_pause = float(backoff.pause_seconds if backoff else get_icici_rate_limit_pause_seconds(user_id))
+        endpoint = "get_option_chain_quotes"
         for attempt in range(max_attempts):
+            GlobalIciciApiPacer.wait_for_slot(user_id, base_pause, endpoint=endpoint)
             try:
                 if strike_price is not None:
                     quote = breeze.get_option_chain_quotes(
@@ -1586,6 +1592,7 @@ class processor():
                     "Status": 400,
                     "Error": f"Error calling ICICI Breeze API get_option_chain_quotes: {e}",
                 }
+            GlobalIciciApiPacer.mark_call_complete(user_id)
             if audit:
                 audit.record_icici_api_call(
                     "get_option_chain_quotes",
@@ -1595,11 +1602,13 @@ class processor():
                 )
             if not isinstance(quote, dict):
                 quote = {"Status": 400, "Error": "Invalid response from get_option_chain_quotes"}
+                GlobalIciciApiPacer.on_success(user_id)
                 backoff.on_success()
                 return quote
 
             status = quote.get("Status")
             if status == 200:
+                GlobalIciciApiPacer.on_success(user_id)
                 backoff.on_success()
                 if strike_price is not None:
                     try:
@@ -1614,10 +1623,12 @@ class processor():
                 return quote
 
             if status in (429, 503) and attempt < max_attempts - 1:
-                time.sleep(backoff.on_rate_limit())
+                sleep_sec = GlobalIciciApiPacer.rate_limit_backoff(user_id, base_pause, endpoint=endpoint)
+                time.sleep(sleep_sec)
                 continue
 
             if status not in (429, 503):
+                GlobalIciciApiPacer.on_success(user_id)
                 backoff.on_success()
             if quote.get("Error"):
                 _logger.warning(
@@ -1661,11 +1672,17 @@ class processor():
                 "Error": "Unable to connect to broker. Please check your credentials and re-login.",
             }
         else:
+            base_pause = get_icici_rate_limit_pause_seconds(user_id)
+            endpoint = "get_option_chain_quotes"
             try:
+                GlobalIciciApiPacer.wait_for_slot(user_id, base_pause, endpoint=endpoint)
                 _pt, _rt = _icici_option_chain_enums(product_type, right)
                 quote = breeze.get_option_chain_quotes(
                     stock_code, exchange_code, expiry_date, _pt, _rt, strike_price
                 )
+                GlobalIciciApiPacer.mark_call_complete(user_id)
+                if isinstance(quote, dict) and quote.get("Status") == 200:
+                    GlobalIciciApiPacer.on_success(user_id)
                 if audit:
                     audit.record_icici_api_call(
                         "get_option_chain_quotes",
@@ -1674,6 +1691,7 @@ class processor():
                         rationale=audit_rationale,
                     )
             except Exception as e:
+                GlobalIciciApiPacer.mark_call_complete(user_id)
                 quote = {
                     "Status": 400,
                     "Error": f"Error calling ICICI Breeze API get_option_chain_quotes: {e}",
@@ -3012,25 +3030,41 @@ class processor():
         }
         if audit_context:
             icici_request.update(audit_context)
-        try:
-            margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
-            if audit:
-                audit.record_icici_api_call(
-                    "margin_calculator",
-                    icici_request,
-                    margins if isinstance(margins, dict) else None,
-                    rationale=margin_rationale,
-                )
-        except Exception as e:
-            err = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
-            if audit:
-                audit.record_icici_api_call(
-                    "margin_calculator",
-                    icici_request,
-                    err,
-                    rationale=margin_rationale,
-                )
-            return err
+        base_pause = get_icici_rate_limit_pause_seconds(user_id)
+        endpoint = "margin_calculator"
+        margins: dict[str, Any] | None = None
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                GlobalIciciApiPacer.wait_for_slot(user_id, base_pause, endpoint=endpoint)
+                margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
+                GlobalIciciApiPacer.mark_call_complete(user_id)
+                if audit:
+                    audit.record_icici_api_call(
+                        "margin_calculator",
+                        icici_request,
+                        margins if isinstance(margins, dict) else None,
+                        rationale=margin_rationale,
+                    )
+                if isinstance(margins, dict) and margins.get("Status") in (429, 503) and attempt < max_attempts - 1:
+                    time.sleep(GlobalIciciApiPacer.rate_limit_backoff(user_id, base_pause, endpoint=endpoint))
+                    continue
+                if isinstance(margins, dict) and margins.get("Status") == 200:
+                    GlobalIciciApiPacer.on_success(user_id)
+                break
+            except Exception as e:
+                GlobalIciciApiPacer.mark_call_complete(user_id)
+                err = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
+                if audit:
+                    audit.record_icici_api_call(
+                        "margin_calculator",
+                        icici_request,
+                        err,
+                        rationale=margin_rationale,
+                    )
+                return err
+        if margins is None:
+            return _icici_error("Error calling ICICI Breeze API margin_calculator: no response")
         self._maybe_evict_session(user_id, margins)
         if margins.get("Status") == 200:
             base_span = float((margins.get("Success") or {}).get("span_margin_required") or 0.0)

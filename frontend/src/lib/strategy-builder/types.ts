@@ -87,7 +87,9 @@ export type ProposedTradeLeg = {
   buy_sell_ratio?: number | string | null;
 };
 
-export type StrategyCategory = "income" | "directional" | "volatility";
+export type StrategyCategory = "income" | "bullish" | "bearish";
+
+export type RiskRewardProfile = "conservative" | "moderate" | "aggressive";
 
 export type ProposedTrade = {
   strategy_id: string;

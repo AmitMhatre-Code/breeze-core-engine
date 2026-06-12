@@ -155,8 +155,7 @@ async def post_propose_trades(
         min_pop_pct=body.min_pop_pct,
         provision_elm=body.provision_elm,
         strategy_category=body.strategy_category,
-        range_lower=body.range_lower,
-        range_upper=body.range_upper,
+        risk_reward_profile=body.risk_reward_profile,
         request_id=ctx.request_id,
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderProposeTrades")

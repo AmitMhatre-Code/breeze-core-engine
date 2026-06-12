@@ -93,22 +93,22 @@ def _resolve_lazy(name: str) -> Any:
         return tail_strikes_needed
 
     calc_map = {
-        "calc_bear_call_spread": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income",
-        "calc_bull_put_spread": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income",
-        "calc_iron_butterfly": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income",
-        "calc_iron_condor": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income",
-        "calc_naked_ce_short": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income",
-        "calc_naked_pe_short": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income",
-        "calc_short_straddle": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income",
-        "calc_short_strangle": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income",
-        "calc_bull_call_spread": "icici_breeze_backend.app.services.options_strategy_engine.strategies.directional",
-        "calc_bear_put_spread": "icici_breeze_backend.app.services.options_strategy_engine.strategies.directional",
-        "calc_long_call": "icici_breeze_backend.app.services.options_strategy_engine.strategies.directional",
-        "calc_long_put": "icici_breeze_backend.app.services.options_strategy_engine.strategies.directional",
-        "calc_long_straddle": "icici_breeze_backend.app.services.options_strategy_engine.strategies.volatility",
-        "calc_long_strangle": "icici_breeze_backend.app.services.options_strategy_engine.strategies.volatility",
-        "calc_long_butterfly": "icici_breeze_backend.app.services.options_strategy_engine.strategies.volatility",
-        "calc_long_condor": "icici_breeze_backend.app.services.options_strategy_engine.strategies.volatility",
+        "calc_bear_call_spread": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bear_call_spread",
+        "calc_bull_put_spread": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bull_put_spread",
+        "calc_iron_butterfly": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_butterfly",
+        "calc_iron_condor": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor",
+        "calc_naked_ce_short": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.naked_ce_short",
+        "calc_naked_pe_short": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.naked_pe_short",
+        "calc_short_straddle": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.short_straddle",
+        "calc_short_strangle": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.short_strangle",
+        "calc_bull_call_spread": "icici_breeze_backend.app.services.options_strategy_engine.strategies.directional.bull_call_spread",
+        "calc_bear_put_spread": "icici_breeze_backend.app.services.options_strategy_engine.strategies.directional.bear_put_spread",
+        "calc_long_call": "icici_breeze_backend.app.services.options_strategy_engine.strategies.directional.long_call",
+        "calc_long_put": "icici_breeze_backend.app.services.options_strategy_engine.strategies.directional.long_put",
+        "calc_long_straddle": "icici_breeze_backend.app.services.options_strategy_engine.strategies.volatility.long_straddle",
+        "calc_long_strangle": "icici_breeze_backend.app.services.options_strategy_engine.strategies.volatility.long_strangle",
+        "calc_long_butterfly": "icici_breeze_backend.app.services.options_strategy_engine.strategies.volatility.long_butterfly",
+        "calc_long_condor": "icici_breeze_backend.app.services.options_strategy_engine.strategies.volatility.long_condor",
     }
     if name in calc_map:
         import importlib

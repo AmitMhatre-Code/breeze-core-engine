@@ -1,9 +1,10 @@
 """Options strategy builder (v2) request/response schemas."""
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-StrategyCategory = Literal["income", "directional", "volatility"]
+StrategyCategory = Literal["income", "bullish", "bearish"]
+RiskRewardProfile = Literal["conservative", "moderate", "aggressive"]
 
 
 class ProposeTradesRequest(BaseModel):
@@ -15,8 +16,13 @@ class ProposeTradesRequest(BaseModel):
     min_pop_pct: float = Field(default=65, ge=1, le=99)
     provision_elm: bool = False
     strategy_category: StrategyCategory
-    range_lower: float = Field(gt=0)
-    range_upper: float = Field(gt=0)
+    risk_reward_profile: RiskRewardProfile = "moderate"
+
+    @model_validator(mode="after")
+    def _validate_category_fields(self) -> "ProposeTradesRequest":
+        if self.strategy_category in ("bullish", "bearish") and not self.risk_reward_profile:
+            raise ValueError("risk_reward_profile is required for bullish/bearish strategies.")
+        return self
 
 
 class ProposedTradeLegOut(BaseModel):

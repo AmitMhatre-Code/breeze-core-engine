@@ -43,6 +43,7 @@ class TestBullCallSpreadSizing(unittest.TestCase):
         strikes = list(range(23000, 24100, 50))
         cache = {}
         for s in strikes:
+            delta = 0.50 if s == 23500 else (0.30 if s == 23600 else 0.20)
             cache[(s, "Call")] = QuoteRow(
                 strike=s,
                 right="Call",
@@ -53,6 +54,7 @@ class TestBullCallSpreadSizing(unittest.TestCase):
                 total_sell_qty=100,
                 buy_sell_ratio=1.0,
                 spot_price=23500.0,
+                delta=delta,
             )
         return EngineContext(
             processor=MagicMock(),
@@ -60,13 +62,12 @@ class TestBullCallSpreadSizing(unittest.TestCase):
             stock_code="NIFTY",
             exchange_code="NFO",
             expiry_display="09-Jun-2025",
-            range_lower=23400,
-            range_upper=23600,
             margin_rupees=500_000,
             max_loss_rupees=200_000,
             min_pop_pct=1.0,
             provision_elm=False,
-            strategy_category="directional",
+            strategy_category="bullish",
+            risk_reward_profile="moderate",
             lot_size=75,
             strikes=strikes,
             strike_step=50,
@@ -116,8 +117,6 @@ class TestMarginBatching(unittest.TestCase):
             stock_code="NIFTY",
             exchange_code="NFO",
             expiry_display="09-Jun-2025",
-            range_lower=23400,
-            range_upper=23600,
             margin_rupees=500_000,
             max_loss_rupees=200_000,
             min_pop_pct=65.0,
@@ -212,8 +211,6 @@ class TestBuildLiquidityCache(unittest.TestCase):
             stock_code="NIFTY",
             exchange_code="NFO",
             expiry_display="09-Jun-2025",
-            range_lower=23400,
-            range_upper=23600,
             margin_rupees=500_000,
             max_loss_rupees=200_000,
             min_pop_pct=65.0,
@@ -305,8 +302,6 @@ class TestExpandChainToLiquidityBoundary(unittest.TestCase):
             stock_code="NIFTY",
             exchange_code="NFO",
             expiry_display="09-Jun-2025",
-            range_lower=23400,
-            range_upper=23600,
             margin_rupees=500_000,
             max_loss_rupees=200_000,
             min_pop_pct=65.0,
@@ -335,6 +330,11 @@ class TestExpandChainToLiquidityBoundary(unittest.TestCase):
 
 
 class TestFetchOptionChainBackoff(unittest.TestCase):
+    def setUp(self) -> None:
+        from icici_breeze_backend.app.services.icici_api_pacing import GlobalIciciApiPacer
+
+        GlobalIciciApiPacer.reset_user("u1")
+
     def test_503_backoff_waits_user_pause_then_succeeds(self):
         proc = processor()
         backoff = OptionChainBackoff(pause_seconds=2)
@@ -368,7 +368,7 @@ class TestFetchOptionChainBackoff(unittest.TestCase):
                 backoff=backoff,
             )
         self.assertEqual(res["Status"], 200)
-        self.assertEqual(mock_sleep.call_args_list, [call(2.0), call(2.0)])
+        self.assertEqual(mock_sleep.call_args_list, [call(2.0), call(3.0)])
         self.assertEqual(mock_breeze.get_option_chain_quotes.call_count, 3)
         self.assertEqual(backoff.consecutive_rate_limited, 0)
 
@@ -390,7 +390,7 @@ class TestFetchOptionChainBackoff(unittest.TestCase):
             )
         self.assertEqual(res["Status"], 503)
         self.assertEqual(mock_breeze.get_option_chain_quotes.call_count, 3)
-        self.assertEqual(mock_sleep.call_args_list, [call(1.0), call(1.0)])
+        self.assertEqual(mock_sleep.call_args_list, [call(1.0), call(2.0)])
 
     def test_429_uses_same_user_pause(self):
         proc = processor()
@@ -451,8 +451,6 @@ class TestBuildLiquidityCacheUserBackoff(unittest.TestCase):
             stock_code="NIFTY",
             exchange_code="NFO",
             expiry_display="09-Jun-2025",
-            range_lower=23400,
-            range_upper=23600,
             margin_rupees=500_000,
             max_loss_rupees=200_000,
             min_pop_pct=65.0,
@@ -474,8 +472,8 @@ class TestBuildLiquidityCacheUserBackoff(unittest.TestCase):
         self.assertEqual(ctx.chain_backoff.pause_seconds, 3)
 
 
-class TestNakedCeAboveRangeUpper(unittest.TestCase):
-    def test_selects_liquid_ce_above_range_when_only_boundary_quoted(self):
+class TestNakedCeDeltaAnchor(unittest.TestCase):
+    def test_selects_liquid_otm_ce_near_target_delta(self):
         strikes = list(range(22000, 24600, 50)) + [25000, 25500, 26000]
         cache: dict = {}
         for s in range(22000, 24600, 50):
@@ -500,6 +498,7 @@ class TestNakedCeAboveRangeUpper(unittest.TestCase):
             total_sell_qty=100,
             buy_sell_ratio=1.0,
             spot_price=23310.0,
+            delta=0.15,
         )
         mock_processor = MagicMock()
         mock_processor.strategy_builder_margin.return_value = {
@@ -512,11 +511,9 @@ class TestNakedCeAboveRangeUpper(unittest.TestCase):
             stock_code="NIFTY",
             exchange_code="NFO",
             expiry_display="20-Jun-2026",
-            range_lower=22500,
-            range_upper=24500,
             margin_rupees=1_000_000,
             max_loss_rupees=500_000,
-            min_pop_pct=1.0,
+            min_pop_pct=85.0,
             provision_elm=False,
             strategy_category="income",
             lot_size=75,

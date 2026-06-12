@@ -344,6 +344,10 @@ def iron_wings_symmetric(
     return lp, lc, credit, max_loss_u, qty, pop
 
 
+def all_liquid(ctx: EngineContext, right: Right) -> list[int]:
+    return ctx.liquid_ce_strikes if right == "Call" else ctx.liquid_pe_strikes
+
+
 def windowed_liquid(
     ctx: EngineContext,
     strategy_id: str,
@@ -352,3 +356,68 @@ def windowed_liquid(
     anchors = anchors_for(ctx)
     liquid = ctx.liquid_ce_strikes if right == "Call" else ctx.liquid_pe_strikes
     return strikes_in_window(liquid, anchors, right, max_steps_for_strategy(strategy_id))
+
+
+def credit_spread_wing_full(
+    ctx: EngineContext,
+    short_stp: int,
+    short_right: Right,
+    wing_strikes: list[int],
+    wing_is_higher: bool,
+) -> tuple[int, float, float, int, float] | None:
+    """Enumerate all liquid wings (no top-M cap) and pick best credit score."""
+    from icici_breeze_backend.app.services.options_strategy_engine.pruning import (
+        wing_strikes_from_multipliers,
+    )
+
+    L = ctx.lot_size
+    qs = ctx.cache.get((short_stp, short_right))
+    if not qs:
+        return None
+    liquid_set = set(wing_strikes)
+    wings = wing_strikes_from_multipliers(
+        short_stp, ctx.strike_step, liquid_set, wing_is_higher=wing_is_higher
+    )
+    if not wings:
+        wings = [
+            s
+            for s in wing_strikes
+            if (s > short_stp if wing_is_higher else s < short_stp)
+        ]
+    short_prem = qs.best_bid_price or qs.ltp
+    best: tuple[float, int, float, float, int, float] | None = None
+    for wing in wings:
+        qw = ctx.cache.get((wing, short_right))
+        if not qw or not qw.liquid:
+            continue
+        wing_prem = qw.best_offer_price or qw.ltp
+        credit = short_prem - wing_prem
+        width = abs(wing - short_stp)
+        max_loss_u = width - credit
+        if not passes_economic_prune(
+            net_credit=credit,
+            max_loss_per_unit=max_loss_u,
+            max_loss_total=max_loss_u * L,
+            max_loss_budget=ctx.max_loss_rupees,
+            require_pop=requires_pop_gate(ctx),
+            min_pop_pct=ctx.min_pop_pct,
+        ):
+            continue
+        qty = size_by_loss(ctx.max_loss_rupees, max_loss_u * L, L)
+        if qty < L:
+            continue
+        legs = [
+            TradeLeg(short_right, "Sell", short_stp, qty, short_prem),
+            TradeLeg(short_right, "Buy", wing, qty, wing_prem),
+        ]
+        pop = pop_for_legs(ctx, legs)
+        if not meets_pop_floor(ctx, pop):
+            continue
+        net_collected = credit * qty
+        score = score_credit_trade(pop, net_collected, max_loss_u * qty)
+        if best is None or score > best[0]:
+            best = (score, wing, credit, max_loss_u, qty, pop)
+    if not best:
+        return None
+    _, wing, credit, max_loss_u, qty, pop = best
+    return wing, credit, max_loss_u, qty, pop

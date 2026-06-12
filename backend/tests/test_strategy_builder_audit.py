@@ -80,7 +80,7 @@ class TestStrategyBuilderAuditSession(unittest.TestCase):
             ):
                 session = StrategyBuilderAuditSession(
                     user_id="user-1",
-                    request={"stock_code": "NIFTY", "range_lower": 22500, "range_upper": 24000},
+                    request={"stock_code": "NIFTY", "strategy_category": "income"},
                     request_id="req-abc",
                 )
                 session.record("test", "hello", {"x": 1}, rationale="because")
@@ -183,8 +183,6 @@ class TestEngineAuditIntegration(unittest.TestCase):
             stock_code="NIFTY",
             exchange_code="NFO",
             expiry_display="09-Jun-2025",
-            range_lower=23400,
-            range_upper=23600,
             margin_rupees=500_000,
             max_loss_rupees=200_000,
             min_pop_pct=1.0,
@@ -243,8 +241,7 @@ class TestEngineAuditIntegration(unittest.TestCase):
                     min_pop_pct=1.0,
                     provision_elm=False,
                     strategy_category="income",
-                    range_lower=23400,
-                    range_upper=23600,
+                    risk_reward_profile="moderate",
                     request_id="req-1",
                 )
                 self.assertEqual(out["Status"], 200)

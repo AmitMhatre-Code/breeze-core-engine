@@ -144,26 +144,34 @@ def pop_within_tolerance(estimated_pop: float, target_pop: float, tolerance: flo
 
 def iron_condor_candidates(
     ctx: EngineContext,
-    k: int = TOP_K_SHORT_STRIKES,
-    m: int = TOP_M_WING_STRIKES,
 ) -> list[tuple[int, int, int, int]]:
-    """Return (long_put, short_put, short_call, long_call) tuples, capped at MAX_IRON_CONDOR_CANDIDATES."""
-    short_puts = top_k_strikes(
-        [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
-        ctx.cache,
-        "Put",
-        k,
-        credit=True,
-        delta_window=DELTA_INCOME_SHORT,
-    )
-    short_calls = top_k_strikes(
-        [s for s in ctx.liquid_ce_strikes if s > ctx.spot],
-        ctx.cache,
-        "Call",
-        k,
-        credit=True,
-        delta_window=DELTA_INCOME_SHORT,
-    )
+    """Return (long_put, short_put, short_call, long_call) over full liquid chain."""
+    from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import pop_to_short_delta
+
+    target_delta = pop_to_short_delta(ctx.min_pop_pct, 2)
+    short_puts = [
+        s
+        for s in ctx.liquid_pe_strikes
+        if s < ctx.spot
+        and (q := ctx.cache.get((s, "Put")))
+        and q.liquid
+        and q.delta is not None
+        and abs(abs(q.delta) - target_delta) <= POP_TOLERANCE_PCT / 100.0 + 0.05
+    ]
+    short_calls = [
+        s
+        for s in ctx.liquid_ce_strikes
+        if s > ctx.spot
+        and (q := ctx.cache.get((s, "Call")))
+        and q.liquid
+        and q.delta is not None
+        and abs(abs(q.delta) - target_delta) <= POP_TOLERANCE_PCT / 100.0 + 0.05
+    ]
+    if not short_puts:
+        short_puts = [s for s in ctx.liquid_pe_strikes if s < ctx.spot]
+    if not short_calls:
+        short_calls = [s for s in ctx.liquid_ce_strikes if s > ctx.spot]
+
     liquid_pe = set(ctx.liquid_pe_strikes)
     liquid_ce = set(ctx.liquid_ce_strikes)
     out: list[tuple[int, int, int, int]] = []
@@ -178,14 +186,11 @@ def iron_condor_candidates(
                 qp.delta if qp else None,
                 qc.delta if qc else None,
             )
-            if not pop_within_tolerance(est_pop, ctx.min_pop_pct):
-                if ctx.strategy_category == "income" and est_pop < ctx.min_pop_pct - POP_TOLERANCE_PCT:
-                    continue
+            if ctx.strategy_category == "income" and est_pop < ctx.min_pop_pct - POP_TOLERANCE_PCT:
+                continue
 
             wing_puts = wing_strikes_from_multipliers(sp, ctx.strike_step, liquid_pe, wing_is_higher=False)
-            wing_puts = [s for s in wing_puts if s in top_m_wings(sp, ctx.liquid_pe_strikes, ctx.cache, "Put", m, wing_is_higher=False)]
             wing_calls = wing_strikes_from_multipliers(sc, ctx.strike_step, liquid_ce, wing_is_higher=True)
-            wing_calls = [s for s in wing_calls if s in top_m_wings(sc, ctx.liquid_ce_strikes, ctx.cache, "Call", m, wing_is_higher=True)]
 
             for lp in wing_puts:
                 spread = sp - lp

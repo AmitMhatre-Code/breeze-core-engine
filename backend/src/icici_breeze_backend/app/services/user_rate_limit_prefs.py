@@ -1,12 +1,12 @@
-"""Per-user pause duration when ICICI rate-limits (HTTP 429/503) during order or strategy-builder flows."""
+"""Per-user pause duration between ICICI API calls (proactive pacing + 429/503 backoff)."""
 
 import sqlite3
 
 import icici_breeze_backend.app.core.config as cfg
 
-_DEFAULT_PAUSE = 1
-_MIN = 1
-_MAX = 300
+_DEFAULT_PAUSE = 1.0
+_MIN = 0.25
+_MAX = 300.0
 
 
 def ensure_icici_rate_limit_pause_column() -> None:
@@ -14,14 +14,14 @@ def ensure_icici_rate_limit_pause_column() -> None:
         try:
             conn.execute(
                 "ALTER TABLE user_account ADD COLUMN icici_rate_limit_pause_seconds "
-                "INTEGER NOT NULL DEFAULT 1"
+                "REAL NOT NULL DEFAULT 1"
             )
             conn.commit()
         except sqlite3.OperationalError:
             pass
 
 
-def get_icici_rate_limit_pause_seconds(user_id: str) -> int:
+def get_icici_rate_limit_pause_seconds(user_id: str) -> float:
     ensure_icici_rate_limit_pause_column()
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         row = conn.execute(
@@ -31,15 +31,15 @@ def get_icici_rate_limit_pause_seconds(user_id: str) -> int:
     if not row or row[0] is None:
         return _DEFAULT_PAUSE
     try:
-        v = int(row[0])
+        v = float(row[0])
     except (TypeError, ValueError):
         return _DEFAULT_PAUSE
     return max(_MIN, min(_MAX, v))
 
 
-def set_icici_rate_limit_pause_seconds(user_id: str, seconds: int) -> int:
+def set_icici_rate_limit_pause_seconds(user_id: str, seconds: float) -> float:
     ensure_icici_rate_limit_pause_column()
-    v = max(_MIN, min(_MAX, int(seconds)))
+    v = max(_MIN, min(_MAX, float(seconds)))
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         conn.execute(
             "UPDATE user_account SET icici_rate_limit_pause_seconds = ? WHERE user_id = ?",
