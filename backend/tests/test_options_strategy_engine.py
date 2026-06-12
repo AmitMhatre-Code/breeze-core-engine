@@ -21,6 +21,7 @@ from icici_breeze_backend.app.services.options_strategy_engine import (
     run_propose_trades,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.greeks import (
+    norm_ppf,
     snap_strike,
     strike_for_abs_delta,
 )
@@ -506,6 +507,15 @@ class TestBuildLiquidityCacheUserBackoff(unittest.TestCase):
             _build_liquidity_cache(ctx)
         self.assertIsNotNone(ctx.chain_backoff)
         self.assertEqual(ctx.chain_backoff.pause_seconds, 3)
+
+
+class TestNormPpf(unittest.TestCase):
+    def test_median_is_zero(self):
+        self.assertAlmostEqual(norm_ppf(0.5), 0.0, places=10)
+
+    def test_symmetric_quantiles(self):
+        self.assertAlmostEqual(norm_ppf(0.841344746), 1.0, places=5)
+        self.assertAlmostEqual(norm_ppf(0.158655254), -1.0, places=5)
 
 
 class TestStrikeForAbsDelta(unittest.TestCase):

@@ -1,13 +1,14 @@
 """Settings JSON API under /api/settings."""
 import datetime
 import json
+import os
 import sqlite3
 from typing import Any, List
 
 import httpx
 import time
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.auth.ai_provider_keys import AiProviderKeyManager
@@ -92,6 +93,7 @@ from icici_breeze_backend.audit.strategy_builder_audit import (
     _MAX_AUDIT_LOGS_PER_USER,
     build_audit_zip_for_user,
     list_audit_log_index_for_user,
+    resolve_audit_file_for_user,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -1267,4 +1269,22 @@ async def download_strategy_builder_audit_logs(
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-store",
         },
+    )
+
+
+@router.get("/strategy-builder-audit-logs/{session_id}/download")
+async def download_strategy_builder_audit_log(
+    session_id: str,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Download one Strategy Builder audit log JSON for the current user."""
+    path = resolve_audit_file_for_user(session_id.strip(), ctx.user_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="Audit log not found")
+    fname = os.path.basename(path)
+    return FileResponse(
+        path,
+        media_type="application/json",
+        filename=fname,
+        headers={"Cache-Control": "no-store"},
     )

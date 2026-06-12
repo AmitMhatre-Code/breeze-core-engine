@@ -8,18 +8,74 @@ import { AppShell } from "@/components/layout/AppShell";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import {
   downloadAllStrategyAuditLogs,
+  downloadStrategyAuditLog,
   fetchStrategyAuditLogIndex,
+  type StrategyAuditLogItem,
 } from "@/lib/settings/strategy-audit-logs";
 
-function formatTimestamp(value: string | null | undefined): string {
+const MONTH_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+function formatFinishedAt(value: string | null | undefined): string {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString();
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = MONTH_SHORT[d.getMonth()];
+  const year = d.getFullYear();
+  const time = d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  return `${day}-${month}-${year}, ${time}`;
+}
+
+function formatLacs(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return `${value} L`;
+}
+
+function formatPop(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return `${value}%`;
+}
+
+function formatYesNo(value: boolean | null | undefined): string {
+  if (value == null) return "—";
+  return value ? "Yes" : "No";
+}
+
+function formatLabel(value: string | null | undefined): string {
+  if (!value) return "—";
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function formatStrategyCategory(value: string | null | undefined): string {
+  if (!value) return "—";
+  const labels: Record<string, string> = {
+    income: "Income",
+    bullish: "Bullish",
+    bearish: "Bearish",
+  };
+  return labels[value] ?? formatLabel(value);
 }
 
 export default function StrategyAuditLogsSettingsPage() {
-  const [downloading, setDownloading] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [downloadingSessionId, setDownloadingSessionId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const q = useQuery({
@@ -29,6 +85,21 @@ export default function StrategyAuditLogsSettingsPage() {
 
   const logs = q.data?.logs ?? [];
   const maxLogs = q.data?.max_logs ?? 10;
+
+  const handleDownloadOne = async (row: StrategyAuditLogItem) => {
+    if (!row.session_id) return;
+    setDownloadError(null);
+    setDownloadingSessionId(row.session_id);
+    try {
+      await downloadStrategyAuditLog(row.session_id);
+    } catch (e) {
+      setDownloadError(
+        e instanceof Error ? e.message : "Failed to download audit log",
+      );
+    } finally {
+      setDownloadingSessionId(null);
+    }
+  };
 
   return (
     <AppShell>
@@ -47,11 +118,11 @@ export default function StrategyAuditLogsSettingsPage() {
           <button
             type="button"
             className="app-btn-primary inline-flex min-h-[2.25rem] items-center rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition-shadow hover:shadow-md disabled:shadow-none"
-            disabled={downloading || q.isLoading || logs.length === 0}
-            aria-busy={downloading}
+            disabled={downloadingAll || q.isLoading || logs.length === 0}
+            aria-busy={downloadingAll}
             onClick={async () => {
               setDownloadError(null);
-              setDownloading(true);
+              setDownloadingAll(true);
               try {
                 await downloadAllStrategyAuditLogs();
               } catch (e) {
@@ -59,12 +130,12 @@ export default function StrategyAuditLogsSettingsPage() {
                   e instanceof Error ? e.message : "Failed to download audit logs",
                 );
               } finally {
-                setDownloading(false);
+                setDownloadingAll(false);
               }
             }}
           >
             <AsyncLabelSpan
-              busy={downloading}
+              busy={downloadingAll}
               idleLabel="Download all as ZIP"
               busyLabel="Downloading…"
             />
@@ -94,25 +165,69 @@ export default function StrategyAuditLogsSettingsPage() {
             <table className="min-w-full text-left text-sm">
               <thead className="bg-zinc-50/90 text-xs uppercase tracking-wide text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-400">
                 <tr>
-                  <th className="px-3 py-2 font-medium">Finished</th>
-                  <th className="px-3 py-2 font-medium">Stock</th>
-                  <th className="px-3 py-2 font-medium">Events</th>
-                  <th className="px-3 py-2 font-medium">Session</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Finished</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Scrip</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Expiry</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Strategy</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">PoP</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Margin</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Loss</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">ELM</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">RR Profile</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Events</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Session</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Download</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200/80 dark:divide-zinc-800">
-                {logs.map((row) => (
-                  <tr key={row.session_id ?? row.filename}>
-                    <td className="px-3 py-2 tabular-nums">
-                      {formatTimestamp(row.finished_at ?? row.started_at)}
-                    </td>
-                    <td className="px-3 py-2">{row.stock_code ?? "—"}</td>
-                    <td className="px-3 py-2 tabular-nums">{row.event_count ?? "—"}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-zinc-600 dark:text-zinc-400">
-                      {row.session_id ? `${row.session_id.slice(0, 8)}…` : "—"}
-                    </td>
-                  </tr>
-                ))}
+                {logs.map((row) => {
+                  const sessionId = row.session_id ?? row.filename;
+                  const isDownloading = downloadingSessionId === row.session_id;
+                  return (
+                    <tr key={sessionId}>
+                      <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                        {formatFinishedAt(row.finished_at ?? row.started_at)}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">{row.stock_code ?? "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{row.expiry_date ?? "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {formatStrategyCategory(row.strategy_category)}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                        {formatPop(row.min_pop_pct)}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                        {formatLacs(row.margin_lacs)}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                        {formatLacs(row.max_loss_lacs)}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {formatYesNo(row.provision_elm)}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {formatLabel(row.risk_reward_profile)}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                        {row.event_count ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                        {row.session_id ? `${row.session_id.slice(0, 8)}…` : "—"}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <button
+                          type="button"
+                          className="app-link text-xs font-medium disabled:cursor-wait disabled:opacity-60"
+                          disabled={!row.session_id || isDownloading || downloadingAll}
+                          aria-busy={isDownloading}
+                          onClick={() => void handleDownloadOne(row)}
+                        >
+                          {isDownloading ? "Downloading…" : "JSON"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

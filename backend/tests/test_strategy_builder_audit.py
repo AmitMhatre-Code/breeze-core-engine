@@ -23,6 +23,7 @@ from icici_breeze_backend.audit.strategy_builder_audit import (
     build_audit_zip_for_user,
     enforce_audit_retention,
     list_audit_files_for_user,
+    list_audit_log_index_for_user,
     quote_row_to_audit,
     resolve_audit_file_for_user,
 )
@@ -322,6 +323,39 @@ class TestAuditRetention(unittest.TestCase):
                 second = self._write_session("user-a", "NIFTY", "second")
                 ordered = list_audit_files_for_user("user-a")
                 self.assertEqual(ordered, [second, first])
+
+    def test_list_audit_log_index_includes_request_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
+                return_value=tmp,
+            ):
+                session = StrategyBuilderAuditSession(
+                    user_id="user-a",
+                    request={
+                        "stock_code": "NIFTY",
+                        "expiry_date": "16-Jun-2026",
+                        "margin_lacs": 500.0,
+                        "max_loss_lacs": 10.0,
+                        "min_pop_pct": 65.0,
+                        "provision_elm": True,
+                        "strategy_category": "income",
+                        "risk_reward_profile": "moderate",
+                    },
+                )
+                session.record("test", "inputs")
+                session.finalize({"status": "ok"})
+                rows = list_audit_log_index_for_user("user-a")
+                self.assertEqual(len(rows), 1)
+                row = rows[0]
+                self.assertEqual(row["stock_code"], "NIFTY")
+                self.assertEqual(row["expiry_date"], "16-Jun-2026")
+                self.assertEqual(row["margin_lacs"], 500.0)
+                self.assertEqual(row["max_loss_lacs"], 10.0)
+                self.assertEqual(row["min_pop_pct"], 65.0)
+                self.assertTrue(row["provision_elm"])
+                self.assertEqual(row["strategy_category"], "income")
+                self.assertEqual(row["risk_reward_profile"], "moderate")
 
     def test_build_audit_zip_contains_expected_files(self):
         with tempfile.TemporaryDirectory() as tmp:

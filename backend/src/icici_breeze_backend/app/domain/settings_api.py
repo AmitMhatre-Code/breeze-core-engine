@@ -268,6 +268,13 @@ class StrategyBuilderAuditLogItem(BaseModel):
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     stock_code: Optional[str] = None
+    expiry_date: Optional[str] = None
+    min_pop_pct: Optional[float] = None
+    margin_lacs: Optional[float] = None
+    max_loss_lacs: Optional[float] = None
+    provision_elm: Optional[bool] = None
+    risk_reward_profile: Optional[str] = None
+    strategy_category: Optional[str] = None
     event_count: Optional[int] = None
     filename: str = ""
 

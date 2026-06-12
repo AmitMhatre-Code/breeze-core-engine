@@ -286,6 +286,25 @@ def list_audit_files_for_user(user_id: str) -> list[str]:
     return [path for path, _mtime in files]
 
 
+def _audit_index_row(doc: dict[str, Any], path: str) -> dict[str, Any]:
+    request = doc.get("request") or {}
+    return {
+        "session_id": doc.get("session_id"),
+        "started_at": doc.get("started_at"),
+        "finished_at": doc.get("finished_at"),
+        "stock_code": request.get("stock_code"),
+        "expiry_date": request.get("expiry_date"),
+        "min_pop_pct": request.get("min_pop_pct"),
+        "margin_lacs": request.get("margin_lacs"),
+        "max_loss_lacs": request.get("max_loss_lacs"),
+        "provision_elm": request.get("provision_elm"),
+        "risk_reward_profile": request.get("risk_reward_profile"),
+        "strategy_category": request.get("strategy_category"),
+        "event_count": doc.get("event_count"),
+        "filename": os.path.basename(path),
+    }
+
+
 def list_audit_log_index_for_user(user_id: str) -> list[dict[str, Any]]:
     """Metadata for each retained audit log, newest first."""
     entries: list[tuple[float, dict[str, Any]]] = []
@@ -293,20 +312,7 @@ def list_audit_log_index_for_user(user_id: str) -> list[dict[str, Any]]:
         doc = _read_audit_doc(path)
         if not doc:
             continue
-        request = doc.get("request") or {}
-        entries.append(
-            (
-                mtime,
-                {
-                    "session_id": doc.get("session_id"),
-                    "started_at": doc.get("started_at"),
-                    "finished_at": doc.get("finished_at"),
-                    "stock_code": request.get("stock_code"),
-                    "event_count": doc.get("event_count"),
-                    "filename": os.path.basename(path),
-                },
-            )
-        )
+        entries.append((mtime, _audit_index_row(doc, path)))
     entries.sort(key=lambda item: item[0], reverse=True)
     return [meta for _mtime, meta in entries]
 
