@@ -41,6 +41,7 @@ IC_TOP_K_SHORT_STRIKES = 5
 IC_POP_FLOOR_TOLERANCE_PCT = 2.0
 MIN_WING_CREDIT = 0.05
 MIN_IC_CREDIT_PCT_OF_WIDTH = 0.03
+IC_CREDIT_PCT_RELAXATION_SCHEDULE: tuple[float, ...] = (0.03, 0.025, 0.02, 0.015, 0.01)
 MIN_IC_ANNUALIZED_RETURN_PCT = 5.0
 IC_SPAN_REFINE_TOP_N = 5
 IC_RETURN_TOP_N = 5
@@ -259,14 +260,20 @@ class IronCondorRejectionStats:
         return f"No iron condor passed filters ({total} rejected: {parts})."
 
 
-def passes_ic_wing_credit(put_credit: float, call_credit: float, wing_width: int) -> bool:
+def passes_ic_wing_credit(
+    put_credit: float,
+    call_credit: float,
+    wing_width: int,
+    *,
+    min_credit_pct_of_width: float = MIN_IC_CREDIT_PCT_OF_WIDTH,
+) -> bool:
     """Per-spread credit floor plus soft total-credit vs wing width."""
     if put_credit < MIN_WING_CREDIT or call_credit < MIN_WING_CREDIT:
         return False
     total = put_credit + call_credit
     if total <= 0:
         return False
-    return total >= MIN_IC_CREDIT_PCT_OF_WIDTH * wing_width
+    return total >= min_credit_pct_of_width * wing_width
 
 
 @dataclass(frozen=True)
@@ -295,6 +302,7 @@ def enumerate_symmetric_iron_condors(
     short_call: int,
     *,
     stats: IronCondorRejectionStats | None = None,
+    min_credit_pct_of_width: float = MIN_IC_CREDIT_PCT_OF_WIDTH,
 ) -> list[IronCondorCandidate]:
     """All feasible symmetric-wing iron condors for a short put/call pair."""
     L = ctx.lot_size
@@ -399,7 +407,9 @@ def enumerate_symmetric_iron_condors(
             )
             continue
         credit = put_credit + call_credit
-        if not passes_ic_wing_credit(put_credit, call_credit, w):
+        if not passes_ic_wing_credit(
+            put_credit, call_credit, w, min_credit_pct_of_width=min_credit_pct_of_width
+        ):
             _reject(
                 "min_credit",
                 wing_width=w,
@@ -408,7 +418,7 @@ def enumerate_symmetric_iron_condors(
                 credit=credit,
                 put_credit=put_credit,
                 call_credit=call_credit,
-                required=round(MIN_IC_CREDIT_PCT_OF_WIDTH * w, 4),
+                required=round(min_credit_pct_of_width * w, 4),
             )
             continue
         max_loss_u = w - credit
@@ -642,15 +652,24 @@ def _merge_pairs(
     return merged
 
 
-def _collect_candidates(
+def _collect_at_credit_threshold(
     ctx: EngineContext,
     pairs: list[tuple[int, int]],
+    min_credit_pct_of_width: float,
     *,
     stats: IronCondorRejectionStats | None = None,
 ) -> list[IronCondorCandidate]:
     candidates: list[IronCondorCandidate] = []
     for sp, sc in pairs:
-        candidates.extend(enumerate_symmetric_iron_condors(ctx, sp, sc, stats=stats))
+        candidates.extend(
+            enumerate_symmetric_iron_condors(
+                ctx,
+                sp,
+                sc,
+                stats=stats,
+                min_credit_pct_of_width=min_credit_pct_of_width,
+            )
+        )
 
     if candidates:
         return candidates
@@ -664,7 +683,42 @@ def _collect_candidates(
     )
     if stp_sp is None or stp_sc is None:
         return []
-    return enumerate_symmetric_iron_condors(ctx, stp_sp, stp_sc, stats=stats)
+    return enumerate_symmetric_iron_condors(
+        ctx,
+        stp_sp,
+        stp_sc,
+        stats=stats,
+        min_credit_pct_of_width=min_credit_pct_of_width,
+    )
+
+
+def _collect_candidates(
+    ctx: EngineContext,
+    pairs: list[tuple[int, int]],
+    *,
+    stats: IronCondorRejectionStats | None = None,
+) -> tuple[list[IronCondorCandidate], float]:
+    last_pct = IC_CREDIT_PCT_RELAXATION_SCHEDULE[-1]
+    for pct in IC_CREDIT_PCT_RELAXATION_SCHEDULE:
+        candidates = _collect_at_credit_threshold(ctx, pairs, pct, stats=None)
+        if candidates:
+            if stats is not None:
+                _collect_at_credit_threshold(ctx, pairs, pct, stats=stats)
+            return candidates, pct
+
+    if stats is not None:
+        _collect_at_credit_threshold(ctx, pairs, last_pct, stats=stats)
+    return [], last_pct
+
+
+def _ic_credit_search_rationale(min_credit_pct_used: float) -> str:
+    if min_credit_pct_used < MIN_IC_CREDIT_PCT_OF_WIDTH:
+        pct_display = min_credit_pct_used * 100
+        return (
+            f"Credit pct relaxed to {pct_display:g}% to find survivors; "
+            "enumerated top-K short pairs × all wing widths with ROR scoring."
+        )
+    return "Enumerated top-K short pairs × all wing widths with ROR scoring."
 
 
 def _pick_top_candidates(
@@ -754,7 +808,7 @@ def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
     pairs = iron_condor_short_pairs(ctx)
     seed_pair = _best_strangle_short_pair(ctx)
     pairs = _merge_pairs(pairs, seed_pair)
-    candidates = _collect_candidates(ctx, pairs, stats=stats)
+    candidates, min_credit_pct_used = _collect_candidates(ctx, pairs, stats=stats)
 
     if not candidates:
         skip_reason = stats.skip_message() if stats else (
@@ -767,6 +821,8 @@ def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
                     "pairs_evaluated": len(pairs),
                     "survivors": 0,
                     "strangle_seed": list(seed_pair) if seed_pair else None,
+                    "min_credit_pct_used": min_credit_pct_used,
+                    "credit_thresholds_attempted": list(IC_CREDIT_PCT_RELAXATION_SCHEDULE),
                 },
                 {
                     "rejection_counts": stats.counts,
@@ -805,9 +861,10 @@ def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
                 "pairs_evaluated": len(pairs),
                 "survivors": len(candidates),
                 "strangle_seed": list(seed_pair) if seed_pair else None,
+                "min_credit_pct_used": min_credit_pct_used,
             },
             audit_outputs,
-            rationale="Enumerated top-K short pairs × all wing widths with ROR scoring.",
+            rationale=_ic_credit_search_rationale(min_credit_pct_used),
         )
 
     winners, span_scores = _pick_top_candidates(ctx, candidates, strategy_id=sid)

@@ -6,10 +6,12 @@ from unittest.mock import MagicMock, patch
 
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_detail_for_legs, pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
+    IC_CREDIT_PCT_RELAXATION_SCHEDULE,
     IC_TOP_K_SHORT_STRIKES,
     WING_WIDTH_MULTIPLIERS,
     IronCondorCandidate,
     IronCondorRejectionStats,
+    _collect_candidates,
     _pick_top_candidates,
     build_ranking_summary,
     calc_iron_condor,
@@ -468,6 +470,75 @@ class TestWingCreditGate(unittest.TestCase):
 
     def test_audit_style_credit_passes_50pt_wing(self):
         self.assertTrue(passes_ic_wing_credit(1.0, 1.45, 50))
+
+    def test_passes_ic_wing_credit_respects_override(self):
+        self.assertFalse(passes_ic_wing_credit(0.6, 0.6, 50))
+        self.assertFalse(passes_ic_wing_credit(0.6, 0.6, 50, min_credit_pct_of_width=0.025))
+        self.assertTrue(passes_ic_wing_credit(0.6, 0.6, 50, min_credit_pct_of_width=0.02))
+
+
+class TestCreditRelaxation(unittest.TestCase):
+    def test_relaxation_schedule_matches_spec(self):
+        self.assertEqual(
+            IC_CREDIT_PCT_RELAXATION_SCHEDULE,
+            (0.03, 0.025, 0.02, 0.015, 0.01),
+        )
+
+    def test_credit_relaxation_finds_candidate_at_lower_pct(self):
+        cache = {
+            (22800, "Put"): _quote(22800, "Put", bid=1.0, ask=1.05, delta=0.05),
+            (22750, "Put"): _quote(22750, "Put", bid=0.35, ask=0.40, delta=0.04),
+            (24400, "Call"): _quote(24400, "Call", bid=1.0, ask=1.05, delta=0.05),
+            (24450, "Call"): _quote(24450, "Call", bid=0.35, ask=0.40, delta=0.04),
+        }
+        ctx = _ctx_from_cache(cache, min_pop_pct=50.0)
+        self.assertEqual(enumerate_symmetric_iron_condors(ctx, 22800, 24400), [])
+        relaxed = enumerate_symmetric_iron_condors(
+            ctx, 22800, 24400, min_credit_pct_of_width=0.02
+        )
+        self.assertEqual(len(relaxed), 1)
+        self.assertAlmostEqual(relaxed[0].credit, 1.2, places=2)
+
+        candidates, pct = _collect_candidates(ctx, [(22800, 24400)])
+        self.assertGreater(len(candidates), 0)
+        self.assertEqual(pct, 0.02)
+
+    def test_credit_relaxation_stops_at_one_pct_floor(self):
+        cache = {
+            (22800, "Put"): _quote(22800, "Put", bid=0.20, ask=0.25, delta=0.05),
+            (22750, "Put"): _quote(22750, "Put", bid=0.10, ask=0.15, delta=0.04),
+            (24400, "Call"): _quote(24400, "Call", bid=0.20, ask=0.25, delta=0.05),
+            (24450, "Call"): _quote(24450, "Call", bid=0.10, ask=0.15, delta=0.04),
+        }
+        ctx = _ctx_from_cache(cache, min_pop_pct=50.0)
+        candidates, pct = _collect_candidates(ctx, [(22800, 24400)])
+        self.assertEqual(candidates, [])
+        self.assertEqual(pct, 0.01)
+
+    def test_calc_iron_condor_uses_relaxed_credit_via_collect(self):
+        cache = {
+            (22800, "Put"): _quote(22800, "Put", bid=1.0, ask=1.05, delta=0.05),
+            (22750, "Put"): _quote(22750, "Put", bid=0.35, ask=0.40, delta=0.04),
+            (24400, "Call"): _quote(24400, "Call", bid=1.0, ask=1.05, delta=0.05),
+            (24450, "Call"): _quote(24450, "Call", bid=0.35, ask=0.40, delta=0.04),
+        }
+        proc = MagicMock()
+        proc.strategy_builder_margin.return_value = {"Success": {"span_margin_required": 50_000.0}}
+        ctx = _ctx_from_cache(cache, min_pop_pct=50.0, processor=proc)
+        with patch(
+            "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.iron_condor_short_pairs",
+            return_value=[(22800, 24400)],
+        ), patch(
+            "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor._best_strangle_short_pair",
+            return_value=None,
+        ), patch(
+            "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_ANNUALIZED_RETURN_PCT",
+            0.0,
+        ):
+            results = calc_iron_condor(ctx)
+        ok = [r for r in results if r.status == "ok"]
+        self.assertEqual(len(ok), 1)
+        self.assertAlmostEqual(ok[0].net_premium or 0, 1.2 * 65, places=0)
 
 
 class TestSearchBounds(unittest.TestCase):
