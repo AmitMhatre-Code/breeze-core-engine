@@ -20,34 +20,9 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "2.0.0-x",
-    date: "12-Jun-2026",
-    releaseKind: "patch",
-    summary: "Delta-anchored Strategy Builder",
-    changes: [
-      "Settings adds Strategy Builder Audit Logs: view and download up to 10 recent propose-trades audit JSON files as a ZIP from your persistent data volume",
-      "Strategy Builder (New) removes the strike-range slider; income strategies anchor at ATM and select OTM wings by delta from minimum PoP",
-      "Bullish and Bearish generation buttons replace Directional; risk/reward profile (Conservative, Moderate, Aggressive) maps to fixed delta buckets and CER ranking",
-      "Full liquid options chain is explored without K/M strike caps; naked shorts and short straddle/strangle ignore max-loss budget",
-      "Universal ICICI API pacing enforces minimum spacing between all broker calls (Settings backoff down to 0.25s; 503 exponential backoff capped at 3s)",
-    ],
-  },
-  {
-    version: "2.0.0-o",
-    date: "11-Jun-2026",
-    releaseKind: "patch",
-    summary: "Strategy Builder (New) categories",
-    changes: [
-      "Strategy Builder (New) restores the strike-range slider alongside minimum PoP input",
-      "Income, Directional, and Volatility strategy buttons each generate category-specific trades with tailored objectives",
-      "Full options chain is built incrementally to liquidity boundaries; trade tiles show SPAN and ELM requirements",
-      "Strategy Builder option-chain retries use the API Usage rate-limit backoff setting (default 1 second)",
-    ],
-  },
-  {
-    version: "2.0.0-k",
-    date: "10-Jun-2026",
-    releaseKind: "patch",
+    version: "2.0.0",
+    date: "13-Jun-2026",
+    releaseKind: "major",
     summary: "Strategy Builder (New)",
     changes: [
       "New Strategy Builder (New) page generates all options strategies from range, margin, and risk parameters",
