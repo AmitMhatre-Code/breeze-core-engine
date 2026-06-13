@@ -5,15 +5,19 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from icici_breeze_backend.app.services.options_strategy_engine.budget_resize import resize_results_to_budgets
+from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import strikes_ranked_by_delta
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_detail_for_legs, pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
     IC_CREDIT_PCT_RELAXATION_SCHEDULE,
     IC_RETURN_TOP_N,
+    IC_SHORT_STRIKES_INWARD,
+    IC_SHORT_STRIKES_OUTWARD,
     IC_TOP_K_SHORT_STRIKES,
     WING_WIDTH_MULTIPLIERS,
     IronCondorCandidate,
     IronCondorRejectionStats,
     _collect_candidates,
+    _ic_short_strikes_around_target,
     _pick_top_candidates,
     _unit_span_margin,
     build_ranking_summary,
@@ -172,14 +176,45 @@ class TestEnumerateSymmetricIronCondor(unittest.TestCase):
 class TestRorScoring(unittest.TestCase):
     def test_ror_prefers_higher_credit_at_lower_pop(self):
         quotes = [_quote(22800, "Put", bid=5, ask=5.1, delta=0.05)] * 4
-        score_a, _ = score_iron_condor_ror(95.1, 2_000.0, 50_000.0, 95.0, quotes)
-        score_b, _ = score_iron_condor_ror(93.8, 11_000.0, 50_000.0, 95.0, quotes)
+        score_a, factors_a = score_iron_condor_ror(95.1, 2_000.0, 50_000.0, 95.0, quotes)
+        score_b, factors_b = score_iron_condor_ror(93.8, 11_000.0, 50_000.0, 95.0, quotes)
         self.assertGreater(score_b, score_a)
+        self.assertGreaterEqual(93.8, 95.0 - 5)  # both above practical floor in scenario
+        self.assertIn("pop_tiebreak", factors_a)
+        self.assertIn("pop_tiebreak", factors_b)
+        self.assertNotIn("pop_weight", factors_a)
 
     def test_ranking_summary_mentions_credit(self):
-        summary = build_ranking_summary(11_000.0, 93.8, 0.22, 2_000.0, 95.1, 0.04)
-        self.assertIn("credit", summary.lower())
-        self.assertIn("ROR", summary)
+        summary = build_ranking_summary(
+            higher_rank=1,
+            lower_rank=2,
+            viewing_rank=1,
+            higher_credit=11_000.0,
+            higher_pop=93.8,
+            higher_ror=0.22,
+            lower_credit=2_000.0,
+            lower_pop=95.1,
+            lower_ror=0.04,
+        )
+        self.assertIn("Ranked #1 over #2:", summary)
+        self.assertIn("net credit per lot", summary)
+        self.assertIn("ROR #1", summary)
+
+    def test_ranking_summary_for_lower_rank_uses_above_variant_lead(self):
+        summary = build_ranking_summary(
+            higher_rank=3,
+            lower_rank=4,
+            viewing_rank=4,
+            higher_credit=10_050.0,
+            higher_pop=93.3,
+            higher_ror=0.053,
+            lower_credit=10_000.0,
+            lower_pop=93.8,
+            lower_ror=0.043,
+        )
+        self.assertIn("#3 ranks above this variant:", summary)
+        self.assertIn("PoP #3 93.3% vs #4 93.8%", summary)
+        self.assertIn("ROR #3", summary)
 
 
 class TestScoreIronCondorCandidate(unittest.TestCase):
@@ -433,7 +468,7 @@ class TestCalcIronCondor(unittest.TestCase):
 
 class TestAuditQuoteRegression(unittest.TestCase):
     def test_far_otm_condor_survives_relaxed_credit_gate(self):
-        """Audit-cache style 22850/24400 condor at 95% PoP / 55L max loss."""
+        """Audit-cache style 22850/24400 condor at ~94% PoP / 55L max loss."""
         strikes = list(range(22600, 24650, 50))
         cache = _fill_strikes(
             strikes,
@@ -449,7 +484,7 @@ class TestAuditQuoteRegression(unittest.TestCase):
         ctx = _ctx_from_cache(
             cache,
             spot=23622.9,
-            min_pop_pct=95.0,
+            min_pop_pct=93.0,
             max_loss_rupees=5_500_000,
         )
         variants = enumerate_symmetric_iron_condors(ctx, 22850, 24400)
@@ -660,6 +695,76 @@ class TestSearchBounds(unittest.TestCase):
             len(enumerate_symmetric_iron_condors(ctx, sp, sc)) for sp, sc in pairs
         )
         self.assertLessEqual(survivors, max_evals)
+
+    def test_hard_pop_floor_rejects_below_min(self):
+        strikes = list(range(22600, 24650, 50))
+        cache = _fill_strikes(
+            strikes,
+            23622.9,
+            bid_fn=lambda s, r: 3.0,
+            ask_fn=lambda s, r: 3.1,
+            delta_fn=lambda s, r: 0.025,
+        )
+        cache[(22850, "Put")] = _quote(22850, "Put", bid=6.80, ask=6.95, delta=0.02)
+        cache[(22750, "Put")] = _quote(22750, "Put", bid=5.65, ask=5.80, delta=0.018)
+        cache[(24400, "Call")] = _quote(24400, "Call", bid=5.40, ask=5.55, delta=0.02)
+        cache[(24500, "Call")] = _quote(24500, "Call", bid=3.85, ask=3.95, delta=0.018)
+        ctx_pass = _ctx_from_cache(cache, spot=23622.9, min_pop_pct=93.0)
+        ctx_reject = _ctx_from_cache(cache, spot=23622.9, min_pop_pct=94.0)
+        stats = IronCondorRejectionStats()
+        survivors_pass = enumerate_symmetric_iron_condors(ctx_pass, 22850, 24400)
+        enumerate_symmetric_iron_condors(ctx_reject, 22850, 24400, stats=stats)
+        self.assertGreater(len(survivors_pass), 0)
+        self.assertLess(survivors_pass[0].pop, 94.0)
+        self.assertEqual(
+            enumerate_symmetric_iron_condors(ctx_reject, 22850, 24400),
+            [],
+        )
+        self.assertGreater(stats.counts.get("pop_floor", 0), 0)
+
+    def test_short_strikes_include_inward_and_outward(self):
+        """ATM-ward strike beyond old top-K delta distance must still be shortlisted."""
+        strikes = list(range(22500, 24700, 50))
+        target = 0.025  # 95% PoP target delta
+
+        def delta_fn(s, r):
+            if s == 22700 and r == "Put":
+                return 0.04
+            if s == 24500 and r == "Call":
+                return 0.04
+            dist = abs(s - 23623)
+            return max(0.015, target - dist / 50000)
+
+        cache = _fill_strikes(
+            strikes,
+            23623.0,
+            bid_fn=lambda s, r: 4.0,
+            ask_fn=lambda s, r: 4.1,
+            delta_fn=delta_fn,
+        )
+        ctx = _ctx_from_cache(cache, min_pop_pct=95.0)
+        puts = _ic_short_strikes_around_target(
+            [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
+            ctx.cache,
+            "Put",
+            target,
+        )
+        calls = _ic_short_strikes_around_target(
+            [s for s in ctx.liquid_ce_strikes if s > ctx.spot],
+            ctx.cache,
+            "Call",
+            target,
+        )
+        self.assertIn(22700, puts)
+        self.assertIn(24500, calls)
+        old_style_puts = strikes_ranked_by_delta(
+            [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
+            ctx.cache,
+            "Put",
+            target,
+        )[:5]
+        self.assertNotIn(22700, old_style_puts)
+        self.assertEqual(IC_SHORT_STRIKES_INWARD + IC_SHORT_STRIKES_OUTWARD, IC_TOP_K_SHORT_STRIKES)
 
 
 if __name__ == "__main__":

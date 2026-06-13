@@ -5,6 +5,7 @@ import math
 from dataclasses import dataclass, field
 
 from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import (
+    abs_delta,
     best_strike_near_delta,
     pop_to_short_delta,
     strikes_ranked_by_delta,
@@ -13,8 +14,8 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     annualized_carry_percent_on_span,
     days_to_expiry,
     legs_to_margin_input,
+    meets_pop_floor,
     parse_float,
-    requires_pop_gate,
     skip,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.pop import (
@@ -41,20 +42,14 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
 # --- Iron condor tuning constants (owned by this module) ---
 
 WING_WIDTH_MULTIPLIERS: tuple[int, ...] = (1, 2, 3, 4)
-IC_TOP_K_SHORT_STRIKES = 5
-IC_POP_FLOOR_TOLERANCE_PCT = 2.0
+IC_SHORT_STRIKES_INWARD = 3
+IC_SHORT_STRIKES_OUTWARD = 3
+IC_TOP_K_SHORT_STRIKES = IC_SHORT_STRIKES_INWARD + IC_SHORT_STRIKES_OUTWARD
 MIN_WING_CREDIT = 0.05
 MIN_IC_CREDIT_PCT_OF_WIDTH = 0.03
 IC_CREDIT_PCT_RELAXATION_SCHEDULE: tuple[float, ...] = (0.03, 0.025, 0.02, 0.015, 0.01)
 MIN_IC_ANNUALIZED_RETURN_PCT = 5.0
 IC_RETURN_TOP_N = 5
-
-
-def _meets_ic_pop_floor(ctx: EngineContext, pop: float) -> bool:
-    """Iron condor soft PoP floor: target minus tolerance."""
-    if not requires_pop_gate(ctx):
-        return True
-    return pop >= ctx.min_pop_pct - IC_POP_FLOOR_TOLERANCE_PCT
 
 
 def pop_iron_condor_short_pair(
@@ -82,10 +77,11 @@ def score_iron_condor_candidate(
     unit_span: float | None,
     dte: int | None,
 ) -> float:
-    """Annualized carry on SPAN when available, else proxy score."""
+    """Annualized carry on SPAN when available, else ROR-only proxy."""
+    del pop_pct
     if unit_span and unit_span > 0 and dte is not None and dte > 0:
         return annualized_carry_percent_on_span(net_premium, dte, unit_span)
-    return score_credit_trade(pop_pct, net_premium, max_loss, span_margin=unit_span)
+    return net_premium / max(max_loss, 1.0)
 
 
 def _geometric_mean(values: list[float]) -> float:
@@ -106,20 +102,21 @@ def score_iron_condor_ror(
     pop_pct: float,
     net_premium: float,
     max_loss: float,
-    target_pop: float,
+    min_pop_pct: float,
     leg_quotes: list[QuoteRow],
 ) -> tuple[float, dict[str, float]]:
-    """Return-on-risk composite score for iron condor ranking."""
+    """Credit proxy: ROR × liquidity × spread; PoP tiebreak only at floor."""
     ror = net_premium / max(max_loss, 1.0)
-    pop_weight = (pop_pct / max(target_pop, 1.0)) ** 0.5
     liquidity_vals = [q.liquidity_score for q in leg_quotes if q.liquidity_score > 0]
     spread_vals = [_leg_spread_score(q) for q in leg_quotes]
     liquidity_weight = _geometric_mean(liquidity_vals) if liquidity_vals else 0.5
     spread_weight = _geometric_mean(spread_vals) if spread_vals else 0.5
-    score = ror * pop_weight * liquidity_weight * spread_weight
+    score = ror * liquidity_weight * spread_weight
+    pop_tiebreak = min(pop_pct, min_pop_pct) / max(min_pop_pct, 1.0)
+    score *= 1.0 + 1e-4 * pop_tiebreak
     factors = {
         "ror": round(ror, 6),
-        "pop_weight": round(pop_weight, 6),
+        "pop_tiebreak": round(pop_tiebreak, 6),
         "liquidity_weight": round(liquidity_weight, 6),
         "spread_weight": round(spread_weight, 6),
     }
@@ -127,45 +124,96 @@ def score_iron_condor_ror(
 
 
 def build_ranking_summary(
-    winner_credit: float,
-    winner_pop: float,
-    winner_ror: float,
-    runner_credit: float,
-    runner_pop: float,
-    runner_ror: float,
+    *,
+    higher_rank: int,
+    lower_rank: int,
+    viewing_rank: int,
+    higher_credit: float,
+    higher_pop: float,
+    higher_ror: float,
+    lower_credit: float,
+    lower_pop: float,
+    lower_ror: float,
 ) -> str:
-    """Explain why the higher-ranked condor beat the runner-up."""
-    parts: list[str] = []
-    credit_delta = winner_credit - runner_credit
+    """Explain how the higher-ranked condor compares to the adjacent lower rank."""
+    if viewing_rank == higher_rank:
+        lead = f"Ranked #{higher_rank} over #{lower_rank}:"
+    else:
+        lead = f"#{higher_rank} ranks above this variant:"
+
+    details: list[str] = []
+    credit_delta = higher_credit - lower_credit
     if abs(credit_delta) >= 1.0:
-        parts.append(f"Higher credit ({credit_delta:+.0f})")
-    pop_delta = winner_pop - runner_pop
+        if credit_delta > 0:
+            details.append(f"₹{credit_delta:.0f} more net credit per lot")
+        else:
+            details.append(f"₹{abs(credit_delta):.0f} less net credit per lot")
+    pop_delta = higher_pop - lower_pop
     if abs(pop_delta) >= 0.5:
-        parts.append(f"PoP {winner_pop:.1f}% vs {runner_pop:.1f}%")
-    if abs(winner_ror - runner_ror) >= 0.001:
-        parts.append(f"better ROR ({winner_ror:.3f} vs {runner_ror:.3f})")
-    if not parts:
-        return "Higher composite ROR score."
-    return "; ".join(parts) + "."
+        details.append(
+            f"PoP #{higher_rank} {higher_pop:.1f}% vs #{lower_rank} {lower_pop:.1f}%"
+        )
+    if abs(higher_ror - lower_ror) >= 0.001:
+        details.append(
+            f"ROR #{higher_rank} {higher_ror:.3f} vs #{lower_rank} {lower_ror:.3f}"
+        )
+    if not details:
+        details.append("higher composite ROR score")
+    return f"{lead} {'; '.join(details)}."
+
+
+def _ic_short_strikes_around_target(
+    strikes: list[int],
+    cache: dict[tuple[int, Right], QuoteRow],
+    right: Right,
+    target: float,
+    *,
+    inward: int = IC_SHORT_STRIKES_INWARD,
+    outward: int = IC_SHORT_STRIKES_OUTWARD,
+) -> list[int]:
+    """Strikes on both sides of target delta: ATM-ward (more credit) and OTM-ward."""
+    scored: list[tuple[float, int]] = []
+    for s in strikes:
+        q = cache.get((s, right))
+        d = abs_delta(q)
+        if not q or not q.liquid or d is None:
+            continue
+        scored.append((d, s))
+
+    atmward = sorted(
+        [(d, s) for d, s in scored if d >= target],
+        key=lambda x: x[0],
+    )[:inward]
+    otmward = sorted(
+        [(d, s) for d, s in scored if d <= target],
+        key=lambda x: -x[0],
+    )[:outward]
+
+    out: list[int] = []
+    seen: set[int] = set()
+    for _, s in atmward + otmward:
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
 
 
 def iron_condor_short_pairs(ctx: EngineContext) -> list[tuple[int, int]]:
     """Return (short_put, short_call) shortlists for iron condor optimization."""
     target = pop_to_short_delta(ctx.min_pop_pct, short_legs=2)
-    short_puts = strikes_ranked_by_delta(
+    short_puts = _ic_short_strikes_around_target(
         [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
         ctx.cache,
         "Put",
         target,
-    )[:IC_TOP_K_SHORT_STRIKES]
-    short_calls = strikes_ranked_by_delta(
+    )
+    short_calls = _ic_short_strikes_around_target(
         [s for s in ctx.liquid_ce_strikes if s > ctx.spot],
         ctx.cache,
         "Call",
         target,
-    )[:IC_TOP_K_SHORT_STRIKES]
+    )
 
-    pop_floor = ctx.min_pop_pct - IC_POP_FLOOR_TOLERANCE_PCT
     out: list[tuple[int, int]] = []
     for sp in short_puts:
         qp = ctx.cache.get((sp, "Put"))
@@ -177,7 +225,7 @@ def iron_condor_short_pairs(ctx: EngineContext) -> list[tuple[int, int]]:
                 qp.delta if qp else None,
                 qc.delta if qc else None,
             )
-            if ctx.strategy_category == "income" and est_pop < pop_floor:
+            if ctx.strategy_category == "income" and est_pop < ctx.min_pop_pct:
                 continue
             out.append((sp, sc))
     return out
@@ -455,7 +503,7 @@ def enumerate_symmetric_iron_condors(
         ]
         pop_detail = pop_detail_for_legs(ctx, legs)
         pop = pop_detail.pop_pct
-        if not _meets_ic_pop_floor(ctx, pop):
+        if not meets_pop_floor(ctx, pop):
             _reject(
                 "pop_floor",
                 wing_width=w,
@@ -479,10 +527,11 @@ def enumerate_symmetric_iron_condors(
         )
         net_collected = credit * qty
         leg_quotes: list[QuoteRow] = [sp, lpq, sc, lcq]
+        max_loss_total = max_loss_u * qty
         final_score, score_factors = score_iron_condor_ror(
-            pop, net_collected, max_loss_u * qty, ctx.min_pop_pct, leg_quotes
+            pop, net_collected, max_loss_total, ctx.min_pop_pct, leg_quotes
         )
-        proxy_score = score_credit_trade(pop, net_collected, max_loss_u * qty)
+        proxy_score = net_collected / max(max_loss_total, 1.0)
         out.append(
             IronCondorCandidate(
                 short_put=short_put,
@@ -519,7 +568,7 @@ def evaluate_symmetric_iron_condor(
     candidates = enumerate_symmetric_iron_condors(ctx, short_put, short_call)
     if not candidates:
         return None
-    return max(candidates, key=lambda c: (c.final_score, c.net_collected))
+    return max(candidates, key=lambda c: (c.final_score, c.net_collected, c.pop))
 
 
 def iron_wings_symmetric(
@@ -548,22 +597,31 @@ def iron_wings_symmetric(
 def prefetch_iron_condor_strikes(ctx: EngineContext) -> set[tuple[int, Right]]:
     """Strike/right pairs needed for iron condor (and iron butterfly wings)."""
     from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import (
-        estimate_strike_for_abs_delta,
         prefetch_atm_pairs,
     )
 
     pairs = prefetch_atm_pairs(ctx)
-    d2 = pop_to_short_delta(ctx.min_pop_pct, 2)
-    short_put = estimate_strike_for_abs_delta(ctx, "Put", d2)
-    short_call = estimate_strike_for_abs_delta(ctx, "Call", d2)
-    for strike, right in ((short_put, "Put"), (short_call, "Call")):
-        if strike is not None:
-            pairs.add((strike, right))
-    if short_put is not None and short_call is not None:
+    target = pop_to_short_delta(ctx.min_pop_pct, 2)
+    short_puts = _ic_short_strikes_around_target(
+        [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
+        ctx.cache,
+        "Put",
+        target,
+    )
+    short_calls = _ic_short_strikes_around_target(
+        [s for s in ctx.liquid_ce_strikes if s > ctx.spot],
+        ctx.cache,
+        "Call",
+        target,
+    )
+    for s in short_puts:
+        pairs.add((s, "Put"))
         for mult in WING_WIDTH_MULTIPLIERS:
-            spread = mult * ctx.strike_step
-            pairs.add((short_put - spread, "Put"))
-            pairs.add((short_call + spread, "Call"))
+            pairs.add((s - mult * ctx.strike_step, "Put"))
+    for s in short_calls:
+        pairs.add((s, "Call"))
+        for mult in WING_WIDTH_MULTIPLIERS:
+            pairs.add((s + mult * ctx.strike_step, "Call"))
     return pairs
 
 
@@ -726,9 +784,13 @@ def _ic_credit_search_rationale(min_credit_pct_used: float) -> str:
         pct_display = min_credit_pct_used * 100
         return (
             f"Credit pct relaxed to {pct_display:g}% to find survivors; "
-            "enumerated top-K short pairs × all wing widths with ROR scoring."
+            "bidirectional short strikes × all wing widths; PoP hard floor; "
+            "credit/annualized-return ranking."
         )
-    return "Enumerated top-K short pairs × all wing widths with ROR scoring."
+    return (
+        "Bidirectional short strikes × all wing widths; PoP hard floor; "
+        "credit/annualized-return ranking."
+    )
 
 
 def _pick_top_candidates(
@@ -741,7 +803,7 @@ def _pick_top_candidates(
     """Proxy-shortlist finalists, margin only those, then rank by SPAN-informed return."""
     dte = days_to_expiry(ctx.expiry_display)
     shortlist = sorted(
-        candidates, key=lambda c: (c.final_score, c.net_collected), reverse=True
+        candidates, key=lambda c: (c.final_score, c.net_collected, c.pop), reverse=True
     )[:top_n]
 
     span_scores: list[dict] = []
@@ -767,7 +829,7 @@ def _pick_top_candidates(
 
     def rank_key(item: tuple[IronCondorCandidate, float]) -> tuple[float, float, float]:
         cand, ann = item
-        return (cand.final_score, ann, cand.net_collected)
+        return (ann, cand.net_collected, cand.pop)
 
     winners = sorted(scored, key=rank_key, reverse=True)
     return winners, span_scores
@@ -880,7 +942,8 @@ def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
             {"finalists": len(span_scores)},
             {"scores": span_scores},
             rationale=(
-                "Proxy-shortlisted delivered finalists; SPAN annualized return breaks near-ties."
+                "Credit-proxy shortlist; finalists ranked by SPAN annualized return, "
+                "then net credit; PoP tiebreak only."
             ),
         )
 
@@ -901,22 +964,28 @@ def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
         if rank == 1 and len(winners) > 1:
             runner = winners[1][0]
             summary = build_ranking_summary(
-                cand.net_collected,
-                cand.pop,
-                cand.score_factors.get("ror", 0.0),
-                runner.net_collected,
-                runner.pop,
-                runner.score_factors.get("ror", 0.0),
+                higher_rank=1,
+                lower_rank=2,
+                viewing_rank=1,
+                higher_credit=cand.net_collected,
+                higher_pop=cand.pop,
+                higher_ror=cand.score_factors.get("ror", 0.0),
+                lower_credit=runner.net_collected,
+                lower_pop=runner.pop,
+                lower_ror=runner.score_factors.get("ror", 0.0),
             )
         elif rank > 1:
             prev = winners[rank - 2][0]
             summary = build_ranking_summary(
-                prev.net_collected,
-                prev.pop,
-                prev.score_factors.get("ror", 0.0),
-                cand.net_collected,
-                cand.pop,
-                cand.score_factors.get("ror", 0.0),
+                higher_rank=rank - 1,
+                lower_rank=rank,
+                viewing_rank=rank,
+                higher_credit=prev.net_collected,
+                higher_pop=prev.pop,
+                higher_ror=prev.score_factors.get("ror", 0.0),
+                lower_credit=cand.net_collected,
+                lower_pop=cand.pop,
+                lower_ror=cand.score_factors.get("ror", 0.0),
             )
         results.append(
             _candidate_to_result(
