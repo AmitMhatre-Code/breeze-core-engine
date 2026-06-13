@@ -99,10 +99,6 @@ class DirectionalAuditState:
     shortlist_scores: list[dict] = field(default_factory=list)
 
 
-def _profile_label(profile: RiskRewardProfile) -> str:
-    return profile.capitalize()
-
-
 def _format_rupees(amount: float) -> str:
     return format_indian_money_compact(amount)
 
@@ -736,7 +732,7 @@ def build_directional_result(
     is_spread: bool,
 ) -> StrategyResult:
     profile = candidate.conviction_profile
-    name = f"{base_name} ({_profile_label(profile)})"
+    name = base_name
     if is_spread:
         rr = f"{candidate.max_loss:.0f} : {candidate.max_gain:.0f}"
         hero, secondary = _spread_tile_metrics(candidate)

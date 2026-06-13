@@ -700,50 +700,57 @@ export default function StrategyBuilderNewPage() {
                 <div className="grid gap-4 lg:grid-cols-2">
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Income strategies</h3>
-                    <label className={sb.fieldRow}>
-                      <span
-                        className={`${sb.fieldLabelInline} flex min-w-[9.5rem] items-center gap-1.5`}
-                      >
-                        Minimum PoP (%)
-                        <FieldHint text={MIN_POP_HINT} />
-                      </span>
-                      <input
-                        type="number"
-                        className={`${sb.input} min-w-0 flex-1`}
-                        value={minPopPct}
-                        onChange={(e) => setMinPopPct(e.target.value)}
-                        min={1}
-                        max={99}
-                        step={1}
-                      />
-                    </label>
-                    {minPopPctNum == null && minPopPct.trim() !== "" ? (
-                      <p className="text-sm text-red-600 dark:text-red-400">
-                        Minimum PoP must be between 1 and 99.
-                      </p>
-                    ) : null}
-                    <label className={sb.fieldRow}>
-                      <span
-                        className={`${sb.fieldLabelInline} flex min-w-[9.5rem] items-center gap-1.5`}
-                      >
-                        Min ann. return (%)
-                        <FieldHint text={MIN_ANN_RETURN_HINT} />
-                      </span>
-                      <input
-                        type="number"
-                        className={`${sb.input} min-w-0 flex-1`}
-                        value={minAnnReturnPct}
-                        onChange={(e) => setMinAnnReturnPct(e.target.value)}
-                        min={0}
-                        max={100}
-                        step={0.5}
-                      />
-                    </label>
-                    {minAnnReturnPctNum == null && minAnnReturnPct.trim() !== "" ? (
-                      <p className="text-sm text-red-600 dark:text-red-400">
-                        Minimum annualized return must be between 0 and 100.
-                      </p>
-                    ) : null}
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="min-w-0 space-y-1">
+                        <label className={sb.fieldRow}>
+                          <span
+                            className={`${sb.fieldLabelInline} flex min-w-[9.5rem] items-center gap-1.5`}
+                          >
+                            Minimum PoP (%)
+                            <FieldHint text={MIN_POP_HINT} />
+                          </span>
+                          <input
+                            type="number"
+                            className={`${sb.input} min-w-0 flex-1`}
+                            value={minPopPct}
+                            onChange={(e) => setMinPopPct(e.target.value)}
+                            min={1}
+                            max={99}
+                            step={1}
+                          />
+                        </label>
+                        {minPopPctNum == null && minPopPct.trim() !== "" ? (
+                          <p className="text-sm text-red-600 dark:text-red-400">
+                            Minimum PoP must be between 1 and 99.
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="min-w-0 space-y-1">
+                        <label className={sb.fieldRow}>
+                          <span
+                            className={`${sb.fieldLabelInline} flex min-w-[9.5rem] items-center gap-1.5`}
+                          >
+                            Min ann. return (%)
+                            <FieldHint text={MIN_ANN_RETURN_HINT} />
+                          </span>
+                          <input
+                            type="number"
+                            className={`${sb.input} min-w-0 flex-1`}
+                            value={minAnnReturnPct}
+                            onChange={(e) => setMinAnnReturnPct(e.target.value)}
+                            min={0}
+                            max={100}
+                            step={0.5}
+                          />
+                        </label>
+                        {minAnnReturnPctNum == null &&
+                        minAnnReturnPct.trim() !== "" ? (
+                          <p className="text-sm text-red-600 dark:text-red-400">
+                            Minimum annualized return must be between 0 and 100.
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
                     <button
                       type="button"
                       className={`${sb.btnPrimary} w-full`}

@@ -163,7 +163,7 @@ class TestResizeResultsToBudgets(unittest.TestCase):
         ctx = _ctx(margin_rupees=500_000, max_loss_rupees=200_000)
         result = StrategyResult(
             "long_call",
-            "Long Call (Moderate)",
+            "Long Call",
             status="ok",
             max_loss=7_150.0,
             net_premium=-7_150.0,
@@ -190,7 +190,7 @@ class TestDirectionalTileRefresh(unittest.TestCase):
     def test_refresh_spread_tiles_match_scaled_loss_and_margins(self):
         result = StrategyResult(
             "bull_call_spread",
-            "Bull Call Spread (Moderate)",
+            "Bull Call Spread",
             status="ok",
             conviction_profile="moderate",
             max_loss=18_655.0,
