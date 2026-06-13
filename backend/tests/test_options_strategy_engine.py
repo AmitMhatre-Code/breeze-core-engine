@@ -28,7 +28,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.greeks import (
     snap_strike,
     strike_for_abs_delta,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.icici_async_fetch import IciciCallBudget
 from icici_breeze_backend.app.services.processor import OptionChainBackoff, processor
 
 
@@ -140,8 +139,10 @@ class TestMarginBatching(unittest.TestCase):
             spot=23500,
             atm_strike=23500,
         )
-        _attach_margins_and_returns(
+        asyncio.run(
+            _attach_margins_and_returns(
             processor, "u1", "NFO", "NIFTY", "09-Jun-2025", results, margin_ctx
+        )
         )
         self.assertEqual(processor.strategy_builder_margin.call_count, 2)
 
@@ -370,35 +371,24 @@ class TestExpandChainToLiquidityBoundary(unittest.TestCase):
 
 
 class TestFetchOptionChainBackoff(unittest.TestCase):
-    def setUp(self) -> None:
-        from icici_breeze_backend.app.services.icici_api_pacing import GlobalIciciApiPacer
-
-        GlobalIciciApiPacer.reset_user("u1")
-
-    def test_503_backoff_waits_user_pause_then_succeeds(self):
+    def test_success_returns_quote(self):
         proc = processor()
         backoff = OptionChainBackoff(pause_seconds=2)
         mock_breeze = MagicMock()
-        mock_breeze.get_option_chain_quotes.side_effect = [
-            {"Status": 503, "Error": "busy"},
-            {"Status": 503, "Error": "busy"},
-            {
-                "Status": 200,
-                "Success": [
-                    {
-                        "strike_price": 23500,
-                        "total_buy_qty": 10,
-                        "total_sell_qty": 10,
-                        "ltp": 1,
-                        "best_bid_price": 1,
-                        "best_offer_price": 1,
-                    }
-                ],
-            },
-        ]
-        with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch(
-            "icici_breeze_backend.app.services.processor.time.sleep"
-        ) as mock_sleep:
+        mock_breeze.get_option_chain_quotes.return_value = {
+            "Status": 200,
+            "Success": [
+                {
+                    "strike_price": 23500,
+                    "total_buy_qty": 10,
+                    "total_sell_qty": 10,
+                    "ltp": 1,
+                    "best_bid_price": 1,
+                    "best_offer_price": 1,
+                }
+            ],
+        }
+        with patch.object(proc, "get_session_breeze", return_value=mock_breeze):
             res = proc.fetch_option_chain_quotes_sb(
                 "u1",
                 "NIFTY",
@@ -408,11 +398,10 @@ class TestFetchOptionChainBackoff(unittest.TestCase):
                 backoff=backoff,
             )
         self.assertEqual(res["Status"], 200)
-        self.assertEqual(mock_sleep.call_args_list, [call(2.0), call(3.0)])
-        self.assertEqual(mock_breeze.get_option_chain_quotes.call_count, 3)
+        self.assertEqual(mock_breeze.get_option_chain_quotes.call_count, 1)
         self.assertEqual(backoff.consecutive_rate_limited, 0)
 
-    def test_three_consecutive_503_returns_last(self):
+    def test_503_returns_broker_response(self):
         proc = processor()
         backoff = OptionChainBackoff(pause_seconds=1)
         mock_breeze = MagicMock()
@@ -429,29 +418,17 @@ class TestFetchOptionChainBackoff(unittest.TestCase):
                 backoff=backoff,
             )
         self.assertEqual(res["Status"], 503)
-        self.assertEqual(mock_breeze.get_option_chain_quotes.call_count, 3)
-        self.assertEqual(mock_sleep.call_args_list, [call(1.0), call(2.0)])
+        self.assertEqual(mock_breeze.get_option_chain_quotes.call_count, 1)
+        mock_sleep.assert_not_called()
 
-    def test_429_uses_same_user_pause(self):
+    def test_429_returns_broker_response(self):
         proc = processor()
         backoff = OptionChainBackoff(pause_seconds=3)
         mock_breeze = MagicMock()
-        mock_breeze.get_option_chain_quotes.side_effect = [
-            {"Status": 429, "Error": "too many"},
-            {
-                "Status": 200,
-                "Success": [
-                    {
-                        "strike_price": 23500,
-                        "total_buy_qty": 10,
-                        "total_sell_qty": 10,
-                        "ltp": 1,
-                        "best_bid_price": 1,
-                        "best_offer_price": 1,
-                    }
-                ],
-            },
-        ]
+        mock_breeze.get_option_chain_quotes.return_value = {
+            "Status": 429,
+            "Error": "too many",
+        }
         with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch(
             "icici_breeze_backend.app.services.processor.time.sleep"
         ) as mock_sleep:
@@ -463,8 +440,9 @@ class TestFetchOptionChainBackoff(unittest.TestCase):
                 "Call",
                 backoff=backoff,
             )
-        self.assertEqual(res["Status"], 200)
-        self.assertEqual(mock_sleep.call_args_list, [call(3.0)])
+        self.assertEqual(res["Status"], 429)
+        self.assertEqual(mock_breeze.get_option_chain_quotes.call_count, 1)
+        mock_sleep.assert_not_called()
 
 
 class TestBuildLiquidityCacheUserBackoff(unittest.TestCase):
@@ -535,37 +513,6 @@ class TestStrikeForAbsDelta(unittest.TestCase):
         snapped = snap_strike(strikes, k, prefer="floor")
         self.assertIsNotNone(snapped)
         self.assertLess(snapped, 23500)
-
-
-class TestIciciCallBudget(unittest.IsolatedAsyncioTestCase):
-    async def test_blocks_when_minute_budget_exhausted(self):
-        clock = [0.0]
-
-        def fake_monotonic() -> float:
-            return clock[0]
-
-        async def advance(sec: float) -> None:
-            clock[0] += sec
-
-        budget = IciciCallBudget(max_per_minute=2, max_concurrent=2)
-        with patch(
-            "icici_breeze_backend.app.services.options_strategy_engine.icici_async_fetch.time.monotonic",
-            side_effect=fake_monotonic,
-        ), patch(
-            "icici_breeze_backend.app.services.options_strategy_engine.icici_async_fetch.asyncio.sleep",
-            new=advance,
-        ):
-            await budget.acquire()
-            budget.release()
-            await budget.acquire()
-            budget.release()
-
-            task = asyncio.create_task(budget.acquire())
-            await advance(0.01)
-            self.assertFalse(task.done())
-            await advance(60.0)
-            await task
-            budget.release()
 
 
 class TestNakedCeDeltaAnchor(unittest.TestCase):

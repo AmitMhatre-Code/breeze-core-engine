@@ -5,8 +5,11 @@ from typing import Any
 
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     legs_to_margin_input,
-    parse_float,
     short_lots_in_legs,
+)
+from icici_breeze_backend.app.services.options_strategy_engine.margin_async_fetch import (
+    MarginFetchRequest,
+    fetch_margins_concurrent,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
     legs_at_lots,
@@ -18,7 +21,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, StrategyResult
 
 
-def resize_results_to_budgets(
+async def resize_results_to_budgets(
     proc: Any,
     user_id: str,
     exchange_code: str,
@@ -31,32 +34,43 @@ def resize_results_to_budgets(
     """Size each ok trade from one-lot SPAN margin and dual margin/max-loss budgets."""
     L = ctx.lot_size
 
+    margin_requests: list[MarginFetchRequest] = []
+    for result in results:
+        if result.status != "ok" or not result.legs:
+            continue
+        struct_key = structural_margin_key(result.legs)
+        if struct_key in ctx.unit_span_by_structure:
+            continue
+        one_lot_legs = legs_at_lots(result.legs, L, lots=1)
+        margin_input = legs_to_margin_input(
+            one_lot_legs, stock_code, exchange_code, expiry_display
+        )
+        margin_requests.append(
+            MarginFetchRequest(
+                cache_key=struct_key,
+                margin_input=margin_input,
+                strategy_id=result.strategy_id,
+                phase="unit_span_sizing",
+            )
+        )
+
+    if margin_requests:
+        spans = await fetch_margins_concurrent(
+            proc,
+            user_id,
+            exchange_code,
+            margin_requests,
+            audit=audit,
+            existing_cache=ctx.unit_span_by_structure,
+        )
+        ctx.unit_span_by_structure.update(spans)
+
     for result in results:
         if result.status != "ok" or not result.legs:
             continue
 
         struct_key = structural_margin_key(result.legs)
-        if struct_key not in ctx.unit_span_by_structure:
-            one_lot_legs = legs_at_lots(result.legs, L, lots=1)
-            margin_input = legs_to_margin_input(
-                one_lot_legs, stock_code, exchange_code, expiry_display
-            )
-            res = proc.strategy_builder_margin(
-                user_id,
-                exchange_code,
-                margin_input,
-                audit=audit,
-                audit_context={
-                    "strategy_id": result.strategy_id,
-                    "legs": margin_input,
-                    "phase": "unit_span_sizing",
-                },
-            )
-            ctx.unit_span_by_structure[struct_key] = parse_float(
-                (res.get("Success") or {}).get("span_margin_required")
-            )
-
-        unit_span = ctx.unit_span_by_structure[struct_key]
+        unit_span = ctx.unit_span_by_structure.get(struct_key, 0.0)
         if unit_span <= 0:
             result.status = "skipped"
             result.skip_reason = "Could not resolve SPAN margin for one lot."

@@ -203,6 +203,24 @@ def get_today_count(user_id: str) -> int:
         return 0
 
 
+def is_daily_limit_reached(user_id: str) -> bool:
+    """True when the user's internal daily Breeze call count has reached the cap."""
+    return get_today_count(user_id) >= API_CALLS_LIMIT_PER_DAY
+
+
+def get_usage_warning(user_id: str) -> str | None:
+    """Return a proactive warning when the user is in the final 1000-call band."""
+    count = get_today_count(user_id)
+    if count < GREEN_MAX or count >= API_CALLS_LIMIT_PER_DAY:
+        return None
+    remaining = API_CALLS_LIMIT_PER_DAY - count
+    return (
+        f"You have used {count} of your {API_CALLS_LIMIT_PER_DAY} daily ICICI API calls. "
+        f"You have only {remaining} calls remaining — use them carefully during critical "
+        "operations such as placing or cancelling orders."
+    )
+
+
 def get_usage_for_display(user_id: str) -> dict:
     """Return dict for template: api_calls_today, api_calls_limit, api_usage_band (green|amber|red)."""
     count = get_today_count(user_id) if user_id else 0

@@ -7,6 +7,7 @@ export type BreakOrderChunkResponse = {
   contract_label?: string;
   price_f?: number;
   rate_limited: boolean;
+  daily_limit_exhausted?: boolean;
   success: boolean;
   placed_quantity: number;
   danger_line: string | null;
@@ -76,6 +77,14 @@ export async function runBreakOrderChunks(
     }
 
     if (res.rate_limited) {
+      if (res.daily_limit_exhausted) {
+        return {
+          ok: false,
+          terminalError:
+            res.danger_line ??
+            "You have been throttled by ICICI and have reached the daily API limit.",
+        };
+      }
       const sec = Math.max(
         1,
         Math.floor(Number(res.rate_limit_pause_seconds) || 1),
@@ -115,6 +124,7 @@ export async function runBreakOrderChunks(
 export type CancelOneResponse = {
   success: boolean;
   rate_limited: boolean;
+  daily_limit_exhausted?: boolean;
   error: string | null;
   rate_limit_pause_seconds: number;
 };
@@ -132,6 +142,16 @@ export async function runCancelOrdersWithPacing(args: {
         order_id: oid,
       });
       if (res.rate_limited) {
+        if (res.daily_limit_exhausted) {
+          results.push({
+            order_ref: oid,
+            success: false,
+            error:
+              res.error ??
+              "You have been throttled by ICICI and have reached the daily API limit.",
+          });
+          break;
+        }
         const sec = Math.max(
           1,
           Math.floor(Number(res.rate_limit_pause_seconds) || 1),

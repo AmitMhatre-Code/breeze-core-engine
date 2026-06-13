@@ -7,6 +7,7 @@ functions live in ``requests.api`` and call ``requests.api.request`` by name. Pa
 almost no SDK traffic was counted. We patch ``requests.api.request`` (and align
 ``requests.request`` / ``requests.get``).
 """
+import json
 import logging
 import requests as _requests
 
@@ -15,7 +16,8 @@ _logger = logging.getLogger(__name__)
 
 
 def _is_breeze_url(url):
-    return url and ("breezeapi" in str(url) or "icicidirect" in str(url))
+    u = str(url or "")
+    return bool(u and "api.icicidirect.com" in u and "breezeapi" in u)
 
 
 def _preview_for_log(text: str, max_len: int = 320) -> str:
@@ -56,6 +58,24 @@ def _log_breeze_parse_failure(
     )
 
 
+class _SyntheticRawResponse:
+    """Minimal requests.Response stand-in for limiter-generated throttle payloads."""
+
+    def __init__(self, status_code: int, text: str) -> None:
+        self.status_code = status_code
+        self.text = text
+        self.headers: dict[str, str] = {}
+
+    def json(self):
+        return json.loads(self.text)
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, chunk_size=1024, decode_unicode=False):
+        yield self.text.encode("utf-8")
+
+
 class _SafeBreezeResponse:
     """Wraps Breeze API response so .json() never raises on 5xx/HTML; SDK gets Status/Error dict instead."""
 
@@ -80,7 +100,8 @@ class _SafeBreezeResponse:
 
     def json(self):
         text = self.text
-        ct = (self._raw.headers.get("Content-Type") or "").split(";")[0].strip() or None
+        ct = (getattr(self._raw, "headers", {}) or {}).get("Content-Type", "")
+        ct = (ct or "").split(";")[0].strip() or None
         if self._raw.status_code != 200:
             _log_breeze_parse_failure(
                 reason="non_200_http",
@@ -91,6 +112,12 @@ class _SafeBreezeResponse:
                 body_len=len(text),
                 body_preview=text[:800] if text else "",
             )
+            try:
+                parsed = self._raw.json()
+                if isinstance(parsed, dict) and parsed.get("Status") is not None:
+                    return parsed
+            except Exception:
+                pass
             return {
                 "Status": self._raw.status_code,
                 "Error": (text[:500] if text else "Request failed"),
@@ -124,14 +151,48 @@ class _SafeBreezeResponse:
         return data
 
 
-def _record_breeze_call(url):
-    """Count one API call per HTTP request to Breeze (lazy import to avoid circular deps)."""
-    try:
-        from icici_breeze_backend.app.services.api_usage import record_breeze_call_if_in_request
+def _classify_requests_response(raw) -> tuple[int, dict | None, str | None]:
+    http_status = int(getattr(raw, "status_code", 0) or 0)
+    body: dict | None = None
+    err_text: str | None = None
+    text = getattr(raw, "text", None) or ""
+    if http_status == 200:
+        try:
+            data = raw.json()
+            if isinstance(data, dict):
+                body = data
+                err_text = str(data.get("Error") or data.get("error") or "") or None
+        except Exception:
+            err_text = text[:500] if text else None
+    else:
+        err_text = text[:500] if text else "Request failed"
+        try:
+            data = raw.json()
+            if isinstance(data, dict):
+                body = data
+                err_text = str(data.get("Error") or data.get("error") or err_text)
+        except Exception:
+            pass
+    return http_status, body, err_text
 
-        record_breeze_call_if_in_request(str(url) if url else "")
-    except Exception:
-        pass
+
+def _run_breeze_request(method: str, url: str, perform_http):
+    from icici_breeze_backend.app.services.icici_api_pacing import GlobalIciciApiLimiter
+
+    m = method.upper()
+    u = str(url) if url else ""
+
+    def build_result(error_dict: dict):
+        payload = json.dumps(error_dict)
+        return _SyntheticRawResponse(int(error_dict.get("Status") or 429), payload)
+
+    out = GlobalIciciApiLimiter.request_breeze_http(
+        perform_http,
+        record_url=u,
+        classify_response=_classify_requests_response,
+        build_result=build_result,
+    )
+    return _SafeBreezeResponse(out, method=m, url=u)
 
 
 def _patched_request(method, url, **kwargs):
@@ -148,10 +209,14 @@ def _patched_request(method, url, **kwargs):
         prep.headers = dict(kwargs.get("headers") or {})
         prep.body = body
         prep.headers["Content-Length"] = str(len(body))
-        try:
-            out = Session().send(prep, timeout=kwargs.get("timeout"))
-        except Exception as e:
-            if _is_breeze_url(u):
+
+        def perform():
+            return Session().send(prep, timeout=kwargs.get("timeout"))
+
+        if _is_breeze_url(u):
+            try:
+                return _run_breeze_request(m, u, perform)
+            except Exception as e:
                 _logger.warning(
                     "breeze_http_transport_error method=%s url=%s err=%s",
                     m,
@@ -159,11 +224,38 @@ def _patched_request(method, url, **kwargs):
                     e,
                     exc_info=True,
                 )
+                raise
+        try:
+            return perform()
+        except Exception as e:
+            _logger.warning(
+                "breeze_http_transport_error method=%s url=%s err=%s",
+                m,
+                u,
+                e,
+                exc_info=True,
+            )
             raise
-        _record_breeze_call(url)
-        return _SafeBreezeResponse(out, method=m, url=u) if _is_breeze_url(u) else out
+
+    if _is_breeze_url(u):
+
+        def perform():
+            return _orig_request(method, url, **kwargs)
+
+        try:
+            return _run_breeze_request(m, u, perform)
+        except Exception as e:
+            _logger.warning(
+                "breeze_http_transport_error method=%s url=%s err=%s",
+                m,
+                u,
+                e,
+                exc_info=True,
+            )
+            raise
+
     try:
-        out = _orig_request(method, url, **kwargs)
+        return _orig_request(method, url, **kwargs)
     except Exception as e:
         if _is_breeze_url(u):
             _logger.warning(
@@ -174,8 +266,6 @@ def _patched_request(method, url, **kwargs):
                 exc_info=True,
             )
         raise
-    _record_breeze_call(url)
-    return _SafeBreezeResponse(out, method=m, url=u) if _is_breeze_url(u) else out
 
 
 def apply_requests_patch() -> None:

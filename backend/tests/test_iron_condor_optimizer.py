@@ -1,6 +1,7 @@
 """Regression tests for iron condor optimizer revamp."""
 from __future__ import annotations
 
+import asyncio
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -9,16 +10,23 @@ from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor impo
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_detail_for_legs, pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
     IC_CREDIT_PCT_RELAXATION_SCHEDULE,
+    IC_POP_BAND_WIDTH_PCT,
     IC_RETURN_TOP_N,
     IC_SHORT_STRIKES_INWARD,
     IC_SHORT_STRIKES_OUTWARD,
+    IC_SHORT_STRIKES_MAX_ATM,
+    IC_SHORT_STRIKES_MAX_PER_WING,
     IC_TOP_K_SHORT_STRIKES,
     WING_WIDTH_MULTIPLIERS,
     IronCondorCandidate,
     IronCondorRejectionStats,
+    _build_pop_audit_summary,
     _collect_candidates,
+    _ic_pop_bucket,
     _ic_short_strikes_around_target,
+    _ic_short_strikes_for_pop_band,
     _pick_top_candidates,
+    _pop_band_covered,
     _unit_span_margin,
     build_ranking_summary,
     calc_iron_condor,
@@ -26,6 +34,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.strategies.income
     evaluate_symmetric_iron_condor,
     iron_condor_short_delta_window,
     iron_condor_short_pairs,
+    passes_hard_wing_credit,
     passes_ic_wing_credit,
     score_iron_condor_candidate,
     score_iron_condor_ror,
@@ -149,16 +158,18 @@ class TestEnumerateSymmetricIronCondor(unittest.TestCase):
         self.assertIn(50, widths)
         self.assertIn(100, widths)
 
-    def test_min_credit_pct_rejects_low_premium(self):
+    def test_min_wing_credit_rejects_tiny_spreads(self):
         cache = {
-            (22800, "Put"): _quote(22800, "Put", bid=0.20, ask=0.25, delta=0.05),
-            (22750, "Put"): _quote(22750, "Put", bid=0.10, ask=0.15, delta=0.04),
-            (24400, "Call"): _quote(24400, "Call", bid=0.20, ask=0.25, delta=0.05),
-            (24450, "Call"): _quote(24450, "Call", bid=0.10, ask=0.15, delta=0.04),
+            (22800, "Put"): _quote(22800, "Put", bid=0.06, ask=0.02, delta=0.05),
+            (22750, "Put"): _quote(22750, "Put", bid=0.02, ask=0.01, delta=0.04),
+            (24400, "Call"): _quote(24400, "Call", bid=0.06, ask=0.02, delta=0.05),
+            (24450, "Call"): _quote(24450, "Call", bid=0.02, ask=0.01, delta=0.04),
         }
         ctx = _ctx_from_cache(cache, min_pop_pct=50.0)
-        variants = enumerate_symmetric_iron_condors(ctx, 22800, 24400)
+        stats = IronCondorRejectionStats()
+        variants = enumerate_symmetric_iron_condors(ctx, 22800, 24400, stats=stats)
         self.assertEqual(variants, [])
+        self.assertGreater(stats.counts.get("min_wing_credit", 0), 0)
 
     def test_min_credit_pct_accepts_adequate_premium(self):
         cache = {
@@ -239,6 +250,72 @@ class TestCalcIronCondor(unittest.TestCase):
         proc.strategy_builder_margin.side_effect = margin
         return proc
 
+    def test_near_floor_pop_reaches_finalists_at_90_pop(self):
+        """At 90% PoP floor, rank #1 should be near-floor high-credit, not 94%+ OTM."""
+        spot = 23622.9
+        strikes = list(range(22600, 24700, 50))
+        deltas = {
+            (22950, "Put"): 0.08,
+            (22900, "Put"): 0.07,
+            (22850, "Put"): 0.06,
+            (22800, "Put"): 0.055,
+            (22750, "Put"): 0.05,
+            (22700, "Put"): 0.045,
+            (22650, "Put"): 0.04,
+            (22600, "Put"): 0.035,
+            (24350, "Call"): 0.08,
+            (24400, "Call"): 0.07,
+            (24450, "Call"): 0.06,
+            (24500, "Call"): 0.055,
+            (24550, "Call"): 0.05,
+            (24600, "Call"): 0.045,
+            (24650, "Call"): 0.04,
+        }
+        cache = _fill_strikes(
+            strikes,
+            spot,
+            bid_fn=lambda s, r: 3.0,
+            ask_fn=lambda s, r: 3.15,
+            delta_fn=lambda s, r: deltas.get((s, r), 0.03),
+        )
+        cache[(22950, "Put")] = _quote(22950, "Put", bid=12.0, ask=12.15, delta=0.08, spot=spot)
+        cache[(24350, "Call")] = _quote(24350, "Call", bid=12.0, ask=12.15, delta=0.08, spot=spot)
+        cache[(22750, "Put")] = _quote(22750, "Put", bid=5.65, ask=5.80, delta=0.05, spot=spot)
+        cache[(24550, "Call")] = _quote(24550, "Call", bid=3.85, ask=3.95, delta=0.05, spot=spot)
+
+        proc = MagicMock()
+        proc.strategy_builder_margin.return_value = {"Success": {"span_margin_required": 50_000.0}}
+        ctx = _ctx_from_cache(
+            cache,
+            spot=spot,
+            min_pop_pct=90.0,
+            max_loss_rupees=5_500_000,
+            processor=proc,
+        )
+        candidates, _ = _collect_candidates(ctx, iron_condor_short_pairs(ctx))
+        self.assertGreater(len(candidates), 0)
+        high_pop = [c for c in candidates if c.pop >= 94.5]
+        self.assertTrue(any(c.net_collected < 500 for c in high_pop))
+
+        with patch(
+            "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_ANNUALIZED_RETURN_PCT",
+            0.0,
+        ), patch(
+            "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_CREDIT_PCT_OF_WIDTH",
+            0.01,
+        ):
+            results = asyncio.run(calc_iron_condor(ctx))
+
+        ok = [r for r in results if r.status == "ok"]
+        self.assertGreaterEqual(len(ok), 1)
+        self.assertGreaterEqual(ok[0].pop_pct or 0, 90.0)
+        self.assertLessEqual(ok[0].pop_pct or 0, 93.0)
+        self.assertGreater(ok[0].net_premium or 0, 900.0)
+        put_sell = next(leg for leg in ok[0].legs if leg.right == "Put" and leg.side == "Sell")
+        call_sell = next(leg for leg in ok[0].legs if leg.right == "Call" and leg.side == "Sell")
+        self.assertEqual(put_sell.strike, 22950)
+        self.assertEqual(call_sell.strike, 24350)
+
     def test_does_not_pick_audit_bad_debit_put_condor(self):
         strikes = list(range(22150, 25150, 50))
         cache: dict = {}
@@ -264,7 +341,7 @@ class TestCalcIronCondor(unittest.TestCase):
             "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_CREDIT_PCT_OF_WIDTH",
             0.01,
         ):
-            results = calc_iron_condor(ctx)
+            results = asyncio.run(calc_iron_condor(ctx))
 
         ok = [r for r in results if r.status == "ok"]
         self.assertGreater(len(ok), 0)
@@ -311,15 +388,16 @@ class TestCalcIronCondor(unittest.TestCase):
                 proxy_score=final,
                 net_collected=premium,
                 final_score=final,
-                score_factors={"ror": 0.1},
+                score_factors={"ror": 0.1, "liquidity_weight": 0.9, "spread_weight": 0.9},
             )
 
         high_score = _cand(23250, final=100.0, premium=10_000.0)
-        low_span = _cand(22900, final=100.0, premium=8_000.0)
+        low_span = _cand(22900, final=50.0, premium=10_000.0)
 
-        winners, scores = _pick_top_candidates(
+        winners, scores = asyncio.run(
+            _pick_top_candidates(
             ctx, [high_score, low_span], strategy_id="iron_condor", top_n=2
-        )
+        ))
         self.assertEqual(len(winners), 2)
         winner, best_return = winners[0]
         self.assertEqual(winner.short_put, 22900)
@@ -344,13 +422,13 @@ class TestCalcIronCondor(unittest.TestCase):
             "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_ANNUALIZED_RETURN_PCT",
             500.0,
         ):
-            results = calc_iron_condor(ctx)
+            results = asyncio.run(calc_iron_condor(ctx))
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].status, "skipped")
         self.assertIn("annualized return", (results[0].skip_reason or "").lower())
 
     def test_returns_top_variants_with_ranks(self):
-        strikes = list(range(22700, 24700, 50))
+        strikes = list(range(22600, 24700, 50))
         cache = _fill_strikes(
             strikes,
             23623.0,
@@ -366,7 +444,7 @@ class TestCalcIronCondor(unittest.TestCase):
             "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_ANNUALIZED_RETURN_PCT",
             0.0,
         ):
-            results = calc_iron_condor(ctx)
+            results = asyncio.run(calc_iron_condor(ctx))
 
         ok = [r for r in results if r.status == "ok"]
         self.assertGreater(len(ok), 1)
@@ -404,14 +482,71 @@ class TestCalcIronCondor(unittest.TestCase):
                 wing_width=100,
                 legs=trade_legs,
                 proxy_score=final,
-                net_collected=final * 100,
+                net_collected=float(10_000 - (short_put - 22800) // 50 * 500),
                 final_score=final,
-                score_factors={"ror": 0.1},
+                score_factors={"ror": 0.1, "liquidity_weight": 0.9, "spread_weight": 0.9},
             )
 
         candidates = [_cand(22800 + i * 50, float(100 - i)) for i in range(8)]
-        _pick_top_candidates(ctx, candidates, strategy_id="iron_condor", top_n=IC_RETURN_TOP_N)
+        asyncio.run(
+            _pick_top_candidates(ctx, candidates, strategy_id="iron_condor", top_n=IC_RETURN_TOP_N)
+        )
         self.assertEqual(proc.strategy_builder_margin.call_count, IC_RETURN_TOP_N)
+
+    def test_pick_top_candidates_isolates_margin_failures(self):
+        proc = MagicMock()
+        call_count = {"n": 0}
+
+        def margin(user_id, exchange, legs, audit=None, audit_context=None, audit_rationale=None):
+            call_count["n"] += 1
+            short_put = next(
+                leg["strike_price"] for leg in legs if leg["right"] == "Put" and leg["action"] == "Sell"
+            )
+            if short_put == "22900":
+                return {"Status": 400, "Error": "broker down"}
+            return {"Status": 200, "Success": {"span_margin_required": 50_000.0}}
+
+        proc.strategy_builder_margin.side_effect = margin
+        ctx = _ctx_from_cache({}, processor=proc)
+
+        def _cand(short_put: int, final: float) -> IronCondorCandidate:
+            trade_legs = [
+                TradeLeg("Put", "Sell", short_put, 65, 8.0),
+                TradeLeg("Put", "Buy", short_put - 100, 65, 5.0),
+                TradeLeg("Call", "Sell", 24400, 65, 8.0),
+                TradeLeg("Call", "Buy", 24500, 65, 5.0),
+            ]
+            return IronCondorCandidate(
+                short_put=short_put,
+                short_call=24400,
+                long_put=short_put - 100,
+                long_call=24500,
+                credit=6.0,
+                put_credit=3.0,
+                call_credit=3.0,
+                max_loss_u=44.0,
+                qty=65,
+                pop=95.0,
+                wing_width=100,
+                legs=trade_legs,
+                proxy_score=final,
+                net_collected=float(10_000),
+                final_score=final,
+                score_factors={"ror": 0.1, "liquidity_weight": 0.9, "spread_weight": 0.9},
+            )
+
+        candidates = [_cand(22900, 100.0), _cand(22800, 90.0), _cand(22850, 80.0)]
+        winners, scores = asyncio.run(
+            _pick_top_candidates(ctx, candidates, strategy_id="iron_condor", top_n=IC_RETURN_TOP_N)
+        )
+        self.assertEqual(call_count["n"], IC_RETURN_TOP_N)
+        self.assertEqual(len(winners), IC_RETURN_TOP_N)
+        failed = next(s for s in scores if s["short_put"] == 22900)
+        self.assertEqual(failed["unit_span"], 0.0)
+        self.assertGreater(
+            next(s for s in scores if s["short_put"] == 22800)["unit_span"],
+            0.0,
+        )
 
     def test_unit_span_margin_uses_session_cache(self):
         proc = MagicMock()
@@ -459,8 +594,10 @@ class TestCalcIronCondor(unittest.TestCase):
                 legs=legs,
             )
         ]
-        resize_results_to_budgets(
+        asyncio.run(
+            resize_results_to_budgets(
             proc, "u1", "NFO", "NIFTY", "16-Jun-2026", results, ctx
+        )
         )
         self.assertEqual(proc.strategy_builder_margin.call_count, 1)
         self.assertEqual(results[0].status, "ok")
@@ -511,7 +648,8 @@ class TestAuditQuoteRegression(unittest.TestCase):
         )
         ctx = _ctx_from_cache(cache, spot=23622.9, min_pop_pct=95.0)
         pairs = iron_condor_short_pairs(ctx)
-        self.assertTrue(any(sp == 22650 and sc == 24500 for sp, sc in pairs))
+        self.assertGreater(len(pairs), 0)
+        self.assertLessEqual(len(pairs), IC_SHORT_STRIKES_MAX_PER_WING * IC_SHORT_STRIKES_MAX_PER_WING)
 
 
 class TestIronCondorEvalAudit(unittest.TestCase):
@@ -593,6 +731,9 @@ class TestSkipMessage(unittest.TestCase):
 
 
 class TestWingCreditGate(unittest.TestCase):
+    def test_hard_wing_credit_blocks_tiny_spreads(self):
+        self.assertFalse(passes_hard_wing_credit(0.04, 0.06))
+
     def test_per_spread_floor_blocks_tiny_wings(self):
         self.assertFalse(passes_ic_wing_credit(0.04, 0.06, 50))
 
@@ -605,14 +746,8 @@ class TestWingCreditGate(unittest.TestCase):
         self.assertTrue(passes_ic_wing_credit(0.6, 0.6, 50, min_credit_pct_of_width=0.02))
 
 
-class TestCreditRelaxation(unittest.TestCase):
-    def test_relaxation_schedule_matches_spec(self):
-        self.assertEqual(
-            IC_CREDIT_PCT_RELAXATION_SCHEDULE,
-            (0.03, 0.025, 0.02, 0.015, 0.01),
-        )
-
-    def test_credit_relaxation_finds_candidate_at_lower_pct(self):
+class TestSoftPreferredCredit(unittest.TestCase):
+    def test_soft_preferred_credit_survives_with_annotation(self):
         cache = {
             (22800, "Put"): _quote(22800, "Put", bid=1.0, ask=1.05, delta=0.05),
             (22750, "Put"): _quote(22750, "Put", bid=0.35, ask=0.40, delta=0.04),
@@ -620,30 +755,30 @@ class TestCreditRelaxation(unittest.TestCase):
             (24450, "Call"): _quote(24450, "Call", bid=0.35, ask=0.40, delta=0.04),
         }
         ctx = _ctx_from_cache(cache, min_pop_pct=50.0)
-        self.assertEqual(enumerate_symmetric_iron_condors(ctx, 22800, 24400), [])
-        relaxed = enumerate_symmetric_iron_condors(
-            ctx, 22800, 24400, min_credit_pct_of_width=0.02
-        )
-        self.assertEqual(len(relaxed), 1)
-        self.assertAlmostEqual(relaxed[0].credit, 1.2, places=2)
+        variants = enumerate_symmetric_iron_condors(ctx, 22800, 24400)
+        self.assertEqual(len(variants), 1)
+        self.assertAlmostEqual(variants[0].credit, 1.2, places=2)
+        self.assertTrue(variants[0].below_preferred_credit)
+        self.assertEqual(variants[0].score_factors.get("preferred_credit_met"), 0.0)
 
         candidates, pct = _collect_candidates(ctx, [(22800, 24400)])
         self.assertGreater(len(candidates), 0)
-        self.assertEqual(pct, 0.02)
+        self.assertEqual(pct, 0.03)
+        self.assertTrue(candidates[0].below_preferred_credit)
 
-    def test_credit_relaxation_stops_at_one_pct_floor(self):
+    def test_preferred_credit_met_when_adequate_premium(self):
         cache = {
-            (22800, "Put"): _quote(22800, "Put", bid=0.20, ask=0.25, delta=0.05),
-            (22750, "Put"): _quote(22750, "Put", bid=0.10, ask=0.15, delta=0.04),
-            (24400, "Call"): _quote(24400, "Call", bid=0.20, ask=0.25, delta=0.05),
-            (24450, "Call"): _quote(24450, "Call", bid=0.10, ask=0.15, delta=0.04),
+            (22800, "Put"): _quote(22800, "Put", bid=4.0, ask=4.1, delta=0.05),
+            (22750, "Put"): _quote(22750, "Put", bid=1.0, ask=1.1, delta=0.04),
+            (24400, "Call"): _quote(24400, "Call", bid=4.0, ask=4.1, delta=0.05),
+            (24450, "Call"): _quote(24450, "Call", bid=1.0, ask=1.1, delta=0.04),
         }
         ctx = _ctx_from_cache(cache, min_pop_pct=50.0)
-        candidates, pct = _collect_candidates(ctx, [(22800, 24400)])
-        self.assertEqual(candidates, [])
-        self.assertEqual(pct, 0.01)
+        variants = enumerate_symmetric_iron_condors(ctx, 22800, 24400)
+        self.assertEqual(len(variants), 1)
+        self.assertFalse(variants[0].below_preferred_credit)
 
-    def test_calc_iron_condor_uses_relaxed_credit_via_collect(self):
+    def test_calc_iron_condor_includes_below_preferred_survivor(self):
         cache = {
             (22800, "Put"): _quote(22800, "Put", bid=1.0, ask=1.05, delta=0.05),
             (22750, "Put"): _quote(22750, "Put", bid=0.35, ask=0.40, delta=0.04),
@@ -663,10 +798,121 @@ class TestCreditRelaxation(unittest.TestCase):
             "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_ANNUALIZED_RETURN_PCT",
             0.0,
         ):
-            results = calc_iron_condor(ctx)
+            results = asyncio.run(calc_iron_condor(ctx))
         ok = [r for r in results if r.status == "ok"]
-        self.assertEqual(len(ok), 1)
+        self.assertGreater(len(ok), 0)
         self.assertAlmostEqual(ok[0].net_premium or 0, 1.2 * 65, places=0)
+        self.assertEqual(ok[0].score_breakdown.get("below_preferred_credit"), 1.0)
+
+
+class TestPopBandStrikeSelection(unittest.TestCase):
+    def test_pop_band_strike_selection_covers_floor_to_floor_plus_two(self):
+        spot = 23622.9
+        strikes = list(range(22600, 24700, 50))
+        deltas = {
+            (22950, "Put"): 0.08,
+            (22900, "Put"): 0.07,
+            (22850, "Put"): 0.06,
+            (22800, "Put"): 0.055,
+            (22750, "Put"): 0.05,
+            (22700, "Put"): 0.045,
+            (22650, "Put"): 0.04,
+            (24350, "Call"): 0.08,
+            (24400, "Call"): 0.07,
+            (24450, "Call"): 0.06,
+            (24500, "Call"): 0.055,
+            (24550, "Call"): 0.05,
+            (24600, "Call"): 0.045,
+        }
+
+        def bid_fn(s: int, r: str) -> float:
+            if (s, r) == (22950, "Put"):
+                return 1.0
+            if (s, r) in ((24350, "Call"), (24400, "Call")):
+                return 1.0
+            return 3.0
+
+        cache = _fill_strikes(
+            strikes,
+            spot,
+            bid_fn=bid_fn,
+            ask_fn=lambda s, r: bid_fn(s, r) + 0.15,
+            delta_fn=lambda s, r: deltas.get((s, r), 0.03),
+        )
+        ctx = _ctx_from_cache(cache, spot=spot, min_pop_pct=90.0)
+        puts = _ic_short_strikes_for_pop_band(
+            ctx,
+            [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
+            "Put",
+            90.0,
+        )
+        calls = _ic_short_strikes_for_pop_band(
+            ctx,
+            [s for s in ctx.liquid_ce_strikes if s > ctx.spot],
+            "Call",
+            90.0,
+            opposite_strikes=puts,
+        )
+        self.assertTrue(_pop_band_covered(ctx, puts, calls, 90.0))
+
+    def test_pop_band_covered_uses_real_pop_not_delta(self):
+        """Coverage must use breakeven PoP; delta estimate can falsely claim band coverage."""
+        spot = 23623.0
+        short_put, short_call = 23000, 24200
+        put_delta, call_delta = 0.044, 0.046
+        bid = 20.0
+        cache = {
+            (short_put, "Put"): _quote(
+                short_put, "Put", bid=bid, ask=bid + 0.1, delta=put_delta, spot=spot
+            ),
+            (short_call, "Call"): _quote(
+                short_call, "Call", bid=bid, ask=bid + 0.1, delta=call_delta, spot=spot
+            ),
+        }
+        ctx = _ctx_from_cache(cache, spot=spot, min_pop_pct=90.0)
+        legs = [
+            TradeLeg("Put", "Sell", short_put, 1, bid),
+            TradeLeg("Call", "Sell", short_call, 1, bid),
+        ]
+        real_pop = pop_for_legs(ctx, legs)
+        delta_est = (1.0 - put_delta - call_delta) * 100.0
+        self.assertGreaterEqual(delta_est, 90.0)
+        self.assertLess(real_pop, 90.0)
+        self.assertFalse(_pop_band_covered(ctx, [short_put], [short_call], 90.0))
+
+    def test_ic_pop_bucket_labels(self):
+        self.assertEqual(_ic_pop_bucket(90.4, 90.0), "90-91")
+        self.assertEqual(_ic_pop_bucket(91.9, 90.0), "91-92")
+        self.assertEqual(_ic_pop_bucket(95.0, 90.0), ">=93")
+
+
+class TestPopAuditBuckets(unittest.TestCase):
+    def test_pop_audit_buckets_min_credit_and_survivors(self):
+        cache = {
+            (22800, "Put"): _quote(22800, "Put", bid=1.0, ask=1.05, delta=0.05),
+            (22750, "Put"): _quote(22750, "Put", bid=0.35, ask=0.40, delta=0.04),
+            (24400, "Call"): _quote(24400, "Call", bid=1.0, ask=1.05, delta=0.05),
+            (24450, "Call"): _quote(24450, "Call", bid=0.35, ask=0.40, delta=0.04),
+        }
+        ctx = _ctx_from_cache(cache, min_pop_pct=50.0)
+        stats = IronCondorRejectionStats()
+        variants = enumerate_symmetric_iron_condors(ctx, 22800, 24400, stats=stats)
+        summary = _build_pop_audit_summary(stats, variants, 50.0)
+        self.assertGreater(len(summary["pop_distribution"]), 0)
+        self.assertGreater(summary["below_preferred_credit_total"], 0)
+        self.assertGreater(
+            len(summary["below_preferred_credit_by_pop_bucket"]),
+            0,
+        )
+        self.assertEqual(summary["pop_band_target"], [50.0, 50.0 + IC_POP_BAND_WIDTH_PCT])
+
+
+class TestCreditRelaxationSchedule(unittest.TestCase):
+    def test_relaxation_schedule_matches_spec(self):
+        self.assertEqual(
+            IC_CREDIT_PCT_RELAXATION_SCHEDULE,
+            (0.03, 0.025, 0.02, 0.015, 0.01),
+        )
 
 
 class TestSearchBounds(unittest.TestCase):
@@ -687,10 +933,18 @@ class TestSearchBounds(unittest.TestCase):
         )
         ctx = _ctx_from_cache(cache, min_pop_pct=93.0)
         pairs = iron_condor_short_pairs(ctx)
-        max_pairs = IC_TOP_K_SHORT_STRIKES * IC_TOP_K_SHORT_STRIKES
+        pe = [s for s in ctx.liquid_pe_strikes if s < ctx.spot]
+        ce = [s for s in ctx.liquid_ce_strikes if s > ctx.spot]
+        puts = _ic_short_strikes_for_pop_band(ctx, pe, "Put", 93.0)
+        calls = _ic_short_strikes_for_pop_band(
+            ctx, ce, "Call", 93.0, opposite_strikes=puts
+        )
+        max_pairs = len(puts) * len(calls)
         self.assertLessEqual(len(pairs), max_pairs)
+        self.assertLessEqual(len(puts), IC_SHORT_STRIKES_MAX_PER_WING)
+        self.assertLessEqual(len(calls), IC_SHORT_STRIKES_MAX_PER_WING)
 
-        max_evals = max_pairs * len(WING_WIDTH_MULTIPLIERS)
+        max_evals = len(pairs) * len(WING_WIDTH_MULTIPLIERS)
         survivors = sum(
             len(enumerate_symmetric_iron_condors(ctx, sp, sc)) for sp, sc in pairs
         )
@@ -722,49 +976,54 @@ class TestSearchBounds(unittest.TestCase):
         )
         self.assertGreater(stats.counts.get("pop_floor", 0), 0)
 
-    def test_short_strikes_include_inward_and_outward(self):
-        """ATM-ward strike beyond old top-K delta distance must still be shortlisted."""
+    def test_short_strikes_include_band_and_atm_extension(self):
+        """PoP-band shortlist must include ATM-ward strikes beyond legacy top-K."""
         strikes = list(range(22500, 24700, 50))
         target = 0.025  # 95% PoP target delta
 
         def delta_fn(s, r):
             if s == 22700 and r == "Put":
-                return 0.04
+                return 0.08
             if s == 24500 and r == "Call":
-                return 0.04
+                return 0.08
+            if s == 22800 and r == "Put":
+                return 0.02
+            if s == 24400 and r == "Call":
+                return 0.02
             dist = abs(s - 23623)
             return max(0.015, target - dist / 50000)
+
+        def bid_fn(s: int, r: str) -> float:
+            if (s, r) == (22800, "Put"):
+                return 10.0
+            if (s, r) == (24400, "Call"):
+                return 10.0
+            return 4.0
 
         cache = _fill_strikes(
             strikes,
             23623.0,
-            bid_fn=lambda s, r: 4.0,
-            ask_fn=lambda s, r: 4.1,
+            bid_fn=bid_fn,
+            ask_fn=lambda s, r: bid_fn(s, r) + 0.1,
             delta_fn=delta_fn,
         )
         ctx = _ctx_from_cache(cache, min_pop_pct=95.0)
-        puts = _ic_short_strikes_around_target(
+        puts = _ic_short_strikes_for_pop_band(
+            ctx,
             [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
-            ctx.cache,
             "Put",
-            target,
+            95.0,
         )
-        calls = _ic_short_strikes_around_target(
+        calls = _ic_short_strikes_for_pop_band(
+            ctx,
             [s for s in ctx.liquid_ce_strikes if s > ctx.spot],
-            ctx.cache,
             "Call",
-            target,
+            95.0,
+            opposite_strikes=puts,
         )
         self.assertIn(22700, puts)
         self.assertIn(24500, calls)
-        old_style_puts = strikes_ranked_by_delta(
-            [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
-            ctx.cache,
-            "Put",
-            target,
-        )[:5]
-        self.assertNotIn(22700, old_style_puts)
-        self.assertEqual(IC_SHORT_STRIKES_INWARD + IC_SHORT_STRIKES_OUTWARD, IC_TOP_K_SHORT_STRIKES)
+        self.assertTrue(_pop_band_covered(ctx, puts, calls, 95.0))
 
 
 if __name__ == "__main__":

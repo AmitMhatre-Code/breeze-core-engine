@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Union
+from typing import Awaitable, Callable, Union
 
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional.bear_put_spread import (
     calc_bear_put_spread,
@@ -76,12 +76,13 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
 )
 
 StrategyCalcResult = Union[StrategyResult, list[StrategyResult]]
+StrategyCalcFn = Callable[[EngineContext], StrategyCalcResult | Awaitable[StrategyCalcResult]]
 PrefetchFn = Callable[[EngineContext], set[tuple[int, Right]]]
 
 
 @dataclass(frozen=True)
 class StrategySpec:
-    calc: Callable[[EngineContext], StrategyCalcResult]
+    calc: StrategyCalcFn
     prefetch: PrefetchFn | None = None
 
 
@@ -112,7 +113,7 @@ CATEGORY_STRATEGIES: dict[StrategyCategory, list[StrategySpec]] = {
     ],
 }
 
-CATEGORY_CALCULATORS: dict[StrategyCategory, list[Callable[[EngineContext], StrategyCalcResult]]] = {
+CATEGORY_CALCULATORS: dict[StrategyCategory, list[StrategyCalcFn]] = {
     category: [spec.calc for spec in specs]
     for category, specs in CATEGORY_STRATEGIES.items()
 }

@@ -14,6 +14,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import breezeMark from "@/app/android-chrome-192x192.png";
+import { ApiUsageWarningDialog } from "@/components/api-usage/ApiUsageWarningDialog";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
@@ -60,6 +61,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const [changelogOpen, setChangelogOpen] = useState(false);
+  const [apiUsageWarnDismissed, setApiUsageWarnDismissed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [pathnameSeen, setPathnameSeen] = useState(pathname);
   if (pathname !== pathnameSeen) {
@@ -124,6 +126,47 @@ export function AppShell({
   // Backend may omit keys (older server or cached payload); `undefined != null` is false in JS, so coalesce.
   const apiCallsToday = homeQ.data?.api_calls_today ?? 0;
   const apiCallsLimit = homeQ.data?.api_calls_limit ?? 5000;
+  const apiUsageBand = homeQ.data?.api_usage_band ?? "green";
+  const apiUsageWarning = homeQ.data?.api_usage_warning ?? null;
+
+  const apiUsageWarnStorageKey = useMemo(() => {
+    const istDay = new Date().toLocaleDateString("en-CA", {
+      timeZone: "Asia/Kolkata",
+    });
+    return `apiUsageWarn:${istDay}`;
+  }, []);
+
+  useEffect(() => {
+    if (!apiUsageWarning) return;
+    try {
+      if (sessionStorage.getItem(apiUsageWarnStorageKey) === "1") {
+        setApiUsageWarnDismissed(true);
+      } else {
+        setApiUsageWarnDismissed(false);
+      }
+    } catch {
+      setApiUsageWarnDismissed(false);
+    }
+  }, [apiUsageWarning, apiUsageWarnStorageKey]);
+
+  const showApiUsageWarning =
+    Boolean(apiUsageWarning) && !apiUsageWarnDismissed;
+
+  const dismissApiUsageWarning = useCallback(() => {
+    setApiUsageWarnDismissed(true);
+    try {
+      sessionStorage.setItem(apiUsageWarnStorageKey, "1");
+    } catch {
+      /* ignore */
+    }
+  }, [apiUsageWarnStorageKey]);
+
+  const apiCounterClass =
+    apiUsageBand === "red"
+      ? "text-red-600 dark:text-red-400"
+      : apiUsageBand === "amber"
+        ? "text-amber-700 dark:text-amber-300"
+        : "text-zinc-500 dark:text-zinc-400";
 
   const freeMarginDisplay = useMemo(() => {
     if (freeMargin == null || !Number.isFinite(freeMargin)) return null;
@@ -232,7 +275,10 @@ export function AppShell({
           <div className="flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-3">
             {homeDataReady && (
               <span
-                className="min-w-0 max-w-[6.25rem] shrink-0 truncate whitespace-nowrap text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400 sm:max-w-none sm:text-xs"
+                className={[
+                  "min-w-0 max-w-[6.25rem] shrink-0 truncate whitespace-nowrap text-[11px] tabular-nums sm:max-w-none sm:text-xs",
+                  apiCounterClass,
+                ].join(" ")}
                 title="Breeze REST calls from this app today (IST calendar day, ICICI daily cap 5,000)"
               >
                 <span className="hidden sm:inline">API </span>
@@ -345,6 +391,11 @@ export function AppShell({
         <ChangelogDialog
           open={changelogOpen}
           onClose={() => setChangelogOpen(false)}
+        />
+        <ApiUsageWarningDialog
+          open={showApiUsageWarning}
+          message={apiUsageWarning ?? ""}
+          onDismiss={dismissApiUsageWarning}
         />
         <LicenseStatusBanner
           status={licenseStatus}

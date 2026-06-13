@@ -1,4 +1,5 @@
 """Unit tests for SPAN-based post-sizing in the strategy engine."""
+import asyncio
 import unittest
 from unittest.mock import MagicMock
 
@@ -78,14 +79,14 @@ class TestResizeResultsToBudgets(unittest.TestCase):
             "iron_condor",
             "Iron Condor",
             status="ok",
-            max_loss=4_000_000.0,
-            net_premium=282_496.5,
-            risk_reward_ratio="4000000 : 282497",
+            max_loss=3035.0,
+            net_premium=718.75,
+            risk_reward_ratio="3035 : 719",
             legs=[
-                TradeLeg("Put", "Sell", 22200, 85_605, 3.35),
-                TradeLeg("Put", "Buy", 22150, 85_605, 3.45),
-                TradeLeg("Call", "Sell", 24150, 85_605, 16.7),
-                TradeLeg("Call", "Buy", 24200, 85_605, 13.3),
+                TradeLeg("Put", "Sell", 22200, 65, 3.35),
+                TradeLeg("Put", "Buy", 22150, 65, 3.45),
+                TradeLeg("Call", "Sell", 24150, 65, 16.7),
+                TradeLeg("Call", "Buy", 24200, 65, 13.3),
             ],
         )
         proc = MagicMock()
@@ -93,8 +94,10 @@ class TestResizeResultsToBudgets(unittest.TestCase):
             "Success": {"span_margin_required": 65_624.0},
             "Status": 200,
         }
-        resize_results_to_budgets(
+        asyncio.run(
+            resize_results_to_budgets(
             proc, "u1", "NFO", "NIFTY", "16-Jun-2026", [result], ctx
+        )
         )
         self.assertEqual(result.status, "ok")
         # SPAN 65_624 + ELM ~61_422 per lot → ~393 lots within 5 Cr margin budget
@@ -108,17 +111,19 @@ class TestResizeResultsToBudgets(unittest.TestCase):
             "Naked PE Short",
             status="ok",
             max_loss=None,
-            net_premium=25_000_000.0,
-            risk_reward_ratio="Unlimited : 25000000",
-            legs=[TradeLeg("Put", "Sell", 22950, 2_840_890, 8.8)],
+            net_premium=572.0,
+            risk_reward_ratio="Unlimited : 572",
+            legs=[TradeLeg("Put", "Sell", 22950, 65, 8.8)],
         )
         proc = MagicMock()
         proc.strategy_builder_margin.return_value = {
             "Success": {"span_margin_required": 2_400_000.0},
             "Status": 200,
         }
-        resize_results_to_budgets(
+        asyncio.run(
+            resize_results_to_budgets(
             proc, "u1", "NFO", "NIFTY", "16-Jun-2026", [result], ctx
+        )
         )
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.legs[0].quantity, 65 * 20)
@@ -139,8 +144,10 @@ class TestResizeResultsToBudgets(unittest.TestCase):
             "Success": {"span_margin_required": 0},
             "Status": 200,
         }
-        resize_results_to_budgets(
+        asyncio.run(
+            resize_results_to_budgets(
             proc, "u1", "NFO", "NIFTY", "16-Jun-2026", [result], ctx
+        )
         )
         self.assertEqual(result.status, "skipped")
         self.assertEqual(result.legs, [])

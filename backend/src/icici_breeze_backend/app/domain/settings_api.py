@@ -62,7 +62,7 @@ class ApiUsagePreferencesResponse(BaseModel):
 
 
 class ApiUsagePreferencesUpdateBody(BaseModel):
-    rate_limit_pause_seconds: float = Field(ge=0.25, le=300)
+    rate_limit_pause_seconds: float = Field(ge=0.5, le=3)
 
 
 class MarginSourceStateResponse(BaseModel):

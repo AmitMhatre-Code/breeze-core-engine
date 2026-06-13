@@ -102,6 +102,14 @@ class HomeDataResponse(BaseModel):
         "green",
         description="green | amber | red relative to daily limit thresholds",
     )
+    api_usage_warning: Optional[str] = Field(
+        None,
+        description="Proactive warning when user is in the final 1000-call band",
+    )
+    api_usage_blocked: bool = Field(
+        False,
+        description="True when daily Breeze API cap is reached (broker calls blocked)",
+    )
     deployment_license_status: Optional[Literal["active", "expired", "revoked", "unlicensed"]] = Field(
         None,
         description="Portal-reported deployment license status when portal env is configured",

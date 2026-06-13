@@ -1,6 +1,7 @@
 """Strategy engine orchestration and delivery."""
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from icici_breeze_backend.audit.strategy_builder_audit import StrategyBuilderAuditSession, quote_row_to_audit
@@ -15,9 +16,12 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     legs_to_margin_input,
     margin_key,
     normalize_expiry_display,
-    parse_float,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.budget_resize import resize_results_to_budgets
+from icici_breeze_backend.app.services.options_strategy_engine.margin_async_fetch import (
+    MarginFetchRequest,
+    fetch_margins_concurrent,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.registry import CATEGORY_CALCULATORS
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
@@ -76,7 +80,7 @@ def log_strategy_result(ctx: EngineContext, res: StrategyResult) -> None:
     )
 
 
-def attach_margins_and_returns(
+async def attach_margins_and_returns(
     proc: processor,
     user_id: str,
     exchange_code: str,
@@ -96,21 +100,26 @@ def attach_margins_and_returns(
         unique.setdefault(key, r.legs)
         strategy_by_key.setdefault(key, r.strategy_id)
 
-    span_by_key: dict[tuple, float] = {}
+    margin_requests: list[MarginFetchRequest] = []
     for key, legs in unique.items():
         margin_input = legs_to_margin_input(legs, stock_code, exchange_code, expiry_display)
-        res = proc.strategy_builder_margin(
-            user_id,
-            exchange_code,
-            margin_input,
-            audit=audit,
-            audit_context={
-                "strategy_id": strategy_by_key.get(key),
-                "legs": margin_input,
-            },
+        margin_requests.append(
+            MarginFetchRequest(
+                cache_key=key,
+                margin_input=margin_input,
+                strategy_id=strategy_by_key.get(key, ""),
+                phase=None,
+                audit_rationale="Batch SPAN margin for unique proposed leg structure.",
+            )
         )
-        span = parse_float((res.get("Success") or {}).get("span_margin_required"))
-        span_by_key[key] = span
+
+    span_by_key = await fetch_margins_concurrent(
+        proc,
+        user_id,
+        exchange_code,
+        margin_requests,
+        audit=audit,
+    )
 
     dte = _days_to_expiry(expiry_display)
     for r in results:
@@ -287,19 +296,20 @@ async def run_propose_trades(
         if audit:
             sid = calc.__name__.replace("calc_", "")
             audit.record("strategy_eval_start", calc.__name__, {"strategy_id": sid})
-        res = calc(ctx)
+        outcome = calc(ctx)
+        res = await outcome if inspect.isawaitable(outcome) else outcome
         if isinstance(res, list):
             results.extend(res)
         else:
             results.append(res)
 
-    resize_results_to_budgets(
+    await resize_results_to_budgets(
         proc, user_id, exchange_code, ctx.stock_code, expiry_display, results, ctx, audit
     )
     for res in results:
         log_strategy_result(ctx, res)
 
-    attach_margins_and_returns(
+    await attach_margins_and_returns(
         proc, user_id, exchange_code, ctx.stock_code, expiry_display, results, ctx, audit
     )
 

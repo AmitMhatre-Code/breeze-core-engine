@@ -175,9 +175,11 @@ def _ensure_app_database() -> None:
             ensure_parked_orders_table(db_path)
             from icici_breeze_backend.app.services.user_rate_limit_prefs import (
                 migrate_legacy_rate_limit_pause_default,
+                migrate_rate_limit_pause_bounds,
             )
 
             migrate_legacy_rate_limit_pause_default()
+            migrate_rate_limit_pause_bounds()
         except Exception:
             _logger.exception("user_account schema migration failed")
 

@@ -25,6 +25,10 @@ from icici_breeze_backend.app.services.options_strategy_engine.pop import (
 )
 from icici_breeze_backend.app.services.options_strategy_engine.pruning import passes_economic_prune
 from icici_breeze_backend.app.services.options_strategy_engine.ranking import score_credit_trade
+from icici_breeze_backend.app.services.options_strategy_engine.margin_async_fetch import (
+    MarginFetchRequest,
+    fetch_margins_concurrent,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
     legs_at_lots,
     min_qty_for_one_lot,
@@ -42,24 +46,18 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
 # --- Iron condor tuning constants (owned by this module) ---
 
 WING_WIDTH_MULTIPLIERS: tuple[int, ...] = (1, 2, 3, 4)
-IC_SHORT_STRIKES_INWARD = 3
+IC_SHORT_STRIKES_INWARD = 7
 IC_SHORT_STRIKES_OUTWARD = 3
 IC_TOP_K_SHORT_STRIKES = IC_SHORT_STRIKES_INWARD + IC_SHORT_STRIKES_OUTWARD
+IC_POP_BAND_WIDTH_PCT = 2.0
+IC_SHORT_STRIKES_MAX_ATM = 12
+IC_SHORT_STRIKES_MAX_PER_WING = 12
 MIN_WING_CREDIT = 0.05
 MIN_IC_CREDIT_PCT_OF_WIDTH = 0.03
+# Deprecated for collection; kept for backward-compatible tests/docs.
 IC_CREDIT_PCT_RELAXATION_SCHEDULE: tuple[float, ...] = (0.03, 0.025, 0.02, 0.015, 0.01)
 MIN_IC_ANNUALIZED_RETURN_PCT = 5.0
-IC_RETURN_TOP_N = 5
-
-
-def pop_iron_condor_short_pair(
-    put_delta: float | None,
-    call_delta: float | None,
-) -> float:
-    if put_delta is None or call_delta is None:
-        return 0.0
-    est = 1.0 - (abs(put_delta) + call_delta)
-    return max(0.0, min(100.0, est * 100.0))
+IC_RETURN_TOP_N = 3
 
 
 def iron_condor_short_delta_window(min_pop_pct: float) -> tuple[float, float]:
@@ -162,6 +160,139 @@ def build_ranking_summary(
     return f"{lead} {'; '.join(details)}."
 
 
+def _ic_pop_band_delta_bounds(min_pop_pct: float) -> tuple[float, float]:
+    """Per-wing abs-delta range for [min_pop, min_pop + band] on symmetric shorts."""
+    floor_delta = pop_to_short_delta(min_pop_pct, short_legs=2)
+    ceil_delta = pop_to_short_delta(min_pop_pct + IC_POP_BAND_WIDTH_PCT, short_legs=2)
+    return ceil_delta, floor_delta
+
+
+def _ic_pop_bucket(pop_pct: float, floor_pct: float) -> str:
+    """1% PoP bucket anchored at the user floor."""
+    if pop_pct < floor_pct:
+        return f"<{floor_pct:.0f}"
+    offset = int((pop_pct - floor_pct) // 1.0)
+    if offset >= IC_POP_BAND_WIDTH_PCT + 1:
+        return f">={floor_pct + IC_POP_BAND_WIDTH_PCT + 1:.0f}"
+    lo = floor_pct + offset
+    hi = lo + 1.0
+    return f"{lo:.0f}-{hi:.0f}"
+
+
+def _pop_short_strangle_pair(
+    ctx: EngineContext,
+    short_put: int,
+    short_call: int,
+) -> float:
+    """Breakeven PoP for a short put + short call pair (no wings)."""
+    pe = ctx.cache.get((short_put, "Put"))
+    ce = ctx.cache.get((short_call, "Call"))
+    if not pe or not ce or not pe.liquid or not ce.liquid:
+        return 0.0
+    prem_p = pe.best_bid_price or pe.ltp
+    prem_c = ce.best_bid_price or ce.ltp
+    legs = [
+        TradeLeg("Put", "Sell", short_put, 1, prem_p),
+        TradeLeg("Call", "Sell", short_call, 1, prem_c),
+    ]
+    return pop_for_legs(ctx, legs)
+
+
+def _pop_band_covered(
+    ctx: EngineContext,
+    short_puts: list[int],
+    short_calls: list[int],
+    min_pop_pct: float,
+) -> bool:
+    """True when shortlists span [floor, floor+band]: lower and upper PoP sub-ranges."""
+    lo = min_pop_pct
+    hi = min_pop_pct + IC_POP_BAND_WIDTH_PCT
+    mid = lo + IC_POP_BAND_WIDTH_PCT / 2.0
+    has_lower = False
+    has_upper = False
+    for sp in short_puts:
+        for sc in short_calls:
+            if sp >= sc:
+                continue
+            pop = _pop_short_strangle_pair(ctx, sp, sc)
+            if lo <= pop <= mid:
+                has_lower = True
+            if mid <= pop <= hi:
+                has_upper = True
+    return has_lower and has_upper
+
+
+def _ic_short_strikes_for_pop_band(
+    ctx: EngineContext,
+    strikes: list[int],
+    right: Right,
+    min_pop_pct: float,
+    *,
+    opposite_strikes: list[int] | None = None,
+) -> list[int]:
+    """PoP-band shortlist: OTM band strikes plus ATM-ward expansion toward floor credit."""
+    cache = ctx.cache
+    ceil_delta, floor_delta = _ic_pop_band_delta_bounds(min_pop_pct)
+    scored: list[tuple[float, int]] = []
+    for s in strikes:
+        q = cache.get((s, right))
+        d = abs_delta(q)
+        if not q or not q.liquid or d is None:
+            continue
+        scored.append((d, s))
+
+    seen: set[int] = set()
+    band_strikes: list[int] = []
+    for d, s in sorted(scored, key=lambda x: -x[0]):
+        if ceil_delta <= d <= floor_delta and s not in seen:
+            seen.add(s)
+            band_strikes.append(s)
+
+    atm_candidates = sorted(
+        [(d, s) for d, s in scored if d > floor_delta],
+        key=lambda x: -x[0],
+    )
+    atm_strikes: list[int] = []
+    for _, s in atm_candidates[:IC_SHORT_STRIKES_MAX_ATM]:
+        if s not in seen:
+            seen.add(s)
+            atm_strikes.append(s)
+
+    selected: list[int] = []
+    for s in atm_strikes + band_strikes:
+        if s not in selected:
+            selected.append(s)
+
+    if opposite_strikes is not None and not _pop_band_covered(
+        ctx,
+        selected if right == "Put" else opposite_strikes,
+        opposite_strikes if right == "Put" else selected,
+        min_pop_pct,
+    ):
+        otm_extended = sorted(
+            [(d, s) for d, s in scored if d < ceil_delta],
+            key=lambda x: -x[0],
+        )
+        for _, s in otm_extended:
+            if s in seen:
+                continue
+            seen.add(s)
+            selected.append(s)
+            if right == "Put":
+                if _pop_band_covered(ctx, selected, opposite_strikes, min_pop_pct):
+                    break
+            elif _pop_band_covered(ctx, opposite_strikes, selected, min_pop_pct):
+                break
+            if len(selected) >= IC_SHORT_STRIKES_MAX_ATM + IC_TOP_K_SHORT_STRIKES:
+                break
+
+    if not selected:
+        for _, s in sorted(scored, key=lambda x: abs(x[0] - floor_delta))[:IC_TOP_K_SHORT_STRIKES]:
+            if s not in seen:
+                selected.append(s)
+    return selected[:IC_SHORT_STRIKES_MAX_PER_WING]
+
+
 def _ic_short_strikes_around_target(
     strikes: list[int],
     cache: dict[tuple[int, Right], QuoteRow],
@@ -171,7 +302,7 @@ def _ic_short_strikes_around_target(
     inward: int = IC_SHORT_STRIKES_INWARD,
     outward: int = IC_SHORT_STRIKES_OUTWARD,
 ) -> list[int]:
-    """Strikes on both sides of target delta: ATM-ward (more credit) and OTM-ward."""
+    """Legacy delta-count shortlist; prefer _ic_short_strikes_for_pop_band for IC search."""
     scored: list[tuple[float, int]] = []
     for s in strikes:
         q = cache.get((s, right))
@@ -200,32 +331,33 @@ def _ic_short_strikes_around_target(
 
 def iron_condor_short_pairs(ctx: EngineContext) -> list[tuple[int, int]]:
     """Return (short_put, short_call) shortlists for iron condor optimization."""
-    target = pop_to_short_delta(ctx.min_pop_pct, short_legs=2)
-    short_puts = _ic_short_strikes_around_target(
-        [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
-        ctx.cache,
-        "Put",
-        target,
-    )
-    short_calls = _ic_short_strikes_around_target(
-        [s for s in ctx.liquid_ce_strikes if s > ctx.spot],
-        ctx.cache,
-        "Call",
-        target,
-    )
+    pe_strikes = [s for s in ctx.liquid_pe_strikes if s < ctx.spot]
+    ce_strikes = [s for s in ctx.liquid_ce_strikes if s > ctx.spot]
+    short_puts = _ic_short_strikes_for_pop_band(ctx, pe_strikes, "Put", ctx.min_pop_pct)
+    short_calls = _ic_short_strikes_for_pop_band(ctx, ce_strikes, "Call", ctx.min_pop_pct)
+    for _ in range(3):
+        new_puts = _ic_short_strikes_for_pop_band(
+            ctx,
+            pe_strikes,
+            "Put",
+            ctx.min_pop_pct,
+            opposite_strikes=short_calls,
+        )
+        new_calls = _ic_short_strikes_for_pop_band(
+            ctx,
+            ce_strikes,
+            "Call",
+            ctx.min_pop_pct,
+            opposite_strikes=new_puts,
+        )
+        if new_puts == short_puts and new_calls == short_calls:
+            break
+        short_puts, short_calls = new_puts, new_calls
 
     out: list[tuple[int, int]] = []
     for sp in short_puts:
-        qp = ctx.cache.get((sp, "Put"))
         for sc in short_calls:
             if sp >= sc:
-                continue
-            qc = ctx.cache.get((sc, "Call"))
-            est_pop = pop_iron_condor_short_pair(
-                qp.delta if qp else None,
-                qc.delta if qc else None,
-            )
-            if ctx.strategy_category == "income" and est_pop < ctx.min_pop_pct:
                 continue
             out.append((sp, sc))
     return out
@@ -240,6 +372,11 @@ class IronCondorRejectionStats:
     samples: list[dict] = field(default_factory=list)
     evaluations: list[dict] = field(default_factory=list)
     pair_wing_plans: list[dict] = field(default_factory=list)
+    pop_bucket_counts: dict[str, int] = field(default_factory=dict)
+    survivors_by_pop_bucket: dict[str, int] = field(default_factory=dict)
+    below_preferred_credit_by_pop_bucket: dict[str, int] = field(default_factory=dict)
+    min_credit_hard_reject_by_pop_bucket: dict[str, int] = field(default_factory=dict)
+    min_pop_pct: float = 0.0
 
     def record_pair_wing_plan(
         self,
@@ -269,6 +406,8 @@ class IronCondorRejectionStats:
         credit: float | None = None,
         put_credit: float | None = None,
         call_credit: float | None = None,
+        below_preferred_credit: bool | None = None,
+        preferred_credit_met: bool | None = None,
     ) -> None:
         entry: dict[str, object] = {
             "short_put": short_put,
@@ -282,12 +421,34 @@ class IronCondorRejectionStats:
             "put_credit": round(put_credit, 4) if put_credit is not None else None,
             "call_credit": round(call_credit, 4) if call_credit is not None else None,
         }
+        pop_pct: float | None = None
         if pop_detail is not None:
             entry.update(pop_detail.to_audit_dict())
+            pop_pct = pop_detail.pop_pct
         else:
             entry["pop_pct"] = None
             entry["pop_basis"] = None
+        if below_preferred_credit is not None:
+            entry["below_preferred_credit"] = below_preferred_credit
+        if preferred_credit_met is not None:
+            entry["preferred_credit_met"] = preferred_credit_met
         self.evaluations.append(entry)
+
+        if pop_pct is not None and self.min_pop_pct > 0:
+            bucket = _ic_pop_bucket(pop_pct, self.min_pop_pct)
+            self.pop_bucket_counts[bucket] = self.pop_bucket_counts.get(bucket, 0) + 1
+            if outcome == "accepted":
+                self.survivors_by_pop_bucket[bucket] = (
+                    self.survivors_by_pop_bucket.get(bucket, 0) + 1
+                )
+                if below_preferred_credit:
+                    self.below_preferred_credit_by_pop_bucket[bucket] = (
+                        self.below_preferred_credit_by_pop_bucket.get(bucket, 0) + 1
+                    )
+            elif reject_reason == "min_wing_credit":
+                self.min_credit_hard_reject_by_pop_bucket[bucket] = (
+                    self.min_credit_hard_reject_by_pop_bucket.get(bucket, 0) + 1
+                )
 
     def record(self, reason: str, **detail: object) -> None:
         self.combos_tried += 1
@@ -309,6 +470,13 @@ class IronCondorRejectionStats:
                 f"({total} rejected: {parts})."
             )
         return f"No iron condor passed filters ({total} rejected: {parts})."
+
+
+def passes_hard_wing_credit(put_credit: float, call_credit: float) -> bool:
+    """Hard per-spread credit floor (structural validity)."""
+    if put_credit < MIN_WING_CREDIT or call_credit < MIN_WING_CREDIT:
+        return False
+    return put_credit + call_credit > 0
 
 
 def passes_ic_wing_credit(
@@ -345,6 +513,28 @@ class IronCondorCandidate:
     net_collected: float
     final_score: float = 0.0
     score_factors: dict[str, float] = field(default_factory=dict)
+    below_preferred_credit: bool = False
+
+
+def _ic_rank_key(
+    cand: IronCondorCandidate,
+    *,
+    ann_return: float = 0.0,
+) -> tuple[float, float, float, float]:
+    """Net credit, ann return, liquidity×spread, PoP (all DESC)."""
+    liq = cand.score_factors.get("liquidity_weight", 0.5)
+    spread = cand.score_factors.get("spread_weight", 0.5)
+    return (cand.net_collected, ann_return, liq * spread, cand.pop)
+
+
+def _proxy_ann_return(cand: IronCondorCandidate, dte: int | None) -> float:
+    return score_iron_condor_candidate(
+        cand.pop,
+        cand.net_collected,
+        cand.max_loss_u * cand.qty,
+        None,
+        dte,
+    )
 
 
 def enumerate_symmetric_iron_condors(
@@ -362,6 +552,7 @@ def enumerate_symmetric_iron_condors(
     out: list[IronCondorCandidate] = []
     wing_widths = [mult * ctx.strike_step for mult in WING_WIDTH_MULTIPLIERS]
     if stats is not None:
+        stats.min_pop_pct = ctx.min_pop_pct
         stats.record_pair_wing_plan(short_put, short_call, wing_widths)
 
     def _reject(
@@ -401,6 +592,8 @@ def enumerate_symmetric_iron_condors(
         credit: float,
         put_credit: float,
         call_credit: float,
+        below_preferred_credit: bool,
+        preferred_credit_met: bool,
     ) -> None:
         if stats is not None:
             stats.record_evaluation(
@@ -415,6 +608,8 @@ def enumerate_symmetric_iron_condors(
                 credit=credit,
                 put_credit=put_credit,
                 call_credit=call_credit,
+                below_preferred_credit=below_preferred_credit,
+                preferred_credit_met=preferred_credit_met,
             )
 
     for mult in WING_WIDTH_MULTIPLIERS:
@@ -458,20 +653,6 @@ def enumerate_symmetric_iron_condors(
             )
             continue
         credit = put_credit + call_credit
-        if not passes_ic_wing_credit(
-            put_credit, call_credit, w, min_credit_pct_of_width=min_credit_pct_of_width
-        ):
-            _reject(
-                "min_credit",
-                wing_width=w,
-                long_put=lp,
-                long_call=lc,
-                credit=credit,
-                put_credit=put_credit,
-                call_credit=call_credit,
-                required=round(min_credit_pct_of_width * w, 4),
-            )
-            continue
         max_loss_u = w - credit
         if not passes_economic_prune(
             net_credit=credit,
@@ -516,6 +697,22 @@ def enumerate_symmetric_iron_condors(
                 floor=ctx.min_pop_pct,
             )
             continue
+        if not passes_hard_wing_credit(put_credit, call_credit):
+            _reject(
+                "min_wing_credit",
+                wing_width=w,
+                long_put=lp,
+                long_call=lc,
+                pop_detail=pop_detail,
+                credit=credit,
+                put_credit=put_credit,
+                call_credit=call_credit,
+            )
+            continue
+        preferred_credit_met = passes_ic_wing_credit(
+            put_credit, call_credit, w, min_credit_pct_of_width=min_credit_pct_of_width
+        )
+        below_preferred_credit = not preferred_credit_met
         _accept(
             wing_width=w,
             long_put=lp,
@@ -524,6 +721,8 @@ def enumerate_symmetric_iron_condors(
             credit=credit,
             put_credit=put_credit,
             call_credit=call_credit,
+            below_preferred_credit=below_preferred_credit,
+            preferred_credit_met=preferred_credit_met,
         )
         net_collected = credit * qty
         leg_quotes: list[QuoteRow] = [sp, lpq, sc, lcq]
@@ -531,6 +730,7 @@ def enumerate_symmetric_iron_condors(
         final_score, score_factors = score_iron_condor_ror(
             pop, net_collected, max_loss_total, ctx.min_pop_pct, leg_quotes
         )
+        score_factors["preferred_credit_met"] = float(preferred_credit_met)
         proxy_score = net_collected / max(max_loss_total, 1.0)
         out.append(
             IronCondorCandidate(
@@ -550,6 +750,7 @@ def enumerate_symmetric_iron_condors(
                 net_collected=net_collected,
                 final_score=final_score,
                 score_factors=score_factors,
+                below_preferred_credit=below_preferred_credit,
             )
         )
 
@@ -568,7 +769,11 @@ def evaluate_symmetric_iron_condor(
     candidates = enumerate_symmetric_iron_condors(ctx, short_put, short_call)
     if not candidates:
         return None
-    return max(candidates, key=lambda c: (c.final_score, c.net_collected, c.pop))
+    dte = days_to_expiry(ctx.expiry_display)
+    return max(
+        candidates,
+        key=lambda c: _ic_rank_key(c, ann_return=_proxy_ann_return(c, dte)),
+    )
 
 
 def iron_wings_symmetric(
@@ -601,19 +806,28 @@ def prefetch_iron_condor_strikes(ctx: EngineContext) -> set[tuple[int, Right]]:
     )
 
     pairs = prefetch_atm_pairs(ctx)
-    target = pop_to_short_delta(ctx.min_pop_pct, 2)
-    short_puts = _ic_short_strikes_around_target(
-        [s for s in ctx.liquid_pe_strikes if s < ctx.spot],
-        ctx.cache,
-        "Put",
-        target,
-    )
-    short_calls = _ic_short_strikes_around_target(
-        [s for s in ctx.liquid_ce_strikes if s > ctx.spot],
-        ctx.cache,
-        "Call",
-        target,
-    )
+    pe_strikes = [s for s in ctx.liquid_pe_strikes if s < ctx.spot]
+    ce_strikes = [s for s in ctx.liquid_ce_strikes if s > ctx.spot]
+    short_puts = _ic_short_strikes_for_pop_band(ctx, pe_strikes, "Put", ctx.min_pop_pct)
+    short_calls = _ic_short_strikes_for_pop_band(ctx, ce_strikes, "Call", ctx.min_pop_pct)
+    for _ in range(3):
+        new_puts = _ic_short_strikes_for_pop_band(
+            ctx,
+            pe_strikes,
+            "Put",
+            ctx.min_pop_pct,
+            opposite_strikes=short_calls,
+        )
+        new_calls = _ic_short_strikes_for_pop_band(
+            ctx,
+            ce_strikes,
+            "Call",
+            ctx.min_pop_pct,
+            opposite_strikes=new_puts,
+        )
+        if new_puts == short_puts and new_calls == short_calls:
+            break
+        short_puts, short_calls = new_puts, new_calls
     for s in short_puts:
         pairs.add((s, "Put"))
         for mult in WING_WIDTH_MULTIPLIERS:
@@ -766,45 +980,95 @@ def _collect_candidates(
     *,
     stats: IronCondorRejectionStats | None = None,
 ) -> tuple[list[IronCondorCandidate], float]:
-    last_pct = IC_CREDIT_PCT_RELAXATION_SCHEDULE[-1]
-    for pct in IC_CREDIT_PCT_RELAXATION_SCHEDULE:
-        candidates = _collect_at_credit_threshold(ctx, pairs, pct, stats=None)
-        if candidates:
-            if stats is not None:
-                _collect_at_credit_threshold(ctx, pairs, pct, stats=stats)
-            return candidates, pct
+    candidates = _collect_at_credit_threshold(
+        ctx,
+        pairs,
+        MIN_IC_CREDIT_PCT_OF_WIDTH,
+        stats=stats,
+    )
+    return candidates, MIN_IC_CREDIT_PCT_OF_WIDTH
 
-    if stats is not None:
-        _collect_at_credit_threshold(ctx, pairs, last_pct, stats=stats)
-    return [], last_pct
+
+def _build_pop_audit_summary(
+    stats: IronCondorRejectionStats,
+    candidates: list[IronCondorCandidate],
+    min_pop_pct: float,
+) -> dict[str, object]:
+    below_total = sum(1 for c in candidates if c.below_preferred_credit)
+    survivors_by_bucket: dict[str, int] = {}
+    below_preferred_by_bucket: dict[str, int] = {}
+    for cand in candidates:
+        bucket = _ic_pop_bucket(cand.pop, min_pop_pct)
+        survivors_by_bucket[bucket] = survivors_by_bucket.get(bucket, 0) + 1
+        if cand.below_preferred_credit:
+            below_preferred_by_bucket[bucket] = (
+                below_preferred_by_bucket.get(bucket, 0) + 1
+            )
+    return {
+        "pop_distribution": dict(sorted(stats.pop_bucket_counts.items())),
+        "survivors_by_pop_bucket": dict(sorted(survivors_by_bucket.items())),
+        "below_preferred_credit_by_pop_bucket": dict(
+            sorted(below_preferred_by_bucket.items())
+        ),
+        "min_credit_rejections_by_pop_bucket": dict(
+            sorted(stats.min_credit_hard_reject_by_pop_bucket.items())
+        ),
+        "below_preferred_credit_total": below_total,
+        "pop_band_target": [min_pop_pct, min_pop_pct + IC_POP_BAND_WIDTH_PCT],
+    }
 
 
 def _ic_credit_search_rationale(min_credit_pct_used: float) -> str:
-    if min_credit_pct_used < MIN_IC_CREDIT_PCT_OF_WIDTH:
-        pct_display = min_credit_pct_used * 100
-        return (
-            f"Credit pct relaxed to {pct_display:g}% to find survivors; "
-            "bidirectional short strikes × all wing widths; PoP hard floor; "
-            "credit/annualized-return ranking."
-        )
+    del min_credit_pct_used
     return (
-        "Bidirectional short strikes × all wing widths; PoP hard floor; "
+        "PoP-band strike shortlist; PoP hard floor; soft preferred credit annotation; "
         "credit/annualized-return ranking."
     )
 
 
-def _pick_top_candidates(
+async def _pick_top_candidates(
     ctx: EngineContext,
     candidates: list[IronCondorCandidate],
     *,
     strategy_id: str,
     top_n: int = IC_RETURN_TOP_N,
 ) -> tuple[list[tuple[IronCondorCandidate, float]], list[dict]]:
-    """Proxy-shortlist finalists, margin only those, then rank by SPAN-informed return."""
+    """Credit-first shortlist, margin only those, then rank by SPAN-informed return."""
     dte = days_to_expiry(ctx.expiry_display)
     shortlist = sorted(
-        candidates, key=lambda c: (c.final_score, c.net_collected, c.pop), reverse=True
+        candidates,
+        key=lambda c: _ic_rank_key(c, ann_return=_proxy_ann_return(c, dte)),
+        reverse=True,
     )[:top_n]
+
+    margin_requests: list[MarginFetchRequest] = []
+    for cand in shortlist:
+        one_lot_legs = legs_at_lots(cand.legs, ctx.lot_size, lots=1)
+        struct_key = structural_margin_key(one_lot_legs)
+        if struct_key in ctx.unit_span_by_structure:
+            continue
+        margin_input = legs_to_margin_input(
+            one_lot_legs, ctx.stock_code, ctx.exchange_code, ctx.expiry_display
+        )
+        margin_requests.append(
+            MarginFetchRequest(
+                cache_key=struct_key,
+                margin_input=margin_input,
+                strategy_id=strategy_id,
+                phase="ic_candidate_span",
+            )
+        )
+
+    if margin_requests:
+        spans = await fetch_margins_concurrent(
+            ctx.processor,
+            ctx.user_id,
+            ctx.exchange_code,
+            margin_requests,
+            audit=ctx.audit,
+            existing_cache=ctx.unit_span_by_structure,
+        )
+        ctx.unit_span_by_structure.update(spans)
 
     span_scores: list[dict] = []
     scored: list[tuple[IronCondorCandidate, float]] = []
@@ -827,11 +1091,11 @@ def _pick_top_candidates(
         )
         scored.append((cand, ann_return))
 
-    def rank_key(item: tuple[IronCondorCandidate, float]) -> tuple[float, float, float]:
-        cand, ann = item
-        return (ann, cand.net_collected, cand.pop)
-
-    winners = sorted(scored, key=rank_key, reverse=True)
+    winners = sorted(
+        scored,
+        key=lambda item: _ic_rank_key(item[0], ann_return=item[1]),
+        reverse=True,
+    )
     return winners, span_scores
 
 
@@ -858,13 +1122,20 @@ def _candidate_to_result(
         variant_rank=rank,
         engine_score=round(cand.final_score, 6),
         ranking_summary=ranking_summary,
-        score_breakdown=cand.score_factors,
+        score_breakdown={
+            **cand.score_factors,
+            **(
+                {"below_preferred_credit": 1.0}
+                if cand.below_preferred_credit
+                else {}
+            ),
+        },
     )
     result.annualized_return_pct = round(ann_return, 2)
     return result
 
 
-def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
+async def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
     sid, name = "iron_condor", "Iron Condor"
     if ctx.halted:
         return [skip(sid, name, ctx.halt_reason or "Market halted")]
@@ -880,14 +1151,15 @@ def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
             "No iron condor meets minimum PoP within risk limits."
         )
         if ctx.audit and stats is not None:
+            pop_summary = _build_pop_audit_summary(stats, [], ctx.min_pop_pct)
             ctx.audit.record_calculation(
                 "Iron condor candidate search",
                 {
                     "pairs_evaluated": len(pairs),
                     "survivors": 0,
                     "strangle_seed": list(seed_pair) if seed_pair else None,
-                    "min_credit_pct_used": min_credit_pct_used,
-                    "credit_thresholds_attempted": list(IC_CREDIT_PCT_RELAXATION_SCHEDULE),
+                    "preferred_credit_pct": MIN_IC_CREDIT_PCT_OF_WIDTH,
+                    "pop_band_target": pop_summary["pop_band_target"],
                 },
                 {
                     "rejection_counts": stats.counts,
@@ -895,8 +1167,9 @@ def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
                     "samples": stats.samples[:15],
                     "pair_wing_plans": stats.pair_wing_plans,
                     "candidates_evaluated": stats.evaluations,
+                    **pop_summary,
                 },
-                rationale="No symmetric iron condor passed credit, risk, or PoP filters.",
+                rationale="No symmetric iron condor passed risk or PoP filters.",
             )
         return [skip(sid, name, skip_reason)]
 
@@ -911,7 +1184,11 @@ def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
                     "pop": round(c.pop, 2),
                     "final_score": round(c.final_score, 4),
                 }
-                for c in sorted(candidates, key=lambda x: x.final_score, reverse=True)[:5]
+                for c in sorted(
+                    candidates,
+                    key=lambda x: (x.net_collected, x.pop),
+                    reverse=True,
+                )[:5]
             ],
         }
         if stats is not None:
@@ -920,19 +1197,23 @@ def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
             audit_outputs["rejection_samples"] = stats.samples[:10]
             audit_outputs["pair_wing_plans"] = stats.pair_wing_plans
             audit_outputs["candidates_evaluated"] = stats.evaluations
+            audit_outputs.update(
+                _build_pop_audit_summary(stats, candidates, ctx.min_pop_pct)
+            )
         ctx.audit.record_calculation(
             "Iron condor candidate search",
             {
                 "pairs_evaluated": len(pairs),
                 "survivors": len(candidates),
                 "strangle_seed": list(seed_pair) if seed_pair else None,
-                "min_credit_pct_used": min_credit_pct_used,
+                "preferred_credit_pct": MIN_IC_CREDIT_PCT_OF_WIDTH,
+                "pop_band_target": [ctx.min_pop_pct, ctx.min_pop_pct + IC_POP_BAND_WIDTH_PCT],
             },
             audit_outputs,
             rationale=_ic_credit_search_rationale(min_credit_pct_used),
         )
 
-    winners, span_scores = _pick_top_candidates(ctx, candidates, strategy_id=sid)
+    winners, span_scores = await _pick_top_candidates(ctx, candidates, strategy_id=sid)
     if not winners:
         return [skip(sid, name, "Could not resolve iron condor finalists.")]
 
@@ -942,8 +1223,9 @@ def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
             {"finalists": len(span_scores)},
             {"scores": span_scores},
             rationale=(
-                "Credit-proxy shortlist; finalists ranked by SPAN annualized return, "
-                "then net credit; PoP tiebreak only."
+                "Credit-first shortlist by net collected and proxy annualized return; "
+                "finalists re-ranked by SPAN annualized return, net credit, liquidity; "
+                "PoP tiebreak only."
             ),
         )
 

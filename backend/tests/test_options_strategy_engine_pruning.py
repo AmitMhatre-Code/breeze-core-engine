@@ -19,7 +19,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.pruning import (
     wing_strikes_from_multipliers,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
-    IC_TOP_K_SHORT_STRIKES,
+    IC_SHORT_STRIKES_MAX_ATM,
     iron_condor_short_pairs,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import short_lots_in_legs
@@ -103,7 +103,7 @@ class TestPruning(unittest.TestCase):
         ctx = _mock_ctx()
         ctx.min_pop_pct = 25.0
         pairs = iron_condor_short_pairs(ctx)
-        self.assertLessEqual(len(pairs), IC_TOP_K_SHORT_STRIKES * IC_TOP_K_SHORT_STRIKES)
+        self.assertLessEqual(len(pairs), IC_SHORT_STRIKES_MAX_ATM * IC_SHORT_STRIKES_MAX_ATM)
         self.assertGreater(len(pairs), 0)
 
     def test_top_k_truncates(self):
