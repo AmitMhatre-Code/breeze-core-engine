@@ -8,14 +8,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import {
   OrderExecutionConfirmDialog,
   type ExecutionPreviewLeg,
 } from "@/components/order/OrderExecutionConfirmDialog";
 import type { OrderConfirmPayload } from "@/lib/order-confirm";
-import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 import type { OptionRight } from "@/lib/strategy-builder/types";
 
 export type OpenOrderConfirmOptions = {
@@ -90,7 +88,6 @@ function orderPayloadToLeg(base: OrderConfirmPayload): ExecutionPreviewLeg {
 }
 
 export function OrderConfirmProvider({ children }: { children: ReactNode }) {
-  const { secondsRemaining } = useRateLimitCountdown();
   const { guardTradingAction } = useLicenseRestrictions();
   const [modal, setModal] = useState<ConfirmModalState>({ open: false });
 
@@ -137,9 +134,6 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
 
   return (
     <OrderConfirmContext.Provider value={value}>
-      {secondsRemaining !== null ? (
-        <RateLimitPauseOverlay secondsRemaining={secondsRemaining} />
-      ) : null}
       {children}
       {modal.open && modal.mode === "single" ? (
         <OrderExecutionConfirmDialog

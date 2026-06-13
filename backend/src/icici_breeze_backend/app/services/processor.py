@@ -1072,7 +1072,7 @@ class processor():
 
         return orders
 
-    def group_orders(self,user_id,orders):
+    def group_orders(self, user_id, orders, *, fetch_ltp: bool = False):
         orders = sorted(orders['Success'], key=lambda x: (x.get("exchange_code", ""), x["option"]))
         grouped_orders = []
         group = None
@@ -1096,23 +1096,26 @@ class processor():
                     group_order['group_open'] = 0
                     group_order['group_executed'] = 0
                     group_order['group_orders'] = []
-                    try:
-                        quote = self.get_quote(
-                            user_id,
-                            order['stock_code'],
-                            order['expiry_date'],
-                            order['product_type'],
-                            order['right'],
-                            order['strike_price'],
-                            exchange_code=order.get('exchange_code', cfg.NFO),
-                        )
-                    except Exception as e:
-                        quote = _icici_error(f"Error calling ICICI Breeze API get_quote({order['stock_code']},{order['expiry_date']},{order['product_type']},{order['right']},{order['strike_price']}): {e}")
+                    if fetch_ltp:
+                        try:
+                            quote = self.get_quote(
+                                user_id,
+                                order['stock_code'],
+                                order['expiry_date'],
+                                order['product_type'],
+                                order['right'],
+                                order['strike_price'],
+                                exchange_code=order.get('exchange_code', cfg.NFO),
+                            )
+                        except Exception as e:
+                            quote = _icici_error(f"Error calling ICICI Breeze API get_quote({order['stock_code']},{order['expiry_date']},{order['product_type']},{order['right']},{order['strike_price']}): {e}")
 
-                    if quote['Status'] == 200:
-                        group_order['group_ltp'] = quote['Success'][0]['ltp']
+                        if quote['Status'] == 200:
+                            group_order['group_ltp'] = quote['Success'][0]['ltp']
+                        else:
+                            group_order['group_ltp'] = 0
                     else:
-                        group_order['group_ltp'] = 0
+                        group_order['group_ltp'] = None
 
                 group_order['group_ordered'] = group_order['group_ordered'] + int(order['quantity'])
                 if order['status'] == cfg.EXECUTED:
@@ -1136,6 +1139,114 @@ class processor():
             grouped_orders.append(group_order)
 
         return grouped_orders
+
+    def fetch_group_ltps_batch(
+        self,
+        user_id: str,
+        groups: list[dict[str, Any]],
+    ) -> dict[str, float | None]:
+        """Batch LTP lookup for order-book groups (dedupe contracts, one chain per CE/PE bucket)."""
+        if not groups:
+            return {}
+
+        def _strike_key(raw: Any) -> str:
+            try:
+                return "{:.0f}".format(float(raw))
+            except (TypeError, ValueError):
+                return str(raw or "").strip()
+
+        def _expiry_display(raw: str) -> str:
+            s = str(raw or "").strip()
+            if not s:
+                return s
+            if "T" in s:
+                return _expiry_api_to_display(s)
+            if len(s.split("-")[0]) == 4:
+                return _expiry_api_to_display(s)
+            return s
+
+        # group_id -> contract key
+        group_contract: dict[str, tuple[str, str, str, str, str]] = {}
+        contract_groups: dict[tuple[str, str, str, str, str], list[str]] = {}
+        for item in groups:
+            group_id = str(item.get("group") or "").strip()
+            if not group_id:
+                continue
+            stock_code = str(item.get("stock_code") or "").strip()
+            expiry_display = _expiry_display(str(item.get("expiry_date") or ""))
+            strike = _strike_key(item.get("strike_price"))
+            right = str(item.get("right") or "").strip()
+            exchange_code = str(item.get("exchange_code") or cfg.NFO).strip() or cfg.NFO
+            if not stock_code or not expiry_display or not strike or not right:
+                group_contract[group_id] = ("", "", "", "", "")
+                continue
+            contract_key = (stock_code, expiry_display, strike, right, exchange_code)
+            group_contract[group_id] = contract_key
+            contract_groups.setdefault(contract_key, []).append(group_id)
+
+        # Unique contracts -> chain buckets
+        chain_buckets: dict[tuple[str, str, str, str], set[str]] = {}
+        for contract_key in contract_groups:
+            stock_code, expiry_display, strike, right, exchange_code = contract_key
+            if not stock_code:
+                continue
+            bucket = (stock_code, expiry_display, exchange_code, right)
+            chain_buckets.setdefault(bucket, set()).add(strike)
+
+        breeze = self.get_session_breeze(user_id)
+        strike_ltps: dict[tuple[str, str, str, str, str], float | None] = {}
+
+        for (stock_code, expiry_display, exchange_code, right), strikes in chain_buckets.items():
+            if breeze is None:
+                for strike in strikes:
+                    strike_ltps[(stock_code, expiry_display, strike, right, exchange_code)] = None
+                continue
+            try:
+                expiry_api = _expiry_to_breeze_place_order(expiry_display)
+            except (ValueError, TypeError):
+                for strike in strikes:
+                    strike_ltps[(stock_code, expiry_display, strike, right, exchange_code)] = None
+                continue
+            _pt, _rt = _icici_option_chain_enums(cfg.OPTIONS, right)
+            try:
+                chain = breeze.get_option_chain_quotes(
+                    stock_code=stock_code,
+                    exchange_code=exchange_code,
+                    product_type=_pt,
+                    expiry_date=expiry_api,
+                    right=_rt,
+                )
+            except Exception as e:
+                _logger.warning(
+                    "fetch_group_ltps_batch: chain failed user=%s stock=%s expiry=%s right=%s: %s",
+                    user_id,
+                    stock_code,
+                    expiry_display,
+                    right,
+                    e,
+                )
+                chain = _icici_error(str(e))
+
+            ltp_by_strike: dict[str, float | None] = {}
+            if isinstance(chain, dict) and chain.get("Status") == 200:
+                for row in chain.get("Success") or []:
+                    sk = _strike_key(row.get("strike_price"))
+                    ltp_raw = row.get("ltp")
+                    try:
+                        ltp_by_strike[sk] = float(ltp_raw) if ltp_raw is not None else None
+                    except (TypeError, ValueError):
+                        ltp_by_strike[sk] = None
+
+            for strike in strikes:
+                strike_ltps[(stock_code, expiry_display, strike, right, exchange_code)] = ltp_by_strike.get(strike)
+
+        out: dict[str, float | None] = {}
+        for group_id, contract_key in group_contract.items():
+            if not contract_key[0]:
+                out[group_id] = None
+            else:
+                out[group_id] = strike_ltps.get(contract_key)
+        return out
 
     def build_cancel_order_messages(
         self,

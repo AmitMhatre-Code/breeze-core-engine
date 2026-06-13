@@ -84,3 +84,8 @@ def evict(user_id: str, broker_token: str) -> None:
         if key in _cache:
             del _cache[key]
             _logger.debug("broker_snapshot_cache: evicted user=%s", user_id)
+
+
+def evict_broker_snapshot(user_id: str, broker_token: str) -> None:
+    """Evict cached login snapshot so /home/data refetches fresh margin."""
+    evict(user_id, broker_token)

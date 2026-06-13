@@ -12,14 +12,12 @@ import {
 } from "@/components/order/OptionChainTable";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionConfirmDialog";
-import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { OptionStrategyIcon } from "@/components/strategy-builder/OptionStrategyIcon";
 import { ReadymadeSetupTooltip } from "@/components/strategy-builder/ReadymadeSetupTooltip";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
 import { apiClient } from "@/lib/api-client";
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
-import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
 import {
   expiryDisplayToYears,
@@ -1271,7 +1269,6 @@ function isCoveredPairInLegs(
 }
 
 export default function StrategyBuilderPage() {
-  const { secondsRemaining } = useRateLimitCountdown();
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
@@ -3388,9 +3385,6 @@ export default function StrategyBuilderPage() {
   return (
     <AppShell contentWidth="wide">
       <RevokedTradingPageGuard>
-      {secondsRemaining !== null ? (
-        <RateLimitPauseOverlay secondsRemaining={secondsRemaining} />
-      ) : null}
       <div className="space-y-5">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>

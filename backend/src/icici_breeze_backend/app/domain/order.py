@@ -136,6 +136,25 @@ class BookCancelCommitRequest(BaseModel):
     cancel_details: Optional[List[CancelOrderDetail]] = None
 
 
+class BookGroupLtpItem(BaseModel):
+    """One order-book group row for batched LTP lookup."""
+
+    group: str
+    stock_code: str
+    expiry_date: str
+    strike_price: str | float | int
+    right: str
+    exchange_code: str = "NFO"
+
+
+class BookGroupLtpRequest(BaseModel):
+    groups: List[BookGroupLtpItem] = Field(default_factory=list)
+
+
+class BookGroupLtpResponse(BaseModel):
+    ltps: dict[str, float | None] = Field(default_factory=dict)
+
+
 class OrderFormRequest(BaseModel):
     """Full order form request (all actions: BUY, SELL, QUOTE, CLEAR)."""
     product_type: Optional[str] = None

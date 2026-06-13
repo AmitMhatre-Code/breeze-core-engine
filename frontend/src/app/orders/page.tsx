@@ -17,10 +17,14 @@ import type { ExecutionPreviewLeg } from "@/components/order/OrderExecutionConfi
 import { OrderBookDatePopover } from "@/components/order/OrderBookDatePopover";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
 import { PrefilledOrderCard } from "@/components/order/PrefilledOrderCard";
-import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
+import {
+  fetchBookGroupLtps,
+  type BookGroupLtpItem,
+} from "@/lib/book-ltp";
 import { runCancelOrdersWithPacing } from "@/lib/icici-rate-limit-flow";
+import { invalidateTradingShellQueries } from "@/lib/trading-cache";
 import {
   deleteParkedOrdersMany,
   fetchParkedOrders,
@@ -65,6 +69,42 @@ type BookGroup = {
   group_ltp?: number | string;
   group_orders?: BookOrderRow[];
 };
+
+function formatGroupLtpDisplay(
+  groupId: string | undefined,
+  fallback: number | string | null | undefined,
+  ltps: Record<string, number | null> | undefined,
+  loading: boolean,
+): string {
+  if (groupId && ltps && groupId in ltps) {
+    const v = ltps[groupId];
+    if (v != null && Number.isFinite(v)) return `₹${v}`;
+    return "—";
+  }
+  if (fallback != null && fallback !== "") return `₹${fallback}`;
+  if (loading) return "…";
+  return "—";
+}
+
+function bookGroupLtpPayload(groups: BookGroup[]): BookGroupLtpItem[] {
+  const out: BookGroupLtpItem[] = [];
+  for (const g of groups) {
+    if ((g.group_open ?? 0) <= 0 || !g.group) continue;
+    const first = g.group_orders?.[0];
+    if (!first?.stock_code || !first.expiry_date || first.strike_price == null) {
+      continue;
+    }
+    out.push({
+      group: g.group,
+      stock_code: String(first.stock_code),
+      expiry_date: String(first.expiry_date),
+      strike_price: first.strike_price,
+      right: String(first.right ?? ""),
+      exchange_code: String(first.exchange_code ?? g.group_exchange ?? "NFO"),
+    });
+  }
+  return out;
+}
 
 function cancelDetailForOrderKey(
   key: string,
@@ -303,7 +343,7 @@ function BookMessages({ messages }: { messages: BookMessage[] }) {
 function OrdersBody() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { secondsRemaining, wait } = useRateLimitCountdown();
+  const { wait } = useRateLimitCountdown();
   const { openOrderConfirm, openExecutionConfirm } = useOrderConfirm();
 
   const cloneOrderToPlace = useCallback(
@@ -379,7 +419,7 @@ function OrdersBody() {
       }),
     onSuccess: async () => {
       setSelected(new Set());
-      await queryClient.invalidateQueries({ queryKey: ["book"] });
+      invalidateTradingShellQueries(queryClient);
     },
   });
 
@@ -423,6 +463,30 @@ function OrdersBody() {
   );
 
   const groups = bookQuery.data?.grouped_orders ?? null;
+  const ltpPayload = useMemo(
+    () => (groups?.length ? bookGroupLtpPayload(groups) : []),
+    [groups],
+  );
+  const ltpQuery = useQuery({
+    queryKey: [
+      "book",
+      "ltp",
+      appliedRange?.start ?? "__default__",
+      appliedRange?.end ?? "__default__",
+      ltpPayload.map((g) => g.group).join("|"),
+    ],
+    queryFn: () => fetchBookGroupLtps(ltpPayload),
+    enabled: ltpPayload.length > 0 && !bookQuery.isLoading,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+  const groupLtps = ltpQuery.data?.ltps;
+  const groupLtpLoading = ltpQuery.isLoading || ltpQuery.isFetching;
+  const formatGroupLtp = useCallback(
+    (g: BookGroup) =>
+      formatGroupLtpDisplay(g.group, g.group_ltp, groupLtps, groupLtpLoading),
+    [groupLtps, groupLtpLoading],
+  );
   const bookMsgs = bookQuery.data?.messages;
   const brokerMessagesKey = useMemo(() => {
     if (!bookMsgs?.length) return "";
@@ -590,9 +654,6 @@ function OrdersBody() {
 
   return (
     <>
-      {secondsRemaining !== null ? (
-        <RateLimitPauseOverlay secondsRemaining={secondsRemaining} />
-      ) : null}
       <Suspense fallback={null}>
         <PrefilledOrderCard />
       </Suspense>
@@ -1200,9 +1261,7 @@ function OrdersBody() {
                                                   {formatQtyIndian(o.open_quantity)}
                                                 </td>
                                                 <td className="px-4 py-2.5 align-middle text-center tabular-nums text-zinc-600 dark:text-zinc-400">
-                                                  {g.group_ltp != null
-                                                    ? `₹${g.group_ltp}`
-                                                    : "—"}
+                                                  {formatGroupLtp(g)}
                                                 </td>
                                                 <td className="px-4 py-2.5 align-middle text-center tabular-nums text-zinc-600 dark:text-zinc-400">
                                                   {o.price != null
@@ -1355,7 +1414,7 @@ function OrdersBody() {
                               <p>
                                 Price:{" "}
                                 {o.price != null ? `₹${o.price}` : "—"} | LTP:{" "}
-                                {g.group_ltp != null ? `₹${g.group_ltp}` : "—"}
+                                {formatGroupLtp(g)}
                               </p>
                               <p>Status: {o.status}</p>
                               {o.cancelable && o.order_id ? (

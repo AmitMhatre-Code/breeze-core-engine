@@ -6,7 +6,6 @@ import { AppShell } from "@/components/layout/AppShell";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionConfirmDialog";
-import { RateLimitPauseOverlay } from "@/components/order/RateLimitPauseOverlay";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { OutlookFilterButtons } from "@/components/strategy-builder/OutlookFilterButtons";
 import { MasonryGrid } from "@/components/strategy-builder/MasonryGrid";
@@ -57,7 +56,6 @@ import { tradeSelectionKey } from "@/lib/strategy-builder/types";
 const DEFAULT_MIN_POP_PCT = 65;
 const DEFAULT_MIN_ANN_RETURN_PCT = 5;
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
-import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 
 const MARGIN_LACS_MAX = 999_999;
 
@@ -128,7 +126,6 @@ function resetDownstream(
 }
 
 export default function StrategyBuilderNewPage() {
-  const { secondsRemaining } = useRateLimitCountdown();
   const [segmentExchange, setSegmentExchange] = useState<"NFO" | "BFO">("NFO");
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
@@ -564,9 +561,6 @@ export default function StrategyBuilderNewPage() {
   return (
     <AppShell>
       <RevokedTradingPageGuard>
-        {secondsRemaining !== null ? (
-          <RateLimitPauseOverlay secondsRemaining={secondsRemaining} />
-        ) : null}
         <div className="space-y-5">
           <header>
             <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">

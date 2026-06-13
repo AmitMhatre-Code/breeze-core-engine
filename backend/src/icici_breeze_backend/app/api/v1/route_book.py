@@ -16,6 +16,8 @@ from icici_breeze_backend.app.domain.order import (
     BookActionRequest,
     BookCancelCommitRequest,
     BookCancelOneRequest,
+    BookGroupLtpRequest,
+    BookGroupLtpResponse,
     ParkedOrderCreateRequest,
     ParkedOrderIdsRequest,
     ParkedOrderListResponse,
@@ -25,6 +27,7 @@ from icici_breeze_backend.app.services.user_rate_limit_prefs import (
     get_icici_rate_limit_pause_seconds,
 )
 from icici_breeze_backend.app.domain.responses import BookDataResponse
+from icici_breeze_backend.app.services.broker_snapshot_cache import evict_broker_snapshot
 from icici_breeze_backend.app.services.processor import processor
 
 router = APIRouter()
@@ -51,40 +54,6 @@ async def get_book_data(
             detail="ICICI broker token missing; re-login required",
         )
 
-    error: dict = {}
-
-    customer = breeze.get_customer_details(user_id)
-    if customer is None:
-        error["location"] = (
-            "In route_book.py --> get_book_data() get_customer_details returned None"
-        )
-        error["contents"] = "get_customer_details() returned None for user_id = " + user_id
-        breeze.store_error(error)
-    elif customer["Status"] != 200:
-        error["location"] = "In route_book.py --> get_book_data() get_customer_details failed"
-        error["contents"] = (
-            "customer['status'] = "
-            + str(customer["Status"])
-            + " and customer['error'] = "
-            + customer.get("Error", "")
-        )
-        breeze.store_error(error)
-
-    margin = breeze.get_margin_situation(user_id, target_margin_ute=100)
-    if margin["Status"] != 200:
-        error["location"] = "In route_book.py --> get_book_data() get_margin_situation failed"
-        error["contents"] = (
-            "margin['status'] = "
-            + str(margin["Status"])
-            + " and margin['error'] = "
-            + margin.get("Error", "")
-        )
-        breeze.store_error(error)
-
-    errors = breeze.retrieve_errors()
-    if len(errors) > 0:
-        raise_route_errors(errors, log_context="route_book.get_book_data")
-
     raw_messages = breeze.retrieve_messages(user_id)
     messages: list[dict] = list(raw_messages) if raw_messages else []
 
@@ -109,7 +78,7 @@ async def get_book_data(
     elif orders.get("Success") is None:
         grouped_orders = None
     else:
-        grouped_orders = breeze.group_orders(user_id, orders)
+        grouped_orders = breeze.group_orders(user_id, orders, fetch_ltp=False)
 
     if orders_failed:
         messages = list(messages)
@@ -130,6 +99,22 @@ async def get_book_data(
         end=end,
         orders_failed=orders_failed,
     )
+
+
+@router.post("/group-ltp", response_model=BookGroupLtpResponse)
+async def post_book_group_ltp(
+    body: BookGroupLtpRequest,
+    context: RequestContext = Depends(get_request_context),
+):
+    """Lazy batched LTP for order-book groups (after fast /book/data load)."""
+    if not context.broker_token:
+        raise HTTPException(
+            status_code=401,
+            detail="ICICI broker token missing; re-login required",
+        )
+    payload = [g.model_dump() for g in body.groups]
+    ltps = breeze.fetch_group_ltps_batch(context.user_id, payload)
+    return BookGroupLtpResponse(ltps=ltps)
 
 
 @router.post("")
@@ -194,6 +179,8 @@ async def post_cancel_commit(
         success_idx, failures, orders, details
     )
     breeze.store_messages(context.user_id, messages)
+    if success_idx:
+        evict_broker_snapshot(context.user_id, context.broker_token or "")
     return json_redirect("/orders")
 
 

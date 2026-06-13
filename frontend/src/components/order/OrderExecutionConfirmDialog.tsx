@@ -19,6 +19,7 @@ import type {
   OrderSide,
 } from "@/lib/strategy-builder/types";
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
+import { invalidateTradingShellQueries } from "@/lib/trading-cache";
 import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 
 export type ExecutionPreviewLeg = {
@@ -214,8 +215,7 @@ export function OrderExecutionConfirmDialog({
       }
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["book"] });
-      void queryClient.invalidateQueries({ queryKey: ["portfolio", "positions"] });
+      invalidateTradingShellQueries(queryClient);
       void queryClient.invalidateQueries({ queryKey: ["parked-orders"] });
       void queryClient.invalidateQueries({ queryKey: ["orders", "list"] });
       onClose();
