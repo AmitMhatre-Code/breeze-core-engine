@@ -4,6 +4,8 @@ import unittest
 from icici_breeze_backend.audit.user_explainability import (
     USER_REPORT_SCHEMA_VERSION,
     build_user_explainability_report,
+    resolve_explainability_from_audit_doc,
+    split_report_into_levels,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import (
     BADGE_CAPITAL,
@@ -259,6 +261,61 @@ class TestUserExplainabilityReport(unittest.TestCase):
                 for i in report["what_if_insights"]
             )
         )
+
+    def test_split_report_into_levels(self):
+        report = build_user_explainability_report(
+            request=_base_request(),
+            strategy_evaluations={},
+            trades=[],
+            summary=_base_summary(),
+        )
+        levels = split_report_into_levels(report)
+        self.assertEqual(levels["schema_version"], USER_REPORT_SCHEMA_VERSION)
+        self.assertIn("user_inputs", levels["level_1"])
+        self.assertIn("why_this", levels["level_2"])
+        self.assertIn("why_not", levels["level_2"])
+        self.assertIsInstance(levels["level_3"], list)
+
+    def test_resolve_explainability_rebuilds_from_evaluations(self):
+        doc = {
+            "request": _base_request(),
+            "summary": {
+                "strategies_ok": ["iron_condor"],
+                "strategies_skipped": [
+                    {"strategy_id": "short_straddle", "skip_reason": "PoP too low"}
+                ],
+            },
+            "strategy_evaluations": {
+                "iron_condor": {
+                    "strategy_summary": {"generated": 5, "returned": 1},
+                    "pop_policy": {"used_for_filtering": True, "ignored": False},
+                    "rejection_funnel": {},
+                    "winners": [
+                        {
+                            "metrics": {
+                                "pop_pct": 70.0,
+                                "net_collected": 10000.0,
+                                "annualized_return_pct": 12.0,
+                                "margin": 80000.0,
+                                "badges": [BADGE_INCOME],
+                            }
+                        }
+                    ],
+                },
+                "short_straddle": {
+                    "strategy_summary": {"generated": 3, "returned": 0},
+                    "pop_policy": {"used_for_filtering": True, "ignored": False},
+                    "rejection_funnel": {"pop_floor": 3},
+                    "near_misses": [{"metrics": {"pop_pct": 58.0}}],
+                },
+            },
+        }
+        levels = resolve_explainability_from_audit_doc(doc)
+        self.assertIsNotNone(levels)
+        assert levels is not None
+        self.assertEqual(levels["level_1"]["strategies_evaluated"], 2)
+        self.assertEqual(len(levels["level_2"]["why_this"]), 1)
+        self.assertEqual(len(levels["level_2"]["why_not"]), 1)
 
 
 if __name__ == "__main__":

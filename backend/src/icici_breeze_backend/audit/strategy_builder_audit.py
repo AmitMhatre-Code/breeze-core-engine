@@ -297,7 +297,10 @@ class StrategyBuilderAuditSession:
             "summary": summary,
         }
         if user_explainability is not None:
+            from icici_breeze_backend.audit.user_explainability import split_report_into_levels
+
             document["user_explainability"] = user_explainability
+            document["explainability_levels"] = split_report_into_levels(user_explainability)
         try:
             enforce_audit_retention(self.user_id)
             with open(self.file_path, "w", encoding="utf-8") as fh:
@@ -355,6 +358,8 @@ def list_audit_files_for_user(user_id: str) -> list[str]:
 
 
 def _audit_index_row(doc: dict[str, Any], path: str) -> dict[str, Any]:
+    from icici_breeze_backend.audit.user_explainability import explainability_available_for_doc
+
     request = doc.get("request") or {}
     return {
         "session_id": doc.get("session_id"),
@@ -370,6 +375,8 @@ def _audit_index_row(doc: dict[str, Any], path: str) -> dict[str, Any]:
         "strategy_category": request.get("strategy_category"),
         "event_count": doc.get("event_count"),
         "filename": os.path.basename(path),
+        "explainability_available": explainability_available_for_doc(doc),
+        "level_4_available": True,
     }
 
 
@@ -433,6 +440,65 @@ def resolve_audit_file_for_user(session_id: str, user_id: str) -> str | None:
         if doc.get("session_id") == session_id and doc.get("user_id") == user_id:
             return path
     return None
+
+
+def _write_audit_doc(path: str, doc: dict[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2, default=_json_default, ensure_ascii=False)
+        fh.write("\n")
+
+
+def resolve_explainability_for_session(
+    session_id: str,
+    user_id: str,
+    *,
+    persist_if_rebuilt: bool = True,
+) -> dict[str, Any] | None:
+    """Load Level 1–3 explainability for a session; lazy-migrate to disk when rebuilt."""
+    from icici_breeze_backend.audit.user_explainability import resolve_explainability_from_audit_doc
+
+    path = resolve_audit_file_for_user(session_id, user_id)
+    if not path:
+        return None
+    doc = _read_audit_doc(path)
+    if not doc:
+        return None
+
+    had_stored_levels = isinstance(doc.get("explainability_levels"), dict)
+    levels = resolve_explainability_from_audit_doc(doc)
+    if levels is None:
+        return None
+
+    if persist_if_rebuilt and not had_stored_levels:
+        doc["explainability_levels"] = levels
+        if not doc.get("user_explainability"):
+            doc["user_explainability"] = {
+                "user_report_schema_version": levels.get("schema_version", "1.0"),
+                "executive_summary": levels["level_1"],
+                "why_this": levels["level_2"]["why_this"],
+                "why_not": levels["level_2"]["why_not"],
+                "what_if_insights": levels["level_3"],
+            }
+        try:
+            _write_audit_doc(path, doc)
+            _logger.info(
+                "Persisted explainability_levels for session=%s path=%s",
+                session_id,
+                path,
+            )
+        except OSError as exc:
+            _logger.warning(
+                "Failed to persist explainability_levels for %s: %s",
+                path,
+                exc,
+            )
+
+    return {
+        "session_id": session_id,
+        "level_1": levels["level_1"],
+        "level_2": levels["level_2"],
+        "level_3": levels["level_3"],
+    }
 
 
 def quote_row_to_audit(q: Any) -> dict[str, Any]:

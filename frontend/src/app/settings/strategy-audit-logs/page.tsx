@@ -1,14 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useCallback, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import {
+  ExplainabilityLevel1View,
+  ExplainabilityLevel2View,
+  ExplainabilityLevel3View,
+} from "@/components/strategy-builder/StrategyExplainabilityPanel";
+import type { AuditExplainabilityLevels } from "@/lib/strategy-builder/types";
+import {
   downloadAllStrategyAuditLogs,
   downloadStrategyAuditLog,
+  fetchStrategyAuditExplainability,
   fetchStrategyAuditLogIndex,
   type StrategyAuditLogItem,
 } from "@/lib/settings/strategy-audit-logs";
@@ -27,6 +34,13 @@ const MONTH_SHORT = [
   "Nov",
   "Dec",
 ] as const;
+
+type ExpandedLevel = 1 | 2 | 3;
+
+type ExpandedRow = {
+  sessionId: string;
+  level: ExpandedLevel;
+};
 
 function formatFinishedAt(value: string | null | undefined): string {
   if (!value) return "—";
@@ -73,10 +87,28 @@ function formatStrategyCategory(value: string | null | undefined): string {
   return labels[value] ?? formatLabel(value);
 }
 
+function levelLinkClass(active: boolean, disabled?: boolean): string {
+  const base =
+    "rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums transition";
+  if (disabled) {
+    return `${base} cursor-not-allowed text-zinc-400 dark:text-zinc-600`;
+  }
+  if (active) {
+    return `${base} bg-sky-600 text-white dark:bg-sky-500`;
+  }
+  return `${base} app-link hover:bg-zinc-100 dark:hover:bg-zinc-800`;
+}
+
 export default function StrategyAuditLogsSettingsPage() {
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [downloadingSessionId, setDownloadingSessionId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<ExpandedRow | null>(null);
+  const [explainabilityCache, setExplainabilityCache] = useState<
+    Record<string, AuditExplainabilityLevels>
+  >({});
+  const [explainabilityLoading, setExplainabilityLoading] = useState<string | null>(null);
+  const [explainabilityError, setExplainabilityError] = useState<string | null>(null);
 
   const q = useQuery({
     queryKey: ["settings", "strategy-builder-audit-logs"],
@@ -85,6 +117,45 @@ export default function StrategyAuditLogsSettingsPage() {
 
   const logs = q.data?.logs ?? [];
   const maxLogs = q.data?.max_logs ?? 10;
+
+  const loadExplainability = useCallback(
+    async (sessionId: string) => {
+      if (explainabilityCache[sessionId]) {
+        return explainabilityCache[sessionId];
+      }
+      setExplainabilityError(null);
+      setExplainabilityLoading(sessionId);
+      try {
+        const data = await fetchStrategyAuditExplainability(sessionId);
+        setExplainabilityCache((prev) => ({ ...prev, [sessionId]: data }));
+        return data;
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : "Failed to load explainability";
+        setExplainabilityError(msg);
+        return null;
+      } finally {
+        setExplainabilityLoading(null);
+      }
+    },
+    [explainabilityCache],
+  );
+
+  const handleLevelClick = async (
+    row: StrategyAuditLogItem,
+    level: ExpandedLevel,
+  ) => {
+    const sessionId = row.session_id;
+    if (!sessionId || !row.explainability_available) return;
+
+    if (expanded?.sessionId === sessionId && expanded.level === level) {
+      setExpanded(null);
+      return;
+    }
+
+    setExpanded({ sessionId, level });
+    await loadExplainability(sessionId);
+  };
 
   const handleDownloadOne = async (row: StrategyAuditLogItem) => {
     if (!row.session_id) return;
@@ -101,6 +172,36 @@ export default function StrategyAuditLogsSettingsPage() {
     }
   };
 
+  const renderExpandedContent = (sessionId: string, level: ExpandedLevel) => {
+    if (explainabilityLoading === sessionId) {
+      return <p className="text-sm app-text-muted">Loading explainability…</p>;
+    }
+
+    const data = explainabilityCache[sessionId];
+    if (!data) {
+      return (
+        <p className="text-sm text-red-600 dark:text-red-400">
+          {explainabilityError ?? "Explainability is not available for this log."}
+        </p>
+      );
+    }
+
+    if (level === 1) {
+      return <ExplainabilityLevel1View executiveSummary={data.level_1} />;
+    }
+    if (level === 2) {
+      return (
+        <ExplainabilityLevel2View
+          whyThis={data.level_2.why_this}
+          whyNot={data.level_2.why_not}
+        />
+      );
+    }
+    return <ExplainabilityLevel3View insights={data.level_3} />;
+  };
+
+  const columnCount = 12;
+
   return (
     <AppShell>
       <section className="app-card space-y-4 p-4">
@@ -112,7 +213,8 @@ export default function StrategyAuditLogsSettingsPage() {
             <h2 className="text-xl app-text-heading">Strategy Builder Audit Logs</h2>
             <p className="mt-1 text-sm app-text-muted">
               Up to {maxLogs} recent propose-trades audit logs are stored on your server
-              (persistent data volume). Older logs are removed automatically when a new log is saved.
+              (persistent data volume). Levels 1–3 provide user-friendly explainability;
+              Level 4 is the full technical audit JSON download.
             </p>
           </div>
           <button
@@ -176,56 +278,117 @@ export default function StrategyAuditLogsSettingsPage() {
                   <th className="px-3 py-2 font-medium whitespace-nowrap">RR Profile</th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">Events</th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">Session</th>
-                  <th className="px-3 py-2 font-medium whitespace-nowrap">Download</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Transparency</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200/80 dark:divide-zinc-800">
                 {logs.map((row) => {
                   const sessionId = row.session_id ?? row.filename;
                   const isDownloading = downloadingSessionId === row.session_id;
+                  const isExpanded = expanded?.sessionId === row.session_id;
+                  const canExplain = Boolean(row.explainability_available && row.session_id);
+
                   return (
-                    <tr key={sessionId}>
-                      <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                        {formatFinishedAt(row.finished_at ?? row.started_at)}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">{row.stock_code ?? "—"}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{row.expiry_date ?? "—"}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {formatStrategyCategory(row.strategy_category)}
-                      </td>
-                      <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                        {formatPop(row.min_pop_pct)}
-                      </td>
-                      <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                        {formatLacs(row.margin_lacs)}
-                      </td>
-                      <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                        {formatLacs(row.max_loss_lacs)}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {formatYesNo(row.provision_elm)}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {formatLabel(row.risk_reward_profile)}
-                      </td>
-                      <td className="px-3 py-2 tabular-nums whitespace-nowrap">
-                        {row.event_count ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
-                        {row.session_id ? `${row.session_id.slice(0, 8)}…` : "—"}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <button
-                          type="button"
-                          className="app-link text-xs font-medium disabled:cursor-wait disabled:opacity-60"
-                          disabled={!row.session_id || isDownloading || downloadingAll}
-                          aria-busy={isDownloading}
-                          onClick={() => void handleDownloadOne(row)}
-                        >
-                          {isDownloading ? "Downloading…" : "JSON"}
-                        </button>
-                      </td>
-                    </tr>
+                    <Fragment key={sessionId}>
+                      <tr>
+                        <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                          {formatFinishedAt(row.finished_at ?? row.started_at)}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">{row.stock_code ?? "—"}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{row.expiry_date ?? "—"}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {formatStrategyCategory(row.strategy_category)}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                          {formatPop(row.min_pop_pct)}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                          {formatLacs(row.margin_lacs)}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                          {formatLacs(row.max_loss_lacs)}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {formatYesNo(row.provision_elm)}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {formatLabel(row.risk_reward_profile)}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums whitespace-nowrap">
+                          {row.event_count ?? "—"}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                          {row.session_id ? `${row.session_id.slice(0, 8)}…` : "—"}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <button
+                              type="button"
+                              title="Level 1: Executive summary"
+                              disabled={!canExplain}
+                              className={levelLinkClass(
+                                isExpanded && expanded?.level === 1,
+                                !canExplain,
+                              )}
+                              onClick={() => void handleLevelClick(row, 1)}
+                            >
+                              L1
+                            </button>
+                            <button
+                              type="button"
+                              title="Level 2: Why this / Why not"
+                              disabled={!canExplain}
+                              className={levelLinkClass(
+                                isExpanded && expanded?.level === 2,
+                                !canExplain,
+                              )}
+                              onClick={() => void handleLevelClick(row, 2)}
+                            >
+                              L2
+                            </button>
+                            <button
+                              type="button"
+                              title="Level 3: What if?"
+                              disabled={!canExplain}
+                              className={levelLinkClass(
+                                isExpanded && expanded?.level === 3,
+                                !canExplain,
+                              )}
+                              onClick={() => void handleLevelClick(row, 3)}
+                            >
+                              L3
+                            </button>
+                            <button
+                              type="button"
+                              title="Level 4: Download full technical audit JSON"
+                              disabled={!row.session_id || isDownloading || downloadingAll}
+                              className={levelLinkClass(false)}
+                              onClick={() => void handleDownloadOne(row)}
+                            >
+                              {isDownloading ? "…" : "L4"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && row.session_id ? (
+                        <tr>
+                          <td
+                            colSpan={columnCount}
+                            className="bg-zinc-50/80 px-4 py-4 dark:bg-zinc-950/50"
+                          >
+                            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                              Level {expanded!.level}:{" "}
+                              {expanded!.level === 1
+                                ? "Executive summary"
+                                : expanded!.level === 2
+                                  ? "Why this strategy? / Why not?"
+                                  : "What if?"}
+                            </p>
+                            {renderExpandedContent(row.session_id, expanded!.level)}
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
                   );
                 })}
               </tbody>

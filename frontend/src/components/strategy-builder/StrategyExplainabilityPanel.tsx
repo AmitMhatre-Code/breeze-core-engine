@@ -2,10 +2,13 @@
 
 import { useState, type ReactNode } from "react";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
+import { downloadStrategyBuilderAudit } from "@/lib/strategy-builder/api";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
+  ExecutiveSummary,
   FunnelStage,
   UserExplainabilityReport,
+  WhatIfInsight,
   WhyNotStrategy,
   WhyThisStrategy,
 } from "@/lib/strategy-builder/types";
@@ -45,12 +48,16 @@ function DisclosureSection({
         </span>
         <span className="text-zinc-400 dark:text-zinc-500">{open ? "−" : "+"}</span>
       </button>
-      {open ? <div className="border-t border-zinc-200/80 px-4 py-3 dark:border-zinc-700/80">{children}</div> : null}
+      {open ? (
+        <div className="border-t border-zinc-200/80 px-4 py-3 dark:border-zinc-700/80">
+          {children}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function FunnelStepper({ funnel }: { funnel: FunnelStage[] }) {
+export function FunnelStepper({ funnel }: { funnel: FunnelStage[] }) {
   return (
     <ol className="flex flex-wrap gap-2">
       {funnel.map((stage) => (
@@ -162,13 +169,169 @@ function WhyNotBlock({ entry }: { entry: WhyNotStrategy }) {
   );
 }
 
+export function ExplainabilityLevel1View({
+  executiveSummary,
+}: {
+  executiveSummary: ExecutiveSummary;
+}) {
+  const inputs = executiveSummary.user_inputs;
+
+  return (
+    <div className="space-y-4">
+      <dl className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+        <div>
+          <dt className="text-zinc-500 dark:text-zinc-400">Category</dt>
+          <dd className="font-medium text-zinc-900 dark:text-zinc-100">
+            {CATEGORY_LABELS[inputs.strategy_category] ?? inputs.strategy_category}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-zinc-500 dark:text-zinc-400">Capital</dt>
+          <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+            ₹{inputs.margin_lacs}L
+          </dd>
+        </div>
+        <div>
+          <dt className="text-zinc-500 dark:text-zinc-400">Max loss</dt>
+          <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+            ₹{inputs.max_loss_lacs}L
+          </dd>
+        </div>
+        {inputs.min_pop_pct != null ? (
+          <div>
+            <dt className="text-zinc-500 dark:text-zinc-400">Min PoP</dt>
+            <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+              {inputs.min_pop_pct}%
+            </dd>
+          </div>
+        ) : null}
+        {inputs.min_ann_return_pct != null ? (
+          <div>
+            <dt className="text-zinc-500 dark:text-zinc-400">Min annual ROI</dt>
+            <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+              {inputs.min_ann_return_pct}%
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+
+      <div className="flex flex-wrap gap-4 text-xs">
+        <p>
+          <span className="text-zinc-500 dark:text-zinc-400">Evaluated: </span>
+          <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+            {executiveSummary.strategies_evaluated}
+          </span>
+        </p>
+        <p>
+          <span className="text-zinc-500 dark:text-zinc-400">Recommended: </span>
+          <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+            {executiveSummary.strategies_recommended.length
+              ? executiveSummary.strategies_recommended.map((s) => s.strategy_name).join(", ")
+              : "None"}
+          </span>
+        </p>
+        <p>
+          <span className="text-zinc-500 dark:text-zinc-400">Skipped: </span>
+          <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+            {executiveSummary.strategies_skipped.length}
+          </span>
+        </p>
+      </div>
+
+      {executiveSummary.strategies_skipped.length > 0 ? (
+        <ul className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+          {executiveSummary.strategies_skipped.map((s) => (
+            <li key={s.strategy_id} className="leading-snug">
+              <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                {s.strategy_name}:
+              </span>{" "}
+              {s.summary}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+export function ExplainabilityLevel2View({
+  whyThis,
+  whyNot,
+}: {
+  whyThis: WhyThisStrategy[];
+  whyNot: WhyNotStrategy[];
+}) {
+  if (whyThis.length === 0 && whyNot.length === 0) {
+    return (
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        No strategy decision details are available for this build.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {whyThis.length > 0 ? (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+            Recommended
+          </p>
+          {whyThis.map((entry) => (
+            <WhyThisBlock key={entry.strategy_id} entry={entry} />
+          ))}
+        </div>
+      ) : null}
+      {whyNot.length > 0 ? (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Skipped
+          </p>
+          {whyNot.map((entry) => (
+            <div key={entry.strategy_id}>
+              <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                {entry.strategy_name}
+              </p>
+              <WhyNotBlock entry={entry} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function ExplainabilityLevel3View({ insights }: { insights: WhatIfInsight[] }) {
+  if (insights.length === 0) {
+    return (
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        No constraint sensitivity insights are available for this build.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="space-y-2">
+      {insights.map((insight, idx) => (
+        <li
+          key={`${insight.constraint}-${idx}`}
+          className="rounded-md border border-amber-200/70 bg-amber-50/50 px-3 py-2 text-xs leading-snug text-zinc-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-zinc-300"
+        >
+          {insight.message}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function StrategyExplainabilityPanel({
   report,
+  auditSessionId,
 }: {
   report: UserExplainabilityReport;
+  auditSessionId?: string | null;
 }) {
-  const exec = report.executive_summary;
-  const inputs = exec.user_inputs;
+  const [auditDownloading, setAuditDownloading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
   return (
     <div className={`${sb.section} space-y-3`} id="strategy-builder-explainability">
@@ -177,133 +340,57 @@ export function StrategyExplainabilityPanel({
       </h3>
 
       <DisclosureSection title="Executive summary" level={1} defaultOpen>
-        <div className="space-y-4">
-          <dl className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
-            <div>
-              <dt className="text-zinc-500 dark:text-zinc-400">Category</dt>
-              <dd className="font-medium text-zinc-900 dark:text-zinc-100">
-                {CATEGORY_LABELS[inputs.strategy_category] ?? inputs.strategy_category}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500 dark:text-zinc-400">Capital</dt>
-              <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
-                ₹{inputs.margin_lacs}L
-              </dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500 dark:text-zinc-400">Max loss</dt>
-              <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
-                ₹{inputs.max_loss_lacs}L
-              </dd>
-            </div>
-            {inputs.min_pop_pct != null ? (
-              <div>
-                <dt className="text-zinc-500 dark:text-zinc-400">Min PoP</dt>
-                <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
-                  {inputs.min_pop_pct}%
-                </dd>
-              </div>
-            ) : null}
-            {inputs.min_ann_return_pct != null ? (
-              <div>
-                <dt className="text-zinc-500 dark:text-zinc-400">Min annual ROI</dt>
-                <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
-                  {inputs.min_ann_return_pct}%
-                </dd>
-              </div>
-            ) : null}
-          </dl>
-
-          <div className="flex flex-wrap gap-4 text-xs">
-            <p>
-              <span className="text-zinc-500 dark:text-zinc-400">Evaluated: </span>
-              <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                {exec.strategies_evaluated}
-              </span>
-            </p>
-            <p>
-              <span className="text-zinc-500 dark:text-zinc-400">Recommended: </span>
-              <span className="font-semibold text-emerald-700 dark:text-emerald-400">
-                {exec.strategies_recommended.length
-                  ? exec.strategies_recommended.map((s) => s.strategy_name).join(", ")
-                  : "None"}
-              </span>
-            </p>
-            <p>
-              <span className="text-zinc-500 dark:text-zinc-400">Skipped: </span>
-              <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                {exec.strategies_skipped.length}
-              </span>
-            </p>
-          </div>
-
-          {exec.strategies_skipped.length > 0 ? (
-            <ul className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
-              {exec.strategies_skipped.map((s) => (
-                <li key={s.strategy_id} className="leading-snug">
-                  <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                    {s.strategy_name}:
-                  </span>{" "}
-                  {s.summary}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
+        <ExplainabilityLevel1View executiveSummary={report.executive_summary} />
       </DisclosureSection>
 
       {(report.why_this.length > 0 || report.why_not.length > 0) && (
         <DisclosureSection title="Why this strategy? / Why not?" level={2}>
-          <div className="space-y-4">
-            {report.why_this.length > 0 ? (
-              <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
-                  Recommended
-                </p>
-                {report.why_this.map((entry) => (
-                  <WhyThisBlock key={entry.strategy_id} entry={entry} />
-                ))}
-              </div>
-            ) : null}
-            {report.why_not.length > 0 ? (
-              <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  Skipped
-                </p>
-                {report.why_not.map((entry) => (
-                  <div key={entry.strategy_id}>
-                    <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                      {entry.strategy_name}
-                    </p>
-                    <WhyNotBlock entry={entry} />
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
+          <ExplainabilityLevel2View
+            whyThis={report.why_this}
+            whyNot={report.why_not}
+          />
         </DisclosureSection>
       )}
 
       {report.what_if_insights.length > 0 ? (
         <DisclosureSection title="What if?" level={3}>
-          <ul className="space-y-2">
-            {report.what_if_insights.map((insight, idx) => (
-              <li
-                key={`${insight.constraint}-${idx}`}
-                className="rounded-md border border-amber-200/70 bg-amber-50/50 px-3 py-2 text-xs leading-snug text-zinc-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-zinc-300"
-              >
-                {insight.message}
-              </li>
-            ))}
-          </ul>
+          <ExplainabilityLevel3View insights={report.what_if_insights} />
         </DisclosureSection>
       ) : null}
 
-      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-        Level 4: use <span className="font-medium">download audit</span> above for the full
-        technical audit JSON.
-      </p>
+      {auditSessionId ? (
+        <DisclosureSection title="Technical audit" level={4}>
+          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+            Download the full technical audit JSON for this strategy-builder session.
+          </p>
+          <button
+            type="button"
+            className="mt-2 font-normal text-sky-600 underline underline-offset-2 hover:text-sky-500 disabled:cursor-wait disabled:opacity-60 dark:text-sky-400 dark:hover:text-sky-300"
+            title="Download full technical audit JSON"
+            disabled={auditDownloading}
+            onClick={() => {
+              void (async () => {
+                setAuditError(null);
+                setAuditDownloading(true);
+                try {
+                  await downloadStrategyBuilderAudit(auditSessionId);
+                } catch (e) {
+                  const msg =
+                    e instanceof Error ? e.message : "Failed to download audit log";
+                  setAuditError(msg);
+                } finally {
+                  setAuditDownloading(false);
+                }
+              })();
+            }}
+          >
+            {auditDownloading ? "downloading…" : "download audit"}
+          </button>
+          {auditError ? (
+            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{auditError}</p>
+          ) : null}
+        </DisclosureSection>
+      ) : null}
     </div>
   );
 }

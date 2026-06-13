@@ -3,6 +3,13 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from icici_breeze_backend.app.domain.options_strategy import (
+    ExecutiveSummaryOut,
+    WhatIfInsightOut,
+    WhyNotStrategyOut,
+    WhyThisStrategyOut,
+)
+
 
 class CredentialsStateResponse(BaseModel):
     customer: dict[str, Any] = Field(default_factory=dict)
@@ -277,9 +284,23 @@ class StrategyBuilderAuditLogItem(BaseModel):
     strategy_category: Optional[str] = None
     event_count: Optional[int] = None
     filename: str = ""
+    explainability_available: bool = False
+    level_4_available: bool = True
 
 
 class StrategyBuilderAuditLogsResponse(BaseModel):
     user_id: str = ""
     max_logs: int = 10
     logs: list[StrategyBuilderAuditLogItem] = Field(default_factory=list)
+
+
+class StrategyBuilderAuditExplainabilityLevel2Out(BaseModel):
+    why_this: list[WhyThisStrategyOut] = Field(default_factory=list)
+    why_not: list[WhyNotStrategyOut] = Field(default_factory=list)
+
+
+class StrategyBuilderAuditExplainabilityResponse(BaseModel):
+    session_id: str
+    level_1: ExecutiveSummaryOut
+    level_2: StrategyBuilderAuditExplainabilityLevel2Out
+    level_3: list[WhatIfInsightOut] = Field(default_factory=list)

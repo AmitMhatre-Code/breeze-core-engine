@@ -230,6 +230,17 @@ export type UserExplainabilityReport = {
   what_if_insights: WhatIfInsight[];
 };
 
+/** Level 1–3 slices returned by audit log explainability API. */
+export type AuditExplainabilityLevels = {
+  session_id: string;
+  level_1: ExecutiveSummary;
+  level_2: {
+    why_this: WhyThisStrategy[];
+    why_not: WhyNotStrategy[];
+  };
+  level_3: WhatIfInsight[];
+};
+
 export type ProposeTradesApiResponse = {
   Status: number;
   Error?: string | null;

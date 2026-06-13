@@ -599,3 +599,110 @@ def _build_what_if_insights(
             )
 
     return insights
+
+
+def split_report_into_levels(report: dict[str, Any]) -> dict[str, Any]:
+    """Split a full user report into persisted Level 1–3 slices."""
+    return {
+        "schema_version": USER_REPORT_SCHEMA_VERSION,
+        "level_1": report["executive_summary"],
+        "level_2": {
+            "why_this": report["why_this"],
+            "why_not": report["why_not"],
+        },
+        "level_3": report["what_if_insights"],
+    }
+
+
+def levels_from_user_explainability(user_explainability: dict[str, Any]) -> dict[str, Any]:
+    """Derive level slices from stored user_explainability block."""
+    if "level_1" in user_explainability:
+        return user_explainability
+    return split_report_into_levels(user_explainability)
+
+
+def _synthetic_trades_from_audit_doc(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build minimal trade list from audit summary + strategy_evaluations winners."""
+    trades: list[dict[str, Any]] = []
+    summary = doc.get("summary") or {}
+    evaluations = doc.get("strategy_evaluations") or {}
+
+    for item in summary.get("strategies_skipped") or []:
+        if not isinstance(item, dict):
+            continue
+        sid = item.get("strategy_id")
+        if not sid:
+            continue
+        trades.append(
+            {
+                "strategy_id": sid,
+                "strategy_name": strategy_display_name(str(sid)),
+                "status": "skipped",
+                "skip_reason": item.get("skip_reason"),
+            }
+        )
+
+    ok_ids = set(summary.get("strategies_ok") or [])
+    for sid in ok_ids:
+        sid_str = str(sid)
+        ev = evaluations.get(sid_str) or {}
+        winners = ev.get("winners") or []
+        if winners:
+            for idx, winner in enumerate(winners):
+                metrics = winner.get("metrics") or {}
+                trades.append(
+                    {
+                        "strategy_id": sid_str,
+                        "strategy_name": strategy_display_name(sid_str),
+                        "status": "ok",
+                        "badges": metrics.get("badges") or [],
+                        "pop_pct": metrics.get("pop_pct"),
+                        "net_premium": metrics.get("net_collected") or metrics.get("net_credit"),
+                        "annualized_return_pct": metrics.get("annualized_return_pct"),
+                        "span_margin": metrics.get("margin"),
+                        "variant_rank": idx + 1 if len(winners) > 1 else None,
+                    }
+                )
+        else:
+            trades.append(
+                {
+                    "strategy_id": sid_str,
+                    "strategy_name": strategy_display_name(sid_str),
+                    "status": "ok",
+                }
+            )
+
+    return trades
+
+
+def resolve_explainability_from_audit_doc(doc: dict[str, Any]) -> dict[str, Any] | None:
+    """Return Level 1–3 slices from audit doc, rebuilding if necessary."""
+    stored_levels = doc.get("explainability_levels")
+    if isinstance(stored_levels, dict) and stored_levels.get("level_1") is not None:
+        return stored_levels
+
+    user_explainability = doc.get("user_explainability")
+    if isinstance(user_explainability, dict):
+        return levels_from_user_explainability(user_explainability)
+
+    evaluations = doc.get("strategy_evaluations")
+    if not evaluations:
+        return None
+
+    request = doc.get("request") or {}
+    summary = doc.get("summary") or {}
+    trades = _synthetic_trades_from_audit_doc(doc)
+    report = build_user_explainability_report(
+        request=request,
+        strategy_evaluations=evaluations,
+        trades=trades,
+        summary=summary,
+    )
+    return split_report_into_levels(report)
+
+
+def explainability_available_for_doc(doc: dict[str, Any]) -> bool:
+    """True when Level 1–3 can be loaded or rebuilt from this audit doc."""
+    if doc.get("explainability_levels") or doc.get("user_explainability"):
+        return True
+    return bool(doc.get("strategy_evaluations"))

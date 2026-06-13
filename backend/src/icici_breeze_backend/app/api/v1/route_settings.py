@@ -61,6 +61,7 @@ from icici_breeze_backend.app.domain.settings_api import (
     BreezeApiTesterInvokeResponse,
     StrategyBuilderAuditLogItem,
     StrategyBuilderAuditLogsResponse,
+    StrategyBuilderAuditExplainabilityResponse,
     BreezeApiTesterRiskStatusResponse,
     QuantityLimitsStateResponse,
     QuantityLimitsUpdateBody,
@@ -94,6 +95,7 @@ from icici_breeze_backend.audit.strategy_builder_audit import (
     build_audit_zip_for_user,
     list_audit_log_index_for_user,
     resolve_audit_file_for_user,
+    resolve_explainability_for_session,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -1288,3 +1290,24 @@ async def download_strategy_builder_audit_log(
         filename=fname,
         headers={"Cache-Control": "no-store"},
     )
+
+
+@router.get(
+    "/strategy-builder-audit-logs/{session_id}/explainability",
+    response_model=StrategyBuilderAuditExplainabilityResponse,
+)
+async def get_strategy_builder_audit_explainability(
+    session_id: str,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Return Level 1–3 explainability slices for a retained audit log."""
+    payload = resolve_explainability_for_session(session_id.strip(), ctx.user_id)
+    if payload is None:
+        path = resolve_audit_file_for_user(session_id.strip(), ctx.user_id)
+        if not path:
+            raise HTTPException(status_code=404, detail="Audit log not found")
+        raise HTTPException(
+            status_code=422,
+            detail="Explainability is not available for this audit log.",
+        )
+    return StrategyBuilderAuditExplainabilityResponse(**payload)

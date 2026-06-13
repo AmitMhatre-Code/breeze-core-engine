@@ -24,7 +24,6 @@ import {
 import { StrategyPayoffPanel } from "@/components/strategy-builder/StrategyPayoffPanel";
 import { apiClient } from "@/lib/api-client";
 import {
-  downloadStrategyBuilderAudit,
   fetchStrategyBuilderChain,
   proposeTrades,
 } from "@/lib/strategy-builder/api";
@@ -166,8 +165,6 @@ export default function StrategyBuilderNewPage() {
     () => new Set(ALL_OUTLOOKS),
   );
   const [tradeSort, setTradeSort] = useState<TradeSortKey>("score");
-  const [auditDownloading, setAuditDownloading] = useState(false);
-  const [auditError, setAuditError] = useState<string | null>(null);
   const [unlimitedRiskTrade, setUnlimitedRiskTrade] = useState<ProposedTrade | null>(
     null,
   );
@@ -809,67 +806,27 @@ export default function StrategyBuilderNewPage() {
                     </span>
                   ) : null}
                 </h2>
-                {trades.length > 0 || proposedData?.audit_session_id ? (
+                {trades.length > 0 ? (
                   <div className="flex shrink-0 flex-wrap items-center gap-3 text-[11px]">
-                    {trades.length > 0 ? (
-                      <>
-                        <OutlookFilterButtons
-                          selected={outlookFilter}
-                          onChange={setOutlookFilter}
-                        />
-                        <span
-                          className="text-zinc-400 dark:text-zinc-500"
-                          aria-hidden
-                        >
-                          ·
-                        </span>
-                      </>
-                    ) : null}
-                    {trades.length > 0 ? (
-                      <TradeSortLink value={tradeSort} onChange={setTradeSort} />
-                    ) : null}
-                    {trades.length > 0 && proposedData?.audit_session_id ? (
-                      <span className="text-zinc-400 dark:text-zinc-500" aria-hidden>
-                        ·
-                      </span>
-                    ) : null}
-                    {proposedData?.audit_session_id ? (
-                      <button
-                        type="button"
-                        className="font-normal text-sky-600 underline underline-offset-2 hover:text-sky-500 disabled:cursor-wait disabled:opacity-60 dark:text-sky-400 dark:hover:text-sky-300"
-                        title="Level 4: Download full technical audit JSON"
-                        disabled={auditDownloading}
-                        onClick={() => {
-                          void (async () => {
-                            setAuditError(null);
-                            setAuditDownloading(true);
-                            try {
-                              await downloadStrategyBuilderAudit(
-                                proposedData.audit_session_id!,
-                              );
-                            } catch (e) {
-                              const msg =
-                                e instanceof Error
-                                  ? e.message
-                                  : "Failed to download audit log";
-                              setAuditError(msg);
-                            } finally {
-                              setAuditDownloading(false);
-                            }
-                          })();
-                        }}
-                      >
-                        {auditDownloading ? "downloading…" : "download audit"}
-                      </button>
-                    ) : null}
+                    <OutlookFilterButtons
+                      selected={outlookFilter}
+                      onChange={setOutlookFilter}
+                    />
+                    <span
+                      className="text-zinc-400 dark:text-zinc-500"
+                      aria-hidden
+                    >
+                      ·
+                    </span>
+                    <TradeSortLink value={tradeSort} onChange={setTradeSort} />
                   </div>
                 ) : null}
               </div>
-              {auditError ? (
-                <p className="text-sm text-red-600 dark:text-red-400">{auditError}</p>
-              ) : null}
               {proposedData?.user_report ? (
-                <StrategyExplainabilityPanel report={proposedData.user_report} />
+                <StrategyExplainabilityPanel
+                  report={proposedData.user_report}
+                  auditSessionId={proposedData.audit_session_id}
+                />
               ) : null}
               {!trades.length ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">

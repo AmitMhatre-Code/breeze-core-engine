@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/api-client";
 import { getBackendBaseUrl } from "@/lib/config";
+import type { AuditExplainabilityLevels } from "@/lib/strategy-builder/types";
 
 export type StrategyAuditLogItem = {
   session_id?: string | null;
@@ -15,6 +16,8 @@ export type StrategyAuditLogItem = {
   strategy_category?: string | null;
   event_count?: number | null;
   filename: string;
+  explainability_available?: boolean;
+  level_4_available?: boolean;
 };
 
 export type StrategyAuditLogIndex = {
@@ -26,6 +29,15 @@ export type StrategyAuditLogIndex = {
 export async function fetchStrategyAuditLogIndex(): Promise<StrategyAuditLogIndex> {
   return apiClient.get<StrategyAuditLogIndex>(
     "/api/settings/strategy-builder-audit-logs",
+  );
+}
+
+/** Fetch Level 1–3 explainability for a retained audit log session. */
+export async function fetchStrategyAuditExplainability(
+  sessionId: string,
+): Promise<AuditExplainabilityLevels> {
+  return apiClient.get<AuditExplainabilityLevels>(
+    `/api/settings/strategy-builder-audit-logs/${encodeURIComponent(sessionId)}/explainability`,
   );
 }
 

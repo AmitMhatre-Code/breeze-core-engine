@@ -30,7 +30,9 @@ from icici_breeze_backend.audit.strategy_builder_audit import (
     list_audit_log_index_for_user,
     quote_row_to_audit,
     resolve_audit_file_for_user,
+    resolve_explainability_for_session,
 )
+from icici_breeze_backend.audit.user_explainability import build_user_explainability_report
 
 def _chain_row(strike: int, right: str) -> dict:
     return {
@@ -478,6 +480,7 @@ class TestAuditRetention(unittest.TestCase):
                     },
                 )
                 session.record("test", "inputs")
+                session.strategy_evaluations = {"iron_condor": {"rejection_funnel": {}}}
                 session.finalize({"status": "ok"})
                 rows = list_audit_log_index_for_user("user-a")
                 self.assertEqual(len(rows), 1)
@@ -490,6 +493,83 @@ class TestAuditRetention(unittest.TestCase):
                 self.assertTrue(row["provision_elm"])
                 self.assertEqual(row["strategy_category"], "income")
                 self.assertEqual(row["risk_reward_profile"], "moderate")
+                self.assertTrue(row["explainability_available"])
+                self.assertTrue(row["level_4_available"])
+
+    def test_finalize_persists_explainability_levels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
+                return_value=tmp,
+            ):
+                session = StrategyBuilderAuditSession(
+                    user_id="user-a",
+                    request={
+                        "stock_code": "NIFTY",
+                        "expiry_date": "16-Jun-2026",
+                        "margin_lacs": 5.0,
+                        "max_loss_lacs": 2.0,
+                        "min_pop_pct": 65.0,
+                        "strategy_category": "income",
+                    },
+                )
+                user_report = build_user_explainability_report(
+                    request=session.request,
+                    strategy_evaluations={},
+                    trades=[],
+                    summary={"strategies_ok": [], "strategies_skipped": []},
+                )
+                session.finalize({"status": "ok"}, user_explainability=user_report)
+                with open(session.file_path, encoding="utf-8") as fh:
+                    doc = json.load(fh)
+                self.assertIn("user_explainability", doc)
+                self.assertIn("explainability_levels", doc)
+                self.assertIn("level_1", doc["explainability_levels"])
+                self.assertIn("level_2", doc["explainability_levels"])
+                self.assertIn("level_3", doc["explainability_levels"])
+
+    def test_resolve_explainability_lazy_persists_levels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
+                return_value=tmp,
+            ):
+                session = StrategyBuilderAuditSession(
+                    user_id="user-a",
+                    request={
+                        "stock_code": "NIFTY",
+                        "margin_lacs": 5.0,
+                        "max_loss_lacs": 2.0,
+                        "min_pop_pct": 65.0,
+                        "strategy_category": "income",
+                    },
+                )
+                session.strategy_evaluations = {
+                    "iron_condor": {
+                        "strategy_summary": {"generated": 1, "returned": 1},
+                        "pop_policy": {"used_for_filtering": True, "ignored": False},
+                        "rejection_funnel": {},
+                        "winners": [],
+                    }
+                }
+                session.finalize(
+                    {
+                        "status": "ok",
+                        "strategies_ok": ["iron_condor"],
+                        "strategies_skipped": [],
+                    }
+                )
+                payload = resolve_explainability_for_session(
+                    session.session_id,
+                    "user-a",
+                )
+                self.assertIsNotNone(payload)
+                assert payload is not None
+                self.assertEqual(payload["session_id"], session.session_id)
+                self.assertIn("level_1", payload)
+                with open(session.file_path, encoding="utf-8") as fh:
+                    doc = json.load(fh)
+                self.assertIn("explainability_levels", doc)
 
     def test_build_audit_zip_contains_expected_files(self):
         with tempfile.TemporaryDirectory() as tmp:
