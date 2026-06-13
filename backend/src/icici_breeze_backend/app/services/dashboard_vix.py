@@ -650,25 +650,29 @@ def _log_atm_iv_trace(
     _logger.info("%s === end ATM IV trace ===", ATM_IV_TRACE_PREFIX)
 
 
-def fetch_vix_core(user_id: str, processor) -> Dict[str, Any]:
+def fetch_vix_headline(
+    user_id: str,
+    processor,
+    *,
+    breeze=None,
+) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
     """
-    Fast payload: current_vix, nifty_spot, vix_30d (~3 calendar months) only (no option chains).
-    Use so the page can show VIX and NIFTY quickly; then call fetch_vix_options for ATM IV etc.
+    INDVIX + NIFTY cash quotes and trend pct only (no history, no option chains).
+    Returns (payload, raw_nifty_quote) for reuse by fetch_vix_options.
     """
     result = {
         "current_vix": None,
         "nifty_spot": None,
-        # Daily % change vs previous_close (used for dashboard “trend %”).
-        # Computed when `previous_close` is available in NSE cash quote.
         "vix_trend_pct": None,
         "nifty_spot_trend_pct": None,
         "vix_30d": [],
         "error": None,
     }
-    breeze = processor.get_session_breeze(user_id)
+    if breeze is None:
+        breeze = processor.get_session_breeze(user_id)
     if breeze is None:
         result["error"] = "Session unavailable. Please log in again."
-        return result
+        return result, None
 
     vix_quote = _quote_nse_cash(breeze, INDVIX_SYMBOL)
     if vix_quote:
@@ -720,14 +724,12 @@ def fetch_vix_core(user_id: str, processor) -> Dict[str, Any]:
                     prev,
                     result["nifty_spot_trend_pct"],
                 )
-    # If NIFTY cash quote is temporarily unavailable, reuse last successful spot.
     if result.get("nifty_spot") is None:
         cached = _cache_get(_CORE_NIFTY_CACHE, user_id)
         if cached and isinstance(cached.get("nifty_spot"), (int, float)):
             result["nifty_spot"] = cached.get("nifty_spot")
             result["nifty_spot_trend_pct"] = cached.get("nifty_spot_trend_pct")
 
-    # Cache last successful NIFTY core values for short TTL.
     if isinstance(result.get("nifty_spot"), (int, float)) and result.get("nifty_spot") is not None:
         _cache_set(
             _CORE_NIFTY_CACHE,
@@ -737,18 +739,43 @@ def fetch_vix_core(user_id: str, processor) -> Dict[str, Any]:
                 "nifty_spot_trend_pct": result.get("nifty_spot_trend_pct"),
             },
         )
+    return result, nifty_quote
 
+
+def fetch_vix_history(user_id: str, processor, *, breeze=None) -> List[Dict[str, Any]]:
+    """~3 calendar months of INDVIX daily closes (multiple ICICI historical chart calls)."""
+    if breeze is None:
+        breeze = processor.get_session_breeze(user_id)
+    if breeze is None:
+        return []
     end_d = now_ist_naive()
     y, m = end_d.year, end_d.month - VIX_HISTORY_MONTHS
     while m < 1:
         m += 12
         y -= 1
     start_d = end_d.replace(year=y, month=m, day=1, hour=0, minute=0, second=0, microsecond=0)
-    result["vix_30d"] = _historical_vix_range(breeze, start_d, end_d)
-    return result
+    return _historical_vix_range(breeze, start_d, end_d)
 
 
-def fetch_vix_options(user_id: str, processor) -> Dict[str, Any]:
+def fetch_vix_core(user_id: str, processor) -> Dict[str, Any]:
+    """
+    VIX headline plus ~3m INDVIX history (no option chains).
+    Use fetch_vix_headline + fetch_vix_history separately for faster bootstrap.
+    """
+    headline, _ = fetch_vix_headline(user_id, processor)
+    if headline.get("error"):
+        return headline
+    headline["vix_30d"] = fetch_vix_history(user_id, processor)
+    return headline
+
+
+def fetch_vix_options(
+    user_id: str,
+    processor,
+    *,
+    breeze=None,
+    nifty_quote: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     Payload: nifty_spot, atm_iv, expected_range, expected_move_pct, put_call_ratio, strike_highest_*. First expiry only.
     """
@@ -763,12 +790,14 @@ def fetch_vix_options(user_id: str, processor) -> Dict[str, Any]:
         "strike_highest_put_oi": None,
         "error": None,
     }
-    breeze = processor.get_session_breeze(user_id)
+    if breeze is None:
+        breeze = processor.get_session_breeze(user_id)
     if breeze is None:
         result["error"] = "Session unavailable. Please log in again."
         return result
 
-    nifty_quote = _quote_nse_cash(breeze, NIFTY_SYMBOL)
+    if nifty_quote is None:
+        nifty_quote = _quote_nse_cash(breeze, NIFTY_SYMBOL)
     spot = None
     if nifty_quote:
         try:

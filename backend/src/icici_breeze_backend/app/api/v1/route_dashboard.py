@@ -3,10 +3,25 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
 from icici_breeze_backend.app.services.processor import processor
-from icici_breeze_backend.app.services.dashboard_vix import fetch_vix_core, fetch_vix_options, fetch_vix_options_atm_skew
+from icici_breeze_backend.app.services.dashboard_bootstrap import build_dashboard_bootstrap
+from icici_breeze_backend.app.services.dashboard_vix import (
+    fetch_vix_core,
+    fetch_vix_history,
+    fetch_vix_options,
+    fetch_vix_options_atm_skew,
+)
 
 router = APIRouter()
 breeze = processor()
+
+
+@router.get("/bootstrap")
+@router.get("/bootstrap/")
+async def get_dashboard_bootstrap(ctx: RequestContext = Depends(get_request_context)):
+    """Orchestrated home + portfolio + vix headline + options (no VIX history)."""
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    return build_dashboard_bootstrap(ctx.user_id, breeze, broker_token=ctx.broker_token or "")
 
 
 @router.get("/vix")
@@ -16,6 +31,15 @@ async def get_dashboard_vix(ctx: RequestContext = Depends(get_request_context)):
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
     return fetch_vix_core(ctx.user_id, breeze)
+
+
+@router.get("/vix/history")
+@router.get("/vix/history/")
+async def get_dashboard_vix_history(ctx: RequestContext = Depends(get_request_context)):
+    """~3 calendar months of INDVIX daily closes (lazy-loaded chart data)."""
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    return {"vix_30d": fetch_vix_history(ctx.user_id, breeze)}
 
 
 @router.get("/vix/options")

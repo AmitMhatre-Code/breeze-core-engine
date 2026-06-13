@@ -246,6 +246,34 @@ def _normalize_icici_response(data: dict) -> tuple:
     return status, success, err_msg
 
 
+def build_margin_situation_from_raw(margin: dict | None, *, target_margin_ute: float = 100) -> dict:
+    """Normalize raw ICICI margin API response into get_margin_situation Success shape."""
+    margin_situation: dict = {}
+    if margin is None:
+        margin = {}
+    status, success, err_msg = _normalize_icici_response(margin)
+    if status == 200 and success:
+        margin_situation["Status"] = 200
+        margin_situation["Success"] = {}
+        limit_list = success.get("limit_list") or []
+        actual_margin_ute = 0
+        for i in limit_list:
+            actual_margin_ute += int(i.get("amount", 0))
+        cash_limit = float(success.get("cash_limit", 0) or 0)
+        margin_situation["Success"]["actual_margin_ute"] = actual_margin_ute
+        margin_situation["Success"]["cash_limit"] = cash_limit
+        margin_situation["Success"]["actual_margin_avl"] = cash_limit + actual_margin_ute
+        margin_situation["Success"]["target_margin_free"] = cash_limit * (100 - target_margin_ute) / 100
+        margin_situation["Success"]["limits"] = (
+            margin_situation["Success"]["actual_margin_avl"] - margin_situation["Success"]["target_margin_free"]
+        )
+        margin_situation["Success"]["last_refresh"] = now_ist().strftime("%d-%b-%Y %H:%M:%S")
+    else:
+        margin_situation["Status"] = status if status is not None else 400
+        margin_situation["Error"] = err_msg
+    return margin_situation
+
+
 def _is_icici_limit_exceeded(error_text: str) -> bool:
     return is_icici_daily_limit_exceeded(error_text)
 
@@ -784,27 +812,22 @@ class processor():
                 )
             if margin is None:
                 margin = {}
-            status, success, err_msg = _normalize_icici_response(margin)
-            if status == 200 and success:
-                _logger.info("get_margin_situation: success=%s", success)
-                margin_situation["Status"] = 200
-                margin_situation["Success"] = {}
-                limit_list = success.get("limit_list") or []
-                actual_margin_ute = 0
-                for i in limit_list:
-                    actual_margin_ute += int(i.get("amount", 0))
-                cash_limit = float(success.get("cash_limit", 0) or 0)
-                margin_situation["Success"]["actual_margin_ute"] = actual_margin_ute
-                margin_situation["Success"]["cash_limit"] = cash_limit
-                margin_situation["Success"]["actual_margin_avl"] = cash_limit + actual_margin_ute
-                margin_situation["Success"]["target_margin_free"] = cash_limit * (100 - target_margin_ute) / 100
-                margin_situation["Success"]["limits"] = margin_situation["Success"]["actual_margin_avl"] - margin_situation["Success"]["target_margin_free"]
-                margin_situation["Success"]["last_refresh"] = now_ist().strftime("%d-%b-%Y %H:%M:%S")
+            margin_situation = build_margin_situation_from_raw(
+                margin, target_margin_ute=target_margin_ute
+            )
+            if margin_situation.get("Status") == 200:
+                _logger.info(
+                    "get_margin_situation: success=%s",
+                    margin_situation.get("Success"),
+                )
                 _logger.info("get_margin_situation: margin_situation=%s", margin_situation)
             else:
-                margin_situation["Status"] = status if status is not None else 400
-                margin_situation["Error"] = err_msg
-                _logger.warning("get_margin_situation: API returned status=%s error=%r user_id=%s", status, err_msg, user_id)
+                _logger.warning(
+                    "get_margin_situation: API returned status=%s error=%r user_id=%s",
+                    margin_situation.get("Status"),
+                    margin_situation.get("Error"),
+                    user_id,
+                )
         except Exception as e:
             _logger.warning("get_margin_situation: exception user_id=%s: %s", user_id, e, exc_info=True)
             margin_situation["Status"] = 400
@@ -1258,7 +1281,7 @@ class processor():
     def delete_parked_order(self, user_id: str, order_id: str) -> bool:
         return parked_orders_repo.delete_parked_order(user_id, order_id)
 
-    def get_positions(self, user_id):
+    def get_positions(self, user_id, *, session_token: str | None = None):
         breeze = self.get_session_breeze(user_id)
         if breeze is None:
             _logger.warning("get_positions: no session for user_id=%s", user_id)
@@ -1279,14 +1302,22 @@ class processor():
         else:
             # Use direct CustomerDetails API (like margin) - SDK's get_customer_details may return different structure
             broker_token = self.get_session_token(user_id) or ""
-            session_token = (
-                _fetch_customerdetails_session_token(
-                    cred_data["Success"]["broker_api_key"], broker_token, user_id=user_id
+            resolved_session = (session_token or "").strip()
+            if not resolved_session:
+                from icici_breeze_backend.app.services.broker_snapshot_cache import get_snapshot
+
+                snap = get_snapshot(user_id, broker_token)
+                if snap and snap.customerdetails_session_token:
+                    resolved_session = snap.customerdetails_session_token
+            if not resolved_session:
+                resolved_session = (
+                    _fetch_customerdetails_session_token(
+                        cred_data["Success"]["broker_api_key"], broker_token, user_id=user_id
+                    )
+                    if broker_token
+                    else ""
                 )
-                if broker_token
-                else ""
-            )
-            if not session_token:
+            if not resolved_session:
                 return {"Status": 400, "Error": "CustomerDetails did not return session_token", "Success": None}
             try:
                 positions = _call_icici_api_direct(
@@ -1294,9 +1325,9 @@ class processor():
                     {},
                     cred_data["Success"]["broker_api_key"],
                     full_secret,
-                    session_token,
+                    resolved_session,
                     user_id=user_id,
-                    x_session_token=session_token,
+                    x_session_token=resolved_session,
                 )
             except Exception as e:
                 _logger.warning("get_positions: exception user_id=%s: %s", user_id, e, exc_info=True)

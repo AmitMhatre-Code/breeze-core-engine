@@ -11,6 +11,14 @@ import {
   interpretPcrOi,
 } from "@/lib/dashboard-interpretation";
 import { getHomeMarginTiles, type HomeDataResponse } from "@/lib/home-data";
+import {
+  fetchDashboardBootstrap,
+  fetchDashboardVixHistory,
+  hydrateDashboardQueryCache,
+  type DashboardVixCore,
+  type DashboardVixOptions,
+  type PortfolioApiResponse,
+} from "@/lib/dashboard-bootstrap";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { ApiHttpError, apiClient } from "@/lib/api-client";
 import {
@@ -20,43 +28,6 @@ import {
 } from "@/lib/outlook-api";
 
 type Vix30Point = { date: string; value: number };
-
-type DashboardVixCore = {
-  current_vix: number | null;
-  nifty_spot: number | null;
-  vix_trend_pct: number | null;
-  nifty_spot_trend_pct: number | null;
-  vix_30d: Vix30Point[];
-  error?: string | null;
-};
-
-type DashboardVixOptions = {
-  nifty_spot: number | null;
-  next_expiry: string | null;
-  atm_iv: number | null;
-  expected_range: [number, number] | null;
-  expected_move_pct: number | null;
-  put_call_ratio: number | null;
-  /** Strike with largest call open interest (nearest listed expiry). */
-  strike_highest_call_oi: number | null;
-  /** Strike with largest put open interest (nearest listed expiry). */
-  strike_highest_put_oi: number | null;
-  error?: string | null;
-};
-
-type PortfolioPositionRow = {
-  current_profit?: number | null;
-  pnl?: number | null;
-  span_margin_required?: number | string | null;
-};
-
-type PortfolioApiResponse = {
-  Status: number;
-  Error?: string;
-  Success?: {
-    positions?: PortfolioPositionRow[];
-  };
-};
 
 type MarketOutlookBadgePhase = "idle" | "loading" | "cached" | "updated" | "unavailable";
 
@@ -73,7 +44,9 @@ function coerceMarginField(v: unknown): number | null {
 }
 
 /** Per-row: SPAN only (dashboard “margin used” from positions excludes ELM). */
-function spanMarginForPositionRow(p: PortfolioPositionRow): number {
+function spanMarginForPositionRow(p: {
+  span_margin_required?: number | string | null;
+}): number {
   const span = coerceMarginField(p.span_margin_required);
   if (span != null && span > 0) return span;
   return 0;
@@ -184,28 +157,37 @@ export default function DashboardPage() {
     undefined,
   );
   const [marketEnabled, marketTriggerRef] = useLazySection("300px");
-  const [accountEnabled, accountTriggerRef] = useLazySection("200px");
-  const [niftyEnabled, niftyTriggerRef] = useLazySection("250px");
   const [chartEnabled, chartTriggerRef] = useLazySection("350px");
+
+  const bootstrapQ = useQuery({
+    queryKey: ["dashboard", "bootstrap"],
+    queryFn: fetchDashboardBootstrap,
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (!bootstrapQ.data) return;
+    hydrateDashboardQueryCache(queryClient, bootstrapQ.data);
+  }, [bootstrapQ.data, queryClient]);
 
   const homeQ = useQuery({
     queryKey: ["home", "data"],
     queryFn: () => apiClient.get<HomeDataResponse>("/home/data"),
     staleTime: 30_000,
-    enabled: accountEnabled,
+    enabled: false,
   });
 
   const portQ = useQuery({
     queryKey: ["portfolio", "positions"],
     queryFn: () => apiClient.get<PortfolioApiResponse>("/portfolio/data"),
     staleTime: 30_000,
-    enabled: accountEnabled,
+    enabled: false,
   });
 
   const coreQ = useQuery({
     queryKey: ["dashboard", "vix"],
     queryFn: () => apiClient.get<DashboardVixCore>("/dashboard/vix"),
-    enabled: niftyEnabled || chartEnabled,
+    enabled: false,
   });
 
   const optsQ = useQuery({
@@ -225,7 +207,14 @@ export default function DashboardPage() {
         };
       }
     },
-    enabled: niftyEnabled,
+    enabled: false,
+  });
+
+  const historyQ = useQuery({
+    queryKey: ["dashboard", "vix-history"],
+    queryFn: fetchDashboardVixHistory,
+    staleTime: 30_000,
+    enabled: chartEnabled && Boolean(bootstrapQ.data),
   });
 
   const marketOutlookQ = useQuery({
@@ -301,30 +290,37 @@ export default function DashboardPage() {
     refreshOutlookM.error,
   ]);
 
-  const core = coreQ.data;
-  const opts = optsQ.data;
+  const homeData = bootstrapQ.data?.home ?? homeQ.data;
+  const portData = bootstrapQ.data?.portfolio ?? portQ.data;
+  const coreBase = bootstrapQ.data?.vix ?? coreQ.data;
+  const opts = bootstrapQ.data?.vix_options ?? optsQ.data;
+  const vixSeries = historyQ.data?.vix_30d ?? coreBase?.vix_30d ?? [];
+  const core = coreBase
+    ? { ...coreBase, vix_30d: vixSeries }
+    : undefined;
+
   const { funds, marginUsed: marginUsedFromHome } = getHomeMarginTiles(
-    homeQ.data?.margin,
+    homeData?.margin,
   );
   const marginUsedFromPositions = useMemo(
-    () => sumMarginUsedFromPositions(portQ.data),
-    [portQ.data],
+    () => sumMarginUsedFromPositions(portData),
+    [portData],
   );
   // Home often reports margin used as 0 even with F&O risk; prefer positions when home is 0/null.
   const marginUsedDisplay =
     marginUsedFromHome != null && marginUsedFromHome > 0
       ? marginUsedFromHome
-      : portQ.data?.Status === 200 && marginUsedFromPositions != null
+      : portData?.Status === 200 && marginUsedFromPositions != null
         ? marginUsedFromPositions
         : marginUsedFromHome ?? null;
   const marginUsedPending =
-    marginUsedFromHome == null && portQ.isPending && marginUsedDisplay == null;
+    marginUsedFromHome == null && bootstrapQ.isPending && marginUsedDisplay == null;
 
-  const openPnl = useMemo(() => sumOpenPositionsPnl(portQ.data), [portQ.data]);
+  const openPnl = useMemo(() => sumOpenPositionsPnl(portData), [portData]);
 
   const dashboardWarnings = useMemo(() => {
     const w: string[] = [];
-    const h = homeQ.data;
+    const h = homeData;
     if (h?.customer && typeof h.customer === "object") {
       const st = (h.customer as { Status?: number }).Status;
       if (st != null && st !== 200) {
@@ -337,16 +333,16 @@ export default function DashboardPage() {
         w.push("Margin could not be loaded.");
       }
     }
-    const pd = portQ.data;
+    const pd = portData;
     if (pd && pd.Status != null && pd.Status !== 200) {
       w.push("Positions could not be loaded.");
     }
     return w;
-  }, [homeQ.data, portQ.data]);
+  }, [homeData, portData]);
 
   const openPositionCount =
-    portQ.data?.Status === 200
-      ? (portQ.data.Success?.positions?.length ?? 0)
+    portData?.Status === 200
+      ? (portData.Success?.positions?.length ?? 0)
       : null;
 
   // Prefer spot from /dashboard/vix (same request as VIX) so NIFTY shows immediately; opts may trail.
@@ -369,13 +365,14 @@ export default function DashboardPage() {
       : null;
 
   // IV / OI / PCR come from /dashboard/vix/options (slow); do not block VIX chart or NIFTY spot from core.
-  const optsLoading = optsQ.isPending;
+  const optsLoading = bootstrapQ.isPending && !opts;
 
-  const volatilityFetching = coreQ.isFetching || optsQ.isFetching;
+  const volatilityFetching =
+    bootstrapQ.isFetching || historyQ.isFetching;
   const refreshVolatility = useCallback(() => {
     void Promise.all([
-      queryClient.refetchQueries({ queryKey: ["dashboard", "vix"] }),
-      queryClient.refetchQueries({ queryKey: ["dashboard", "vix-options"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard", "vix-history"] }),
     ]);
   }, [queryClient]);
 
@@ -413,7 +410,7 @@ export default function DashboardPage() {
       window.removeEventListener("resize", recompute);
       mdMq.removeEventListener("change", recompute);
     };
-  }, [accountEnabled, niftyEnabled, homeQ.isPending, coreQ.isPending, optsLoading]);
+  }, [bootstrapQ.isPending, core, optsLoading]);
 
   return (
     <AppShell contentWidth="wide">
@@ -495,7 +492,6 @@ export default function DashboardPage() {
               and logging back in.
             </div>
           ) : null}
-          <div ref={accountTriggerRef} aria-hidden className="h-px w-full md:col-span-2" />
           <section
             ref={accountSectionRef}
             className="app-card min-w-0 space-y-2 p-3 md:col-start-1 md:col-span-2 md:row-start-1"
@@ -506,12 +502,10 @@ export default function DashboardPage() {
                 Intraday
               </span>
             </header>
-            {!accountEnabled ? (
-              <div className="p-2 text-sm app-text-muted">Load when visible...</div>
-            ) : homeQ.error ? (
+            {bootstrapQ.error ? (
               <div className="app-alert-error text-sm">
                 Unable to load account data:{" "}
-                {homeQ.error instanceof Error ? homeQ.error.message : "Unknown error"}
+                {bootstrapQ.error instanceof Error ? bootstrapQ.error.message : "Unknown error"}
               </div>
             ) : (
             <div className="grid gap-2 p-2 md:grid-cols-3">
@@ -522,9 +516,9 @@ export default function DashboardPage() {
                 <div
                   className={[
                     "mt-1 text-lg font-semibold tabular-nums",
-                    portQ.isPending
+                    bootstrapQ.isPending
                       ? "text-zinc-400 dark:text-zinc-500"
-                      : portQ.isError || openPnl == null
+                      : bootstrapQ.isError || openPnl == null
                         ? "text-zinc-900 dark:text-zinc-300"
                         : openPnl > 0
                           ? "text-emerald-600 dark:text-emerald-400"
@@ -534,9 +528,9 @@ export default function DashboardPage() {
                   ].join(" ")}
                   title="Sum of MTM (current_profit) from open options positions; falls back to broker P&amp;L if needed"
                 >
-                  {portQ.isPending
+                  {bootstrapQ.isPending
                     ? "…"
-                    : portQ.isError || openPnl == null
+                    : bootstrapQ.isError || openPnl == null
                       ? "—"
                       : formatIndianMoneyCompact(openPnl)}
                 </div>
@@ -556,7 +550,7 @@ export default function DashboardPage() {
                   title={
                     marginUsedFromHome != null && marginUsedFromHome > 0
                       ? "From ICICI margin situation (actual_margin_avl / cash / utilization)"
-                      : portQ.data?.Status === 200
+                      : portData?.Status === 200
                         ? "Sum of span_margin_required across open NFO/BFO options (ELM not included)"
                         : undefined
                   }
@@ -579,7 +573,6 @@ export default function DashboardPage() {
             </div>
             )}
           </section>
-          <div ref={niftyTriggerRef} aria-hidden className="h-px w-full md:col-span-2" />
           <section
             ref={niftySectionRef}
             className="app-card min-w-0 space-y-2 p-3 md:col-start-1 md:col-span-2 md:row-start-2"
@@ -606,12 +599,10 @@ export default function DashboardPage() {
                 </button>
               </div>
             </header>
-            {!niftyEnabled ? (
-              <div className="p-2 text-sm app-text-muted">Load when visible...</div>
-            ) : coreQ.error ? (
+            {bootstrapQ.error ? (
               <div className="app-alert-error text-sm">
                 Unable to load volatility data:{" "}
-                {coreQ.error instanceof Error ? coreQ.error.message : "Unknown error"}
+                {bootstrapQ.error instanceof Error ? bootstrapQ.error.message : "Unknown error"}
               </div>
             ) : (
             <div className="grid gap-2 p-2 text-sm md:grid-cols-3">

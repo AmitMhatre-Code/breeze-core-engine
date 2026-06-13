@@ -206,6 +206,9 @@ async def logout(request: Request):
                     from icici_breeze_backend.app.services.breeze_session_cache import evict
 
                     evict(payload.user_id, broker_token)
+                    from icici_breeze_backend.app.services.broker_snapshot_cache import evict as evict_snapshot
+
+                    evict_snapshot(payload.user_id, broker_token)
         except Exception:
             pass
     response = redirect_to_frontend("/login")
@@ -421,6 +424,18 @@ async def _complete_icici_session(
     icici_token = str(apisession or "")
 
     logger.info("login_submit success user_id=%s", form.user_id)
+
+    from icici_breeze_backend.app.services.broker_snapshot_cache import set_snapshot
+    from icici_breeze_backend.app.services.processor import build_margin_situation_from_raw
+
+    set_snapshot(
+        form.user_id,
+        icici_token,
+        customer_details=customer_check,
+        margin_situation=build_margin_situation_from_raw(margin_check, target_margin_ute=100),
+        customerdetails_session_token=raw_session or "",
+    )
+
     response = JSONResponse({"redirect": "/dashboard"})
     _set_auth_cookies(response, icici_token, access_token, full_secret)
     from icici_breeze_backend.app.services.portal_deployment_login import notify_portal_deployment_login
@@ -475,8 +490,16 @@ async def get_home_api(ctx: RequestContext = Depends(get_request_context)):
     user_id = ctx.user_id
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
-    customer = breeze.get_customer_details(user_id)
-    margin = breeze.get_margin_situation(user_id, target_margin_ute=100)
+
+    from icici_breeze_backend.app.services.broker_snapshot_cache import get_snapshot
+
+    snap = get_snapshot(user_id, ctx.broker_token or "")
+    if snap:
+        customer = snap.customer_details
+        margin = snap.margin_situation
+    else:
+        customer = breeze.get_customer_details(user_id)
+        margin = breeze.get_margin_situation(user_id, target_margin_ute=100)
     from icici_breeze_backend.audit.logger import AuditLogger
 
     AuditLogger(None).log_portfolio_access(user_id)

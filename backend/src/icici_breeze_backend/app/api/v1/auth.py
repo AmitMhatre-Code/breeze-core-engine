@@ -121,7 +121,10 @@ async def logout_endpoint(ctx: RequestContext = Depends(get_current_user), reque
     request_id = getattr(request_obj.state, "correlation_id", None)
 
     from icici_breeze_backend.app.services.breeze_session_cache import evict
+    from icici_breeze_backend.app.services.broker_snapshot_cache import evict as evict_snapshot
+
     evict(user_id, ctx.broker_token or "")
+    evict_snapshot(user_id, ctx.broker_token or "")
 
     response = JSONResponse(content=LogoutResponse().model_dump())
     response.delete_cookie(key=ICICI_BROKER_TOKEN_COOKIE, path="/")

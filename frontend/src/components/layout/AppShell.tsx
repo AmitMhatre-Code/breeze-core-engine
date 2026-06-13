@@ -109,6 +109,7 @@ export function AppShell({
     queryKey: ["home", "data"],
     queryFn: () => apiClient.get<HomeDataResponse>("/home/data"),
     staleTime: 30_000,
+    enabled: pathname !== "/dashboard" && pathname !== "/",
   });
 
   const displayName = useMemo(
