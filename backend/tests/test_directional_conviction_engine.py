@@ -9,7 +9,10 @@ from icici_breeze_backend.app.services.options_strategy_engine.strategies.direct
     calc_long_call,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, QuoteRow
-from icici_breeze_backend.audit.strategy_evaluation_audit import pop_policy_for
+from icici_breeze_backend.audit.strategy_evaluation_audit import (
+    StrategyAuditCollector,
+    pop_policy_for,
+)
 
 
 def _quote(strike: int, right: str, *, delta: float, ask: float, bid: float | None = None) -> QuoteRow:
@@ -31,9 +34,9 @@ def _quote(strike: int, right: str, *, delta: float, ask: float, bid: float | No
 
 
 class TestDirectionalConvictionEngine(unittest.TestCase):
-    def _ctx(self, cache: dict) -> EngineContext:
+    def _ctx(self, cache: dict, *, with_audit: bool = False) -> EngineContext:
         strikes = sorted({s for s, _ in cache})
-        return EngineContext(
+        ctx = EngineContext(
             processor=MagicMock(),
             user_id="u1",
             stock_code="NIFTY",
@@ -53,6 +56,9 @@ class TestDirectionalConvictionEngine(unittest.TestCase):
             atm_strike=23500,
             cache=cache,
         )
+        if with_audit:
+            ctx.audit_collector = StrategyAuditCollector(strategy_id="long_call", detail_level="debug")
+        return ctx
 
     def test_long_call_returns_up_to_three_profiles(self):
         cache = {
@@ -90,6 +96,58 @@ class TestDirectionalConvictionEngine(unittest.TestCase):
             r = ok[0]
             self.assertEqual(r.hero_metric.label, "Reward : Risk")
             self.assertIn("reward_to_risk", r.score_breakdown or {})
+
+    def test_ranking_summary_omits_conviction_label(self):
+        cache = {
+            (23400, "Call"): _quote(23400, "Call", delta=0.40, ask=150.0),
+            (23450, "Call"): _quote(23450, "Call", delta=0.50, ask=120.0),
+            (23550, "Call"): _quote(23550, "Call", delta=0.30, ask=70.0),
+            (23600, "Call"): _quote(23600, "Call", delta=0.25, ask=55.0),
+        }
+        results = calc_bull_call_spread(self._ctx(cache))
+        ok = [r for r in results if r.status == "ok"]
+        if not ok:
+            self.skipTest("no bull call spread candidates in fixture")
+        for r in ok:
+            self.assertIsNotNone(r.ranking_summary)
+            self.assertNotIn("conviction", r.ranking_summary.lower())
+            self.assertTrue(r.ranking_summary.startswith("Δ target"))
+
+    def test_long_call_conservative_picks_higher_delta(self):
+        cache = {
+            (23400, "Call"): _quote(23400, "Call", delta=0.40, ask=150.0),
+            (23500, "Call"): _quote(23500, "Call", delta=0.50, ask=110.0),
+            (23600, "Call"): _quote(23600, "Call", delta=0.60, ask=80.0),
+        }
+        results = calc_long_call(self._ctx(cache))
+        conservative = next(
+            (r for r in results if r.conviction_profile == "conservative" and r.status == "ok"),
+            None,
+        )
+        self.assertIsNotNone(conservative)
+        self.assertEqual(conservative.legs[0].strike, 23600)
+
+    def test_long_call_tolerance_widening_when_tight_window_empty(self):
+        cache = {
+            (23350, "Call"): _quote(23350, "Call", delta=0.32, ask=170.0),
+        }
+        ctx = self._ctx(cache, with_audit=True)
+        results = calc_long_call(ctx)
+        aggressive = next(
+            (r for r in results if r.conviction_profile == "aggressive" and r.status == "ok"),
+            None,
+        )
+        self.assertIsNotNone(aggressive)
+        audit_doc = ctx.audit_collector.to_dict()
+        profile_audits = audit_doc.get("profile_audits", [])
+        aggressive_audit = next(
+            (p for p in profile_audits if p["conviction_profile"] == "aggressive"),
+            None,
+        )
+        self.assertIsNotNone(aggressive_audit)
+        self.assertEqual(aggressive_audit["status"], "success")
+        self.assertGreater(aggressive_audit["widening_attempts"], 0)
+        self.assertGreater(aggressive_audit["final_delta_tolerance"], 0.05)
 
     def test_directional_pop_policy_ignored(self):
         policy = pop_policy_for("long_call")

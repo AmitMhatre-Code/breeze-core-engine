@@ -33,6 +33,7 @@ REJECTION_REASON_MAP: dict[str, str] = {
     "missing_quote": "liquidity",
     "illiquid": "liquidity",
     "illiquid_wing": "liquidity",
+    "liquidity": "liquidity",
     "no_credit": "min_credit",
     "debit_put_wing": "min_credit",
     "debit_call_wing": "min_credit",
@@ -280,6 +281,7 @@ class StrategyAuditCollector:
             "generated": 0,
             "passed_liquidity": 0,
             "passed_credit": 0,
+            "passed_constraints": 0,
             "passed_economic_prune": 0,
             "passed_pop": 0,
             "margin_refined": 0,
@@ -307,6 +309,7 @@ class StrategyAuditCollector:
 
     # Directional conviction audit (optional).
     directional_audit: Any | None = None
+    _directional_stage_ids: dict[str, set[str]] = field(default_factory=dict)
 
     status: str = "pending"
     skip_reason: str | None = None
@@ -417,6 +420,7 @@ class StrategyAuditCollector:
         stages_passed: list[str],
         ranks: dict[str, int],
         soft_filter_violations: list[str] | None = None,
+        increment_returned: bool = True,
     ) -> None:
         self.winners.append(
             {
@@ -435,7 +439,8 @@ class StrategyAuditCollector:
                 "soft_filter_violations": soft_filter_violations or [],
             }
         )
-        self.stage_counts["returned"] += 1
+        if increment_returned:
+            self.stage_counts["returned"] += 1
 
     def record_near_miss(
         self,
@@ -518,6 +523,7 @@ class StrategyAuditCollector:
             da = self.directional_audit
             out["conviction_config"] = da.get("conviction_config")
             out["candidates_by_profile"] = da.get("candidates_by_profile", {})
+            out["profile_audits"] = da.get("profile_audits", [])
             out["profile_winners"] = da.get("profile_winners", [])
             if self.detail_level == "debug":
                 out["shortlist_scores"] = da.get("shortlist_scores", [])
@@ -607,8 +613,8 @@ def strategy_config_snapshot(strategy_id: str) -> dict[str, Any]:
     def _directional():
         from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import (
             CONVICTION_PROFILES,
-            DELTA_CANDIDATE_WINDOW,
             DELTA_TOLERANCE,
+            DELTA_TOLERANCE_SEQUENCE,
             MAX_CANDIDATES_PER_CONVICTION,
             MIN_LIQUIDITY_SCORE,
             conviction_delta_templates,
@@ -616,7 +622,7 @@ def strategy_config_snapshot(strategy_id: str) -> dict[str, Any]:
         return {
             "CONVICTION_PROFILES": list(CONVICTION_PROFILES),
             "DELTA_TOLERANCE": DELTA_TOLERANCE,
-            "DELTA_CANDIDATE_WINDOW": DELTA_CANDIDATE_WINDOW,
+            "DELTA_TOLERANCE_SEQUENCE": list(DELTA_TOLERANCE_SEQUENCE),
             "MAX_CANDIDATES_PER_CONVICTION": MAX_CANDIDATES_PER_CONVICTION,
             "MIN_LIQUIDITY_SCORE": MIN_LIQUIDITY_SCORE,
             "delta_templates": conviction_delta_templates(),
@@ -710,8 +716,8 @@ def setup_directional_audit(collector: StrategyAuditCollector | None) -> Any | N
         return None
     from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import (
         CONVICTION_PROFILES,
-        DELTA_CANDIDATE_WINDOW,
         DELTA_TOLERANCE,
+        DELTA_TOLERANCE_SEQUENCE,
         conviction_delta_templates,
     )
     from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional._common import (
@@ -724,27 +730,46 @@ def setup_directional_audit(collector: StrategyAuditCollector | None) -> Any | N
             "profiles": list(CONVICTION_PROFILES),
             "delta_templates": conviction_delta_templates(),
             "delta_tolerance": DELTA_TOLERANCE,
-            "candidate_window": DELTA_CANDIDATE_WINDOW,
+            "delta_tolerance_sequence": list(DELTA_TOLERANCE_SEQUENCE),
         },
         "candidates_by_profile": state.candidates_by_profile,
+        "profile_audits": state.profile_audits,
         "profile_winners": state.profile_winners,
         "shortlist_scores": state.shortlist_scores,
     }
     return state
 
 
-def record_directional_attempt(
+def _record_directional_stage_once(
+    collector: StrategyAuditCollector,
+    *,
+    candidate_id: str,
+    stage: str,
+) -> None:
+    seen = collector._directional_stage_ids.setdefault(stage, set())
+    if candidate_id in seen:
+        return
+    seen.add(candidate_id)
+    collector.record_stage(stage)
+    if stage == "generated":
+        collector.combos_tried += 1
+
+
+def record_directional_candidate_stage(
     collector: StrategyAuditCollector | None,
     *,
+    candidate_id: str,
+    stage: str,
     conviction_profile: str,
     reject_reason: str | None = None,
     pop_pct: float | None = None,
     **fields: Any,
 ) -> None:
+    """Record a directional funnel stage once per unique candidate (cross-profile dedupe)."""
     if collector is None:
         return
-    collector.record_generated()
-    payload = {"conviction_profile": conviction_profile, **fields}
+    _record_directional_stage_once(collector, candidate_id=candidate_id, stage=stage)
+    payload = {"conviction_profile": conviction_profile, "candidate_id": candidate_id, **fields}
     if reject_reason:
         collector.record(reject_reason, **payload)
         collector.record_evaluation(
@@ -753,8 +778,7 @@ def record_directional_attempt(
             pop_pct=pop_pct,
             **payload,
         )
-    else:
-        collector.record_stage("passed_liquidity")
+    elif stage == "passed_constraints":
         collector.record_evaluation(
             outcome="accepted",
             pop_pct=pop_pct,
@@ -768,20 +792,18 @@ def record_directional_profile_winner(
     *,
     conviction_profile: str,
     metrics: dict[str, Any],
-    stages_passed: list[str] | None = None,
 ) -> None:
     if collector is None:
         return
-    stages = stages_passed or ["passed_liquidity", "passed_constraints", "returned"]
-    for stage in stages:
-        if stage != "returned":
-            collector.record_stage(stage)
+    cid = candidate_id_for_legs(legs)
+    _record_directional_stage_once(collector, candidate_id=cid, stage="returned")
     collector.record_winner(
-        candidate_id=candidate_id_for_legs(legs),
+        candidate_id=cid,
         legs=legs,
         metrics={**metrics, "conviction_profile": conviction_profile},
-        stages_passed=stages,
+        stages_passed=["passed_liquidity", "passed_credit", "passed_constraints", "returned"],
         ranks={"final": 1, "conviction_profile": conviction_profile},
+        increment_returned=False,
     )
     collector.record_survivor_metrics(
         pop_pct=metrics.get("pop_pct"),

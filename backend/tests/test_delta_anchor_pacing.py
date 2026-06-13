@@ -18,11 +18,17 @@ class TestDeltaAnchor(unittest.TestCase):
     def test_pop_to_short_delta_strangle_wings(self):
         self.assertAlmostEqual(pop_to_short_delta(85.0, 2), 0.075)
 
-    def test_profile_deltas_moderate(self):
-        self.assertEqual(profile_deltas("moderate"), (0.50, 0.25))
+    def test_profile_deltas_spread_moderate(self):
+        self.assertEqual(profile_deltas("moderate", kind="spread"), (0.50, 0.25))
 
-    def test_profile_deltas_aggressive_short(self):
-        self.assertEqual(profile_deltas("aggressive"), (0.60, 0.30))
+    def test_profile_deltas_spread_aggressive(self):
+        self.assertEqual(profile_deltas("aggressive", kind="spread"), (0.60, 0.30))
+
+    def test_profile_deltas_long_option_conservative(self):
+        self.assertEqual(profile_deltas("conservative", kind="long_option"), (0.60, 0.0))
+
+    def test_profile_deltas_long_option_aggressive(self):
+        self.assertEqual(profile_deltas("aggressive", kind="long_option"), (0.40, 0.0))
 
 
 class TestDirectionalConvictionScore(unittest.TestCase):

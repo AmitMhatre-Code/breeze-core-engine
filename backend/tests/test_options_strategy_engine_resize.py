@@ -6,13 +6,20 @@ from unittest.mock import MagicMock
 from icici_breeze_backend.app.services.options_strategy_engine.budget_resize import (
     resize_results_to_budgets,
 )
+from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
+    format_indian_money_compact,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
     rescale_result_to_lots,
     unit_max_loss_per_lot,
 )
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional._common import (
+    refresh_directional_tile_metrics,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
     StrategyResult,
+    TileMetric,
     TradeLeg,
 )
 
@@ -151,6 +158,91 @@ class TestResizeResultsToBudgets(unittest.TestCase):
         )
         self.assertEqual(result.status, "skipped")
         self.assertEqual(result.legs, [])
+
+    def test_long_only_resizes_without_span(self):
+        ctx = _ctx(margin_rupees=500_000, max_loss_rupees=200_000)
+        result = StrategyResult(
+            "long_call",
+            "Long Call (Moderate)",
+            status="ok",
+            max_loss=7_150.0,
+            net_premium=-7_150.0,
+            risk_reward_ratio="7150 : Unlimited",
+            conviction_profile="moderate",
+            legs=[TradeLeg("Call", "Buy", 23500, 65, 110.0)],
+        )
+        proc = MagicMock()
+        proc.strategy_builder_margin.return_value = {
+            "Success": {"span_margin_required": 0},
+            "Status": 200,
+        }
+        asyncio.run(
+            resize_results_to_budgets(
+                proc, "u1", "NFO", "NIFTY", "16-Jun-2026", [result], ctx
+            )
+        )
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.legs[0].quantity, 65 * 27)
+        self.assertLessEqual(result.max_loss, ctx.max_loss_rupees)
+
+
+class TestDirectionalTileRefresh(unittest.TestCase):
+    def test_refresh_spread_tiles_match_scaled_loss_and_margins(self):
+        result = StrategyResult(
+            "bull_call_spread",
+            "Bull Call Spread (Moderate)",
+            status="ok",
+            conviction_profile="moderate",
+            max_loss=18_655.0,
+            net_premium=-18_655.0,
+            risk_reward_ratio="18655 : 20345",
+            pop_pct=82.6,
+            span_margin=120_000.0,
+            elm_requirement=30_000.0,
+            hero_metric=TileMetric(label="Reward : Risk", value="1 : 54.98"),
+            secondary_metrics=[
+                TileMetric(label="Max Gain", value="₹5,948,364"),
+                TileMetric(label="Max Loss", value="₹5,498,136"),
+            ],
+            legs=[
+                TradeLeg("Call", "Buy", 23550, 130, 210.8),
+                TradeLeg("Call", "Sell", 23850, 130, 67.3),
+            ],
+        )
+        refresh_directional_tile_metrics(result)
+        labels = [m.label for m in result.secondary_metrics]
+        self.assertEqual(
+            labels,
+            [
+                "Max Gain",
+                "Max Loss",
+                "Premium",
+                "SPAN",
+                "ELM",
+                "Capital Required",
+                "Est. PoP",
+            ],
+        )
+        self.assertEqual(result.hero_metric.value, "1 : 1.09")
+        self.assertEqual(
+            next(m for m in result.secondary_metrics if m.label == "Max Loss").value,
+            format_indian_money_compact(18_655.0),
+        )
+        self.assertEqual(
+            next(m for m in result.secondary_metrics if m.label == "Max Gain").value,
+            format_indian_money_compact(20_345.0),
+        )
+        capital = next(
+            m for m in result.secondary_metrics if m.label == "Capital Required"
+        ).value
+        self.assertEqual(
+            capital,
+            format_indian_money_compact(18_655.0 + 120_000.0 + 30_000.0),
+        )
+
+    def test_format_indian_money_compact_uses_lac_suffix(self):
+        self.assertEqual(format_indian_money_compact(5_498_136), "₹54.98 Lac")
+        self.assertEqual(format_indian_money_compact(1_500_000), "₹15.00 Lac")
 
 
 if __name__ == "__main__":

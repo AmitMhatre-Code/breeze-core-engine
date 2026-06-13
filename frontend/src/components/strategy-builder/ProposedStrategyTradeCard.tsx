@@ -192,7 +192,7 @@ export function ProposedStrategyTradeCard({
             ) : null}
             {useHeroMetric && secondaryFromApi.length > 0 ? (
               <div
-                className={`${rowClass} gap-x-3 text-zinc-600 dark:text-zinc-300`}
+                className={`${rowClass} flex-wrap gap-x-3 gap-y-1 text-zinc-600 dark:text-zinc-300`}
               >
                 {secondaryFromApi.map((metric) => (
                   <span key={metric.label} className="inline-flex shrink-0 items-center gap-1">

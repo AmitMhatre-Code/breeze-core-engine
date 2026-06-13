@@ -18,6 +18,9 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     normalize_expiry_display,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.budget_resize import resize_results_to_budgets
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional._common import (
+    refresh_directional_tile_metrics,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.margin_async_fetch import (
     MarginFetchRequest,
     fetch_margins_concurrent,
@@ -343,6 +346,9 @@ async def run_propose_trades(
     await attach_margins_and_returns(
         proc, user_id, exchange_code, ctx.stock_code, expiry_display, results, ctx, audit
     )
+
+    for res in results:
+        refresh_directional_tile_metrics(res)
 
     atm_iv = compute_atm_iv(ctx)
     if audit:

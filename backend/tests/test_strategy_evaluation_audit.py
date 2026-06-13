@@ -34,6 +34,7 @@ class TestStrategyEvaluationAudit(unittest.TestCase):
     def test_canonical_rejection_reason(self):
         self.assertEqual(canonical_rejection_reason("no_credit"), "min_credit")
         self.assertEqual(canonical_rejection_reason("illiquid_wing"), "liquidity")
+        self.assertEqual(canonical_rejection_reason("liquidity"), "liquidity")
         self.assertEqual(canonical_rejection_reason("unknown_reason"), "other")
 
     def test_build_histogram(self):
@@ -90,6 +91,45 @@ class TestStrategyEvaluationAudit(unittest.TestCase):
         snap = strategy_config_snapshot("long_call")
         self.assertIn("CONVICTION_PROFILES", snap)
         self.assertIn("delta_templates", snap)
+        self.assertIn("long_option", snap["delta_templates"])
+        self.assertIn("spread", snap["delta_templates"])
+        self.assertIn("DELTA_TOLERANCE_SEQUENCE", snap)
+
+    def test_directional_stage_dedupe_and_funnel_invariants(self):
+        from icici_breeze_backend.audit.strategy_evaluation_audit import (
+            record_directional_candidate_stage,
+            record_directional_profile_winner,
+        )
+
+        collector = StrategyAuditCollector(strategy_id="long_call", detail_level="summary")
+        legs = [TradeLeg("Call", "Buy", 23500, 25, 100.0)]
+        cid = candidate_id_for_legs(legs)
+        for stage in ("generated", "passed_liquidity", "passed_credit", "passed_constraints"):
+            record_directional_candidate_stage(
+                collector,
+                candidate_id=cid,
+                stage=stage,
+                conviction_profile="moderate",
+            )
+        record_directional_candidate_stage(
+            collector,
+            candidate_id=cid,
+            stage="generated",
+            conviction_profile="conservative",
+        )
+        record_directional_profile_winner(
+            collector,
+            legs,
+            conviction_profile="moderate",
+            metrics={"pop_pct": 50.0, "engine_score": 0.8},
+        )
+        summary = collector.stage_counts
+        self.assertEqual(summary["generated"], 1)
+        self.assertLessEqual(summary["passed_liquidity"], summary["generated"])
+        self.assertLessEqual(summary["passed_credit"], summary["passed_liquidity"])
+        self.assertLessEqual(summary["passed_constraints"], summary["passed_credit"])
+        self.assertLessEqual(summary["returned"], summary["passed_constraints"])
+        self.assertEqual(summary["returned"], 1)
 
 
 if __name__ == "__main__":

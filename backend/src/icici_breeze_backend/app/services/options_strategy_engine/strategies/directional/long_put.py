@@ -13,4 +13,4 @@ def calc_long_put(ctx: EngineContext) -> list[StrategyResult]:
 
 
 def prefetch_long_put(ctx: EngineContext) -> set[tuple[int, Right]]:
-    return prefetch_all_conviction_strikes(ctx, "Put")
+    return prefetch_all_conviction_strikes(ctx, "Put", strategy_id="long_put")

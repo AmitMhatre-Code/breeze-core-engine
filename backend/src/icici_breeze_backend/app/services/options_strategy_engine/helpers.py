@@ -235,3 +235,22 @@ def meets_pop_floor(ctx: EngineContext, pop: float) -> bool:
         return True
     return pop >= ctx.min_pop_pct
 
+
+_LAC = 100_000.0
+_CRORE = 10_000_000.0
+
+
+def format_indian_money_compact(amount: float) -> str:
+    """Compact ₹ display using Lac / Crore (and K below 1 Lac). Mirrors frontend format-money-in.ts."""
+    if not isinstance(amount, (int, float)) or math.isnan(amount):
+        return "—"
+    abs_amt = abs(amount)
+    wrap = (lambda s: f"({s})") if amount < 0 else (lambda s: s)
+    if abs_amt >= _CRORE:
+        return wrap(f"₹{abs_amt / _CRORE:,.2f} Cr")
+    if abs_amt >= _LAC:
+        return wrap(f"₹{abs_amt / _LAC:,.2f} Lac")
+    if abs_amt >= 1000:
+        return wrap(f"₹{abs_amt / 1000:,.2f} K")
+    return wrap(f"₹{abs_amt:,.0f}")
+

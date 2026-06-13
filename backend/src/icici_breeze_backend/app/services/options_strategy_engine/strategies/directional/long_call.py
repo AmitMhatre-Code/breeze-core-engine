@@ -13,4 +13,4 @@ def calc_long_call(ctx: EngineContext) -> list[StrategyResult]:
 
 
 def prefetch_long_call(ctx: EngineContext) -> set[tuple[int, Right]]:
-    return prefetch_all_conviction_strikes(ctx, "Call")
+    return prefetch_all_conviction_strikes(ctx, "Call", strategy_id="long_call")

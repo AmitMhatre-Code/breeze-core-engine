@@ -1,4 +1,4 @@
-"""Directional strategy calculators — delta-anchored, CER-ranked."""
+"""Directional strategy calculators — delta-anchored, conviction-scored."""
 from __future__ import annotations
 
 from .bear_put_spread import calc_bear_put_spread

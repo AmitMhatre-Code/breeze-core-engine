@@ -6,22 +6,32 @@ from typing import Callable, Literal
 from icici_breeze_backend.app.services.options_strategy_engine.types import QuoteRow, Right
 
 RiskRewardProfile = Literal["conservative", "moderate", "aggressive"]
+ConvictionStrategyKind = Literal["long_option", "spread"]
 CONVICTION_PROFILES: tuple[RiskRewardProfile, ...] = ("conservative", "moderate", "aggressive")
 DELTA_TOLERANCE = 0.05
 DELTA_CANDIDATE_WINDOW = 0.08
+DELTA_TOLERANCE_SEQUENCE: tuple[float, ...] = (0.05, 0.08, 0.10, 0.15)
 MAX_CANDIDATES_PER_CONVICTION = 12
 MIN_LIQUIDITY_SCORE = 0.05
 
-_PROFILE_DELTAS: dict[str, tuple[float, float]] = {
+_LONG_OPTION_DELTAS: dict[str, tuple[float, float]] = {
+    "conservative": (0.60, 0.0),
+    "moderate": (0.50, 0.0),
+    "aggressive": (0.40, 0.0),
+}
+_SPREAD_PROFILE_DELTAS: dict[str, tuple[float, float]] = {
     "conservative": (0.40, 0.20),
     "moderate": (0.50, 0.25),
     "aggressive": (0.60, 0.30),
 }
 
 
-def conviction_delta_templates() -> dict[str, tuple[float, float]]:
-    """Return a copy of conviction profile → (long_Δ, short_Δ) templates."""
-    return dict(_PROFILE_DELTAS)
+def conviction_delta_templates() -> dict[str, dict[str, tuple[float, float]]]:
+    """Return conviction profile → (long_Δ, short_Δ) templates by strategy kind."""
+    return {
+        "long_option": dict(_LONG_OPTION_DELTAS),
+        "spread": dict(_SPREAD_PROFILE_DELTAS),
+    }
 
 
 def pop_to_short_delta(min_pop_pct: float, short_legs: int = 1) -> float:
@@ -29,8 +39,13 @@ def pop_to_short_delta(min_pop_pct: float, short_legs: int = 1) -> float:
     return (100.0 - min_pop_pct) / 100.0 / max(1, short_legs)
 
 
-def profile_deltas(profile: str) -> tuple[float, float]:
-    return _PROFILE_DELTAS.get(profile, _PROFILE_DELTAS["moderate"])
+def profile_deltas(
+    profile: str,
+    *,
+    kind: ConvictionStrategyKind = "spread",
+) -> tuple[float, float]:
+    templates = _LONG_OPTION_DELTAS if kind == "long_option" else _SPREAD_PROFILE_DELTAS
+    return templates.get(profile, templates["moderate"])
 
 
 def abs_delta(q: QuoteRow | None) -> float | None:

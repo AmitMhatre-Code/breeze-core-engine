@@ -70,6 +70,37 @@ async def resize_results_to_budgets(
             continue
 
         struct_key = structural_margin_key(result.legs)
+        unit_max_loss = unit_max_loss_per_lot(result, L)
+        unit_short_lots = short_lots_in_legs(result.legs, L)
+
+        if unit_short_lots == 0:
+            if unit_max_loss <= 0:
+                result.status = "skipped"
+                result.skip_reason = "Could not determine max loss per lot."
+                result.legs = []
+                continue
+            n_margin = int(ctx.margin_rupees // unit_max_loss)
+            n_risk = int(ctx.max_loss_rupees // unit_max_loss)
+            lots = max(0, min(n_margin, n_risk))
+            if lots < 1:
+                result.status = "skipped"
+                result.skip_reason = "Insufficient margin or max-loss budget for one lot."
+                result.legs = []
+                continue
+            rescale_result_to_lots(result, lot_size=L, lots=lots)
+            if audit:
+                audit.record_calculation(
+                    f"Premium sizing ({result.strategy_id})",
+                    {
+                        "unit_max_loss_per_lot": unit_max_loss,
+                        "margin_rupees": ctx.margin_rupees,
+                        "max_loss_rupees": ctx.max_loss_rupees,
+                    },
+                    {"lots": lots, "quantity": lots * L},
+                    rationale="Long-only sizing: min(margin, max_loss) using premium per lot.",
+                )
+            continue
+
         unit_span = ctx.unit_span_by_structure.get(struct_key, 0.0)
         if unit_span <= 0:
             result.status = "skipped"
@@ -77,8 +108,6 @@ async def resize_results_to_budgets(
             result.legs = []
             continue
 
-        unit_max_loss = unit_max_loss_per_lot(result, L)
-        unit_short_lots = short_lots_in_legs(result.legs, L)
         lots = size_lots(
             result.strategy_id,
             unit_span,
