@@ -11,6 +11,7 @@ import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
 import { formatAppVersionLabel } from "@/lib/app-version";
 import { getLatestRelease } from "@/lib/changelog";
+import { preloadLoginDisclosure } from "@/lib/login-disclosure-preload";
 
 function LoginContent() {
   const sp = useSearchParams();
@@ -61,6 +62,7 @@ function LoginContent() {
     e.preventDefault();
     setDirectErr(null);
     setDirectBusy(true);
+    void preloadLoginDisclosure();
     try {
       const res = await apiClient.post<{ redirect?: string }>("/auth/direct-login", {
         user_id: directUserId.trim(),

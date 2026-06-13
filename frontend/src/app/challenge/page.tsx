@@ -6,7 +6,10 @@ import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { fetchAuthSession } from "@/lib/auth-session";
-import { fetchLoginDisclosureCurrent } from "@/lib/login-disclosure";
+import {
+  preloadLoginDisclosure,
+  preloadLoginDisclosureAuthed,
+} from "@/lib/login-disclosure-preload";
 import { clearSessionAck, markDisclosurePending } from "@/lib/login-disclosure-session";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 
@@ -22,6 +25,11 @@ function ChallengeForm() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!apisession) return;
+    void preloadLoginDisclosure();
+  }, [apisession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,11 +73,7 @@ function ChallengeForm() {
           queryFn: fetchAuthSession,
           staleTime: 30_000,
         });
-        await queryClient.prefetchQuery({
-          queryKey: ["login-disclosure", "current"],
-          queryFn: fetchLoginDisclosureCurrent,
-          staleTime: 0,
-        });
+        await preloadLoginDisclosureAuthed(queryClient);
       } catch {
         // Redirect anyway; LoginDisclosureProvider will retry the fetches.
       }

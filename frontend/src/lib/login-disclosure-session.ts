@@ -1,3 +1,5 @@
+import { clearPreloadedLoginDisclosure } from "@/lib/login-disclosure-preload";
+
 const KEY = "breeze_login_disclosure_ack";
 const PENDING_KEY = "breeze_login_disclosure_pending";
 
@@ -38,4 +40,5 @@ export function clearSessionAck(): void {
   if (typeof sessionStorage === "undefined") return;
   sessionStorage.removeItem(KEY);
   sessionStorage.removeItem(PENDING_KEY);
+  clearPreloadedLoginDisclosure();
 }

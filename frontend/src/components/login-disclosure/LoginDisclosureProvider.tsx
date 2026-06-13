@@ -7,6 +7,7 @@ import { LoginDisclosureDialog } from "@/components/login-disclosure/LoginDisclo
 import { fetchAuthSession } from "@/lib/auth-session";
 import { fetchDashboardBootstrap } from "@/lib/dashboard-bootstrap";
 import { acceptLoginDisclosure, fetchLoginDisclosureCurrent } from "@/lib/login-disclosure";
+import { getPreloadedLoginDisclosure } from "@/lib/login-disclosure-preload";
 import {
   clearDisclosurePending,
   hasSessionAck,
@@ -55,17 +56,20 @@ export function LoginDisclosureProvider({ children }: { children: ReactNode }) {
 
   const authed = Boolean(sessionQ.data?.authenticated);
   const userId = (sessionQ.data?.user_id || "").trim().toUpperCase();
+  const preloadedDoc = getPreloadedLoginDisclosure();
 
   const disclosureQ = useQuery({
     queryKey: ["login-disclosure", "current"],
     queryFn: fetchLoginDisclosureCurrent,
     enabled: enabled && authed,
-    staleTime: 0,
-    refetchOnMount: "always",
+    initialData: preloadedDoc ?? undefined,
+    staleTime: preloadedDoc ? 60_000 : 0,
+    refetchOnMount: preloadedDoc ? false : "always",
     retry: false,
   });
 
-  const version = disclosureQ.data?.version ?? null;
+  const resolvedDoc = disclosureQ.data ?? preloadedDoc;
+  const version = resolvedDoc?.version ?? null;
 
   useEffect(() => {
     setJustAccepted(false);
@@ -90,8 +94,8 @@ export function LoginDisclosureProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  const portalConfigured = disclosureQ.data?.portal_configured !== false;
-  const hasDisclosure = disclosureQ.isSuccess && version != null;
+  const portalConfigured = resolvedDoc?.portal_configured !== false;
+  const hasDisclosure = (disclosureQ.isSuccess || preloadedDoc != null) && version != null;
   const needsDisclosure = Boolean(
     enabled &&
       authed &&
@@ -101,41 +105,43 @@ export function LoginDisclosureProvider({ children }: { children: ReactNode }) {
       !disclosureQ.isError,
   );
 
+  const disclosureLoading = disclosureQ.isLoading && preloadedDoc == null;
+
   const blocksApp = Boolean(
     enabled &&
       !onTermsPage &&
       (pendingLogin ||
         (!sessionAcked &&
           authed &&
-          (disclosureQ.isLoading ||
+          (disclosureLoading ||
             (hasDisclosure && portalConfigured && !disclosureQ.isError)))),
   );
 
   useEffect(() => {
-    if (!pendingLogin || !authed || disclosureQ.isLoading) return;
+    if (!pendingLogin || !authed || disclosureLoading) return;
     if (!needsDisclosure) {
       clearDisclosurePending();
       setPendingLogin(false);
     }
-  }, [pendingLogin, authed, disclosureQ.isLoading, needsDisclosure]);
+  }, [pendingLogin, authed, disclosureLoading, needsDisclosure]);
 
   useEffect(() => {
-    if (!needsDisclosure || disclosureQ.isLoading || !hasDisclosure) return;
+    if (!needsDisclosure || disclosureLoading || !hasDisclosure) return;
     void queryClient.prefetchQuery({
       queryKey: ["dashboard", "bootstrap"],
       queryFn: fetchDashboardBootstrap,
       staleTime: 30_000,
     });
-  }, [needsDisclosure, disclosureQ.isLoading, hasDisclosure, queryClient]);
+  }, [needsDisclosure, disclosureLoading, hasDisclosure, queryClient]);
 
   const showDisclosureDialog = blocksApp;
-  const contentMarkdown = disclosureQ.data?.content_markdown ?? "";
+  const contentMarkdown = resolvedDoc?.content_markdown ?? "";
 
   return (
     <LoginDisclosureContext.Provider
       value={{
         needsDisclosure,
-        isLoading: enabled && (sessionQ.isLoading || disclosureQ.isLoading),
+        isLoading: enabled && (sessionQ.isLoading || disclosureLoading),
         blocksApp,
       }}
     >
@@ -145,7 +151,7 @@ export function LoginDisclosureProvider({ children }: { children: ReactNode }) {
         pending={acceptMut.isPending}
         contentMarkdown={contentMarkdown || "Loading risk disclosure…"}
         version={version}
-        effectiveDate={disclosureQ.data?.effective_date ?? null}
+        effectiveDate={resolvedDoc?.effective_date ?? null}
         onProceed={() => acceptMut.mutate()}
       />
     </LoginDisclosureContext.Provider>

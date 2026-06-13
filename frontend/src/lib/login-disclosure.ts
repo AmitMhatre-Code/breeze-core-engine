@@ -7,6 +7,12 @@ export type LoginDisclosureDocument = {
   portal_configured?: boolean;
 };
 
+export function fetchLoginDisclosurePublicCurrent(): Promise<LoginDisclosureDocument> {
+  return apiClient.get<LoginDisclosureDocument>("/api/login-disclosure/public/current", {
+    sessionPolicy: "passive",
+  });
+}
+
 export function fetchLoginDisclosureCurrent(): Promise<LoginDisclosureDocument> {
   return apiClient.get<LoginDisclosureDocument>("/api/login-disclosure/current", {
     sessionPolicy: "passive",

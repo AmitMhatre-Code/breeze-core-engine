@@ -19,6 +19,17 @@ class LoginDisclosureAcceptBody(BaseModel):
     disclosure_version: int = Field(..., ge=1)
 
 
+@router.get("/public/current")
+async def login_disclosure_public_current():
+    """Unauthenticated read for preloading during ICICI login (content is not user-specific)."""
+    if not portal_login_disclosure_configured():
+        raise HTTPException(status_code=503, detail="Login disclosure unavailable (portal not configured)")
+    doc = await fetch_portal_login_disclosure_current()
+    if not doc:
+        raise HTTPException(status_code=503, detail="Login disclosure unavailable from portal")
+    return {**doc, "portal_configured": True}
+
+
 @router.get("/current")
 async def login_disclosure_current(_: RequestContext = Depends(get_current_user)):
     if not portal_login_disclosure_configured():
