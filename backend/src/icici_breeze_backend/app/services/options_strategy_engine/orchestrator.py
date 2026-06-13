@@ -166,6 +166,7 @@ async def run_propose_trades(
     margin_lacs: float,
     max_loss_lacs: float,
     min_pop_pct: float = 65.0,
+    min_ann_return_pct: float = 5.0,
     provision_elm: bool,
     strategy_category: StrategyCategory,
     risk_reward_profile: RiskRewardProfile | None = None,
@@ -174,6 +175,7 @@ async def run_propose_trades(
     audit_detail_level: AuditDetailLevel = "summary",
 ) -> dict[str, Any]:
     min_pop_pct = min(99.0, max(1.0, min_pop_pct))
+    min_ann_return_pct = min(100.0, max(0.0, min_ann_return_pct))
     if strategy_category not in CATEGORY_CALCULATORS:
         return {"Status": 400, "Error": f"Unknown strategy category: {strategy_category}", "Success": None}
 
@@ -193,6 +195,7 @@ async def run_propose_trades(
                 "margin_lacs": margin_lacs,
                 "max_loss_lacs": max_loss_lacs,
                 "min_pop_pct": min_pop_pct,
+                "min_ann_return_pct": min_ann_return_pct,
                 "provision_elm": provision_elm,
                 "strategy_category": strategy_category,
                 "risk_reward_profile": risk_reward_profile,
@@ -277,6 +280,7 @@ async def run_propose_trades(
         margin_rupees=margin_lacs * 100_000,
         max_loss_rupees=max_loss_lacs * 100_000,
         min_pop_pct=min_pop_pct,
+        min_ann_return_pct=min_ann_return_pct,
         provision_elm=provision_elm,
         strategy_category=strategy_category,
         risk_reward_profile=risk_reward_profile or "moderate",
@@ -389,6 +393,7 @@ async def run_propose_trades(
                 "conviction_profile": r.conviction_profile,
                 "hero_metric": hero,
                 "secondary_metrics": secondary,
+                "badges": r.badges or [],
             }
         )
 

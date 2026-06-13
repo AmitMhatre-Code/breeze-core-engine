@@ -14,6 +14,7 @@ class ProposeTradesRequest(BaseModel):
     margin_lacs: float = Field(gt=0)
     max_loss_lacs: float = Field(gt=0)
     min_pop_pct: float = Field(default=65, ge=1, le=99)
+    min_ann_return_pct: float = Field(default=5.0, ge=0, le=100)
     provision_elm: bool = False
     strategy_category: StrategyCategory
     risk_reward_profile: Optional[RiskRewardProfile] = None
@@ -60,6 +61,7 @@ class ProposedTradeOut(BaseModel):
     conviction_profile: Optional[RiskRewardProfile] = None
     hero_metric: Optional[TileMetricOut] = None
     secondary_metrics: List[TileMetricOut] = Field(default_factory=list)
+    badges: List[str] = Field(default_factory=list)
 
 
 class ProposeTradesSuccess(BaseModel):

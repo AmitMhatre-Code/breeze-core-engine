@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import (
+    BADGE_INCOME,
+    SPAN_SHORTLIST_N,
+    pop_band,
+    select_objective_champions,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bull_put_spread import (
-    BPS_RETURN_TOP_N,
-    BPS_SHORT_STRIKES_MAX,
     BPS_SPAN_SHORTLIST_N,
     BullPutSpreadCandidate,
     BullPutSpreadRejectionStats,
@@ -16,7 +20,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.strategies.income
     _pick_top_candidates,
     _unit_span_margin,
     bull_put_spread_short_strikes,
-    build_ranking_summary,
     calc_bull_put_spread,
     enumerate_bull_put_spreads,
     score_bull_put_spread_candidate,
@@ -61,6 +64,7 @@ def _ctx_from_cache(
     *,
     spot: float = 23623.0,
     min_pop_pct: float = 65.0,
+    min_ann_return_pct: float = 5.0,
     margin_rupees: float = 50_000_000,
     max_loss_rupees: float = 4_000_000,
     processor: MagicMock | None = None,
@@ -84,6 +88,7 @@ def _ctx_from_cache(
         spot=spot,
         atm_strike=23600,
         atm_iv=0.15,
+        min_ann_return_pct=min_ann_return_pct,
         cache=cache,
     )
 
@@ -110,7 +115,7 @@ def _fill_pe_strikes(
 
 
 class TestBullPutSpreadShortStrikes(unittest.TestCase):
-    def test_short_strikes_bounded(self):
+    def test_short_strikes_pop_aware(self):
         strikes = list(range(22500, 23700, 50))
         cache = _fill_pe_strikes(
             strikes,
@@ -122,14 +127,12 @@ class TestBullPutSpreadShortStrikes(unittest.TestCase):
         ctx = _ctx_from_cache(cache, spot=23622.9, min_pop_pct=65.0)
         short_strikes = bull_put_spread_short_strikes(ctx)
         self.assertGreater(len(short_strikes), 0)
-        self.assertLessEqual(len(short_strikes), BPS_SHORT_STRIKES_MAX)
         for s in short_strikes:
             self.assertLessEqual(s, ctx.atm_strike)
 
     def test_pop_bucket_labels(self):
         self.assertEqual(_bps_pop_bucket(64.0, 65.0), "<65")
         self.assertEqual(_bps_pop_bucket(65.5, 65.0), "65-66")
-        self.assertEqual(_bps_pop_bucket(67.5, 65.0), "67-68")
 
 
 class TestEnumerateBullPutSpread(unittest.TestCase):
@@ -159,19 +162,6 @@ class TestEnumerateBullPutSpread(unittest.TestCase):
         self.assertGreater(variants[0].net_collected, 0)
         self.assertGreaterEqual(variants[0].pop, 50.0)
 
-    def test_multiple_wings_per_short(self):
-        strikes = list(range(23000, 23700, 50))
-        cache = _fill_pe_strikes(
-            strikes,
-            23623.0,
-            bid_fn=lambda s: 25.0 if s == 23600 else 8.0,
-            ask_fn=lambda s: 25.5 if s == 23600 else 8.5,
-            delta_fn=lambda s: 0.08 if s == 23600 else 0.04,
-        )
-        ctx = _ctx_from_cache(cache, min_pop_pct=50.0)
-        variants = enumerate_bull_put_spreads(ctx, 23600)
-        self.assertGreater(len(variants), 1)
-
 
 class TestScoreBullPutSpread(unittest.TestCase):
     def test_span_refinement_orders_by_annualized_return(self):
@@ -179,7 +169,7 @@ class TestScoreBullPutSpread(unittest.TestCase):
         high_span = score_bull_put_spread_candidate(90.0, 5_000.0, 100_000.0, 4)
         self.assertGreater(low_span, high_span)
 
-    def test_ror_tiebreaks_via_liquidity_and_spread(self):
+    def test_ror_prefers_liquidity_and_spread(self):
         tight = [
             _quote(23600, "Put", bid=20.0, ask=20.01, liquidity_score=0.95),
             _quote(23550, "Put", bid=5.0, ask=5.01, liquidity_score=0.95),
@@ -188,30 +178,13 @@ class TestScoreBullPutSpread(unittest.TestCase):
             _quote(23600, "Put", bid=20.0, ask=22.0, liquidity_score=0.4),
             _quote(23550, "Put", bid=5.0, ask=7.0, liquidity_score=0.4),
         ]
-        tight_score, _ = score_bull_put_spread_ror(90.0, 5_000.0, 10_000.0, 90.0, tight)
-        wide_score, _ = score_bull_put_spread_ror(90.0, 5_000.0, 10_000.0, 90.0, wide)
+        tight_score, _ = score_bull_put_spread_ror(5_000.0, 10_000.0, tight)
+        wide_score, _ = score_bull_put_spread_ror(5_000.0, 10_000.0, wide)
         self.assertGreater(tight_score, wide_score)
 
 
-class TestRankingSummary(unittest.TestCase):
-    def test_ranking_summary_mentions_span_yield(self):
-        summary = build_ranking_summary(
-            higher_rank=1,
-            lower_rank=2,
-            viewing_rank=1,
-            higher_ann_return=219.0,
-            higher_credit=5_000.0,
-            higher_pop=90.0,
-            lower_ann_return=137.0,
-            lower_credit=6_000.0,
-            lower_pop=90.0,
-        )
-        self.assertIn("Ranked #1 over #2:", summary)
-        self.assertIn("annualized return on SPAN", summary)
-
-
 class TestCalcBullPutSpread(unittest.TestCase):
-    def test_returns_top_variants_with_ranks(self):
+    def test_returns_champions_with_badges(self):
         strikes = list(range(22500, 23700, 50))
         cache = _fill_pe_strikes(
             strikes,
@@ -222,18 +195,14 @@ class TestCalcBullPutSpread(unittest.TestCase):
         )
         proc = MagicMock()
         proc.strategy_builder_margin.return_value = {"Success": {"span_margin_required": 50_000.0}}
-        ctx = _ctx_from_cache(cache, min_pop_pct=50.0, processor=proc)
+        ctx = _ctx_from_cache(cache, min_pop_pct=50.0, min_ann_return_pct=0.0, processor=proc)
 
-        with patch(
-            "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bull_put_spread.MIN_BPS_ANNUALIZED_RETURN_PCT",
-            0.0,
-        ):
-            results = asyncio.run(calc_bull_put_spread(ctx))
+        results = asyncio.run(calc_bull_put_spread(ctx))
 
         ok = [r for r in results if r.status == "ok"]
         self.assertGreater(len(ok), 0)
         self.assertEqual(ok[0].variant_rank, 1)
-        self.assertIsNotNone(ok[0].engine_score)
+        self.assertTrue(ok[0].badges)
 
     def test_skips_when_annualized_return_below_minimum(self):
         strikes = list(range(22500, 23700, 50))
@@ -248,72 +217,15 @@ class TestCalcBullPutSpread(unittest.TestCase):
         proc.strategy_builder_margin.return_value = {
             "Success": {"span_margin_required": 500_000.0}
         }
-        ctx = _ctx_from_cache(cache, min_pop_pct=30.0, processor=proc)
-        with patch(
-            "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bull_put_spread.MIN_BPS_ANNUALIZED_RETURN_PCT",
-            500.0,
-        ):
-            results = asyncio.run(calc_bull_put_spread(ctx))
+        ctx = _ctx_from_cache(
+            cache, min_pop_pct=30.0, min_ann_return_pct=500.0, processor=proc
+        )
+        results = asyncio.run(calc_bull_put_spread(ctx))
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].status, "skipped")
         self.assertIn("annualized return", (results[0].skip_reason or "").lower())
 
-    def test_span_refinement_picks_lower_margin_structure(self):
-        proc = MagicMock()
-
-        def margin(user_id, exchange, legs, audit=None, audit_context=None):
-            short_strike = int(
-                next(
-                    leg["strike_price"]
-                    for leg in legs
-                    if leg["right"] == "Put" and leg["action"] == "Sell"
-                )
-            )
-            span = 40_000.0 if short_strike == 23600 else 90_000.0
-            return {"Success": {"span_margin_required": span}}
-
-        proc.strategy_builder_margin.side_effect = margin
-        ctx = _ctx_from_cache({}, spot=23623.0, processor=proc)
-        ctx.strikes = [23550, 23600, 23650]
-
-        def _cand(short_strike: int, long_strike: int, premium: float) -> BullPutSpreadCandidate:
-            trade_legs = [
-                TradeLeg("Put", "Sell", short_strike, 65, 20.0),
-                TradeLeg("Put", "Buy", long_strike, 65, 5.0),
-            ]
-            return BullPutSpreadCandidate(
-                short_strike=short_strike,
-                long_strike=long_strike,
-                wing_width=short_strike - long_strike,
-                credit=15.0,
-                max_loss_u=35.0,
-                qty=65,
-                pop=90.0,
-                legs=trade_legs,
-                net_collected=premium,
-                final_score=1.0,
-                score_factors={"ror": 1.0, "liquidity_weight": 0.9, "spread_weight": 0.9},
-            )
-
-        high_credit = _cand(23500, 23450, 10_000.0)
-        low_span = _cand(23600, 23550, 10_000.0)
-
-        winners, scores = asyncio.run(
-            _pick_top_candidates(
-                ctx,
-                [high_credit, low_span],
-                strategy_id="bull_put_spread",
-                span_shortlist_n=2,
-                return_top_n=2,
-            )
-        )
-        self.assertEqual(len(winners), 2)
-        winner, best_return = winners[0]
-        self.assertEqual(winner.short_strike, 23600)
-        self.assertGreater(best_return, 0)
-        self.assertEqual(len(scores), 2)
-
-    def test_credit_shortlist_margins_only_top_n(self):
+    def test_span_shortlist_margins_only_top_n(self):
         proc = MagicMock()
         proc.strategy_builder_margin.return_value = {
             "Success": {"span_margin_required": 50_000.0}
@@ -336,8 +248,6 @@ class TestCalcBullPutSpread(unittest.TestCase):
                 pop=90.0,
                 legs=trade_legs,
                 net_collected=premium,
-                final_score=1.0,
-                score_factors={"ror": 1.0, "liquidity_weight": 0.9, "spread_weight": 0.9},
             )
 
         candidates = [_cand(23600 - i * 50, float(20_000 - i * 500)) for i in range(12)]
@@ -346,40 +256,6 @@ class TestCalcBullPutSpread(unittest.TestCase):
             proc.strategy_builder_margin.call_count,
             min(BPS_SPAN_SHORTLIST_N, len(candidates)),
         )
-
-    def test_span_shortlist_returns_top_3_after_rerank(self):
-        proc = MagicMock()
-        proc.strategy_builder_margin.return_value = {
-            "Success": {"span_margin_required": 50_000.0}
-        }
-        ctx = _ctx_from_cache({}, processor=proc)
-
-        def _cand(short_strike: int, premium: float) -> BullPutSpreadCandidate:
-            long_strike = short_strike - 50
-            trade_legs = [
-                TradeLeg("Put", "Sell", short_strike, 65, 20.0),
-                TradeLeg("Put", "Buy", long_strike, 65, 5.0),
-            ]
-            return BullPutSpreadCandidate(
-                short_strike=short_strike,
-                long_strike=long_strike,
-                wing_width=50,
-                credit=15.0,
-                max_loss_u=35.0,
-                qty=65,
-                pop=90.0,
-                legs=trade_legs,
-                net_collected=premium,
-                final_score=1.0,
-                score_factors={"ror": 1.0, "liquidity_weight": 0.9, "spread_weight": 0.9},
-            )
-
-        candidates = [_cand(23600 - i * 50, float(20_000 - i * 500)) for i in range(12)]
-        winners, span_scores = asyncio.run(
-            _pick_top_candidates(ctx, candidates, strategy_id="bull_put_spread")
-        )
-        self.assertEqual(len(span_scores), BPS_SPAN_SHORTLIST_N)
-        self.assertEqual(len(winners), BPS_RETURN_TOP_N)
 
     def test_unit_span_margin_uses_session_cache(self):
         proc = MagicMock()
@@ -398,33 +274,11 @@ class TestCalcBullPutSpread(unittest.TestCase):
         self.assertEqual(proc.strategy_builder_margin.call_count, 1)
 
 
-class TestBullPutSpreadAudit(unittest.TestCase):
-    def test_enumeration_logs_evaluations(self):
-        cache = {
-            (23600, "Put"): _quote(23600, "Put", bid=50.0, ask=50.5, delta=0.45),
-            (23550, "Put"): _quote(23550, "Put", bid=5.0, ask=5.5, delta=0.35),
-        }
-        ctx = _ctx_from_cache(cache, spot=23623.0, min_pop_pct=50.0)
-        stats = BullPutSpreadRejectionStats()
-        enumerate_bull_put_spreads(ctx, 23600, stats=stats)
-        self.assertGreater(len(stats.evaluations), 0)
-
-    def test_collect_candidates_populates_stats(self):
-        strikes = list(range(23000, 23700, 50))
-        cache = _fill_pe_strikes(
-            strikes,
-            23623.0,
-            bid_fn=lambda s: 20.0 if s == 23600 else 8.0,
-            ask_fn=lambda s: 20.5 if s == 23600 else 8.5,
-            delta_fn=lambda s: 0.08 if s == 23600 else 0.04,
-        )
-        ctx = _ctx_from_cache(cache, min_pop_pct=50.0)
-        stats = BullPutSpreadRejectionStats()
-        short_strikes = bull_put_spread_short_strikes(ctx)
-        candidates = _collect_candidates(ctx, short_strikes, stats=stats)
-        self.assertGreater(len(candidates), 0)
-        self.assertGreater(len(stats.evaluations), 0)
-        self.assertGreater(len(stats.survivors_by_pop_bucket), 0)
+class TestObjectiveChampions(unittest.TestCase):
+    def test_pop_band_adaptive_width(self):
+        self.assertEqual(pop_band(25.0), 10.0)
+        self.assertEqual(pop_band(50.0), 5.0)
+        self.assertEqual(pop_band(95.0), 2.0)
 
 
 if __name__ == "__main__":

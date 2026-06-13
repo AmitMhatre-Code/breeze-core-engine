@@ -153,6 +153,7 @@ async def post_propose_trades(
         margin_lacs=body.margin_lacs,
         max_loss_lacs=body.max_loss_lacs,
         min_pop_pct=body.min_pop_pct,
+        min_ann_return_pct=body.min_ann_return_pct,
         provision_elm=body.provision_elm,
         strategy_category=body.strategy_category,
         risk_reward_profile=body.risk_reward_profile,

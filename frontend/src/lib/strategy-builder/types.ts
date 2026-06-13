@@ -117,6 +117,7 @@ export type ProposedTrade = {
   conviction_profile?: RiskRewardProfile | null;
   hero_metric?: TileMetric | null;
   secondary_metrics?: TileMetric[];
+  badges?: string[];
 };
 
 /** Unique key for trade card selection (supports conviction variants). */

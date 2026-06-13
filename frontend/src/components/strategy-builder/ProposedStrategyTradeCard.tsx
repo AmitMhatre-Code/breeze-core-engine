@@ -131,7 +131,16 @@ export function ProposedStrategyTradeCard({
                 {convictionLabel}
               </span>
             ) : null}
+            {(trade.badges ?? []).map((badge) => (
+              <span
+                key={badge}
+                className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:text-emerald-200"
+              >
+                {badge}
+              </span>
+            ))}
             {!convictionLabel &&
+            (trade.badges ?? []).length === 0 &&
             trade.variant_rank != null &&
             trade.variant_rank > 0 ? (
               <span className="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-200">

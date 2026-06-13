@@ -18,12 +18,15 @@ CANONICAL_FUNNEL_KEYS = frozenset(
     {
         "pop_floor",
         "economic_prune",
+        "max_loss",
         "min_credit",
         "liquidity",
         "span_failure",
         "quantity",
         "delta_mismatch",
         "budget",
+        "capital",
+        "min_ann_return",
         "other",
     }
 )
@@ -39,13 +42,14 @@ REJECTION_REASON_MAP: dict[str, str] = {
     "debit_call_wing": "min_credit",
     "min_wing_credit": "min_credit",
     "economic_prune": "economic_prune",
-    "max_loss_budget": "economic_prune",
+    "max_loss_budget": "max_loss",
     "pop_floor": "pop_floor",
     "quantity": "quantity",
     "span_failure": "span_failure",
     "delta_mismatch": "delta_mismatch",
     "budget": "budget",
-    "below_min_ann_return": "other",
+    "capital": "capital",
+    "below_min_ann_return": "min_ann_return",
     "not_finalist": "other",
 }
 
@@ -72,12 +76,12 @@ class PopPolicy:
         }
 
 
-# Income optimizers: PoP floor + tiebreak weight in proxy score.
+# Income optimizers: PoP hard floor only — never used for ranking.
 _INCOME_POP_POLICY = PopPolicy(
     used_for_filtering=True,
-    used_for_ranking=True,
+    used_for_ranking=False,
     ignored=False,
-    pop_weight=1e-4,
+    pop_weight=None,
 )
 # Directional: PoP informational only — not used for filtering or ranking.
 _DIRECTIONAL_POP_POLICY = PopPolicy(
@@ -284,6 +288,9 @@ class StrategyAuditCollector:
             "passed_constraints": 0,
             "passed_economic_prune": 0,
             "passed_pop": 0,
+            "passed_capital": 0,
+            "passed_loss": 0,
+            "feasible": 0,
             "margin_refined": 0,
             "returned": 0,
         }
@@ -309,6 +316,7 @@ class StrategyAuditCollector:
 
     # Directional conviction audit (optional).
     directional_audit: Any | None = None
+    income_audit: dict[str, Any] | None = None
     _directional_stage_ids: dict[str, set[str]] = field(default_factory=dict)
 
     status: str = "pending"
@@ -519,6 +527,8 @@ class StrategyAuditCollector:
             "winners": self.winners,
             "near_misses": near_misses,
         }
+        if self.income_audit is not None:
+            out["income_audit"] = self.income_audit
         if self.directional_audit is not None:
             da = self.directional_audit
             out["conviction_config"] = da.get("conviction_config")
@@ -563,25 +573,30 @@ def strategy_config_snapshot(strategy_id: str) -> dict[str, Any]:
         from icici_breeze_backend.app.services.options_strategy_engine.strategies.income import (
             bull_put_spread as m,
         )
+        from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import (
+            BADGE_CAPITAL,
+            BADGE_INCOME,
+            BADGE_MARGIN,
+            SPAN_SHORTLIST_N,
+            pop_band,
+        )
         return {
-            "BPS_POP_BAND_WIDTH_PCT": m.BPS_POP_BAND_WIDTH_PCT,
-            "BPS_SHORT_STRIKES_MAX": m.BPS_SHORT_STRIKES_MAX,
-            "BPS_SPAN_SHORTLIST_N": m.BPS_SPAN_SHORTLIST_N,
-            "BPS_RETURN_TOP_N": m.BPS_RETURN_TOP_N,
-            "MIN_BPS_ANNUALIZED_RETURN_PCT": m.MIN_BPS_ANNUALIZED_RETURN_PCT,
+            "SPAN_SHORTLIST_N": SPAN_SHORTLIST_N,
+            "pop_band_fn": "adaptive",
             "WING_WIDTH_MULTIPLIERS": list(m.WING_WIDTH_MULTIPLIERS),
+            "OBJECTIVE_BADGES": [BADGE_INCOME, BADGE_CAPITAL, BADGE_MARGIN],
+            "default_pop_band_at_65": pop_band(65.0),
         }
 
     def _bcs():
         from icici_breeze_backend.app.services.options_strategy_engine.strategies.income import (
             bear_call_spread as m,
         )
+        from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import (
+            SPAN_SHORTLIST_N,
+        )
         return {
-            "BCS_POP_BAND_WIDTH_PCT": m.BCS_POP_BAND_WIDTH_PCT,
-            "BCS_SHORT_STRIKES_MAX": m.BCS_SHORT_STRIKES_MAX,
-            "BCS_SPAN_SHORTLIST_N": m.BCS_SPAN_SHORTLIST_N,
-            "BCS_RETURN_TOP_N": m.BCS_RETURN_TOP_N,
-            "MIN_BCS_ANNUALIZED_RETURN_PCT": m.MIN_BCS_ANNUALIZED_RETURN_PCT,
+            "SPAN_SHORTLIST_N": SPAN_SHORTLIST_N,
             "WING_WIDTH_MULTIPLIERS": list(m.WING_WIDTH_MULTIPLIERS),
         }
 
@@ -589,25 +604,24 @@ def strategy_config_snapshot(strategy_id: str) -> dict[str, Any]:
         from icici_breeze_backend.app.services.options_strategy_engine.strategies.income import (
             iron_condor as m,
         )
+        from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import (
+            SPAN_SHORTLIST_N,
+        )
         return {
-            "IC_POP_BAND_WIDTH_PCT": m.IC_POP_BAND_WIDTH_PCT,
-            "IC_SHORT_STRIKES_MAX_PER_WING": m.IC_SHORT_STRIKES_MAX_PER_WING,
+            "SPAN_SHORTLIST_N": SPAN_SHORTLIST_N,
             "MIN_WING_CREDIT": m.MIN_WING_CREDIT,
             "MIN_IC_CREDIT_PCT_OF_WIDTH": m.MIN_IC_CREDIT_PCT_OF_WIDTH,
-            "MIN_IC_ANNUALIZED_RETURN_PCT": m.MIN_IC_ANNUALIZED_RETURN_PCT,
-            "IC_RETURN_TOP_N": m.IC_RETURN_TOP_N,
+            "WING_WIDTH_MULTIPLIERS": list(m.WING_WIDTH_MULTIPLIERS),
         }
 
     def _ss():
-        from icici_breeze_backend.app.services.options_strategy_engine.strategies.income import (
-            short_strangle as m,
+        from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import (
+            NAKED_ANCHOR_TOP_K,
+            SPAN_SHORTLIST_N,
         )
         return {
-            "SS_POP_BAND_WIDTH_PCT": m.SS_POP_BAND_WIDTH_PCT,
-            "SS_SHORT_STRIKES_MAX_PER_WING": m.SS_SHORT_STRIKES_MAX_PER_WING,
-            "SS_SPAN_SHORTLIST_N": m.SS_SPAN_SHORTLIST_N,
-            "SS_RETURN_TOP_N": m.SS_RETURN_TOP_N,
-            "MIN_SS_ANNUALIZED_RETURN_PCT": m.MIN_SS_ANNUALIZED_RETURN_PCT,
+            "SPAN_SHORTLIST_N": SPAN_SHORTLIST_N,
+            "NAKED_ANCHOR_TOP_K": NAKED_ANCHOR_TOP_K,
         }
 
     def _directional():
@@ -809,5 +823,64 @@ def record_directional_profile_winner(
         pop_pct=metrics.get("pop_pct"),
         credit=metrics.get("net_credit"),
         ann_return_pct=metrics.get("annualized_return_pct"),
+    )
+
+
+def setup_income_audit(collector: StrategyAuditCollector | None) -> dict[str, Any] | None:
+    """Initialize income-specific audit block on collector."""
+    if collector is None:
+        return None
+    state: dict[str, Any] = {
+        "search_behaviour": {
+            "initial_pop_band": collector.pop_band_width,
+            "final_pop_band": collector.pop_band_width,
+            "expansion_attempts": 0,
+            "full_chain_exhausted": False,
+        },
+        "objective_champions": [],
+    }
+    collector.income_audit = state
+    return state
+
+
+def record_income_search_behaviour(
+    collector: StrategyAuditCollector | None,
+    *,
+    initial_pop_band: float,
+    final_pop_band: float,
+    expansion_attempts: int,
+    full_chain_exhausted: bool,
+) -> None:
+    if collector is None or collector.income_audit is None:
+        return
+    collector.income_audit["search_behaviour"] = {
+        "initial_pop_band": initial_pop_band,
+        "final_pop_band": final_pop_band,
+        "expansion_attempts": expansion_attempts,
+        "full_chain_exhausted": full_chain_exhausted,
+    }
+
+
+def record_income_champion(
+    collector: StrategyAuditCollector | None,
+    *,
+    candidate_id: str,
+    badges: list[str],
+    net_credit: float,
+    annualized_return_pct: float,
+    margin: float,
+    pop: float,
+) -> None:
+    if collector is None or collector.income_audit is None:
+        return
+    collector.income_audit["objective_champions"].append(
+        {
+            "candidate_id": candidate_id,
+            "badges": badges,
+            "net_credit": round(net_credit, 4),
+            "annualized_return_pct": round(annualized_return_pct, 2),
+            "margin": round(margin, 2),
+            "pop": round(pop, 2),
+        }
     )
 

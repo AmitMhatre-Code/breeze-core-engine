@@ -1,42 +1,38 @@
-"""Short strangle strategy calculator — PoP-band search aligned with iron condor."""
+"""Short strangle — constraint-first multi-objective income optimizer."""
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import (
-    abs_delta,
-    pop_to_short_delta,
-)
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
-    annualized_carry_percent_on_span,
-    days_to_expiry,
-    legs_to_margin_input,
     meets_pop_floor,
-    parse_float,
     skip,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.pop import (
     PopDetail,
     pop_detail_for_legs,
-    pop_for_legs,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.margin_async_fetch import (
-    MarginFetchRequest,
-    fetch_margins_concurrent,
-)
-from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
-    legs_at_lots,
-    min_qty_for_one_lot,
-    structural_margin_key,
-)
-from icici_breeze_backend.audit.strategy_evaluation_audit import (
-    StrategyAuditCollector,
-    candidate_id_for_legs,
-    pop_bucket_label,
-)
+from icici_breeze_backend.app.services.options_strategy_engine.sizing import min_qty_for_one_lot
+from icici_breeze_backend.audit.strategy_evaluation_audit import StrategyAuditCollector
 from icici_breeze_backend.app.services.options_strategy_engine.audit_helpers import audit_calc
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import make_result
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import (
+    IncomeSearchState,
+    NAKED_ANCHOR_TOP_K,
+    SPAN_SHORTLIST_N,
+    adaptive_short_strikes,
+    iter_pop_band_expansions,
+    passes_capital_gate,
+    pop_band,
+    pop_for_short_strike,
+    record_feasible,
+    run_income_champion_pipeline,
+    score_ann_return,
+    setup_income_collector,
+    span_score_candidates,
+    unit_span_from_cache,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
     QuoteRow,
@@ -45,28 +41,9 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     TradeLeg,
 )
 
-# --- Short strangle tuning constants (owned by this module) ---
-
-SS_SHORT_STRIKES_INWARD = 7
-SS_SHORT_STRIKES_OUTWARD = 3
-SS_TOP_K_SHORT_STRIKES = SS_SHORT_STRIKES_INWARD + SS_SHORT_STRIKES_OUTWARD
-SS_POP_BAND_WIDTH_PCT = 2.0
-SS_SHORT_STRIKES_MAX_ATM = 12
-SS_SHORT_STRIKES_MAX_PER_WING = 12
-SS_SPAN_SHORTLIST_N = 10
-SS_RETURN_TOP_N = 3
-MIN_SS_ANNUALIZED_RETURN_PCT = 5.0
+SS_SPAN_SHORTLIST_N = SPAN_SHORTLIST_N
 
 ShortStrangleRejectionStats = StrategyAuditCollector
-
-_STAGES_PASSED = (
-    "passed_liquidity",
-    "passed_credit",
-    "passed_economic_prune",
-    "passed_pop",
-    "margin_refined",
-    "returned",
-)
 
 
 def score_short_strangle_candidate(
@@ -75,11 +52,19 @@ def score_short_strangle_candidate(
     unit_span: float | None,
     dte: int | None,
 ) -> float:
-    """Annualized carry on SPAN when available, else premium proxy."""
     del pop_pct
-    if unit_span and unit_span > 0 and dte is not None and dte > 0:
-        return annualized_carry_percent_on_span(net_premium, dte, unit_span)
-    return net_premium / max(net_premium, 1.0)
+    return score_ann_return(net_premium, unit_span or 0.0, dte)
+
+
+def _ss_pop_bucket(pop_pct: float, floor_pct: float) -> str:
+    from icici_breeze_backend.audit.strategy_evaluation_audit import pop_bucket_label
+
+    return pop_bucket_label(pop_pct, floor_pct, band_width=pop_band(floor_pct))
+
+
+def _unit_span_margin(ctx: EngineContext, legs: list, *, strategy_id: str) -> float:
+    del strategy_id
+    return unit_span_from_cache(ctx, legs)
 
 
 def _geometric_mean(values: list[float]) -> float:
@@ -97,237 +82,18 @@ def _leg_spread_score(q: QuoteRow) -> float:
 
 
 def score_short_strangle_ror(
-    pop_pct: float,
-    net_premium: float,
-    min_pop_pct: float,
+    net_collected: float,
     leg_quotes: list[QuoteRow],
 ) -> tuple[float, dict[str, float]]:
-    """Credit proxy: ROR × liquidity × spread; PoP tiebreak only at floor."""
-    ror = net_premium / max(net_premium, 1.0)
     liquidity_vals = [q.liquidity_score for q in leg_quotes if q.liquidity_score > 0]
     spread_vals = [_leg_spread_score(q) for q in leg_quotes]
     liquidity_weight = _geometric_mean(liquidity_vals) if liquidity_vals else 0.5
     spread_weight = _geometric_mean(spread_vals) if spread_vals else 0.5
-    score = ror * liquidity_weight * spread_weight
-    pop_tiebreak = min(pop_pct, min_pop_pct) / max(min_pop_pct, 1.0)
-    score *= 1.0 + 1e-4 * pop_tiebreak
-    factors = {
-        "ror": round(ror, 6),
-        "pop_tiebreak": round(pop_tiebreak, 6),
+    score = net_collected * liquidity_weight * spread_weight
+    return score, {
         "liquidity_weight": round(liquidity_weight, 6),
         "spread_weight": round(spread_weight, 6),
     }
-    return score, factors
-
-
-def build_ranking_summary(
-    *,
-    higher_rank: int,
-    lower_rank: int,
-    viewing_rank: int,
-    higher_ann_return: float,
-    higher_credit: float,
-    higher_pop: float,
-    lower_ann_return: float,
-    lower_credit: float,
-    lower_pop: float,
-) -> str:
-    """Explain how the higher-ranked strangle compares to the adjacent lower rank."""
-    if viewing_rank == higher_rank:
-        lead = f"Ranked #{higher_rank} over #{lower_rank}:"
-    else:
-        lead = f"#{higher_rank} ranks above this variant:"
-
-    details: list[str] = []
-    ann_delta = higher_ann_return - lower_ann_return
-    if abs(ann_delta) >= 0.1:
-        details.append(
-            f"{ann_delta:+.1f}pp annualized return on SPAN "
-            f"(#{higher_rank} {higher_ann_return:.1f}% vs "
-            f"#{lower_rank} {lower_ann_return:.1f}%)"
-        )
-    credit_delta = higher_credit - lower_credit
-    if abs(credit_delta) >= 1.0:
-        if credit_delta > 0:
-            details.append(f"₹{credit_delta:.0f} more net credit per lot")
-        else:
-            details.append(f"₹{abs(credit_delta):.0f} less net credit per lot")
-    pop_delta = higher_pop - lower_pop
-    if abs(pop_delta) >= 0.5:
-        details.append(
-            f"PoP #{higher_rank} {higher_pop:.1f}% vs #{lower_rank} {lower_pop:.1f}%"
-        )
-    if not details:
-        details.append("higher income efficiency on deployed SPAN margin")
-    return f"{lead} {'; '.join(details)}."
-
-
-def _ss_pop_band_delta_bounds(min_pop_pct: float) -> tuple[float, float]:
-    """Per-wing abs-delta range for [min_pop, min_pop + band] on symmetric shorts."""
-    floor_delta = pop_to_short_delta(min_pop_pct, short_legs=2)
-    ceil_delta = pop_to_short_delta(min_pop_pct + SS_POP_BAND_WIDTH_PCT, short_legs=2)
-    return ceil_delta, floor_delta
-
-
-def _ss_pop_bucket(pop_pct: float, floor_pct: float) -> str:
-    return pop_bucket_label(pop_pct, floor_pct, band_width=SS_POP_BAND_WIDTH_PCT)
-
-
-def _audit_collector(ctx: EngineContext) -> StrategyAuditCollector | None:
-    if ctx.audit_collector is not None:
-        c = ctx.audit_collector
-        c.min_pop_pct = ctx.min_pop_pct
-        c.pop_band_width = SS_POP_BAND_WIDTH_PCT
-        return c
-    return None
-
-
-def _pop_short_strangle_pair(
-    ctx: EngineContext,
-    short_put: int,
-    short_call: int,
-) -> float:
-    """Breakeven PoP for a short put + short call pair."""
-    pe = ctx.cache.get((short_put, "Put"))
-    ce = ctx.cache.get((short_call, "Call"))
-    if not pe or not ce or not pe.liquid or not ce.liquid:
-        return 0.0
-    prem_p = pe.best_bid_price or pe.ltp
-    prem_c = ce.best_bid_price or ce.ltp
-    legs = [
-        TradeLeg("Put", "Sell", short_put, 1, prem_p),
-        TradeLeg("Call", "Sell", short_call, 1, prem_c),
-    ]
-    return pop_for_legs(ctx, legs)
-
-
-def _pop_band_covered(
-    ctx: EngineContext,
-    short_puts: list[int],
-    short_calls: list[int],
-    min_pop_pct: float,
-) -> bool:
-    """True when shortlists span [floor, floor+band]: lower and upper PoP sub-ranges."""
-    lo = min_pop_pct
-    hi = min_pop_pct + SS_POP_BAND_WIDTH_PCT
-    mid = lo + SS_POP_BAND_WIDTH_PCT / 2.0
-    has_lower = False
-    has_upper = False
-    for sp in short_puts:
-        for sc in short_calls:
-            if sp >= sc:
-                continue
-            pop = _pop_short_strangle_pair(ctx, sp, sc)
-            if lo <= pop <= mid:
-                has_lower = True
-            if mid <= pop <= hi:
-                has_upper = True
-    return has_lower and has_upper
-
-
-def _ss_short_strikes_for_pop_band(
-    ctx: EngineContext,
-    strikes: list[int],
-    right: Right,
-    min_pop_pct: float,
-    *,
-    opposite_strikes: list[int] | None = None,
-) -> list[int]:
-    """PoP-band shortlist: OTM band strikes plus ATM-ward expansion toward floor credit."""
-    cache = ctx.cache
-    ceil_delta, floor_delta = _ss_pop_band_delta_bounds(min_pop_pct)
-    scored: list[tuple[float, int]] = []
-    for s in strikes:
-        q = cache.get((s, right))
-        d = abs_delta(q)
-        if not q or not q.liquid or d is None:
-            continue
-        scored.append((d, s))
-
-    seen: set[int] = set()
-    band_strikes: list[int] = []
-    for d, s in sorted(scored, key=lambda x: -x[0]):
-        if ceil_delta <= d <= floor_delta and s not in seen:
-            seen.add(s)
-            band_strikes.append(s)
-
-    atm_candidates = sorted(
-        [(d, s) for d, s in scored if d > floor_delta],
-        key=lambda x: -x[0],
-    )
-    atm_strikes: list[int] = []
-    for _, s in atm_candidates[:SS_SHORT_STRIKES_MAX_ATM]:
-        if s not in seen:
-            seen.add(s)
-            atm_strikes.append(s)
-
-    selected: list[int] = []
-    for s in atm_strikes + band_strikes:
-        if s not in selected:
-            selected.append(s)
-
-    if opposite_strikes is not None and not _pop_band_covered(
-        ctx,
-        selected if right == "Put" else opposite_strikes,
-        opposite_strikes if right == "Put" else selected,
-        min_pop_pct,
-    ):
-        otm_extended = sorted(
-            [(d, s) for d, s in scored if d < ceil_delta],
-            key=lambda x: -x[0],
-        )
-        for _, s in otm_extended:
-            if s in seen:
-                continue
-            seen.add(s)
-            selected.append(s)
-            if right == "Put":
-                if _pop_band_covered(ctx, selected, opposite_strikes, min_pop_pct):
-                    break
-            elif _pop_band_covered(ctx, opposite_strikes, selected, min_pop_pct):
-                break
-            if len(selected) >= SS_SHORT_STRIKES_MAX_ATM + SS_TOP_K_SHORT_STRIKES:
-                break
-
-    if not selected:
-        for _, s in sorted(scored, key=lambda x: abs(x[0] - floor_delta))[:SS_TOP_K_SHORT_STRIKES]:
-            if s not in seen:
-                selected.append(s)
-    return selected[:SS_SHORT_STRIKES_MAX_PER_WING]
-
-
-def short_strangle_pairs(ctx: EngineContext) -> list[tuple[int, int]]:
-    """Return (short_put, short_call) shortlists for short strangle optimization."""
-    pe_strikes = [s for s in ctx.liquid_pe_strikes if s < ctx.spot]
-    ce_strikes = [s for s in ctx.liquid_ce_strikes if s > ctx.spot]
-    short_puts = _ss_short_strikes_for_pop_band(ctx, pe_strikes, "Put", ctx.min_pop_pct)
-    short_calls = _ss_short_strikes_for_pop_band(ctx, ce_strikes, "Call", ctx.min_pop_pct)
-    for _ in range(3):
-        new_puts = _ss_short_strikes_for_pop_band(
-            ctx,
-            pe_strikes,
-            "Put",
-            ctx.min_pop_pct,
-            opposite_strikes=short_calls,
-        )
-        new_calls = _ss_short_strikes_for_pop_band(
-            ctx,
-            ce_strikes,
-            "Call",
-            ctx.min_pop_pct,
-            opposite_strikes=new_puts,
-        )
-        if new_puts == short_puts and new_calls == short_calls:
-            break
-        short_puts, short_calls = new_puts, new_calls
-
-    out: list[tuple[int, int]] = []
-    for sp in short_puts:
-        for sc in short_calls:
-            if sp >= sc:
-                continue
-            out.append((sp, sc))
-    return out
 
 
 @dataclass(frozen=True)
@@ -343,20 +109,131 @@ class ShortStrangleCandidate:
     score_factors: dict[str, float] = field(default_factory=dict)
 
 
-def _ss_credit_shortlist_key(cand: ShortStrangleCandidate) -> tuple[float, float]:
-    """Net credit DESC; PoP DESC for deterministic ties."""
-    return (cand.net_collected, cand.pop)
+async def _pick_top_candidates(ctx, candidates, **kwargs):
+    span_shortlist_n = kwargs.get("span_shortlist_n", SS_SPAN_SHORTLIST_N)
+    return_top_n = kwargs.get("return_top_n", 3)
+    scored = await span_score_candidates(
+        ctx,
+        candidates,
+        strategy_id="short_strangle",
+        phase="ss_candidate_span",
+        shortlist_n=span_shortlist_n,
+    )
+    return [(s.candidate, s.ann_return) for s in scored[:return_top_n]], [
+        {"annualized_return_pct": s.ann_return, "unit_span": s.unit_span} for s in scored
+    ]
 
 
-def _ss_final_rank_key(
-    cand: ShortStrangleCandidate,
+def _collect_candidates(ctx, pairs, *, stats=None):
+    candidates: list[ShortStrangleCandidate] = []
+    for sp, sc in pairs:
+        candidates.extend(enumerate_short_strangles(ctx, sp, sc, stats=stats))
+    return candidates
+
+
+def _naked_anchor_strikes(
+    ctx: EngineContext,
+    strikes: list[int],
+    right: Right,
     *,
-    ann_return: float,
-) -> tuple[float, float, float, float]:
-    """Ann return on SPAN, net credit, liquidity×spread, PoP (all DESC)."""
-    liq = cand.score_factors.get("liquidity_weight", 0.5)
-    spread = cand.score_factors.get("spread_weight", 0.5)
-    return (ann_return, cand.net_collected, liq * spread, cand.pop)
+    spot_filter: Callable[[int], bool],
+) -> list[int]:
+    """Single-leg shorts that individually satisfy the PoP floor."""
+    anchors: list[tuple[float, int]] = []
+    for s in strikes:
+        if not spot_filter(s):
+            continue
+        pop = pop_for_short_strike(ctx, s, right)
+        if pop >= ctx.min_pop_pct:
+            anchors.append((pop, s))
+    anchors.sort(key=lambda x: -x[0])
+    return [s for _, s in anchors]
+
+
+def _short_lists_for_band(
+    ctx: EngineContext,
+    *,
+    ceiling_pop: float,
+) -> tuple[list[int], list[int]]:
+    pe_strikes = [s for s in ctx.liquid_pe_strikes if s < ctx.spot]
+    ce_strikes = [s for s in ctx.liquid_ce_strikes if s > ctx.spot]
+    floor = ctx.min_pop_pct
+    puts = adaptive_short_strikes(
+        ctx,
+        pe_strikes,
+        "Put",
+        spot_filter=lambda s: s < ctx.spot,
+    )
+    calls = adaptive_short_strikes(
+        ctx,
+        ce_strikes,
+        "Call",
+        spot_filter=lambda s: s > ctx.spot,
+    )
+    if not puts:
+        puts = [
+            s
+            for s in pe_strikes
+            if floor <= pop_for_short_strike(ctx, s, "Put") <= ceiling_pop
+        ]
+    if not calls:
+        calls = [
+            s
+            for s in ce_strikes
+            if floor <= pop_for_short_strike(ctx, s, "Call") <= ceiling_pop
+        ]
+    return puts, calls
+
+
+def short_strangle_pairs(
+    ctx: EngineContext,
+    *,
+    search_state: IncomeSearchState | None = None,
+) -> list[tuple[int, int]]:
+    """PoP-aware put/call pairs with naked-anchor forced cross-products."""
+    pe_pool = [s for s in ctx.liquid_pe_strikes if s < ctx.spot]
+    ce_pool = [s for s in ctx.liquid_ce_strikes if s > ctx.spot]
+    anchor_puts = _naked_anchor_strikes(
+        ctx, pe_pool, "Put", spot_filter=lambda s: s < ctx.spot
+    )
+    anchor_calls = _naked_anchor_strikes(
+        ctx, ce_pool, "Call", spot_filter=lambda s: s > ctx.spot
+    )
+
+    initial = pop_band(ctx.min_pop_pct)
+    if search_state is not None:
+        search_state.initial_pop_band = initial
+
+    pair_set: set[tuple[int, int]] = set()
+    for expansion, (floor_pop, ceiling_pop) in enumerate(iter_pop_band_expansions(ctx.min_pop_pct)):
+        del floor_pop
+        puts, calls = _short_lists_for_band(ctx, ceiling_pop=ceiling_pop)
+        for sp in puts:
+            for sc in calls:
+                if sp < sc:
+                    pair_set.add((sp, sc))
+        for anchor_ce in anchor_calls[:NAKED_ANCHOR_TOP_K]:
+            for sp in puts[:NAKED_ANCHOR_TOP_K]:
+                if sp < anchor_ce:
+                    pair_set.add((sp, anchor_ce))
+        for anchor_pe in anchor_puts[:NAKED_ANCHOR_TOP_K]:
+            for sc in calls[:NAKED_ANCHOR_TOP_K]:
+                if anchor_pe < sc:
+                    pair_set.add((anchor_pe, sc))
+        if pair_set:
+            if search_state is not None:
+                search_state.final_pop_band = ceiling_pop - ctx.min_pop_pct
+                search_state.expansion_attempts = expansion
+                search_state.full_chain_exhausted = ceiling_pop >= 100.0
+            break
+        if ceiling_pop >= 100.0:
+            if search_state is not None:
+                search_state.full_chain_exhausted = True
+                search_state.final_pop_band = ceiling_pop - ctx.min_pop_pct
+                search_state.expansion_attempts = expansion
+            break
+
+    return sorted(pair_set)
 
 
 def enumerate_short_strangles(
@@ -366,8 +243,8 @@ def enumerate_short_strangles(
     *,
     stats: ShortStrangleRejectionStats | None = None,
 ) -> list[ShortStrangleCandidate]:
-    """Feasible short strangle for a put/call pair, or empty if rejected."""
     L = ctx.lot_size
+    sid = "short_strangle"
     out: list[ShortStrangleCandidate] = []
     if stats is not None:
         stats.min_pop_pct = ctx.min_pop_pct
@@ -390,23 +267,6 @@ def enumerate_short_strangles(
                 credit=credit,
             )
 
-    def _accept(
-        *,
-        pop_detail: PopDetail,
-        credit: float,
-    ) -> None:
-        if stats is not None:
-            stats.record_stage("passed_pop")
-            stats.record_evaluation(
-                short_put=short_put,
-                short_call=short_call,
-                outcome="accepted",
-                reject_reason=None,
-                pop_detail=pop_detail,
-                credit=credit,
-            )
-            stats.record_survivor_metrics(pop_pct=pop_detail.pop_pct, credit=credit)
-
     if stats is not None:
         stats.record_generated()
     pe = ctx.cache.get((short_put, "Put"))
@@ -428,6 +288,7 @@ def enumerate_short_strangles(
         return out
     if stats is not None:
         stats.record_stage("passed_credit")
+        stats.record_stage("passed_loss")
 
     qty = min_qty_for_one_lot(L)
     if qty < L:
@@ -441,20 +302,33 @@ def enumerate_short_strangles(
     pop_detail = pop_detail_for_legs(ctx, legs)
     pop = pop_detail.pop_pct
     if not meets_pop_floor(ctx, pop):
-        _reject(
-            "pop_floor",
-            pop_detail=pop_detail,
-            credit=credit,
-            floor=ctx.min_pop_pct,
-        )
+        _reject("pop_floor", pop_detail=pop_detail, credit=credit, floor=ctx.min_pop_pct)
         return out
 
-    _accept(pop_detail=pop_detail, credit=credit)
+    margin_est = credit * L * 5
+    if not passes_capital_gate(
+        ctx,
+        strategy_id=sid,
+        legs=legs,
+        unit_max_loss=0.0,
+        margin_estimate=margin_est,
+    ):
+        _reject("capital")
+        return out
+
+    if stats is not None:
+        stats.record_evaluation(
+            short_put=short_put,
+            short_call=short_call,
+            outcome="accepted",
+            reject_reason=None,
+            pop_detail=pop_detail,
+            credit=credit,
+        )
+    record_feasible(stats, pop_detail=pop_detail, credit=credit, passed_capital=True)
+
     net_collected = credit * qty
-    leg_quotes: list[QuoteRow] = [pe, ce]
-    final_score, score_factors = score_short_strangle_ror(
-        pop, net_collected, ctx.min_pop_pct, leg_quotes
-    )
+    final_score, score_factors = score_short_strangle_ror(net_collected, [pe, ce])
     out.append(
         ShortStrangleCandidate(
             short_put=short_put,
@@ -471,210 +345,12 @@ def enumerate_short_strangles(
     return out
 
 
-def _collect_candidates(
-    ctx: EngineContext,
-    pairs: list[tuple[int, int]],
-    *,
-    stats: ShortStrangleRejectionStats | None = None,
-) -> list[ShortStrangleCandidate]:
-    candidates: list[ShortStrangleCandidate] = []
-    for sp, sc in pairs:
-        candidates.extend(enumerate_short_strangles(ctx, sp, sc, stats=stats))
-    return candidates
-
-
-def _build_pop_audit_summary(
-    stats: ShortStrangleRejectionStats,
-    candidates: list[ShortStrangleCandidate],
-    min_pop_pct: float,
-) -> dict[str, object]:
-    survivors_by_bucket: dict[str, int] = {}
-    for cand in candidates:
-        bucket = _ss_pop_bucket(cand.pop, min_pop_pct)
-        survivors_by_bucket[bucket] = survivors_by_bucket.get(bucket, 0) + 1
-    return {
-        "pop_distribution": dict(sorted(stats.pop_bucket_counts.items())),
-        "survivors_by_pop_bucket": dict(sorted(survivors_by_bucket.items())),
-        "pop_band_target": [min_pop_pct, min_pop_pct + SS_POP_BAND_WIDTH_PCT],
-    }
-
-
-def _ss_search_rationale() -> str:
-    return (
-        "PoP-band strike shortlist; PoP hard floor; survivors ranked for highest "
-        "annualized return on SPAN (income efficiency), not raw premium."
-    )
-
-
-def _unit_span_margin(
-    ctx: EngineContext,
-    legs: list,
-    *,
-    strategy_id: str,
-) -> float:
-    one_lot_legs = legs_at_lots(legs, ctx.lot_size, lots=1)
-    struct_key = structural_margin_key(one_lot_legs)
-    cached = ctx.unit_span_by_structure.get(struct_key)
-    if cached is not None:
-        return cached
-
-    margin_input = legs_to_margin_input(
-        one_lot_legs, ctx.stock_code, ctx.exchange_code, ctx.expiry_display
-    )
-    res = ctx.processor.strategy_builder_margin(
-        ctx.user_id,
-        ctx.exchange_code,
-        margin_input,
-        audit=ctx.audit,
-        audit_context={
-            "strategy_id": strategy_id,
-            "legs": margin_input,
-            "phase": "ss_candidate_span",
-        },
-    )
-    span = parse_float((res.get("Success") or {}).get("span_margin_required"))
-    ctx.unit_span_by_structure[struct_key] = span
-    return span
-
-
-async def _pick_top_candidates(
-    ctx: EngineContext,
-    candidates: list[ShortStrangleCandidate],
-    *,
-    strategy_id: str,
-    stats: StrategyAuditCollector | None = None,
-    span_shortlist_n: int = SS_SPAN_SHORTLIST_N,
-    return_top_n: int = SS_RETURN_TOP_N,
-) -> tuple[list[tuple[ShortStrangleCandidate, float]], list[dict]]:
-    """Top credit shortlist; margin only those; re-rank by annualized return on SPAN."""
-    if stats is not None:
-        stats.begin_ranking()
-    dte = days_to_expiry(ctx.expiry_display)
-    shortlist = sorted(
-        candidates,
-        key=_ss_credit_shortlist_key,
-        reverse=True,
-    )[:span_shortlist_n]
-
-    margin_requests: list[MarginFetchRequest] = []
-    for cand in shortlist:
-        if stats is not None:
-            stats.record_stage("margin_refined")
-        one_lot_legs = legs_at_lots(cand.legs, ctx.lot_size, lots=1)
-        struct_key = structural_margin_key(one_lot_legs)
-        if struct_key in ctx.unit_span_by_structure:
-            continue
-        margin_input = legs_to_margin_input(
-            one_lot_legs, ctx.stock_code, ctx.exchange_code, ctx.expiry_display
-        )
-        margin_requests.append(
-            MarginFetchRequest(
-                cache_key=struct_key,
-                margin_input=margin_input,
-                strategy_id=strategy_id,
-                phase="ss_candidate_span",
-            )
-        )
-
-    if margin_requests:
-        spans = await fetch_margins_concurrent(
-            ctx.processor,
-            ctx.user_id,
-            ctx.exchange_code,
-            margin_requests,
-            audit=ctx.audit,
-            existing_cache=ctx.unit_span_by_structure,
-        )
-        ctx.unit_span_by_structure.update(spans)
-
-    span_scores: list[dict] = []
-    scored: list[tuple[ShortStrangleCandidate, float]] = []
-
-    for credit_rank, cand in enumerate(shortlist, start=1):
-        unit_span = _unit_span_margin(ctx, cand.legs, strategy_id=strategy_id)
-        if unit_span <= 0 and stats is not None:
-            stats.record(
-                "span_failure",
-                short_put=cand.short_put,
-                short_call=cand.short_call,
-            )
-        ann_return = score_short_strangle_candidate(
-            cand.pop, cand.net_collected, unit_span, dte
-        )
-        if stats is not None:
-            stats.record_survivor_metrics(
-                pop_pct=cand.pop,
-                credit=cand.credit,
-                ann_return_pct=ann_return,
-                unit_span=unit_span,
-            )
-        span_scores.append(
-            {
-                "short_put": cand.short_put,
-                "short_call": cand.short_call,
-                "shortlist_rank_by_credit": credit_rank,
-                "final_score": round(cand.final_score, 4),
-                "unit_span": unit_span,
-                "annualized_return_pct": round(ann_return, 2),
-                "net_collected": cand.net_collected,
-            }
-        )
-        scored.append((cand, ann_return))
-
-    winners = sorted(
-        scored,
-        key=lambda item: _ss_final_rank_key(item[0], ann_return=item[1]),
-        reverse=True,
-    )[:return_top_n]
-
-    winner_keys = {id(c) for c, _ in winners}
-    if stats is not None:
-        for final_rank, (cand, ann_return) in enumerate(winners, start=1):
-            credit_rank = next(
-                i for i, sc in enumerate(span_scores, start=1)
-                if sc["short_put"] == cand.short_put and sc["short_call"] == cand.short_call
-            )
-            span_rank = final_rank
-            stats.record_winner(
-                candidate_id=candidate_id_for_legs(cand.legs),
-                legs=cand.legs,
-                metrics={
-                    "pop_pct": round(cand.pop, 2),
-                    "net_credit": round(cand.credit, 4),
-                    "net_collected": cand.net_collected,
-                    "annualized_return_pct": round(ann_return, 2),
-                    "unit_span": span_scores[credit_rank - 1]["unit_span"],
-                    "engine_score": round(cand.final_score, 4),
-                    "liquidity_weight": cand.score_factors.get("liquidity_weight"),
-                    "spread_weight": cand.score_factors.get("spread_weight"),
-                },
-                stages_passed=list(_STAGES_PASSED),
-                ranks={"credit": credit_rank, "span": span_rank, "final": final_rank},
-            )
-        for cand, ann_return in scored:
-            if id(cand) in winner_keys:
-                continue
-            stats.record_near_miss(
-                candidate_id=candidate_id_for_legs(cand.legs),
-                metrics={
-                    "pop_pct": round(cand.pop, 2),
-                    "net_collected": cand.net_collected,
-                    "annualized_return_pct": round(ann_return, 2),
-                },
-                rejection_reason="not_finalist",
-                context="SPAN shortlist finalist did not rank in top return set.",
-            )
-        stats.end_ranking(ctx.audit.telemetry if ctx.audit else None)
-
-    return winners, span_scores
-
-
 def _candidate_to_result(
     ctx: EngineContext,
     cand: ShortStrangleCandidate,
-    *,
     rank: int,
     ann_return: float,
+    badges: list[str],
     ranking_summary: str | None,
 ) -> StrategyResult:
     sid = "short_strangle"
@@ -692,6 +368,7 @@ def _candidate_to_result(
         engine_score=round(cand.final_score, 6),
         ranking_summary=ranking_summary,
         score_breakdown=cand.score_factors,
+        badges=badges,
     )
     result.annualized_return_pct = round(ann_return, 2)
     return result
@@ -702,8 +379,9 @@ async def calc_short_strangle(ctx: EngineContext) -> list[StrategyResult]:
     if ctx.halted:
         return [skip(sid, name, ctx.halt_reason or "Market halted")]
 
-    stats = _audit_collector(ctx)
-    pairs = short_strangle_pairs(ctx)
+    stats = setup_income_collector(ctx)
+    search_state = IncomeSearchState(initial_pop_band=pop_band(ctx.min_pop_pct), final_pop_band=0.0)
+    pairs = short_strangle_pairs(ctx, search_state=search_state)
     candidates = _collect_candidates(ctx, pairs, stats=stats)
     if stats is not None:
         stats.end_generation(ctx.audit.telemetry if ctx.audit else None)
@@ -712,135 +390,28 @@ async def calc_short_strangle(ctx: EngineContext) -> list[StrategyResult]:
         skip_reason = stats.skip_message() if stats else (
             "No short strangle meets minimum PoP on the liquid chain."
         )
-        if ctx.audit:
-            audit_calc(
-                ctx,
-                "Short strangle candidate search",
-                {
-                    "pairs_evaluated": len(pairs),
-                    "survivors": 0,
-                    "pop_band_target": [ctx.min_pop_pct, ctx.min_pop_pct + SS_POP_BAND_WIDTH_PCT],
-                },
-                {
-                    "rejection_counts": stats.counts if stats else {},
-                    "combos_tried": stats.combos_tried if stats else 0,
-                },
-                rationale="No short strangle passed PoP filters.",
-                strategy_id=sid,
-            )
         return [skip(sid, name, skip_reason)]
 
-    if ctx.audit:
-        audit_calc(
-            ctx,
-            "Short strangle candidate search",
-            {
-                "pairs_evaluated": len(pairs),
-                "survivors": len(candidates),
-                "pop_band_target": [ctx.min_pop_pct, ctx.min_pop_pct + SS_POP_BAND_WIDTH_PCT],
-            },
-            {
-                "rejection_counts": stats.counts if stats else {},
-                "combos_tried": stats.combos_tried if stats else 0,
-                "top_scores": [
-                    {
-                        "short_put": c.short_put,
-                        "short_call": c.short_call,
-                        "credit": c.credit,
-                        "pop": round(c.pop, 2),
-                        "final_score": round(c.final_score, 4),
-                    }
-                    for c in sorted(
-                        candidates,
-                        key=lambda x: (x.net_collected, x.pop),
-                        reverse=True,
-                    )[:5]
-                ],
-            },
-            rationale=_ss_search_rationale(),
-            strategy_id=sid,
-        )
-
-    winners, span_scores = await _pick_top_candidates(
-        ctx, candidates, strategy_id=sid, stats=stats
+    results = await run_income_champion_pipeline(
+        ctx,
+        candidates,
+        strategy_id=sid,
+        strategy_name=name,
+        stats=stats,
+        to_result=_candidate_to_result,
+        span_phase="ss_candidate_span",
+        search_state=search_state,
     )
-    if not winners:
-        return [skip(sid, name, "Could not resolve short strangle finalists.")]
 
-    if ctx.audit:
-        audit_calc(
-            ctx,
-            "Short strangle SPAN refinement",
-            {"finalists": len(span_scores)},
-            {"scores": span_scores},
-            rationale=(
-                f"Top {SS_SPAN_SHORTLIST_N} by net credit shortlisted; SPAN margin fetched "
-                "for finalists only; re-ranked by annualized return on SPAN, then net "
-                f"credit, liquidity/spread, PoP; top {SS_RETURN_TOP_N} returned."
-            ),
-            strategy_id=sid,
-        )
-
-    best_ann = winners[0][1]
-    if best_ann < MIN_SS_ANNUALIZED_RETURN_PCT:
-        if stats is not None and winners:
-            cand, _ = winners[0]
-            stats.record_near_miss(
-                candidate_id=candidate_id_for_legs(cand.legs),
-                metrics={
-                    "pop_pct": round(cand.pop, 2),
-                    "net_collected": cand.net_collected,
-                    "annualized_return_pct": round(best_ann, 2),
-                },
-                rejection_reason="below_min_ann_return",
-                context=(
-                    f"Best annualized return {best_ann:.1f}% below minimum "
-                    f"{MIN_SS_ANNUALIZED_RETURN_PCT:.1f}%."
-                ),
-            )
+    if not results:
         return [
             skip(
                 sid,
                 name,
-                f"Best short strangle annualized return {best_ann:.1f}% below minimum "
-                f"{MIN_SS_ANNUALIZED_RETURN_PCT:.1f}%.",
+                f"No short strangle meets minimum annualized return "
+                f"{ctx.min_ann_return_pct:.1f}%.",
             )
         ]
-
-    results: list[StrategyResult] = []
-    for rank, (cand, ann_return) in enumerate(winners, start=1):
-        summary: str | None = None
-        if rank == 1 and len(winners) > 1:
-            runner = winners[1][0]
-            summary = build_ranking_summary(
-                higher_rank=1,
-                lower_rank=2,
-                viewing_rank=1,
-                higher_ann_return=ann_return,
-                higher_credit=cand.net_collected,
-                higher_pop=cand.pop,
-                lower_ann_return=winners[1][1],
-                lower_credit=runner.net_collected,
-                lower_pop=runner.pop,
-            )
-        elif rank > 1:
-            prev = winners[rank - 2][0]
-            summary = build_ranking_summary(
-                higher_rank=rank - 1,
-                lower_rank=rank,
-                viewing_rank=rank,
-                higher_ann_return=winners[rank - 2][1],
-                higher_credit=prev.net_collected,
-                higher_pop=prev.pop,
-                lower_ann_return=ann_return,
-                lower_credit=cand.net_collected,
-                lower_pop=cand.pop,
-            )
-        results.append(
-            _candidate_to_result(
-                ctx, cand, rank=rank, ann_return=ann_return, ranking_summary=summary
-            )
-        )
 
     return results
 
@@ -851,7 +422,8 @@ def prefetch_short_strangle(ctx: EngineContext) -> set[tuple[int, Right]]:
     )
 
     pairs = prefetch_atm_pairs(ctx)
-    for sp, sc in short_strangle_pairs(ctx):
+    search_state = IncomeSearchState(initial_pop_band=pop_band(ctx.min_pop_pct), final_pop_band=0.0)
+    for sp, sc in short_strangle_pairs(ctx, search_state=search_state):
         pairs.add((sp, "Put"))
         pairs.add((sc, "Call"))
     return pairs

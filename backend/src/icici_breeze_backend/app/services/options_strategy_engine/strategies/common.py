@@ -168,6 +168,7 @@ def make_result(
     conviction_profile: str | None = None,
     hero_metric: Any | None = None,
     secondary_metrics: list[Any] | None = None,
+    badges: list[str] | None = None,
 ) -> StrategyResult:
     return StrategyResult(
         sid,
@@ -187,6 +188,7 @@ def make_result(
         conviction_profile=conviction_profile,
         hero_metric=hero_metric,
         secondary_metrics=secondary_metrics or [],
+        badges=badges or [],
     )
 
 

@@ -77,6 +77,8 @@ class TestStrategyEvaluationAudit(unittest.TestCase):
     def test_pop_policy_registry(self):
         income = pop_policy_for("bull_put_spread")
         self.assertTrue(income.used_for_filtering)
+        self.assertFalse(income.used_for_ranking)
+        self.assertIsNone(income.pop_weight)
         directional = pop_policy_for("bull_call_spread")
         self.assertFalse(directional.used_for_filtering)
         self.assertFalse(directional.used_for_ranking)
@@ -84,8 +86,8 @@ class TestStrategyEvaluationAudit(unittest.TestCase):
 
     def test_strategy_config_snapshot_bps(self):
         snap = strategy_config_snapshot("bull_put_spread")
-        self.assertIn("BPS_POP_BAND_WIDTH_PCT", snap)
-        self.assertIn("BPS_RETURN_TOP_N", snap)
+        self.assertIn("SPAN_SHORTLIST_N", snap)
+        self.assertIn("OBJECTIVE_BADGES", snap)
 
     def test_strategy_config_snapshot_directional(self):
         snap = strategy_config_snapshot("long_call")

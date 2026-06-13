@@ -55,6 +55,7 @@ import type {
 import { tradeSelectionKey } from "@/lib/strategy-builder/types";
 
 const DEFAULT_MIN_POP_PCT = 65;
+const DEFAULT_MIN_ANN_RETURN_PCT = 5;
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
 import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 
@@ -68,6 +69,9 @@ const CATEGORY_LABELS: Record<StrategyCategory, string> = {
 
 const MIN_POP_HINT =
   "Sets how far OTM income shorts are placed. Higher PoP → further OTM (lower delta).";
+
+const MIN_ANN_RETURN_HINT =
+  "Minimum annualized return on SPAN margin required for any returned income trade.";
 
 const DIRECTIONAL_HINT =
   "Generates Conservative, Moderate, and Aggressive variants automatically from your capital and max-loss limits.";
@@ -101,6 +105,7 @@ function parseNum(raw: unknown): number {
 function resetDownstream(
   setters: {
     setMinPopPct: (v: string) => void;
+    setMinAnnReturnPct: (v: string) => void;
     setLegs: (v: StrategyLeg[]) => void;
     setProposedData: (v: ProposeTradesSuccess | null) => void;
     setSelectedTradeId: (v: string | null) => void;
@@ -112,6 +117,7 @@ function resetDownstream(
   clearError = false,
 ) {
   setters.setMinPopPct(String(DEFAULT_MIN_POP_PCT));
+  setters.setMinAnnReturnPct(String(DEFAULT_MIN_ANN_RETURN_PCT));
   setters.setLegs([]);
   setters.setProposedData(null);
   setters.setSelectedTradeId(null);
@@ -127,6 +133,9 @@ export default function StrategyBuilderNewPage() {
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [minPopPct, setMinPopPct] = useState(String(DEFAULT_MIN_POP_PCT));
+  const [minAnnReturnPct, setMinAnnReturnPct] = useState(
+    String(DEFAULT_MIN_ANN_RETURN_PCT),
+  );
   const [marginLacs, setMarginLacs] = useState("");
   const [maxLossLacs, setMaxLossLacs] = useState("");
   const [provisionElm, setProvisionElm] = useState(false);
@@ -167,6 +176,7 @@ export default function StrategyBuilderNewPage() {
 
   const downstreamSetters = {
     setMinPopPct,
+    setMinAnnReturnPct,
     setLegs,
     setProposedData,
     setSelectedTradeId,
@@ -238,6 +248,11 @@ export default function StrategyBuilderNewPage() {
     if (!Number.isFinite(n)) return null;
     return Math.min(99, Math.max(1, n));
   })();
+  const minAnnReturnPctNum = (() => {
+    const n = parseFloat(minAnnReturnPct.replace(/,/g, ""));
+    if (!Number.isFinite(n)) return null;
+    return Math.min(100, Math.max(0, n));
+  })();
 
   useEffect(() => {
     if (section2Ready && !prevSection2ReadyRef.current) {
@@ -268,7 +283,8 @@ export default function StrategyBuilderNewPage() {
 
   const canGenerateShared =
     section2Ready && marginLacsNum != null && maxLossLacsNum != null;
-  const canGenerateIncome = canGenerateShared && minPopPctNum != null;
+  const canGenerateIncome =
+    canGenerateShared && minPopPctNum != null && minAnnReturnPctNum != null;
   const canGenerateDirectional = canGenerateShared;
 
   const generateM = useMutation({
@@ -283,6 +299,8 @@ export default function StrategyBuilderNewPage() {
           category === "income"
             ? minPopPctNum!
             : (minPopPctNum ?? DEFAULT_MIN_POP_PCT),
+        min_ann_return_pct:
+          category === "income" ? minAnnReturnPctNum! : undefined,
         provision_elm: provisionElm,
         strategy_category: category,
       }),
@@ -702,6 +720,28 @@ export default function StrategyBuilderNewPage() {
                     {minPopPctNum == null && minPopPct.trim() !== "" ? (
                       <p className="text-sm text-red-600 dark:text-red-400">
                         Minimum PoP must be between 1 and 99.
+                      </p>
+                    ) : null}
+                    <label className={sb.fieldRow}>
+                      <span
+                        className={`${sb.fieldLabelInline} flex min-w-[9.5rem] items-center gap-1.5`}
+                      >
+                        Min ann. return (%)
+                        <FieldHint text={MIN_ANN_RETURN_HINT} />
+                      </span>
+                      <input
+                        type="number"
+                        className={`${sb.input} min-w-0 flex-1`}
+                        value={minAnnReturnPct}
+                        onChange={(e) => setMinAnnReturnPct(e.target.value)}
+                        min={0}
+                        max={100}
+                        step={0.5}
+                      />
+                    </label>
+                    {minAnnReturnPctNum == null && minAnnReturnPct.trim() !== "" ? (
+                      <p className="text-sm text-red-600 dark:text-red-400">
+                        Minimum annualized return must be between 0 and 100.
                       </p>
                     ) : null}
                     <button

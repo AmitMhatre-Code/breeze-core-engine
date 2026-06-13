@@ -41,6 +41,17 @@ from icici_breeze_backend.audit.strategy_evaluation_audit import (
 )
 from icici_breeze_backend.app.services.options_strategy_engine.audit_helpers import audit_calc
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import all_liquid, make_result
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import (
+    IncomeSearchState,
+    adaptive_short_strikes,
+    iter_pop_band_expansions,
+    passes_capital_gate,
+    pop_band,
+    pop_for_short_strike,
+    record_feasible,
+    run_income_champion_pipeline,
+    setup_income_collector,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
     QuoteRow,
@@ -127,11 +138,8 @@ def score_iron_condor_ror(
     liquidity_weight = _geometric_mean(liquidity_vals) if liquidity_vals else 0.5
     spread_weight = _geometric_mean(spread_vals) if spread_vals else 0.5
     score = ror * liquidity_weight * spread_weight
-    pop_tiebreak = min(pop_pct, min_pop_pct) / max(min_pop_pct, 1.0)
-    score *= 1.0 + 1e-4 * pop_tiebreak
     factors = {
         "ror": round(ror, 6),
-        "pop_tiebreak": round(pop_tiebreak, 6),
         "liquidity_weight": round(liquidity_weight, 6),
         "spread_weight": round(spread_weight, 6),
     }
@@ -366,38 +374,54 @@ def _ic_short_strikes_around_target(
     return out
 
 
-def iron_condor_short_pairs(ctx: EngineContext) -> list[tuple[int, int]]:
-    """Return (short_put, short_call) shortlists for iron condor optimization."""
+def iron_condor_short_pairs(
+    ctx: EngineContext,
+    *,
+    search_state: IncomeSearchState | None = None,
+) -> list[tuple[int, int]]:
+    """PoP-aware short put/call pairs with adaptive band expansion."""
     pe_strikes = [s for s in ctx.liquid_pe_strikes if s < ctx.spot]
     ce_strikes = [s for s in ctx.liquid_ce_strikes if s > ctx.spot]
-    short_puts = _ic_short_strikes_for_pop_band(ctx, pe_strikes, "Put", ctx.min_pop_pct)
-    short_calls = _ic_short_strikes_for_pop_band(ctx, ce_strikes, "Call", ctx.min_pop_pct)
-    for _ in range(3):
-        new_puts = _ic_short_strikes_for_pop_band(
-            ctx,
-            pe_strikes,
-            "Put",
-            ctx.min_pop_pct,
-            opposite_strikes=short_calls,
-        )
-        new_calls = _ic_short_strikes_for_pop_band(
-            ctx,
-            ce_strikes,
-            "Call",
-            ctx.min_pop_pct,
-            opposite_strikes=new_puts,
-        )
-        if new_puts == short_puts and new_calls == short_calls:
-            break
-        short_puts, short_calls = new_puts, new_calls
+    initial = pop_band(ctx.min_pop_pct)
+    if search_state is not None:
+        search_state.initial_pop_band = initial
 
-    out: list[tuple[int, int]] = []
-    for sp in short_puts:
-        for sc in short_calls:
-            if sp >= sc:
-                continue
-            out.append((sp, sc))
-    return out
+    pair_set: set[tuple[int, int]] = set()
+    for expansion, (floor_pop, ceiling_pop) in enumerate(iter_pop_band_expansions(ctx.min_pop_pct)):
+        del floor_pop
+        puts = adaptive_short_strikes(
+            ctx, pe_strikes, "Put", spot_filter=lambda s: s < ctx.spot
+        )
+        calls = adaptive_short_strikes(
+            ctx, ce_strikes, "Call", spot_filter=lambda s: s > ctx.spot
+        )
+        if not puts:
+            puts = [
+                s for s in pe_strikes
+                if ctx.min_pop_pct <= pop_for_short_strike(ctx, s, "Put") <= ceiling_pop
+            ]
+        if not calls:
+            calls = [
+                s for s in ce_strikes
+                if ctx.min_pop_pct <= pop_for_short_strike(ctx, s, "Call") <= ceiling_pop
+            ]
+        for sp in puts:
+            for sc in calls:
+                if sp < sc:
+                    pair_set.add((sp, sc))
+        if pair_set:
+            if search_state is not None:
+                search_state.final_pop_band = ceiling_pop - ctx.min_pop_pct
+                search_state.expansion_attempts = expansion
+                search_state.full_chain_exhausted = ceiling_pop >= 100.0
+            break
+        if ceiling_pop >= 100.0:
+            if search_state is not None:
+                search_state.full_chain_exhausted = True
+                search_state.final_pop_band = ceiling_pop - ctx.min_pop_pct
+                search_state.expansion_attempts = expansion
+            break
+    return sorted(pair_set)
 
 
 def passes_hard_wing_credit(put_credit: float, call_credit: float) -> bool:
@@ -610,6 +634,7 @@ def enumerate_symmetric_iron_condors(
             continue
         if stats is not None:
             stats.record_stage("passed_economic_prune")
+            stats.record_stage("passed_loss")
         qty = min_qty_for_one_lot(L)
         if qty < L:
             _reject("quantity", wing_width=w, long_put=lp, long_call=lc)
@@ -647,21 +672,42 @@ def enumerate_symmetric_iron_condors(
                 call_credit=call_credit,
             )
             continue
+        if not passes_capital_gate(
+            ctx,
+            strategy_id="iron_condor",
+            legs=legs,
+            unit_max_loss=max_loss_u,
+            margin_estimate=max_loss_u * L,
+        ):
+            _reject(
+                "capital",
+                wing_width=w,
+                long_put=lp,
+                long_call=lc,
+                credit=credit,
+            )
+            continue
         preferred_credit_met = passes_ic_wing_credit(
             put_credit, call_credit, w, min_credit_pct_of_width=min_credit_pct_of_width
         )
         below_preferred_credit = not preferred_credit_met
-        _accept(
-            wing_width=w,
-            long_put=lp,
-            long_call=lc,
-            pop_detail=pop_detail,
-            credit=credit,
-            put_credit=put_credit,
-            call_credit=call_credit,
-            below_preferred_credit=below_preferred_credit,
-            preferred_credit_met=preferred_credit_met,
-        )
+        if stats is not None:
+            stats.record_evaluation(
+                short_put=short_put,
+                short_call=short_call,
+                wing_width=w,
+                long_put=lp,
+                long_call=lc,
+                outcome="accepted",
+                reject_reason=None,
+                pop_detail=pop_detail,
+                credit=credit,
+                put_credit=put_credit,
+                call_credit=call_credit,
+                below_preferred_credit=below_preferred_credit,
+                preferred_credit_met=preferred_credit_met,
+            )
+        record_feasible(stats, pop_detail=pop_detail, credit=credit, passed_capital=True)
         net_collected = credit * qty
         leg_quotes: list[QuoteRow] = [sp, lpq, sc, lcq]
         max_loss_total = max_loss_u * qty
@@ -710,7 +756,7 @@ def evaluate_symmetric_iron_condor(
     dte = days_to_expiry(ctx.expiry_display)
     return max(
         candidates,
-        key=lambda c: _ic_rank_key(c, ann_return=_proxy_ann_return(c, dte)),
+        key=lambda c: (c.net_collected, _proxy_ann_return(c, dte)),
     )
 
 
@@ -1110,9 +1156,9 @@ async def _pick_top_candidates(
 def _candidate_to_result(
     ctx: EngineContext,
     cand: IronCondorCandidate,
-    *,
     rank: int,
     ann_return: float,
+    badges: list[str],
     ranking_summary: str | None,
 ) -> StrategyResult:
     sid = "iron_condor"
@@ -1138,6 +1184,7 @@ def _candidate_to_result(
                 else {}
             ),
         },
+        badges=badges,
     )
     result.annualized_return_pct = round(ann_return, 2)
     return result
@@ -1148,8 +1195,9 @@ async def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
     if ctx.halted:
         return [skip(sid, name, ctx.halt_reason or "Market halted")]
 
-    stats = _audit_collector(ctx)
-    pairs = iron_condor_short_pairs(ctx)
+    stats = setup_income_collector(ctx)
+    search_state = IncomeSearchState(initial_pop_band=pop_band(ctx.min_pop_pct), final_pop_band=0.0)
+    pairs = iron_condor_short_pairs(ctx, search_state=search_state)
     seed_pair = _best_strangle_short_pair(ctx)
     pairs = _merge_pairs(pairs, seed_pair)
     candidates, min_credit_pct_used = _collect_candidates(ctx, pairs, stats=stats)
@@ -1160,139 +1208,42 @@ async def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
         skip_reason = stats.skip_message() if stats else (
             "No iron condor meets minimum PoP within risk limits."
         )
-        if ctx.audit:
-            audit_calc(
-                ctx,
-                "Iron condor candidate search",
-                {
-                    "pairs_evaluated": len(pairs),
-                    "survivors": 0,
-                    "strangle_seed": list(seed_pair) if seed_pair else None,
-                    "preferred_credit_pct": MIN_IC_CREDIT_PCT_OF_WIDTH,
-                    "pop_band_target": [ctx.min_pop_pct, ctx.min_pop_pct + IC_POP_BAND_WIDTH_PCT],
-                },
-                {
-                    "rejection_counts": stats.counts if stats else {},
-                    "combos_tried": stats.combos_tried if stats else 0,
-                },
-                rationale="No symmetric iron condor passed risk or PoP filters.",
-                strategy_id=sid,
-            )
         return [skip(sid, name, skip_reason)]
 
-    if ctx.audit:
-        audit_calc(
-            ctx,
-            "Iron condor candidate search",
-            {
-                "pairs_evaluated": len(pairs),
-                "survivors": len(candidates),
-                "strangle_seed": list(seed_pair) if seed_pair else None,
-                "preferred_credit_pct": MIN_IC_CREDIT_PCT_OF_WIDTH,
-                "pop_band_target": [ctx.min_pop_pct, ctx.min_pop_pct + IC_POP_BAND_WIDTH_PCT],
-            },
-            {
-                "rejection_counts": stats.counts if stats else {},
-                "combos_tried": stats.combos_tried if stats else 0,
-                "top_scores": [
-                    {
-                        "short_put": c.short_put,
-                        "short_call": c.short_call,
-                        "wing_width": c.wing_width,
-                        "credit": c.credit,
-                        "pop": round(c.pop, 2),
-                        "final_score": round(c.final_score, 4),
-                    }
-                    for c in sorted(
-                        candidates,
-                        key=lambda x: (x.net_collected, x.pop),
-                        reverse=True,
-                    )[:5]
-                ],
-            },
-            rationale=_ic_credit_search_rationale(min_credit_pct_used),
-            strategy_id=sid,
-        )
-
-    winners, span_scores = await _pick_top_candidates(
-        ctx, candidates, strategy_id=sid, stats=stats
+    results = await run_income_champion_pipeline(
+        ctx,
+        candidates,
+        strategy_id=sid,
+        strategy_name=name,
+        stats=stats,
+        to_result=_candidate_to_result,
+        span_phase="ic_candidate_span",
+        search_state=search_state,
     )
-    if not winners:
-        return [skip(sid, name, "Could not resolve iron condor finalists.")]
 
-    if ctx.audit:
-        audit_calc(
-            ctx,
-            "Iron condor SPAN refinement",
-            {"finalists": len(span_scores)},
-            {"scores": span_scores},
-            rationale=(
-                "Credit-first shortlist by net collected and proxy annualized return; "
-                "finalists re-ranked by SPAN annualized return, net credit, liquidity; "
-                "PoP tiebreak only."
-            ),
-            strategy_id=sid,
-        )
-
-    best_ann = winners[0][1]
-    if best_ann < MIN_IC_ANNUALIZED_RETURN_PCT:
-        if stats is not None and winners:
-            cand, _ = winners[0]
-            stats.record_near_miss(
-                candidate_id=candidate_id_for_legs(cand.legs),
-                metrics={
-                    "pop_pct": round(cand.pop, 2),
-                    "net_collected": cand.net_collected,
-                    "annualized_return_pct": round(best_ann, 2),
-                },
-                rejection_reason="below_min_ann_return",
-                context=(
-                    f"Best annualized return {best_ann:.1f}% below minimum "
-                    f"{MIN_IC_ANNUALIZED_RETURN_PCT:.1f}%."
-                ),
-            )
+    if not results:
         return [
             skip(
                 sid,
                 name,
-                f"Best iron condor annualized return {best_ann:.1f}% below minimum "
-                f"{MIN_IC_ANNUALIZED_RETURN_PCT:.1f}%.",
+                f"No iron condor meets minimum annualized return "
+                f"{ctx.min_ann_return_pct:.1f}%.",
             )
         ]
 
-    results: list[StrategyResult] = []
-    for rank, (cand, ann_return) in enumerate(winners, start=1):
-        summary: str | None = None
-        if rank == 1 and len(winners) > 1:
-            runner = winners[1][0]
-            summary = build_ranking_summary(
-                higher_rank=1,
-                lower_rank=2,
-                viewing_rank=1,
-                higher_credit=cand.net_collected,
-                higher_pop=cand.pop,
-                higher_ror=cand.score_factors.get("ror", 0.0),
-                lower_credit=runner.net_collected,
-                lower_pop=runner.pop,
-                lower_ror=runner.score_factors.get("ror", 0.0),
-            )
-        elif rank > 1:
-            prev = winners[rank - 2][0]
-            summary = build_ranking_summary(
-                higher_rank=rank - 1,
-                lower_rank=rank,
-                viewing_rank=rank,
-                higher_credit=prev.net_collected,
-                higher_pop=prev.pop,
-                higher_ror=prev.score_factors.get("ror", 0.0),
-                lower_credit=cand.net_collected,
-                lower_pop=cand.pop,
-                lower_ror=cand.score_factors.get("ror", 0.0),
-            )
-        results.append(
-            _candidate_to_result(
-                ctx, cand, rank=rank, ann_return=ann_return, ranking_summary=summary
-            )
+    if ctx.audit:
+        audit_calc(
+            ctx,
+            "Iron condor objective champions",
+            {
+                "pairs_evaluated": len(pairs),
+                "feasible": len(candidates),
+                "returned": len(results),
+                "preferred_credit_pct": min_credit_pct_used,
+            },
+            {"search_state": search_state.__dict__},
+            rationale=_ic_credit_search_rationale(min_credit_pct_used),
+            strategy_id=sid,
         )
 
     return results

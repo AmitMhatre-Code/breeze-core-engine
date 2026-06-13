@@ -33,6 +33,7 @@ export type ProposeTradesParams = {
   margin_lacs: number;
   max_loss_lacs: number;
   min_pop_pct: number;
+  min_ann_return_pct?: number;
   provision_elm: boolean;
   strategy_category: StrategyCategory;
   risk_reward_profile?: RiskRewardProfile;

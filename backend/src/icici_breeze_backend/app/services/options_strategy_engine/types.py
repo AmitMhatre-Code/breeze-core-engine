@@ -126,6 +126,7 @@ class StrategyResult:
     conviction_profile: RiskRewardProfile | None = None
     hero_metric: TileMetric | None = None
     secondary_metrics: list[TileMetric] = field(default_factory=list)
+    badges: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -147,6 +148,7 @@ class EngineContext:
     spot: float
     atm_strike: int
     risk_reward_profile: RiskRewardProfile = "moderate"
+    min_ann_return_pct: float = 5.0
     atm_iv: float | None = None
     cache: dict[tuple[int, Right], QuoteRow] = field(default_factory=dict)
     structure_modified: bool = False
