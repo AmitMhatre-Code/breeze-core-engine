@@ -11,6 +11,7 @@ import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill
 import { OutlookFilterButtons } from "@/components/strategy-builder/OutlookFilterButtons";
 import { MasonryGrid } from "@/components/strategy-builder/MasonryGrid";
 import { ProposedStrategyTradeCard } from "@/components/strategy-builder/ProposedStrategyTradeCard";
+import { StrategyExplainabilityPanel } from "@/components/strategy-builder/StrategyExplainabilityPanel";
 import {
   TradeSortLink,
   type TradeSortKey,
@@ -836,7 +837,7 @@ export default function StrategyBuilderNewPage() {
                       <button
                         type="button"
                         className="font-normal text-sky-600 underline underline-offset-2 hover:text-sky-500 disabled:cursor-wait disabled:opacity-60 dark:text-sky-400 dark:hover:text-sky-300"
-                        title="Download build audit log (JSON)"
+                        title="Level 4: Download full technical audit JSON"
                         disabled={auditDownloading}
                         onClick={() => {
                           void (async () => {
@@ -866,6 +867,9 @@ export default function StrategyBuilderNewPage() {
               </div>
               {auditError ? (
                 <p className="text-sm text-red-600 dark:text-red-400">{auditError}</p>
+              ) : null}
+              {proposedData?.user_report ? (
+                <StrategyExplainabilityPanel report={proposedData.user_report} />
               ) : null}
               {!trades.length ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">

@@ -50,6 +50,25 @@ def fetch_customerdetails_session_token(
     return (succ.get("session_token") or succ.get("sessionToken") or "").strip()
 
 
+def session_token_from_customer_response(
+    customer_response: dict | None,
+    *,
+    raw_session: str | None = None,
+    broker_token: str | None = None,
+) -> str:
+    """Best-effort X-SessionToken for direct Breeze REST calls (portfolio, margin)."""
+    token = (raw_session or "").strip()
+    if token:
+        return token
+    if customer_response and isinstance(customer_response, dict):
+        succ = customer_response.get("Success") or customer_response.get("success") or {}
+        if isinstance(succ, dict):
+            token = (succ.get("session_token") or succ.get("sessionToken") or "").strip()
+            if token:
+                return token
+    return (broker_token or "").strip()
+
+
 def call_icici_api_direct(
     url: str,
     payload_dict: dict,

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from icici_breeze_backend.app.external.icici_api import session_token_from_customer_response
 from icici_breeze_backend.app.services.broker_snapshot_cache import (
     get_snapshot,
     set_snapshot,
@@ -22,6 +23,19 @@ def _clear_snapshot_cache():
     yield
     with mod._lock:
         mod._cache.clear()
+
+
+def test_session_token_from_customer_response_fallbacks():
+    assert session_token_from_customer_response(
+        {"Success": {"session_token": "tok-a"}},
+        raw_session="",
+        broker_token="apisession",
+    ) == "tok-a"
+    assert session_token_from_customer_response(
+        None,
+        raw_session="",
+        broker_token="apisession",
+    ) == "apisession"
 
 
 def test_snapshot_cache_hit_skips_live_home_fields():
@@ -47,7 +61,7 @@ def test_snapshot_cache_hit_skips_live_home_fields():
     assert snap.customerdetails_session_token == "sess-tok"
 
 
-def test_build_dashboard_bootstrap_uses_snapshot_and_shared_vix_quote():
+def test_build_dashboard_bootstrap_uses_snapshot_and_skips_vix_options():
     user = "U1"
     token = "broker-tok"
     customer = {"Status": 200, "Success": {"idirect_user_name": "Cached"}}
@@ -65,10 +79,10 @@ def test_build_dashboard_bootstrap_uses_snapshot_and_shared_vix_quote():
     proc = MagicMock()
     proc.get_customer_details = MagicMock(side_effect=AssertionError("should use cache"))
     proc.get_margin_situation = MagicMock(side_effect=AssertionError("should use cache"))
-    proc.get_session_breeze.return_value = MagicMock()
+    mock_breeze = MagicMock()
+    proc.get_session_breeze.return_value = mock_breeze
     proc.get_positions.return_value = {"Status": 200, "Success": []}
 
-    nifty_quote = {"ltp": 24000, "previous_close": 23500}
     vix_payload = {
         "current_vix": 14.5,
         "nifty_spot": 24000.0,
@@ -77,25 +91,11 @@ def test_build_dashboard_bootstrap_uses_snapshot_and_shared_vix_quote():
         "vix_30d": [],
         "error": None,
     }
-    opts_payload = {
-        "nifty_spot": 24000.0,
-        "next_expiry": "16-Jun-2026",
-        "atm_iv": 12.5,
-        "expected_range": [23000, 25000],
-        "expected_move_pct": 2.0,
-        "put_call_ratio": 1.1,
-        "strike_highest_call_oi": 24100,
-        "strike_highest_put_oi": 23900,
-        "error": None,
-    }
 
     with patch(
         "icici_breeze_backend.app.services.dashboard_bootstrap.fetch_vix_headline",
-        return_value=(vix_payload, nifty_quote),
+        return_value=(vix_payload, {"ltp": 24000}),
     ) as headline_mock, patch(
-        "icici_breeze_backend.app.services.dashboard_bootstrap.fetch_vix_options",
-        return_value=opts_payload,
-    ) as opts_mock, patch(
         "icici_breeze_backend.app.services.api_usage.get_usage_for_display",
         return_value={
             "api_calls_today": 1,
@@ -118,15 +118,12 @@ def test_build_dashboard_bootstrap_uses_snapshot_and_shared_vix_quote():
 
     proc.get_customer_details.assert_not_called()
     proc.get_margin_situation.assert_not_called()
+    proc.get_session_breeze.assert_called_once()
     proc.get_positions.assert_called_once_with(user, session_token="raw-sess")
     headline_mock.assert_called_once()
-    opts_mock.assert_called_once()
-    _args, opts_kwargs = opts_mock.call_args
-    assert opts_kwargs.get("nifty_quote") == nifty_quote
-
+    assert "vix_options" not in payload
     assert payload["home"]["customer"] == customer
     assert payload["vix"]["vix_30d"] == []
-    assert payload["vix_options"]["atm_iv"] == 12.5
 
 
 def test_fetch_vix_history_returns_series():

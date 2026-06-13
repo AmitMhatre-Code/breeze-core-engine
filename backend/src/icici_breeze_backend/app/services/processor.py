@@ -1310,6 +1310,8 @@ class processor():
                 if snap and snap.customerdetails_session_token:
                     resolved_session = snap.customerdetails_session_token
             if not resolved_session:
+                resolved_session = broker_token
+            if not resolved_session:
                 resolved_session = (
                     _fetch_customerdetails_session_token(
                         cred_data["Success"]["broker_api_key"], broker_token, user_id=user_id

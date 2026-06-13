@@ -6,8 +6,28 @@ from typing import Any
 from icici_breeze_backend.app.api.v1.route_portfolio import _normalize_portfolio_success_for_ui
 from icici_breeze_backend.app.domain.responses import HomeDataResponse
 from icici_breeze_backend.app.services.broker_snapshot_cache import get_snapshot
-from icici_breeze_backend.app.services.dashboard_vix import fetch_vix_headline, fetch_vix_options
+from icici_breeze_backend.app.services.dashboard_vix import fetch_vix_headline
 from icici_breeze_backend.audit.logger import AuditLogger
+
+
+def _resolve_portfolio_session_token(
+    user_id: str,
+    processor,
+    *,
+    broker_token: str,
+    breeze,
+) -> str | None:
+    snap = get_snapshot(user_id, broker_token)
+    token = (snap.customerdetails_session_token if snap else None) or ""
+    token = token.strip()
+    if token:
+        return token
+    if breeze is not None:
+        sk = getattr(breeze, "session_key", None)
+        if sk and str(sk).strip():
+            return str(sk).strip()
+    bt = (broker_token or "").strip()
+    return bt or None
 
 
 def build_home_data_fields(user_id: str, processor, *, broker_token: str) -> dict[str, Any]:
@@ -45,33 +65,28 @@ def build_home_data_fields(user_id: str, processor, *, broker_token: str) -> dic
 
 def build_dashboard_bootstrap(user_id: str, processor, *, broker_token: str) -> dict[str, Any]:
     """
-    Single-request dashboard payload: home, portfolio, vix headline, vix options.
-    VIX history is omitted (lazy-loaded via /dashboard/vix/history).
+    Fast dashboard payload: home, portfolio, vix headline only.
+    vix_options and vix history load via separate lazy endpoints after first paint.
     """
     AuditLogger(None).log_portfolio_access(user_id)
+
+    breeze = processor.get_session_breeze(user_id)
 
     home_fields = build_home_data_fields(user_id, processor, broker_token=broker_token)
     home = HomeDataResponse(**home_fields)
 
-    snap = get_snapshot(user_id, broker_token)
-    session_token = snap.customerdetails_session_token if snap else None
+    session_token = _resolve_portfolio_session_token(
+        user_id, processor, broker_token=broker_token, breeze=breeze
+    )
     portfolio_raw = processor.get_positions(user_id, session_token=session_token)
     portfolio = portfolio_raw
     if isinstance(portfolio_raw, dict):
         portfolio = _normalize_portfolio_success_for_ui(portfolio_raw)
 
-    breeze = processor.get_session_breeze(user_id)
-    vix, nifty_quote = fetch_vix_headline(user_id, processor, breeze=breeze)
-    vix_options = fetch_vix_options(
-        user_id,
-        processor,
-        breeze=breeze,
-        nifty_quote=nifty_quote,
-    )
+    vix, _nifty_quote = fetch_vix_headline(user_id, processor, breeze=breeze)
 
     return {
         "home": home.model_dump(),
         "portfolio": portfolio,
         "vix": vix,
-        "vix_options": vix_options,
     }

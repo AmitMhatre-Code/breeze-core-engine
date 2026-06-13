@@ -299,6 +299,7 @@ async def _complete_icici_session(
             from icici_breeze_backend.app.external.icici_api import (
                 fetch_customerdetails_session_token,
                 call_icici_api_direct,
+                session_token_from_customer_response,
             )
 
             broker_token = str(apisession or "")
@@ -433,7 +434,11 @@ async def _complete_icici_session(
         icici_token,
         customer_details=customer_check,
         margin_situation=build_margin_situation_from_raw(margin_check, target_margin_ute=100),
-        customerdetails_session_token=raw_session or "",
+        customerdetails_session_token=session_token_from_customer_response(
+            customer_check,
+            raw_session=raw_session,
+            broker_token=icici_token,
+        ),
     )
 
     response = JSONResponse({"redirect": "/dashboard"})

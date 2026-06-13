@@ -21,16 +21,6 @@ describe("hydrateDashboardQueryCache", () => {
         nifty_spot_trend_pct: 1,
         vix_30d: [],
       },
-      vix_options: {
-        nifty_spot: 24000,
-        next_expiry: "16-Jun-2026",
-        atm_iv: 12,
-        expected_range: [23000, 25000],
-        expected_move_pct: 2,
-        put_call_ratio: 1,
-        strike_highest_call_oi: 24100,
-        strike_highest_put_oi: 23900,
-      },
     };
 
     hydrateDashboardQueryCache(queryClient, bootstrap);
@@ -40,8 +30,6 @@ describe("hydrateDashboardQueryCache", () => {
       bootstrap.portfolio,
     );
     expect(queryClient.getQueryData(["dashboard", "vix"])).toEqual(bootstrap.vix);
-    expect(queryClient.getQueryData(["dashboard", "vix-options"])).toEqual(
-      bootstrap.vix_options,
-    );
+    expect(queryClient.getQueryData(["dashboard", "vix-options"])).toBeUndefined();
   });
 });

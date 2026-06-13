@@ -44,7 +44,6 @@ export type DashboardBootstrapResponse = {
   home: HomeDataResponse;
   portfolio: PortfolioApiResponse;
   vix: DashboardVixCore;
-  vix_options: DashboardVixOptions;
 };
 
 export type DashboardVixHistoryResponse = {
@@ -53,6 +52,10 @@ export type DashboardVixHistoryResponse = {
 
 export function fetchDashboardBootstrap(): Promise<DashboardBootstrapResponse> {
   return apiClient.get<DashboardBootstrapResponse>("/dashboard/bootstrap");
+}
+
+export function fetchDashboardVixOptions(): Promise<DashboardVixOptions> {
+  return apiClient.get<DashboardVixOptions>("/dashboard/vix/options");
 }
 
 export function fetchDashboardVixHistory(): Promise<DashboardVixHistoryResponse> {
@@ -68,5 +71,4 @@ export function hydrateDashboardQueryCache(
   queryClient.setQueryData(["home", "data"], data.home);
   queryClient.setQueryData(["portfolio", "positions"], data.portfolio);
   queryClient.setQueryData(["dashboard", "vix"], data.vix);
-  queryClient.setQueryData(["dashboard", "vix-options"], data.vix_options);
 }

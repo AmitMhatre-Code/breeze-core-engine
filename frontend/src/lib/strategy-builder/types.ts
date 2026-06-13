@@ -140,6 +140,94 @@ export type ProposeTradesSuccess = {
   trades: ProposedTrade[];
   /** Server-side audit session id for downloading the build audit JSON. */
   audit_session_id?: string | null;
+  user_report?: UserExplainabilityReport | null;
+};
+
+export type UserInputsSummary = {
+  strategy_category: string;
+  margin_lacs: number;
+  max_loss_lacs: number;
+  min_pop_pct?: number;
+  min_ann_return_pct?: number;
+};
+
+export type StrategyRef = {
+  strategy_id: string;
+  strategy_name: string;
+};
+
+export type SkippedStrategySummary = {
+  strategy_id: string;
+  strategy_name: string;
+  primary_reason: string;
+  summary: string;
+};
+
+export type ExecutiveSummary = {
+  user_inputs: UserInputsSummary;
+  strategies_evaluated: number;
+  strategies_recommended: StrategyRef[];
+  strategies_skipped: SkippedStrategySummary[];
+};
+
+export type FunnelStage = {
+  stage: string;
+  label: string;
+  count: number | string;
+};
+
+export type BadgeExplanation = {
+  badge: string;
+  rationale: string;
+};
+
+export type TradeMetrics = {
+  pop_pct?: number | null;
+  net_credit?: number | null;
+  annualized_return_pct?: number | null;
+  margin?: number | null;
+};
+
+export type ReturnedTradeExplanation = {
+  strategy_name: string;
+  variant_rank?: number | null;
+  conviction_profile?: RiskRewardProfile | null;
+  badges?: string[];
+  badge_explanations?: BadgeExplanation[];
+  metrics: TradeMetrics;
+  ranking_summary?: string | null;
+};
+
+export type WhyThisStrategy = {
+  strategy_id: string;
+  strategy_name: string;
+  funnel: FunnelStage[];
+  pop_filter_note?: string | null;
+  returned_trades: ReturnedTradeExplanation[];
+};
+
+export type WhyNotStrategy = {
+  strategy_id: string;
+  strategy_name: string;
+  primary_reason: string;
+  explanation: string;
+  funnel: FunnelStage[];
+};
+
+export type WhatIfInsight = {
+  constraint: string;
+  current_value?: number | null;
+  suggested_change?: number | null;
+  affected_strategies: string[];
+  message: string;
+};
+
+export type UserExplainabilityReport = {
+  user_report_schema_version: string;
+  executive_summary: ExecutiveSummary;
+  why_this: WhyThisStrategy[];
+  why_not: WhyNotStrategy[];
+  what_if_insights: WhatIfInsight[];
 };
 
 export type ProposeTradesApiResponse = {

@@ -14,6 +14,7 @@ import { getHomeMarginTiles, type HomeDataResponse } from "@/lib/home-data";
 import {
   fetchDashboardBootstrap,
   fetchDashboardVixHistory,
+  fetchDashboardVixOptions,
   hydrateDashboardQueryCache,
   type DashboardVixCore,
   type DashboardVixOptions,
@@ -157,7 +158,7 @@ export default function DashboardPage() {
     undefined,
   );
   const [marketEnabled, marketTriggerRef] = useLazySection("300px");
-  const [chartEnabled, chartTriggerRef] = useLazySection("350px");
+  const [chartEnabled, chartTriggerRef] = useLazySection("0px");
 
   const bootstrapQ = useQuery({
     queryKey: ["dashboard", "bootstrap"],
@@ -194,9 +195,7 @@ export default function DashboardPage() {
     queryKey: ["dashboard", "vix-options"],
     queryFn: async () => {
       try {
-        return await apiClient.get<DashboardVixOptions>(
-          "/dashboard/vix/options",
-        );
+        return await fetchDashboardVixOptions();
       } catch (e) {
         return {
           ...emptyOpts(),
@@ -207,7 +206,8 @@ export default function DashboardPage() {
         };
       }
     },
-    enabled: false,
+    staleTime: 30_000,
+    enabled: Boolean(bootstrapQ.data),
   });
 
   const historyQ = useQuery({
@@ -293,7 +293,7 @@ export default function DashboardPage() {
   const homeData = bootstrapQ.data?.home ?? homeQ.data;
   const portData = bootstrapQ.data?.portfolio ?? portQ.data;
   const coreBase = bootstrapQ.data?.vix ?? coreQ.data;
-  const opts = bootstrapQ.data?.vix_options ?? optsQ.data;
+  const opts = optsQ.data;
   const vixSeries = historyQ.data?.vix_30d ?? coreBase?.vix_30d ?? [];
   const core = coreBase
     ? { ...coreBase, vix_30d: vixSeries }
@@ -365,13 +365,14 @@ export default function DashboardPage() {
       : null;
 
   // IV / OI / PCR come from /dashboard/vix/options (slow); do not block VIX chart or NIFTY spot from core.
-  const optsLoading = bootstrapQ.isPending && !opts;
+  const optsLoading = optsQ.isPending;
 
   const volatilityFetching =
-    bootstrapQ.isFetching || historyQ.isFetching;
+    bootstrapQ.isFetching || optsQ.isFetching || historyQ.isFetching;
   const refreshVolatility = useCallback(() => {
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard", "vix-options"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard", "vix-history"] }),
     ]);
   }, [queryClient]);

@@ -64,6 +64,93 @@ class ProposedTradeOut(BaseModel):
     badges: List[str] = Field(default_factory=list)
 
 
+class UserInputsSummaryOut(BaseModel):
+    strategy_category: str
+    margin_lacs: float
+    max_loss_lacs: float
+    min_pop_pct: Optional[float] = None
+    min_ann_return_pct: Optional[float] = None
+
+
+class StrategyRefOut(BaseModel):
+    strategy_id: str
+    strategy_name: str
+
+
+class SkippedStrategySummaryOut(BaseModel):
+    strategy_id: str
+    strategy_name: str
+    primary_reason: str
+    summary: str
+
+
+class ExecutiveSummaryOut(BaseModel):
+    user_inputs: UserInputsSummaryOut
+    strategies_evaluated: int
+    strategies_recommended: List[StrategyRefOut] = Field(default_factory=list)
+    strategies_skipped: List[SkippedStrategySummaryOut] = Field(default_factory=list)
+
+
+class FunnelStageOut(BaseModel):
+    stage: str
+    label: str
+    count: int | str
+
+
+class BadgeExplanationOut(BaseModel):
+    badge: str
+    rationale: str
+
+
+class TradeMetricsOut(BaseModel):
+    pop_pct: Optional[float] = None
+    net_credit: Optional[float] = None
+    annualized_return_pct: Optional[float] = None
+    margin: Optional[float] = None
+
+
+class ReturnedTradeExplanationOut(BaseModel):
+    strategy_name: str
+    variant_rank: Optional[int] = None
+    conviction_profile: Optional[RiskRewardProfile] = None
+    badges: List[str] = Field(default_factory=list)
+    badge_explanations: List[BadgeExplanationOut] = Field(default_factory=list)
+    metrics: TradeMetricsOut
+    ranking_summary: Optional[str] = None
+
+
+class WhyThisStrategyOut(BaseModel):
+    strategy_id: str
+    strategy_name: str
+    funnel: List[FunnelStageOut] = Field(default_factory=list)
+    pop_filter_note: Optional[str] = None
+    returned_trades: List[ReturnedTradeExplanationOut] = Field(default_factory=list)
+
+
+class WhyNotStrategyOut(BaseModel):
+    strategy_id: str
+    strategy_name: str
+    primary_reason: str
+    explanation: str
+    funnel: List[FunnelStageOut] = Field(default_factory=list)
+
+
+class WhatIfInsightOut(BaseModel):
+    constraint: str
+    current_value: Optional[float] = None
+    suggested_change: Optional[float] = None
+    affected_strategies: List[str] = Field(default_factory=list)
+    message: str
+
+
+class UserExplainabilityReportOut(BaseModel):
+    user_report_schema_version: str
+    executive_summary: ExecutiveSummaryOut
+    why_this: List[WhyThisStrategyOut] = Field(default_factory=list)
+    why_not: List[WhyNotStrategyOut] = Field(default_factory=list)
+    what_if_insights: List[WhatIfInsightOut] = Field(default_factory=list)
+
+
 class ProposeTradesSuccess(BaseModel):
     spot_price: Optional[float] = None
     lot_size: int
@@ -72,6 +159,7 @@ class ProposeTradesSuccess(BaseModel):
     structure_modified: bool = False
     trades: List[ProposedTradeOut] = Field(default_factory=list)
     audit_session_id: Optional[str] = None
+    user_report: Optional[UserExplainabilityReportOut] = None
 
 
 class ProposeTradesResponse(BaseModel):

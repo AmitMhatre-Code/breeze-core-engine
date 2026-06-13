@@ -5,6 +5,7 @@ import inspect
 from typing import Any
 
 from icici_breeze_backend.audit.strategy_builder_audit import StrategyBuilderAuditSession, quote_row_to_audit
+from icici_breeze_backend.audit.user_explainability import build_user_explainability_report
 from icici_breeze_backend.app.services.processor import (
     _annualized_carry_percent_on_span,
     _days_to_expiry,
@@ -406,26 +407,40 @@ async def run_propose_trades(
         "trades": trades_out,
     }
 
+    audit_summary = {
+        "status": "ok",
+        "spot_price": success_payload["spot_price"],
+        "atm_strike": ctx.atm_strike,
+        "atm_iv": atm_iv,
+        "structure_modified": ctx.structure_modified,
+        "liquid_ce_strikes": ctx.liquid_ce_strikes,
+        "liquid_pe_strikes": ctx.liquid_pe_strikes,
+        "icici_api_calls": audit.icici_api_call_stats if audit else {},
+        "strategies_ok": [t["strategy_id"] for t in trades_out if t["status"] == "ok"],
+        "strategies_skipped": [
+            {"strategy_id": t["strategy_id"], "skip_reason": t["skip_reason"]}
+            for t in trades_out
+            if t["status"] == "skipped"
+        ],
+    }
+
+    user_report = build_user_explainability_report(
+        request=audit.request if audit else {
+            "margin_lacs": margin_lacs,
+            "max_loss_lacs": max_loss_lacs,
+            "min_pop_pct": min_pop_pct,
+            "min_ann_return_pct": min_ann_return_pct,
+            "strategy_category": strategy_category,
+        },
+        strategy_evaluations=audit.strategy_evaluations if audit else {},
+        trades=trades_out,
+        summary=audit_summary,
+    )
+    success_payload["user_report"] = user_report
+
     if audit:
         audit.set_temp_liquid_cache(temp_liquid_cache_snapshot(ctx))
-        audit.finalize(
-            {
-                "status": "ok",
-                "spot_price": success_payload["spot_price"],
-                "atm_strike": ctx.atm_strike,
-                "atm_iv": atm_iv,
-                "structure_modified": ctx.structure_modified,
-                "liquid_ce_strikes": ctx.liquid_ce_strikes,
-                "liquid_pe_strikes": ctx.liquid_pe_strikes,
-                "icici_api_calls": audit.icici_api_call_stats,
-                "strategies_ok": [t["strategy_id"] for t in trades_out if t["status"] == "ok"],
-                "strategies_skipped": [
-                    {"strategy_id": t["strategy_id"], "skip_reason": t["skip_reason"]}
-                    for t in trades_out
-                    if t["status"] == "skipped"
-                ],
-            }
-        )
+        audit.finalize(audit_summary, user_explainability=user_report)
         success_payload["audit_session_id"] = audit.session_id
 
     return {

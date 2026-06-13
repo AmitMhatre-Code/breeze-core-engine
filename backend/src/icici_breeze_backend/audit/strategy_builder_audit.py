@@ -262,7 +262,11 @@ class StrategyBuilderAuditSession:
             "by_api": by_api,
         }
 
-    def finalize(self, summary: dict[str, Any]) -> str:
+    def finalize(
+        self,
+        summary: dict[str, Any],
+        user_explainability: dict[str, Any] | None = None,
+    ) -> str:
         finished = datetime.now(timezone.utc)
         duration_ms = int((finished - self._started_mono).total_seconds() * 1000)
         quote_calls = self._api_call_stats.get("get_option_chain_quotes", {}).get("total", 0)
@@ -292,6 +296,8 @@ class StrategyBuilderAuditSession:
             "events": self.events,
             "summary": summary,
         }
+        if user_explainability is not None:
+            document["user_explainability"] = user_explainability
         try:
             enforce_audit_retention(self.user_id)
             with open(self.file_path, "w", encoding="utf-8") as fh:

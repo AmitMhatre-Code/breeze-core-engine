@@ -1,9 +1,11 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
+import { fetchDashboardBootstrap } from "@/lib/dashboard-bootstrap";
 import { clearSessionAck } from "@/lib/login-disclosure-session";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 
@@ -11,6 +13,8 @@ type ChallengeCtx = { user_id: string | null };
 
 function ChallengeForm() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const apisession = searchParams.get("apisession") ?? "";
   const [secret, setSecret] = useState("");
   const [ctx, setCtx] = useState<ChallengeCtx | null>(null);
@@ -53,7 +57,12 @@ function ChallengeForm() {
         },
       );
       clearSessionAck();
-      window.location.href = res.redirect || "/dashboard";
+      void queryClient.prefetchQuery({
+        queryKey: ["dashboard", "bootstrap"],
+        queryFn: fetchDashboardBootstrap,
+        staleTime: 30_000,
+      });
+      router.replace(res.redirect || "/dashboard");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Sign-in failed");
     } finally {
