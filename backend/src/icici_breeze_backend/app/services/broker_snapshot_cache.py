@@ -26,6 +26,8 @@ class BrokerSnapshot:
     customer_details: dict[str, Any]
     margin_situation: dict[str, Any]
     customerdetails_session_token: str
+    portfolio: dict[str, Any] | None = None
+    vix_headline: dict[str, Any] | None = None
 
 
 class _Entry:
@@ -47,6 +49,8 @@ def set_snapshot(
     customer_details: dict[str, Any],
     margin_situation: dict[str, Any],
     customerdetails_session_token: str = "",
+    portfolio: dict[str, Any] | None = None,
+    vix_headline: dict[str, Any] | None = None,
 ) -> None:
     if not user_id or not broker_token:
         return
@@ -55,6 +59,8 @@ def set_snapshot(
         customer_details=dict(customer_details or {}),
         margin_situation=dict(margin_situation or {}),
         customerdetails_session_token=(customerdetails_session_token or "").strip(),
+        portfolio=dict(portfolio) if isinstance(portfolio, dict) else None,
+        vix_headline=dict(vix_headline) if isinstance(vix_headline, dict) else None,
     )
     expires_at = time.monotonic() + _TTL_SECONDS
     with _lock:

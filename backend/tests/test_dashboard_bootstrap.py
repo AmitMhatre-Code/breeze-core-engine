@@ -68,21 +68,7 @@ def test_build_dashboard_bootstrap_uses_snapshot_and_skips_vix_options():
     margin = build_margin_situation_from_raw(
         {"Status": 200, "Success": {"cash_limit": 500.0, "limit_list": []}}
     )
-    set_snapshot(
-        user,
-        token,
-        customer_details=customer,
-        margin_situation=margin,
-        customerdetails_session_token="raw-sess",
-    )
-
-    proc = MagicMock()
-    proc.get_customer_details = MagicMock(side_effect=AssertionError("should use cache"))
-    proc.get_margin_situation = MagicMock(side_effect=AssertionError("should use cache"))
-    mock_breeze = MagicMock()
-    proc.get_session_breeze.return_value = mock_breeze
-    proc.get_positions.return_value = {"Status": 200, "Success": []}
-
+    portfolio = {"Status": 200, "Success": {"positions": []}}
     vix_payload = {
         "current_vix": 14.5,
         "nifty_spot": 24000.0,
@@ -91,10 +77,25 @@ def test_build_dashboard_bootstrap_uses_snapshot_and_skips_vix_options():
         "vix_30d": [],
         "error": None,
     }
+    set_snapshot(
+        user,
+        token,
+        customer_details=customer,
+        margin_situation=margin,
+        customerdetails_session_token="raw-sess",
+        portfolio=portfolio,
+        vix_headline=vix_payload,
+    )
+
+    proc = MagicMock()
+    proc.get_customer_details = MagicMock(side_effect=AssertionError("should use cache"))
+    proc.get_margin_situation = MagicMock(side_effect=AssertionError("should use cache"))
+    proc.get_session_breeze = MagicMock(side_effect=AssertionError("should use cache"))
+    proc.get_positions = MagicMock(side_effect=AssertionError("should use cache"))
 
     with patch(
         "icici_breeze_backend.app.services.dashboard_bootstrap.fetch_vix_headline",
-        return_value=(vix_payload, {"ltp": 24000}),
+        side_effect=AssertionError("should use cache"),
     ) as headline_mock, patch(
         "icici_breeze_backend.app.services.api_usage.get_usage_for_display",
         return_value={
@@ -118,11 +119,12 @@ def test_build_dashboard_bootstrap_uses_snapshot_and_skips_vix_options():
 
     proc.get_customer_details.assert_not_called()
     proc.get_margin_situation.assert_not_called()
-    proc.get_session_breeze.assert_called_once()
-    proc.get_positions.assert_called_once_with(user, session_token="raw-sess")
-    headline_mock.assert_called_once()
+    proc.get_session_breeze.assert_not_called()
+    proc.get_positions.assert_not_called()
+    headline_mock.assert_not_called()
     assert "vix_options" not in payload
     assert payload["home"]["customer"] == customer
+    assert payload["portfolio"] == portfolio
     assert payload["vix"]["vix_30d"] == []
 
 

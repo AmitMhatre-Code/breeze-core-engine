@@ -209,7 +209,7 @@ class GlobalIciciApiLimiter:
             GlobalIciciApiPacer.wait_for_slot(uid, base_pause, endpoint=ep)
             user_lock = cls._user_lock(uid)
         else:
-            base_pause = 1.0
+            base_pause = 0.5
             user_lock = None
 
         def _attempt_loop() -> T:

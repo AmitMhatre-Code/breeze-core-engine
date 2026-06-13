@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearSessionAck,
   hasSessionAck,
+  isDisclosurePending,
+  markDisclosurePending,
   setSessionAck,
 } from "@/lib/login-disclosure-session";
 
@@ -38,5 +40,13 @@ describe("login-disclosure-session", () => {
     setSessionAck("icici1", 1);
     clearSessionAck();
     expect(hasSessionAck("icici1", 1)).toBe(false);
+  });
+
+  it("tracks pending login disclosure gate", () => {
+    expect(isDisclosurePending()).toBe(false);
+    markDisclosurePending();
+    expect(isDisclosurePending()).toBe(true);
+    clearSessionAck();
+    expect(isDisclosurePending()).toBe(false);
   });
 });

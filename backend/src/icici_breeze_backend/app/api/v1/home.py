@@ -278,6 +278,9 @@ async def _complete_icici_session(
             detail="Credentials not found. Please register or update your credentials.",
         )
 
+    login_bootstrap_portfolio = None
+    login_bootstrap_vix = None
+
     try:
         from icici_breeze_backend.app.services.icici_api_pacing import icici_user_scope
 
@@ -347,6 +350,31 @@ async def _complete_icici_session(
                             + " This is not necessarily a wrong secret fragment."
                         ),
                     )
+
+            from icici_breeze_backend.app.services.breeze_session_cache import set as cache_breeze_session
+            from icici_breeze_backend.app.services.dashboard_bootstrap import (
+                warm_dashboard_bootstrap_snapshot,
+            )
+
+            cache_breeze_session(form.user_id, broker_token, breeze_inst)
+            try:
+                login_bootstrap_portfolio, login_bootstrap_vix = warm_dashboard_bootstrap_snapshot(
+                    form.user_id,
+                    broker_token=broker_token,
+                    session_token=session_token_from_customer_response(
+                        customer_check,
+                        raw_session=raw_session or "",
+                        broker_token=broker_token,
+                    ),
+                    breeze=breeze_inst,
+                    processor=breeze,
+                )
+            except Exception as warm_exc:
+                logger.warning(
+                    "login_submit bootstrap_warm_failed user_id=%s error=%s",
+                    form.user_id,
+                    warm_exc,
+                )
     except HTTPException:
         raise
     except Exception as e:
@@ -439,6 +467,8 @@ async def _complete_icici_session(
             raw_session=raw_session,
             broker_token=icici_token,
         ),
+        portfolio=login_bootstrap_portfolio,
+        vix_headline=login_bootstrap_vix,
     )
 
     response = JSONResponse({"redirect": "/dashboard"})

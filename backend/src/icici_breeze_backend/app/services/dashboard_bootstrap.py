@@ -1,6 +1,7 @@
 """Orchestrated dashboard bootstrap: one ICICI pipeline for post-login load."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from icici_breeze_backend.app.api.v1.route_portfolio import _normalize_portfolio_success_for_ui
@@ -8,6 +9,8 @@ from icici_breeze_backend.app.domain.responses import HomeDataResponse
 from icici_breeze_backend.app.services.broker_snapshot_cache import get_snapshot
 from icici_breeze_backend.app.services.dashboard_vix import fetch_vix_headline
 from icici_breeze_backend.audit.logger import AuditLogger
+
+_logger = logging.getLogger(__name__)
 
 
 def _resolve_portfolio_session_token(
@@ -63,6 +66,42 @@ def build_home_data_fields(user_id: str, processor, *, broker_token: str) -> dic
     }
 
 
+def warm_dashboard_bootstrap_snapshot(
+    user_id: str,
+    *,
+    broker_token: str,
+    session_token: str | None,
+    breeze,
+    processor,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """
+    Pre-fetch positions + VIX headline during login so /dashboard/bootstrap can return
+    from the login snapshot without additional ICICI round-trips.
+    """
+    portfolio: dict[str, Any] | None = None
+    vix: dict[str, Any] | None = None
+    try:
+        portfolio_raw = processor.get_positions(user_id, session_token=session_token)
+        portfolio = portfolio_raw
+        if isinstance(portfolio_raw, dict):
+            portfolio = _normalize_portfolio_success_for_ui(portfolio_raw)
+    except Exception as exc:
+        _logger.warning(
+            "warm_dashboard_bootstrap_snapshot: positions failed user_id=%s error=%s",
+            user_id,
+            exc,
+        )
+    try:
+        vix, _nifty_quote = fetch_vix_headline(user_id, processor, breeze=breeze)
+    except Exception as exc:
+        _logger.warning(
+            "warm_dashboard_bootstrap_snapshot: vix headline failed user_id=%s error=%s",
+            user_id,
+            exc,
+        )
+    return portfolio, vix
+
+
 def build_dashboard_bootstrap(user_id: str, processor, *, broker_token: str) -> dict[str, Any]:
     """
     Fast dashboard payload: home, portfolio, vix headline only.
@@ -70,20 +109,31 @@ def build_dashboard_bootstrap(user_id: str, processor, *, broker_token: str) -> 
     """
     AuditLogger(None).log_portfolio_access(user_id)
 
-    breeze = processor.get_session_breeze(user_id)
+    snap = get_snapshot(user_id, broker_token)
+    cached_portfolio = snap.portfolio if snap and snap.portfolio is not None else None
+    cached_vix = snap.vix_headline if snap and snap.vix_headline is not None else None
+    needs_live_broker = cached_portfolio is None or cached_vix is None
+
+    breeze = processor.get_session_breeze(user_id) if needs_live_broker else None
 
     home_fields = build_home_data_fields(user_id, processor, broker_token=broker_token)
     home = HomeDataResponse(**home_fields)
 
-    session_token = _resolve_portfolio_session_token(
-        user_id, processor, broker_token=broker_token, breeze=breeze
-    )
-    portfolio_raw = processor.get_positions(user_id, session_token=session_token)
-    portfolio = portfolio_raw
-    if isinstance(portfolio_raw, dict):
-        portfolio = _normalize_portfolio_success_for_ui(portfolio_raw)
+    if cached_portfolio is not None:
+        portfolio = cached_portfolio
+    else:
+        session_token = _resolve_portfolio_session_token(
+            user_id, processor, broker_token=broker_token, breeze=breeze
+        )
+        portfolio_raw = processor.get_positions(user_id, session_token=session_token)
+        portfolio = portfolio_raw
+        if isinstance(portfolio_raw, dict):
+            portfolio = _normalize_portfolio_success_for_ui(portfolio_raw)
 
-    vix, _nifty_quote = fetch_vix_headline(user_id, processor, breeze=breeze)
+    if cached_vix is not None:
+        vix = cached_vix
+    else:
+        vix, _nifty_quote = fetch_vix_headline(user_id, processor, breeze=breeze)
 
     return {
         "home": home.model_dump(),

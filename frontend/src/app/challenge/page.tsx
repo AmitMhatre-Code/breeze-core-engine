@@ -5,8 +5,9 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
-import { fetchDashboardBootstrap } from "@/lib/dashboard-bootstrap";
-import { clearSessionAck } from "@/lib/login-disclosure-session";
+import { fetchAuthSession } from "@/lib/auth-session";
+import { fetchLoginDisclosureCurrent } from "@/lib/login-disclosure";
+import { clearSessionAck, markDisclosurePending } from "@/lib/login-disclosure-session";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 
 type ChallengeCtx = { user_id: string | null };
@@ -57,11 +58,21 @@ function ChallengeForm() {
         },
       );
       clearSessionAck();
-      void queryClient.prefetchQuery({
-        queryKey: ["dashboard", "bootstrap"],
-        queryFn: fetchDashboardBootstrap,
-        staleTime: 30_000,
-      });
+      markDisclosurePending();
+      try {
+        await queryClient.prefetchQuery({
+          queryKey: ["auth", "session"],
+          queryFn: fetchAuthSession,
+          staleTime: 30_000,
+        });
+        await queryClient.prefetchQuery({
+          queryKey: ["login-disclosure", "current"],
+          queryFn: fetchLoginDisclosureCurrent,
+          staleTime: 0,
+        });
+      } catch {
+        // Redirect anyway; LoginDisclosureProvider will retry the fetches.
+      }
       router.replace(res.redirect || "/dashboard");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Sign-in failed");
