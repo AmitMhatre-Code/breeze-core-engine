@@ -46,9 +46,11 @@ const navItems = [
 ];
 
 function navItemActive(pathname: string, href: string) {
-  return href === "/dashboard"
-    ? pathname === "/" || pathname.startsWith("/dashboard")
-    : pathname.startsWith(href);
+  if (href === "/dashboard") {
+    return pathname === "/" || pathname.startsWith("/dashboard");
+  }
+  // Exact match or sub-route only — avoids `/strategy-builder` matching `/strategy-builder-new`.
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export function AppShell({
