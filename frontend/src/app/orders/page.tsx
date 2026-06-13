@@ -61,6 +61,7 @@ type BookGroup = {
   group: string;
   group_option?: string;
   group_action?: string;
+  group_exchange?: string;
   group_ordered?: number;
   group_cancelled?: number;
   group_expired?: number;
