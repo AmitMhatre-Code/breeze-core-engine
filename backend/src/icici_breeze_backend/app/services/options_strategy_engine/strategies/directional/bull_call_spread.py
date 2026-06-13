@@ -23,12 +23,22 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     StrategyResult,
     TradeLeg,
 )
+from icici_breeze_backend.audit.strategy_evaluation_audit import (
+    audit_collector_for,
+    record_simple_attempt,
+    record_simple_winner,
+)
+
+_DIRECTIONAL_STAGES = ("passed_liquidity", "passed_credit", "passed_pop", "returned")
 
 
 def calc_bull_call_spread(ctx: EngineContext) -> StrategyResult:
     sid, name = "bull_call_spread", "Bull Call Spread"
     if ctx.halted:
         return skip(sid, name, ctx.halt_reason or "Market halted")
+    collector = audit_collector_for(ctx)
+    if collector is not None:
+        collector.min_pop_pct = ctx.min_pop_pct
     long_target, short_target = long_short_targets(ctx)
     L = ctx.lot_size
     liquid_ce = all_liquid(ctx, "Call")
@@ -50,10 +60,22 @@ def calc_bull_call_spread(ctx: EngineContext) -> StrategyResult:
                 continue
             qh = ctx.cache[(stp_h, "Call")]
             if not delta_match(qh.delta, short_target):
+                record_simple_attempt(
+                    collector,
+                    reject_reason="delta_mismatch",
+                    long_strike=stp_l,
+                    short_strike=stp_h,
+                )
                 continue
             sell_prem = qh.best_bid_price or qh.ltp
             net_per = buy_prem - sell_prem
             if net_per <= 0:
+                record_simple_attempt(
+                    collector,
+                    reject_reason="no_credit",
+                    long_strike=stp_l,
+                    short_strike=stp_h,
+                )
                 continue
             max_loss_lot = net_per * L
             qty = size_quantity_from_budgets(
@@ -68,6 +90,12 @@ def calc_bull_call_spread(ctx: EngineContext) -> StrategyResult:
                 provision_elm=ctx.provision_elm,
             )
             if qty < L:
+                record_simple_attempt(
+                    collector,
+                    reject_reason="quantity",
+                    long_strike=stp_l,
+                    short_strike=stp_h,
+                )
                 continue
             legs = [
                 TradeLeg("Call", "Buy", stp_l, qty, buy_prem),
@@ -75,16 +103,38 @@ def calc_bull_call_spread(ctx: EngineContext) -> StrategyResult:
             ]
             max_loss = net_per * qty
             if max_loss > ctx.max_loss_rupees:
+                record_simple_attempt(
+                    collector,
+                    reject_reason="budget",
+                    long_strike=stp_l,
+                    short_strike=stp_h,
+                    max_loss=max_loss,
+                )
                 continue
             pop = pop_for_legs(ctx, legs)
             max_profit = ((stp_h - stp_l) - net_per) * qty
             cer = score_directional_candidate(pop, max_profit, max_loss)
+            record_simple_attempt(collector, pop_pct=pop, long_strike=stp_l, short_strike=stp_h)
+            if collector is not None:
+                collector.record_stage("passed_credit")
+                collector.record_stage("passed_pop")
             if best is None or cer > best[0]:
                 best = (cer, legs, max_loss, pop, max_profit)
 
     if not best:
         return skip(sid, name, "No bull call spread meets delta profile and max-loss budget.")
-    _, legs, max_loss, pop, max_profit = best
+    cer, legs, max_loss, pop, max_profit = best
+    record_simple_winner(
+        collector,
+        legs,
+        metrics={
+            "pop_pct": pop,
+            "max_loss": max_loss,
+            "net_credit": -max_loss,
+            "engine_score": cer,
+        },
+        stages_passed=list(_DIRECTIONAL_STAGES),
+    )
     return make_result(
         ctx, sid, name, legs,
         max_loss=max_loss,

@@ -30,6 +30,12 @@ from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
     min_qty_for_one_lot,
     structural_margin_key,
 )
+from icici_breeze_backend.audit.strategy_evaluation_audit import (
+    StrategyAuditCollector,
+    candidate_id_for_legs,
+    pop_bucket_label,
+)
+from icici_breeze_backend.app.services.options_strategy_engine.audit_helpers import audit_calc
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import make_result
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
@@ -50,6 +56,17 @@ SS_SHORT_STRIKES_MAX_PER_WING = 12
 SS_SPAN_SHORTLIST_N = 10
 SS_RETURN_TOP_N = 3
 MIN_SS_ANNUALIZED_RETURN_PCT = 5.0
+
+ShortStrangleRejectionStats = StrategyAuditCollector
+
+_STAGES_PASSED = (
+    "passed_liquidity",
+    "passed_credit",
+    "passed_economic_prune",
+    "passed_pop",
+    "margin_refined",
+    "returned",
+)
 
 
 def score_short_strangle_candidate(
@@ -153,15 +170,16 @@ def _ss_pop_band_delta_bounds(min_pop_pct: float) -> tuple[float, float]:
 
 
 def _ss_pop_bucket(pop_pct: float, floor_pct: float) -> str:
-    """1% PoP bucket anchored at the user floor."""
-    if pop_pct < floor_pct:
-        return f"<{floor_pct:.0f}"
-    offset = int((pop_pct - floor_pct) // 1.0)
-    if offset >= SS_POP_BAND_WIDTH_PCT + 1:
-        return f">={floor_pct + SS_POP_BAND_WIDTH_PCT + 1:.0f}"
-    lo = floor_pct + offset
-    hi = lo + 1.0
-    return f"{lo:.0f}-{hi:.0f}"
+    return pop_bucket_label(pop_pct, floor_pct, band_width=SS_POP_BAND_WIDTH_PCT)
+
+
+def _audit_collector(ctx: EngineContext) -> StrategyAuditCollector | None:
+    if ctx.audit_collector is not None:
+        c = ctx.audit_collector
+        c.min_pop_pct = ctx.min_pop_pct
+        c.pop_band_width = SS_POP_BAND_WIDTH_PCT
+        return c
+    return None
 
 
 def _pop_short_strangle_pair(
@@ -312,74 +330,6 @@ def short_strangle_pairs(ctx: EngineContext) -> list[tuple[int, int]]:
     return out
 
 
-@dataclass
-class ShortStrangleRejectionStats:
-    """Tracks why short strangle combos were rejected during search."""
-
-    combos_tried: int = 0
-    counts: dict[str, int] = field(default_factory=dict)
-    samples: list[dict] = field(default_factory=list)
-    evaluations: list[dict] = field(default_factory=list)
-    pop_bucket_counts: dict[str, int] = field(default_factory=dict)
-    survivors_by_pop_bucket: dict[str, int] = field(default_factory=dict)
-    min_pop_pct: float = 0.0
-
-    def record_evaluation(
-        self,
-        *,
-        short_put: int,
-        short_call: int,
-        outcome: str,
-        reject_reason: str | None = None,
-        pop_detail: PopDetail | None = None,
-        credit: float | None = None,
-    ) -> None:
-        entry: dict[str, object] = {
-            "short_put": short_put,
-            "short_call": short_call,
-            "outcome": outcome,
-            "reject_reason": reject_reason,
-            "credit": round(credit, 4) if credit is not None else None,
-        }
-        pop_pct: float | None = None
-        if pop_detail is not None:
-            entry.update(pop_detail.to_audit_dict())
-            pop_pct = pop_detail.pop_pct
-        else:
-            entry["pop_pct"] = None
-            entry["pop_basis"] = None
-        self.evaluations.append(entry)
-
-        if pop_pct is not None and self.min_pop_pct > 0:
-            bucket = _ss_pop_bucket(pop_pct, self.min_pop_pct)
-            self.pop_bucket_counts[bucket] = self.pop_bucket_counts.get(bucket, 0) + 1
-            if outcome == "accepted":
-                self.survivors_by_pop_bucket[bucket] = (
-                    self.survivors_by_pop_bucket.get(bucket, 0) + 1
-                )
-
-    def record(self, reason: str, **detail: object) -> None:
-        self.combos_tried += 1
-        self.counts[reason] = self.counts.get(reason, 0) + 1
-        if len(self.samples) < 25:
-            self.samples.append({"reason": reason, **detail})
-
-    def skip_message(self) -> str:
-        if not self.counts:
-            return "No short strangle candidates could be evaluated on the liquid chain."
-        total = sum(self.counts.values())
-        parts = ", ".join(
-            f"{count} {reason}" for reason, count in sorted(self.counts.items(), key=lambda x: -x[1])
-        )
-        top_reason = max(self.counts.items(), key=lambda x: x[1])[0]
-        if top_reason == "pop_floor":
-            return (
-                f"No short strangle meets minimum PoP within risk limits "
-                f"({total} rejected: {parts})."
-            )
-        return f"No short strangle passed filters ({total} rejected: {parts})."
-
-
 @dataclass(frozen=True)
 class ShortStrangleCandidate:
     short_put: int
@@ -446,6 +396,7 @@ def enumerate_short_strangles(
         credit: float,
     ) -> None:
         if stats is not None:
+            stats.record_stage("passed_pop")
             stats.record_evaluation(
                 short_put=short_put,
                 short_call=short_call,
@@ -454,7 +405,10 @@ def enumerate_short_strangles(
                 pop_detail=pop_detail,
                 credit=credit,
             )
+            stats.record_survivor_metrics(pop_pct=pop_detail.pop_pct, credit=credit)
 
+    if stats is not None:
+        stats.record_generated()
     pe = ctx.cache.get((short_put, "Put"))
     ce = ctx.cache.get((short_call, "Call"))
     if not pe or not ce:
@@ -463,6 +417,8 @@ def enumerate_short_strangles(
     if not pe.liquid or not ce.liquid:
         _reject("illiquid")
         return out
+    if stats is not None:
+        stats.record_stage("passed_liquidity")
 
     prem_p = pe.best_bid_price or pe.ltp
     prem_c = ce.best_bid_price or ce.ltp
@@ -470,6 +426,8 @@ def enumerate_short_strangles(
     if credit <= 0:
         _reject("no_credit", credit=credit)
         return out
+    if stats is not None:
+        stats.record_stage("passed_credit")
 
     qty = min_qty_for_one_lot(L)
     if qty < L:
@@ -584,10 +542,13 @@ async def _pick_top_candidates(
     candidates: list[ShortStrangleCandidate],
     *,
     strategy_id: str,
+    stats: StrategyAuditCollector | None = None,
     span_shortlist_n: int = SS_SPAN_SHORTLIST_N,
     return_top_n: int = SS_RETURN_TOP_N,
 ) -> tuple[list[tuple[ShortStrangleCandidate, float]], list[dict]]:
     """Top credit shortlist; margin only those; re-rank by annualized return on SPAN."""
+    if stats is not None:
+        stats.begin_ranking()
     dte = days_to_expiry(ctx.expiry_display)
     shortlist = sorted(
         candidates,
@@ -597,6 +558,8 @@ async def _pick_top_candidates(
 
     margin_requests: list[MarginFetchRequest] = []
     for cand in shortlist:
+        if stats is not None:
+            stats.record_stage("margin_refined")
         one_lot_legs = legs_at_lots(cand.legs, ctx.lot_size, lots=1)
         struct_key = structural_margin_key(one_lot_legs)
         if struct_key in ctx.unit_span_by_structure:
@@ -629,9 +592,22 @@ async def _pick_top_candidates(
 
     for credit_rank, cand in enumerate(shortlist, start=1):
         unit_span = _unit_span_margin(ctx, cand.legs, strategy_id=strategy_id)
+        if unit_span <= 0 and stats is not None:
+            stats.record(
+                "span_failure",
+                short_put=cand.short_put,
+                short_call=cand.short_call,
+            )
         ann_return = score_short_strangle_candidate(
             cand.pop, cand.net_collected, unit_span, dte
         )
+        if stats is not None:
+            stats.record_survivor_metrics(
+                pop_pct=cand.pop,
+                credit=cand.credit,
+                ann_return_pct=ann_return,
+                unit_span=unit_span,
+            )
         span_scores.append(
             {
                 "short_put": cand.short_put,
@@ -650,6 +626,46 @@ async def _pick_top_candidates(
         key=lambda item: _ss_final_rank_key(item[0], ann_return=item[1]),
         reverse=True,
     )[:return_top_n]
+
+    winner_keys = {id(c) for c, _ in winners}
+    if stats is not None:
+        for final_rank, (cand, ann_return) in enumerate(winners, start=1):
+            credit_rank = next(
+                i for i, sc in enumerate(span_scores, start=1)
+                if sc["short_put"] == cand.short_put and sc["short_call"] == cand.short_call
+            )
+            span_rank = final_rank
+            stats.record_winner(
+                candidate_id=candidate_id_for_legs(cand.legs),
+                legs=cand.legs,
+                metrics={
+                    "pop_pct": round(cand.pop, 2),
+                    "net_credit": round(cand.credit, 4),
+                    "net_collected": cand.net_collected,
+                    "annualized_return_pct": round(ann_return, 2),
+                    "unit_span": span_scores[credit_rank - 1]["unit_span"],
+                    "engine_score": round(cand.final_score, 4),
+                    "liquidity_weight": cand.score_factors.get("liquidity_weight"),
+                    "spread_weight": cand.score_factors.get("spread_weight"),
+                },
+                stages_passed=list(_STAGES_PASSED),
+                ranks={"credit": credit_rank, "span": span_rank, "final": final_rank},
+            )
+        for cand, ann_return in scored:
+            if id(cand) in winner_keys:
+                continue
+            stats.record_near_miss(
+                candidate_id=candidate_id_for_legs(cand.legs),
+                metrics={
+                    "pop_pct": round(cand.pop, 2),
+                    "net_collected": cand.net_collected,
+                    "annualized_return_pct": round(ann_return, 2),
+                },
+                rejection_reason="not_finalist",
+                context="SPAN shortlist finalist did not rank in top return set.",
+            )
+        stats.end_ranking(ctx.audit.telemetry if ctx.audit else None)
+
     return winners, span_scores
 
 
@@ -686,76 +702,74 @@ async def calc_short_strangle(ctx: EngineContext) -> list[StrategyResult]:
     if ctx.halted:
         return [skip(sid, name, ctx.halt_reason or "Market halted")]
 
-    stats = ShortStrangleRejectionStats() if ctx.audit else None
+    stats = _audit_collector(ctx)
     pairs = short_strangle_pairs(ctx)
     candidates = _collect_candidates(ctx, pairs, stats=stats)
+    if stats is not None:
+        stats.end_generation(ctx.audit.telemetry if ctx.audit else None)
 
     if not candidates:
         skip_reason = stats.skip_message() if stats else (
             "No short strangle meets minimum PoP on the liquid chain."
         )
-        if ctx.audit and stats is not None:
-            pop_summary = _build_pop_audit_summary(stats, [], ctx.min_pop_pct)
-            ctx.audit.record_calculation(
+        if ctx.audit:
+            audit_calc(
+                ctx,
                 "Short strangle candidate search",
                 {
                     "pairs_evaluated": len(pairs),
                     "survivors": 0,
-                    "pop_band_target": pop_summary["pop_band_target"],
+                    "pop_band_target": [ctx.min_pop_pct, ctx.min_pop_pct + SS_POP_BAND_WIDTH_PCT],
                 },
                 {
-                    "rejection_counts": stats.counts,
-                    "combos_tried": stats.combos_tried,
-                    "samples": stats.samples[:15],
-                    "candidates_evaluated": stats.evaluations,
-                    **pop_summary,
+                    "rejection_counts": stats.counts if stats else {},
+                    "combos_tried": stats.combos_tried if stats else 0,
                 },
                 rationale="No short strangle passed PoP filters.",
+                strategy_id=sid,
             )
         return [skip(sid, name, skip_reason)]
 
     if ctx.audit:
-        audit_outputs: dict = {
-            "top_scores": [
-                {
-                    "short_put": c.short_put,
-                    "short_call": c.short_call,
-                    "credit": c.credit,
-                    "pop": round(c.pop, 2),
-                    "final_score": round(c.final_score, 4),
-                }
-                for c in sorted(
-                    candidates,
-                    key=lambda x: (x.net_collected, x.pop),
-                    reverse=True,
-                )[:5]
-            ],
-        }
-        if stats is not None:
-            audit_outputs["rejection_counts"] = stats.counts
-            audit_outputs["combos_tried"] = stats.combos_tried
-            audit_outputs["rejection_samples"] = stats.samples[:10]
-            audit_outputs["candidates_evaluated"] = stats.evaluations
-            audit_outputs.update(
-                _build_pop_audit_summary(stats, candidates, ctx.min_pop_pct)
-            )
-        ctx.audit.record_calculation(
+        audit_calc(
+            ctx,
             "Short strangle candidate search",
             {
                 "pairs_evaluated": len(pairs),
                 "survivors": len(candidates),
                 "pop_band_target": [ctx.min_pop_pct, ctx.min_pop_pct + SS_POP_BAND_WIDTH_PCT],
             },
-            audit_outputs,
+            {
+                "rejection_counts": stats.counts if stats else {},
+                "combos_tried": stats.combos_tried if stats else 0,
+                "top_scores": [
+                    {
+                        "short_put": c.short_put,
+                        "short_call": c.short_call,
+                        "credit": c.credit,
+                        "pop": round(c.pop, 2),
+                        "final_score": round(c.final_score, 4),
+                    }
+                    for c in sorted(
+                        candidates,
+                        key=lambda x: (x.net_collected, x.pop),
+                        reverse=True,
+                    )[:5]
+                ],
+            },
             rationale=_ss_search_rationale(),
+            strategy_id=sid,
         )
 
-    winners, span_scores = await _pick_top_candidates(ctx, candidates, strategy_id=sid)
+    winners, span_scores = await _pick_top_candidates(
+        ctx, candidates, strategy_id=sid, stats=stats
+    )
     if not winners:
         return [skip(sid, name, "Could not resolve short strangle finalists.")]
 
     if ctx.audit:
-        ctx.audit.record_calculation(
+        audit_calc(
+            ctx,
             "Short strangle SPAN refinement",
             {"finalists": len(span_scores)},
             {"scores": span_scores},
@@ -764,10 +778,26 @@ async def calc_short_strangle(ctx: EngineContext) -> list[StrategyResult]:
                 "for finalists only; re-ranked by annualized return on SPAN, then net "
                 f"credit, liquidity/spread, PoP; top {SS_RETURN_TOP_N} returned."
             ),
+            strategy_id=sid,
         )
 
     best_ann = winners[0][1]
     if best_ann < MIN_SS_ANNUALIZED_RETURN_PCT:
+        if stats is not None and winners:
+            cand, _ = winners[0]
+            stats.record_near_miss(
+                candidate_id=candidate_id_for_legs(cand.legs),
+                metrics={
+                    "pop_pct": round(cand.pop, 2),
+                    "net_collected": cand.net_collected,
+                    "annualized_return_pct": round(best_ann, 2),
+                },
+                rejection_reason="below_min_ann_return",
+                context=(
+                    f"Best annualized return {best_ann:.1f}% below minimum "
+                    f"{MIN_SS_ANNUALIZED_RETURN_PCT:.1f}%."
+                ),
+            )
         return [
             skip(
                 sid,

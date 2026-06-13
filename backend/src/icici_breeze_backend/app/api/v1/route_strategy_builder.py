@@ -157,6 +157,7 @@ async def post_propose_trades(
         strategy_category=body.strategy_category,
         risk_reward_profile=body.risk_reward_profile,
         request_id=ctx.request_id,
+        audit_detail_level=body.audit_detail_level,
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderProposeTrades")
     return ProposeTradesResponse(**data)

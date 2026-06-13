@@ -9,8 +9,18 @@ from icici_breeze_backend.audit.strategy_builder_audit import (
     list_audit_log_index_for_user,
     resolve_audit_file_for_user,
 )
+from icici_breeze_backend.audit.strategy_evaluation_audit import (
+    AUDIT_SCHEMA_VERSION,
+    AuditDetailLevel,
+    SessionTelemetry,
+    StrategyAuditCollector,
+)
 
 __all__ = [
+    "AUDIT_SCHEMA_VERSION",
+    "AuditDetailLevel",
+    "SessionTelemetry",
+    "StrategyAuditCollector",
     "StrategyBuilderAuditSession",
     "audit_log_dir",
     "build_audit_zip_for_user",

@@ -1,4 +1,5 @@
 """Tests for Strategy Builder (New) per-session audit logs."""
+import asyncio
 import json
 import os
 import tempfile
@@ -8,13 +9,16 @@ import zipfile
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
-from icici_breeze_backend.app.services.options_strategy_engine import (
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bear_call_spread import (
+    calc_bear_call_spread,
+)
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bull_put_spread import (
+    calc_bull_put_spread,
+)
+from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
     QuoteRow,
-    calc_bear_call_spread,
-    run_propose_trades,
 )
-from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_EXCHANGE
 from icici_breeze_backend.audit.strategy_builder_audit import (
     StrategyBuilderAuditSession,
@@ -104,6 +108,70 @@ class TestStrategyBuilderAuditSession(unittest.TestCase):
                 self.assertEqual(doc["summary"]["status"], "ok")
                 self.assertEqual(doc["icici_api_calls"]["total"], 0)
 
+    def test_finalize_emits_schema_v2_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
+                return_value=tmp,
+            ):
+                session = StrategyBuilderAuditSession(
+                    user_id="user-1",
+                    request={"stock_code": "NIFTY", "strategy_category": "income"},
+                    audit_detail_level="summary",
+                    strategy_ids=["bull_put_spread", "iron_condor"],
+                )
+                collector = session.begin_strategy_collector("bull_put_spread")
+                collector.record_generated()
+                collector.record("pop_floor", short_strike=23600)
+                collector.set_status("skipped", "No survivors")
+                session.finish_strategy_collector(collector)
+                session.record_icici_api_call(
+                    "get_option_chain_quotes",
+                    {"strike": 23300},
+                    {"Status": 200},
+                    latency_ms=12.5,
+                )
+                path = session.finalize({"status": "ok"})
+                with open(path, encoding="utf-8") as fh:
+                    doc = json.load(fh)
+                self.assertEqual(doc["audit_schema_version"], "2.0")
+                self.assertEqual(doc["audit_detail_level"], "summary")
+                self.assertIn("configuration_snapshot", doc)
+                self.assertIn("telemetry", doc)
+                self.assertIn("strategy_evaluations", doc)
+                self.assertIn("bull_put_spread", doc["strategy_evaluations"])
+                bps = doc["strategy_evaluations"]["bull_put_spread"]
+                self.assertIn("strategy_summary", bps)
+                self.assertIn("rejection_funnel", bps)
+                self.assertIn("pop_policy", bps)
+                self.assertEqual(doc["telemetry"]["quote_calls"], 1)
+                self.assertEqual(doc["telemetry"]["quote_latency_ms"]["count"], 1)
+
+    def test_debug_detail_level_includes_candidate_traces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
+                return_value=tmp,
+            ):
+                session = StrategyBuilderAuditSession(
+                    user_id="user-1",
+                    request={"stock_code": "NIFTY"},
+                    audit_detail_level="debug",
+                )
+                collector = session.begin_strategy_collector("bear_call_spread")
+                collector.record_evaluation(
+                    outcome="rejected",
+                    reject_reason="pop_floor",
+                    pop_pct=60.0,
+                )
+                session.finish_strategy_collector(collector)
+                path = session.finalize({"status": "ok"})
+                with open(path, encoding="utf-8") as fh:
+                    doc = json.load(fh)
+                bcs = doc["strategy_evaluations"]["bear_call_spread"]
+                self.assertIn("candidate_traces", bcs)
+                self.assertGreater(len(bcs["candidate_traces"]), 0)
+
     def test_api_call_counts(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
@@ -173,18 +241,36 @@ class TestEngineAuditIntegration(unittest.TestCase):
         strikes = list(range(23000, 24100, 50))
         cache = {}
         for s in strikes:
-            for right in ("Call", "Put"):
-                cache[(s, right)] = QuoteRow(
-                    strike=s,
-                    right=right,
-                    ltp=50.0,
-                    best_bid_price=49.0,
-                    best_offer_price=51.0,
-                    total_buy_qty=100,
-                    total_sell_qty=100,
-                    buy_sell_ratio=1.0,
-                    spot_price=23500.0,
-                )
+            call_delta = min(0.35, 0.08 + (s - 23500) / 5000.0)
+            put_delta = -min(0.35, 0.08 + (23500 - s) / 5000.0)
+            call_bid = max(1.0, 30.0 - (s - 23000) / 50.0)
+            call_ask = call_bid + 0.5
+            put_bid = max(1.0, 30.0 - (23500 - s) / 50.0)
+            put_ask = put_bid + 0.5
+            cache[(s, "Call")] = QuoteRow(
+                strike=s,
+                right="Call",
+                ltp=(call_bid + call_ask) / 2,
+                best_bid_price=call_bid,
+                best_offer_price=call_ask,
+                total_buy_qty=100,
+                total_sell_qty=100,
+                buy_sell_ratio=1.0,
+                spot_price=23500.0,
+                delta=call_delta,
+            )
+            cache[(s, "Put")] = QuoteRow(
+                strike=s,
+                right="Put",
+                ltp=(put_bid + put_ask) / 2,
+                best_bid_price=put_bid,
+                best_offer_price=put_ask,
+                total_buy_qty=100,
+                total_sell_qty=100,
+                buy_sell_ratio=1.0,
+                spot_price=23500.0,
+                delta=put_delta,
+            )
         return EngineContext(
             processor=MagicMock(),
             user_id="u1",
@@ -208,22 +294,70 @@ class TestEngineAuditIntegration(unittest.TestCase):
         )
 
     def test_bear_call_audit_records_wing_search(self):
+        proc = MagicMock()
+        proc.strategy_builder_margin.return_value = {
+            "Success": {"span_margin_required": 50_000.0}
+        }
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
                 "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
                 return_value=tmp,
             ):
-                audit = StrategyBuilderAuditSession(
-                    user_id="u1",
-                    request={"stock_code": "NIFTY"},
-                )
-                res = calc_bear_call_spread(self._ctx(audit))
-                audit.finalize({"status": "ok", "strategy": res.strategy_id})
-                categories = [e["category"] for e in audit.events]
-                self.assertIn("decision", categories)
-                self.assertIn("strategy", categories)
+                with patch(
+                    "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bear_call_spread.MIN_BCS_ANNUALIZED_RETURN_PCT",
+                    0.0,
+                ):
+                    audit = StrategyBuilderAuditSession(
+                        user_id="u1",
+                        request={"stock_code": "NIFTY"},
+                    )
+                    ctx = self._ctx(audit)
+                    ctx.processor = proc
+                    results = asyncio.run(calc_bear_call_spread(ctx))
+                    res = results[0]
+                    audit.finalize({"status": "ok", "strategy": res.strategy_id})
+                calc_titles = [
+                    e["message"]
+                    for e in audit.events
+                    if e["category"] == "calculation"
+                ]
+                self.assertIn("Bear call spread candidate search", calc_titles)
+                self.assertIn("Bear call spread SPAN refinement", calc_titles)
+
+    def test_bull_put_audit_records_wing_search(self):
+        proc = MagicMock()
+        proc.strategy_builder_margin.return_value = {
+            "Success": {"span_margin_required": 50_000.0}
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
+                return_value=tmp,
+            ):
+                with patch(
+                    "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bull_put_spread.MIN_BPS_ANNUALIZED_RETURN_PCT",
+                    0.0,
+                ):
+                    audit = StrategyBuilderAuditSession(
+                        user_id="u1",
+                        request={"stock_code": "NIFTY"},
+                    )
+                    ctx = self._ctx(audit)
+                    ctx.processor = proc
+                    results = asyncio.run(calc_bull_put_spread(ctx))
+                    res = results[0]
+                    audit.finalize({"status": "ok", "strategy": res.strategy_id})
+                calc_titles = [
+                    e["message"]
+                    for e in audit.events
+                    if e["category"] == "calculation"
+                ]
+                self.assertIn("Bull put spread candidate search", calc_titles)
+                self.assertIn("Bull put spread SPAN refinement", calc_titles)
 
     def test_run_propose_trades_emits_audit_metadata(self):
+        from icici_breeze_backend.app.services.options_strategy_engine import run_propose_trades
+
         strikes = list(range(23000, 24100, 50))
         proc = MagicMock()
         proc.fetch_lot_size.return_value = 75
@@ -386,6 +520,8 @@ class TestAuditRetention(unittest.TestCase):
 
 class TestProcessorIciciAudit(unittest.TestCase):
     def test_baseline_only_margin_skips_icici_audit(self):
+        from icici_breeze_backend.app.services.processor import processor
+
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
                 "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
@@ -429,6 +565,8 @@ class TestProcessorIciciAudit(unittest.TestCase):
                 mock_breeze.margin_calculator.assert_not_called()
 
     def test_margin_calculator_recorded_on_breeze_path(self):
+        from icici_breeze_backend.app.services.processor import processor
+
         session = StrategyBuilderAuditSession(user_id="u1", request={"stock_code": "NIFTY"})
         proc = processor()
         legs = [

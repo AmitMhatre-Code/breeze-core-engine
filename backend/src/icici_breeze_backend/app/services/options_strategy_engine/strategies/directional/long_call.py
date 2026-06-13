@@ -18,12 +18,22 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     StrategyResult,
     TradeLeg,
 )
+from icici_breeze_backend.audit.strategy_evaluation_audit import (
+    audit_collector_for,
+    record_simple_attempt,
+    record_simple_winner,
+)
+
+_DIRECTIONAL_STAGES = ("passed_liquidity", "passed_credit", "passed_pop", "returned")
 
 
 def calc_long_call(ctx: EngineContext) -> StrategyResult:
     sid, name = "long_call", "Long Call"
     if ctx.halted:
         return skip(sid, name, ctx.halt_reason or "Market halted")
+    collector = audit_collector_for(ctx)
+    if collector is not None:
+        collector.min_pop_pct = ctx.min_pop_pct
     long_target, _ = long_short_targets(ctx)
     L = ctx.lot_size
     candidates = strikes_ranked_by_delta(all_liquid(ctx, "Call"), ctx.cache, "Call", long_target)
@@ -32,6 +42,7 @@ def calc_long_call(ctx: EngineContext) -> StrategyResult:
     for stp in candidates:
         q = ctx.cache[(stp, "Call")]
         if not delta_match(q.delta, long_target):
+            record_simple_attempt(collector, reject_reason="delta_mismatch", strike=stp)
             continue
         buy_prem = q.best_offer_price or q.ltp
         debit_lot = buy_prem * L
@@ -47,19 +58,41 @@ def calc_long_call(ctx: EngineContext) -> StrategyResult:
             provision_elm=ctx.provision_elm,
         )
         if qty < L:
+            record_simple_attempt(collector, reject_reason="quantity", strike=stp)
             continue
         legs = [TradeLeg("Call", "Buy", stp, qty, buy_prem)]
         max_loss = buy_prem * qty
         if max_loss > ctx.max_loss_rupees:
+            record_simple_attempt(
+                collector,
+                reject_reason="budget",
+                strike=stp,
+                max_loss=max_loss,
+            )
             continue
         pop = pop_for_legs(ctx, legs)
         cer = score_directional_candidate(pop, float("inf"), max_loss)
+        record_simple_attempt(collector, pop_pct=pop, strike=stp)
+        if collector is not None:
+            collector.record_stage("passed_credit")
+            collector.record_stage("passed_pop")
         if best is None or cer > best[0]:
             best = (cer, legs, max_loss, pop)
 
     if not best:
         return skip(sid, name, "No long call meets delta profile and max-loss budget.")
-    _, legs, max_loss, pop = best
+    cer, legs, max_loss, pop = best
+    record_simple_winner(
+        collector,
+        legs,
+        metrics={
+            "pop_pct": pop,
+            "max_loss": max_loss,
+            "net_credit": -max_loss,
+            "engine_score": cer,
+        },
+        stages_passed=list(_DIRECTIONAL_STAGES),
+    )
     return make_result(
         ctx, sid, name, legs,
         max_loss=max_loss,

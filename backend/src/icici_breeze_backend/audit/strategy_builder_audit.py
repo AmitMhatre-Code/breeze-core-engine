@@ -9,9 +9,16 @@ import re
 import uuid
 import zipfile
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.audit.strategy_evaluation_audit import (
+    AUDIT_SCHEMA_VERSION,
+    AuditDetailLevel,
+    SessionTelemetry,
+    StrategyAuditCollector,
+    build_configuration_snapshot,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -51,10 +58,13 @@ class StrategyBuilderAuditSession:
         user_id: str,
         request: dict[str, Any],
         request_id: str | None = None,
+        audit_detail_level: AuditDetailLevel = "summary",
+        strategy_ids: list[str] | None = None,
     ) -> None:
         self.session_id = str(uuid.uuid4())
         self.user_id = user_id
         self.request_id = request_id
+        self.audit_detail_level: AuditDetailLevel = audit_detail_level
         self.started_at = _utc_now()
         self._started_mono = datetime.now(timezone.utc)
         self.request = request
@@ -62,6 +72,13 @@ class StrategyBuilderAuditSession:
         self._seq = 0
         self._api_call_stats: dict[str, dict[str, int]] = {}
         self._temp_liquid_cache: dict[str, Any] | None = None
+        self.telemetry = SessionTelemetry()
+        self.strategy_evaluations: dict[str, dict[str, Any]] = {}
+        self._configuration_snapshot = build_configuration_snapshot(
+            request,
+            strategy_ids or [],
+        )
+        self._active_collectors: dict[str, StrategyAuditCollector] = {}
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         fname = (
             f"{ts}_{_safe_token(user_id, 16)}_{_safe_token(request.get('stock_code', ''), 12)}"
@@ -100,6 +117,20 @@ class StrategyBuilderAuditSession:
         else:
             stats["failed"] += 1
 
+    def begin_strategy_collector(self, strategy_id: str) -> StrategyAuditCollector:
+        collector = StrategyAuditCollector(
+            strategy_id=strategy_id,
+            detail_level=self.audit_detail_level,
+        )
+        self._active_collectors[strategy_id] = collector
+        return collector
+
+    def finish_strategy_collector(self, collector: StrategyAuditCollector | None) -> None:
+        if collector is None:
+            return
+        self.strategy_evaluations[collector.strategy_id] = collector.to_dict()
+        self._active_collectors.pop(collector.strategy_id, None)
+
     def record_icici_api_call(
         self,
         api: str,
@@ -109,10 +140,16 @@ class StrategyBuilderAuditSession:
         rationale: str | None = None,
         error: str | None = None,
         context: dict[str, Any] | None = None,
+        latency_ms: float | None = None,
     ) -> None:
         """Record one breeze-connect SDK method invocation (e.g. get_option_chain_quotes)."""
         ok = (response or {}).get("Status") == 200
         self._bump_api_stat(api, success=ok)
+        if latency_ms is not None:
+            if api == "get_option_chain_quotes":
+                self.telemetry.record_quote_latency(latency_ms)
+            elif api == "margin_calculator":
+                self.telemetry.record_margin_latency(latency_ms)
         payload: dict[str, Any] = {
             "api": api,
             "success": ok,
@@ -152,7 +189,21 @@ class StrategyBuilderAuditSession:
         *,
         formula: str | None = None,
         rationale: str | None = None,
+        strategy_id: str | None = None,
     ) -> None:
+        if self.audit_detail_level == "summary" and strategy_id:
+            slim_outputs = {
+                k: v
+                for k, v in outputs.items()
+                if k
+                not in (
+                    "candidates_evaluated",
+                    "rejection_samples",
+                    "samples",
+                )
+            }
+            slim_outputs["see_strategy_evaluations"] = strategy_id
+            outputs = slim_outputs
         data: dict[str, Any] = {"inputs": inputs, "outputs": outputs}
         if formula:
             data["formula"] = formula
@@ -214,16 +265,27 @@ class StrategyBuilderAuditSession:
     def finalize(self, summary: dict[str, Any]) -> str:
         finished = datetime.now(timezone.utc)
         duration_ms = int((finished - self._started_mono).total_seconds() * 1000)
+        quote_calls = self._api_call_stats.get("get_option_chain_quotes", {}).get("total", 0)
+        margin_calls = self._api_call_stats.get("margin_calculator", {}).get("total", 0)
         document = {
             "session_id": self.session_id,
             "user_id": self.user_id,
             "request_id": self.request_id,
             "source": "strategy_builder_new",
+            "audit_schema_version": AUDIT_SCHEMA_VERSION,
+            "audit_detail_level": self.audit_detail_level,
             "started_at": self.started_at,
             "finished_at": finished.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
             "duration_ms": duration_ms,
             "audit_file": self.file_path,
             "request": self.request,
+            "configuration_snapshot": self._configuration_snapshot,
+            "telemetry": self.telemetry.to_dict(
+                quote_calls=quote_calls,
+                margin_calls=margin_calls,
+                total_execution_ms=duration_ms,
+            ),
+            "strategy_evaluations": self.strategy_evaluations,
             "icici_api_calls": self.icici_api_call_stats,
             "temp_liquid_cache": self._temp_liquid_cache,
             "event_count": len(self.events),

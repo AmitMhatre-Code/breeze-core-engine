@@ -144,6 +144,7 @@ class EngineContext:
     halted: bool = False
     halt_reason: str | None = None
     audit: Any | None = None
+    audit_collector: Any | None = None
     chain_backoff: Any | None = None
     range_lower: float = 0.0
     range_upper: float = 0.0

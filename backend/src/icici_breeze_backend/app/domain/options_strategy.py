@@ -17,6 +17,7 @@ class ProposeTradesRequest(BaseModel):
     provision_elm: bool = False
     strategy_category: StrategyCategory
     risk_reward_profile: RiskRewardProfile = "moderate"
+    audit_detail_level: Literal["summary", "debug"] = "summary"
 
     @model_validator(mode="after")
     def _validate_category_fields(self) -> "ProposeTradesRequest":

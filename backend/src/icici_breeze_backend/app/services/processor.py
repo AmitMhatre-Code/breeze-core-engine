@@ -1567,10 +1567,12 @@ class processor():
                     icici_request,
                     quote,
                     rationale=audit_rationale,
+                    latency_ms=0.0,
                 )
             return quote
 
         _pt, _rt = _icici_option_chain_enums(cfg.OPTIONS, right)
+        _t0 = time.perf_counter()
         try:
             if strike_price is not None:
                 quote = breeze.get_option_chain_quotes(
@@ -1589,12 +1591,14 @@ class processor():
                 "Status": 400,
                 "Error": f"Error calling ICICI Breeze API get_option_chain_quotes: {e}",
             }
+        _latency_ms = (time.perf_counter() - _t0) * 1000
         if audit:
             audit.record_icici_api_call(
                 "get_option_chain_quotes",
                 icici_request,
                 quote if isinstance(quote, dict) else None,
                 rationale=audit_rationale,
+                latency_ms=_latency_ms,
             )
         if not isinstance(quote, dict):
             quote = {"Status": 400, "Error": "Invalid response from get_option_chain_quotes"}
@@ -3012,13 +3016,16 @@ class processor():
         if audit_context:
             icici_request.update(audit_context)
         try:
+            _t0 = time.perf_counter()
             margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
+            _latency_ms = (time.perf_counter() - _t0) * 1000
             if audit:
                 audit.record_icici_api_call(
                     "margin_calculator",
                     icici_request,
                     margins if isinstance(margins, dict) else None,
                     rationale=margin_rationale,
+                    latency_ms=_latency_ms,
                 )
         except Exception as e:
             err = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")

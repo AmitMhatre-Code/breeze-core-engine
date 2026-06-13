@@ -35,7 +35,8 @@ export type ProposeTradesParams = {
   min_pop_pct: number;
   provision_elm: boolean;
   strategy_category: StrategyCategory;
-  risk_reward_profile: RiskRewardProfile;
+  risk_reward_profile?: RiskRewardProfile;
+  audit_detail_level?: "summary" | "debug";
 };
 
 export async function proposeTrades(

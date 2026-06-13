@@ -34,6 +34,12 @@ from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
     min_qty_for_one_lot,
     structural_margin_key,
 )
+from icici_breeze_backend.audit.strategy_evaluation_audit import (
+    StrategyAuditCollector,
+    candidate_id_for_legs,
+    pop_bucket_label,
+)
+from icici_breeze_backend.app.services.options_strategy_engine.audit_helpers import audit_calc
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import all_liquid, make_result
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
@@ -58,6 +64,17 @@ MIN_IC_CREDIT_PCT_OF_WIDTH = 0.03
 IC_CREDIT_PCT_RELAXATION_SCHEDULE: tuple[float, ...] = (0.03, 0.025, 0.02, 0.015, 0.01)
 MIN_IC_ANNUALIZED_RETURN_PCT = 5.0
 IC_RETURN_TOP_N = 3
+
+IronCondorRejectionStats = StrategyAuditCollector
+
+_STAGES_PASSED = (
+    "passed_liquidity",
+    "passed_credit",
+    "passed_economic_prune",
+    "passed_pop",
+    "margin_refined",
+    "returned",
+)
 
 
 def iron_condor_short_delta_window(min_pop_pct: float) -> tuple[float, float]:
@@ -168,15 +185,35 @@ def _ic_pop_band_delta_bounds(min_pop_pct: float) -> tuple[float, float]:
 
 
 def _ic_pop_bucket(pop_pct: float, floor_pct: float) -> str:
-    """1% PoP bucket anchored at the user floor."""
-    if pop_pct < floor_pct:
-        return f"<{floor_pct:.0f}"
-    offset = int((pop_pct - floor_pct) // 1.0)
-    if offset >= IC_POP_BAND_WIDTH_PCT + 1:
-        return f">={floor_pct + IC_POP_BAND_WIDTH_PCT + 1:.0f}"
-    lo = floor_pct + offset
-    hi = lo + 1.0
-    return f"{lo:.0f}-{hi:.0f}"
+    return pop_bucket_label(pop_pct, floor_pct, band_width=IC_POP_BAND_WIDTH_PCT)
+
+
+def _audit_collector(ctx: EngineContext) -> StrategyAuditCollector | None:
+    if ctx.audit_collector is not None:
+        c = ctx.audit_collector
+        c.min_pop_pct = ctx.min_pop_pct
+        c.pop_band_width = IC_POP_BAND_WIDTH_PCT
+        return c
+    return None
+
+
+def _record_ic_pair_wing_plan(
+    stats: IronCondorRejectionStats | None,
+    short_put: int,
+    short_call: int,
+    wing_widths: list[int],
+) -> None:
+    if stats is None:
+        return
+    if not hasattr(stats, "pair_wing_plans"):
+        stats.pair_wing_plans = []  # type: ignore[attr-defined]
+    stats.pair_wing_plans.append(  # type: ignore[attr-defined]
+        {
+            "short_put": short_put,
+            "short_call": short_call,
+            "wing_widths_attempted": wing_widths,
+        }
+    )
 
 
 def _pop_short_strangle_pair(
@@ -363,115 +400,6 @@ def iron_condor_short_pairs(ctx: EngineContext) -> list[tuple[int, int]]:
     return out
 
 
-@dataclass
-class IronCondorRejectionStats:
-    """Tracks why symmetric iron condor combos were rejected during search."""
-
-    combos_tried: int = 0
-    counts: dict[str, int] = field(default_factory=dict)
-    samples: list[dict] = field(default_factory=list)
-    evaluations: list[dict] = field(default_factory=list)
-    pair_wing_plans: list[dict] = field(default_factory=list)
-    pop_bucket_counts: dict[str, int] = field(default_factory=dict)
-    survivors_by_pop_bucket: dict[str, int] = field(default_factory=dict)
-    below_preferred_credit_by_pop_bucket: dict[str, int] = field(default_factory=dict)
-    min_credit_hard_reject_by_pop_bucket: dict[str, int] = field(default_factory=dict)
-    min_pop_pct: float = 0.0
-
-    def record_pair_wing_plan(
-        self,
-        short_put: int,
-        short_call: int,
-        wing_widths: list[int],
-    ) -> None:
-        self.pair_wing_plans.append(
-            {
-                "short_put": short_put,
-                "short_call": short_call,
-                "wing_widths_attempted": wing_widths,
-            }
-        )
-
-    def record_evaluation(
-        self,
-        *,
-        short_put: int,
-        short_call: int,
-        wing_width: int,
-        long_put: int | None = None,
-        long_call: int | None = None,
-        outcome: str,
-        reject_reason: str | None = None,
-        pop_detail: PopDetail | None = None,
-        credit: float | None = None,
-        put_credit: float | None = None,
-        call_credit: float | None = None,
-        below_preferred_credit: bool | None = None,
-        preferred_credit_met: bool | None = None,
-    ) -> None:
-        entry: dict[str, object] = {
-            "short_put": short_put,
-            "short_call": short_call,
-            "wing_width": wing_width,
-            "long_put": long_put,
-            "long_call": long_call,
-            "outcome": outcome,
-            "reject_reason": reject_reason,
-            "credit": round(credit, 4) if credit is not None else None,
-            "put_credit": round(put_credit, 4) if put_credit is not None else None,
-            "call_credit": round(call_credit, 4) if call_credit is not None else None,
-        }
-        pop_pct: float | None = None
-        if pop_detail is not None:
-            entry.update(pop_detail.to_audit_dict())
-            pop_pct = pop_detail.pop_pct
-        else:
-            entry["pop_pct"] = None
-            entry["pop_basis"] = None
-        if below_preferred_credit is not None:
-            entry["below_preferred_credit"] = below_preferred_credit
-        if preferred_credit_met is not None:
-            entry["preferred_credit_met"] = preferred_credit_met
-        self.evaluations.append(entry)
-
-        if pop_pct is not None and self.min_pop_pct > 0:
-            bucket = _ic_pop_bucket(pop_pct, self.min_pop_pct)
-            self.pop_bucket_counts[bucket] = self.pop_bucket_counts.get(bucket, 0) + 1
-            if outcome == "accepted":
-                self.survivors_by_pop_bucket[bucket] = (
-                    self.survivors_by_pop_bucket.get(bucket, 0) + 1
-                )
-                if below_preferred_credit:
-                    self.below_preferred_credit_by_pop_bucket[bucket] = (
-                        self.below_preferred_credit_by_pop_bucket.get(bucket, 0) + 1
-                    )
-            elif reject_reason == "min_wing_credit":
-                self.min_credit_hard_reject_by_pop_bucket[bucket] = (
-                    self.min_credit_hard_reject_by_pop_bucket.get(bucket, 0) + 1
-                )
-
-    def record(self, reason: str, **detail: object) -> None:
-        self.combos_tried += 1
-        self.counts[reason] = self.counts.get(reason, 0) + 1
-        if len(self.samples) < 25:
-            self.samples.append({"reason": reason, **detail})
-
-    def skip_message(self) -> str:
-        if not self.counts:
-            return "No iron condor candidates could be evaluated on the liquid chain."
-        total = sum(self.counts.values())
-        parts = ", ".join(
-            f"{count} {reason}" for reason, count in sorted(self.counts.items(), key=lambda x: -x[1])
-        )
-        top_reason = max(self.counts.items(), key=lambda x: x[1])[0]
-        if top_reason == "pop_floor":
-            return (
-                f"No iron condor meets minimum PoP within risk limits "
-                f"({total} rejected: {parts})."
-            )
-        return f"No iron condor passed filters ({total} rejected: {parts})."
-
-
 def passes_hard_wing_credit(put_credit: float, call_credit: float) -> bool:
     """Hard per-spread credit floor (structural validity)."""
     if put_credit < MIN_WING_CREDIT or call_credit < MIN_WING_CREDIT:
@@ -553,7 +481,7 @@ def enumerate_symmetric_iron_condors(
     wing_widths = [mult * ctx.strike_step for mult in WING_WIDTH_MULTIPLIERS]
     if stats is not None:
         stats.min_pop_pct = ctx.min_pop_pct
-        stats.record_pair_wing_plan(short_put, short_call, wing_widths)
+        _record_ic_pair_wing_plan(stats, short_put, short_call, wing_widths)
 
     def _reject(
         reason: str,
@@ -596,6 +524,7 @@ def enumerate_symmetric_iron_condors(
         preferred_credit_met: bool,
     ) -> None:
         if stats is not None:
+            stats.record_stage("passed_pop")
             stats.record_evaluation(
                 short_put=short_put,
                 short_call=short_call,
@@ -611,8 +540,11 @@ def enumerate_symmetric_iron_condors(
                 below_preferred_credit=below_preferred_credit,
                 preferred_credit_met=preferred_credit_met,
             )
+            stats.record_survivor_metrics(pop_pct=pop_detail.pop_pct, credit=credit)
 
     for mult in WING_WIDTH_MULTIPLIERS:
+        if stats is not None:
+            stats.record_generated()
         w = mult * ctx.strike_step
         lp = short_put - w
         lc = short_call + w
@@ -626,6 +558,8 @@ def enumerate_symmetric_iron_condors(
         if not sp or not sc or not lpq or not lcq:
             _reject("missing_quote", wing_width=w, long_put=lp, long_call=lc)
             continue
+        if stats is not None:
+            stats.record_stage("passed_liquidity")
         sp_prem = sp.best_bid_price or sp.ltp
         sc_prem = sc.best_bid_price or sc.ltp
         lp_prem = lpq.best_offer_price or lpq.ltp
@@ -652,6 +586,8 @@ def enumerate_symmetric_iron_condors(
                 call_credit=call_credit,
             )
             continue
+        if stats is not None:
+            stats.record_stage("passed_credit")
         credit = put_credit + call_credit
         max_loss_u = w - credit
         if not passes_economic_prune(
@@ -672,6 +608,8 @@ def enumerate_symmetric_iron_condors(
                 budget=ctx.max_loss_rupees,
             )
             continue
+        if stats is not None:
+            stats.record_stage("passed_economic_prune")
         qty = min_qty_for_one_lot(L)
         if qty < L:
             _reject("quantity", wing_width=w, long_put=lp, long_call=lc)
@@ -1011,7 +949,13 @@ def _build_pop_audit_summary(
             sorted(below_preferred_by_bucket.items())
         ),
         "min_credit_rejections_by_pop_bucket": dict(
-            sorted(stats.min_credit_hard_reject_by_pop_bucket.items())
+            sorted(
+                {
+                    bucket: funnel.get("min_credit", 0)
+                    for bucket, funnel in stats.rejection_funnel_by_pop_bucket.items()
+                    if funnel.get("min_credit", 0) > 0
+                }.items()
+            )
         ),
         "below_preferred_credit_total": below_total,
         "pop_band_target": [min_pop_pct, min_pop_pct + IC_POP_BAND_WIDTH_PCT],
@@ -1031,9 +975,12 @@ async def _pick_top_candidates(
     candidates: list[IronCondorCandidate],
     *,
     strategy_id: str,
+    stats: StrategyAuditCollector | None = None,
     top_n: int = IC_RETURN_TOP_N,
 ) -> tuple[list[tuple[IronCondorCandidate, float]], list[dict]]:
     """Credit-first shortlist, margin only those, then rank by SPAN-informed return."""
+    if stats is not None:
+        stats.begin_ranking()
     dte = days_to_expiry(ctx.expiry_display)
     shortlist = sorted(
         candidates,
@@ -1043,6 +990,8 @@ async def _pick_top_candidates(
 
     margin_requests: list[MarginFetchRequest] = []
     for cand in shortlist:
+        if stats is not None:
+            stats.record_stage("margin_refined")
         one_lot_legs = legs_at_lots(cand.legs, ctx.lot_size, lots=1)
         struct_key = structural_margin_key(one_lot_legs)
         if struct_key in ctx.unit_span_by_structure:
@@ -1073,11 +1022,24 @@ async def _pick_top_candidates(
     span_scores: list[dict] = []
     scored: list[tuple[IronCondorCandidate, float]] = []
 
-    for cand in shortlist:
+    for credit_rank, cand in enumerate(shortlist, start=1):
         unit_span = _unit_span_margin(ctx, cand.legs, strategy_id=strategy_id)
+        if unit_span <= 0 and stats is not None:
+            stats.record(
+                "span_failure",
+                short_put=cand.short_put,
+                short_call=cand.short_call,
+            )
         ann_return = score_iron_condor_candidate(
             cand.pop, cand.net_collected, cand.max_loss_u * cand.qty, unit_span, dte
         )
+        if stats is not None:
+            stats.record_survivor_metrics(
+                pop_pct=cand.pop,
+                credit=cand.credit,
+                ann_return_pct=ann_return,
+                unit_span=unit_span,
+            )
         span_scores.append(
             {
                 "short_put": cand.short_put,
@@ -1096,6 +1058,52 @@ async def _pick_top_candidates(
         key=lambda item: _ic_rank_key(item[0], ann_return=item[1]),
         reverse=True,
     )
+
+    winner_keys = {id(c) for c, _ in winners}
+    if stats is not None:
+        for final_rank, (cand, ann_return) in enumerate(winners, start=1):
+            credit_rank = next(
+                i for i, sc in enumerate(span_scores, start=1)
+                if sc["short_put"] == cand.short_put
+                and sc["short_call"] == cand.short_call
+                and sc["wing_width"] == cand.wing_width
+            )
+            stats.record_winner(
+                candidate_id=candidate_id_for_legs(cand.legs),
+                legs=cand.legs,
+                metrics={
+                    "pop_pct": round(cand.pop, 2),
+                    "net_credit": round(cand.credit, 4),
+                    "net_collected": cand.net_collected,
+                    "annualized_return_pct": round(ann_return, 2),
+                    "unit_span": span_scores[credit_rank - 1]["unit_span"],
+                    "max_loss": cand.max_loss_u * cand.qty,
+                    "engine_score": round(cand.final_score, 4),
+                    "liquidity_weight": cand.score_factors.get("liquidity_weight"),
+                    "spread_weight": cand.score_factors.get("spread_weight"),
+                    "below_preferred_credit": cand.below_preferred_credit,
+                },
+                stages_passed=list(_STAGES_PASSED),
+                ranks={"credit": credit_rank, "span": final_rank, "final": final_rank},
+                soft_filter_violations=(
+                    ["below_preferred_credit"] if cand.below_preferred_credit else None
+                ),
+            )
+        for cand, ann_return in scored:
+            if id(cand) in winner_keys:
+                continue
+            stats.record_near_miss(
+                candidate_id=candidate_id_for_legs(cand.legs),
+                metrics={
+                    "pop_pct": round(cand.pop, 2),
+                    "net_collected": cand.net_collected,
+                    "annualized_return_pct": round(ann_return, 2),
+                },
+                rejection_reason="not_finalist",
+                context="Credit shortlist finalist did not rank in top return set.",
+            )
+        stats.end_ranking(ctx.audit.telemetry if ctx.audit else None)
+
     return winners, span_scores
 
 
@@ -1140,67 +1148,41 @@ async def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
     if ctx.halted:
         return [skip(sid, name, ctx.halt_reason or "Market halted")]
 
-    stats = IronCondorRejectionStats() if ctx.audit else None
+    stats = _audit_collector(ctx)
     pairs = iron_condor_short_pairs(ctx)
     seed_pair = _best_strangle_short_pair(ctx)
     pairs = _merge_pairs(pairs, seed_pair)
     candidates, min_credit_pct_used = _collect_candidates(ctx, pairs, stats=stats)
+    if stats is not None:
+        stats.end_generation(ctx.audit.telemetry if ctx.audit else None)
 
     if not candidates:
         skip_reason = stats.skip_message() if stats else (
             "No iron condor meets minimum PoP within risk limits."
         )
-        if ctx.audit and stats is not None:
-            pop_summary = _build_pop_audit_summary(stats, [], ctx.min_pop_pct)
-            ctx.audit.record_calculation(
+        if ctx.audit:
+            audit_calc(
+                ctx,
                 "Iron condor candidate search",
                 {
                     "pairs_evaluated": len(pairs),
                     "survivors": 0,
                     "strangle_seed": list(seed_pair) if seed_pair else None,
                     "preferred_credit_pct": MIN_IC_CREDIT_PCT_OF_WIDTH,
-                    "pop_band_target": pop_summary["pop_band_target"],
+                    "pop_band_target": [ctx.min_pop_pct, ctx.min_pop_pct + IC_POP_BAND_WIDTH_PCT],
                 },
                 {
-                    "rejection_counts": stats.counts,
-                    "combos_tried": stats.combos_tried,
-                    "samples": stats.samples[:15],
-                    "pair_wing_plans": stats.pair_wing_plans,
-                    "candidates_evaluated": stats.evaluations,
-                    **pop_summary,
+                    "rejection_counts": stats.counts if stats else {},
+                    "combos_tried": stats.combos_tried if stats else 0,
                 },
                 rationale="No symmetric iron condor passed risk or PoP filters.",
+                strategy_id=sid,
             )
         return [skip(sid, name, skip_reason)]
 
     if ctx.audit:
-        audit_outputs: dict = {
-            "top_scores": [
-                {
-                    "short_put": c.short_put,
-                    "short_call": c.short_call,
-                    "wing_width": c.wing_width,
-                    "credit": c.credit,
-                    "pop": round(c.pop, 2),
-                    "final_score": round(c.final_score, 4),
-                }
-                for c in sorted(
-                    candidates,
-                    key=lambda x: (x.net_collected, x.pop),
-                    reverse=True,
-                )[:5]
-            ],
-        }
-        if stats is not None:
-            audit_outputs["rejection_counts"] = stats.counts
-            audit_outputs["combos_tried"] = stats.combos_tried
-            audit_outputs["rejection_samples"] = stats.samples[:10]
-            audit_outputs["pair_wing_plans"] = stats.pair_wing_plans
-            audit_outputs["candidates_evaluated"] = stats.evaluations
-            audit_outputs.update(
-                _build_pop_audit_summary(stats, candidates, ctx.min_pop_pct)
-            )
-        ctx.audit.record_calculation(
+        audit_calc(
+            ctx,
             "Iron condor candidate search",
             {
                 "pairs_evaluated": len(pairs),
@@ -1209,16 +1191,38 @@ async def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
                 "preferred_credit_pct": MIN_IC_CREDIT_PCT_OF_WIDTH,
                 "pop_band_target": [ctx.min_pop_pct, ctx.min_pop_pct + IC_POP_BAND_WIDTH_PCT],
             },
-            audit_outputs,
+            {
+                "rejection_counts": stats.counts if stats else {},
+                "combos_tried": stats.combos_tried if stats else 0,
+                "top_scores": [
+                    {
+                        "short_put": c.short_put,
+                        "short_call": c.short_call,
+                        "wing_width": c.wing_width,
+                        "credit": c.credit,
+                        "pop": round(c.pop, 2),
+                        "final_score": round(c.final_score, 4),
+                    }
+                    for c in sorted(
+                        candidates,
+                        key=lambda x: (x.net_collected, x.pop),
+                        reverse=True,
+                    )[:5]
+                ],
+            },
             rationale=_ic_credit_search_rationale(min_credit_pct_used),
+            strategy_id=sid,
         )
 
-    winners, span_scores = await _pick_top_candidates(ctx, candidates, strategy_id=sid)
+    winners, span_scores = await _pick_top_candidates(
+        ctx, candidates, strategy_id=sid, stats=stats
+    )
     if not winners:
         return [skip(sid, name, "Could not resolve iron condor finalists.")]
 
     if ctx.audit:
-        ctx.audit.record_calculation(
+        audit_calc(
+            ctx,
             "Iron condor SPAN refinement",
             {"finalists": len(span_scores)},
             {"scores": span_scores},
@@ -1227,10 +1231,26 @@ async def calc_iron_condor(ctx: EngineContext) -> list[StrategyResult]:
                 "finalists re-ranked by SPAN annualized return, net credit, liquidity; "
                 "PoP tiebreak only."
             ),
+            strategy_id=sid,
         )
 
     best_ann = winners[0][1]
     if best_ann < MIN_IC_ANNUALIZED_RETURN_PCT:
+        if stats is not None and winners:
+            cand, _ = winners[0]
+            stats.record_near_miss(
+                candidate_id=candidate_id_for_legs(cand.legs),
+                metrics={
+                    "pop_pct": round(cand.pop, 2),
+                    "net_collected": cand.net_collected,
+                    "annualized_return_pct": round(best_ann, 2),
+                },
+                rejection_reason="below_min_ann_return",
+                context=(
+                    f"Best annualized return {best_ann:.1f}% below minimum "
+                    f"{MIN_IC_ANNUALIZED_RETURN_PCT:.1f}%."
+                ),
+            )
         return [
             skip(
                 sid,

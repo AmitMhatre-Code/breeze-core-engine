@@ -36,6 +36,12 @@ from icici_breeze_backend.app.services.options_strategy_engine.universe import (
     build_bulk_chain_cache,
     finalize_liquidity_cache,
 )
+from icici_breeze_backend.audit.strategy_evaluation_audit import AuditDetailLevel
+from icici_breeze_backend.app.services.options_strategy_engine.audit_helpers import (
+    StrategyTiming,
+    begin_strategy_audit,
+    end_strategy_audit,
+)
 
 
 def temp_liquid_cache_snapshot(ctx: EngineContext) -> dict[str, Any]:
@@ -78,6 +84,10 @@ def log_strategy_result(ctx: EngineContext, res: StrategyResult) -> None:
             for leg in res.legs
         ],
     )
+
+
+def _audit_status_from_result(status: str) -> str:
+    return "success" if status == "ok" else status
 
 
 async def attach_margins_and_returns(
@@ -158,16 +168,21 @@ async def run_propose_trades(
     risk_reward_profile: RiskRewardProfile = "moderate",
     request_id: str | None = None,
     enable_audit: bool = True,
+    audit_detail_level: AuditDetailLevel = "summary",
 ) -> dict[str, Any]:
     min_pop_pct = min(99.0, max(1.0, min_pop_pct))
     if strategy_category not in CATEGORY_CALCULATORS:
         return {"Status": 400, "Error": f"Unknown strategy category: {strategy_category}", "Success": None}
 
     audit: StrategyBuilderAuditSession | None = None
+    calculators = CATEGORY_CALCULATORS[strategy_category]
+    strategy_ids = [calc.__name__.replace("calc_", "") for calc in calculators]
     if enable_audit:
         audit = StrategyBuilderAuditSession(
             user_id=user_id,
             request_id=request_id,
+            audit_detail_level=audit_detail_level,
+            strategy_ids=strategy_ids,
             request={
                 "exchange_code": exchange_code,
                 "stock_code": stock_code.strip(),
@@ -291,17 +306,33 @@ async def run_propose_trades(
         return _fail(400, ctx.halt_reason or "Insufficient market depth.")
 
     results: list[StrategyResult] = []
-    calculators = CATEGORY_CALCULATORS[strategy_category]
     for calc in calculators:
+        sid = calc.__name__.replace("calc_", "")
         if audit:
-            sid = calc.__name__.replace("calc_", "")
             audit.record("strategy_eval_start", calc.__name__, {"strategy_id": sid})
-        outcome = calc(ctx)
-        res = await outcome if inspect.isawaitable(outcome) else outcome
+        collector = begin_strategy_audit(ctx, sid) if audit else None
+        with StrategyTiming(ctx, sid):
+            outcome = calc(ctx)
+            res = await outcome if inspect.isawaitable(outcome) else outcome
         if isinstance(res, list):
-            results.extend(res)
+            strategy_results = res
+            results.extend(strategy_results)
+            if collector:
+                ok_results = [r for r in strategy_results if r.status == "ok"]
+                if ok_results:
+                    end_strategy_audit(ctx, collector, status="success")
+                else:
+                    skip_r = next((r.skip_reason for r in strategy_results if r.skip_reason), None)
+                    end_strategy_audit(ctx, collector, status="skipped", skip_reason=skip_r)
         else:
             results.append(res)
+            if collector:
+                end_strategy_audit(
+                    ctx,
+                    collector,
+                    status=_audit_status_from_result(res.status),
+                    skip_reason=res.skip_reason,
+                )
 
     await resize_results_to_budgets(
         proc, user_id, exchange_code, ctx.stock_code, expiry_display, results, ctx, audit

@@ -7,7 +7,8 @@ from icici_breeze_backend.app.services.options_strategy_engine.strategies.common
     make_result,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
-    iron_wings_symmetric,
+    enumerate_symmetric_iron_condors,
+    prefetch_iron_condor_strikes,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
@@ -15,19 +16,44 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     StrategyResult,
     TradeLeg,
 )
+from icici_breeze_backend.audit.strategy_evaluation_audit import (
+    audit_collector_for,
+    record_simple_attempt,
+    record_simple_winner,
+)
+
+_INCOME_STAGES = (
+    "passed_liquidity",
+    "passed_credit",
+    "passed_economic_prune",
+    "passed_pop",
+    "returned",
+)
 
 
 def calc_iron_butterfly(ctx: EngineContext) -> StrategyResult:
     sid, name = "iron_butterfly", "Iron Butterfly"
     if ctx.halted:
         return skip(sid, name, ctx.halt_reason or "Market halted")
+    collector = audit_collector_for(ctx)
+    if collector is not None:
+        collector.min_pop_pct = ctx.min_pop_pct
     stp = atm_with_liquidity(ctx)
     if stp is None:
+        record_simple_attempt(collector, reject_reason="illiquid")
         return skip(sid, name, "No liquid ATM for iron butterfly.")
-    wings = iron_wings_symmetric(ctx, stp, stp, strategy_id=sid)
-    if not wings:
+    candidates = enumerate_symmetric_iron_condors(ctx, stp, stp, stats=collector)
+    if not candidates:
         return skip(sid, name, "No symmetric wings meet minimum PoP within risk limits.")
-    lp, lc, credit, max_loss_u, qty, pop = wings
+    cand = max(candidates, key=lambda c: (c.final_score, c.net_collected, c.pop))
+    lp, lc, credit, max_loss_u, qty, pop = (
+        cand.long_put,
+        cand.long_call,
+        cand.credit,
+        cand.max_loss_u,
+        cand.qty,
+        cand.pop,
+    )
     ce, pe, lpq, lcq = ctx.cache[(stp, "Call")], ctx.cache[(stp, "Put")], ctx.cache[(lp, "Put")], ctx.cache[(lc, "Call")]
     legs = [
         TradeLeg("Put", "Sell", stp, qty, pe.best_bid_price or pe.ltp),
@@ -36,6 +62,17 @@ def calc_iron_butterfly(ctx: EngineContext) -> StrategyResult:
         TradeLeg("Call", "Buy", lc, qty, lcq.best_offer_price or lcq.ltp),
     ]
     max_loss = max_loss_u * qty
+    record_simple_winner(
+        collector,
+        legs,
+        metrics={
+            "pop_pct": pop,
+            "net_credit": credit * qty,
+            "max_loss": max_loss,
+            "engine_score": cand.final_score,
+        },
+        stages_passed=list(_INCOME_STAGES),
+    )
     return make_result(
         ctx, sid, name, legs,
         max_loss=max_loss,
@@ -47,8 +84,5 @@ def calc_iron_butterfly(ctx: EngineContext) -> StrategyResult:
 
 def prefetch_iron_butterfly(ctx: EngineContext) -> set[tuple[int, Right]]:
     from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import prefetch_atm_pairs
-    from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
-        prefetch_iron_condor_strikes,
-    )
 
     return prefetch_atm_pairs(ctx) | prefetch_iron_condor_strikes(ctx)

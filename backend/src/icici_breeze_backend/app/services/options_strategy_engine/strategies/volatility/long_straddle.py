@@ -12,12 +12,22 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     StrategyResult,
     TradeLeg,
 )
+from icici_breeze_backend.audit.strategy_evaluation_audit import (
+    audit_collector_for,
+    record_simple_attempt,
+    record_simple_winner,
+)
+
+_VOL_STAGES = ("passed_liquidity", "returned")
 
 
 def calc_long_straddle(ctx: EngineContext) -> StrategyResult:
     sid, name = "long_straddle", "Long Straddle"
     if ctx.halted:
         return skip(sid, name, ctx.halt_reason or "Market halted")
+    collector = audit_collector_for(ctx)
+    if collector is not None:
+        collector.min_pop_pct = ctx.min_pop_pct
     L = ctx.lot_size
     candidates = [
         s
@@ -34,6 +44,7 @@ def calc_long_straddle(ctx: EngineContext) -> StrategyResult:
         debit_lot = ((ce.best_offer_price or ce.ltp) + (pe.best_offer_price or pe.ltp)) * L
         qty = size_quantity_loss_only(min(ctx.margin_rupees, ctx.max_loss_rupees), debit_lot, L)
         if qty < L:
+            record_simple_attempt(collector, reject_reason="quantity", strike=stp)
             continue
         legs = [
             TradeLeg("Call", "Buy", stp, qty, ce.best_offer_price or ce.ltp),
@@ -41,14 +52,27 @@ def calc_long_straddle(ctx: EngineContext) -> StrategyResult:
         ]
         max_loss = debit_lot * (qty // L)
         if max_loss > ctx.max_loss_rupees:
+            record_simple_attempt(
+                collector,
+                reject_reason="budget",
+                strike=stp,
+                max_loss=max_loss,
+            )
             continue
         pop = pop_for_legs(ctx, legs)
         ev = score_debit_trade(pop, float("inf"), max_loss)
+        record_simple_attempt(collector, pop_pct=pop, strike=stp, max_loss=max_loss)
         if best is None or ev > best[0]:
             best = (ev, legs, max_loss, pop)
     if not best:
         return skip(sid, name, "No long straddle meets risk limits within the outlook range.")
-    _, legs, max_loss, pop = best
+    ev, legs, max_loss, pop = best
+    record_simple_winner(
+        collector,
+        legs,
+        metrics={"pop_pct": pop, "max_loss": max_loss, "engine_score": ev},
+        stages_passed=list(_VOL_STAGES),
+    )
     return make_result(
         ctx, sid, name, legs,
         max_loss=max_loss,

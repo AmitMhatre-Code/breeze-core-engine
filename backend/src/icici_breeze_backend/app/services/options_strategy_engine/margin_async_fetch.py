@@ -118,6 +118,11 @@ async def fetch_margins_concurrent(
 
     cache = existing_cache or {}
     pending = [req for req in requests if req.cache_key not in cache]
+    cached_count = len(requests) - len(pending)
+    if audit and hasattr(audit, "telemetry"):
+        audit.telemetry.record_span_cache(hit=True, count=cached_count)
+        audit.telemetry.record_span_cache(hit=False, count=len(pending))
+
     if not pending:
         return {req.cache_key: cache[req.cache_key] for req in requests}
 
