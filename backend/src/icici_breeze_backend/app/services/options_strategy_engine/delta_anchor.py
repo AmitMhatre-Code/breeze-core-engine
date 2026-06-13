@@ -6,13 +6,22 @@ from typing import Callable, Literal
 from icici_breeze_backend.app.services.options_strategy_engine.types import QuoteRow, Right
 
 RiskRewardProfile = Literal["conservative", "moderate", "aggressive"]
+CONVICTION_PROFILES: tuple[RiskRewardProfile, ...] = ("conservative", "moderate", "aggressive")
 DELTA_TOLERANCE = 0.05
+DELTA_CANDIDATE_WINDOW = 0.08
+MAX_CANDIDATES_PER_CONVICTION = 12
+MIN_LIQUIDITY_SCORE = 0.05
 
 _PROFILE_DELTAS: dict[str, tuple[float, float]] = {
     "conservative": (0.40, 0.20),
-    "moderate": (0.50, 0.30),
-    "aggressive": (0.60, 0.35),
+    "moderate": (0.50, 0.25),
+    "aggressive": (0.60, 0.30),
 }
+
+
+def conviction_delta_templates() -> dict[str, tuple[float, float]]:
+    """Return a copy of conviction profile → (long_Δ, short_Δ) templates."""
+    return dict(_PROFILE_DELTAS)
 
 
 def pop_to_short_delta(min_pop_pct: float, short_legs: int = 1) -> float:

@@ -13,6 +13,12 @@ import type { ProposedTrade } from "@/lib/strategy-builder/types";
 
 const BOOK_LAKH = 100_000;
 
+const CONVICTION_LABELS: Record<string, string> = {
+  conservative: "Conservative",
+  moderate: "Moderate",
+  aggressive: "Aggressive",
+};
+
 const rowClass =
   "flex flex-nowrap items-center gap-x-2 whitespace-nowrap text-xs";
 
@@ -86,6 +92,11 @@ export function ProposedStrategyTradeCard({
     trade.risk_reward_ratio,
     trade.max_loss,
   );
+  const convictionLabel = trade.conviction_profile
+    ? CONVICTION_LABELS[trade.conviction_profile] ?? trade.conviction_profile
+    : null;
+  const useHeroMetric = trade.hero_metric != null;
+  const secondaryFromApi = trade.secondary_metrics ?? [];
 
   const vBar = (
     <span
@@ -115,7 +126,14 @@ export function ProposedStrategyTradeCard({
               </span>
             ) : null}
             <span className="shrink-0 leading-snug">{trade.strategy_name}</span>
-            {trade.variant_rank != null && trade.variant_rank > 0 ? (
+            {convictionLabel ? (
+              <span className="shrink-0 rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-medium text-violet-800 dark:text-violet-200">
+                {convictionLabel}
+              </span>
+            ) : null}
+            {!convictionLabel &&
+            trade.variant_rank != null &&
+            trade.variant_rank > 0 ? (
               <span className="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-200">
                 #{trade.variant_rank}
               </span>
@@ -126,15 +144,37 @@ export function ProposedStrategyTradeCard({
               </span>
             ) : null}
           </div>
-          {!skipped && prem != null ? (
+          {!skipped && (useHeroMetric || prem != null) ? (
             <span
-              className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ring-1 ${premiumCapsuleClass(prem)}`}
-              title="Net premium (annualised ROI)"
+              className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ring-1 ${
+                useHeroMetric
+                  ? "bg-sky-500/14 text-sky-900 ring-sky-600/20 dark:bg-sky-500/12 dark:text-sky-200 dark:ring-sky-400/30"
+                  : premiumCapsuleClass(prem)
+              }`}
+              title={
+                useHeroMetric
+                  ? trade.hero_metric!.label
+                  : "Net premium (annualised ROI)"
+              }
             >
-              <span className={moneyToneClass(prem)}>{premLabel}</span>
-              {trade.annualized_return_pct != null ? (
-                <span className="font-normal opacity-90"> ({roiLabel})</span>
-              ) : null}
+              {useHeroMetric ? (
+                <>
+                  <span className="font-normal opacity-80">
+                    {trade.hero_metric!.label}:{" "}
+                  </span>
+                  <span>{trade.hero_metric!.value}</span>
+                </>
+              ) : (
+                <>
+                  <span className={moneyToneClass(prem!)}>{premLabel}</span>
+                  {trade.annualized_return_pct != null ? (
+                    <span className="font-normal opacity-90">
+                      {" "}
+                      ({roiLabel})
+                    </span>
+                  ) : null}
+                </>
+              )}
             </span>
           ) : null}
         </div>
@@ -150,6 +190,26 @@ export function ProposedStrategyTradeCard({
                 {trade.ranking_summary}
               </p>
             ) : null}
+            {useHeroMetric && secondaryFromApi.length > 0 ? (
+              <div
+                className={`${rowClass} gap-x-3 text-zinc-600 dark:text-zinc-300`}
+              >
+                {secondaryFromApi.map((metric) => (
+                  <span key={metric.label} className="inline-flex shrink-0 items-center gap-1">
+                    {metric.label}:{" "}
+                    <strong
+                      className={`tabular-nums ${
+                        metric.label === "Est. PoP"
+                          ? "font-normal text-zinc-500 dark:text-zinc-400"
+                          : "text-zinc-800 dark:text-zinc-200"
+                      }`}
+                    >
+                      {metric.value}
+                    </strong>
+                  </span>
+                ))}
+              </div>
+            ) : (
             <div
               className={`${rowClass} gap-x-3 text-zinc-600 dark:text-zinc-300`}
             >
@@ -194,6 +254,7 @@ export function ProposedStrategyTradeCard({
                 </strong>
               </span>
             </div>
+            )}
 
             <div className="space-y-1.5 border-t border-zinc-100 pt-1.5 dark:border-zinc-800">
               {trade.legs.map((leg, i) => {

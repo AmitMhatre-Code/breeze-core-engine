@@ -78,11 +78,11 @@ _INCOME_POP_POLICY = PopPolicy(
     ignored=False,
     pop_weight=1e-4,
 )
-# Directional: PoP in EV ranking only.
+# Directional: PoP informational only — not used for filtering or ranking.
 _DIRECTIONAL_POP_POLICY = PopPolicy(
     used_for_filtering=False,
-    used_for_ranking=True,
-    ignored=False,
+    used_for_ranking=False,
+    ignored=True,
     pop_weight=None,
 )
 # Volatility long structures: PoP computed for display, not gated or ranked.
@@ -305,6 +305,9 @@ class StrategyAuditCollector:
     # Iron condor wing-plan trace (backward compatible with tests).
     pair_wing_plans: list[dict[str, Any]] = field(default_factory=list)
 
+    # Directional conviction audit (optional).
+    directional_audit: Any | None = None
+
     status: str = "pending"
     skip_reason: str | None = None
 
@@ -511,6 +514,13 @@ class StrategyAuditCollector:
             "winners": self.winners,
             "near_misses": near_misses,
         }
+        if self.directional_audit is not None:
+            da = self.directional_audit
+            out["conviction_config"] = da.get("conviction_config")
+            out["candidates_by_profile"] = da.get("candidates_by_profile", {})
+            out["profile_winners"] = da.get("profile_winners", [])
+            if self.detail_level == "debug":
+                out["shortlist_scores"] = da.get("shortlist_scores", [])
         if self.detail_level == "debug":
             out["candidate_traces"] = self.evaluations
             out["rejection_samples"] = self.samples[:25]
@@ -594,11 +604,33 @@ def strategy_config_snapshot(strategy_id: str) -> dict[str, Any]:
             "MIN_SS_ANNUALIZED_RETURN_PCT": m.MIN_SS_ANNUALIZED_RETURN_PCT,
         }
 
+    def _directional():
+        from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import (
+            CONVICTION_PROFILES,
+            DELTA_CANDIDATE_WINDOW,
+            DELTA_TOLERANCE,
+            MAX_CANDIDATES_PER_CONVICTION,
+            MIN_LIQUIDITY_SCORE,
+            conviction_delta_templates,
+        )
+        return {
+            "CONVICTION_PROFILES": list(CONVICTION_PROFILES),
+            "DELTA_TOLERANCE": DELTA_TOLERANCE,
+            "DELTA_CANDIDATE_WINDOW": DELTA_CANDIDATE_WINDOW,
+            "MAX_CANDIDATES_PER_CONVICTION": MAX_CANDIDATES_PER_CONVICTION,
+            "MIN_LIQUIDITY_SCORE": MIN_LIQUIDITY_SCORE,
+            "delta_templates": conviction_delta_templates(),
+        }
+
     builders = {
         "bull_put_spread": _bps,
         "bear_call_spread": _bcs,
         "iron_condor": _ic,
         "short_strangle": _ss,
+        "bull_call_spread": _directional,
+        "bear_put_spread": _directional,
+        "long_call": _directional,
+        "long_put": _directional,
     }
     builder = builders.get(strategy_id)
     if builder:
@@ -664,6 +696,92 @@ def record_simple_winner(
         metrics=metrics,
         stages_passed=stages,
         ranks={"final": 1},
+    )
+    collector.record_survivor_metrics(
+        pop_pct=metrics.get("pop_pct"),
+        credit=metrics.get("net_credit"),
+        ann_return_pct=metrics.get("annualized_return_pct"),
+    )
+
+
+def setup_directional_audit(collector: StrategyAuditCollector | None) -> Any | None:
+    """Initialize conviction audit state on the per-strategy collector."""
+    if collector is None:
+        return None
+    from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import (
+        CONVICTION_PROFILES,
+        DELTA_CANDIDATE_WINDOW,
+        DELTA_TOLERANCE,
+        conviction_delta_templates,
+    )
+    from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional._common import (
+        DirectionalAuditState,
+    )
+
+    state = DirectionalAuditState()
+    collector.directional_audit = {
+        "conviction_config": {
+            "profiles": list(CONVICTION_PROFILES),
+            "delta_templates": conviction_delta_templates(),
+            "delta_tolerance": DELTA_TOLERANCE,
+            "candidate_window": DELTA_CANDIDATE_WINDOW,
+        },
+        "candidates_by_profile": state.candidates_by_profile,
+        "profile_winners": state.profile_winners,
+        "shortlist_scores": state.shortlist_scores,
+    }
+    return state
+
+
+def record_directional_attempt(
+    collector: StrategyAuditCollector | None,
+    *,
+    conviction_profile: str,
+    reject_reason: str | None = None,
+    pop_pct: float | None = None,
+    **fields: Any,
+) -> None:
+    if collector is None:
+        return
+    collector.record_generated()
+    payload = {"conviction_profile": conviction_profile, **fields}
+    if reject_reason:
+        collector.record(reject_reason, **payload)
+        collector.record_evaluation(
+            outcome="rejected",
+            reject_reason=reject_reason,
+            pop_pct=pop_pct,
+            **payload,
+        )
+    else:
+        collector.record_stage("passed_liquidity")
+        collector.record_evaluation(
+            outcome="accepted",
+            pop_pct=pop_pct,
+            **payload,
+        )
+
+
+def record_directional_profile_winner(
+    collector: StrategyAuditCollector | None,
+    legs: list[Any],
+    *,
+    conviction_profile: str,
+    metrics: dict[str, Any],
+    stages_passed: list[str] | None = None,
+) -> None:
+    if collector is None:
+        return
+    stages = stages_passed or ["passed_liquidity", "passed_constraints", "returned"]
+    for stage in stages:
+        if stage != "returned":
+            collector.record_stage(stage)
+    collector.record_winner(
+        candidate_id=candidate_id_for_legs(legs),
+        legs=legs,
+        metrics={**metrics, "conviction_profile": conviction_profile},
+        stages_passed=stages,
+        ranks={"final": 1, "conviction_profile": conviction_profile},
     )
     collector.record_survivor_metrics(
         pop_pct=metrics.get("pop_pct"),

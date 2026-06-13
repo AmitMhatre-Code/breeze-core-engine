@@ -165,7 +165,7 @@ async def run_propose_trades(
     min_pop_pct: float = 65.0,
     provision_elm: bool,
     strategy_category: StrategyCategory,
-    risk_reward_profile: RiskRewardProfile = "moderate",
+    risk_reward_profile: RiskRewardProfile | None = None,
     request_id: str | None = None,
     enable_audit: bool = True,
     audit_detail_level: AuditDetailLevel = "summary",
@@ -276,7 +276,7 @@ async def run_propose_trades(
         min_pop_pct=min_pop_pct,
         provision_elm=provision_elm,
         strategy_category=strategy_category,
-        risk_reward_profile=risk_reward_profile,
+        risk_reward_profile=risk_reward_profile or "moderate",
         lot_size=int(lot_size),
         strikes=strikes,
         strike_step=step,
@@ -355,6 +355,12 @@ async def run_propose_trades(
 
     trades_out = []
     for r in results:
+        hero = None
+        if r.hero_metric is not None:
+            hero = {"label": r.hero_metric.label, "value": r.hero_metric.value}
+        secondary = [
+            {"label": m.label, "value": m.value} for m in (r.secondary_metrics or [])
+        ]
         trades_out.append(
             {
                 "strategy_id": r.strategy_id,
@@ -374,6 +380,9 @@ async def run_propose_trades(
                 "engine_score": r.engine_score,
                 "ranking_summary": r.ranking_summary,
                 "score_breakdown": r.score_breakdown,
+                "conviction_profile": r.conviction_profile,
+                "hero_metric": hero,
+                "secondary_metrics": secondary,
             }
         )
 

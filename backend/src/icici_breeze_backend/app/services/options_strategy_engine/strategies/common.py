@@ -165,6 +165,9 @@ def make_result(
     engine_score: float | None = None,
     ranking_summary: str | None = None,
     score_breakdown: dict | None = None,
+    conviction_profile: str | None = None,
+    hero_metric: Any | None = None,
+    secondary_metrics: list[Any] | None = None,
 ) -> StrategyResult:
     return StrategyResult(
         sid,
@@ -181,6 +184,9 @@ def make_result(
         engine_score=engine_score,
         ranking_summary=ranking_summary,
         score_breakdown=score_breakdown,
+        conviction_profile=conviction_profile,
+        hero_metric=hero_metric,
+        secondary_metrics=secondary_metrics or [],
     )
 
 

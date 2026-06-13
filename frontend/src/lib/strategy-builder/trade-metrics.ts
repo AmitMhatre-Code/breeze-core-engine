@@ -38,12 +38,16 @@ export function computeTradePop(
   return estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
 }
 
-/** Score = net premium × PoP (PoP as fraction). */
+/** Score trades for client-side sort; directional uses server engine_score when present. */
 export function computeTradeScore(
   trade: ProposedTrade,
   pop: number | null,
 ): number | null {
-  if (trade.status === "skipped" || pop == null || !Number.isFinite(pop)) return null;
+  if (trade.status === "skipped") return null;
+  if (trade.engine_score != null && Number.isFinite(trade.engine_score)) {
+    return trade.engine_score;
+  }
+  if (pop == null || !Number.isFinite(pop)) return null;
   const prem = trade.net_premium;
   if (prem == null || !Number.isFinite(prem)) return null;
   return prem * (pop / 100);

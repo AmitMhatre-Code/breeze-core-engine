@@ -98,6 +98,12 @@ class TradeLeg:
 
 
 @dataclass
+class TileMetric:
+    label: str
+    value: str
+
+
+@dataclass
 class StrategyResult:
     strategy_id: str
     strategy_name: str
@@ -117,6 +123,9 @@ class StrategyResult:
     engine_score: float | None = None
     ranking_summary: str | None = None
     score_breakdown: dict | None = None
+    conviction_profile: RiskRewardProfile | None = None
+    hero_metric: TileMetric | None = None
+    secondary_metrics: list[TileMetric] = field(default_factory=list)
 
 
 @dataclass

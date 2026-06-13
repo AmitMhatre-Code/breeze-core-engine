@@ -48,7 +48,6 @@ import type {
   Outlook,
   ProposedTrade,
   ProposeTradesSuccess,
-  RiskRewardProfile,
   StrategyCategory,
   StrategyLeg,
   UnderlyingsApiResponse,
@@ -70,30 +69,8 @@ const CATEGORY_LABELS: Record<StrategyCategory, string> = {
 const MIN_POP_HINT =
   "Sets how far OTM income shorts are placed. Higher PoP → further OTM (lower delta).";
 
-const RISK_PROFILE_OPTIONS: {
-  id: RiskRewardProfile;
-  label: string;
-  tooltip: string;
-}[] = [
-  {
-    id: "conservative",
-    label: "Conservative",
-    tooltip:
-      "Long leg ~0.40Δ, short leg ~0.20Δ on spreads. Lower premium, needs a larger move.",
-  },
-  {
-    id: "moderate",
-    label: "Moderate",
-    tooltip:
-      "Long leg ~0.50Δ, short leg ~0.30Δ on spreads. Balanced directional exposure.",
-  },
-  {
-    id: "aggressive",
-    label: "Aggressive",
-    tooltip:
-      "Long leg ~0.60Δ, short leg ~0.35Δ on spreads. Higher premium, profits on a smaller move.",
-  },
-];
+const DIRECTIONAL_HINT =
+  "Generates Conservative, Moderate, and Aggressive variants automatically from your capital and max-loss limits.";
 
 function FieldHint({ text }: { text: string }) {
   return (
@@ -150,8 +127,6 @@ export default function StrategyBuilderNewPage() {
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [minPopPct, setMinPopPct] = useState(String(DEFAULT_MIN_POP_PCT));
-  const [riskRewardProfile, setRiskRewardProfile] =
-    useState<RiskRewardProfile>("moderate");
   const [marginLacs, setMarginLacs] = useState("");
   const [maxLossLacs, setMaxLossLacs] = useState("");
   const [provisionElm, setProvisionElm] = useState(false);
@@ -310,7 +285,6 @@ export default function StrategyBuilderNewPage() {
             : (minPopPctNum ?? DEFAULT_MIN_POP_PCT),
         provision_elm: provisionElm,
         strategy_category: category,
-        risk_reward_profile: riskRewardProfile,
       }),
     onSuccess: (res, category) => {
       if (res.Status !== 200 || !res.Success) {
@@ -744,28 +718,9 @@ export default function StrategyBuilderNewPage() {
 
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Directional strategies</h3>
-                    <div className={sb.fieldRow}>
-                      <span className={`${sb.fieldLabelInline} min-w-[9.5rem]`}>
-                        Risk / reward profile
-                      </span>
-                      <div className="flex min-w-0 flex-1 flex-wrap gap-2">
-                        {RISK_PROFILE_OPTIONS.map((opt) => (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            title={opt.tooltip}
-                            className={`inline-flex items-center rounded-lg border px-3.5 py-2.5 text-sm font-medium transition ${
-                              riskRewardProfile === opt.id
-                                ? "border-sky-600 bg-sky-50 text-sky-800 dark:border-sky-500 dark:bg-sky-950/50 dark:text-sky-200"
-                                : "border-zinc-300/80 bg-white/95 text-zinc-700 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300"
-                            }`}
-                            onClick={() => setRiskRewardProfile(opt.id)}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                      {DIRECTIONAL_HINT}
+                    </p>
                     <div className="grid gap-2 sm:grid-cols-2">
                       {(["bullish", "bearish"] as const).map((category) => (
                         <button

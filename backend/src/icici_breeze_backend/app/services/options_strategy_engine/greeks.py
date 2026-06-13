@@ -68,6 +68,21 @@ def norm_ppf(p: float) -> float:
     return num / den
 
 
+def _bs_d1(
+    spot: float,
+    strike: float,
+    t: float,
+    sigma: float,
+    *,
+    r: float = DEFAULT_R,
+    q: float = DEFAULT_Q,
+) -> float | None:
+    if t <= 0 or sigma <= 0 or spot <= 0 or strike <= 0:
+        return None
+    sqrt_t = math.sqrt(t)
+    return (math.log(spot / strike) + (r - q + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
+
+
 def bs_delta(
     spot: float,
     strike: float,
@@ -82,10 +97,45 @@ def bs_delta(
         if right == "Call":
             return 1.0 if spot > strike else 0.0
         return -1.0 if spot < strike else 0.0
-    sqrt_t = math.sqrt(t)
-    d1 = (math.log(spot / strike) + (r - q + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
+    d1 = _bs_d1(spot, strike, t, sigma, r=r, q=q)
+    if d1 is None:
+        return 0.0
     call_delta = _norm_cdf(d1)
     return call_delta if right == "Call" else call_delta - 1.0
+
+
+def bs_theta(
+    spot: float,
+    strike: float,
+    t: float,
+    sigma: float,
+    right: Right,
+    *,
+    r: float = DEFAULT_R,
+    q: float = DEFAULT_Q,
+) -> float:
+    """Black-Scholes theta per calendar year (negative for long options)."""
+    if t <= 0 or sigma <= 0 or spot <= 0 or strike <= 0:
+        return 0.0
+    sqrt_t = math.sqrt(t)
+    d1 = _bs_d1(spot, strike, t, sigma, r=r, q=q)
+    if d1 is None:
+        return 0.0
+    d2 = d1 - sigma * sqrt_t
+    disc_q = math.exp(-q * t)
+    disc_r = math.exp(-r * t)
+    pdf_d1 = math.exp(-0.5 * d1 * d1) / math.sqrt(2.0 * math.pi)
+    common = -(spot * disc_q * pdf_d1 * sigma) / (2.0 * sqrt_t)
+    if right == "Call":
+        return common - r * strike * disc_r * _norm_cdf(d2) + q * spot * disc_q * _norm_cdf(d1)
+    return common + r * strike * disc_r * _norm_cdf(-d2) - q * spot * disc_q * _norm_cdf(-d1)
+
+
+def theta_for_quote(ctx: EngineContext, q: QuoteRow) -> float:
+    """Theta for a cached quote using its IV or fallback sigma."""
+    t = ctx.t_years
+    sigma = q.iv if q.iv and q.iv > 0 else sigma_for_pop(ctx)
+    return bs_theta(ctx.spot, float(q.strike), t, sigma, q.right)
 
 
 def strike_for_abs_delta(

@@ -8,9 +8,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor impo
     pop_to_short_delta,
     profile_deltas,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.ranking import (
-    score_directional_candidate,
-)
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import size_lots
 
 
@@ -22,14 +19,42 @@ class TestDeltaAnchor(unittest.TestCase):
         self.assertAlmostEqual(pop_to_short_delta(85.0, 2), 0.075)
 
     def test_profile_deltas_moderate(self):
-        self.assertEqual(profile_deltas("moderate"), (0.50, 0.30))
+        self.assertEqual(profile_deltas("moderate"), (0.50, 0.25))
+
+    def test_profile_deltas_aggressive_short(self):
+        self.assertEqual(profile_deltas("aggressive"), (0.60, 0.30))
 
 
-class TestDirectionalCER(unittest.TestCase):
-    def test_higher_ev_per_capital_wins(self):
-        low = score_directional_candidate(60.0, 5000.0, 10000.0)
-        high = score_directional_candidate(60.0, 8000.0, 10000.0)
-        self.assertGreater(high, low)
+class TestDirectionalConvictionScore(unittest.TestCase):
+    def test_long_option_score_is_finite(self):
+        from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional.scoring import (
+            finalize_long_option_score,
+            score_long_option_components,
+        )
+        from icici_breeze_backend.app.services.options_strategy_engine.types import QuoteRow
+        from unittest.mock import MagicMock
+
+        q = QuoteRow(
+            strike=23500,
+            right="Call",
+            ltp=100.0,
+            best_bid_price=99.0,
+            best_offer_price=101.0,
+            total_buy_qty=100,
+            total_sell_qty=100,
+            buy_sell_ratio=1.0,
+            delta=0.50,
+            liquidity_score=0.8,
+            iv=0.18,
+        )
+        ctx = MagicMock()
+        ctx.spot = 23500.0
+        ctx.t_years = 0.05
+        components = score_long_option_components(
+            ctx, q, target_delta=0.50, premium_per_unit=100.0
+        )
+        score, _ = finalize_long_option_score(components, premium_efficiency_norm=0.5)
+        self.assertTrue(0 <= score <= 1.5)
 
 
 class TestIciciApiPacer(unittest.TestCase):

@@ -65,6 +65,8 @@ class TestBullCallSpreadSizing(unittest.TestCase):
                 buy_sell_ratio=1.0,
                 spot_price=23500.0,
                 delta=delta,
+                liquidity_score=0.85,
+                iv=0.18,
             )
         return EngineContext(
             processor=MagicMock(),
@@ -90,16 +92,23 @@ class TestBullCallSpreadSizing(unittest.TestCase):
 
     def test_produces_legs_when_viable(self):
         ctx = self._ctx()
-        res = calc_bull_call_spread(ctx)
-        self.assertEqual(res.status, "ok")
+        results = calc_bull_call_spread(ctx)
+        self.assertIsInstance(results, list)
+        ok = [r for r in results if r.status == "ok"]
+        self.assertGreaterEqual(len(ok), 1)
+        res = ok[0]
         self.assertEqual(len(res.legs), 2)
         self.assertGreaterEqual(res.legs[0].quantity, 75)
+        self.assertIsNotNone(res.conviction_profile)
 
     def test_skips_when_insufficient_risk(self):
         ctx = self._ctx()
         ctx.max_loss_rupees = 100
-        res = calc_bull_call_spread(ctx)
-        self.assertEqual(res.status, "skipped")
+        results = calc_bull_call_spread(ctx)
+        if len(results) == 1:
+            self.assertEqual(results[0].status, "skipped")
+        else:
+            self.assertEqual(len([r for r in results if r.status == "ok"]), 0)
 
 
 class TestMarginBatching(unittest.TestCase):

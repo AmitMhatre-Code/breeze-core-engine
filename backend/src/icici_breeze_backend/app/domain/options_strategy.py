@@ -1,7 +1,7 @@
 """Options strategy builder (v2) request/response schemas."""
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 StrategyCategory = Literal["income", "bullish", "bearish", "volatility"]
 RiskRewardProfile = Literal["conservative", "moderate", "aggressive"]
@@ -16,14 +16,8 @@ class ProposeTradesRequest(BaseModel):
     min_pop_pct: float = Field(default=65, ge=1, le=99)
     provision_elm: bool = False
     strategy_category: StrategyCategory
-    risk_reward_profile: RiskRewardProfile = "moderate"
+    risk_reward_profile: Optional[RiskRewardProfile] = None
     audit_detail_level: Literal["summary", "debug"] = "summary"
-
-    @model_validator(mode="after")
-    def _validate_category_fields(self) -> "ProposeTradesRequest":
-        if self.strategy_category in ("bullish", "bearish") and not self.risk_reward_profile:
-            raise ValueError("risk_reward_profile is required for bullish/bearish strategies.")
-        return self
 
 
 class ProposedTradeLegOut(BaseModel):
@@ -38,6 +32,11 @@ class ProposedTradeLegOut(BaseModel):
     total_buy_qty: Optional[int] = None
     total_sell_qty: Optional[int] = None
     buy_sell_ratio: Optional[float | str] = None
+
+
+class TileMetricOut(BaseModel):
+    label: str
+    value: str
 
 
 class ProposedTradeOut(BaseModel):
@@ -58,6 +57,9 @@ class ProposedTradeOut(BaseModel):
     engine_score: Optional[float] = None
     ranking_summary: Optional[str] = None
     score_breakdown: Optional[dict[str, float]] = None
+    conviction_profile: Optional[RiskRewardProfile] = None
+    hero_metric: Optional[TileMetricOut] = None
+    secondary_metrics: List[TileMetricOut] = Field(default_factory=list)
 
 
 class ProposeTradesSuccess(BaseModel):

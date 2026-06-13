@@ -91,6 +91,11 @@ export type StrategyCategory = "income" | "bullish" | "bearish";
 
 export type RiskRewardProfile = "conservative" | "moderate" | "aggressive";
 
+export type TileMetric = {
+  label: string;
+  value: string;
+};
+
 export type ProposedTrade = {
   strategy_id: string;
   strategy_name: string;
@@ -109,10 +114,16 @@ export type ProposedTrade = {
   engine_score?: number | null;
   ranking_summary?: string | null;
   score_breakdown?: Record<string, number> | null;
+  conviction_profile?: RiskRewardProfile | null;
+  hero_metric?: TileMetric | null;
+  secondary_metrics?: TileMetric[];
 };
 
-/** Unique key for trade card selection (supports multiple iron condor variants). */
+/** Unique key for trade card selection (supports conviction variants). */
 export function tradeSelectionKey(trade: ProposedTrade): string {
+  if (trade.conviction_profile) {
+    return `${trade.strategy_id}#${trade.conviction_profile}`;
+  }
   if (trade.variant_rank != null && trade.variant_rank > 0) {
     return `${trade.strategy_id}#${trade.variant_rank}`;
   }
