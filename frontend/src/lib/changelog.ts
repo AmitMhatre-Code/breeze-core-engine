@@ -20,6 +20,16 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "1.9.9-c",
+    date: "14-Jun-2026",
+    releaseKind: "minor",
+    summary: "Build Your Own + chain cache",
+    changes: [
+      "Strategy Builder (New): third Build Your Own card with full liquid option chain and manual leg/payoff flow",
+      "Options chain cached server-side for 5 minutes; stale timestamp warning and opt-in refresh on strategy execution",
+    ],
+  },
+  {
     version: "1.9.9-b",
     date: "13-Jun-2026",
     releaseKind: "major",

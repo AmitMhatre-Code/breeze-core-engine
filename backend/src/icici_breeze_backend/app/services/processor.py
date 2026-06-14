@@ -23,6 +23,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from icici_breeze_backend.app.repositories import parked_orders as parked_orders_repo
+from icici_breeze_backend.app.services.option_chain_cache import (
+    chain_metadata,
+    get_cached_raw_chain,
+    make_chain_cache_key,
+    set_cached_raw_chain,
+)
 
 if TYPE_CHECKING:
     from icici_breeze_backend.audit.strategy_builder_audit import StrategyBuilderAuditSession
@@ -1848,7 +1854,86 @@ class processor():
             pass
         return quote
 
-    def get_full_option_chain(self, user_id: str, stock_code: str, exchange_code: str, expiry_date: str):
+    def _transform_icici_chain_rows(
+        self,
+        stock_code: str,
+        expiry_display: str,
+        exchange_code: str,
+        right: str,
+        raw_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        lot_size = self.fetch_lot_size(stock_code, expiry_display, exchange_code=exchange_code)
+        lot_val = lot_size if lot_size is not None else 0
+        rows: list[dict[str, Any]] = []
+        for i in raw_rows:
+            try:
+                total_buy = int(i.get("total_buy_qty") or 0)
+                total_sell = int(i.get("total_sell_qty") or 0)
+                if total_sell > 0:
+                    ratio = total_buy / total_sell
+                else:
+                    ratio = 0.0 if total_buy == 0 else None
+                oi = i.get("open_interest")
+                try:
+                    oi_val = int(oi) if oi is not None else 0
+                except (TypeError, ValueError):
+                    oi_val = 0
+                rows.append(
+                    {
+                        "stock_code": stock_code,
+                        "strike_price": int(float(i.get("strike_price", 0))),
+                        "right": right,
+                        "expiry_date": expiry_display,
+                        "ltp": i.get("ltp"),
+                        "open_interest": oi_val,
+                        "total_buy_qty": total_buy,
+                        "total_sell_qty": total_sell,
+                        "buy_sell_ratio": ratio if ratio is not None else "NA",
+                        "best_bid_price": i.get("best_bid_price"),
+                        "best_offer_price": i.get("best_offer_price"),
+                        "spot_price": i.get("spot_price"),
+                        "lot_size": lot_val,
+                    }
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        return rows
+
+    def _fetch_icici_chain_side_raw(
+        self,
+        user_id: str,
+        stock_code: str,
+        exchange_code: str,
+        expiry_api: str,
+        right: str,
+    ) -> dict[str, Any]:
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return _icici_error("Unable to connect to broker. Please log out and log back in.")
+        try:
+            _pt, _rt = _icici_option_chain_enums(cfg.OPTIONS, right)
+            r = breeze.get_option_chain_quotes(
+                stock_code=stock_code,
+                exchange_code=exchange_code,
+                product_type=_pt,
+                expiry_date=expiry_api,
+                right=_rt,
+            )
+        except Exception as e:
+            return _icici_error(f"get_option_chain_quotes({right}): {e}")
+        if not isinstance(r, dict) or r.get("Status") != 200:
+            return r if isinstance(r, dict) else _icici_error(f"get_option_chain_quotes({right}): invalid response")
+        return {"Status": 200, "Success": list(r.get("Success") or []), "Error": None}
+
+    def get_full_option_chain(
+        self,
+        user_id: str,
+        stock_code: str,
+        exchange_code: str,
+        expiry_date: str,
+        *,
+        force_refresh: bool = False,
+    ):
         """Fetch full CE + PE option chain for order page. Expiry can be YYYY-MM-DD or DD-Mon-YYYY.
         Returns dict with Status, Error, Success: { chain_rows, max_call_oi, max_put_oi, expiry_display, stock_code, exchange_code }.
         chain_rows = list of { strike_price, call?: row, put?: row }; each row has OI, LTP, total_buy_qty, total_sell_qty, buy_sell_ratio, lot_size, best_bid_price, best_offer_price, etc.
@@ -1862,67 +1947,40 @@ class processor():
                 pass
         expiry_api = _expiry_display_to_api(expiry_display)
 
-        breeze = self.get_session_breeze(user_id)
-        product_type = cfg.OPTIONS
+        cache_key = make_chain_cache_key(user_id, exchange_code, stock_code, expiry_display)
+        served_from_cache = False
+        fetched_at: float | None = None
+        ce_raw: list[dict[str, Any]] | None = None
+        pe_raw: list[dict[str, Any]] | None = None
 
-        def fetch_side(right: str):
-            try:
-                _pt, _rt = _icici_option_chain_enums(product_type, right)
-                r = breeze.get_option_chain_quotes(
-                    stock_code=stock_code,
-                    exchange_code=exchange_code,
-                    product_type=_pt,
-                    expiry_date=expiry_api,
-                    right=_rt,
-                )
-            except Exception as e:
-                return _icici_error(f"get_option_chain_quotes({right}): {e}")
-            if not isinstance(r, dict) or r.get("Status") != 200:
-                return r
-            rows = []
-            for i in (r.get("Success") or []):
-                try:
-                    total_buy = int(i.get("total_buy_qty") or 0)
-                    total_sell = int(i.get("total_sell_qty") or 0)
-                    if total_sell > 0:
-                        ratio = total_buy / total_sell
-                    else:
-                        ratio = 0.0 if total_buy == 0 else None  # None = "NA"
-                    oi = i.get("open_interest")
-                    try:
-                        oi_val = int(oi) if oi is not None else 0
-                    except (TypeError, ValueError):
-                        oi_val = 0
-                    row = {
-                        "stock_code": stock_code,
-                        "strike_price": int(float(i.get("strike_price", 0))),
-                        "right": right,
-                        "expiry_date": expiry_display,
-                        "ltp": i.get("ltp"),
-                        "open_interest": oi_val,
-                        "total_buy_qty": total_buy,
-                        "total_sell_qty": total_sell,
-                        "buy_sell_ratio": ratio if ratio is not None else "NA",
-                        "best_bid_price": i.get("best_bid_price"),
-                        "best_offer_price": i.get("best_offer_price"),
-                        "spot_price": i.get("spot_price"),
-                    }
-                    lot_size = self.fetch_lot_size(stock_code, expiry_display, exchange_code=exchange_code)
-                    row["lot_size"] = lot_size if lot_size is not None else 0
-                    rows.append(row)
-                except (KeyError, TypeError, ValueError):
-                    continue
-            return {"Status": 200, "Success": rows, "Error": None}
+        if not force_refresh:
+            cached = get_cached_raw_chain(cache_key)
+            if cached:
+                ce_raw, pe_raw, fetched_at = cached
+                served_from_cache = True
 
-        ce_res = fetch_side(cfg.CALL)
-        pe_res = fetch_side(cfg.PUT)
-        if ce_res.get("Status") != 200:
-            return ce_res
-        if pe_res.get("Status") != 200:
-            return pe_res
+        if ce_raw is None or pe_raw is None:
+            ce_res = self._fetch_icici_chain_side_raw(
+                user_id, stock_code, exchange_code, expiry_api, cfg.CALL
+            )
+            pe_res = self._fetch_icici_chain_side_raw(
+                user_id, stock_code, exchange_code, expiry_api, cfg.PUT
+            )
+            if ce_res.get("Status") != 200:
+                return ce_res
+            if pe_res.get("Status") != 200:
+                return pe_res
+            ce_raw = ce_res.get("Success") or []
+            pe_raw = pe_res.get("Success") or []
+            fetched_at = set_cached_raw_chain(cache_key, ce_raw, pe_raw)
+            served_from_cache = False
 
-        calls = ce_res.get("Success") or []
-        puts = pe_res.get("Success") or []
+        calls = self._transform_icici_chain_rows(
+            stock_code, expiry_display, exchange_code, cfg.CALL, ce_raw
+        )
+        puts = self._transform_icici_chain_rows(
+            stock_code, expiry_display, exchange_code, cfg.PUT, pe_raw
+        )
 
         strikes = sorted(set(r["strike_price"] for r in calls) | set(r["strike_price"] for r in puts))
         call_by_strike = {r["strike_price"]: r for r in calls}
@@ -1985,23 +2043,27 @@ class processor():
         except (TypeError, ValueError):
             freeze_quantity = None
 
+        success_payload: dict[str, Any] = {
+            "chain_rows": chain_rows,
+            "max_call_oi": max_call_oi,
+            "max_put_oi": max_put_oi,
+            "expiry_display": expiry_display,
+            "stock_code": stock_code,
+            "exchange_code": exchange_code,
+            "spot_price": spot_price,
+            "atm_strike": atm_strike,
+            "lot_size": int(lot_size_for_series)
+            if lot_size_for_series is not None
+            else None,
+            "freeze_quantity": freeze_quantity,
+        }
+        if fetched_at is not None:
+            success_payload.update(chain_metadata(fetched_at, served_from_cache))
+
         return {
             "Status": 200,
             "Error": None,
-            "Success": {
-                "chain_rows": chain_rows,
-                "max_call_oi": max_call_oi,
-                "max_put_oi": max_put_oi,
-                "expiry_display": expiry_display,
-                "stock_code": stock_code,
-                "exchange_code": exchange_code,
-                "spot_price": spot_price,
-                "atm_strike": atm_strike,
-                "lot_size": int(lot_size_for_series)
-                if lot_size_for_series is not None
-                else None,
-                "freeze_quantity": freeze_quantity,
-            },
+            "Success": success_payload,
         }
 
     def place_order(self,user_id,product_type,stock_code,action,strike_price,right,price,expiry_date,quantity, exchange_code: str = cfg.NFO):

@@ -7,6 +7,7 @@ import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionConfirmDialog";
+import { BuildYourOwnChainSection } from "@/components/strategy-builder/BuildYourOwnChainSection";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { OutlookFilterButtons } from "@/components/strategy-builder/OutlookFilterButtons";
 import { MasonryGrid } from "@/components/strategy-builder/MasonryGrid";
@@ -27,7 +28,13 @@ import {
   fetchStrategyBuilderChain,
   proposeTrades,
 } from "@/lib/strategy-builder/api";
-import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import {
+  appendLegFromChainRow,
+  buildYourOwnAddedSlots,
+  buildYourOwnSlotKey,
+} from "@/lib/strategy-builder/build-your-own";
+import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
+import { expiryDisplayToYears, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import {
   legsQtySignature,
   parseSpanMarginFromResponse,
@@ -44,7 +51,11 @@ import {
 } from "@/lib/strategy-builder/trade-metrics";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
+  BuilderMode,
+  ChainRow,
   MarginApiResponse,
+  OptionRight,
+  OrderSide,
   Outlook,
   ProposedTrade,
   ProposeTradesSuccess,
@@ -74,6 +85,20 @@ const MIN_ANN_RETURN_HINT =
 
 const DIRECTIONAL_HINT =
   "Generates Conservative, Moderate, and Aggressive variants automatically from your capital and max-loss limits.";
+
+const BYO_HINT =
+  "Pick buy/sell legs from the full liquid option chain and simulate payoffs before execution.";
+
+const CHAIN_STALE_TIME_MS = 5 * 60 * 1000;
+
+function formatChainFetchedAt(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+  } catch {
+    return iso;
+  }
+}
 
 function FieldHint({ text }: { text: string }) {
   return (
@@ -111,7 +136,8 @@ function resetDownstream(
     setGenerateError: (v: string | null) => void;
     setOutlookFilter: (v: Set<Outlook>) => void;
     setTradeSort: (v: TradeSortKey) => void;
-    setActiveCategory: (v: StrategyCategory | null) => void;
+    setBuilderMode: (v: BuilderMode) => void;
+    setRefreshChainOnBuild: (v: boolean) => void;
   },
   clearError = false,
 ) {
@@ -122,7 +148,8 @@ function resetDownstream(
   setters.setSelectedTradeId(null);
   setters.setOutlookFilter(new Set(ALL_OUTLOOKS));
   setters.setTradeSort("score");
-  setters.setActiveCategory(null);
+  setters.setBuilderMode(null);
+  setters.setRefreshChainOnBuild(false);
   if (clearError) setters.setGenerateError(null);
 }
 
@@ -137,9 +164,9 @@ export default function StrategyBuilderNewPage() {
   const [marginLacs, setMarginLacs] = useState("");
   const [maxLossLacs, setMaxLossLacs] = useState("");
   const [provisionElm, setProvisionElm] = useState(false);
-  const [activeCategory, setActiveCategory] = useState<StrategyCategory | null>(
-    null,
-  );
+  const [builderMode, setBuilderMode] = useState<BuilderMode>(null);
+  const [refreshChainOnBuild, setRefreshChainOnBuild] = useState(false);
+  const [byoLoading, setByoLoading] = useState(false);
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
   const [proposedData, setProposedData] = useState<ProposeTradesSuccess | null>(
     null,
@@ -169,6 +196,7 @@ export default function StrategyBuilderNewPage() {
   const prevSection2ReadyRef = useRef(false);
   const prevSection3ReadyRef = useRef(false);
   const prevSection4ReadyRef = useRef(false);
+  const chainForceRefreshRef = useRef(false);
 
   const downstreamSetters = {
     setMinPopPct,
@@ -179,7 +207,8 @@ export default function StrategyBuilderNewPage() {
     setGenerateError,
     setOutlookFilter,
     setTradeSort,
-    setActiveCategory,
+    setBuilderMode,
+    setRefreshChainOnBuild,
   };
 
   const uq = useQuery({
@@ -204,10 +233,12 @@ export default function StrategyBuilderNewPage() {
           stock_code: stockCode.trim(),
           expiry_date: expiryDate.trim(),
           exchange_code: segmentExchange,
+          force_refresh: chainForceRefreshRef.current,
         },
         signal,
       ),
     enabled: Boolean(stockCode.trim() && expiryDate.trim()),
+    staleTime: CHAIN_STALE_TIME_MS,
   });
 
   const chainSuccess =
@@ -228,14 +259,27 @@ export default function StrategyBuilderNewPage() {
 
   const lotSize = proposedData?.lot_size ?? chainLotSize;
   const spot = chainSpot ?? proposedData?.spot_price ?? null;
-  const atmIv = proposedData?.atm_iv ?? null;
+
+  const byoAtmIv = useMemo(() => {
+    if (!chainSuccess || builderMode !== "build_your_own") return null;
+    const T = expiryDisplayToYears(expiryDate || "01-Jan-2099");
+    return atmSigmaFromChain(chainSuccess, T);
+  }, [chainSuccess, builderMode, expiryDate]);
+
+  const atmIv = proposedData?.atm_iv ?? byoAtmIv ?? null;
 
   const section1Complete = Boolean(stockCode.trim() && expiryDate.trim());
   const section2Ready =
     section1Complete && chainSpot != null && !chainQ.isFetching;
   const trades: ProposedTrade[] = proposedData?.trades ?? [];
-  const section3Ready = proposedData != null && trades.length > 0;
-  const section4Ready = legs.length > 0 && selectedTradeId != null;
+  const section3EngineReady = proposedData != null && trades.length > 0;
+  const section3ByoReady =
+    builderMode === "build_your_own" &&
+    Boolean(chainSuccess?.chain_rows?.length);
+  const section3Ready = section3EngineReady || section3ByoReady;
+  const section4Ready =
+    legs.length > 0 &&
+    (selectedTradeId != null || builderMode === "build_your_own");
 
   const marginLacsNum = parsePositiveNum(marginLacs);
   const maxLossLacsNum = parsePositiveNum(maxLossLacs);
@@ -283,9 +327,20 @@ export default function StrategyBuilderNewPage() {
     canGenerateShared && minPopPctNum != null && minAnnReturnPctNum != null;
   const canGenerateDirectional = canGenerateShared;
 
+  const refetchChainIfRequested = useCallback(async () => {
+    if (!refreshChainOnBuild) return;
+    chainForceRefreshRef.current = true;
+    try {
+      await chainQ.refetch();
+    } finally {
+      chainForceRefreshRef.current = false;
+    }
+  }, [refreshChainOnBuild, chainQ]);
+
   const generateM = useMutation({
-    mutationFn: (category: StrategyCategory) =>
-      proposeTrades({
+    mutationFn: async (category: StrategyCategory) => {
+      await refetchChainIfRequested();
+      return proposeTrades({
         exchange_code: segmentExchange,
         stock_code: stockCode.trim(),
         expiry_date: expiryDate.trim(),
@@ -299,7 +354,9 @@ export default function StrategyBuilderNewPage() {
           category === "income" ? minAnnReturnPctNum! : undefined,
         provision_elm: provisionElm,
         strategy_category: category,
-      }),
+        refresh_chain: refreshChainOnBuild,
+      });
+    },
     onSuccess: (res, category) => {
       if (res.Status !== 200 || !res.Success) {
         setGenerateError(res.Error ?? "Failed to generate trades.");
@@ -310,7 +367,7 @@ export default function StrategyBuilderNewPage() {
       }
       setGenerateError(null);
       setProposedData(res.Success);
-      setActiveCategory(category);
+      setBuilderMode(category);
       setSelectedTradeId(null);
       setLegs([]);
       setLegMarginCache({});
@@ -559,6 +616,33 @@ export default function StrategyBuilderNewPage() {
     resetDownstream(downstreamSetters, true);
   };
 
+  const buildYourOwnSlots = useMemo(
+    () => buildYourOwnAddedSlots(legs, stockCode, expiryDate),
+    [legs, stockCode, expiryDate],
+  );
+
+  const handleStrategyChainBuySell = useCallback(
+    (side: OrderSide, row: ChainRow, right: OptionRight) => {
+      setLegs((prev) => appendLegFromChainRow(prev, side, row, right));
+    },
+    [],
+  );
+
+  const startBuildYourOwn = useCallback(async () => {
+    setGenerateError(null);
+    setProposedData(null);
+    setSelectedTradeId(null);
+    setLegs([]);
+    setLegMarginCache({});
+    setBuilderMode("build_your_own");
+    setByoLoading(true);
+    try {
+      await refetchChainIfRequested();
+    } finally {
+      setByoLoading(false);
+    }
+  }, [refetchChainIfRequested]);
+
   return (
     <AppShell>
       <RevokedTradingPageGuard>
@@ -691,7 +775,7 @@ export default function StrategyBuilderNewPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid gap-4 lg:grid-cols-3">
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Income strategies</h3>
                     <div className="grid gap-4 sm:grid-cols-2">
@@ -778,7 +862,43 @@ export default function StrategyBuilderNewPage() {
                       ))}
                     </div>
                   </div>
+
+                  <div className={sb.parameterCard}>
+                    <h3 className={sb.parameterCardTitle}>Build your own</h3>
+                    <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                      {BYO_HINT}
+                    </p>
+                    <button
+                      type="button"
+                      className={`${sb.btnPrimary} w-full`}
+                      disabled={!section2Ready || byoLoading || generateM.isPending}
+                      onClick={() => void startBuildYourOwn()}
+                    >
+                      {byoLoading ? "Loading chain…" : "Build Your Own"}
+                    </button>
+                  </div>
                 </div>
+
+                {chainSuccess?.chain_fetched_at ? (
+                  <div className="space-y-2 rounded-md border border-amber-200/80 bg-amber-50/60 px-3 py-2.5 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                    <p>
+                      Options chain last updated at{" "}
+                      <span className="font-medium tabular-nums">
+                        {formatChainFetchedAt(chainSuccess.chain_fetched_at)}
+                      </span>
+                      {chainSuccess.from_cache ? " (cached)" : null}.
+                    </p>
+                    <label className={`${sb.checkboxRow} gap-2 text-xs font-medium`}>
+                      <input
+                        type="checkbox"
+                        checked={refreshChainOnBuild}
+                        onChange={(e) => setRefreshChainOnBuild(e.target.checked)}
+                        className="size-4 rounded border-zinc-300 text-sky-600 focus:ring-sky-500 dark:border-zinc-600"
+                      />
+                      Refresh options chain as part of Strategy Execution
+                    </label>
+                  </div>
+                ) : null}
               </div>
               {generateError ? (
                 <p className="mt-4 text-sm text-red-600 dark:text-red-400">
@@ -793,12 +913,42 @@ export default function StrategyBuilderNewPage() {
               id="strategy-builder-proposed-trades"
               className={`${sb.section} space-y-4`}
             >
+              {builderMode === "build_your_own" ? (
+                <>
+                  <h2 className={sb.sectionTitle}>3. Option Chain</h2>
+                  <BuildYourOwnChainSection
+                    chainSuccess={chainSuccess ?? null}
+                    isFetching={chainQ.isFetching}
+                    isError={chainQ.isError}
+                    error={chainQ.error}
+                    chainStatus={chainQ.data?.Status}
+                    chainError={chainQ.data?.Error}
+                    stockCode={stockCode}
+                    expiryDate={expiryDate}
+                    onStrategyBuySell={handleStrategyChainBuySell}
+                    isStrategySlotAdded={(strike, right, side) =>
+                      buildYourOwnSlots.has(
+                        buildYourOwnSlotKey(
+                          stockCode,
+                          expiryDate,
+                          strike,
+                          right,
+                          side,
+                        ),
+                      )
+                    }
+                  />
+                </>
+              ) : (
+                <>
               <div className="flex flex-wrap items-baseline justify-between gap-3">
                 <h2 className={sb.sectionTitle}>
                   3. Proposed Trades
-                  {activeCategory ? (
+                  {builderMode === "income" ||
+                  builderMode === "bullish" ||
+                  builderMode === "bearish" ? (
                     <span className="ml-2 text-sm font-normal text-zinc-500 dark:text-zinc-400">
-                      — {CATEGORY_LABELS[activeCategory]}
+                      — {CATEGORY_LABELS[builderMode]}
                     </span>
                   ) : null}
                 </h2>
@@ -851,10 +1001,13 @@ export default function StrategyBuilderNewPage() {
                   )}
                 />
               )}
+                </>
+              )}
             </section>
           </SectionGate>
 
           <SectionGate locked={!section4Ready}>
+            <div id="strategy-builder-legs" className="space-y-5">
             <StrategyLegsPanel
               stockCode={stockCode}
               expiryDate={expiryDate}
@@ -894,6 +1047,7 @@ export default function StrategyBuilderNewPage() {
               marginError={marginQ.data?.Error ?? null}
               marginWarnings={strategyBuilderMarginWarnings}
             />
+            </div>
           </SectionGate>
         </div>
 

@@ -171,6 +171,7 @@ async def run_propose_trades(
     provision_elm: bool,
     strategy_category: StrategyCategory,
     risk_reward_profile: RiskRewardProfile | None = None,
+    refresh_chain: bool = False,
     request_id: str | None = None,
     enable_audit: bool = True,
     audit_detail_level: AuditDetailLevel = "summary",
@@ -200,6 +201,7 @@ async def run_propose_trades(
                 "provision_elm": provision_elm,
                 "strategy_category": strategy_category,
                 "risk_reward_profile": risk_reward_profile,
+                "refresh_chain": refresh_chain,
             },
         )
         audit.record(
@@ -296,7 +298,7 @@ async def run_propose_trades(
         audit=audit,
     )
 
-    build_bulk_chain_cache(ctx)
+    build_bulk_chain_cache(ctx, force_refresh=refresh_chain)
     if ctx.halted:
         return _fail(400, ctx.halt_reason or "Insufficient market depth.")
 

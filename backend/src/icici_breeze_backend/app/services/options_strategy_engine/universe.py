@@ -6,6 +6,11 @@ from typing import Any
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.audit.strategy_builder_audit import quote_row_to_audit
 from icici_breeze_backend.app.services.processor import OptionChainBackoff, _expiry_display_to_api, processor
+from icici_breeze_backend.app.services.option_chain_cache import (
+    get_cached_raw_chain,
+    make_chain_cache_key,
+    set_cached_raw_chain,
+)
 from icici_breeze_backend.app.services.user_rate_limit_prefs import get_icici_rate_limit_pause_seconds
 from icici_breeze_backend.app.services.options_strategy_engine.audit_helpers import audit_calc
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
@@ -130,7 +135,13 @@ def fetch_quotes(
     return cache
 
 
-def fetch_full_chain_side(ctx: EngineContext, right: Right, *, fetch_reason: str) -> None:
+def fetch_full_chain_side(
+    ctx: EngineContext,
+    right: Right,
+    *,
+    fetch_reason: str,
+    raw_collector: dict[str, list[Any]] | None = None,
+) -> None:
     if ctx.chain_backoff is None:
         return
     expiry_api = _expiry_display_to_api(ctx.expiry_display)
@@ -146,7 +157,10 @@ def fetch_full_chain_side(ctx: EngineContext, right: Right, *, fetch_reason: str
     )
     if quote.get("Status") != 200:
         return
-    ingested = ingest_chain_rows(quote.get("Success") or [], right)
+    raw_rows = quote.get("Success") or []
+    if raw_collector is not None:
+        raw_collector[right] = list(raw_rows)
+    ingested = ingest_chain_rows(raw_rows, right)
     ctx.cache.update(ingested)
     record_ingested_strikes(ctx.audit, ingested, context=fetch_reason)
 
@@ -259,32 +273,7 @@ def expand_chain_to_liquidity_boundary(ctx: EngineContext) -> None:
         )
 
 
-def build_bulk_chain_cache(ctx: EngineContext) -> None:
-    """Primary core fetch: two chain-wide quotes (CE + PE) without strike_price."""
-    all_strikes = ctx.strikes
-    if not all_strikes:
-        ctx.halted = True
-        ctx.halt_reason = "No strikes found in scrip master for this expiry."
-        if ctx.audit:
-            ctx.audit.record("halt", ctx.halt_reason, {"phase": "liquidity_cache"})
-        return
-
-    mid = float(all_strikes[len(all_strikes) // 2])
-    ctx.chain_backoff = OptionChainBackoff(
-        pause_seconds=get_icici_rate_limit_pause_seconds(ctx.user_id),
-    )
-
-    if ctx.audit:
-        ctx.audit.record(
-            "liquidity_protocol",
-            "Fetch full CE and PE option chains",
-            {"strike_count_master": len(all_strikes), "initial_spot_guess": mid},
-            rationale="Two chain-wide quotes populate the bulk strike cache (~60 strikes per side).",
-        )
-
-    fetch_full_chain_side(ctx, "Call", fetch_reason="Fetch full CE chain")
-    fetch_full_chain_side(ctx, "Put", fetch_reason="Fetch full PE chain")
-
+def _resolve_spot_and_atm(ctx: EngineContext, all_strikes: list[int], mid: float) -> None:
     spot = ctx.spot
     for q in ctx.cache.values():
         if q.spot_price and q.spot_price > 0:
@@ -301,6 +290,79 @@ def build_bulk_chain_cache(ctx: EngineContext) -> None:
         {"spot": spot, "atm_strike": ctx.atm_strike},
         rationale="Spot from chain quote payload when available, else scrip midpoint.",
     )
+
+
+def hydrate_bulk_cache_from_raw_chain(
+    ctx: EngineContext,
+    ce_rows: list[Any],
+    pe_rows: list[Any],
+) -> None:
+    """Populate engine quote cache from cached raw ICICI chain rows."""
+    ce_ingested = ingest_chain_rows(ce_rows, "Call")
+    pe_ingested = ingest_chain_rows(pe_rows, "Put")
+    ctx.cache.update(ce_ingested)
+    ctx.cache.update(pe_ingested)
+    record_ingested_strikes(ctx.audit, ce_ingested, context="chain_cache_hit")
+    record_ingested_strikes(ctx.audit, pe_ingested, context="chain_cache_hit")
+    all_strikes = ctx.strikes
+    mid = float(all_strikes[len(all_strikes) // 2]) if all_strikes else 0.0
+    _resolve_spot_and_atm(ctx, all_strikes, mid)
+
+
+def build_bulk_chain_cache(ctx: EngineContext, *, force_refresh: bool = False) -> None:
+    """Primary core fetch: two chain-wide quotes (CE + PE) without strike_price."""
+    all_strikes = ctx.strikes
+    if not all_strikes:
+        ctx.halted = True
+        ctx.halt_reason = "No strikes found in scrip master for this expiry."
+        if ctx.audit:
+            ctx.audit.record("halt", ctx.halt_reason, {"phase": "liquidity_cache"})
+        return
+
+    mid = float(all_strikes[len(all_strikes) // 2])
+    ctx.chain_backoff = OptionChainBackoff(
+        pause_seconds=get_icici_rate_limit_pause_seconds(ctx.user_id),
+    )
+
+    cache_key = make_chain_cache_key(
+        ctx.user_id,
+        ctx.exchange_code,
+        ctx.stock_code,
+        ctx.expiry_display,
+    )
+
+    if not force_refresh:
+        cached = get_cached_raw_chain(cache_key)
+        if cached:
+            ce_rows, pe_rows, _fetched_at = cached
+            if ctx.audit:
+                ctx.audit.record(
+                    "chain_cache_hit",
+                    "Reused cached option chain",
+                    {"cache_key": cache_key, "ce_rows": len(ce_rows), "pe_rows": len(pe_rows)},
+                    rationale="Skip ICICI full-chain fetch; cache TTL 5 minutes.",
+                )
+            hydrate_bulk_cache_from_raw_chain(ctx, ce_rows, pe_rows)
+            return
+
+    if ctx.audit:
+        ctx.audit.record(
+            "liquidity_protocol",
+            "Fetch full CE and PE option chains",
+            {"strike_count_master": len(all_strikes), "initial_spot_guess": mid},
+            rationale="Two chain-wide quotes populate the bulk strike cache (~60 strikes per side).",
+        )
+
+    pending_raw: dict[str, list[Any]] = {}
+    fetch_full_chain_side(ctx, "Call", fetch_reason="Fetch full CE chain", raw_collector=pending_raw)
+    fetch_full_chain_side(ctx, "Put", fetch_reason="Fetch full PE chain", raw_collector=pending_raw)
+
+    ce_raw = pending_raw.get("Call") or []
+    pe_raw = pending_raw.get("Put") or []
+    if ce_raw and pe_raw:
+        set_cached_raw_chain(cache_key, ce_raw, pe_raw)
+
+    _resolve_spot_and_atm(ctx, all_strikes, mid)
 
 
 def finalize_liquidity_cache(ctx: EngineContext) -> None:

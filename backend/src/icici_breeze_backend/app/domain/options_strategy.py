@@ -18,6 +18,7 @@ class ProposeTradesRequest(BaseModel):
     provision_elm: bool = False
     strategy_category: StrategyCategory
     risk_reward_profile: Optional[RiskRewardProfile] = None
+    refresh_chain: bool = False
     audit_detail_level: Literal["summary", "debug"] = "summary"
 
 
