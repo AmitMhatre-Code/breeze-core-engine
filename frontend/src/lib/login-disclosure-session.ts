@@ -14,6 +14,28 @@ export function hasSessionAck(userId: string, version: number): boolean {
   return sessionStorage.getItem(KEY) === ackValue(uid, version);
 }
 
+export function getStoredSessionAckVersion(userId: string): number | null {
+  if (typeof sessionStorage === "undefined") return null;
+  const uid = userId.trim().toUpperCase();
+  if (!uid) return null;
+
+  const stored = sessionStorage.getItem(KEY);
+  if (!stored) return null;
+
+  const colon = stored.indexOf(":");
+  if (colon < 1) return null;
+
+  const storedUid = stored.slice(0, colon).trim().toUpperCase();
+  if (storedUid !== uid) return null;
+
+  const version = Number.parseInt(stored.slice(colon + 1), 10);
+  return Number.isFinite(version) && version >= 1 ? version : null;
+}
+
+export function hasStoredSessionAckForUser(userId: string): boolean {
+  return getStoredSessionAckVersion(userId) != null;
+}
+
 export function setSessionAck(userId: string, version: number): void {
   if (typeof sessionStorage === "undefined") return;
   const uid = userId.trim().toUpperCase();

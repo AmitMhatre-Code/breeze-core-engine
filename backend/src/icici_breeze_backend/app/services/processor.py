@@ -246,6 +246,31 @@ def _normalize_icici_response(data: dict) -> tuple:
     return status, success, err_msg
 
 
+def _is_empty_portfolio_positions_response(data: dict | None) -> bool:
+    """True when ICICI reports no open positions (Success null or empty list) with Status 200."""
+    if not isinstance(data, dict):
+        return False
+    status = data.get("Status") or data.get("status")
+    if status != 200:
+        return False
+    if "Success" in data:
+        raw = data.get("Success")
+    else:
+        raw = data.get("success")
+    if raw is None:
+        return True
+    return isinstance(raw, list) and len(raw) == 0
+
+
+def _empty_portfolio_positions_result() -> dict:
+    return {"Status": 200, "Success": [], "Error": None}
+
+
+def _quote_success_rows(quote: dict | None) -> list:
+    rows = (quote or {}).get("Success")
+    return rows if isinstance(rows, list) else []
+
+
 def build_margin_situation_from_raw(margin: dict | None, *, target_margin_ute: float = 100) -> dict:
     """Normalize raw ICICI margin API response into get_margin_situation Success shape."""
     margin_situation: dict = {}
@@ -1411,42 +1436,18 @@ class processor():
             else:
                 return {"Status": cred_data.get("Status", 400), "Error": cred_data.get("Error", "Could not fetch credentials"), "Success": None}
         else:
-            # Use direct CustomerDetails API (like margin) - SDK's get_customer_details may return different structure
-            broker_token = self.get_session_token(user_id) or ""
-            resolved_session = (session_token or "").strip()
-            if not resolved_session:
-                from icici_breeze_backend.app.services.broker_snapshot_cache import get_snapshot
-
-                snap = get_snapshot(user_id, broker_token)
-                if snap and snap.customerdetails_session_token:
-                    resolved_session = snap.customerdetails_session_token
-            if not resolved_session:
-                resolved_session = broker_token
-            if not resolved_session:
-                resolved_session = (
-                    _fetch_customerdetails_session_token(
-                        cred_data["Success"]["broker_api_key"], broker_token, user_id=user_id
-                    )
-                    if broker_token
-                    else ""
-                )
-            if not resolved_session:
-                return {"Status": 400, "Error": "CustomerDetails did not return session_token", "Success": None}
+            # Same SDK entry point as Breeze API tester (get_portfolio_positions).
             try:
-                positions = _call_icici_api_direct(
-                    "https://api.icicidirect.com/breezeapi/api/v1/portfoliopositions",
-                    {},
-                    cred_data["Success"]["broker_api_key"],
-                    full_secret,
-                    resolved_session,
-                    user_id=user_id,
-                    x_session_token=resolved_session,
-                )
+                positions = breeze.get_portfolio_positions()
             except Exception as e:
                 _logger.warning("get_positions: exception user_id=%s: %s", user_id, e, exc_info=True)
                 positions = {"Status": 400, "Error": "Unable to fetch positions. Please try again or re-login.", "Success": None}
 
         self._maybe_evict_session(user_id, positions)
+        if positions is None:
+            positions = {"Status": 400, "Error": "ICICI Breeze API get_portfolio_positions() returned NULL", "Success": None}
+        if _is_empty_portfolio_positions_response(positions):
+            return _empty_portfolio_positions_result()
         if positions is not None:
             status, success_data, _ = _normalize_icici_response(positions)
             if status == 200 and success_data is not None:
@@ -1465,10 +1466,11 @@ class processor():
                         quote = breeze.get_quotes(stock_code,exchange_code,expiry_date,product_type,right,strike_price)
                     except Exception as e:
                         quote = _icici_error(f"Error calling ICICI Breeze API get_quotes({stock_code},{exchange_code},{expiry_date},{product_type},{right},{strike_price}): {e}")
-                    if quote['Status'] == 200:
-                        i['spot_price'] = quote['Success'][0]['spot_price']
+                    quote_rows = _quote_success_rows(quote)
+                    if quote.get("Status") == 200 and quote_rows:
+                        i["spot_price"] = quote_rows[0].get("spot_price", "Err")
                     else:
-                        i['spot_price'] = "Err"
+                        i["spot_price"] = "Err"
 
                     if i['product_type'] == cfg.OPTIONS:
                         i['option'] = i['stock_code']+"-"+i['expiry_date']+"-"+i['strike_price']+"-"+i['right']
@@ -1536,11 +1538,11 @@ class processor():
                                 i['elm_margin_required'] = None
                                 i['carry_margin_returns'] = None
                                 i['hedgeable'] = False
+                if positions.get("Status") == 200 and positions.get("Success") == []:
+                    positions["Error"] = None
             else:
                 err = positions.get("Error") or positions.get("error") or "No data"
                 _logger.warning("get_positions: API returned status=%s error=%r user_id=%s", status, err, user_id)
-        else:
-            positions = {"Status": 400, "Error": "ICICI Breeze API get_portfolio_positions() returned NULL", "Success": None}
 
         return positions
 

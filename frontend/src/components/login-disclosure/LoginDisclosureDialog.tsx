@@ -1,6 +1,9 @@
 "use client";
 
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MarkdownContent } from "@/components/markdown/MarkdownContent";
+
+const SCROLL_THRESHOLD_PX = 32;
 
 type Props = {
   open: boolean;
@@ -11,6 +14,29 @@ type Props = {
   onProceed: () => void;
 };
 
+function useScrollReachedBottom(contentKey: string) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [hasReachedBottom, setHasReachedBottom] = useState(false);
+
+  const checkScrollPosition = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight <= SCROLL_THRESHOLD_PX;
+    setHasReachedBottom(atBottom);
+  }, []);
+
+  useEffect(() => {
+    setHasReachedBottom(false);
+    const frame = requestAnimationFrame(() => {
+      checkScrollPosition();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [contentKey, checkScrollPosition]);
+
+  return { scrollRef, hasReachedBottom, checkScrollPosition };
+}
+
 export function LoginDisclosureDialog({
   open,
   pending,
@@ -19,6 +45,10 @@ export function LoginDisclosureDialog({
   effectiveDate,
   onProceed,
 }: Props) {
+  const { scrollRef, hasReachedBottom, checkScrollPosition } = useScrollReachedBottom(
+    contentMarkdown,
+  );
+
   if (!open) return null;
 
   return (
@@ -50,7 +80,11 @@ export function LoginDisclosureDialog({
           ) : null}
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div
+          ref={scrollRef}
+          onScroll={checkScrollPosition}
+          className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
+        >
           <MarkdownContent
             markdown={contentMarkdown}
             className="text-sm leading-relaxed text-zinc-300"
@@ -61,15 +95,20 @@ export function LoginDisclosureDialog({
           <p className="mb-3 text-xs leading-relaxed text-zinc-500">
             You must read and acknowledge the risk disclosure before using Breeze Modern.
           </p>
-          <div className="flex justify-end">
+          <div className="flex flex-col items-end gap-2">
             <button
               type="button"
-              disabled={pending}
+              disabled={pending || !hasReachedBottom}
               onClick={onProceed}
-              className="app-btn-primary min-w-[10rem]"
+              className="app-btn-primary min-w-[10rem] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {pending ? "Saving…" : "Proceed"}
             </button>
+            {!hasReachedBottom ? (
+              <p className="max-w-xs text-right text-xs leading-relaxed text-zinc-500">
+                Scroll to the bottom of the message to enable Proceed.
+              </p>
+            ) : null}
           </div>
         </footer>
       </div>

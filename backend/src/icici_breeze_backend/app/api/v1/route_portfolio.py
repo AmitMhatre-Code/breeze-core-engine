@@ -81,7 +81,7 @@ def _normalize_portfolio_success_for_ui(data: Dict[str, Any]) -> Dict[str, Any]:
         return data
     success = data.get("Success")
     if success is None:
-        return data
+        return {**data, "Success": {"positions": []}, "Error": None}
     rows: Optional[List[Any]] = None
     if isinstance(success, list):
         rows = success
@@ -92,8 +92,10 @@ def _normalize_portfolio_success_for_ui(data: Dict[str, Any]) -> Dict[str, Any]:
     positions = [
         _coerce_position_row(r) if isinstance(r, dict) else r for r in rows
     ]
-    data = {**data, "Success": {"positions": positions}}
-    return data
+    out = {**data, "Success": {"positions": positions}}
+    if not positions:
+        out["Error"] = None
+    return out
 
 
 router = APIRouter()
