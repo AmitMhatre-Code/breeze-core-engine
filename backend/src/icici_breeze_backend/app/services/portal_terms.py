@@ -99,25 +99,33 @@ async def fetch_portal_terms_status(*, icici_user_id: str) -> dict:
         return portal_terms_skipped_status()
 
 
-async def post_portal_terms_accept(*, icici_user_id: str, terms_version: int) -> dict:
+async def post_portal_terms_accept(
+    *,
+    icici_user_id: str,
+    terms_version: int,
+    idirect_user_name: str | None = None,
+) -> dict:
     if not _portal_configured():
         return {"ok": False, "detail": "Portal not configured"}
-    payload = _portal_base_payload(icici_user_id=icici_user_id)
-    if not payload:
+    base_payload = _portal_base_payload(icici_user_id=icici_user_id)
+    if not base_payload:
         return {"ok": False, "detail": "Portal terms unavailable"}
-    payload["terms_version"] = str(terms_version)
     base = (cfg.PORTAL_API_BASE_URL or "").strip().rstrip("/")
     url = f"{base}/api/public/terms/accept"
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT_SEC) as client:
+            request_body: dict[str, str | int] = {
+                "license_key": base_payload["license_key"],
+                "public_ip": base_payload["public_ip"],
+                "icici_user_id": base_payload["icici_user_id"],
+                "terms_version": terms_version,
+            }
+            name = (idirect_user_name or "").strip()
+            if name:
+                request_body["idirect_user_name"] = name
             resp = await client.post(
                 url,
-                json={
-                    "license_key": payload["license_key"],
-                    "public_ip": payload["public_ip"],
-                    "icici_user_id": payload["icici_user_id"],
-                    "terms_version": terms_version,
-                },
+                json=request_body,
             )
             if not resp.is_success:
                 detail = "Terms acceptance failed"

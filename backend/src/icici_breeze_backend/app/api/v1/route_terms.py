@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 
 from icici_breeze_backend.app.api.deps import get_current_user
 from icici_breeze_backend.app.auth.context import RequestContext
+from icici_breeze_backend.app.services.broker_snapshot_cache import get_snapshot
+from icici_breeze_backend.app.services.icici_customer_identity import parse_customer_details_identity
 from icici_breeze_backend.app.services.portal_terms import (
     fetch_portal_terms_current,
     fetch_portal_terms_status,
@@ -17,6 +19,28 @@ router = APIRouter(prefix="/api/terms", tags=["terms"])
 
 class TermsAcceptBody(BaseModel):
     terms_version: int = Field(..., ge=1)
+
+
+def _resolve_idirect_user_name(ctx: RequestContext) -> str | None:
+    user_id = (ctx.user_id or "").strip()
+    if not user_id:
+        return None
+    broker_token = (ctx.broker_token or "").strip()
+    snap = get_snapshot(user_id, broker_token) if broker_token else None
+    if snap:
+        customer = snap.customer_details
+    elif user_id:
+        from icici_breeze_backend.app.services.processor import processor
+
+        customer = processor.get_customer_details(user_id)
+    else:
+        customer = None
+    if not customer:
+        return None
+    _, idirect_user_name = parse_customer_details_identity(
+        customer, fallback_user_id=user_id
+    )
+    return idirect_user_name
 
 
 @router.get("/current")
@@ -51,6 +75,7 @@ async def terms_accept(
     result = await post_portal_terms_accept(
         icici_user_id=user_id,
         terms_version=body.terms_version,
+        idirect_user_name=_resolve_idirect_user_name(ctx),
     )
     if not result.get("ok"):
         status_code = int(result.get("status_code") or 502)

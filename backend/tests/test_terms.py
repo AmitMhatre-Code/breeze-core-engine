@@ -17,6 +17,7 @@ def terms_client(monkeypatch):
             username="iciciuser1",
             roles=["trader"],
             is_authenticated=True,
+            broker_token="broker-token",
         )
 
     app = FastAPI()
@@ -107,22 +108,53 @@ def test_terms_status_needs_acceptance(terms_client, monkeypatch):
 
 
 def test_terms_accept_success(terms_client, monkeypatch):
-    async def _accept(*, icici_user_id: str, terms_version: int):
+    async def _accept(*, icici_user_id: str, terms_version: int, idirect_user_name: str | None = None):
         assert icici_user_id == "iciciuser1"
         assert terms_version == 2
+        assert idirect_user_name == "VIKRAM M HATRE"
         return {"ok": True, "terms_version": 2}
 
     monkeypatch.setattr(
         "icici_breeze_backend.app.api.v1.route_terms.post_portal_terms_accept",
         _accept,
     )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.api.v1.route_terms._resolve_idirect_user_name",
+        lambda _ctx: "VIKRAM M HATRE",
+    )
     r = terms_client.post("/api/terms/accept", json={"terms_version": 2})
     assert r.status_code == 200
     assert r.json()["ok"] is True
 
 
+def test_terms_accept_forwards_name_from_snapshot(terms_client, monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def _accept(*, icici_user_id: str, terms_version: int, idirect_user_name: str | None = None):
+        captured["idirect_user_name"] = idirect_user_name
+        return {"ok": True, "terms_version": terms_version}
+
+    class _Snap:
+        customer_details = {
+            "Status": 200,
+            "Success": {"id": "iciciuser1", "idirect_user_name": "VIKRAM M HATRE"},
+        }
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.api.v1.route_terms.post_portal_terms_accept",
+        _accept,
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.api.v1.route_terms.get_snapshot",
+        lambda user_id, broker_token: _Snap(),
+    )
+    r = terms_client.post("/api/terms/accept", json={"terms_version": 2})
+    assert r.status_code == 200
+    assert captured["idirect_user_name"] == "VIKRAM M HATRE"
+
+
 def test_terms_accept_version_mismatch(terms_client, monkeypatch):
-    async def _accept(*, icici_user_id: str, terms_version: int):
+    async def _accept(*, icici_user_id: str, terms_version: int, idirect_user_name: str | None = None):
         return {
             "ok": False,
             "detail": "Terms version mismatch; refresh and accept the latest version",
@@ -132,6 +164,10 @@ def test_terms_accept_version_mismatch(terms_client, monkeypatch):
     monkeypatch.setattr(
         "icici_breeze_backend.app.api.v1.route_terms.post_portal_terms_accept",
         _accept,
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.api.v1.route_terms._resolve_idirect_user_name",
+        lambda _ctx: None,
     )
     r = terms_client.post("/api/terms/accept", json={"terms_version": 1})
     assert r.status_code == 409
