@@ -12,7 +12,6 @@ export async function fetchStrategyBuilderChain(
     stock_code: string;
     expiry_date: string;
     exchange_code: string;
-    force_refresh?: boolean;
   },
   signal?: AbortSignal,
 ): Promise<ChainApiResponse> {
@@ -21,9 +20,6 @@ export async function fetchStrategyBuilderChain(
     expiry_date: params.expiry_date,
     exchange_code: params.exchange_code,
   });
-  if (params.force_refresh) {
-    q.set("force_refresh", "true");
-  }
   return apiClient.get<ChainApiResponse>(
     `/strategy-builder/chain?${q.toString()}`,
     signal,
@@ -41,7 +37,6 @@ export type ProposeTradesParams = {
   provision_elm: boolean;
   strategy_category: StrategyCategory;
   risk_reward_profile?: RiskRewardProfile;
-  refresh_chain?: boolean;
   audit_detail_level?: "summary" | "debug";
 };
 

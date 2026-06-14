@@ -20,6 +20,16 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "1.9.9-d",
+    date: "14-Jun-2026",
+    releaseKind: "patch",
+    summary: "Always-fresh option chain",
+    changes: [
+      "Removed server-side option chain TTL cache; chain and strategy execution always fetch live quotes from ICICI",
+      "Removed Strategy Builder cache timestamp banner and opt-in refresh checkbox",
+    ],
+  },
+  {
     version: "1.9.9-c",
     date: "14-Jun-2026",
     releaseKind: "minor",

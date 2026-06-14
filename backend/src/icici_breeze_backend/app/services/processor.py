@@ -23,13 +23,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from icici_breeze_backend.app.repositories import parked_orders as parked_orders_repo
-from icici_breeze_backend.app.services.option_chain_cache import (
-    chain_metadata,
-    get_cached_raw_chain,
-    make_chain_cache_key,
-    set_cached_raw_chain,
-)
-
 if TYPE_CHECKING:
     from icici_breeze_backend.audit.strategy_builder_audit import StrategyBuilderAuditSession
 from icici_breeze_backend.app.domain.order import ParkedOrderItem, ParkedOrderListItem
@@ -1931,8 +1924,6 @@ class processor():
         stock_code: str,
         exchange_code: str,
         expiry_date: str,
-        *,
-        force_refresh: bool = False,
     ):
         """Fetch full CE + PE option chain for order page. Expiry can be YYYY-MM-DD or DD-Mon-YYYY.
         Returns dict with Status, Error, Success: { chain_rows, max_call_oi, max_put_oi, expiry_display, stock_code, exchange_code }.
@@ -1947,33 +1938,18 @@ class processor():
                 pass
         expiry_api = _expiry_display_to_api(expiry_display)
 
-        cache_key = make_chain_cache_key(user_id, exchange_code, stock_code, expiry_display)
-        served_from_cache = False
-        fetched_at: float | None = None
-        ce_raw: list[dict[str, Any]] | None = None
-        pe_raw: list[dict[str, Any]] | None = None
-
-        if not force_refresh:
-            cached = get_cached_raw_chain(cache_key)
-            if cached:
-                ce_raw, pe_raw, fetched_at = cached
-                served_from_cache = True
-
-        if ce_raw is None or pe_raw is None:
-            ce_res = self._fetch_icici_chain_side_raw(
-                user_id, stock_code, exchange_code, expiry_api, cfg.CALL
-            )
-            pe_res = self._fetch_icici_chain_side_raw(
-                user_id, stock_code, exchange_code, expiry_api, cfg.PUT
-            )
-            if ce_res.get("Status") != 200:
-                return ce_res
-            if pe_res.get("Status") != 200:
-                return pe_res
-            ce_raw = ce_res.get("Success") or []
-            pe_raw = pe_res.get("Success") or []
-            fetched_at = set_cached_raw_chain(cache_key, ce_raw, pe_raw)
-            served_from_cache = False
+        ce_res = self._fetch_icici_chain_side_raw(
+            user_id, stock_code, exchange_code, expiry_api, cfg.CALL
+        )
+        pe_res = self._fetch_icici_chain_side_raw(
+            user_id, stock_code, exchange_code, expiry_api, cfg.PUT
+        )
+        if ce_res.get("Status") != 200:
+            return ce_res
+        if pe_res.get("Status") != 200:
+            return pe_res
+        ce_raw = ce_res.get("Success") or []
+        pe_raw = pe_res.get("Success") or []
 
         calls = self._transform_icici_chain_rows(
             stock_code, expiry_display, exchange_code, cfg.CALL, ce_raw
@@ -2057,8 +2033,6 @@ class processor():
             else None,
             "freeze_quantity": freeze_quantity,
         }
-        if fetched_at is not None:
-            success_payload.update(chain_metadata(fetched_at, served_from_cache))
 
         return {
             "Status": 200,

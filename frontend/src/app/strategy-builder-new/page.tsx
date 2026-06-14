@@ -89,36 +89,6 @@ const DIRECTIONAL_HINT =
 const BYO_HINT =
   "Pick buy/sell legs from the full liquid option chain and simulate payoffs before execution.";
 
-const CHAIN_STALE_TIME_MS = 5 * 60 * 1000;
-
-function formatChainFetchedAt(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    const ist = { timeZone: "Asia/Kolkata" as const };
-    const dateParts = new Intl.DateTimeFormat("en-GB", {
-      ...ist,
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    }).formatToParts(d);
-    const day = dateParts.find((p) => p.type === "day")?.value ?? "??";
-    const month = dateParts.find((p) => p.type === "month")?.value ?? "???";
-    const year = dateParts.find((p) => p.type === "year")?.value ?? "????";
-    const time = new Intl.DateTimeFormat("en-IN", {
-      ...ist,
-      hour: "numeric",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: true,
-    }).format(d);
-    return `${day}-${month}-${year}, ${time}`;
-  } catch {
-    return iso;
-  }
-}
-
 function FieldHint({ text }: { text: string }) {
   return (
     <span
@@ -156,7 +126,6 @@ function resetDownstream(
     setOutlookFilter: (v: Set<Outlook>) => void;
     setTradeSort: (v: TradeSortKey) => void;
     setBuilderMode: (v: BuilderMode) => void;
-    setRefreshChainOnBuild: (v: boolean) => void;
   },
   clearError = false,
 ) {
@@ -168,7 +137,6 @@ function resetDownstream(
   setters.setOutlookFilter(new Set(ALL_OUTLOOKS));
   setters.setTradeSort("score");
   setters.setBuilderMode(null);
-  setters.setRefreshChainOnBuild(false);
   if (clearError) setters.setGenerateError(null);
 }
 
@@ -184,8 +152,6 @@ export default function StrategyBuilderNewPage() {
   const [maxLossLacs, setMaxLossLacs] = useState("");
   const [provisionElm, setProvisionElm] = useState(false);
   const [builderMode, setBuilderMode] = useState<BuilderMode>(null);
-  const [refreshChainOnBuild, setRefreshChainOnBuild] = useState(false);
-  const [byoLoading, setByoLoading] = useState(false);
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
   const [proposedData, setProposedData] = useState<ProposeTradesSuccess | null>(
     null,
@@ -215,7 +181,6 @@ export default function StrategyBuilderNewPage() {
   const prevSection2ReadyRef = useRef(false);
   const prevSection3ReadyRef = useRef(false);
   const prevSection4ReadyRef = useRef(false);
-  const chainForceRefreshRef = useRef(false);
 
   const downstreamSetters = {
     setMinPopPct,
@@ -227,7 +192,6 @@ export default function StrategyBuilderNewPage() {
     setOutlookFilter,
     setTradeSort,
     setBuilderMode,
-    setRefreshChainOnBuild,
   };
 
   const uq = useQuery({
@@ -252,12 +216,10 @@ export default function StrategyBuilderNewPage() {
           stock_code: stockCode.trim(),
           expiry_date: expiryDate.trim(),
           exchange_code: segmentExchange,
-          force_refresh: chainForceRefreshRef.current,
         },
         signal,
       ),
     enabled: Boolean(stockCode.trim() && expiryDate.trim()),
-    staleTime: CHAIN_STALE_TIME_MS,
   });
 
   const chainSuccess =
@@ -346,19 +308,8 @@ export default function StrategyBuilderNewPage() {
     canGenerateShared && minPopPctNum != null && minAnnReturnPctNum != null;
   const canGenerateDirectional = canGenerateShared;
 
-  const refetchChainIfRequested = useCallback(async () => {
-    if (!refreshChainOnBuild) return;
-    chainForceRefreshRef.current = true;
-    try {
-      await chainQ.refetch();
-    } finally {
-      chainForceRefreshRef.current = false;
-    }
-  }, [refreshChainOnBuild, chainQ]);
-
   const generateM = useMutation({
     mutationFn: async (category: StrategyCategory) => {
-      await refetchChainIfRequested();
       return proposeTrades({
         exchange_code: segmentExchange,
         stock_code: stockCode.trim(),
@@ -373,7 +324,6 @@ export default function StrategyBuilderNewPage() {
           category === "income" ? minAnnReturnPctNum! : undefined,
         provision_elm: provisionElm,
         strategy_category: category,
-        refresh_chain: refreshChainOnBuild,
       });
     },
     onSuccess: (res, category) => {
@@ -647,20 +597,14 @@ export default function StrategyBuilderNewPage() {
     [],
   );
 
-  const startBuildYourOwn = useCallback(async () => {
+  const startBuildYourOwn = useCallback(() => {
     setGenerateError(null);
     setProposedData(null);
     setSelectedTradeId(null);
     setLegs([]);
     setLegMarginCache({});
     setBuilderMode("build_your_own");
-    setByoLoading(true);
-    try {
-      await refetchChainIfRequested();
-    } finally {
-      setByoLoading(false);
-    }
-  }, [refetchChainIfRequested]);
+  }, []);
 
   return (
     <AppShell>
@@ -890,34 +834,13 @@ export default function StrategyBuilderNewPage() {
                     <button
                       type="button"
                       className={`${sb.btnPrimary} mt-auto w-full`}
-                      disabled={!section2Ready || byoLoading || generateM.isPending}
-                      onClick={() => void startBuildYourOwn()}
+                      disabled={!section2Ready || generateM.isPending}
+                      onClick={startBuildYourOwn}
                     >
-                      {byoLoading ? "Loading chain…" : "Build Your Own"}
+                      Build Your Own
                     </button>
                   </div>
                 </div>
-
-                {chainSuccess?.chain_fetched_at ? (
-                  <div className="space-y-2 rounded-md border border-sky-200/90 bg-sky-50/80 px-3 py-2.5 text-sm text-sky-950 dark:border-sky-900/45 dark:bg-sky-950/30 dark:text-sky-100">
-                    <p>
-                      Options chain last updated at{" "}
-                      <span className="font-medium tabular-nums">
-                        {formatChainFetchedAt(chainSuccess.chain_fetched_at)}
-                      </span>
-                      {chainSuccess.from_cache ? " (cached)" : null}.
-                    </p>
-                    <label className={`${sb.checkboxRow} gap-2 text-xs font-medium`}>
-                      <input
-                        type="checkbox"
-                        checked={refreshChainOnBuild}
-                        onChange={(e) => setRefreshChainOnBuild(e.target.checked)}
-                        className="size-4 rounded border-zinc-300 text-sky-600 focus:ring-sky-500 dark:border-zinc-600"
-                      />
-                      Refresh options chain as part of Strategy Execution
-                    </label>
-                  </div>
-                ) : null}
               </div>
               {generateError ? (
                 <p className="mt-4 text-sm text-red-600 dark:text-red-400">

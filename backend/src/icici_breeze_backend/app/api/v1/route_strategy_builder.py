@@ -70,7 +70,6 @@ async def get_chain(
     stock_code: str,
     expiry_date: str,
     exchange_code: str = cfg.NFO,
-    force_refresh: bool = False,
     ctx: RequestContext = Depends(get_request_context),
 ):
     if not ctx.broker_token:
@@ -82,7 +81,6 @@ async def get_chain(
         stock_code.strip(),
         exchange_code,
         expiry_date.strip(),
-        force_refresh=force_refresh,
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderChain")
     return StrategyBuilderChainResponse(**data)
@@ -164,7 +162,6 @@ async def post_propose_trades(
         provision_elm=body.provision_elm,
         strategy_category=body.strategy_category,
         risk_reward_profile=body.risk_reward_profile,
-        refresh_chain=body.refresh_chain,
         request_id=ctx.request_id,
         audit_detail_level=body.audit_detail_level,
     )

@@ -35,10 +35,6 @@ export type ChainSuccess = {
   lot_size?: number | null;
   /** Max order quantity per exchange freeze rule (multiple of lot size). */
   freeze_quantity?: number | null;
-  /** ISO timestamp when chain quotes were last fetched. */
-  chain_fetched_at?: string | null;
-  /** True when served from server-side TTL cache. */
-  from_cache?: boolean;
 };
 
 export type ChainApiResponse = {
