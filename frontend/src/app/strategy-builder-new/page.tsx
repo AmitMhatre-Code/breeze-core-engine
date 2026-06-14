@@ -94,7 +94,26 @@ const CHAIN_STALE_TIME_MS = 5 * 60 * 1000;
 function formatChainFetchedAt(iso: string | null | undefined): string {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const ist = { timeZone: "Asia/Kolkata" as const };
+    const dateParts = new Intl.DateTimeFormat("en-GB", {
+      ...ist,
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).formatToParts(d);
+    const day = dateParts.find((p) => p.type === "day")?.value ?? "??";
+    const month = dateParts.find((p) => p.type === "month")?.value ?? "???";
+    const year = dateParts.find((p) => p.type === "year")?.value ?? "????";
+    const time = new Intl.DateTimeFormat("en-IN", {
+      ...ist,
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    }).format(d);
+    return `${day}-${month}-${year}, ${time}`;
   } catch {
     return iso;
   }
@@ -778,7 +797,7 @@ export default function StrategyBuilderNewPage() {
                 <div className="grid gap-4 lg:grid-cols-3">
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Income strategies</h3>
-                    <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="flex flex-1 flex-col gap-4">
                       <div className="min-w-0 space-y-1">
                         <label className={sb.fieldRow}>
                           <span
@@ -831,7 +850,7 @@ export default function StrategyBuilderNewPage() {
                     </div>
                     <button
                       type="button"
-                      className={`${sb.btnPrimary} w-full`}
+                      className={`${sb.btnPrimary} mt-auto w-full`}
                       disabled={!canGenerateIncome || generateM.isPending}
                       onClick={() => generateM.mutate("income")}
                     >
@@ -843,10 +862,10 @@ export default function StrategyBuilderNewPage() {
 
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Directional strategies</h3>
-                    <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                    <p className="flex-1 text-sm text-zinc-600 dark:text-zinc-400">
                       {DIRECTIONAL_HINT}
                     </p>
-                    <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="mt-auto grid gap-2 sm:grid-cols-2">
                       {(["bullish", "bearish"] as const).map((category) => (
                         <button
                           key={category}
@@ -865,12 +884,12 @@ export default function StrategyBuilderNewPage() {
 
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Build your own</h3>
-                    <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                    <p className="flex-1 text-sm text-zinc-600 dark:text-zinc-400">
                       {BYO_HINT}
                     </p>
                     <button
                       type="button"
-                      className={`${sb.btnPrimary} w-full`}
+                      className={`${sb.btnPrimary} mt-auto w-full`}
                       disabled={!section2Ready || byoLoading || generateM.isPending}
                       onClick={() => void startBuildYourOwn()}
                     >
@@ -880,7 +899,7 @@ export default function StrategyBuilderNewPage() {
                 </div>
 
                 {chainSuccess?.chain_fetched_at ? (
-                  <div className="space-y-2 rounded-md border border-amber-200/80 bg-amber-50/60 px-3 py-2.5 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                  <div className="space-y-2 rounded-md border border-sky-200/90 bg-sky-50/80 px-3 py-2.5 text-sm text-sky-950 dark:border-sky-900/45 dark:bg-sky-950/30 dark:text-sky-100">
                     <p>
                       Options chain last updated at{" "}
                       <span className="font-medium tabular-nums">
