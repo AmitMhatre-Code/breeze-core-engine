@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
+import { InfinitySymbol } from "@/components/strategy-builder/InfinitySymbol";
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
@@ -11,11 +12,15 @@ import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
   estimateProbabilityOfProfit,
   payoffChartSpotDomain,
-  portfolioPayoffAtExpiry,
   scanMarkToModelCurve,
   scanPayoffCurve,
+  summarizePayoffExact,
   type PayoffSummary,
 } from "@/lib/strategy-builder/payoff";
+import {
+  isUnlimitedMaxLoss,
+  isUnlimitedMaxProfit,
+} from "@/lib/strategy-builder/trade-metrics";
 import type {
   ChainApiResponse,
   ChainSuccess,
@@ -100,66 +105,6 @@ type Props = {
 const profitClass = "text-emerald-700 dark:text-emerald-400";
 const lossClass = "text-red-700 dark:text-red-400";
 const PAYOFF_STEPS = 401;
-
-function normalizeBreakevens(values: number[]): number[] {
-  if (!values.length) return [];
-  const sorted = [...values].filter(Number.isFinite).sort((a, b) => a - b);
-  const out: number[] = [];
-  for (const v of sorted) {
-    const prev = out[out.length - 1];
-    if (prev == null || Math.abs(v - prev) > 0.5) out.push(v);
-  }
-  return out;
-}
-
-function uniqueSorted(values: number[]): number[] {
-  const sorted = [...values].filter(Number.isFinite).sort((a, b) => a - b);
-  const out: number[] = [];
-  for (const v of sorted) {
-    const prev = out[out.length - 1];
-    if (prev == null || Math.abs(v - prev) > 1e-9) out.push(v);
-  }
-  return out;
-}
-
-function summarizeExpiryExactly(
-  legs: StrategyLeg[],
-  lotSize: number,
-  spot: number | null,
-): PayoffSummary {
-  if (!legs.length) return { maxProfit: 0, maxLoss: 0, breakevens: [] };
-  const strikes = uniqueSorted(legs.map((l) => l.strike));
-  const maxStrike = strikes.length ? strikes[strikes.length - 1] : 0;
-  const ref = Math.max(maxStrike, spot ?? 0, 1);
-  const left = 0;
-  const right = ref * 4;
-  const nodes = uniqueSorted([left, ...strikes, right]);
-  const ys = nodes.map((s) => portfolioPayoffAtExpiry(s, legs, lotSize));
-  let maxProfit = -Infinity;
-  let maxLoss = Infinity;
-  for (const y of ys) {
-    if (y > maxProfit) maxProfit = y;
-    if (y < maxLoss) maxLoss = y;
-  }
-  const breakevens: number[] = [];
-  for (let i = 1; i < nodes.length; i++) {
-    const x0 = nodes[i - 1];
-    const x1 = nodes[i];
-    const y0 = ys[i - 1];
-    const y1 = ys[i];
-    if (Math.abs(y0) <= 1e-9) breakevens.push(x0);
-    if (y0 * y1 < 0) {
-      const t = y0 / (y0 - y1);
-      breakevens.push(x0 + t * (x1 - x0));
-    }
-  }
-  if (Math.abs(ys[ys.length - 1]) <= 1e-9) breakevens.push(nodes[nodes.length - 1]);
-  return {
-    maxProfit: Number.isFinite(maxProfit) ? maxProfit : 0,
-    maxLoss: Number.isFinite(maxLoss) ? maxLoss : 0,
-    breakevens: normalizeBreakevens(breakevens),
-  };
-}
 
 /** Payoff + POP for one underlying/expiry bucket (chain fetch for lot size, spot, IV). */
 export function PortfolioGroupPayoffPanel({
@@ -251,7 +196,7 @@ export function PortfolioGroupPayoffPanel({
       legs,
       lotSize,
     );
-    const exactSummary = summarizeExpiryExactly(legs, lotSize, spot);
+    const exactSummary = summarizePayoffExact(legs, lotSize, spot);
     let xt: number[] = [];
     let yt: number[] = [];
     if (spot != null && T > 0) {
@@ -316,7 +261,15 @@ export function PortfolioGroupPayoffPanel({
               Max profit
             </div>
             <div className={`font-semibold tabular-nums ${profitClass}`}>
-              {hasLegs ? formatIndianMoneyCompact(summary.maxProfit) : "—"}
+              {hasLegs ? (
+                isUnlimitedMaxProfit(summary.maxProfit) ? (
+                  <InfinitySymbol />
+                ) : (
+                  formatIndianMoneyCompact(summary.maxProfit)
+                )
+              ) : (
+                "—"
+              )}
             </div>
           </div>
           <div>
@@ -324,7 +277,15 @@ export function PortfolioGroupPayoffPanel({
               Max loss
             </div>
             <div className={`font-semibold tabular-nums ${lossClass}`}>
-              {hasLegs ? formatIndianMoneyCompact(summary.maxLoss) : "—"}
+              {hasLegs ? (
+                isUnlimitedMaxLoss(summary.maxLoss) ? (
+                  <InfinitySymbol />
+                ) : (
+                  formatIndianMoneyCompact(summary.maxLoss)
+                )
+              ) : (
+                "—"
+              )}
             </div>
           </div>
           <div>

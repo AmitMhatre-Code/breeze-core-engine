@@ -16,6 +16,7 @@ import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill
 import { OptionStrategyIcon } from "@/components/strategy-builder/OptionStrategyIcon";
 import { ReadymadeSetupTooltip } from "@/components/strategy-builder/ReadymadeSetupTooltip";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
+import { InfinitySymbol } from "@/components/strategy-builder/InfinitySymbol";
 import { apiClient } from "@/lib/api-client";
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
 import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
@@ -40,6 +41,10 @@ import {
   type TemplateId,
   STRATEGY_TEMPLATES,
 } from "@/lib/strategy-builder/templates";
+import {
+  isUnlimitedMaxLoss,
+  isUnlimitedMaxProfit,
+} from "@/lib/strategy-builder/trade-metrics";
 import type {
   ChainApiResponse,
   ChainRow,
@@ -5810,9 +5815,15 @@ export default function StrategyBuilderPage() {
                   Max profit
                 </div>
                 <div className={`font-semibold tabular-nums ${profitClass}`}>
-                  {hasStrategyLegs
-                    ? formatIndianMoneyCompact(summary.maxProfit)
-                    : "—"}
+                  {hasStrategyLegs ? (
+                    isUnlimitedMaxProfit(summary.maxProfit) ? (
+                      <InfinitySymbol />
+                    ) : (
+                      formatIndianMoneyCompact(summary.maxProfit)
+                    )
+                  ) : (
+                    "—"
+                  )}
                 </div>
               </div>
               <div className="transition-opacity">
@@ -5820,9 +5831,15 @@ export default function StrategyBuilderPage() {
                   Max loss
                 </div>
                 <div className={`font-semibold tabular-nums ${lossClass}`}>
-                  {hasStrategyLegs
-                    ? formatIndianMoneyCompact(summary.maxLoss)
-                    : "—"}
+                  {hasStrategyLegs ? (
+                    isUnlimitedMaxLoss(summary.maxLoss) ? (
+                      <InfinitySymbol />
+                    ) : (
+                      formatIndianMoneyCompact(summary.maxLoss)
+                    )
+                  ) : (
+                    "—"
+                  )}
                 </div>
               </div>
               <div className="transition-opacity">

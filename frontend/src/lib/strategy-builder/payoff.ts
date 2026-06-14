@@ -158,6 +158,21 @@ function normalizeBreakevens(values: number[]): number[] {
   return out;
 }
 
+/** Net call units (lots × lotSize, signed) governing payoff slope as spot → ∞. */
+function netCallExposureUnits(legs: StrategyLeg[], lotSize: number): number {
+  const ls =
+    typeof lotSize === "number" && Number.isFinite(lotSize) && lotSize > 0
+      ? lotSize
+      : 0;
+  let net = 0;
+  for (const leg of legs) {
+    if (leg.right !== "Call") continue;
+    const units = finiteLots(leg) * ls;
+    net += leg.side === "Buy" ? units : -units;
+  }
+  return net;
+}
+
 /**
  * Exact expiry summary from piecewise-linear option payoff.
  * Uses strike breakpoints (plus wide anchors) so breakevens/max P&L are not grid-approximate.
@@ -199,9 +214,14 @@ export function summarizePayoffExact(
     }
   }
   if (Math.abs(ys[ys.length - 1]) <= 1e-9) breakevens.push(nodes[nodes.length - 1]);
+
+  const netCalls = netCallExposureUnits(legs, lotSize);
+  if (netCalls > 0) maxProfit = Infinity;
+  if (netCalls < 0) maxLoss = -Infinity;
+
   return {
-    maxProfit: Number.isFinite(maxProfit) ? maxProfit : 0,
-    maxLoss: Number.isFinite(maxLoss) ? maxLoss : 0,
+    maxProfit,
+    maxLoss,
     breakevens: normalizeBreakevens(breakevens),
   };
 }

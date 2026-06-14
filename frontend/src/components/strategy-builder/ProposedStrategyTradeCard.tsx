@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { InfinitySymbol } from "@/components/strategy-builder/InfinitySymbol";
 import { OutlookIcon } from "@/components/strategy-builder/OutlookIcon";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import { strategyOutlook } from "@/lib/strategy-builder/templates";
@@ -33,17 +34,6 @@ function formatBookQtyInL(n: number): string {
 function fmtPx(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
-}
-
-function InfinitySymbol() {
-  return (
-    <span
-      className="inline-flex h-4 w-4 items-center justify-center text-base leading-none"
-      aria-hidden
-    >
-      ∞
-    </span>
-  );
 }
 
 function premiumCapsuleClass(premium: number | null | undefined): string {

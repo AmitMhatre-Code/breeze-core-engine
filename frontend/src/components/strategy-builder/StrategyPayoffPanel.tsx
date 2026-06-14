@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { InfinitySymbol } from "@/components/strategy-builder/InfinitySymbol";
 import { IvShockSlider } from "@/components/strategy-builder/IvShockSlider";
 import { MarginRefreshIconButton } from "@/components/strategy-builder/MarginRefreshIconButton";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
@@ -15,6 +16,10 @@ import {
 } from "@/lib/strategy-builder/payoff";
 import { sb } from "@/lib/strategy-builder/ui";
 import type { StrategyLeg } from "@/lib/strategy-builder/types";
+import {
+  isUnlimitedMaxLoss,
+  isUnlimitedMaxProfit,
+} from "@/lib/strategy-builder/trade-metrics";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 
 export function StrategyPayoffPanel({
@@ -116,9 +121,15 @@ export function StrategyPayoffPanel({
               Max profit
             </div>
             <div className={`font-semibold tabular-nums ${profitClass}`}>
-              {hasStrategyLegs
-                ? formatIndianMoneyCompact(summary.maxProfit)
-                : "—"}
+              {hasStrategyLegs ? (
+                isUnlimitedMaxProfit(summary.maxProfit) ? (
+                  <InfinitySymbol />
+                ) : (
+                  formatIndianMoneyCompact(summary.maxProfit)
+                )
+              ) : (
+                "—"
+              )}
             </div>
           </div>
           <div>
@@ -126,9 +137,15 @@ export function StrategyPayoffPanel({
               Max loss
             </div>
             <div className={`font-semibold tabular-nums ${lossClass}`}>
-              {hasStrategyLegs
-                ? formatIndianMoneyCompact(summary.maxLoss)
-                : "—"}
+              {hasStrategyLegs ? (
+                isUnlimitedMaxLoss(summary.maxLoss) ? (
+                  <InfinitySymbol />
+                ) : (
+                  formatIndianMoneyCompact(summary.maxLoss)
+                )
+              ) : (
+                "—"
+              )}
             </div>
           </div>
           <div>

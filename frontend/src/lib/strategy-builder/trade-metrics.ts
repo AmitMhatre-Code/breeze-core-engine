@@ -7,6 +7,12 @@ export function isUnlimitedMaxLoss(maxLoss: number | null | undefined): boolean 
   return maxLoss == null || !Number.isFinite(maxLoss);
 }
 
+export function isUnlimitedMaxProfit(
+  maxProfit: number | null | undefined,
+): boolean {
+  return maxProfit != null && !Number.isFinite(maxProfit) && maxProfit > 0;
+}
+
 /** Parse backend `"loss : profit"` into profit/loss ratio to 2 decimal places. */
 export function formatRiskRewardRatio(
   riskReward: string | null | undefined,
