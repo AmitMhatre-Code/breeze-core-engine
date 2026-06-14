@@ -20,35 +20,13 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "1.9.9-d",
+    version: "2.0.0",
     date: "14-Jun-2026",
-    releaseKind: "patch",
-    summary: "Always-fresh option chain",
-    changes: [
-      "Removed server-side option chain TTL cache; chain and strategy execution always fetch live quotes from ICICI",
-      "Removed Strategy Builder cache timestamp banner and opt-in refresh checkbox",
-    ],
-  },
-  {
-    version: "1.9.9-c",
-    date: "14-Jun-2026",
-    releaseKind: "minor",
-    summary: "Build Your Own + chain cache",
-    changes: [
-      "Strategy Builder (New): third Build Your Own card with full liquid option chain and manual leg/payoff flow",
-      "Options chain cached server-side for 5 minutes; stale timestamp warning and opt-in refresh on strategy execution",
-    ],
-  },
-  {
-    version: "1.9.9-b",
-    date: "13-Jun-2026",
     releaseKind: "major",
     summary: "Strategy Builder (New)",
     changes: [
-      "New Strategy Builder (New) page generates all options strategies from range, margin, and risk parameters",
-      "Proposed trades use batched market data with single-trade selection, editable legs, and payoff simulation",
-      "SEBI risk disclosure modal after each ICICI login; admin-configurable via Breeze Console",
-      "Terms & Conditions page at /terms-and-conditions linked from the login disclosure",
+      "New Strategy Builder (New) page generates Income and Directional (Bullish and Bearish) strategies based on target PoP, margin to deploy, and max loss appetite",
+      "Terms & Conditions and SEBI mandated risk disclosure modal after each ICICI login",
     ],
   },
   {
