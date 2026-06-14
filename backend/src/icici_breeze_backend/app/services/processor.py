@@ -119,7 +119,7 @@ def _expiry_to_breeze_place_order(expiry_date) -> str:
 
 
 def _days_to_expiry(expiry_str: str) -> int:
-    """Days until expiry (include both start and end). Accepts DD-Mon-YYYY or YYYY-MM-DD or YYYY-MM-DDT06:00:00.000Z."""
+    """Days until expiry: (expiry date − today) + 1. Accepts DD-Mon-YYYY or YYYY-MM-DD or YYYY-MM-DDT06:00:00.000Z."""
     s = expiry_str.removesuffix("T06:00:00.000Z")
     try:
         if len(s.split("-")[0]) == 4:  # YYYY-MM-DD
@@ -128,7 +128,7 @@ def _days_to_expiry(expiry_str: str) -> int:
             future_d = datetime.datetime.strptime(s, "%d-%b-%Y").date()
     except ValueError:
         return 0
-    return (future_d - today_ist_date()).days + 2
+    return (future_d - today_ist_date()).days + 1
 
 
 def _parse_option_expiry_date(raw) -> datetime.date | None:
@@ -167,7 +167,10 @@ def _trade_days_to_expiry_at_fill(trade: dict) -> int | None:
 def _annualized_carry_percent_on_span(
     premium: float, days_to_expiry: int, span_margin: float
 ) -> float:
-    """(Premium / DTE) * 365 / Span Margin, as a display percentage (e.g. 15.5 → 15.5%)."""
+    """(Premium / DTE) * 365 / total margin * 100, as a display percentage (e.g. 15.5 → 15.5%).
+
+    The margin argument is SPAN alone for scans/strategies, or SPAN + ELM for portfolio carry returns.
+    """
     dte = max(1, int(days_to_expiry))
     try:
         sm = float(span_margin)
@@ -1500,18 +1503,6 @@ class processor():
                                     margins = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
                                 if margins.get('Status') == 200:
                                     i['span_margin_required'] = float(margins['Success']['span_margin_required'])
-                                    prem_earned = float(i["average_price"]) * abs(
-                                        int(float(i["quantity"]))
-                                    )
-                                    dte = max(1, _days_to_expiry(i["expiry_date"]))
-                                    i["days_to_expiry"] = dte
-                                    i["carry_margin_returns"] = (
-                                        _annualized_carry_percent_on_span(
-                                            prem_earned,
-                                            dte,
-                                            i["span_margin_required"],
-                                        )
-                                    )
                                 else:
                                     i['span_margin_required'] = None
                                     i['carry_margin_returns'] = None
@@ -1530,6 +1521,22 @@ class processor():
                                         i['elm_margin_required'] = float(i['quantity']) * float(i['spot_price']) * cfg.ELM
                                 else:
                                     i['elm_margin_required'] = None
+
+                                if i.get('span_margin_required') is not None:
+                                    carry_amount = float(i["carry_profit"])
+                                    elm = float(i["elm_margin_required"] or 0)
+                                    total_margin = float(i["span_margin_required"]) + elm
+                                    dte = max(1, _days_to_expiry(i["expiry_date"]))
+                                    i["days_to_expiry"] = dte
+                                    i["carry_margin_returns"] = (
+                                        _annualized_carry_percent_on_span(
+                                            carry_amount,
+                                            dte,
+                                            total_margin,
+                                        )
+                                        if total_margin > 0
+                                        else None
+                                    )
                             else:
                                 i['current_profit'] = (float(i['ltp']) - float(i['average_price'])) * int(i['quantity'])
                                 i['carry_profit'] = - float(i['ltp']) * int(i['quantity'])

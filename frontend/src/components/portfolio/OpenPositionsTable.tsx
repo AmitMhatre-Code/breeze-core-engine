@@ -73,40 +73,49 @@ function formatSpanElmLakhs(raw: unknown): string {
 }
 
 function carryMarginRoiTitle(row: PortfolioPositionRecord): string | undefined {
-  const avg = coerceNum(row.average_price);
-  const qty = coerceNum(row.quantity);
+  const carry = coerceNum(row.carry_profit);
   const span = coerceNum(row.span_margin_required);
+  const elm = coerceNum(row.elm_margin_required) ?? 0;
   const dte = coerceNum(row.days_to_expiry);
   const cr = coerceNum(row.carry_margin_returns);
+  const totalMargin = span != null ? span + elm : null;
   if (
-    avg == null ||
-    qty == null ||
-    span == null ||
+    carry == null ||
+    totalMargin == null ||
     dte == null ||
     cr == null ||
-    span <= 0 ||
+    totalMargin <= 0 ||
     dte <= 0
   ) {
     return undefined;
   }
-  const premium = avg * Math.abs(qty);
-  const premS = `₹${premium.toLocaleString("en-IN", {
+  const carryS = `₹${carry.toLocaleString("en-IN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
-  const spanS = `₹${span.toLocaleString("en-IN", {
+  const spanS = `₹${span!.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+  const elmS = `₹${elm.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+  const marginS = `₹${totalMargin.toLocaleString("en-IN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
   return [
-    "Annualised carry return on SPAN (%):",
-    "(premium at entry ÷ DTE) × 365 ÷ span × 100",
+    "Annualised carry return on margin (Span + ELM) (%):",
+    "(Carry ÷ DTE) × 365 ÷ (Span + ELM) × 100",
     "",
-    `premium (avg sell price × |qty|) = ${premS}`,
+    `Carry (LTP × qty) = ${carryS}`,
     `DTE = ${Math.round(dte)} days`,
     `span = ${spanS}`,
+    `ELM = ${elmS}`,
+    `total margin (span + ELM) = ${marginS}`,
     "",
-    `= (${premium.toLocaleString("en-IN", { maximumFractionDigits: 2 })} ÷ ${Math.round(dte)}) × 365 ÷ ${span.toLocaleString("en-IN", { maximumFractionDigits: 2 })} × 100`,
+    `= (${carry.toLocaleString("en-IN", { maximumFractionDigits: 2 })} ÷ ${Math.round(dte)}) × 365 ÷ ${totalMargin.toLocaleString("en-IN", { maximumFractionDigits: 2 })} × 100`,
     `≈ ${cr.toFixed(2)}%`,
   ].join("\n");
 }
@@ -560,7 +569,7 @@ export function OpenPositionsTable({
                 <th
                   className={`${thBase} text-right`}
                   title={
-                    "Annualised on SPAN (%): (premium at entry ÷ DTE) × 365 ÷ span × 100. Hover a row value for the exact inputs."
+                    "Annualised on margin (Span + ELM) (%): (Carry ÷ DTE) × 365 ÷ (Span + ELM) × 100. Hover a row value for the exact inputs."
                   }
                 >
                   Carry Ret.

@@ -43,7 +43,7 @@ def days_to_expiry(expiry_str: str) -> int:
         return 0
     from icici_breeze_backend.app.core.timezone import today_ist_date
 
-    return (future_d - today_ist_date()).days + 2
+    return (future_d - today_ist_date()).days + 1
 
 
 def years_to_expiry(expiry_display: str) -> float:
@@ -53,7 +53,10 @@ def years_to_expiry(expiry_display: str) -> float:
 def annualized_carry_percent_on_span(
     premium: float, days_to_expiry: int, span_margin: float
 ) -> float:
-    """(Premium / DTE) * 365 / Span Margin, as a display percentage."""
+    """(Premium / DTE) * 365 / total margin * 100, as a display percentage.
+
+    The margin argument is SPAN alone for strategies, or SPAN + ELM for portfolio carry returns.
+    """
     dte = max(1, int(days_to_expiry))
     try:
         sm = float(span_margin)
