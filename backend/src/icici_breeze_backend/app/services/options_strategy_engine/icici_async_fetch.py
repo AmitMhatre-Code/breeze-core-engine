@@ -78,18 +78,28 @@ async def fetch_strike_pairs_async(
             rationale=fetch_reason,
         )
 
-    results = await asyncio.gather(
-        *[
+    sorted_pairs = sorted(pairs)
+    total = len(sorted_pairs)
+    tasks = [
+        asyncio.create_task(
             _fetch_one_pair(ctx, strike, right, fetch_reason=fetch_reason)
-            for strike, right in sorted(pairs)
-        ]
-    )
+        )
+        for strike, right in sorted_pairs
+    ]
 
     ingested: dict[tuple[int, Right], QuoteRow] = {}
-    for item in results:
+    done = 0
+    for coro in asyncio.as_completed(tasks):
+        item = await coro
+        done += 1
         if item is not None:
             key, row = item
             ingested[key] = row
+        if ctx.progress is not None:
+            ctx.progress.tick(
+                phase="fetch_quotes",
+                message=f"Fetching targeted quotes ({done}/{total})…",
+            )
 
     record_ingested_strikes(ctx.audit, ingested, context=fetch_reason)
     return ingested

@@ -236,6 +236,14 @@ export function ExplainabilityLevel1View({
             {executiveSummary.strategies_skipped.length}
           </span>
         </p>
+        {executiveSummary.generation_duration_seconds != null ? (
+          <p>
+            <span className="text-zinc-500 dark:text-zinc-400">Generated in: </span>
+            <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+              {executiveSummary.generation_duration_seconds.toFixed(1)} s
+            </span>
+          </p>
+        ) : null}
       </div>
 
       {executiveSummary.strategies_skipped.length > 0 ? (

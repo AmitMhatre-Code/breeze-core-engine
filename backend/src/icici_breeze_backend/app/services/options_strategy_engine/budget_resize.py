@@ -55,6 +55,12 @@ async def resize_results_to_budgets(
         )
 
     if margin_requests:
+        if ctx.progress is not None:
+            ctx.progress.add_units(
+                len(margin_requests),
+                phase="margins",
+                message=f"Calculating margins (0/{len(margin_requests)})…",
+            )
         spans = await fetch_margins_concurrent(
             proc,
             user_id,
@@ -62,6 +68,7 @@ async def resize_results_to_budgets(
             margin_requests,
             audit=audit,
             existing_cache=ctx.unit_span_by_structure,
+            progress=ctx.progress,
         )
         ctx.unit_span_by_structure.update(spans)
 

@@ -155,6 +155,12 @@ def fetch_full_chain_side(
     ingested = ingest_chain_rows(raw_rows, right)
     ctx.cache.update(ingested)
     record_ingested_strikes(ctx.audit, ingested, context=fetch_reason)
+    if ctx.progress is not None:
+        label = "call" if right == "Call" else "put"
+        ctx.progress.tick(
+            phase="fetch_chain",
+            message=f"Fetching {label} option chain…",
+        )
 
 
 def fetch_missing_tails(ctx: EngineContext, needed_strikes: list[int], *, fetch_reason: str) -> None:

@@ -163,7 +163,7 @@ def _build_executive_summary(
         user_inputs["min_pop_pct"] = min_pop
         user_inputs["min_ann_return_pct"] = min_roi
 
-    return {
+    executive: dict[str, Any] = {
         "user_inputs": user_inputs,
         "strategies_evaluated": evaluated_count,
         "strategies_recommended": [
@@ -178,6 +178,18 @@ def _build_executive_summary(
         ],
         "strategies_skipped": skipped_out,
     }
+    duration = summary.get("generation_duration_seconds")
+    if duration is not None:
+        try:
+            executive["generation_duration_seconds"] = round(float(duration), 1)
+        except (TypeError, ValueError):
+            pass
+    elif summary.get("duration_ms") is not None:
+        try:
+            executive["generation_duration_seconds"] = round(float(summary["duration_ms"]) / 1000.0, 1)
+        except (TypeError, ValueError):
+            pass
+    return executive
 
 
 def _build_why_this(
@@ -691,6 +703,8 @@ def resolve_explainability_from_audit_doc(doc: dict[str, Any]) -> dict[str, Any]
 
     request = doc.get("request") or {}
     summary = doc.get("summary") or {}
+    if "generation_duration_seconds" not in summary and doc.get("duration_ms") is not None:
+        summary = {**summary, "duration_ms": doc.get("duration_ms")}
     trades = _synthetic_trades_from_audit_doc(doc)
     report = build_user_explainability_report(
         request=request,

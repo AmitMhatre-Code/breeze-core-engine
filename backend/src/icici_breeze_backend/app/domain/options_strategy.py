@@ -89,6 +89,7 @@ class ExecutiveSummaryOut(BaseModel):
     strategies_evaluated: int
     strategies_recommended: List[StrategyRefOut] = Field(default_factory=list)
     strategies_skipped: List[SkippedStrategySummaryOut] = Field(default_factory=list)
+    generation_duration_seconds: Optional[float] = None
 
 
 class FunnelStageOut(BaseModel):
@@ -167,3 +168,33 @@ class ProposeTradesResponse(BaseModel):
     Status: int
     Error: Optional[str] = None
     Success: Optional[ProposeTradesSuccess | dict[str, Any]] = None
+
+
+class ProposeTradesJobStartSuccess(BaseModel):
+    job_id: str
+
+
+class ProposeTradesJobStartResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    Status: int
+    Error: Optional[str] = None
+    Success: Optional[ProposeTradesJobStartSuccess] = None
+
+
+class ProposeTradesJobStatusSuccess(BaseModel):
+    job_id: str
+    status: Literal["queued", "running", "done", "error"]
+    phase: str
+    message: str
+    progress_pct: int = 0
+    progress_current: int = 0
+    progress_total: int = 1
+    result: Optional[ProposeTradesSuccess] = None
+    error: Optional[str] = None
+
+
+class ProposeTradesJobStatusResponse(BaseModel):
+    model_config = {"extra": "allow"}
+    Status: int
+    Error: Optional[str] = None
+    Success: Optional[ProposeTradesJobStatusSuccess] = None

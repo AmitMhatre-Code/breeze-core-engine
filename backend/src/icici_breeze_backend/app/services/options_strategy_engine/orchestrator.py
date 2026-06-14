@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+import time
 from typing import Any
 
 from icici_breeze_backend.audit.strategy_builder_audit import StrategyBuilderAuditSession, quote_row_to_audit
@@ -11,6 +12,7 @@ from icici_breeze_backend.app.services.processor import (
     _days_to_expiry,
     processor,
 )
+from icici_breeze_backend.app.services.options_strategy_engine.build_progress import BuildProgress
 from icici_breeze_backend.app.services.options_strategy_engine.greeks import compute_atm_iv, enrich_greeks
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     elm_for_legs,
@@ -28,6 +30,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.margin_async_fetc
 )
 from icici_breeze_backend.app.services.options_strategy_engine.registry import CATEGORY_CALCULATORS
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    STRATEGY_CATALOG,
     EngineContext,
     RiskRewardProfile,
     StrategyCategory,
@@ -127,12 +130,20 @@ async def attach_margins_and_returns(
             )
         )
 
+    if margin_requests and ctx.progress is not None:
+        ctx.progress.add_units(
+            len(margin_requests),
+            phase="margins",
+            message=f"Calculating margins (0/{len(margin_requests)})…",
+        )
+
     span_by_key = await fetch_margins_concurrent(
         proc,
         user_id,
         exchange_code,
         margin_requests,
         audit=audit,
+        progress=ctx.progress,
     )
 
     dte = _days_to_expiry(expiry_display)
@@ -174,7 +185,12 @@ async def run_propose_trades(
     request_id: str | None = None,
     enable_audit: bool = True,
     audit_detail_level: AuditDetailLevel = "summary",
+    progress: BuildProgress | None = None,
 ) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    if progress is not None:
+        progress.mark_running()
+
     min_pop_pct = min(99.0, max(1.0, min_pop_pct))
     min_ann_return_pct = min(100.0, max(0.0, min_ann_return_pct))
     if strategy_category not in CATEGORY_CALCULATORS:
@@ -183,6 +199,10 @@ async def run_propose_trades(
     audit: StrategyBuilderAuditSession | None = None
     calculators = CATEGORY_CALCULATORS[strategy_category]
     strategy_ids = [calc.__name__.replace("calc_", "") for calc in calculators]
+    strategy_names = dict(STRATEGY_CATALOG)
+    if progress is not None:
+        progress.register_base_units(strategy_count=len(calculators))
+        progress.tick(phase="setup", message="Loading scrip master…")
     if enable_audit:
         audit = StrategyBuilderAuditSession(
             user_id=user_id,
@@ -294,6 +314,7 @@ async def run_propose_trades(
         range_lower=float(atm_strike) - range_pad,
         range_upper=float(atm_strike) + range_pad,
         audit=audit,
+        progress=progress,
     )
 
     build_bulk_chain_cache(ctx)
@@ -305,6 +326,12 @@ async def run_propose_trades(
 
     to_fetch = plan_targeted_fetches(ctx)
     if to_fetch:
+        if progress is not None:
+            progress.add_units(
+                len(to_fetch),
+                phase="fetch_quotes",
+                message=f"Fetching targeted quotes (0/{len(to_fetch)})…",
+            )
         ctx.cache.update(await fetch_strike_pairs_async(ctx, to_fetch))
         ctx.atm_iv = compute_atm_iv(ctx) or ctx.atm_iv
         enrich_greeks(ctx)
@@ -314,8 +341,15 @@ async def run_propose_trades(
         return _fail(400, ctx.halt_reason or "Insufficient market depth.")
 
     results: list[StrategyResult] = []
-    for calc in calculators:
+    eval_total = len(calculators)
+    for idx, calc in enumerate(calculators, start=1):
         sid = calc.__name__.replace("calc_", "")
+        display_name = strategy_names.get(sid, sid.replace("_", " ").title())
+        if progress is not None:
+            progress.tick(
+                phase="evaluate",
+                message=f"Evaluating {display_name} ({idx}/{eval_total})…",
+            )
         if audit:
             audit.record("strategy_eval_start", calc.__name__, {"strategy_id": sid})
         collector = begin_strategy_audit(ctx, sid) if audit else None
@@ -422,7 +456,11 @@ async def run_propose_trades(
             for t in trades_out
             if t["status"] == "skipped"
         ],
+        "generation_duration_seconds": round(time.perf_counter() - started_at, 1),
     }
+
+    if progress is not None:
+        progress.tick(phase="finalize", message="Finalizing results…")
 
     user_report = build_user_explainability_report(
         request=audit.request if audit else {

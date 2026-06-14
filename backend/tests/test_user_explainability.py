@@ -45,6 +45,30 @@ class TestUserExplainabilityReport(unittest.TestCase):
         )
         self.assertEqual(report["user_report_schema_version"], USER_REPORT_SCHEMA_VERSION)
 
+    def test_executive_summary_includes_generation_duration_seconds(self):
+        report = build_user_explainability_report(
+            request=_base_request(),
+            strategy_evaluations={},
+            trades=[],
+            summary=_base_summary(generation_duration_seconds=12.4),
+        )
+        self.assertEqual(
+            report["executive_summary"]["generation_duration_seconds"],
+            12.4,
+        )
+
+    def test_executive_summary_derives_duration_from_duration_ms(self):
+        report = build_user_explainability_report(
+            request=_base_request(),
+            strategy_evaluations={},
+            trades=[],
+            summary=_base_summary(duration_ms=8500),
+        )
+        self.assertEqual(
+            report["executive_summary"]["generation_duration_seconds"],
+            8.5,
+        )
+
     def test_pop_floor_skip_why_not_and_what_if(self):
         ev = {
             "strategy_summary": {

@@ -3,6 +3,8 @@ import { getBackendBaseUrl } from "@/lib/config";
 import type {
   ChainApiResponse,
   ProposeTradesApiResponse,
+  ProposeTradesJobStartResponse,
+  ProposeTradesJobStatusResponse,
   RiskRewardProfile,
   StrategyCategory,
 } from "@/lib/strategy-builder/types";
@@ -40,6 +42,26 @@ export type ProposeTradesParams = {
   audit_detail_level?: "summary" | "debug";
 };
 
+export async function startProposeTradesJob(
+  params: ProposeTradesParams,
+): Promise<ProposeTradesJobStartResponse> {
+  return apiClient.post<ProposeTradesJobStartResponse>(
+    "/strategy-builder/propose-trades",
+    params,
+  );
+}
+
+export async function getProposeTradesJobStatus(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<ProposeTradesJobStatusResponse> {
+  return apiClient.get<ProposeTradesJobStatusResponse>(
+    `/strategy-builder/propose-trades/jobs/${encodeURIComponent(jobId)}`,
+    signal,
+  );
+}
+
+/** @deprecated Use startProposeTradesJob + getProposeTradesJobStatus polling instead. */
 export async function proposeTrades(
   params: ProposeTradesParams,
 ): Promise<ProposeTradesApiResponse> {

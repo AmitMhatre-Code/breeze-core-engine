@@ -159,6 +159,10 @@ const nextConfig = {
         destination: `${backendUpstream}/strategy-builder/propose-trades`,
       },
       {
+        source: "/strategy-builder/propose-trades/jobs/:path*",
+        destination: `${backendUpstream}/strategy-builder/propose-trades/jobs/:path*`,
+      },
+      {
         source: "/strategy-builder/margin",
         destination: `${backendUpstream}/strategy-builder/margin`,
       },

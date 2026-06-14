@@ -12,6 +12,7 @@ import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill
 import { OutlookFilterButtons } from "@/components/strategy-builder/OutlookFilterButtons";
 import { MasonryGrid } from "@/components/strategy-builder/MasonryGrid";
 import { ProposedStrategyTradeCard } from "@/components/strategy-builder/ProposedStrategyTradeCard";
+import { ProposeTradesProgressBar } from "@/components/strategy-builder/ProposeTradesProgressBar";
 import { StrategyExplainabilityPanel } from "@/components/strategy-builder/StrategyExplainabilityPanel";
 import {
   TradeSortLink,
@@ -26,7 +27,8 @@ import { StrategyPayoffPanel } from "@/components/strategy-builder/StrategyPayof
 import { apiClient } from "@/lib/api-client";
 import {
   fetchStrategyBuilderChain,
-  proposeTrades,
+  getProposeTradesJobStatus,
+  startProposeTradesJob,
 } from "@/lib/strategy-builder/api";
 import {
   appendLegFromChainRow,
@@ -158,6 +160,10 @@ export default function StrategyBuilderNewPage() {
   );
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [generatingCategory, setGeneratingCategory] =
+    useState<StrategyCategory | null>(null);
+  const activeJobIdRef = useRef<string | null>(null);
   const [executePreviewOpen, setExecutePreviewOpen] = useState(false);
   const [ivShockPct, setIvShockPct] = useState(0);
   const [showGreeks, setShowGreeks] = useState(false);
@@ -308,9 +314,27 @@ export default function StrategyBuilderNewPage() {
     canGenerateShared && minPopPctNum != null && minAnnReturnPctNum != null;
   const canGenerateDirectional = canGenerateShared;
 
-  const generateM = useMutation({
+  const applyGenerateSuccess = useCallback(
+    (success: ProposeTradesSuccess, category: StrategyCategory) => {
+      setGenerateError(null);
+      setProposedData(success);
+      setBuilderMode(category);
+      setSelectedTradeId(null);
+      setLegs([]);
+      setLegMarginCache({});
+    },
+    [],
+  );
+
+  const clearGenerateJob = useCallback(() => {
+    setActiveJobId(null);
+    setGeneratingCategory(null);
+    activeJobIdRef.current = null;
+  }, []);
+
+  const startGenerateM = useMutation({
     mutationFn: async (category: StrategyCategory) => {
-      return proposeTrades({
+      const res = await startProposeTradesJob({
         exchange_code: segmentExchange,
         stock_code: stockCode.trim(),
         expiry_date: expiryDate.trim(),
@@ -325,27 +349,73 @@ export default function StrategyBuilderNewPage() {
         provision_elm: provisionElm,
         strategy_category: category,
       });
-    },
-    onSuccess: (res, category) => {
-      if (res.Status !== 200 || !res.Success) {
-        setGenerateError(res.Error ?? "Failed to generate trades.");
-        setProposedData(null);
-        setSelectedTradeId(null);
-        setLegs([]);
-        return;
+      if (res.Status !== 202 || !res.Success?.job_id) {
+        throw new Error(res.Error ?? "Failed to start strategy generation.");
       }
+      return { jobId: res.Success.job_id, category };
+    },
+    onSuccess: ({ jobId, category }) => {
       setGenerateError(null);
-      setProposedData(res.Success);
-      setBuilderMode(category);
-      setSelectedTradeId(null);
-      setLegs([]);
-      setLegMarginCache({});
+      setGeneratingCategory(category);
+      activeJobIdRef.current = jobId;
+      setActiveJobId(jobId);
     },
     onError: (e: Error) => {
       setGenerateError(e.message || "Failed to generate trades.");
       setProposedData(null);
+      clearGenerateJob();
     },
   });
+
+  const jobStatusQ = useQuery({
+    queryKey: ["strategy-builder", "propose-job", activeJobId],
+    queryFn: ({ signal }) => getProposeTradesJobStatus(activeJobId!, signal),
+    enabled: Boolean(activeJobId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.Success?.status;
+      if (status === "done" || status === "error") return false;
+      return 750;
+    },
+  });
+
+  useEffect(() => {
+    const payload = jobStatusQ.data?.Success;
+    if (!payload || !activeJobId || activeJobIdRef.current !== activeJobId) {
+      return;
+    }
+    if (payload.status === "done" && payload.result) {
+      if (generatingCategory) {
+        applyGenerateSuccess(payload.result, generatingCategory);
+      }
+      clearGenerateJob();
+      return;
+    }
+    if (payload.status === "error") {
+      setGenerateError(payload.error ?? "Failed to generate trades.");
+      setProposedData(null);
+      clearGenerateJob();
+    }
+  }, [
+    jobStatusQ.data,
+    activeJobId,
+    generatingCategory,
+    applyGenerateSuccess,
+    clearGenerateJob,
+  ]);
+
+  useEffect(() => {
+    if (!jobStatusQ.isError || !activeJobId) return;
+    const msg =
+      jobStatusQ.error instanceof Error
+        ? jobStatusQ.error.message
+        : "Failed to check generation status.";
+    setGenerateError(msg);
+    setProposedData(null);
+    clearGenerateJob();
+  }, [jobStatusQ.isError, jobStatusQ.error, activeJobId, clearGenerateJob]);
+
+  const isGenerating = startGenerateM.isPending || Boolean(activeJobId);
+  const jobProgress = jobStatusQ.data?.Success;
 
   const displayedTrades = useMemo(() => {
     let list = trades.filter((t) => {
@@ -795,10 +865,10 @@ export default function StrategyBuilderNewPage() {
                     <button
                       type="button"
                       className={`${sb.btnPrimary} mt-auto w-full`}
-                      disabled={!canGenerateIncome || generateM.isPending}
-                      onClick={() => generateM.mutate("income")}
+                      disabled={!canGenerateIncome || isGenerating}
+                      onClick={() => startGenerateM.mutate("income")}
                     >
-                      {generateM.isPending && generateM.variables === "income"
+                      {isGenerating && generatingCategory === "income"
                         ? "Generating…"
                         : CATEGORY_LABELS.income}
                     </button>
@@ -815,10 +885,10 @@ export default function StrategyBuilderNewPage() {
                           key={category}
                           type="button"
                           className={sb.btnPrimary}
-                          disabled={!canGenerateDirectional || generateM.isPending}
-                          onClick={() => generateM.mutate(category)}
+                          disabled={!canGenerateDirectional || isGenerating}
+                          onClick={() => startGenerateM.mutate(category)}
                         >
-                          {generateM.isPending && generateM.variables === category
+                          {isGenerating && generatingCategory === category
                             ? "Generating…"
                             : CATEGORY_LABELS[category]}
                         </button>
@@ -834,7 +904,7 @@ export default function StrategyBuilderNewPage() {
                     <button
                       type="button"
                       className={`${sb.btnPrimary} mt-auto w-full`}
-                      disabled={!section2Ready || generateM.isPending}
+                      disabled={!section2Ready || isGenerating}
                       onClick={startBuildYourOwn}
                     >
                       Build Your Own
@@ -846,6 +916,17 @@ export default function StrategyBuilderNewPage() {
                 <p className="mt-4 text-sm text-red-600 dark:text-red-400">
                   {generateError}
                 </p>
+              ) : null}
+              {isGenerating &&
+              jobProgress &&
+              (jobProgress.status === "queued" ||
+                jobProgress.status === "running") ? (
+                <ProposeTradesProgressBar
+                  message={jobProgress.message}
+                  progressPct={jobProgress.progress_pct}
+                  progressCurrent={jobProgress.progress_current}
+                  progressTotal={jobProgress.progress_total}
+                />
               ) : null}
             </section>
           </SectionGate>

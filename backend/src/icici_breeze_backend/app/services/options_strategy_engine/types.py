@@ -160,6 +160,7 @@ class EngineContext:
     range_lower: float = 0.0
     range_upper: float = 0.0
     unit_span_by_structure: dict[tuple, float] = field(default_factory=dict)
+    progress: Any | None = None
 
     @property
     def liquid_ce_strikes(self) -> list[int]:

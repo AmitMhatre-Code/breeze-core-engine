@@ -170,6 +170,7 @@ export type ExecutiveSummary = {
   strategies_evaluated: number;
   strategies_recommended: StrategyRef[];
   strategies_skipped: SkippedStrategySummary[];
+  generation_duration_seconds?: number | null;
 };
 
 export type FunnelStage = {
@@ -247,4 +248,30 @@ export type ProposeTradesApiResponse = {
   Status: number;
   Error?: string | null;
   Success?: ProposeTradesSuccess | null;
+};
+
+export type ProposeTradesJobStartResponse = {
+  Status: number;
+  Error?: string | null;
+  Success?: { job_id: string } | null;
+};
+
+export type ProposeTradesJobStatus = "queued" | "running" | "done" | "error";
+
+export type ProposeTradesJobStatusSuccess = {
+  job_id: string;
+  status: ProposeTradesJobStatus;
+  phase: string;
+  message: string;
+  progress_pct: number;
+  progress_current: number;
+  progress_total: number;
+  result?: ProposeTradesSuccess | null;
+  error?: string | null;
+};
+
+export type ProposeTradesJobStatusResponse = {
+  Status: number;
+  Error?: string | null;
+  Success?: ProposeTradesJobStatusSuccess | null;
 };

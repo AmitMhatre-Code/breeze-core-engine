@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+from icici_breeze_backend.app.services.options_strategy_engine.build_progress import BuildProgress
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import parse_float
 
 
@@ -111,6 +112,7 @@ async def fetch_margins_concurrent(
     *,
     audit: Any | None = None,
     existing_cache: dict[tuple, float] | None = None,
+    progress: BuildProgress | None = None,
 ) -> dict[tuple, float]:
     """Fetch SPAN margins concurrently; return cache_key -> span for all requests."""
     if not requests:
@@ -138,16 +140,25 @@ async def fetch_margins_concurrent(
             rationale="Concurrent SPAN margin batch.",
         )
 
-    results = await asyncio.gather(
-        *[
+    total = len(pending)
+    tasks = [
+        asyncio.create_task(
             _fetch_one_margin(proc, user_id, exchange_code, req, audit=audit)
-            for req in pending
-        ]
-    )
+        )
+        for req in pending
+    ]
 
     spans: dict[tuple, float] = {}
-    for key, span in results:
+    done = 0
+    for coro in asyncio.as_completed(tasks):
+        key, span = await coro
         spans[key] = span
+        done += 1
+        if progress is not None:
+            progress.tick(
+                phase="margins",
+                message=f"Calculating margins ({done}/{total})…",
+            )
 
     out: dict[tuple, float] = {}
     for req in requests:

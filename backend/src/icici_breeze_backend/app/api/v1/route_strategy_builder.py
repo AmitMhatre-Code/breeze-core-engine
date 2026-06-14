@@ -1,11 +1,12 @@
 """Strategy Builder JSON API: chain, underlyings, multi-leg margin, orchestrated execution."""
+import asyncio
 import json
 import logging
 import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
 from icici_breeze_backend.app.api.frontend_redirect import redirect_to_frontend
@@ -13,8 +14,12 @@ from icici_breeze_backend.app.auth.context import get_request_context, RequestCo
 from icici_breeze_backend.app.api.v1.covered_shorts_scan import run_covered_shorts_scan
 from icici_breeze_backend.app.domain.responses import UncoveredShortsScanResponse
 from icici_breeze_backend.app.domain.options_strategy import (
+    ProposeTradesJobStartResponse,
+    ProposeTradesJobStartSuccess,
+    ProposeTradesJobStatusResponse,
+    ProposeTradesJobStatusSuccess,
     ProposeTradesRequest,
-    ProposeTradesResponse,
+    ProposeTradesSuccess,
 )
 from icici_breeze_backend.app.domain.strategy_builder import (
     StrategyBuilderChainResponse,
@@ -26,6 +31,14 @@ from icici_breeze_backend.app.domain.strategy_builder import (
     StrategyBuilderUnderlyingsResponse,
 )
 from icici_breeze_backend.app.services.options_strategy_engine import run_propose_trades
+from icici_breeze_backend.app.services.options_strategy_engine.build_progress import BuildProgress
+from icici_breeze_backend.app.services.options_strategy_engine.propose_trades_jobs import (
+    complete_job,
+    create_job,
+    fail_job,
+    get_job_for_user,
+    job_to_status_dict,
+)
 from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 from icici_breeze_backend.audit.strategy_builder_audit import resolve_audit_file_for_user
@@ -142,31 +155,78 @@ async def get_strategy_builder_audit(
     )
 
 
-@router.post("/propose-trades", response_model=ProposeTradesResponse)
+async def _run_propose_trades_job(job_id: str, user_id: str, body: ProposeTradesRequest, request_id: str | None) -> None:
+    progress = BuildProgress(job_id)
+    try:
+        data = await run_propose_trades(
+            breeze,
+            user_id,
+            exchange_code=body.exchange_code.strip() or cfg.NFO,
+            stock_code=body.stock_code.strip(),
+            expiry_date=body.expiry_date.strip(),
+            margin_lacs=body.margin_lacs,
+            max_loss_lacs=body.max_loss_lacs,
+            min_pop_pct=body.min_pop_pct,
+            min_ann_return_pct=body.min_ann_return_pct,
+            provision_elm=body.provision_elm,
+            strategy_category=body.strategy_category,
+            risk_reward_profile=body.risk_reward_profile,
+            request_id=request_id,
+            audit_detail_level=body.audit_detail_level,
+            progress=progress,
+        )
+        AuditLogger(None).log_operation(user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderProposeTrades")
+        if data.get("Status") == 200 and data.get("Success"):
+            complete_job(job_id, data["Success"])
+        else:
+            fail_job(job_id, str(data.get("Error") or "Failed to generate trades."))
+    except Exception as exc:
+        logger.exception("propose-trades job %s failed", job_id)
+        fail_job(job_id, str(exc) or "Failed to generate trades.")
+
+
+@router.post("/propose-trades", response_model=ProposeTradesJobStartResponse, status_code=202)
 async def post_propose_trades(
     body: ProposeTradesRequest,
     ctx: RequestContext = Depends(get_request_context),
 ):
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
-    data = await run_propose_trades(
-        breeze,
-        ctx.user_id,
-        exchange_code=body.exchange_code.strip() or cfg.NFO,
-        stock_code=body.stock_code.strip(),
-        expiry_date=body.expiry_date.strip(),
-        margin_lacs=body.margin_lacs,
-        max_loss_lacs=body.max_loss_lacs,
-        min_pop_pct=body.min_pop_pct,
-        min_ann_return_pct=body.min_ann_return_pct,
-        provision_elm=body.provision_elm,
-        strategy_category=body.strategy_category,
-        risk_reward_profile=body.risk_reward_profile,
-        request_id=ctx.request_id,
-        audit_detail_level=body.audit_detail_level,
+    job = create_job(ctx.user_id)
+    asyncio.create_task(
+        _run_propose_trades_job(job.job_id, ctx.user_id, body, ctx.request_id)
     )
-    AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderProposeTrades")
-    return ProposeTradesResponse(**data)
+    return JSONResponse(
+        status_code=202,
+        content=ProposeTradesJobStartResponse(
+            Status=202,
+            Error=None,
+            Success=ProposeTradesJobStartSuccess(job_id=job.job_id),
+        ).model_dump(),
+    )
+
+
+@router.get("/propose-trades/jobs/{job_id}", response_model=ProposeTradesJobStatusResponse)
+async def get_propose_trades_job(
+    job_id: str,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    job = get_job_for_user(job_id.strip(), ctx.user_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    status_dict = job_to_status_dict(job)
+    result = status_dict.pop("result", None)
+    parsed_result = ProposeTradesSuccess(**result) if isinstance(result, dict) else None
+    return ProposeTradesJobStatusResponse(
+        Status=200,
+        Error=None,
+        Success=ProposeTradesJobStatusSuccess(
+            **status_dict,
+            result=parsed_result,
+        ),
+    )
 
 
 @router.post("/margin", response_model=StrategyBuilderMarginResponse)
