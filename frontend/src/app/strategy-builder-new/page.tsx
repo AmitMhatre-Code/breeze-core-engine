@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionConfirmDialog";
@@ -563,8 +564,9 @@ export default function StrategyBuilderNewPage() {
       <RevokedTradingPageGuard>
         <div className="space-y-5">
           <header>
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-              Strategy Builder (New)
+            <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+              Strategy Builder
+              <NewFeatureBadge />
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
               Parameter-driven strategy proposals with batched market data

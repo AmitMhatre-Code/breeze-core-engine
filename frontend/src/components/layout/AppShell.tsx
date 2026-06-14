@@ -19,6 +19,7 @@ import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
 import { apiClient } from "@/lib/api-client";
 import { formatAppVersionLabel } from "@/lib/app-version";
 import { getLatestRelease } from "@/lib/changelog";
@@ -39,8 +40,9 @@ const navItems = [
   { href: "/strategy-builder", label: "Strategy Builder", icon: StrategyIcon },
   {
     href: "/strategy-builder-new",
-    label: "Strategy Builder (New)",
+    label: "Strategy Builder",
     icon: StrategyIcon,
+    showNewBadge: true,
   },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -210,6 +212,9 @@ export function AppShell({
               <Link
                 key={item.href}
                 href={item.href}
+                aria-label={
+                  item.showNewBadge ? "Strategy Builder, new" : undefined
+                }
                 className={[
                   "flex items-center gap-2 rounded-sm px-2.5 py-2 transition",
                   active
@@ -218,7 +223,10 @@ export function AppShell({
                 ].join(" ")}
               >
                 <Icon />
-                <span>{item.label}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate">{item.label}</span>
+                  {item.showNewBadge ? <NewFeatureBadge /> : null}
+                </span>
               </Link>
             );
           })}
@@ -371,6 +379,9 @@ export function AppShell({
                     <Link
                       key={item.href}
                       href={item.href}
+                      aria-label={
+                        item.showNewBadge ? "Strategy Builder, new" : undefined
+                      }
                       className={[
                         "flex min-h-11 items-center gap-3 rounded-md px-3 py-2 transition",
                         active
@@ -383,7 +394,10 @@ export function AppShell({
                       }}
                     >
                       <Icon />
-                      <span>{item.label}</span>
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate">{item.label}</span>
+                        {item.showNewBadge ? <NewFeatureBadge /> : null}
+                      </span>
                     </Link>
                   );
                 })}
