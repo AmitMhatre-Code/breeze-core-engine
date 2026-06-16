@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { DashboardChartSkeleton } from "@/components/dashboard/DashboardLoading";
 
 type Point = { date: string; value: number };
 
@@ -147,7 +148,13 @@ function monthStartTickIndices(series: Point[]): { i: number; label: string }[] 
   return out;
 }
 
-export function Vix30dChart({ series }: { series: Point[] }) {
+export function Vix30dChart({
+  series,
+  loading = false,
+}: {
+  series: Point[];
+  loading?: boolean;
+}) {
   const [hoverI, setHoverI] = useState<number | null>(null);
   const gradId = useId().replace(/:/g, "");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -308,6 +315,15 @@ export function Vix30dChart({ series }: { series: Point[] }) {
   );
 
   const onPointerLeave = useCallback(() => setHoverI(null), []);
+
+  if (loading) {
+    return (
+      <div className="space-y-2" role="status">
+        <DashboardChartSkeleton />
+        <p className="app-text-muted">Fetching VIX history…</p>
+      </div>
+    );
+  }
 
   if (!series?.length) {
     return <p className="app-text-muted">No VIX history available.</p>;

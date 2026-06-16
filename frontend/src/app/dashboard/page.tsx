@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { InterpretationBadge } from "@/components/dashboard/InterpretationBadge";
+import {
+  DashboardMetricSkeleton,
+  DashboardSectionStatus,
+  DashboardTrendSkeleton,
+} from "@/components/dashboard/DashboardLoading";
 import { Vix30dChart } from "@/components/dashboard/Vix30dChart";
 import {
   interpretAtmIvPercent,
@@ -327,8 +332,6 @@ export default function DashboardPage() {
       : portData?.Status === 200 && marginUsedFromPositions != null
         ? marginUsedFromPositions
         : marginUsedFromHome ?? null;
-  const marginUsedPending =
-    marginUsedFromHome == null && bootstrapQ.isPending && marginUsedDisplay == null;
 
   const openPnl = useMemo(() => sumOpenPositionsPnl(portData), [portData]);
 
@@ -382,7 +385,16 @@ export default function DashboardPage() {
       : null;
 
   // IV / OI / PCR come from /dashboard/vix/options (slow); do not block VIX chart or NIFTY spot from core.
-  const optsLoading = optsQ.isPending;
+  const optsLoading =
+    optsQ.isPending || (optsQ.isFetching && !optsQ.data);
+
+  const accountLoading = bootstrapQ.isPending || portfolioStillRetrying;
+  const volatilityCoreLoading = bootstrapQ.isPending;
+  const vixHistoryLoading =
+    chartEnabled &&
+    Boolean(bootstrapQ.data) &&
+    (historyQ.isPending || historyQ.isFetching) &&
+    (historyQ.data?.vix_30d?.length ?? 0) === 0;
 
   const volatilityFetching =
     bootstrapQ.isFetching || optsQ.isFetching || historyQ.isFetching;
@@ -520,6 +532,9 @@ export default function DashboardPage() {
                 Intraday
               </span>
             </header>
+            {accountLoading ? (
+              <DashboardSectionStatus>Fetching account data…</DashboardSectionStatus>
+            ) : null}
             {bootstrapQ.error ? (
               <div className="app-alert-error text-sm">
                 Unable to load account data:{" "}
@@ -534,7 +549,7 @@ export default function DashboardPage() {
                 <div
                   className={[
                     "mt-1 text-lg font-semibold tabular-nums",
-                    bootstrapQ.isPending || portfolioStillRetrying
+                    accountLoading
                       ? "text-zinc-400 dark:text-zinc-500"
                       : bootstrapQ.isError || openPnl == null
                         ? "text-zinc-900 dark:text-zinc-300"
@@ -546,11 +561,13 @@ export default function DashboardPage() {
                   ].join(" ")}
                   title="Sum of MTM (current_profit) from open options positions; falls back to broker P&amp;L if needed"
                 >
-                  {bootstrapQ.isPending || portfolioStillRetrying
-                    ? "…"
-                    : bootstrapQ.isError || openPnl == null
-                      ? "—"
-                      : formatIndianMoneyCompact(openPnl)}
+                  {accountLoading ? (
+                    <DashboardMetricSkeleton />
+                  ) : bootstrapQ.isError || openPnl == null ? (
+                    "—"
+                  ) : (
+                    formatIndianMoneyCompact(openPnl)
+                  )}
                 </div>
                 {openPositionCount != null ? (
                   <div className="mt-0.5 text-[10px] app-text-muted">
@@ -573,11 +590,13 @@ export default function DashboardPage() {
                         : undefined
                   }
                 >
-                  {marginUsedPending
-                    ? "…"
-                    : marginUsedDisplay != null
-                      ? formatIndianMoneyCompact(marginUsedDisplay)
-                      : "—"}
+                  {accountLoading ? (
+                    <DashboardMetricSkeleton />
+                  ) : marginUsedDisplay != null ? (
+                    formatIndianMoneyCompact(marginUsedDisplay)
+                  ) : (
+                    "—"
+                  )}
                 </div>
               </div>
               <div className="app-card-muted p-2.5">
@@ -585,7 +604,13 @@ export default function DashboardPage() {
                   Funds available
                 </div>
                 <div className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums dark:text-zinc-100">
-                  {funds != null ? formatIndianMoneyCompact(funds) : "—"}
+                  {accountLoading ? (
+                    <DashboardMetricSkeleton />
+                  ) : funds != null ? (
+                    formatIndianMoneyCompact(funds)
+                  ) : (
+                    "—"
+                  )}
                 </div>
               </div>
             </div>
@@ -599,11 +624,13 @@ export default function DashboardPage() {
               <h2 className="app-text-heading">NIFTY Volatility</h2>
               <div className="flex min-w-0 shrink-0 items-center gap-2">
                 <span className="app-text-muted max-w-[9.5rem] truncate text-right sm:max-w-none">
-                  {optsLoading
-                    ? "…"
-                    : opts?.next_expiry
-                      ? `Exp ${opts.next_expiry}`
-                      : "NIFTY"}
+                  {optsLoading ? (
+                    <span className="inline-block h-3.5 w-14 animate-pulse rounded-sm bg-zinc-200 dark:bg-zinc-800" />
+                  ) : opts?.next_expiry ? (
+                    `Exp ${opts.next_expiry}`
+                  ) : (
+                    "NIFTY"
+                  )}
                 </span>
                 <button
                   type="button"
@@ -617,6 +644,11 @@ export default function DashboardPage() {
                 </button>
               </div>
             </header>
+            {volatilityCoreLoading ? (
+              <DashboardSectionStatus>Fetching VIX data…</DashboardSectionStatus>
+            ) : optsLoading ? (
+              <DashboardSectionStatus>Fetching options metrics…</DashboardSectionStatus>
+            ) : null}
             {bootstrapQ.error ? (
               <div className="app-alert-error text-sm">
                 Unable to load volatility data:{" "}
@@ -630,19 +662,26 @@ export default function DashboardPage() {
                 </div>
                 <div className="mt-1 flex items-baseline justify-between gap-2">
                   <div className="text-lg font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                    {typeof core?.current_vix === "number"
-                      ? core.current_vix.toFixed(2)
-                      : "—"}
+                    {volatilityCoreLoading ? (
+                      <DashboardMetricSkeleton />
+                    ) : typeof core?.current_vix === "number" ? (
+                      core.current_vix.toFixed(2)
+                    ) : (
+                      "—"
+                    )}
                   </div>
                   <div className="flex items-center justify-end gap-1">
-                    {vixInterp ? (
+                    {!volatilityCoreLoading && vixInterp ? (
                       <InterpretationBadge
                         label={vixInterp.label}
                         tooltip={vixInterp.tooltip}
                         tone={vixInterp.tone}
                       />
                     ) : null}
-                    <TrendChip pct={core?.vix_trend_pct} />
+                    <TrendChip
+                      pct={core?.vix_trend_pct}
+                      loading={volatilityCoreLoading}
+                    />
                   </div>
                 </div>
               </div>
@@ -653,9 +692,16 @@ export default function DashboardPage() {
                 </div>
                 <div className="mt-1 flex items-baseline justify-between gap-2">
                   <div className="text-lg font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                    {formatNiftyIndexInt(niftySpot)}
+                    {volatilityCoreLoading ? (
+                      <DashboardMetricSkeleton className="w-20" />
+                    ) : (
+                      formatNiftyIndexInt(niftySpot)
+                    )}
                   </div>
-                  <TrendChip pct={core?.nifty_spot_trend_pct} />
+                  <TrendChip
+                    pct={core?.nifty_spot_trend_pct}
+                    loading={volatilityCoreLoading}
+                  />
                 </div>
               </div>
 
@@ -665,11 +711,13 @@ export default function DashboardPage() {
                 </div>
                 <div className="mt-1 flex items-baseline justify-between gap-2">
                   <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                    {optsLoading
-                      ? "…"
-                      : typeof opts?.atm_iv === "number"
-                        ? `${opts.atm_iv.toFixed(2)}%`
-                        : "—"}
+                    {optsLoading ? (
+                      <DashboardMetricSkeleton className="w-20" />
+                    ) : typeof opts?.atm_iv === "number" ? (
+                      `${opts.atm_iv.toFixed(2)}%`
+                    ) : (
+                      "—"
+                    )}
                   </div>
                   {!optsLoading && ivInterp ? (
                     <InterpretationBadge
@@ -687,7 +735,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
                   {optsLoading ? (
-                    "…"
+                    <DashboardMetricSkeleton className="w-36" />
                   ) : Array.isArray(opts?.expected_range) &&
                     opts.expected_range.length === 2 ? (
                     <>
@@ -713,12 +761,14 @@ export default function DashboardPage() {
                   Range based on highest OI
                 </div>
                 <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                  {optsLoading
-                    ? "…"
-                    : formatHighestOiStrikeRange(
-                        opts?.strike_highest_call_oi,
-                        opts?.strike_highest_put_oi,
-                      )}
+                  {optsLoading ? (
+                    <DashboardMetricSkeleton className="w-36" />
+                  ) : (
+                    formatHighestOiStrikeRange(
+                      opts?.strike_highest_call_oi,
+                      opts?.strike_highest_put_oi,
+                    )
+                  )}
                 </div>
               </div>
 
@@ -728,11 +778,13 @@ export default function DashboardPage() {
                 </div>
                 <div className="mt-1 flex items-baseline justify-between gap-2">
                   <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                    {optsLoading
-                      ? "…"
-                      : typeof opts?.put_call_ratio === "number"
-                        ? opts.put_call_ratio.toFixed(2)
-                        : "—"}
+                    {optsLoading ? (
+                      <DashboardMetricSkeleton className="w-14" />
+                    ) : typeof opts?.put_call_ratio === "number" ? (
+                      opts.put_call_ratio.toFixed(2)
+                    ) : (
+                      "—"
+                    )}
                   </div>
                   {!optsLoading && pcrInterp ? (
                     <InterpretationBadge
@@ -764,7 +816,10 @@ export default function DashboardPage() {
             {!chartEnabled ? (
               <div className="text-sm app-text-muted">Load chart when visible...</div>
             ) : (
-              <Vix30dChart series={core?.vix_30d ?? []} />
+              <Vix30dChart
+                series={core?.vix_30d ?? []}
+                loading={vixHistoryLoading}
+              />
             )}
           </section>
       </div>
@@ -1005,7 +1060,17 @@ function OutlookBlock({
   );
 }
 
-function TrendChip({ pct }: { pct: number | null | undefined }) {
+function TrendChip({
+  pct,
+  loading = false,
+}: {
+  pct: number | null | undefined;
+  loading?: boolean;
+}) {
+  if (loading) {
+    return <DashboardTrendSkeleton />;
+  }
+
   if (typeof pct !== "number" || !Number.isFinite(pct)) {
     return (
       <span
