@@ -467,7 +467,12 @@ async def _complete_icici_session(
             raw_session=raw_session,
             broker_token=icici_token,
         ),
-        portfolio=login_bootstrap_portfolio,
+        portfolio=(
+            login_bootstrap_portfolio
+            if isinstance(login_bootstrap_portfolio, dict)
+            and login_bootstrap_portfolio.get("Status") == 200
+            else None
+        ),
         vix_headline=login_bootstrap_vix,
     )
 

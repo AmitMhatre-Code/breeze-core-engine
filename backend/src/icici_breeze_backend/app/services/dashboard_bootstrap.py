@@ -111,6 +111,8 @@ def build_dashboard_bootstrap(user_id: str, processor, *, broker_token: str) -> 
 
     snap = get_snapshot(user_id, broker_token)
     cached_portfolio = snap.portfolio if snap and snap.portfolio is not None else None
+    if isinstance(cached_portfolio, dict) and cached_portfolio.get("Status") != 200:
+        cached_portfolio = None
     cached_vix = snap.vix_headline if snap and snap.vix_headline is not None else None
     needs_live_broker = cached_portfolio is None or cached_vix is None
 

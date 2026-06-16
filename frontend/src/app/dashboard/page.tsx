@@ -178,11 +178,19 @@ export default function DashboardPage() {
     enabled: false,
   });
 
+  const bootstrapPortfolio = bootstrapQ.data?.portfolio;
+  const portfolioBootstrapFailed = Boolean(
+    bootstrapPortfolio &&
+      bootstrapPortfolio.Status != null &&
+      bootstrapPortfolio.Status !== 200,
+  );
+
   const portQ = useQuery({
     queryKey: ["portfolio", "positions"],
     queryFn: () => apiClient.get<PortfolioApiResponse>("/portfolio/data"),
     staleTime: 30_000,
-    enabled: false,
+    enabled: portfolioBootstrapFailed,
+    retry: 1,
   });
 
   const coreQ = useQuery({
@@ -290,8 +298,14 @@ export default function DashboardPage() {
     refreshOutlookM.error,
   ]);
 
-  const homeData = bootstrapQ.data?.home ?? homeQ.data;
-  const portData = bootstrapQ.data?.portfolio ?? portQ.data;
+  const homeData = bootstrapQ.isPending
+    ? undefined
+    : (bootstrapQ.data?.home ?? homeQ.data);
+  const portData = bootstrapQ.isPending
+    ? undefined
+    : (portQ.data ?? bootstrapPortfolio);
+  const portfolioStillRetrying =
+    portfolioBootstrapFailed && (portQ.isPending || portQ.isFetching);
   const coreBase = bootstrapQ.data?.vix ?? coreQ.data;
   const opts = optsQ.data;
   const vixSeries = historyQ.data?.vix_30d ?? coreBase?.vix_30d ?? [];
@@ -319,6 +333,9 @@ export default function DashboardPage() {
   const openPnl = useMemo(() => sumOpenPositionsPnl(portData), [portData]);
 
   const dashboardWarnings = useMemo(() => {
+    if (bootstrapQ.isPending || portfolioStillRetrying) {
+      return [];
+    }
     const w: string[] = [];
     const h = homeData;
     if (h?.customer && typeof h.customer === "object") {
@@ -338,7 +355,7 @@ export default function DashboardPage() {
       w.push("Positions could not be loaded.");
     }
     return w;
-  }, [homeData, portData]);
+  }, [bootstrapQ.isPending, homeData, portData, portfolioStillRetrying]);
 
   const openPositionCount =
     portData?.Status === 200
@@ -517,7 +534,7 @@ export default function DashboardPage() {
                 <div
                   className={[
                     "mt-1 text-lg font-semibold tabular-nums",
-                    bootstrapQ.isPending
+                    bootstrapQ.isPending || portfolioStillRetrying
                       ? "text-zinc-400 dark:text-zinc-500"
                       : bootstrapQ.isError || openPnl == null
                         ? "text-zinc-900 dark:text-zinc-300"
@@ -529,7 +546,7 @@ export default function DashboardPage() {
                   ].join(" ")}
                   title="Sum of MTM (current_profit) from open options positions; falls back to broker P&amp;L if needed"
                 >
-                  {bootstrapQ.isPending
+                  {bootstrapQ.isPending || portfolioStillRetrying
                     ? "…"
                     : bootstrapQ.isError || openPnl == null
                       ? "—"

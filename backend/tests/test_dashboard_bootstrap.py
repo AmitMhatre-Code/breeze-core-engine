@@ -61,6 +61,68 @@ def test_snapshot_cache_hit_skips_live_home_fields():
     assert snap.customerdetails_session_token == "sess-tok"
 
 
+def test_build_dashboard_bootstrap_ignores_failed_cached_portfolio():
+    user = "U1"
+    token = "broker-tok"
+    customer = {"Status": 200, "Success": {"idirect_user_name": "Cached"}}
+    margin = build_margin_situation_from_raw(
+        {"Status": 200, "Success": {"cash_limit": 500.0, "limit_list": []}}
+    )
+    failed_portfolio = {"Status": 400, "Error": "transient", "Success": None}
+    live_portfolio = {"Status": 200, "Success": []}
+    vix_payload = {
+        "current_vix": 14.5,
+        "nifty_spot": 24000.0,
+        "vix_trend_pct": 0.0,
+        "nifty_spot_trend_pct": 2.0,
+        "vix_30d": [],
+        "error": None,
+    }
+    set_snapshot(
+        user,
+        token,
+        customer_details=customer,
+        margin_situation=margin,
+        customerdetails_session_token="raw-sess",
+        portfolio=failed_portfolio,
+        vix_headline=vix_payload,
+    )
+
+    proc = MagicMock()
+    proc.get_customer_details = MagicMock(side_effect=AssertionError("should use cache"))
+    proc.get_margin_situation = MagicMock(side_effect=AssertionError("should use cache"))
+    proc.get_session_breeze = MagicMock(return_value=MagicMock(session_key="sess"))
+    proc.get_positions = MagicMock(return_value=live_portfolio)
+
+    with patch(
+        "icici_breeze_backend.app.services.dashboard_bootstrap.fetch_vix_headline",
+        side_effect=AssertionError("should use cache"),
+    ), patch(
+        "icici_breeze_backend.app.services.api_usage.get_usage_for_display",
+        return_value={
+            "api_calls_today": 1,
+            "api_calls_limit": 5000,
+            "api_usage_band": "green",
+        },
+    ), patch(
+        "icici_breeze_backend.app.services.api_usage.get_usage_warning",
+        return_value=None,
+    ), patch(
+        "icici_breeze_backend.app.services.api_usage.is_daily_limit_reached",
+        return_value=False,
+    ), patch(
+        "icici_breeze_backend.app.services.deployment_license_status.get_license_status_for_api",
+        return_value={},
+    ), patch(
+        "icici_breeze_backend.audit.logger.AuditLogger.log_portfolio_access",
+    ):
+        payload = build_dashboard_bootstrap(user, proc, broker_token=token)
+
+    proc.get_positions.assert_called_once()
+    assert payload["portfolio"]["Status"] == 200
+    assert payload["portfolio"]["Success"]["positions"] == []
+
+
 def test_build_dashboard_bootstrap_uses_snapshot_and_skips_vix_options():
     user = "U1"
     token = "broker-tok"
