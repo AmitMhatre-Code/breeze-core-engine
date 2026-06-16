@@ -176,8 +176,10 @@ function PerformancePageInner() {
   return (
     <AppShell contentWidth="wide">
       {q.isPending ? (
-        <div className="app-card p-4 text-sm text-zinc-500 dark:text-zinc-400">
-          Loading performance…
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="app-card min-h-[180px] animate-pulse p-4" />
+          ))}
         </div>
       ) : q.error ? (
         <div className="app-alert-error">
@@ -459,8 +461,10 @@ export default function PerformancePage() {
     <Suspense
       fallback={
         <AppShell contentWidth="wide">
-          <div className="app-card p-4 text-sm text-zinc-500 dark:text-zinc-400">
-            Loading performance…
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="app-card min-h-[180px] animate-pulse p-4" />
+            ))}
           </div>
         </AppShell>
       }

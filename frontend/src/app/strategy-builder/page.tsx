@@ -3441,6 +3441,11 @@ export default function StrategyBuilderPage() {
             </div>
 
             <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center overflow-visible border-b border-zinc-200 dark:border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-2.5">
+              {uq.isLoading ? (
+                <span className="text-xs app-text-muted animate-pulse">
+                  Loading underlyings…
+                </span>
+              ) : (
               <OptionChainUnderlyingSearch
                 variant="ticker"
                 chainBar
@@ -3456,6 +3461,7 @@ export default function StrategyBuilderPage() {
                   setUncoveredScanResult(null);
                 }}
               />
+              )}
             </div>
 
             <div className="relative z-20 flex shrink-0 items-center overflow-visible px-3 py-2 sm:py-2.5 sm:pe-3.5">

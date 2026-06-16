@@ -71,20 +71,42 @@ type BookGroup = {
   group_orders?: BookOrderRow[];
 };
 
-function formatGroupLtpDisplay(
+function formatGroupLtpText(
   groupId: string | undefined,
   fallback: number | string | null | undefined,
   ltps: Record<string, number | null> | undefined,
-  loading: boolean,
-): string {
+): string | null {
   if (groupId && ltps && groupId in ltps) {
     const v = ltps[groupId];
     if (v != null && Number.isFinite(v)) return `₹${v}`;
     return "—";
   }
   if (fallback != null && fallback !== "") return `₹${fallback}`;
-  if (loading) return "…";
-  return "—";
+  return null;
+}
+
+function GroupLtpValue({
+  groupId,
+  fallback,
+  ltps,
+  loading,
+}: {
+  groupId: string | undefined;
+  fallback: number | string | null | undefined;
+  ltps: Record<string, number | null> | undefined;
+  loading: boolean;
+}) {
+  const text = formatGroupLtpText(groupId, fallback, ltps);
+  if (text != null) return <>{text}</>;
+  if (loading) {
+    return (
+      <span
+        className="inline-block h-3 w-10 animate-pulse rounded-sm bg-zinc-200 dark:bg-zinc-800"
+        aria-hidden
+      />
+    );
+  }
+  return <>—</>;
 }
 
 function bookGroupLtpPayload(groups: BookGroup[]): BookGroupLtpItem[] {
@@ -483,11 +505,6 @@ function OrdersBody() {
   });
   const groupLtps = ltpQuery.data?.ltps;
   const groupLtpLoading = ltpQuery.isLoading || ltpQuery.isFetching;
-  const formatGroupLtp = useCallback(
-    (g: BookGroup) =>
-      formatGroupLtpDisplay(g.group, g.group_ltp, groupLtps, groupLtpLoading),
-    [groupLtps, groupLtpLoading],
-  );
   const bookMsgs = bookQuery.data?.messages;
   const brokerMessagesKey = useMemo(() => {
     if (!bookMsgs?.length) return "";
@@ -669,8 +686,14 @@ function OrdersBody() {
           </span>
         </header>
         {parkedQuery.isLoading ? (
-          <div className="app-card-muted border-dashed p-4 text-sm app-text-muted">
-            Loading parked orders...
+          <div className="app-card-muted space-y-2 border-dashed p-4">
+            <div className="h-4 w-40 animate-pulse rounded-sm bg-zinc-200 dark:bg-zinc-800" />
+            {[0, 1].map((i) => (
+              <div
+                key={i}
+                className="h-9 w-full animate-pulse rounded-sm bg-zinc-100 dark:bg-zinc-800/60"
+              />
+            ))}
           </div>
         ) : parkedQuery.isError ? (
           <div className="app-alert-error text-xs">
@@ -989,7 +1012,15 @@ function OrdersBody() {
       </section>
 
       {bookQuery.isLoading ? (
-        <div className="app-card mt-6 p-4">Loading order book…</div>
+        <div className="app-card mt-6 space-y-3 p-4">
+          <div className="h-5 w-28 animate-pulse rounded-sm bg-zinc-200 dark:bg-zinc-800" />
+          {[0, 1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="h-9 w-full animate-pulse rounded-sm bg-zinc-100 dark:bg-zinc-800/60"
+            />
+          ))}
+        </div>
       ) : bookQuery.error ? (
         <div className="app-alert-error mt-6">
           Unable to load order book:{" "}
@@ -1262,7 +1293,12 @@ function OrdersBody() {
                                                   {formatQtyIndian(o.open_quantity)}
                                                 </td>
                                                 <td className="px-4 py-2.5 align-middle text-center tabular-nums text-zinc-600 dark:text-zinc-400">
-                                                  {formatGroupLtp(g)}
+                                                  <GroupLtpValue
+                                                    groupId={g.group}
+                                                    fallback={g.group_ltp}
+                                                    ltps={groupLtps}
+                                                    loading={groupLtpLoading}
+                                                  />
                                                 </td>
                                                 <td className="px-4 py-2.5 align-middle text-center tabular-nums text-zinc-600 dark:text-zinc-400">
                                                   {o.price != null
@@ -1415,7 +1451,12 @@ function OrdersBody() {
                               <p>
                                 Price:{" "}
                                 {o.price != null ? `₹${o.price}` : "—"} | LTP:{" "}
-                                {formatGroupLtp(g)}
+                                <GroupLtpValue
+                                  groupId={g.group}
+                                  fallback={g.group_ltp}
+                                  ltps={groupLtps}
+                                  loading={groupLtpLoading}
+                                />
                               </p>
                               <p>Status: {o.status}</p>
                               {o.cancelable && o.order_id ? (

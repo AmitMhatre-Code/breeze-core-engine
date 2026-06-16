@@ -249,7 +249,7 @@ export function AppShell({
             <span className="hidden truncate text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 md:inline">
               Trading
             </span>
-            {homeQ.isLoading ? (
+            {homeQ.isLoading || (homeQ.isFetching && !homeQ.data) ? (
               <span className="text-xs text-zinc-500">Loading account…</span>
             ) : homeQ.isError ? (
               <span className="truncate text-xs text-amber-700 dark:text-amber-200/90">

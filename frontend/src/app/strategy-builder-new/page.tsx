@@ -715,6 +715,11 @@ export default function StrategyBuilderNewPage() {
                 </div>
               </div>
               <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center px-3 py-2 sm:border-r sm:dark:border-zinc-700/70">
+                {uq.isLoading ? (
+                  <span className="text-xs app-text-muted animate-pulse">
+                    Loading underlyings…
+                  </span>
+                ) : (
                 <OptionChainUnderlyingSearch
                   variant="ticker"
                   chainBar
@@ -728,6 +733,7 @@ export default function StrategyBuilderNewPage() {
                     resetDownstream(downstreamSetters);
                   }}
                 />
+                )}
               </div>
               <div className="flex shrink-0 items-center px-3 py-2 sm:pe-3.5">
                 <ExpirySelectPill
