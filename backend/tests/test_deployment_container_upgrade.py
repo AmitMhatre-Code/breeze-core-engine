@@ -67,6 +67,13 @@ def test_format_dotenv_text_quotes_spaces():
     assert "JWT_SECRET=abc\n" in text
 
 
+def test_format_bytes_reclaimed():
+    assert dcu._format_bytes_reclaimed(0) == "0B"
+    assert dcu._format_bytes_reclaimed(512) == "512B"
+    assert dcu._format_bytes_reclaimed(1536) == "1.5KB"
+    assert dcu._format_bytes_reclaimed(5 * 1024 * 1024) == "5.0MB"
+
+
 def test_upgrade_shell_script_uses_env_file():
     script = dcu.upgrade_shell_script(
         image="ghcr.io/org/breeze-core-engine:latest",
@@ -78,6 +85,12 @@ def test_upgrade_shell_script_uses_env_file():
     assert 'ENV_FILE=/opt/breeze-core-engine/.upgrade.env' in script
     assert 'docker rm -f "$NAME"' in script
     assert "still exists after docker rm" in script
+    assert "not running after docker run" in script
+    assert "docker container prune -f" in script
+    assert "docker image prune -f" in script
+    assert "stopped containers pruned successfully" in script
+    assert "dangling images pruned successfully" in script
+    assert "prune complete:" in script
     assert "-p 80:3000" in script
     assert "upgrade.log" in script
 
@@ -115,7 +128,7 @@ def test_schedule_recreate_via_helper_detached_cli(monkeypatch):
     args, kwargs = mock_client.containers.run.call_args
     assert args[0] == "docker:cli"
     assert kwargs["detach"] is True
-    assert kwargs["remove"] is False
+    assert kwargs["remove"] is True
     assert "/var/run/docker.sock" in kwargs["volumes"]
     assert dcu._DEPLOY_ROOT in kwargs["volumes"]
     assert 'ENV_FILE=' in kwargs["command"][0]
@@ -147,6 +160,8 @@ def test_recreate_deployment_container_stops_and_runs_with_env(tmp_path, monkeyp
     mock_old.stop.assert_called_once()
     mock_old.remove.assert_called_once_with(force=True)
     mock_client.containers.run.assert_called_once()
+    mock_client.containers.prune.assert_called_once()
+    mock_client.images.prune.assert_called_once_with(filters={"dangling": True})
     _, kwargs = mock_client.containers.run.call_args
     assert kwargs["name"] == "breeze-core-engine"
     assert kwargs["environment"]["JWT_ACCESS_TOKEN_EXPIRE_MINUTES"] == "1440"

@@ -211,6 +211,83 @@ def prepare_upgrade_env_file(client: Any, container_name: str) -> str:
     return _UPGRADE_ENV_FILE
 
 
+def _post_upgrade_prune_shell_lines() -> list[str]:
+    """Prune stopped containers and dangling images after a successful recreate."""
+    return [
+        'if ! docker ps --filter "name=^/${NAME}$" --filter status=running --format \'{{.ID}}\' | grep -q .; then',
+        '  echo "ERROR: container $NAME not running after docker run"',
+        "  exit 1",
+        "fi",
+        'echo "=== pruning stopped containers ==="',
+        'CONTAINER_PRUNE_OUT="$(docker container prune -f 2>&1)" || { echo "ERROR: container prune failed"; exit 1; }',
+        'printf "%s\n" "$CONTAINER_PRUNE_OUT"',
+        'CONTAINER_SPACE="$(printf "%s\n" "$CONTAINER_PRUNE_OUT" | sed -n "s/^Total reclaimed space: //p" | tail -1)"',
+        'if [ -n "$CONTAINER_SPACE" ]; then',
+        '  echo "stopped containers pruned successfully; space reclaimed: $CONTAINER_SPACE"',
+        "else",
+        '  echo "stopped containers pruned successfully"',
+        "fi",
+        'echo "=== pruning dangling images ==="',
+        'IMAGE_PRUNE_OUT="$(docker image prune -f 2>&1)" || { echo "ERROR: image prune failed"; exit 1; }',
+        'printf "%s\n" "$IMAGE_PRUNE_OUT"',
+        'IMAGE_SPACE="$(printf "%s\n" "$IMAGE_PRUNE_OUT" | sed -n "s/^Total reclaimed space: //p" | tail -1)"',
+        'if [ -n "$IMAGE_SPACE" ]; then',
+        '  echo "dangling images pruned successfully; space reclaimed: $IMAGE_SPACE"',
+        "else",
+        '  echo "dangling images pruned successfully"',
+        "fi",
+        'echo "=== prune complete: containers=${CONTAINER_SPACE:-0B}, images=${IMAGE_SPACE:-0B} ==="',
+    ]
+
+
+def _format_bytes_reclaimed(n: int | float | None) -> str:
+    """Human-readable byte size (similar to docker prune CLI output)."""
+    try:
+        size = int(n or 0)
+    except (TypeError, ValueError):
+        return "0B"
+    if size <= 0:
+        return "0B"
+    units = ("B", "KB", "MB", "GB", "TB")
+    value = float(size)
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)}B"
+            return f"{value:.1f}{unit}"
+        value /= 1024.0
+    return f"{size}B"
+
+
+def _prune_docker_after_upgrade(client: Any) -> None:
+    """SDK equivalent of post-upgrade container/image prune on the host."""
+    from docker.errors import APIError, DockerException
+
+    try:
+        containers_result = client.containers.prune()
+        images_result = client.images.prune(filters={"dangling": True})
+        container_space = int(containers_result.get("SpaceReclaimed") or 0)
+        image_space = int(images_result.get("SpaceReclaimed") or 0)
+        containers_deleted = containers_result.get("ContainersDeleted") or []
+        images_deleted = images_result.get("ImagesDeleted") or []
+        logger.info(
+            "deployment upgrade: stopped containers pruned successfully (%d removed, %s reclaimed)",
+            len(containers_deleted),
+            _format_bytes_reclaimed(container_space),
+        )
+        logger.info(
+            "deployment upgrade: dangling images pruned successfully (%d removed, %s reclaimed)",
+            len(images_deleted),
+            _format_bytes_reclaimed(image_space),
+        )
+        logger.info(
+            "deployment upgrade: prune complete (total reclaimed: %s)",
+            _format_bytes_reclaimed(container_space + image_space),
+        )
+    except (APIError, DockerException) as exc:
+        logger.warning("deployment upgrade: docker prune failed: %s", exc)
+
+
 def upgrade_shell_script(
     *,
     image: str,
@@ -252,6 +329,7 @@ def upgrade_shell_script(
             "-v /var/run/docker.sock:/var/run/docker.sock "
             '--env-file "$ENV_FILE" '
             '"$IMAGE"',
+            *_post_upgrade_prune_shell_lines(),
             'echo "=== upgrade complete: $(docker ps --filter name=^/$NAME$ --format {{.Status}}) ==="',
         ]
     )
@@ -305,7 +383,7 @@ def schedule_recreate_via_helper(client: Any, *, image: str, container_name: str
             command=[script],
             name=helper_name,
             detach=True,
-            remove=False,
+            remove=True,
             volumes={
                 "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
                 _DEPLOY_ROOT: {"bind": _DEPLOY_ROOT, "mode": "rw"},
@@ -373,3 +451,4 @@ def recreate_deployment_container(client: Any, *, image: str, container_name: st
         environment=environment,
     )
     logger.info("deployment upgrade: container %s is up", container_name)
+    _prune_docker_after_upgrade(client)
