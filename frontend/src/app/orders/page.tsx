@@ -101,7 +101,7 @@ function GroupLtpValue({
   if (loading) {
     return (
       <span
-        className="inline-block h-3 w-10 animate-pulse rounded-sm bg-zinc-200 dark:bg-zinc-800"
+        className="app-skeleton inline-block h-3 w-10 rounded-sm border-0"
         aria-hidden
       />
     );
@@ -687,12 +687,9 @@ function OrdersBody() {
         </header>
         {parkedQuery.isLoading ? (
           <div className="app-card-muted space-y-2 border-dashed p-4">
-            <div className="h-4 w-40 animate-pulse rounded-sm bg-zinc-200 dark:bg-zinc-800" />
+            <div className="h-4 w-40 app-skeleton rounded-sm border-0" />
             {[0, 1].map((i) => (
-              <div
-                key={i}
-                className="h-9 w-full animate-pulse rounded-sm bg-zinc-100 dark:bg-zinc-800/60"
-              />
+              <div key={i} className="h-9 w-full app-skeleton rounded-sm border-0" />
             ))}
           </div>
         ) : parkedQuery.isError ? (
@@ -1013,12 +1010,9 @@ function OrdersBody() {
 
       {bookQuery.isLoading ? (
         <div className="app-card mt-6 space-y-3 p-4">
-          <div className="h-5 w-28 animate-pulse rounded-sm bg-zinc-200 dark:bg-zinc-800" />
+          <div className="h-5 w-28 app-skeleton rounded-sm border-0" />
           {[0, 1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="h-9 w-full animate-pulse rounded-sm bg-zinc-100 dark:bg-zinc-800/60"
-            />
+            <div key={i} className="h-9 w-full app-skeleton rounded-sm border-0" />
           ))}
         </div>
       ) : bookQuery.error ? (

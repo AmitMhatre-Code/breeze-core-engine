@@ -24,7 +24,7 @@ const PerformanceMonthlyChart = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="app-card-muted min-h-[300px] animate-pulse rounded-md" />
+      <div className="app-skeleton min-h-[300px] rounded-md border-0" />
     ),
   },
 );
@@ -178,7 +178,9 @@ function PerformancePageInner() {
       {q.isPending ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="app-card min-h-[180px] animate-pulse p-4" />
+            <div key={i} className="app-card min-h-[180px] p-4">
+              <div className="h-full min-h-[140px] w-full app-skeleton rounded-sm border-0" />
+            </div>
           ))}
         </div>
       ) : q.error ? (
@@ -463,7 +465,9 @@ export default function PerformancePage() {
         <AppShell contentWidth="wide">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="app-card min-h-[180px] animate-pulse p-4" />
+              <div key={i} className="app-card min-h-[180px] p-4">
+              <div className="h-full min-h-[140px] w-full app-skeleton rounded-sm border-0" />
+            </div>
             ))}
           </div>
         </AppShell>

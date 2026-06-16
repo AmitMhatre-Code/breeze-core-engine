@@ -23,9 +23,10 @@ export const changelogReleases: ChangelogRelease[] = [
     version: "2.0.1",
     date: "16-Jun-2026",
     releaseKind: "patch",
-    summary: "Login Disclosure Bug Fix",
+    summary: "Login Disclosure bug fix and minor UI tweaks",
     changes: [
       "The 'Proceed' button on the Risk Disclosure modal now works correctly.",
+      "Minor UI tweaks to the Dashboard so it doesn't throw errors while the data is being fetched.",
     ],
   },
   {

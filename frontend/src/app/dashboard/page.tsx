@@ -625,7 +625,7 @@ export default function DashboardPage() {
               <div className="flex min-w-0 shrink-0 items-center gap-2">
                 <span className="app-text-muted max-w-[9.5rem] truncate text-right sm:max-w-none">
                   {optsLoading ? (
-                    <span className="inline-block h-3.5 w-14 animate-pulse rounded-sm bg-zinc-200 dark:bg-zinc-800" />
+                    <span className="app-skeleton inline-block h-3.5 w-14 rounded-sm border-0" />
                   ) : opts?.next_expiry ? (
                     `Exp ${opts.next_expiry}`
                   ) : (

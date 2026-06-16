@@ -28,12 +28,9 @@ export default function PortfolioPage() {
     <AppShell contentWidth="wide">
       {q.isLoading ? (
         <div className="app-card space-y-3 p-4">
-          <div className="h-5 w-32 animate-pulse rounded-sm bg-zinc-200 dark:bg-zinc-800" />
+          <div className="h-5 w-32 app-skeleton rounded-sm border-0" />
           {[0, 1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="h-9 w-full animate-pulse rounded-sm bg-zinc-100 dark:bg-zinc-800/60"
-            />
+            <div key={i} className="h-9 w-full app-skeleton rounded-sm border-0" />
           ))}
         </div>
       ) : q.error ? (

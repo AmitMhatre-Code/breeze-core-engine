@@ -5,10 +5,7 @@ type SkeletonProps = {
 export function DashboardMetricSkeleton({ className }: SkeletonProps) {
   return (
     <div
-      className={[
-        "app-card-muted h-7 w-16 animate-pulse rounded-sm",
-        className,
-      ]
+      className={["app-skeleton h-7 w-16 rounded-sm border-0", className]
         .filter(Boolean)
         .join(" ")}
       aria-hidden
@@ -19,10 +16,7 @@ export function DashboardMetricSkeleton({ className }: SkeletonProps) {
 export function DashboardChartSkeleton({ className }: SkeletonProps) {
   return (
     <div
-      className={[
-        "app-card-muted min-h-[148px] w-full animate-pulse rounded-md",
-        className,
-      ]
+      className={["app-skeleton min-h-[148px] w-full rounded-md border-0", className]
         .filter(Boolean)
         .join(" ")}
       aria-hidden
@@ -33,7 +27,7 @@ export function DashboardChartSkeleton({ className }: SkeletonProps) {
 export function DashboardTrendSkeleton() {
   return (
     <span
-      className="inline-block h-5 w-14 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800"
+      className="app-skeleton inline-block h-5 w-14 rounded-full border-0"
       aria-hidden
     />
   );
