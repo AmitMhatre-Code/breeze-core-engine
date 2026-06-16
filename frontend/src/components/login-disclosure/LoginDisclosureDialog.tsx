@@ -14,7 +14,7 @@ type Props = {
   onProceed: () => void;
 };
 
-function useScrollReachedBottom(contentKey: string) {
+function useScrollReachedBottom(contentKey: string, open: boolean) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [hasReachedBottom, setHasReachedBottom] = useState(false);
 
@@ -26,13 +26,38 @@ function useScrollReachedBottom(contentKey: string) {
     setHasReachedBottom(atBottom);
   }, []);
 
+  // Re-check when content changes or the dialog opens. While closed, scrollRef is
+  // not mounted (early return), so a content-only effect can miss the first open.
   useEffect(() => {
+    if (!open) return;
     setHasReachedBottom(false);
-    const frame = requestAnimationFrame(() => {
+    let innerFrame = 0;
+    const outerFrame = requestAnimationFrame(() => {
+      innerFrame = requestAnimationFrame(() => {
+        checkScrollPosition();
+      });
+    });
+    return () => {
+      cancelAnimationFrame(outerFrame);
+      cancelAnimationFrame(innerFrame);
+    };
+  }, [contentKey, open, checkScrollPosition]);
+
+  // Markdown/terms can grow after the initial layout pass.
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver(() => {
       checkScrollPosition();
     });
-    return () => cancelAnimationFrame(frame);
-  }, [contentKey, checkScrollPosition]);
+    observer.observe(el);
+    for (const child of el.children) {
+      observer.observe(child);
+    }
+    return () => observer.disconnect();
+  }, [contentKey, open, checkScrollPosition]);
 
   return { scrollRef, hasReachedBottom, checkScrollPosition };
 }
@@ -47,6 +72,7 @@ export function LoginDisclosureDialog({
 }: Props) {
   const { scrollRef, hasReachedBottom, checkScrollPosition } = useScrollReachedBottom(
     contentMarkdown,
+    open,
   );
 
   if (!open) return null;
