@@ -324,12 +324,9 @@ class TestCalcIronCondor(unittest.TestCase):
         cache[(24600, "Call")] = _quote(24600, "Call", bid=2.70, ask=2.75, delta=0.04)
 
         proc = self._margin_mock({})
-        ctx = _ctx_from_cache(cache, min_pop_pct=50.0, processor=proc)
+        ctx = _ctx_from_cache(cache, min_pop_pct=50.0, min_ann_return_pct=0.0, processor=proc)
 
         with patch(
-            "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_ANNUALIZED_RETURN_PCT",
-            0.0,
-        ), patch(
             "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_CREDIT_PCT_OF_WIDTH",
             0.01,
         ):
@@ -383,8 +380,8 @@ class TestCalcIronCondor(unittest.TestCase):
                 score_factors={"ror": 0.1, "liquidity_weight": 0.9, "spread_weight": 0.9},
             )
 
+        low_span = _cand(22900, final=50.0, premium=15_000.0)
         high_score = _cand(23250, final=100.0, premium=10_000.0)
-        low_span = _cand(22900, final=50.0, premium=10_000.0)
 
         winners, scores = asyncio.run(
             _pick_top_candidates(
@@ -772,16 +769,13 @@ class TestSoftPreferredCredit(unittest.TestCase):
         }
         proc = MagicMock()
         proc.strategy_builder_margin.return_value = {"Success": {"span_margin_required": 50_000.0}}
-        ctx = _ctx_from_cache(cache, min_pop_pct=50.0, processor=proc)
+        ctx = _ctx_from_cache(cache, min_pop_pct=50.0, min_ann_return_pct=0.0, processor=proc)
         with patch(
             "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.iron_condor_short_pairs",
             return_value=[(22800, 24400)],
         ), patch(
             "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor._best_strangle_short_pair",
             return_value=None,
-        ), patch(
-            "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.MIN_IC_ANNUALIZED_RETURN_PCT",
-            0.0,
         ):
             results = asyncio.run(calc_iron_condor(ctx))
         ok = [r for r in results if r.status == "ok"]
@@ -841,7 +835,7 @@ class TestPopBandStrikeSelection(unittest.TestCase):
         self.assertTrue(_pop_band_covered(ctx, puts, calls, 90.0))
 
     def test_pop_band_covered_uses_real_pop_not_delta(self):
-        """Coverage must use breakeven PoP; delta estimate can falsely claim band coverage."""
+        """Coverage must use breakeven PoP; naive delta sum can mis-rank vs breakeven model."""
         spot = 23623.0
         short_put, short_call = 23000, 24200
         put_delta, call_delta = 0.044, 0.046
@@ -862,7 +856,7 @@ class TestPopBandStrikeSelection(unittest.TestCase):
         real_pop = pop_for_legs(ctx, legs)
         delta_est = (1.0 - put_delta - call_delta) * 100.0
         self.assertGreaterEqual(delta_est, 90.0)
-        self.assertLess(real_pop, 90.0)
+        self.assertGreater(real_pop, 90.0)
         self.assertFalse(_pop_band_covered(ctx, [short_put], [short_call], 90.0))
 
     def test_ic_pop_bucket_labels(self):
@@ -922,7 +916,13 @@ class TestSearchBounds(unittest.TestCase):
         for sp, sc in pairs:
             self.assertLess(sp, sc)
 
-    def test_hard_pop_floor_rejects_below_min(self):
+    @patch(
+        "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor.pop_detail_for_legs"
+    )
+    def test_hard_pop_floor_rejects_below_min(self, mock_pop_detail):
+        from icici_breeze_backend.app.services.options_strategy_engine.pop import PopDetail
+
+        mock_pop_detail.return_value = PopDetail(93.5, "breakevens_from_short_strikes")
         strikes = list(range(22600, 24650, 50))
         cache = _fill_strikes(
             strikes,

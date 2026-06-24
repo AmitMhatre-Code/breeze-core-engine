@@ -6,6 +6,10 @@ from icici_breeze_backend.app.services.options_strategy_engine.strategies.common
     atm_with_liquidity,
     make_result,
 )
+from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import (
+    income_constraint_violations,
+    mark_relaxed_result,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
     enumerate_symmetric_iron_condors,
     prefetch_iron_condor_strikes,
@@ -44,6 +48,10 @@ def calc_iron_butterfly(ctx: EngineContext) -> StrategyResult:
         return skip(sid, name, "No liquid ATM for iron butterfly.")
     candidates = enumerate_symmetric_iron_condors(ctx, stp, stp, stats=collector)
     if not candidates:
+        candidates = enumerate_symmetric_iron_condors(
+            ctx, stp, stp, stats=collector, enforce_pop=False
+        )
+    if not candidates:
         return skip(sid, name, "No symmetric wings meet minimum PoP within risk limits.")
     cand = max(candidates, key=lambda c: (c.final_score, c.net_collected, c.pop))
     lp, lc, credit, max_loss_u, qty, pop = (
@@ -62,6 +70,7 @@ def calc_iron_butterfly(ctx: EngineContext) -> StrategyResult:
         TradeLeg("Call", "Buy", lc, qty, lcq.best_offer_price or lcq.ltp),
     ]
     max_loss = max_loss_u * qty
+    violations = income_constraint_violations(ctx, pop=pop)
     record_simple_winner(
         collector,
         legs,
@@ -73,13 +82,16 @@ def calc_iron_butterfly(ctx: EngineContext) -> StrategyResult:
         },
         stages_passed=list(_INCOME_STAGES),
     )
-    return make_result(
+    result = make_result(
         ctx, sid, name, legs,
         max_loss=max_loss,
         rr=f"{max_loss:.0f} : {credit * qty:.0f}",
         pop=pop,
         net_premium_val=credit * qty,
     )
+    if violations:
+        return mark_relaxed_result(result, violations)
+    return result
 
 
 def prefetch_iron_butterfly(ctx: EngineContext) -> set[tuple[int, Right]]:

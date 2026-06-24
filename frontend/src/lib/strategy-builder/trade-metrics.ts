@@ -58,3 +58,25 @@ export function computeTradeScore(
   if (prem == null || !Number.isFinite(prem)) return null;
   return prem * (pop / 100);
 }
+
+export function formatConstraintViolation(
+  violation: string,
+  trade: ProposedTrade,
+  minPopPct?: number | null,
+  minAnnReturnPct?: number | null,
+): string {
+  if (violation === "pop_floor" && trade.pop_pct != null && minPopPct != null) {
+    return `PoP ${trade.pop_pct.toFixed(1)}% (your min ${minPopPct}%)`;
+  }
+  if (
+    violation === "min_ann_return" &&
+    trade.annualized_return_pct != null &&
+    minAnnReturnPct != null
+  ) {
+    return `ROI ${trade.annualized_return_pct.toFixed(1)}% (your min ${minAnnReturnPct}%)`;
+  }
+  if (violation === "infinite_loss") {
+    return "Unlimited loss";
+  }
+  return violation.replace(/_/g, " ");
+}

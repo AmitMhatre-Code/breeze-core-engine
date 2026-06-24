@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     meets_pop_floor,
+    pre_filter_pop_floor,
     skip,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.pop import (
@@ -22,6 +23,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.strategies.income
     NAKED_ANCHOR_TOP_K,
     SPAN_SHORTLIST_N,
     adaptive_short_strikes,
+    estimate_short_strangle_pop,
     iter_pop_band_expansions,
     passes_capital_gate,
     pop_band,
@@ -124,10 +126,12 @@ async def _pick_top_candidates(ctx, candidates, **kwargs):
     ]
 
 
-def _collect_candidates(ctx, pairs, *, stats=None):
+def _collect_candidates(ctx, pairs, *, stats=None, enforce_pop: bool = True):
     candidates: list[ShortStrangleCandidate] = []
     for sp, sc in pairs:
-        candidates.extend(enumerate_short_strangles(ctx, sp, sc, stats=stats))
+        candidates.extend(
+            enumerate_short_strangles(ctx, sp, sc, stats=stats, enforce_pop=enforce_pop)
+        )
     return candidates
 
 
@@ -138,13 +142,14 @@ def _naked_anchor_strikes(
     *,
     spot_filter: Callable[[int], bool],
 ) -> list[int]:
-    """Single-leg shorts that individually satisfy the PoP floor."""
+    """Single-leg shorts prioritized by PoP down to the soft pre-filter floor."""
+    floor = pre_filter_pop_floor(ctx.min_pop_pct)
     anchors: list[tuple[float, int]] = []
     for s in strikes:
         if not spot_filter(s):
             continue
         pop = pop_for_short_strike(ctx, s, right)
-        if pop >= ctx.min_pop_pct:
+        if pop >= floor:
             anchors.append((pop, s))
     anchors.sort(key=lambda x: -x[0])
     return [s for _, s in anchors]
@@ -157,7 +162,7 @@ def _short_lists_for_band(
 ) -> tuple[list[int], list[int]]:
     pe_strikes = [s for s in ctx.liquid_pe_strikes if s < ctx.spot]
     ce_strikes = [s for s in ctx.liquid_ce_strikes if s > ctx.spot]
-    floor = ctx.min_pop_pct
+    floor = pre_filter_pop_floor(ctx.min_pop_pct)
     puts = adaptive_short_strikes(
         ctx,
         pe_strikes,
@@ -242,6 +247,7 @@ def enumerate_short_strangles(
     short_call: int,
     *,
     stats: ShortStrangleRejectionStats | None = None,
+    enforce_pop: bool = True,
 ) -> list[ShortStrangleCandidate]:
     L = ctx.lot_size
     sid = "short_strangle"
@@ -258,6 +264,11 @@ def enumerate_short_strangles(
     ) -> None:
         if stats is not None:
             stats.record(reason, short_put=short_put, short_call=short_call, **detail)
+            est_pop = (
+                estimate_short_strangle_pop(ctx, short_put, short_call)
+                if pop_detail is not None
+                else None
+            )
             stats.record_evaluation(
                 short_put=short_put,
                 short_call=short_call,
@@ -265,6 +276,8 @@ def enumerate_short_strangles(
                 reject_reason=reason,
                 pop_detail=pop_detail,
                 credit=credit,
+                estimated_pop=est_pop,
+                rejected_stage=reason if reason == "pop_floor" else None,
             )
 
     if stats is not None:
@@ -301,7 +314,7 @@ def enumerate_short_strangles(
     ]
     pop_detail = pop_detail_for_legs(ctx, legs)
     pop = pop_detail.pop_pct
-    if not meets_pop_floor(ctx, pop):
+    if enforce_pop and not meets_pop_floor(ctx, pop):
         _reject("pop_floor", pop_detail=pop_detail, credit=credit, floor=ctx.min_pop_pct)
         return out
 
@@ -324,6 +337,7 @@ def enumerate_short_strangles(
             reject_reason=None,
             pop_detail=pop_detail,
             credit=credit,
+            estimated_pop=estimate_short_strangle_pop(ctx, short_put, short_call),
         )
     record_feasible(stats, pop_detail=pop_detail, credit=credit, passed_capital=True)
 
@@ -386,15 +400,7 @@ async def calc_short_strangle(ctx: EngineContext) -> list[StrategyResult]:
     if stats is not None:
         stats.end_generation(ctx.audit.telemetry if ctx.audit else None)
 
-    if not candidates:
-        skip_reason = stats.skip_message() if stats else (
-            "No short strangle meets minimum PoP on the liquid chain."
-        )
-        return [skip(sid, name, skip_reason)]
-
-    results = await run_income_champion_pipeline(
-        ctx,
-        candidates,
+    pipeline_kwargs = dict(
         strategy_id=sid,
         strategy_name=name,
         stats=stats,
@@ -403,6 +409,28 @@ async def calc_short_strangle(ctx: EngineContext) -> list[StrategyResult]:
         search_state=search_state,
     )
 
+    if not candidates:
+        pairs = short_strangle_pairs(ctx, search_state=search_state)
+        candidates = _collect_candidates(ctx, pairs, stats=stats, enforce_pop=False)
+        if stats is not None:
+            stats.end_generation(ctx.audit.telemetry if ctx.audit else None)
+
+    if not candidates:
+        skip_reason = stats.skip_message() if stats else (
+            "No short strangle meets minimum PoP on the liquid chain."
+        )
+        return [skip(sid, name, skip_reason)]
+
+    recommended, relaxed = await run_income_champion_pipeline(ctx, candidates, **pipeline_kwargs)
+    if not recommended and not relaxed:
+        pairs = short_strangle_pairs(ctx, search_state=search_state)
+        pop_relaxed = _collect_candidates(ctx, pairs, stats=stats, enforce_pop=False)
+        if pop_relaxed:
+            recommended, relaxed = await run_income_champion_pipeline(
+                ctx, pop_relaxed, **pipeline_kwargs
+            )
+
+    results = recommended + relaxed
     if not results:
         return [
             skip(

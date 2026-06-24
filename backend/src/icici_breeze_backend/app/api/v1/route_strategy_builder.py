@@ -166,6 +166,7 @@ async def _run_propose_trades_job(job_id: str, user_id: str, body: ProposeTrades
             expiry_date=body.expiry_date.strip(),
             margin_lacs=body.margin_lacs,
             max_loss_lacs=body.max_loss_lacs,
+            allow_infinite_loss=body.allow_infinite_loss,
             min_pop_pct=body.min_pop_pct,
             min_ann_return_pct=body.min_ann_return_pct,
             provision_elm=body.provision_elm,
@@ -337,6 +338,7 @@ async def post_execute(
             leg.price or "0",
             leg.action,
             exchange_code=ex,
+            aggressive_limit=leg.aggressive_limit,
         )
         breeze.store_messages(ctx.user_id, messages)
         serialized = _serialize_messages(messages)

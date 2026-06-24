@@ -33,7 +33,8 @@ export type ProposeTradesParams = {
   stock_code: string;
   expiry_date: string;
   margin_lacs: number;
-  max_loss_lacs: number;
+  max_loss_lacs?: number;
+  allow_infinite_loss?: boolean;
   min_pop_pct: number;
   min_ann_return_pct?: number;
   provision_elm: boolean;

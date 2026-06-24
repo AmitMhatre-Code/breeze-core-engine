@@ -159,6 +159,7 @@ async def process_post(
                 req.price,
                 req.action,
                 exchange_code=body.exchange_code or cfg.NFO,
+                aggressive_limit=req.aggressive_limit,
             )
             breeze.store_messages(user_id, messages)
             redirect_url = "/book"
@@ -209,6 +210,7 @@ async def post_break_chunk(
         body.exchange_code or cfg.NFO,
         body.chunk_index,
         body.chunk_qty,
+        aggressive_limit=body.aggressive_limit,
     )
     out["rate_limit_pause_seconds"] = pause
     if out.get("success") and int(out.get("placed_quantity") or 0) > 0:
@@ -238,6 +240,7 @@ async def post_break_finalize(
         price_f,
         list(body.success_quantities),
         list(body.danger_lines),
+        aggressive_limit=body.aggressive_limit,
     )
     breeze.store_messages(context.user_id, messages)
     return json_redirect("/book")

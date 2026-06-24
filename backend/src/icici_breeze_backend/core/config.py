@@ -21,6 +21,7 @@ ELM = 0.02
 # Product Types
 OPTIONS = "Options"
 LIMIT = "limit"
+MARKET = "market"
 STOCK = "Stock"
 INDEX = "Index"
 

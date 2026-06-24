@@ -24,7 +24,13 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
 )
 
 
-def _ctx(*, margin_rupees: float = 50_000_000, max_loss_rupees: float = 4_000_000) -> EngineContext:
+def _ctx(
+    *,
+    margin_rupees: float = 50_000_000,
+    max_loss_rupees: float | None = 4_000_000,
+    allow_infinite_loss: bool = False,
+    provision_elm: bool = True,
+) -> EngineContext:
     return EngineContext(
         processor=MagicMock(),
         user_id="u1",
@@ -33,8 +39,9 @@ def _ctx(*, margin_rupees: float = 50_000_000, max_loss_rupees: float = 4_000_00
         expiry_display="16-Jun-2026",
         margin_rupees=margin_rupees,
         max_loss_rupees=max_loss_rupees,
+        allow_infinite_loss=allow_infinite_loss,
         min_pop_pct=95.0,
-        provision_elm=True,
+        provision_elm=provision_elm,
         strategy_category="income",
         lot_size=65,
         strikes=[23600],
@@ -109,7 +116,75 @@ class TestResizeResultsToBudgets(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         # SPAN 65_624 + ELM ~61_422 per lot → ~393 lots within 5 Cr margin budget
         self.assertEqual(result.legs[0].quantity, 65 * 393)
-        self.assertLessEqual(result.max_loss, ctx.max_loss_rupees)
+        if ctx.max_loss_rupees is not None:
+            self.assertLessEqual(result.max_loss, ctx.max_loss_rupees)
+
+    def test_infinite_loss_mode_sizes_defined_risk_by_margin_only(self):
+        def make_legs() -> list[TradeLeg]:
+            return [
+                TradeLeg("Put", "Sell", 22200, 65, 3.35),
+                TradeLeg("Put", "Buy", 22150, 65, 3.45),
+                TradeLeg("Call", "Sell", 24150, 65, 16.7),
+                TradeLeg("Call", "Buy", 24200, 65, 13.3),
+            ]
+
+        proc = MagicMock()
+        proc.strategy_builder_margin.return_value = {
+            "Success": {"span_margin_required": 100_000.0},
+            "Status": 200,
+        }
+
+        capped = StrategyResult(
+            "iron_condor",
+            "Iron Condor",
+            status="ok",
+            max_loss=3035.0,
+            net_premium=718.75,
+            legs=make_legs(),
+        )
+        asyncio.run(
+            resize_results_to_budgets(
+                proc,
+                "u1",
+                "NFO",
+                "NIFTY",
+                "16-Jun-2026",
+                [capped],
+                _ctx(
+                    max_loss_rupees=4_000,
+                    margin_rupees=500_000,
+                    allow_infinite_loss=False,
+                    provision_elm=False,
+                ),
+            )
+        )
+        infinite = StrategyResult(
+            "iron_condor",
+            "Iron Condor",
+            status="ok",
+            max_loss=3035.0,
+            net_premium=718.75,
+            legs=make_legs(),
+        )
+        asyncio.run(
+            resize_results_to_budgets(
+                proc,
+                "u1",
+                "NFO",
+                "NIFTY",
+                "16-Jun-2026",
+                [infinite],
+                _ctx(
+                    max_loss_rupees=None,
+                    allow_infinite_loss=True,
+                    margin_rupees=500_000,
+                    provision_elm=False,
+                ),
+            )
+        )
+        self.assertEqual(capped.status, "ok")
+        self.assertEqual(infinite.status, "ok")
+        self.assertGreater(infinite.legs[0].quantity, capped.legs[0].quantity)
 
     def test_undefined_risk_uses_margin_only(self):
         ctx = _ctx()

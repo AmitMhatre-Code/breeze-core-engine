@@ -29,6 +29,7 @@ export type ExecutionPreviewLeg = {
   /** Contract units (not lots). */
   quantity: number;
   premiumPerUnit: number;
+  aggressiveLimit?: boolean;
 };
 
 export type ControlledChunkProps = {
@@ -149,6 +150,7 @@ export function OrderExecutionConfirmDialog({
           l.side,
           l.quantity,
           l.premiumPerUnit,
+          l.aggressiveLimit ?? false,
         ]),
       ),
     [legs],
@@ -173,7 +175,7 @@ export function OrderExecutionConfirmDialog({
           right: l.right,
           strike_price: String(l.strike),
           quantity: String(Math.round(l.quantity)),
-          price: String(l.premiumPerUnit),
+          price: l.aggressiveLimit ? "0" : String(l.premiumPerUnit),
           action: l.side,
         })),
       }),
@@ -201,10 +203,11 @@ export function OrderExecutionConfirmDialog({
           right: l.right,
           strike_price: String(l.strike),
           total_qty: String(qn),
-          price: String(l.premiumPerUnit),
+          price: l.aggressiveLimit ? "0" : String(l.premiumPerUnit),
           action: l.side,
           onRateLimitWait: wait,
           chunk_qty: chunkQty.trim() || undefined,
+          aggressive_limit: l.aggressiveLimit ?? false,
         });
         if (!out.ok) {
           throw new Error(out.terminalError ?? "Order leg failed");
@@ -319,7 +322,7 @@ export function OrderExecutionConfirmDialog({
         <ul className="max-h-64 divide-y divide-zinc-200/90 overflow-x-auto overflow-y-auto rounded-md border border-zinc-200/80 dark:divide-zinc-700/90 dark:border-zinc-700/80">
           {legs.map((l, idx) => {
             const q = Math.round(l.quantity);
-            const linePrem = l.premiumPerUnit * q;
+            const linePrem = l.aggressiveLimit ? null : l.premiumPerUnit * q;
             const label = formatOptionSymbolLabel(
               stockCode,
               expiryDisplay,
@@ -337,13 +340,24 @@ export function OrderExecutionConfirmDialog({
                     Qty {q <= 0 ? "—" : q.toLocaleString("en-IN")}
                   </span>
                   <span className="shrink-0 whitespace-nowrap">
-                    @ ₹
-                    {l.premiumPerUnit.toLocaleString("en-IN", {
-                      maximumFractionDigits: 2,
-                    })}
+                    {l.aggressiveLimit ? (
+                      <span className="rounded-full border border-amber-500/60 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-800 dark:text-amber-200">
+                        Aggressive limit
+                      </span>
+                    ) : (
+                      <>
+                        @ ₹
+                        {l.premiumPerUnit.toLocaleString("en-IN", {
+                          maximumFractionDigits: 2,
+                        })}
+                      </>
+                    )}
                   </span>
                   <span className="shrink-0 whitespace-nowrap">
-                    Premium {formatIndianMoneyCompact(linePrem)}
+                    Premium{" "}
+                    {linePrem == null
+                      ? "—"
+                      : formatIndianMoneyCompact(linePrem)}
                   </span>
                 </div>
               </li>

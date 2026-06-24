@@ -61,7 +61,7 @@ def credit_spread_wing(
             net_credit=credit,
             max_loss_per_unit=max_loss_u,
             max_loss_total=max_loss_u * L,
-            max_loss_budget=ctx.max_loss_rupees,
+            max_loss_budget=ctx.effective_max_loss_budget(),
             require_pop=requires_pop_gate(ctx),
             min_pop_pct=ctx.min_pop_pct,
         ):
@@ -120,7 +120,7 @@ def credit_spread_wing_full(
             net_credit=credit,
             max_loss_per_unit=max_loss_u,
             max_loss_total=max_loss_u * L,
-            max_loss_budget=ctx.max_loss_rupees,
+            max_loss_budget=ctx.effective_max_loss_budget(),
             require_pop=requires_pop_gate(ctx),
             min_pop_pct=ctx.min_pop_pct,
         ):

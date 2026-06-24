@@ -11,6 +11,8 @@ import { BuildYourOwnChainSection } from "@/components/strategy-builder/BuildYou
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { OutlookFilterButtons } from "@/components/strategy-builder/OutlookFilterButtons";
 import { MasonryGrid } from "@/components/strategy-builder/MasonryGrid";
+import { PopLabel } from "@/components/strategy-builder/PopLabel";
+import { PopHelpTrigger } from "@/components/strategy-builder/PopHelpTrigger";
 import { ProposedStrategyTradeCard } from "@/components/strategy-builder/ProposedStrategyTradeCard";
 import { ProposeTradesProgressBar } from "@/components/strategy-builder/ProposeTradesProgressBar";
 import { StrategyExplainabilityPanel } from "@/components/strategy-builder/StrategyExplainabilityPanel";
@@ -78,9 +80,6 @@ const CATEGORY_LABELS: Record<StrategyCategory, string> = {
   bullish: "Bullish Strategies",
   bearish: "Bearish Strategies",
 };
-
-const MIN_POP_HINT =
-  "Sets how far OTM income shorts are placed. Higher PoP → further OTM (lower delta).";
 
 const MIN_ANN_RETURN_HINT =
   "Minimum annualized return on SPAN margin required for any returned income trade.";
@@ -152,6 +151,7 @@ export default function StrategyBuilderNewPage() {
   );
   const [marginLacs, setMarginLacs] = useState("");
   const [maxLossLacs, setMaxLossLacs] = useState("");
+  const [maxLossMode, setMaxLossMode] = useState<"capped" | "infinite">("capped");
   const [provisionElm, setProvisionElm] = useState(false);
   const [builderMode, setBuilderMode] = useState<BuilderMode>(null);
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
@@ -259,7 +259,10 @@ export default function StrategyBuilderNewPage() {
   const section2Ready =
     section1Complete && chainSpot != null && !chainQ.isFetching;
   const trades: ProposedTrade[] = proposedData?.trades ?? [];
-  const section3EngineReady = proposedData != null && trades.length > 0;
+  const relaxedTrades: ProposedTrade[] = proposedData?.relaxed_trades ?? [];
+  const section3EngineReady =
+    proposedData != null &&
+    (trades.some((t) => t.status === "ok") || relaxedTrades.length > 0);
   const section3ByoReady =
     builderMode === "build_your_own" &&
     Boolean(chainSuccess?.chain_rows?.length);
@@ -270,6 +273,7 @@ export default function StrategyBuilderNewPage() {
 
   const marginLacsNum = parsePositiveNum(marginLacs);
   const maxLossLacsNum = parsePositiveNum(maxLossLacs);
+  const allowInfiniteLoss = maxLossMode === "infinite";
   const minPopPctNum = (() => {
     const n = parseFloat(minPopPct.replace(/,/g, ""));
     if (!Number.isFinite(n)) return null;
@@ -309,7 +313,9 @@ export default function StrategyBuilderNewPage() {
   }, [section4Ready]);
 
   const canGenerateShared =
-    section2Ready && marginLacsNum != null && maxLossLacsNum != null;
+    section2Ready &&
+    marginLacsNum != null &&
+    (allowInfiniteLoss || maxLossLacsNum != null);
   const canGenerateIncome =
     canGenerateShared && minPopPctNum != null && minAnnReturnPctNum != null;
   const canGenerateDirectional = canGenerateShared;
@@ -339,7 +345,9 @@ export default function StrategyBuilderNewPage() {
         stock_code: stockCode.trim(),
         expiry_date: expiryDate.trim(),
         margin_lacs: marginLacsNum!,
-        max_loss_lacs: maxLossLacsNum!,
+        ...(allowInfiniteLoss
+          ? { allow_infinite_loss: true }
+          : { max_loss_lacs: maxLossLacsNum! }),
         min_pop_pct:
           category === "income"
             ? minPopPctNum!
@@ -417,50 +425,64 @@ export default function StrategyBuilderNewPage() {
   const isGenerating = startGenerateM.isPending || Boolean(activeJobId);
   const jobProgress = jobStatusQ.data?.Success;
 
+  const sortTradeList = useCallback(
+    (list: ProposedTrade[]) => {
+      if (tradeSort === "server") return list;
+
+      const withMetrics = list.map((t) => {
+        const pop = computeTradePop(t, spot, atmIv, expiryDate, lotSize);
+        return {
+          trade: t,
+          pop,
+          score: computeTradeScore(t, pop),
+        };
+      });
+
+      if (tradeSort === "score") {
+        withMetrics.sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
+        return withMetrics.map((x) => x.trade);
+      }
+
+      if (tradeSort === "pop") {
+        withMetrics.sort((a, b) => (b.pop ?? -1) - (a.pop ?? -1));
+        return withMetrics.map((x) => x.trade);
+      }
+
+      if (tradeSort === "net_premium") {
+        return [...list].sort(
+          (a, b) => (b.net_premium ?? -Infinity) - (a.net_premium ?? -Infinity),
+        );
+      }
+
+      return [...list].sort((a, b) => {
+        const aLoss = a.max_loss;
+        const bLoss = b.max_loss;
+        if (aLoss == null && bLoss == null) return 0;
+        if (aLoss == null) return 1;
+        if (bLoss == null) return -1;
+        return aLoss - bLoss;
+      });
+    },
+    [tradeSort, spot, atmIv, expiryDate, lotSize],
+  );
+
   const displayedTrades = useMemo(() => {
-    let list = trades.filter((t) => {
+    const list = trades.filter((t) => {
+      if (t.status !== "ok") return false;
       const o = strategyOutlook(t.strategy_id);
       return o ? outlookFilter.has(o) : true;
     });
+    return sortTradeList(list);
+  }, [trades, outlookFilter, sortTradeList]);
 
-    if (tradeSort === "server") return list;
-
-    const withMetrics = list.map((t) => {
-      const pop = computeTradePop(t, spot, atmIv, expiryDate, lotSize);
-      return {
-        trade: t,
-        pop,
-        score: computeTradeScore(t, pop),
-      };
+  const displayedRelaxedTrades = useMemo(() => {
+    const list = relaxedTrades.filter((t) => {
+      if (t.status !== "ok") return false;
+      const o = strategyOutlook(t.strategy_id);
+      return o ? outlookFilter.has(o) : true;
     });
-
-    if (tradeSort === "score") {
-      withMetrics.sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
-      return withMetrics.map((x) => x.trade);
-    }
-
-    if (tradeSort === "pop") {
-      withMetrics.sort((a, b) => (b.pop ?? -1) - (a.pop ?? -1));
-      return withMetrics.map((x) => x.trade);
-    }
-
-    if (tradeSort === "net_premium") {
-      list = [...list].sort(
-        (a, b) => (b.net_premium ?? -Infinity) - (a.net_premium ?? -Infinity),
-      );
-      return list;
-    }
-
-    list = [...list].sort((a, b) => {
-      const aLoss = a.max_loss;
-      const bLoss = b.max_loss;
-      if (aLoss == null && bLoss == null) return 0;
-      if (aLoss == null) return 1;
-      if (bLoss == null) return -1;
-      return aLoss - bLoss;
-    });
-    return list;
-  }, [trades, outlookFilter, tradeSort, spot, atmIv, expiryDate, lotSize]);
+    return sortTradeList(list);
+  }, [relaxedTrades, outlookFilter, sortTradeList]);
 
   const applySelectedTrade = useCallback(
     (trade: ProposedTrade) => {
@@ -596,7 +618,7 @@ export default function StrategyBuilderNewPage() {
   const totalsNetPremium = useMemo(() => {
     let t = 0;
     for (const l of legs) {
-      if (l.lots <= 0) continue;
+      if (l.lots <= 0 || l.aggressiveLimit) continue;
       const units = l.lots * lotSize;
       const prem = (l.premiumPerUnit ?? 0) * units;
       t += l.side === "Sell" ? prem : -prem;
@@ -643,7 +665,8 @@ export default function StrategyBuilderNewPage() {
           right: l.right,
           side: l.side,
           quantity: Math.round(l.lots * lotSize),
-          premiumPerUnit: l.premiumPerUnit ?? 0,
+          premiumPerUnit: l.aggressiveLimit ? 0 : (l.premiumPerUnit ?? 0),
+          aggressiveLimit: l.aggressiveLimit ?? false,
         })),
     [legs, lotSize],
   );
@@ -773,20 +796,52 @@ export default function StrategyBuilderNewPage() {
                       step={0.1}
                     />
                   </label>
-                  <label className={sb.fieldRow}>
+                  <div className={`${sb.fieldRow} flex-col items-stretch gap-2`}>
                     <span className={`${sb.fieldLabelInline} min-w-[9.5rem]`}>
-                      Maximum loss (Lacs)
+                      Max loss
                     </span>
-                    <input
-                      type="number"
-                      className={`${sb.input} min-w-0 flex-1`}
-                      value={maxLossLacs}
-                      onChange={(e) => setMaxLossLacs(e.target.value)}
-                      min={0}
-                      max={MARGIN_LACS_MAX}
-                      step={0.1}
-                    />
-                  </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className={`rounded-md px-2.5 py-1 text-xs font-medium ring-1 transition ${
+                          maxLossMode === "capped"
+                            ? "bg-sky-600 text-white ring-sky-600"
+                            : "bg-white text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-700"
+                        }`}
+                        onClick={() => setMaxLossMode("capped")}
+                      >
+                        Set max loss
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded-md px-2.5 py-1 text-xs font-medium ring-1 transition ${
+                          maxLossMode === "infinite"
+                            ? "bg-sky-600 text-white ring-sky-600"
+                            : "bg-white text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-700"
+                        }`}
+                        onClick={() => setMaxLossMode("infinite")}
+                      >
+                        Infinite loss
+                      </button>
+                    </div>
+                    {maxLossMode === "capped" ? (
+                      <input
+                        type="number"
+                        className={`${sb.input} min-w-0 w-full`}
+                        value={maxLossLacs}
+                        onChange={(e) => setMaxLossLacs(e.target.value)}
+                        min={0}
+                        max={MARGIN_LACS_MAX}
+                        step={0.1}
+                        aria-label="Maximum loss in Lacs"
+                      />
+                    ) : (
+                      <p className="text-xs leading-snug text-zinc-500 dark:text-zinc-400">
+                        Strategies are sized by margin only; unlimited-loss
+                        structures are allowed.
+                      </p>
+                    )}
+                  </div>
                   <div className={sb.fieldRow}>
                     <div
                       className={`${sb.checkboxRow} gap-2 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
@@ -819,12 +874,12 @@ export default function StrategyBuilderNewPage() {
                     <h3 className={sb.parameterCardTitle}>Income strategies</h3>
                     <div className="flex flex-1 flex-col gap-4">
                       <div className="min-w-0 space-y-1">
-                        <label className={sb.fieldRow}>
+                        <label className={`${sb.fieldRow} flex-wrap`}>
                           <span
-                            className={`${sb.fieldLabelInline} flex min-w-[9.5rem] items-center gap-1.5`}
+                            className={`${sb.fieldLabelInline} flex min-w-[11.5rem] items-center gap-1.5`}
                           >
-                            Minimum PoP (%)
-                            <FieldHint text={MIN_POP_HINT} />
+                            <PopLabel variant="field" />
+                            {" (%)"}
                           </span>
                           <input
                             type="number"
@@ -838,7 +893,7 @@ export default function StrategyBuilderNewPage() {
                         </label>
                         {minPopPctNum == null && minPopPct.trim() !== "" ? (
                           <p className="text-sm text-red-600 dark:text-red-400">
-                            Minimum PoP must be between 1 and 99.
+                            Minimum probability of profit must be between 1 and 99.
                           </p>
                         ) : null}
                       </div>
@@ -882,9 +937,13 @@ export default function StrategyBuilderNewPage() {
 
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Directional strategies</h3>
-                    <p className="flex-1 text-sm text-zinc-600 dark:text-zinc-400">
-                      {DIRECTIONAL_HINT}
-                    </p>
+                    <div className="flex-1 space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
+                      <p>{DIRECTIONAL_HINT}</p>
+                      <p className="inline-flex flex-wrap items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        <span>Est. probability of profit is shown on each trade for reference.</span>
+                        <PopHelpTrigger />
+                      </p>
+                    </div>
                     <div className="mt-auto grid gap-2 sm:grid-cols-2">
                       {(["bullish", "bearish"] as const).map((category) => (
                         <button
@@ -981,7 +1040,8 @@ export default function StrategyBuilderNewPage() {
                     </span>
                   ) : null}
                 </h2>
-                {trades.length > 0 ? (
+                {trades.some((t) => t.status === "ok") ||
+                relaxedTrades.length > 0 ? (
                   <div className="flex shrink-0 flex-wrap items-center gap-3 text-[11px]">
                     <OutlookFilterButtons
                       selected={outlookFilter}
@@ -1003,32 +1063,83 @@ export default function StrategyBuilderNewPage() {
                   auditSessionId={proposedData.audit_session_id}
                 />
               ) : null}
-              {!trades.length ? (
+              {!trades.some((t) => t.status === "ok") &&
+              !relaxedTrades.length ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
                   Fill parameters and choose a strategy category to see
                   proposals.
                 </p>
-              ) : displayedTrades.length === 0 ? (
+              ) : displayedTrades.length === 0 &&
+                displayedRelaxedTrades.length === 0 ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
                   No strategies match the selected outlook filters.
                 </p>
               ) : (
-                <MasonryGrid
-                  items={displayedTrades}
-                  gapClassName="gap-4"
-                  getKey={(trade) => tradeSelectionKey(trade)}
-                  renderItem={(trade) => (
-                    <ProposedStrategyTradeCard
-                      trade={trade}
-                      lotSize={lotSize}
-                      spot={spot}
-                      atmIv={atmIv}
-                      expiryDate={expiryDate}
-                      selected={selectedTradeId === tradeSelectionKey(trade)}
-                      onSelect={() => selectTrade(trade)}
+                <>
+                  {displayedTrades.length > 0 ? (
+                    <MasonryGrid
+                      items={displayedTrades}
+                      gapClassName="gap-4"
+                      getKey={(trade) => tradeSelectionKey(trade)}
+                      renderItem={(trade) => (
+                        <ProposedStrategyTradeCard
+                          trade={trade}
+                          lotSize={lotSize}
+                          spot={spot}
+                          atmIv={atmIv}
+                          expiryDate={expiryDate}
+                          selected={selectedTradeId === tradeSelectionKey(trade)}
+                          onSelect={() => selectTrade(trade)}
+                          minPopPct={minPopPctNum}
+                          minAnnReturnPct={minAnnReturnPctNum}
+                        />
+                      )}
                     />
-                  )}
-                />
+                  ) : null}
+                  {displayedRelaxedTrades.length > 0 ? (
+                    <div className="space-y-3 pt-2">
+                      <div>
+                        <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                          Near-threshold alternatives
+                          {builderMode === "income" ||
+                          builderMode === "bullish" ||
+                          builderMode === "bearish" ? (
+                            <span className="ml-1.5 font-normal text-zinc-500 dark:text-zinc-400">
+                              — {CATEGORY_LABELS[builderMode]} strategies
+                            </span>
+                          ) : null}
+                        </h3>
+                        <p className="mt-1 max-w-3xl text-sm text-zinc-600 dark:text-zinc-400">
+                          The strategies below did not meet your PoP and/or
+                          annualized return thresholds, or are unlimited-loss
+                          structures excluded while a max-loss limit is set.
+                          They are the best available options if those
+                          constraints were relaxed.
+                        </p>
+                      </div>
+                      <MasonryGrid
+                        items={displayedRelaxedTrades}
+                        gapClassName="gap-4"
+                        getKey={(trade) => `relaxed-${tradeSelectionKey(trade)}`}
+                        renderItem={(trade) => (
+                          <ProposedStrategyTradeCard
+                            trade={trade}
+                            lotSize={lotSize}
+                            spot={spot}
+                            atmIv={atmIv}
+                            expiryDate={expiryDate}
+                            selected={
+                              selectedTradeId === tradeSelectionKey(trade)
+                            }
+                            onSelect={() => selectTrade(trade)}
+                            minPopPct={minPopPctNum}
+                            minAnnReturnPct={minAnnReturnPctNum}
+                          />
+                        )}
+                      />
+                    </div>
+                  ) : null}
+                </>
               )}
                 </>
               )}
