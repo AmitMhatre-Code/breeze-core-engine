@@ -121,9 +121,7 @@ export function ProposedStrategyTradeCard({
     >
       <div className="space-y-2">
         <div className="flex items-start justify-between gap-2">
-          <div
-            className={`${rowClass} min-w-0 gap-x-1.5 text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50`}
-          >
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
             {outlook ? (
               <span className="shrink-0">
                 <OutlookIcon outlook={outlook} />
@@ -164,7 +162,7 @@ export function ProposedStrategyTradeCard({
           </div>
           {!skipped && (useHeroMetric || prem != null) ? (
             <span
-              className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ring-1 ${
+              className={`shrink-0 self-start rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ring-1 ${
                 useHeroMetric
                   ? "bg-sky-500/14 text-sky-900 ring-sky-600/20 dark:bg-sky-500/12 dark:text-sky-200 dark:ring-sky-400/30"
                   : premiumCapsuleClass(prem)

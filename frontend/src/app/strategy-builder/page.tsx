@@ -150,7 +150,6 @@ export default function StrategyBuilderPage() {
   );
   const [marginLacs, setMarginLacs] = useState("");
   const [maxLossLacs, setMaxLossLacs] = useState("");
-  const [maxLossMode, setMaxLossMode] = useState<"capped" | "infinite">("capped");
   const [provisionElm, setProvisionElm] = useState(false);
   const [builderMode, setBuilderMode] = useState<BuilderMode>(null);
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
@@ -272,7 +271,7 @@ export default function StrategyBuilderPage() {
 
   const marginLacsNum = parsePositiveNum(marginLacs);
   const maxLossLacsNum = parsePositiveNum(maxLossLacs);
-  const allowInfiniteLoss = maxLossMode === "infinite";
+  const allowInfiniteLoss = maxLossLacsNum == null;
   const minPopPctNum = (() => {
     const n = parseFloat(minPopPct.replace(/,/g, ""));
     if (!Number.isFinite(n)) return null;
@@ -794,52 +793,22 @@ export default function StrategyBuilderPage() {
                       step={0.1}
                     />
                   </label>
-                  <div className={`${sb.fieldRow} flex-col items-stretch gap-2`}>
+                  <label className={sb.fieldRow}>
                     <span className={`${sb.fieldLabelInline} min-w-[9.5rem]`}>
                       Max loss
                     </span>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className={`rounded-md px-2.5 py-1 text-xs font-medium ring-1 transition ${
-                          maxLossMode === "capped"
-                            ? "bg-sky-600 text-white ring-sky-600"
-                            : "bg-white text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-700"
-                        }`}
-                        onClick={() => setMaxLossMode("capped")}
-                      >
-                        Set max loss
-                      </button>
-                      <button
-                        type="button"
-                        className={`rounded-md px-2.5 py-1 text-xs font-medium ring-1 transition ${
-                          maxLossMode === "infinite"
-                            ? "bg-sky-600 text-white ring-sky-600"
-                            : "bg-white text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-700"
-                        }`}
-                        onClick={() => setMaxLossMode("infinite")}
-                      >
-                        Infinite loss
-                      </button>
-                    </div>
-                    {maxLossMode === "capped" ? (
-                      <input
-                        type="number"
-                        className={`${sb.input} min-w-0 w-full`}
-                        value={maxLossLacs}
-                        onChange={(e) => setMaxLossLacs(e.target.value)}
-                        min={0}
-                        max={MARGIN_LACS_MAX}
-                        step={0.1}
-                        aria-label="Maximum loss in Lacs"
-                      />
-                    ) : (
-                      <p className="text-xs leading-snug text-zinc-500 dark:text-zinc-400">
-                        Strategies are sized by margin only; unlimited-loss
-                        structures are allowed.
-                      </p>
-                    )}
-                  </div>
+                    <input
+                      type="number"
+                      className={`${sb.input} min-w-0 flex-1`}
+                      value={maxLossLacs}
+                      onChange={(e) => setMaxLossLacs(e.target.value)}
+                      placeholder="∞ Unlimited"
+                      min={0}
+                      max={MARGIN_LACS_MAX}
+                      step={0.1}
+                      aria-label="Maximum loss in Lacs"
+                    />
+                  </label>
                   <div className={sb.fieldRow}>
                     <div
                       className={`${sb.checkboxRow} gap-2 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
