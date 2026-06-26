@@ -23,10 +23,7 @@ from icici_breeze_backend.app.domain.order import (
     ParkedOrderListResponse,
     ParkedOrderPatchRequest,
 )
-from icici_breeze_backend.app.services.user_rate_limit_prefs import (
-    get_icici_rate_limit_pause_seconds,
-)
-from icici_breeze_backend.app.services.icici_api_pacing import client_rate_limit_pause_seconds
+from icici_breeze_backend.app.services.icici_api_pacing import client_pause_for_rate_limit_result
 from icici_breeze_backend.app.domain.responses import BookDataResponse
 from icici_breeze_backend.app.services.broker_snapshot_cache import evict_broker_snapshot
 from icici_breeze_backend.app.services.processor import processor
@@ -154,10 +151,9 @@ async def post_cancel_one(
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
     r = breeze.cancel_order_single(context.user_id, body.order_id.strip())
-    pause = get_icici_rate_limit_pause_seconds(context.user_id)
-    if r.get("rate_limited"):
-        pause = client_rate_limit_pause_seconds(context.user_id)
-    return JSONResponse({**r, "rate_limit_pause_seconds": pause})
+    return JSONResponse(
+        {**r, "rate_limit_pause_seconds": client_pause_for_rate_limit_result(context.user_id, r)}
+    )
 
 
 @router.post("/cancel-commit")

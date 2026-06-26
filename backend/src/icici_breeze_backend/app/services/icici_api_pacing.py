@@ -11,21 +11,45 @@ from typing import Any, Callable, TypeVar
 
 _logger = logging.getLogger(__name__)
 
-_MAX_BACKOFF_SEC = 10.0
+_MAX_BACKOFF_SEC = 5.0
+_ICICI_BREEZE_STATUS_PER_MINUTE = 5
+_BACKOFF_EXHAUSTED_SUFFIX = (
+    " despite proactive spacing and exponential backoff up to 5 seconds."
+)
 _MAX_HTTP_ATTEMPTS = 4
 
 T = TypeVar("T")
 
 
+def is_icici_per_minute_limit_exceeded(error_text: str | None) -> bool:
+    e = str(error_text or "").lower()
+    return "api call per minute" in e or (
+        "limit exceed" in e and "per minute" in e
+    )
+
+
+def is_icici_daily_limit_exceeded(error_text: str | None) -> bool:
+    if is_icici_per_minute_limit_exceeded(error_text):
+        return False
+    e = str(error_text or "").lower()
+    return (
+        "limit exceed" in e
+        or ("5000" in e and "call" in e)
+        or ("daily" in e and "limit" in e)
+    )
+
+
 def is_breeze_rate_limited(status: Any, error_text: str | None = None) -> bool:
-    """True when ICICI / Breeze indicates HTTP 429/503 or equivalent in body."""
+    """True when ICICI / Breeze indicates HTTP 429/503, Status 5, or per-minute quota."""
     try:
         st = int(status or 0)
     except (TypeError, ValueError):
         st = 0
-    if st in (429, 503):
+    if st in (429, 503, _ICICI_BREEZE_STATUS_PER_MINUTE):
         return True
     err = str(error_text or "")
+    if is_icici_per_minute_limit_exceeded(err):
+        return True
     el = err.lower()
     if "too many requests" in el and ("429" in el or "rate" in el):
         return True
@@ -35,25 +59,19 @@ def is_breeze_rate_limited(status: Any, error_text: str | None = None) -> bool:
     return False
 
 
-def rate_limit_reason(http_status: int | Any) -> str:
+def rate_limit_reason(http_status: int | Any, error_text: str | None = None) -> str:
     """Human-readable reason for UI when ICICI rate-limits a call."""
+    if is_icici_per_minute_limit_exceeded(error_text):
+        return "ICICI per-minute API call limit exceeded"
     try:
         st = int(http_status or 0)
     except (TypeError, ValueError):
         st = 0
+    if st == _ICICI_BREEZE_STATUS_PER_MINUTE:
+        return "ICICI returned Status 5 (per-minute API limit)"
     if st == 503:
         return "ICICI returned HTTP 503 (Service Unavailable)"
     return "ICICI returned HTTP 429 (Too Many Requests)"
-
-
-def is_icici_daily_limit_exceeded(error_text: str | None) -> bool:
-    e = str(error_text or "").lower()
-    return (
-        "limit exceed" in e
-        or "api call per minute" in e
-        or ("5000" in e and "call" in e)
-        or ("daily" in e and "limit" in e)
-    )
 
 
 @dataclass(frozen=True)
@@ -203,7 +221,13 @@ class GlobalIciciApiPacer:
             cls._backoff_visible.pop(user_id, None)
 
     @classmethod
-    def rate_limit_backoff(cls, user_id: str, base_spacing_sec: float, *, endpoint: str = "icici") -> float:
+    def rate_limit_backoff(
+        cls,
+        user_id: str,
+        base_spacing_sec: float,
+        *,
+        endpoint: str = "icici",
+    ) -> float:
         base = max(0.0, float(base_spacing_sec))
         with cls._lock:
             n = cls._consecutive_rate_limited.get(user_id, 0) + 1
@@ -263,22 +287,33 @@ class GlobalIciciApiLimiter:
         )
 
         uid = (user_id or "").strip()
+        minute_exhausted = is_icici_per_minute_limit_exceeded(broker_error_text)
         daily_exhausted = bool(uid and is_daily_limit_reached(uid)) or is_icici_daily_limit_exceeded(
             broker_error_text
         )
-        msg = "You have been throttled by ICICI."
         if daily_exhausted:
-            msg += (
+            msg = (
+                "You have been throttled by ICICI."
                 f" You have crossed the daily limit of {API_CALLS_LIMIT_PER_DAY} API calls and "
                 "cannot use broker features until midnight IST."
             )
+        elif minute_exhausted:
+            msg = (
+                "ICICI per-minute API quota was exceeded"
+                f"{_BACKOFF_EXHAUSTED_SUFFIX} Please wait about a minute and try again."
+            )
         else:
-            msg += " Please try again in a minute."
+            msg = (
+                "ICICI rate-limited this request"
+                f"{_BACKOFF_EXHAUSTED_SUFFIX} Please wait and try again."
+            )
         return {
             "Status": 429,
             "Error": msg,
             "icici_throttled": True,
+            "rate_limit_backoff_exhausted": True,
             "daily_limit_exhausted": daily_exhausted,
+            "icici_minute_limit_exceeded": minute_exhausted,
         }
 
     @classmethod
@@ -432,7 +467,8 @@ class GlobalIciciApiLimiter:
                 if attempt >= _MAX_HTTP_ATTEMPTS - 1:
                     break
 
-                reason = rate_limit_reason(http_status)
+                breeze_err = str((body or {}).get("Error") or (body or {}).get("error") or err_text or "")
+                reason = rate_limit_reason(http_status, breeze_err or err_text)
                 if uid:
                     sleep_sec = GlobalIciciApiPacer.rate_limit_backoff(uid, base_pause, endpoint=ep)
                     GlobalIciciApiPacer._sleep_with_status(
@@ -562,6 +598,19 @@ def client_rate_limit_pause_seconds(user_id: str) -> float:
 
     base = get_icici_rate_limit_pause_seconds(user_id)
     return GlobalIciciApiPacer.peek_next_backoff_seconds(user_id, base)
+
+
+def client_pause_for_rate_limit_result(user_id: str, result: dict[str, Any]) -> float:
+    """Pause seconds to embed in API responses (proactive default or post-throttle wait)."""
+    from icici_breeze_backend.app.services.user_rate_limit_prefs import (
+        get_icici_rate_limit_pause_seconds,
+    )
+
+    if result.get("icici_throttled"):
+        return get_icici_rate_limit_pause_seconds(user_id)
+    if not result.get("rate_limited"):
+        return get_icici_rate_limit_pause_seconds(user_id)
+    return client_rate_limit_pause_seconds(user_id)
 
 
 @contextmanager

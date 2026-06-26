@@ -25,6 +25,7 @@ export type BreakOrderChunkResponse = {
   price_f?: number;
   rate_limited: boolean;
   daily_limit_exhausted?: boolean;
+  icici_throttled?: boolean;
   success: boolean;
   placed_quantity: number;
   danger_line: string | null;
@@ -97,12 +98,12 @@ export async function runBreakOrderChunks(
     }
 
     if (res.rate_limited) {
-      if (res.daily_limit_exhausted) {
+      if (res.daily_limit_exhausted || res.icici_throttled) {
         return {
           ok: false,
           terminalError:
             res.danger_line ??
-            "You have been throttled by ICICI and have reached the daily API limit.",
+            "ICICI rate-limited this request despite proactive spacing and exponential backoff up to 5 seconds.",
         };
       }
       const sec = Math.max(
@@ -146,6 +147,7 @@ export type CancelOneResponse = {
   success: boolean;
   rate_limited: boolean;
   daily_limit_exhausted?: boolean;
+  icici_throttled?: boolean;
   error: string | null;
   rate_limit_pause_seconds: number;
 };
@@ -163,13 +165,13 @@ export async function runCancelOrdersWithPacing(args: {
         order_id: oid,
       });
       if (res.rate_limited) {
-        if (res.daily_limit_exhausted) {
+        if (res.daily_limit_exhausted || res.icici_throttled) {
           results.push({
             order_ref: oid,
             success: false,
             error:
               res.error ??
-              "You have been throttled by ICICI and have reached the daily API limit.",
+              "ICICI rate-limited this request despite proactive spacing and exponential backoff up to 5 seconds.",
           });
           break;
         }

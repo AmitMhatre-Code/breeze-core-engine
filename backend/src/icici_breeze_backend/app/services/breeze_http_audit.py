@@ -112,7 +112,7 @@ def log_breeze_http_attempt(
 
     from icici_breeze_backend.app.services.icici_api_pacing import (
         is_breeze_rate_limited,
-        is_icici_daily_limit_exceeded,
+        is_icici_per_minute_limit_exceeded,
     )
 
     breeze_status, breeze_error = _breeze_fields(body)
@@ -134,7 +134,7 @@ def log_breeze_http_attempt(
     rate_limited = is_breeze_rate_limited(http_status, err_text) or (
         body is not None and is_breeze_rate_limited(breeze_status, breeze_error)
     )
-    icici_minute_limit = is_icici_daily_limit_exceeded(merged_err)
+    icici_minute_limit = is_icici_per_minute_limit_exceeded(merged_err)
 
     headers_repr = _safe_headers(raw) if raw is not None else {}
     body_preview = ""

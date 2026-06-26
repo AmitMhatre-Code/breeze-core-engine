@@ -41,6 +41,7 @@ from icici_breeze_backend.app.services.icici_api_pacing import (
     GlobalIciciApiLimiter,
     is_breeze_rate_limited,
     is_icici_daily_limit_exceeded,
+    is_icici_per_minute_limit_exceeded,
 )
 
 
@@ -302,7 +303,9 @@ def build_margin_situation_from_raw(margin: dict | None, *, target_margin_ute: f
 
 
 def _is_icici_limit_exceeded(error_text: str) -> bool:
-    return is_icici_daily_limit_exceeded(error_text)
+    return is_icici_daily_limit_exceeded(error_text) or is_icici_per_minute_limit_exceeded(
+        error_text
+    )
 
 
 def _breeze_limit_error(user_id: str | None = None) -> dict:
@@ -326,13 +329,27 @@ def _is_broker_rate_limited(response: dict | None) -> bool:
     return is_breeze_rate_limited(st, err)
 
 
-def _order_rate_limit_flags(response: dict | None) -> tuple[bool, bool]:
-    """Return (rate_limited, daily_limit_exhausted) for client pacing flows."""
+def _order_rate_limit_flags(response: dict | None) -> tuple[bool, bool, bool]:
+    """Return (rate_limited, daily_limit_exhausted, icici_minute_limit_exceeded)."""
     if not response:
-        return False, False
+        return False, False, False
     if response.get("icici_throttled"):
-        return True, bool(response.get("daily_limit_exhausted"))
-    return _is_broker_rate_limited(response), False
+        return (
+            True,
+            bool(response.get("daily_limit_exhausted")),
+            bool(response.get("icici_minute_limit_exceeded")),
+        )
+    err = str(response.get("Error") or response.get("error") or "")
+    minute = is_icici_per_minute_limit_exceeded(err)
+    try:
+        st = int(response.get("Status") or response.get("status") or 0)
+    except (TypeError, ValueError):
+        st = 0
+    if st == 5:
+        minute = True
+    daily = is_icici_daily_limit_exceeded(err) and not minute
+    rl = _is_broker_rate_limited(response)
+    return rl, daily, minute
 
 
 from icici_breeze_backend.app.external.icici_api import fetch_customerdetails_session_token as _fetch_customerdetails_session_token
@@ -1345,6 +1362,7 @@ class processor():
             return {
                 "success": False,
                 "rate_limited": False,
+                "icici_throttled": False,
                 "error": "Unable to connect to broker. Please log out and log back in.",
             }
         order_id = order_ref
@@ -1362,13 +1380,23 @@ class processor():
 
         self._maybe_evict_session(user_id, response)
         if response.get("Status") == 200:
-            return {"success": True, "rate_limited": False, "daily_limit_exhausted": False, "error": None}
+            return {
+                "success": True,
+                "rate_limited": False,
+                "daily_limit_exhausted": False,
+                "icici_minute_limit_exceeded": False,
+                "icici_throttled": False,
+                "error": None,
+            }
         err = str(response.get("Error") or "Unknown error")
-        rl, daily_exhausted = _order_rate_limit_flags(response)
+        rl, daily_exhausted, minute_limit = _order_rate_limit_flags(response)
+        throttled = bool(response.get("icici_throttled"))
         return {
             "success": False,
             "rate_limited": rl,
             "daily_limit_exhausted": daily_exhausted,
+            "icici_minute_limit_exceeded": minute_limit,
+            "icici_throttled": throttled,
             "error": err,
         }
 
@@ -2338,7 +2366,8 @@ class processor():
             exchange_code=exchange_code,
             aggressive_limit=aggressive_limit,
         )
-        rl, daily_exhausted = _order_rate_limit_flags(response)
+        rl, daily_exhausted, minute_limit = _order_rate_limit_flags(response)
+        throttled = bool((response or {}).get("icici_throttled"))
         ok = bool(response and response.get("Status") == 200)
         danger_line = None
         if not ok and not rl:
@@ -2358,6 +2387,11 @@ class processor():
             )
         elif rl and daily_exhausted:
             danger_line = (response or {}).get("Error") or "Broker daily limit reached."
+        elif rl and throttled:
+            danger_line = (response or {}).get("Error") or (
+                "ICICI rate-limited this request despite proactive spacing and "
+                "exponential backoff up to 5 seconds."
+            )
 
         return {
             "terminal_messages": [],
@@ -2367,6 +2401,8 @@ class processor():
             "price_f": price_f,
             "rate_limited": rl,
             "daily_limit_exhausted": daily_exhausted,
+            "icici_minute_limit_exceeded": minute_limit,
+            "icici_throttled": throttled,
             "success": ok,
             "placed_quantity": int(qty_this) if ok else 0,
             "danger_line": danger_line,

@@ -86,13 +86,13 @@ class TestIciciApiPacer(unittest.TestCase):
         GlobalIciciApiPacer.on_success("test-user")
         self.assertFalse(GlobalIciciApiPacer.is_throttling_active("test-user"))
 
-    def test_503_backoff_capped_at_ten_seconds(self):
+    def test_503_backoff_capped_at_five_seconds(self):
         GlobalIciciApiPacer.reset_user("test-user")
         values = [
             GlobalIciciApiPacer.rate_limit_backoff("test-user", 1.0, endpoint="test")
             for _ in range(5)
         ]
-        self.assertEqual(values[-1], 10.0)
+        self.assertEqual(values[-1], 5.0)
 
 
 class TestUndefinedRiskSizing(unittest.TestCase):

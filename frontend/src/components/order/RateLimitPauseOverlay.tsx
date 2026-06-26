@@ -31,7 +31,7 @@ export function RateLimitPauseOverlay(props: {
       </div>
       <p className="max-w-xs text-xs text-white/80 dark:text-zinc-400">
         Pausing before the next ICICI API attempt. After a rate limit, spacing uses your
-        Settings → API Usage pause value.
+        Settings → API Usage pause value with exponential backoff up to 5 seconds.
       </p>
     </div>
   );

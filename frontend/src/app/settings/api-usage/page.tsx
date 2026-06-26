@@ -125,7 +125,7 @@ export default function ApiUsageSettingsPage() {
           </h3>
           <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
             Minimum gap between all outbound ICICI API calls while you are logged in.
-            On HTTP 429 or 503 the app adds exponential backoff (capped at 10 seconds)
+            On HTTP 429 or 503 the app adds exponential backoff (capped at 5 seconds)
             before retrying; a countdown appears when that backoff exceeds 1 second.
             Order place and cancel flows use the same backoff when ICICI rate-limits a
             request.

@@ -26,6 +26,7 @@ export const changelogReleases: ChangelogRelease[] = [
     summary: "Multiple fixes and improvements",
     changes: [
       "Settings → API Usage spacing is now enforced proactively between all ICICI API calls (not only after a rate-limit response).",
+      "ICICI per-minute quota (HTTP 401 / Status 5) is detected as rate-limited: the server retries with exponential backoff capped at 5 seconds, then shows a clear error if ICICI still rate-limits the call.",
       "Strategy engine first approximates PoP to identify candidates to evaluate and then recalculates exact PoP later for the seleced candidates. Fixed the fast PoP approximation logic so that valid candidates are not missed out.",
       "Place Order and Strategy Builder support aggressive limit orders (ICICI derives price from LTP; no manual limit price required).",
       "New Basket Order page: build multi-leg option baskets, view payoff and PoP, and execute all legs at once.",
