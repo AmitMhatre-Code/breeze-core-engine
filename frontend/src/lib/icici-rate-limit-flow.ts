@@ -26,6 +26,7 @@ export type BreakOrderChunkResponse = {
   rate_limited: boolean;
   daily_limit_exhausted?: boolean;
   icici_throttled?: boolean;
+  icici_minute_limit_exceeded?: boolean;
   success: boolean;
   placed_quantity: number;
   danger_line: string | null;
@@ -117,18 +118,21 @@ export async function runBreakOrderChunks(
         }),
       }).catch(() => {});
       // #endregion
-      if (res.daily_limit_exhausted || res.icici_throttled) {
+      if (res.daily_limit_exhausted) {
         return {
           ok: false,
           terminalError:
             res.danger_line ??
-            "ICICI rate-limited this request despite proactive spacing and exponential backoff up to 5 seconds.",
+            "You have been throttled by ICICI and have reached the daily API limit.",
         };
       }
-      const sec = Math.max(
+      let sec = Math.max(
         1,
         Math.floor(Number(res.rate_limit_pause_seconds) || 0.5),
       );
+      if (res.icici_minute_limit_exceeded) {
+        sec = Math.max(sec, 60);
+      }
       await waitForRateLimit(sec, args.onRateLimitWait);
       continue;
     }
@@ -167,6 +171,7 @@ export type CancelOneResponse = {
   rate_limited: boolean;
   daily_limit_exhausted?: boolean;
   icici_throttled?: boolean;
+  icici_minute_limit_exceeded?: boolean;
   error: string | null;
   rate_limit_pause_seconds: number;
 };
@@ -203,20 +208,23 @@ export async function runCancelOrdersWithPacing(args: {
           }),
         }).catch(() => {});
         // #endregion
-        if (res.daily_limit_exhausted || res.icici_throttled) {
+        if (res.daily_limit_exhausted) {
           results.push({
             order_ref: oid,
             success: false,
             error:
               res.error ??
-              "ICICI rate-limited this request despite proactive spacing and exponential backoff up to 5 seconds.",
+              "You have been throttled by ICICI and have reached the daily API limit.",
           });
           break;
         }
-        const sec = Math.max(
+        let sec = Math.max(
           1,
           Math.floor(Number(res.rate_limit_pause_seconds) || 0.5),
         );
+        if (res.icici_minute_limit_exceeded) {
+          sec = Math.max(sec, 60);
+        }
         await waitForRateLimit(sec, args.onRateLimitWait);
         continue;
       }

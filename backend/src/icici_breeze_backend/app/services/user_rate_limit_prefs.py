@@ -58,12 +58,12 @@ def set_icici_rate_limit_pause_seconds(user_id: str, seconds: float) -> float:
 
 
 def migrate_legacy_rate_limit_pause_default() -> None:
-    """Reset legacy factory defaults (5s, 1s) to the current default (0.5s)."""
+    """Reset legacy factory default (5s only) to the current default (0.5s)."""
     ensure_icici_rate_limit_pause_column()
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         cur = conn.execute(
             "UPDATE user_account SET icici_rate_limit_pause_seconds = ? "
-            "WHERE icici_rate_limit_pause_seconds IN (5, 1)",
+            "WHERE icici_rate_limit_pause_seconds IN (5)",
             (_DEFAULT_PAUSE,),
         )
         conn.commit()

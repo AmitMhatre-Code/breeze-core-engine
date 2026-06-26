@@ -233,15 +233,13 @@ class TestGlobalIciciApiLimiter(unittest.TestCase):
         "icici_breeze_backend.app.services.api_usage.is_daily_limit_reached",
         return_value=False,
     )
-    def test_status_5_uses_capped_backoff_then_retries(self, mock_sleep_status, *_mocks):
+    def test_status_5_defers_to_client_without_internal_retry(self, mock_sleep_status, *_mocks):
         calls = {"n": 0}
         err = "Limit exceed: API call per minute:Try after some time"
 
         def perform():
             calls["n"] += 1
-            if calls["n"] == 1:
-                return {"Status": 5, "Error": err}
-            return {"Status": 200, "Success": {"order_id": "1"}}
+            return {"Status": 5, "Error": err}
 
         with patch.object(GlobalIciciApiLimiter, "_record_call"):
             out = GlobalIciciApiLimiter.request_breeze_dict(
@@ -251,10 +249,11 @@ class TestGlobalIciciApiLimiter(unittest.TestCase):
                 record_url="https://api.icicidirect.com/breezeapi/api/v1/order",
             )
 
-        self.assertEqual(calls["n"], 2)
-        self.assertEqual(out.get("Status"), 200)
-        mock_sleep_status.assert_called_once()
-        self.assertAlmostEqual(mock_sleep_status.call_args[0][1], 0.5)
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(out.get("Status"), 5)
+        self.assertTrue(out.get("icici_minute_limit_exceeded"))
+        self.assertFalse(out.get("icici_throttled"))
+        mock_sleep_status.assert_not_called()
 
 
 class TestUserRateLimitPrefsBounds(unittest.TestCase):

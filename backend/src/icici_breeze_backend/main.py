@@ -194,6 +194,20 @@ def _ensure_app_database() -> None:
 
             migrate_legacy_rate_limit_pause_default()
             migrate_rate_limit_pause_bounds()
+            from icici_breeze_backend.app.services.debug_session_log import (
+                agent_log,
+                debug_log_path,
+            )
+
+            agent_log(
+                "A",
+                "main.py:startup",
+                "debug_log_ready",
+                {
+                    "data_path": debug_log_path(),
+                    "tmp_mirror": f"/tmp/debug-d5296e.ndjson",
+                },
+            )
         except Exception:
             _logger.exception("user_account schema migration failed")
 

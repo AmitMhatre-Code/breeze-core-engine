@@ -31,12 +31,15 @@ def agent_log(hypothesis_id: str, location: str, message: str, data: dict) -> No
     }
     # #region agent log
     line = json.dumps(payload, default=str)
-    try:
-        path = debug_log_path()
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    except Exception:
-        pass
+    paths = [debug_log_path(), f"/tmp/debug-{_SESSION_ID}.ndjson"]
+    for path in paths:
+        try:
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except Exception:
+            pass
     _logger.warning("[debug-%s] %s", _SESSION_ID, line)
     # #endregion

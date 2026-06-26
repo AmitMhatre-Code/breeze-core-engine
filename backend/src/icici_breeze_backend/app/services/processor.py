@@ -333,6 +333,8 @@ def _order_rate_limit_flags(response: dict | None) -> tuple[bool, bool, bool]:
     """Return (rate_limited, daily_limit_exhausted, icici_minute_limit_exceeded)."""
     if not response:
         return False, False, False
+    if response.get("icici_minute_limit_exceeded"):
+        return True, bool(response.get("daily_limit_exhausted")), True
     if response.get("icici_throttled"):
         return (
             True,

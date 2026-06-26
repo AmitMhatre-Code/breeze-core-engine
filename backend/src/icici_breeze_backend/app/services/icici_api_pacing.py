@@ -486,10 +486,31 @@ class GlobalIciciApiLimiter:
                 if uid:
                     GlobalIciciApiPacer.activate_throttling(uid)
 
+                breeze_err = str(
+                    (body or {}).get("Error") or (body or {}).get("error") or err_text or ""
+                )
+                if is_icici_per_minute_limit_exceeded(breeze_err or err_text):
+                    _agent_log(
+                        "B",
+                        "icici_api_pacing.py:_attempt_loop",
+                        "per_minute_defer_to_client",
+                        {
+                            "user_id": uid,
+                            "endpoint": ep,
+                            "attempt": attempt + 1,
+                        },
+                    )
+                    return build_result(
+                        {
+                            "Status": 5,
+                            "Error": breeze_err or "ICICI per-minute API call limit exceeded",
+                            "icici_minute_limit_exceeded": True,
+                        }
+                    )
+
                 if attempt >= _MAX_HTTP_ATTEMPTS - 1:
                     break
 
-                breeze_err = str((body or {}).get("Error") or (body or {}).get("error") or err_text or "")
                 reason = rate_limit_reason(http_status, breeze_err or err_text)
                 if uid:
                     sleep_sec = GlobalIciciApiPacer.rate_limit_backoff(uid, base_pause, endpoint=ep)
@@ -649,14 +670,21 @@ def client_rate_limit_pause_seconds(user_id: str) -> float:
     return GlobalIciciApiPacer.peek_next_backoff_seconds(user_id, base)
 
 
+_PER_MINUTE_CLIENT_WAIT_SEC = 60.0
+
+
 def client_pause_for_rate_limit_result(user_id: str, result: dict[str, Any]) -> float:
     """Pause seconds to embed in API responses (proactive default or post-throttle wait)."""
     from icici_breeze_backend.app.services.user_rate_limit_prefs import (
         get_icici_rate_limit_pause_seconds,
     )
 
-    if result.get("icici_throttled"):
+    if result.get("daily_limit_exhausted"):
         return get_icici_rate_limit_pause_seconds(user_id)
+    if result.get("icici_minute_limit_exceeded"):
+        return _PER_MINUTE_CLIENT_WAIT_SEC
+    if result.get("icici_throttled"):
+        return client_rate_limit_pause_seconds(user_id)
     if not result.get("rate_limited"):
         return get_icici_rate_limit_pause_seconds(user_id)
     return client_rate_limit_pause_seconds(user_id)
