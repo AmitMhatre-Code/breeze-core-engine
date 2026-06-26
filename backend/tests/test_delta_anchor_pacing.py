@@ -69,16 +69,14 @@ class TestIciciApiPacer(unittest.TestCase):
 
     def test_wait_for_slot_enforces_spacing(self):
         GlobalIciciApiPacer.mark_call_complete("test-user")
-        t0 = time.monotonic()
         with patch(
-            "icici_breeze_backend.app.services.icici_api_pacing.GlobalIciciApiPacer._sleep_with_status"
+            "icici_breeze_backend.app.services.icici_api_pacing.time.sleep"
         ) as mock_sleep:
             GlobalIciciApiPacer.wait_for_slot("test-user", 0.25, endpoint="test")
             mock_sleep.assert_called_once()
-            wait_arg = mock_sleep.call_args[0][1]
+            wait_arg = mock_sleep.call_args[0][0]
             self.assertGreaterEqual(wait_arg, 0.0)
             self.assertLessEqual(wait_arg, 0.25)
-        _ = t0  # timing not asserted (patched sleep)
 
     def test_throttling_inactive_by_default(self):
         self.assertFalse(GlobalIciciApiPacer.is_throttling_active("test-user"))

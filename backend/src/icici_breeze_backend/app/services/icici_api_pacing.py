@@ -1,4 +1,4 @@
-"""Universal per-user ICICI Breeze API gate (spacing, concurrency, 429/503 retry)."""
+"""Universal per-user ICICI Breeze API gate (proactive spacing, concurrency, 429/503 retry)."""
 from __future__ import annotations
 
 import logging
@@ -188,12 +188,7 @@ class GlobalIciciApiPacer:
                 endpoint,
                 user_id,
             )
-            cls._sleep_with_status(
-                user_id,
-                wait,
-                reason="Waiting between ICICI API calls while rate limiting is active",
-                endpoint=endpoint,
-            )
+            time.sleep(wait)
 
     @classmethod
     def mark_call_complete(cls, user_id: str) -> None:
@@ -394,8 +389,6 @@ class GlobalIciciApiLimiter:
                 return build_result(throttle)
 
             base_pause = get_icici_rate_limit_pause_seconds(uid)
-            if GlobalIciciApiPacer.is_throttling_active(uid):
-                GlobalIciciApiPacer.wait_for_slot(uid, base_pause, endpoint=ep)
             user_lock = cls._user_lock(uid)
         else:
             base_pause = 0.5
@@ -464,6 +457,7 @@ class GlobalIciciApiLimiter:
 
         if user_lock is not None:
             with user_lock:
+                GlobalIciciApiPacer.wait_for_slot(uid, base_pause, endpoint=ep)
                 return _attempt_loop()
         return _attempt_loop()
 
