@@ -1,0 +1,115 @@
+name: Publish container to GHCR
+
+on:
+  push:
+    branches:
+      - testing
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Place build-context canary (must not appear in image)
+        run: echo 'BREEZE_CI_CANARY_MARKER=do-not-ship-in-image' > .env.ci-canary
+
+      - name: Set image name (GHCR requires lowercase)
+        id: image
+        run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - name: Resolve portal DRM build args (required)
+        id: portal_drm
+        env:
+          CONSOLE_API_PUBLIC_BASE_URL: ${{ vars.CONSOLE_API_PUBLIC_BASE_URL || secrets.CONSOLE_API_PUBLIC_BASE_URL }}
+          PORTAL_HEARTBEAT_JWT_PRIVATE_KEY_B64: ${{ secrets.PORTAL_HEARTBEAT_JWT_PRIVATE_KEY_B64 }}
+          PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64: ${{ secrets.PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64 }}
+          PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM: ${{ secrets.PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_PEM }}
+        run: bash scripts/resolve-portal-drm-build-args.sh
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64=${{ steps.portal_drm.outputs.public_key_b64 }}
+            PORTAL_ALLOWED_HOSTS=${{ steps.portal_drm.outputs.allowed_hosts }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Verify image contains no secrets or env files
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}:latest
+          CANARY: BREEZE_CI_CANARY_MARKER
+        run: |
+          set -euo pipefail
+          # Image is built for linux/arm64 only; GHA runners are amd64 — pull/run with explicit platform.
+          docker pull --platform linux/arm64 "$IMAGE"
+          docker run --rm --platform linux/arm64 "$IMAGE" sh -c '
+            set -e
+            if find /app \( -name ".env*" -o -name "*.pem" \) 2>/dev/null | grep -q .; then
+              echo "ERROR: .env or .pem files found under /app"
+              find /app \( -name ".env*" -o -name "*.pem" \) 2>/dev/null
+              exit 1
+            fi
+            if [ ! -s /etc/breeze/portal_heartbeat_public.pem ]; then
+              echo "ERROR: portal DRM public key missing at /etc/breeze/portal_heartbeat_public.pem"
+              exit 1
+            fi
+            if ! grep -v "^[[:space:]]*#" /etc/breeze/portal_allowed_hosts.txt | grep -qv "^[[:space:]]*$"; then
+              echo "ERROR: portal allowed hosts file is empty"
+              cat /etc/breeze/portal_allowed_hosts.txt
+              exit 1
+            fi
+            echo "Portal DRM configured (public key + allowed hosts present)"
+            # Env-file lines only (line-start KEY=value with a real value, not "..." placeholders in source strings).
+            if grep -rE "^[[:space:]]*(JWT_SECRET|GOOGLE_CLIENT_SECRET)=[a-zA-Z0-9+/=_-]{8,}" /app 2>/dev/null; then
+              echo "ERROR: env-style secret assignment found under /app"
+              grep -rE "^[[:space:]]*(JWT_SECRET|GOOGLE_CLIENT_SECRET)=[a-zA-Z0-9+/=_-]{8,}" /app 2>/dev/null || true
+              exit 1
+            fi
+            if grep -rq "BREEZE_CI_CANARY_MARKER=do-not-ship-in-image" /app 2>/dev/null; then
+              echo "ERROR: CI canary marker found in image"
+              exit 1
+            fi
+            if grep -rE "sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}" /app 2>/dev/null | grep -q .; then
+              echo "ERROR: API key-like pattern found under /app"
+              grep -rE "sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}" /app 2>/dev/null || true
+              exit 1
+            fi
+            echo "Image secret scan passed"
+          '
