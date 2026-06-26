@@ -16,6 +16,15 @@ const nextConfig = {
   experimental: {
     proxyClientMaxBodySize: "128mb",
   },
+  async redirects() {
+    return [
+      {
+        source: "/strategy-builder-new",
+        destination: "/strategy-builder",
+        permanent: true,
+      },
+    ];
+  },
   async rewrites() {
     const backendUpstream =
       process.env.BACKEND_UPSTREAM_URL ??

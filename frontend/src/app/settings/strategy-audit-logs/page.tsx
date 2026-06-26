@@ -258,7 +258,7 @@ export default function StrategyAuditLogsSettingsPage() {
 
         {!q.isLoading && !q.error && logs.length === 0 ? (
           <p className="text-sm app-text-muted">
-            No audit logs yet. Run Strategy Builder (New) propose-trades to generate logs.
+            No audit logs yet. Run Strategy Builder propose-trades to generate logs.
           </p>
         ) : null}
 

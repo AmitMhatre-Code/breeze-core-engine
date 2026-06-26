@@ -44,12 +44,6 @@ const navItems = [
     showNewBadge: true,
   },
   { href: "/strategy-builder", label: "Strategy Builder", icon: StrategyIcon },
-  {
-    href: "/strategy-builder-new",
-    label: "Strategy Builder",
-    icon: StrategyIcon,
-    showNewBadge: true,
-  },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
@@ -57,7 +51,6 @@ function navItemActive(pathname: string, href: string) {
   if (href === "/dashboard") {
     return pathname === "/" || pathname.startsWith("/dashboard");
   }
-  // Exact match or sub-route only — avoids `/strategy-builder` matching `/strategy-builder-new`.
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

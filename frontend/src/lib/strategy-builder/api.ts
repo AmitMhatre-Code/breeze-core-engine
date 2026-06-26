@@ -72,7 +72,7 @@ export async function proposeTrades(
   );
 }
 
-/** Download the audit JSON for a completed Strategy Builder (New) session. */
+/** Download the audit JSON for a completed Strategy Builder session. */
 export async function downloadStrategyBuilderAudit(
   sessionId: string,
 ): Promise<void> {
