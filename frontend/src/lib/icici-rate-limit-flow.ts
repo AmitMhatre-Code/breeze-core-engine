@@ -98,6 +98,25 @@ export async function runBreakOrderChunks(
     }
 
     if (res.rate_limited) {
+      // #region agent log
+      fetch("http://127.0.0.1:7341/ingest/c23c04c4-3dc2-4241-8e9a-8ca922b50e2c", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d5296e" },
+        body: JSON.stringify({
+          sessionId: "d5296e",
+          hypothesisId: "B",
+          location: "icici-rate-limit-flow.ts:runBreakOrderChunks",
+          message: "rate_limited_branch",
+          data: {
+            daily_limit_exhausted: res.daily_limit_exhausted,
+            icici_throttled: res.icici_throttled,
+            pause_seconds: res.rate_limit_pause_seconds,
+            chunk,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       if (res.daily_limit_exhausted || res.icici_throttled) {
         return {
           ok: false,
@@ -165,6 +184,25 @@ export async function runCancelOrdersWithPacing(args: {
         order_id: oid,
       });
       if (res.rate_limited) {
+        // #region agent log
+        fetch("http://127.0.0.1:7341/ingest/c23c04c4-3dc2-4241-8e9a-8ca922b50e2c", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d5296e" },
+          body: JSON.stringify({
+            sessionId: "d5296e",
+            hypothesisId: "B",
+            location: "icici-rate-limit-flow.ts:runCancelOrdersWithPacing",
+            message: "rate_limited_branch",
+            data: {
+              daily_limit_exhausted: res.daily_limit_exhausted,
+              icici_throttled: res.icici_throttled,
+              pause_seconds: res.rate_limit_pause_seconds,
+              order_id: oid,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
         if (res.daily_limit_exhausted || res.icici_throttled) {
           results.push({
             order_ref: oid,

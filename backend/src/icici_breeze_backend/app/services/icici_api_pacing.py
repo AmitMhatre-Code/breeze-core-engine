@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
+from icici_breeze_backend.app.services.debug_session_log import agent_log as _agent_log
+
 _logger = logging.getLogger(__name__)
 
 _MAX_BACKOFF_SEC = 5.0
@@ -425,6 +427,12 @@ class GlobalIciciApiLimiter:
 
             base_pause = get_icici_rate_limit_pause_seconds(uid)
             user_lock = cls._user_lock(uid)
+            _agent_log(
+                "D",
+                "icici_api_pacing.py:request_breeze_http",
+                "request_start",
+                {"user_id": uid, "endpoint": ep, "base_pause": base_pause},
+            )
         else:
             base_pause = 0.5
             user_lock = None
@@ -456,6 +464,20 @@ class GlobalIciciApiLimiter:
                 rate_limited = is_breeze_rate_limited(http_status, err_text) or (
                     body and is_breeze_rate_limited(body.get("Status"), body.get("Error"))
                 )
+                _agent_log(
+                    "C",
+                    "icici_api_pacing.py:_attempt_loop",
+                    "http_response",
+                    {
+                        "user_id": uid,
+                        "endpoint": ep,
+                        "attempt": attempt + 1,
+                        "http_status": http_status,
+                        "body_status": (body or {}).get("Status") if body else None,
+                        "rate_limited": rate_limited,
+                        "err_preview": str(err_text or "")[:120],
+                    },
+                )
                 if not rate_limited:
                     if uid:
                         GlobalIciciApiPacer.on_success(uid)
@@ -479,6 +501,19 @@ class GlobalIciciApiLimiter:
                     time.sleep(sleep_sec)
 
             throttle = cls.build_throttle_error(uid, broker_error_text=broker_error)
+            _agent_log(
+                "B",
+                "icici_api_pacing.py:_attempt_loop",
+                "throttle_exhausted",
+                {
+                    "user_id": uid,
+                    "endpoint": ep,
+                    "icici_throttled": throttle.get("icici_throttled"),
+                    "minute_limit": throttle.get("icici_minute_limit_exceeded"),
+                    "daily_limit": throttle.get("daily_limit_exhausted"),
+                    "consecutive": GlobalIciciApiPacer._consecutive_rate_limited.get(uid or "", 0),
+                },
+            )
             _audit(
                 breeze_call_id=new_breeze_call_id(),
                 attempt=_MAX_HTTP_ATTEMPTS,
@@ -493,7 +528,21 @@ class GlobalIciciApiLimiter:
 
         if user_lock is not None:
             with user_lock:
+                with cls._meta_lock:
+                    last_mono = GlobalIciciApiPacer._last_call_mono.get(uid, 0.0)
+                gap_before = max(0.0, base_pause - (time.monotonic() - last_mono))
                 GlobalIciciApiPacer.wait_for_slot(uid, base_pause, endpoint=ep)
+                _agent_log(
+                    "D",
+                    "icici_api_pacing.py:request_breeze_http",
+                    "proactive_wait",
+                    {
+                        "user_id": uid,
+                        "endpoint": ep,
+                        "base_pause": base_pause,
+                        "expected_wait_sec": round(gap_before, 3),
+                    },
+                )
                 return _attempt_loop()
         return _attempt_loop()
 
