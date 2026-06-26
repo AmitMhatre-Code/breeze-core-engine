@@ -87,8 +87,11 @@ async def resize_results_to_budgets(
                 result.legs = []
                 continue
             n_margin = int(ctx.margin_rupees // unit_max_loss)
-            n_risk = int(ctx.max_loss_rupees // unit_max_loss)
-            lots = max(0, min(n_margin, n_risk))
+            if ctx.max_loss_rupees is None:
+                lots = max(0, n_margin)
+            else:
+                n_risk = int(ctx.max_loss_rupees // unit_max_loss)
+                lots = max(0, min(n_margin, n_risk))
             if lots < 1:
                 result.status = "skipped"
                 result.skip_reason = "Insufficient margin or max-loss budget for one lot."

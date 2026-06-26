@@ -37,6 +37,12 @@ const navItems = [
   { href: "/performance", label: "Performance", icon: PerformanceIcon },
   { href: "/orders", label: "Order Book", icon: OrdersIcon },
   { href: "/place-order", label: "Place Order", icon: PlaceOrderIcon },
+  {
+    href: "/basket-order",
+    label: "Basket Order",
+    icon: BasketOrderIcon,
+    showNewBadge: true,
+  },
   { href: "/strategy-builder", label: "Strategy Builder", icon: StrategyIcon },
   {
     href: "/strategy-builder-new",
@@ -593,6 +599,28 @@ function PlaceOrderIcon() {
       <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
       <path d="M3 6h18" />
       <path d="M16 10a4 4 0 0 1-8 0" />
+    </svg>
+  );
+}
+
+function BasketOrderIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M16 10a4 4 0 0 1-8 0" />
+      <path d="M3 6h18" />
+      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h6" />
+      <path d="M19 16v6" />
+      <path d="M16 19h6" />
     </svg>
   );
 }

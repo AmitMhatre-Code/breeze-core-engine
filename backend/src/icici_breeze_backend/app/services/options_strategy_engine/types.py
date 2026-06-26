@@ -37,6 +37,7 @@ TOP_K_SHORT_STRIKES = 8
 TOP_M_WING_STRIKES = 3
 MAX_CANDIDATES_PER_STRATEGY = 30
 POP_TOLERANCE_PCT = 7.0
+POP_PRE_FILTER_TOLERANCE = 2.0
 
 
 @dataclass
@@ -127,6 +128,8 @@ class StrategyResult:
     hero_metric: TileMetric | None = None
     secondary_metrics: list[TileMetric] = field(default_factory=list)
     badges: list[str] = field(default_factory=list)
+    compliance: Literal["recommended", "relaxed"] = "recommended"
+    constraint_violations: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -137,7 +140,7 @@ class EngineContext:
     exchange_code: str
     expiry_display: str
     margin_rupees: float
-    max_loss_rupees: float
+    max_loss_rupees: float | None
     min_pop_pct: float
     provision_elm: bool
     strategy_category: StrategyCategory
@@ -147,6 +150,7 @@ class EngineContext:
     search_interval: int
     spot: float
     atm_strike: int
+    allow_infinite_loss: bool = False
     risk_reward_profile: RiskRewardProfile = "moderate"
     min_ann_return_pct: float = 5.0
     atm_iv: float | None = None
@@ -161,6 +165,16 @@ class EngineContext:
     range_upper: float = 0.0
     unit_span_by_structure: dict[tuple, float] = field(default_factory=dict)
     progress: Any | None = None
+
+    def effective_max_loss_budget(self) -> float | None:
+        if self.allow_infinite_loss or self.max_loss_rupees is None:
+            return None
+        return self.max_loss_rupees
+
+    def effective_loss_sizing_budget(self) -> float:
+        if self.max_loss_rupees is None:
+            return self.margin_rupees
+        return min(self.margin_rupees, self.max_loss_rupees)
 
     @property
     def liquid_ce_strikes(self) -> list[int]:

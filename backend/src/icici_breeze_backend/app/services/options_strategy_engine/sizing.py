@@ -15,7 +15,7 @@ def size_lots(
     unit_max_loss: float,
     *,
     margin_rupees: float,
-    max_loss_rupees: float,
+    max_loss_rupees: float | None,
     lot_size: int,
     unit_short_lots: int,
     spot: float,
@@ -33,10 +33,10 @@ def size_lots(
     if strategy_id in UNDEFINED_RISK_STRATEGIES:
         return max(0, n_margin)
 
-    if unit_max_loss > 0:
+    if unit_max_loss > 0 and max_loss_rupees is not None:
         n_risk = int(max_loss_rupees // unit_max_loss)
     else:
-        n_risk = 0
+        n_risk = n_margin
 
     return max(0, min(n_margin, n_risk))
 
@@ -47,7 +47,7 @@ def size_quantity_from_budgets(
     per_lot_max_loss: float,
     *,
     margin_rupees: float,
-    max_loss_rupees: float,
+    max_loss_rupees: float | None,
     lot_size: int,
     unit_short_lots: int,
     spot: float,
@@ -69,7 +69,7 @@ def size_quantity_from_budgets(
 
 
 def size_quantity_loss_only(
-    max_loss_rupees: float,
+    max_loss_rupees: float | None,
     max_loss_per_lot: float,
     lot_size: int,
 ) -> int:

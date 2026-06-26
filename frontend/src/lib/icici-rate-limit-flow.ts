@@ -29,6 +29,7 @@ export type PlaceBreakOrderArgs = {
   onRateLimitWait: (seconds: number) => Promise<void>;
   /** Max units per exchange order; server lot-rounds and caps at freeze. Omit for backend default. */
   chunk_qty?: string;
+  aggressive_limit?: boolean;
 };
 
 /**
@@ -52,6 +53,7 @@ export async function runBreakOrderChunks(
     total_qty: args.total_qty,
     price: args.price,
     action: args.action,
+    ...(args.aggressive_limit ? { aggressive_limit: true } : {}),
     ...(args.chunk_qty != null && String(args.chunk_qty).trim() !== ""
       ? { chunk_qty: String(args.chunk_qty).trim() }
       : {}),
@@ -117,6 +119,7 @@ export async function runBreakOrderChunks(
     action: args.action,
     success_quantities: successes,
     danger_lines: dangers,
+    ...(args.aggressive_limit ? { aggressive_limit: true } : {}),
   });
   return { ok: true, redirect: fin.redirect };
 }

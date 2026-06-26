@@ -17,6 +17,7 @@ LIMITS_MASTER_BSE = getattr(_cfg, "LIMITS_MASTER_BSE", "")
 ELM = _cfg.ELM
 OPTIONS = _cfg.OPTIONS
 LIMIT = _cfg.LIMIT
+MARKET = _cfg.MARKET
 STOCK = _cfg.STOCK
 INDEX = _cfg.INDEX
 BUY = _cfg.BUY

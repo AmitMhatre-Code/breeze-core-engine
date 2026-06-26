@@ -84,6 +84,7 @@ function orderPayloadToLeg(base: OrderConfirmPayload): ExecutionPreviewLeg {
     side: base.action,
     quantity: Number.isFinite(q) && q > 0 ? q : 0,
     premiumPerUnit: Number.isFinite(prem) && prem >= 0 ? prem : 0,
+    aggressiveLimit: base.aggressive_limit ?? false,
   };
 }
 

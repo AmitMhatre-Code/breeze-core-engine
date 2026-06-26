@@ -2047,7 +2047,7 @@ class processor():
             "Success": success_payload,
         }
 
-    def place_order(self,user_id,product_type,stock_code,action,strike_price,right,price,expiry_date,quantity, exchange_code: str = cfg.NFO):
+    def place_order(self,user_id,product_type,stock_code,action,strike_price,right,price,expiry_date,quantity, exchange_code: str = cfg.NFO, aggressive_limit: bool = False):
         breeze = self.get_session_breeze(user_id)
         if breeze is None:
             return _icici_error(
@@ -2070,7 +2070,8 @@ class processor():
             qty_str = str(int(quantity))
         except (TypeError, ValueError):
             qty_str = str(quantity)
-        prc = str(price).strip()
+        prc = "0" if aggressive_limit else str(price).strip()
+        order_type = str(cfg.MARKET if aggressive_limit else cfg.LIMIT).strip().lower()
 
         place_order_sdk_exception = False
         try:
@@ -2082,7 +2083,7 @@ class processor():
                 price=prc,
                 expiry_date=expiry_api,
                 validity="day",
-                order_type=str(cfg.LIMIT).strip().lower(),
+                order_type=order_type,
                 quantity=qty_str,
                 validity_date=str(today_ist_date()) + "T06:00:00.000Z",
                 stoploss="",
@@ -2157,22 +2158,26 @@ class processor():
         price_f: float,
         success_qty_chunks: list[int],
         danger_messages: list[str],
+        aggressive_limit: bool = False,
     ) -> list[dict]:
         """Success + failure toasts matching break_order (used by /order/break-finalize)."""
         messages: list[dict] = []
         if success_qty_chunks:
             n_orders = len(success_qty_chunks)
             total_q = sum(success_qty_chunks)
-            total_prem = total_q * price_f
-            prem_s = _format_inr_integer_indian(total_prem)
+            if aggressive_limit:
+                price_clause = "at ICICI aggressive limit prices (LTP-derived)"
+            else:
+                total_prem = total_q * price_f
+                prem_s = _format_inr_integer_indian(total_prem)
+                price_clause = f"for a total premium of {prem_s}"
             messages.append(
                 {
                     "type": cfg.SUCCESS,
                     "message": (
                         f"Successfully placed {_format_indian_integer_digits(n_orders)} orders "
                         f"for {contract_label} totaling "
-                        f"{_format_indian_integer_digits(total_q)} quantity for a total "
-                        f"premium of {prem_s}"
+                        f"{_format_indian_integer_digits(total_q)} quantity {price_clause}"
                     ),
                 }
             )
@@ -2246,6 +2251,7 @@ class processor():
         exchange_code: str,
         chunk_index: int,
         chunk_qty: str | None = None,
+        aggressive_limit: bool = False,
     ) -> dict:
         """Place a single slice of a split order for client-driven pacing on 429."""
         contract_label = f"{stock_code}-{expiry_date}-{strike_price}-{right}"
@@ -2330,19 +2336,25 @@ class processor():
             expiry_date=expiry_date,
             quantity=qty_this,
             exchange_code=exchange_code,
+            aggressive_limit=aggressive_limit,
         )
         rl, daily_exhausted = _order_rate_limit_flags(response)
         ok = bool(response and response.get("Status") == 200)
         danger_line = None
         if not ok and not rl:
             err = (response or {}).get("Error") or "Unknown error"
+            price_label = (
+                "Aggressive limit (LTP-derived)"
+                if aggressive_limit
+                else _format_inr_integer_indian(price_f)
+            )
             danger_line = (
                 str(err)
                 + contract_label
                 + " | Qty = "
                 + _format_indian_integer_digits(int(qty_this))
                 + " | Price = "
-                + _format_inr_integer_indian(price_f)
+                + price_label
             )
         elif rl and daily_exhausted:
             danger_line = (response or {}).get("Error") or "Broker daily limit reached."
@@ -2362,7 +2374,7 @@ class processor():
             "effective_chunk_qty": int(qty_per_order),
         }
 
-    def break_order(self,user_id,stock_code,expiry_date,product_type,right,strike_price,total_qty,price,action, exchange_code: str = cfg.NFO):
+    def break_order(self,user_id,stock_code,expiry_date,product_type,right,strike_price,total_qty,price,action, exchange_code: str = cfg.NFO, aggressive_limit: bool = False):
         messages: list[dict] = []
         contract_label = f"{stock_code}-{expiry_date}-{strike_price}-{right}"
         try:
@@ -2387,6 +2399,11 @@ class processor():
             remainder = int(total_qty) % int(qty_per_order)
             success_qty_chunks: list[int] = []
             danger_messages: list[str] = []
+            price_label = (
+                "Aggressive limit (LTP-derived)"
+                if aggressive_limit
+                else _format_inr_integer_indian(price_f)
+            )
 
             while iterations > 0:
                 response = self.place_order(
@@ -2400,6 +2417,7 @@ class processor():
                     expiry_date=expiry_date,
                     quantity=qty_per_order,
                     exchange_code=exchange_code,
+                    aggressive_limit=aggressive_limit,
                 )
                 iterations -= 1
                 if response and response.get("Status") == 200:
@@ -2412,7 +2430,7 @@ class processor():
                         + " | Qty = "
                         + _format_indian_integer_digits(int(qty_per_order))
                         + " | Price = "
-                        + _format_inr_integer_indian(price_f)
+                        + price_label
                     )
 
             if remainder > 0:
@@ -2427,6 +2445,7 @@ class processor():
                     expiry_date=expiry_date,
                     quantity=remainder,
                     exchange_code=exchange_code,
+                    aggressive_limit=aggressive_limit,
                 )
                 if response and response.get("Status") == 200:
                     success_qty_chunks.append(int(remainder))
@@ -2438,7 +2457,7 @@ class processor():
                         + " | Qty = "
                         + _format_indian_integer_digits(int(remainder))
                         + " | Price = "
-                        + _format_inr_integer_indian(price_f)
+                        + price_label
                     )
 
             if danger_messages:
@@ -2465,7 +2484,11 @@ class processor():
                 )
             messages.extend(
                 self.break_order_finalize_user_messages(
-                    contract_label, price_f, success_qty_chunks, danger_messages
+                    contract_label,
+                    price_f,
+                    success_qty_chunks,
+                    danger_messages,
+                    aggressive_limit=aggressive_limit,
                 )
             )
 
