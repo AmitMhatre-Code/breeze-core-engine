@@ -95,13 +95,76 @@ class TestGlobalIciciApiLimiter(unittest.TestCase):
         self.assertIn("try again in a minute", out["Error"])
         self.assertFalse(out["daily_limit_exhausted"])
 
-    def test_backoff_capped_at_three_seconds(self):
-        b1 = GlobalIciciApiPacer.rate_limit_backoff("limit-user", 1.0, endpoint="test")
-        b2 = GlobalIciciApiPacer.rate_limit_backoff("limit-user", 1.0, endpoint="test")
-        b3 = GlobalIciciApiPacer.rate_limit_backoff("limit-user", 1.0, endpoint="test")
-        self.assertAlmostEqual(b1, 1.0)
-        self.assertAlmostEqual(b2, 2.0)
-        self.assertAlmostEqual(b3, 3.0)
+    def test_backoff_capped_at_ten_seconds(self):
+        GlobalIciciApiPacer.reset_user("limit-user")
+        values = [
+            GlobalIciciApiPacer.rate_limit_backoff("limit-user", 1.0, endpoint="test")
+            for _ in range(5)
+        ]
+        self.assertAlmostEqual(values[0], 1.0)
+        self.assertAlmostEqual(values[1], 2.0)
+        self.assertAlmostEqual(values[2], 4.0)
+        self.assertAlmostEqual(values[3], 8.0)
+        self.assertAlmostEqual(values[4], 10.0)
+
+    @patch("icici_breeze_backend.app.services.icici_api_pacing.time.sleep")
+    @patch(
+        "icici_breeze_backend.app.services.user_rate_limit_prefs.get_icici_rate_limit_pause_seconds",
+        return_value=1.0,
+    )
+    @patch(
+        "icici_breeze_backend.app.services.api_usage.is_daily_limit_reached",
+        return_value=False,
+    )
+    def test_success_does_not_wait_for_slot(self, *_mocks):
+        with patch.object(GlobalIciciApiPacer, "wait_for_slot") as wait_slot:
+            with patch.object(GlobalIciciApiLimiter, "_record_call"):
+                out = GlobalIciciApiLimiter.request_breeze_dict(
+                    lambda: {"Status": 200, "Success": []},
+                    user_id="limit-user",
+                    record_url="https://api.icicidirect.com/breezeapi/api/v1/quotes",
+                )
+        wait_slot.assert_not_called()
+        self.assertEqual(out.get("Status"), 200)
+
+    @patch("icici_breeze_backend.app.services.icici_api_pacing.GlobalIciciApiPacer._sleep_with_status")
+    @patch(
+        "icici_breeze_backend.app.services.user_rate_limit_prefs.get_icici_rate_limit_pause_seconds",
+        return_value=1.0,
+    )
+    @patch(
+        "icici_breeze_backend.app.services.api_usage.is_daily_limit_reached",
+        return_value=False,
+    )
+    def test_429_activates_throttling_and_waits_on_next_call(self, *_mocks):
+        calls = {"n": 0}
+
+        def perform():
+            calls["n"] += 1
+            if calls["n"] <= 4:
+                return {"Status": 429, "Error": "too many"}
+            return {"Status": 200, "Success": []}
+
+        with patch.object(GlobalIciciApiLimiter, "_record_call"):
+            with patch.object(GlobalIciciApiPacer, "wait_for_slot") as wait_slot:
+                out1 = GlobalIciciApiLimiter.request_breeze_dict(
+                    perform,
+                    user_id="limit-user",
+                    record_url="https://api.icicidirect.com/breezeapi/api/v1/quotes",
+                )
+                self.assertTrue(GlobalIciciApiPacer.is_throttling_active("limit-user"))
+                wait_slot.assert_not_called()
+
+                out2 = GlobalIciciApiLimiter.request_breeze_dict(
+                    perform,
+                    user_id="limit-user",
+                    record_url="https://api.icicidirect.com/breezeapi/api/v1/quotes",
+                )
+                wait_slot.assert_called_once()
+                self.assertEqual(out2.get("Status"), 200)
+                self.assertFalse(GlobalIciciApiPacer.is_throttling_active("limit-user"))
+
+        self.assertTrue(out1.get("icici_throttled"))
 
 
 class TestUserRateLimitPrefsBounds(unittest.TestCase):

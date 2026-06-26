@@ -19,6 +19,7 @@ from icici_breeze_backend.app.domain.order import (
 from icici_breeze_backend.app.services.user_rate_limit_prefs import (
     get_icici_rate_limit_pause_seconds,
 )
+from icici_breeze_backend.app.services.icici_api_pacing import client_rate_limit_pause_seconds
 from icici_breeze_backend.app.domain.responses import IciciApiResponse, OrderDetailResponse
 from icici_breeze_backend.audit.logger import AuditLogger
 from icici_breeze_backend.concurrency.idempotency import idempotency_store, IdempotencyResult
@@ -212,6 +213,8 @@ async def post_break_chunk(
         body.chunk_qty,
         aggressive_limit=body.aggressive_limit,
     )
+    if out.get("rate_limited"):
+        pause = client_rate_limit_pause_seconds(context.user_id)
     out["rate_limit_pause_seconds"] = pause
     if out.get("success") and int(out.get("placed_quantity") or 0) > 0:
         from icici_breeze_backend.app.services.broker_snapshot_cache import evict_broker_snapshot

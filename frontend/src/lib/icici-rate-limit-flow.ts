@@ -1,5 +1,22 @@
 import { apiClient } from "@/lib/api-client";
 
+function sleepSeconds(total: number): Promise<void> {
+  const sec = Math.max(1, Math.floor(total));
+  return new Promise((resolve) => setTimeout(resolve, sec * 1000));
+}
+
+async function waitForRateLimit(
+  seconds: number,
+  onRateLimitWait: (seconds: number) => Promise<void>,
+): Promise<void> {
+  const sec = Math.max(1, Math.floor(Number(seconds) || 0.5));
+  if (sec > 1) {
+    await onRateLimitWait(sec);
+    return;
+  }
+  await sleepSeconds(sec);
+}
+
 export type BreakOrderChunkResponse = {
   terminal_messages?: Array<{ type?: string; message?: string }>;
   chunk_index: number;
@@ -92,7 +109,7 @@ export async function runBreakOrderChunks(
         1,
         Math.floor(Number(res.rate_limit_pause_seconds) || 0.5),
       );
-      await args.onRateLimitWait(sec);
+      await waitForRateLimit(sec, args.onRateLimitWait);
       continue;
     }
 
@@ -160,7 +177,7 @@ export async function runCancelOrdersWithPacing(args: {
           1,
           Math.floor(Number(res.rate_limit_pause_seconds) || 0.5),
         );
-        await args.onRateLimitWait(sec);
+        await waitForRateLimit(sec, args.onRateLimitWait);
         continue;
       }
       results.push({

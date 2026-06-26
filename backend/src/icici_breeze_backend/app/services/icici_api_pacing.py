@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
 _logger = logging.getLogger(__name__)
 
-_MAX_BACKOFF_SEC = 3.0
+_MAX_BACKOFF_SEC = 10.0
 _MAX_HTTP_ATTEMPTS = 4
 
 T = TypeVar("T")
@@ -33,6 +35,17 @@ def is_breeze_rate_limited(status: Any, error_text: str | None = None) -> bool:
     return False
 
 
+def rate_limit_reason(http_status: int | Any) -> str:
+    """Human-readable reason for UI when ICICI rate-limits a call."""
+    try:
+        st = int(http_status or 0)
+    except (TypeError, ValueError):
+        st = 0
+    if st == 503:
+        return "ICICI returned HTTP 503 (Service Unavailable)"
+    return "ICICI returned HTTP 429 (Too Many Requests)"
+
+
 def is_icici_daily_limit_exceeded(error_text: str | None) -> bool:
     e = str(error_text or "").lower()
     return (
@@ -43,12 +56,123 @@ def is_icici_daily_limit_exceeded(error_text: str | None) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class BackoffSnapshot:
+    active: bool
+    reason: str
+    seconds_remaining: int
+    endpoint: str = "icici"
+    throttling_active: bool = False
+
+
 class GlobalIciciApiPacer:
     """Thread-safe register of last ICICI API call time per user."""
 
     _lock = threading.Lock()
     _last_call_mono: dict[str, float] = {}
     _consecutive_rate_limited: dict[str, int] = {}
+    _throttling_active: dict[str, bool] = {}
+    _backoff_visible: dict[str, BackoffSnapshot] = {}
+
+    @classmethod
+    def is_throttling_active(cls, user_id: str) -> bool:
+        with cls._lock:
+            return bool(cls._throttling_active.get(user_id))
+
+    @classmethod
+    def activate_throttling(cls, user_id: str) -> None:
+        with cls._lock:
+            cls._throttling_active[user_id] = True
+
+    @classmethod
+    def get_backoff_snapshot(cls, user_id: str) -> BackoffSnapshot | None:
+        with cls._lock:
+            snap = cls._backoff_visible.get(user_id)
+            throttling = bool(cls._throttling_active.get(user_id))
+        if snap is not None:
+            return BackoffSnapshot(
+                active=snap.active,
+                reason=snap.reason,
+                seconds_remaining=snap.seconds_remaining,
+                endpoint=snap.endpoint,
+                throttling_active=throttling,
+            )
+        if throttling:
+            return BackoffSnapshot(
+                active=False,
+                reason="",
+                seconds_remaining=0,
+                throttling_active=True,
+            )
+        return None
+
+    @classmethod
+    def peek_next_backoff_seconds(cls, user_id: str, base_spacing_sec: float) -> float:
+        """Next backoff delay if rate-limited again (does not increment counter)."""
+        base = max(0.0, float(base_spacing_sec))
+        with cls._lock:
+            n = cls._consecutive_rate_limited.get(user_id, 0) + 1
+        return min(_MAX_BACKOFF_SEC, base * (2 ** (n - 1)))
+
+    @classmethod
+    def _clear_backoff_visible(cls, user_id: str) -> None:
+        with cls._lock:
+            cls._backoff_visible.pop(user_id, None)
+
+    @classmethod
+    def _publish_backoff_visible(
+        cls,
+        user_id: str,
+        *,
+        reason: str,
+        seconds_remaining: int,
+        endpoint: str,
+    ) -> None:
+        with cls._lock:
+            cls._backoff_visible[user_id] = BackoffSnapshot(
+                active=True,
+                reason=reason,
+                seconds_remaining=max(0, seconds_remaining),
+                endpoint=endpoint,
+                throttling_active=bool(cls._throttling_active.get(user_id)),
+            )
+
+    @classmethod
+    def _sleep_with_status(
+        cls,
+        user_id: str,
+        seconds: float,
+        *,
+        reason: str,
+        endpoint: str = "icici",
+    ) -> None:
+        total = max(0.0, float(seconds))
+        if total <= 0:
+            return
+        if total > 1.0 and user_id:
+            remaining = int(math.ceil(total))
+            cls._publish_backoff_visible(
+                user_id,
+                reason=reason,
+                seconds_remaining=remaining,
+                endpoint=endpoint,
+            )
+            slept = 0.0
+            while slept < total:
+                tick = min(1.0, total - slept)
+                time.sleep(tick)
+                slept += tick
+                remaining = max(0, int(math.ceil(total - slept)))
+                if remaining > 0:
+                    cls._publish_backoff_visible(
+                        user_id,
+                        reason=reason,
+                        seconds_remaining=remaining,
+                        endpoint=endpoint,
+                    )
+            cls._clear_backoff_visible(user_id)
+        else:
+            time.sleep(total)
 
     @classmethod
     def wait_for_slot(cls, user_id: str, base_spacing_sec: float, *, endpoint: str = "icici") -> None:
@@ -64,7 +188,12 @@ class GlobalIciciApiPacer:
                 endpoint,
                 user_id,
             )
-            time.sleep(wait)
+            cls._sleep_with_status(
+                user_id,
+                wait,
+                reason="Waiting between ICICI API calls while rate limiting is active",
+                endpoint=endpoint,
+            )
 
     @classmethod
     def mark_call_complete(cls, user_id: str) -> None:
@@ -75,6 +204,8 @@ class GlobalIciciApiPacer:
     def on_success(cls, user_id: str) -> None:
         with cls._lock:
             cls._consecutive_rate_limited[user_id] = 0
+            cls._throttling_active.pop(user_id, None)
+            cls._backoff_visible.pop(user_id, None)
 
     @classmethod
     def rate_limit_backoff(cls, user_id: str, base_spacing_sec: float, *, endpoint: str = "icici") -> float:
@@ -97,6 +228,8 @@ class GlobalIciciApiPacer:
         with cls._lock:
             cls._last_call_mono.pop(user_id, None)
             cls._consecutive_rate_limited.pop(user_id, None)
+            cls._throttling_active.pop(user_id, None)
+            cls._backoff_visible.pop(user_id, None)
 
 
 class GlobalIciciApiLimiter:
@@ -206,7 +339,8 @@ class GlobalIciciApiLimiter:
                 return build_result(cls.build_throttle_error(uid))
 
             base_pause = get_icici_rate_limit_pause_seconds(uid)
-            GlobalIciciApiPacer.wait_for_slot(uid, base_pause, endpoint=ep)
+            if GlobalIciciApiPacer.is_throttling_active(uid):
+                GlobalIciciApiPacer.wait_for_slot(uid, base_pause, endpoint=ep)
             user_lock = cls._user_lock(uid)
         else:
             base_pause = 0.5
@@ -222,21 +356,29 @@ class GlobalIciciApiLimiter:
                     cls._record_call(uid, record_url)
                     GlobalIciciApiPacer.mark_call_complete(uid)
 
-                if not is_breeze_rate_limited(http_status, err_text) and not (
+                rate_limited = is_breeze_rate_limited(http_status, err_text) or (
                     body and is_breeze_rate_limited(body.get("Status"), body.get("Error"))
-                ):
+                )
+                if not rate_limited:
                     if uid:
                         GlobalIciciApiPacer.on_success(uid)
                     return raw
 
+                if uid:
+                    GlobalIciciApiPacer.activate_throttling(uid)
+
                 if attempt >= _MAX_HTTP_ATTEMPTS - 1:
                     break
 
+                reason = rate_limit_reason(http_status)
                 if uid:
                     sleep_sec = GlobalIciciApiPacer.rate_limit_backoff(uid, base_pause, endpoint=ep)
+                    GlobalIciciApiPacer._sleep_with_status(
+                        uid, sleep_sec, reason=reason, endpoint=ep
+                    )
                 else:
                     sleep_sec = min(_MAX_BACKOFF_SEC, base_pause * (2**attempt))
-                time.sleep(sleep_sec)
+                    time.sleep(sleep_sec)
 
             return build_result(cls.build_throttle_error(uid, broker_error_text=broker_error))
 
@@ -335,6 +477,16 @@ class GlobalIciciApiLimiter:
         return finalize(result)
 
 
+def client_rate_limit_pause_seconds(user_id: str) -> float:
+    """Suggested client wait after rate_limited response (matches server backoff semantics)."""
+    from icici_breeze_backend.app.services.user_rate_limit_prefs import (
+        get_icici_rate_limit_pause_seconds,
+    )
+
+    base = get_icici_rate_limit_pause_seconds(user_id)
+    return GlobalIciciApiPacer.peek_next_backoff_seconds(user_id, base)
+
+
 @contextmanager
 def icici_user_scope(user_id: str):
     """Set request user_id context for login/bootstrap ICICI calls."""
@@ -345,4 +497,3 @@ def icici_user_scope(user_id: str):
         yield
     finally:
         auth_ctx._user_id_ctx.reset(token)
-
