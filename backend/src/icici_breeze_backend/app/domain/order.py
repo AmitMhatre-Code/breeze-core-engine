@@ -29,7 +29,6 @@ class PlaceOrderRequest(BaseModel):
     price: str = "0"
     expiry_date: str
     quantity: str
-    aggressive_limit: bool = False
 
     @field_validator("quantity")
     @classmethod
@@ -49,7 +48,6 @@ class BreakOrderRequest(BaseModel):
     total_qty: str
     price: str = "0"
     action: Literal["Buy", "Sell"]
-    aggressive_limit: bool = False
 
 
 class CancelOrderDetail(BaseModel):
@@ -94,7 +92,6 @@ class BreakOrderChunkRequest(BaseModel):
         default=None,
         description="Optional max units per child order; lot-rounded, capped at exchange freeze.",
     )
-    aggressive_limit: bool = False
 
 
 class BreakChunkDefaultsRequest(BaseModel):
@@ -118,7 +115,6 @@ class BreakOrderFinalizeRequest(BaseModel):
     action: Literal["Buy", "Sell"]
     success_quantities: list[int] = Field(default_factory=list)
     danger_lines: list[str] = Field(default_factory=list)
-    aggressive_limit: bool = False
 
 
 class BookCancelOneRequest(BaseModel):
@@ -170,7 +166,6 @@ class OrderFormRequest(BaseModel):
     quantity: Optional[str] = None
     price: Optional[str] = None
     action: Literal["Buy", "Sell", "Quote", "Clear"]
-    aggressive_limit: bool = False
     buy_button_state: Optional[str] = None
     sell_button_state: Optional[str] = None
 
@@ -195,7 +190,6 @@ class OrderFormRequest(BaseModel):
             price=self.price or "0",
             expiry_date=self.expiry_date or "",
             quantity=self.quantity or "0",
-            aggressive_limit=self.aggressive_limit,
         )
 
 
@@ -211,7 +205,6 @@ class ParkedOrderItem(BaseModel):
     quantity: str
     price: str = "0"
     action: Literal["Buy", "Sell"]
-    aggressive_limit: bool = False
     chunk_qty: Optional[str] = Field(
         default=None,
         description="Optional max units per child order when executing later.",

@@ -16,7 +16,6 @@ class StrategyBuilderLegIn(BaseModel):
     quantity: str
     price: str = "0"
     action: Literal["Buy", "Sell"]
-    aggressive_limit: bool = False
 
 
 class StrategyBuilderMarginRequest(BaseModel):

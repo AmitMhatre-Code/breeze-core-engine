@@ -33,8 +33,7 @@ export type ProposeTradesParams = {
   stock_code: string;
   expiry_date: string;
   margin_lacs: number;
-  max_loss_lacs?: number;
-  allow_infinite_loss?: boolean;
+  max_loss_lacs: number;
   min_pop_pct: number;
   min_ann_return_pct?: number;
   provision_elm: boolean;
@@ -72,7 +71,7 @@ export async function proposeTrades(
   );
 }
 
-/** Download the audit JSON for a completed Strategy Builder session. */
+/** Download the audit JSON for a completed Strategy Builder (New) session. */
 export async function downloadStrategyBuilderAudit(
   sessionId: string,
 ): Promise<void> {

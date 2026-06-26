@@ -1,22 +1,5 @@
 import { apiClient } from "@/lib/api-client";
 
-function sleepSeconds(total: number): Promise<void> {
-  const sec = Math.max(1, Math.floor(total));
-  return new Promise((resolve) => setTimeout(resolve, sec * 1000));
-}
-
-async function waitForRateLimit(
-  seconds: number,
-  onRateLimitWait: (seconds: number) => Promise<void>,
-): Promise<void> {
-  const sec = Math.max(1, Math.floor(Number(seconds) || 0.5));
-  if (sec > 1) {
-    await onRateLimitWait(sec);
-    return;
-  }
-  await sleepSeconds(sec);
-}
-
 export type BreakOrderChunkResponse = {
   terminal_messages?: Array<{ type?: string; message?: string }>;
   chunk_index: number;
@@ -25,8 +8,6 @@ export type BreakOrderChunkResponse = {
   price_f?: number;
   rate_limited: boolean;
   daily_limit_exhausted?: boolean;
-  icici_throttled?: boolean;
-  icici_minute_limit_exceeded?: boolean;
   success: boolean;
   placed_quantity: number;
   danger_line: string | null;
@@ -48,8 +29,6 @@ export type PlaceBreakOrderArgs = {
   onRateLimitWait: (seconds: number) => Promise<void>;
   /** Max units per exchange order; server lot-rounds and caps at freeze. Omit for backend default. */
   chunk_qty?: string;
-  /** ICICI aggressive limit (order_type=market, price=0). */
-  aggressive_limit?: boolean;
 };
 
 /**
@@ -73,7 +52,6 @@ export async function runBreakOrderChunks(
     total_qty: args.total_qty,
     price: args.price,
     action: args.action,
-    ...(args.aggressive_limit ? { aggressive_limit: true } : {}),
     ...(args.chunk_qty != null && String(args.chunk_qty).trim() !== ""
       ? { chunk_qty: String(args.chunk_qty).trim() }
       : {}),
@@ -99,25 +77,6 @@ export async function runBreakOrderChunks(
     }
 
     if (res.rate_limited) {
-      // #region agent log
-      fetch("http://127.0.0.1:7341/ingest/c23c04c4-3dc2-4241-8e9a-8ca922b50e2c", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d5296e" },
-        body: JSON.stringify({
-          sessionId: "d5296e",
-          hypothesisId: "B",
-          location: "icici-rate-limit-flow.ts:runBreakOrderChunks",
-          message: "rate_limited_branch",
-          data: {
-            daily_limit_exhausted: res.daily_limit_exhausted,
-            icici_throttled: res.icici_throttled,
-            pause_seconds: res.rate_limit_pause_seconds,
-            chunk,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       if (res.daily_limit_exhausted) {
         return {
           ok: false,
@@ -126,14 +85,11 @@ export async function runBreakOrderChunks(
             "You have been throttled by ICICI and have reached the daily API limit.",
         };
       }
-      let sec = Math.max(
+      const sec = Math.max(
         1,
         Math.floor(Number(res.rate_limit_pause_seconds) || 0.5),
       );
-      if (res.icici_minute_limit_exceeded) {
-        sec = Math.max(sec, 60);
-      }
-      await waitForRateLimit(sec, args.onRateLimitWait);
+      await args.onRateLimitWait(sec);
       continue;
     }
 
@@ -161,7 +117,6 @@ export async function runBreakOrderChunks(
     action: args.action,
     success_quantities: successes,
     danger_lines: dangers,
-    ...(args.aggressive_limit ? { aggressive_limit: true } : {}),
   });
   return { ok: true, redirect: fin.redirect };
 }
@@ -170,8 +125,6 @@ export type CancelOneResponse = {
   success: boolean;
   rate_limited: boolean;
   daily_limit_exhausted?: boolean;
-  icici_throttled?: boolean;
-  icici_minute_limit_exceeded?: boolean;
   error: string | null;
   rate_limit_pause_seconds: number;
 };
@@ -189,25 +142,6 @@ export async function runCancelOrdersWithPacing(args: {
         order_id: oid,
       });
       if (res.rate_limited) {
-        // #region agent log
-        fetch("http://127.0.0.1:7341/ingest/c23c04c4-3dc2-4241-8e9a-8ca922b50e2c", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d5296e" },
-          body: JSON.stringify({
-            sessionId: "d5296e",
-            hypothesisId: "B",
-            location: "icici-rate-limit-flow.ts:runCancelOrdersWithPacing",
-            message: "rate_limited_branch",
-            data: {
-              daily_limit_exhausted: res.daily_limit_exhausted,
-              icici_throttled: res.icici_throttled,
-              pause_seconds: res.rate_limit_pause_seconds,
-              order_id: oid,
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
         if (res.daily_limit_exhausted) {
           results.push({
             order_ref: oid,
@@ -218,14 +152,11 @@ export async function runCancelOrdersWithPacing(args: {
           });
           break;
         }
-        let sec = Math.max(
+        const sec = Math.max(
           1,
           Math.floor(Number(res.rate_limit_pause_seconds) || 0.5),
         );
-        if (res.icici_minute_limit_exceeded) {
-          sec = Math.max(sec, 60);
-        }
-        await waitForRateLimit(sec, args.onRateLimitWait);
+        await args.onRateLimitWait(sec);
         continue;
       }
       results.push({

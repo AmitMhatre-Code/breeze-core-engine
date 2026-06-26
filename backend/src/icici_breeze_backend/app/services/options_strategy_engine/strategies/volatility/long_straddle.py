@@ -42,7 +42,7 @@ def calc_long_straddle(ctx: EngineContext) -> StrategyResult:
     for stp in sorted(candidates, key=lambda s: abs(s - ctx.atm_strike))[:5]:
         ce, pe = ctx.cache[(stp, "Call")], ctx.cache[(stp, "Put")]
         debit_lot = ((ce.best_offer_price or ce.ltp) + (pe.best_offer_price or pe.ltp)) * L
-        qty = size_quantity_loss_only(ctx.effective_loss_sizing_budget(), debit_lot, L)
+        qty = size_quantity_loss_only(min(ctx.margin_rupees, ctx.max_loss_rupees), debit_lot, L)
         if qty < L:
             record_simple_attempt(collector, reject_reason="quantity", strike=stp)
             continue
@@ -51,7 +51,7 @@ def calc_long_straddle(ctx: EngineContext) -> StrategyResult:
             TradeLeg("Put", "Buy", stp, qty, pe.best_offer_price or pe.ltp),
         ]
         max_loss = debit_lot * (qty // L)
-        if ctx.max_loss_rupees is not None and max_loss > ctx.max_loss_rupees:
+        if max_loss > ctx.max_loss_rupees:
             record_simple_attempt(
                 collector,
                 reject_reason="budget",

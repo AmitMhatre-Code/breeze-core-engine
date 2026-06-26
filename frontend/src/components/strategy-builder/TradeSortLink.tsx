@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { POP_SORT_LABEL } from "@/lib/strategy-builder/pop-help";
 
 export type TradeSortKey = "score" | "server" | "pop" | "net_premium" | "max_loss";
 
 const SORT_OPTIONS: { key: TradeSortKey; label: string }[] = [
   { key: "score", label: "Score (high → low)" },
   { key: "server", label: "Server order" },
-  { key: "pop", label: POP_SORT_LABEL },
+  { key: "pop", label: "PoP (high → low)" },
   { key: "net_premium", label: "Net Premium (high → low)" },
   { key: "max_loss", label: "Max Loss (low → high)" },
 ];

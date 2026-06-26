@@ -3,16 +3,10 @@
 import { useMemo } from "react";
 import { InfinitySymbol } from "@/components/strategy-builder/InfinitySymbol";
 import { OutlookIcon } from "@/components/strategy-builder/OutlookIcon";
-import { PopHelpTrigger } from "@/components/strategy-builder/PopHelpTrigger";
-import { PopLabel } from "@/components/strategy-builder/PopLabel";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
-import {
-  isPopMetricLabel,
-} from "@/lib/strategy-builder/pop-help";
 import { strategyOutlook } from "@/lib/strategy-builder/templates";
 import {
   computeTradePop,
-  formatConstraintViolation,
   formatRiskRewardRatio,
   isUnlimitedMaxLoss,
 } from "@/lib/strategy-builder/trade-metrics";
@@ -60,8 +54,6 @@ export function ProposedStrategyTradeCard({
   expiryDate,
   selected,
   onSelect,
-  minPopPct,
-  minAnnReturnPct,
 }: {
   trade: ProposedTrade;
   lotSize: number;
@@ -70,11 +62,8 @@ export function ProposedStrategyTradeCard({
   expiryDate: string;
   selected: boolean;
   onSelect: () => void;
-  minPopPct?: number | null;
-  minAnnReturnPct?: number | null;
 }) {
   const skipped = trade.status === "skipped";
-  const relaxed = trade.compliance === "relaxed";
   const outlook = strategyOutlook(trade.strategy_id);
 
   const pop = useMemo(
@@ -98,7 +87,6 @@ export function ProposedStrategyTradeCard({
     : null;
   const useHeroMetric = trade.hero_metric != null;
   const secondaryFromApi = trade.secondary_metrics ?? [];
-  const hasPopInSecondary = secondaryFromApi.some((m) => isPopMetricLabel(m.label));
 
   const vBar = (
     <span
@@ -112,10 +100,6 @@ export function ProposedStrategyTradeCard({
       className={`group relative w-full min-w-0 rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
         skipped
           ? "border-zinc-200/60 bg-zinc-100/50 opacity-70 dark:border-zinc-700/60 dark:bg-zinc-900/40"
-          : relaxed
-            ? selected
-              ? "border-amber-500 ring-2 ring-amber-500/40 bg-amber-50/80 dark:bg-amber-950/20"
-              : "border-amber-300/80 bg-amber-50/60 ring-1 ring-amber-500/15 dark:border-amber-700/60 dark:bg-amber-950/15 dark:ring-amber-400/10"
           : selected
             ? "border-sky-500 ring-2 ring-sky-500/40 bg-white/95 dark:bg-zinc-950/70"
             : "border-zinc-200/80 bg-white/90 ring-1 ring-zinc-950/[0.03] hover:border-zinc-300 dark:border-zinc-700/80 dark:bg-zinc-950/60 dark:ring-white/[0.04] dark:hover:border-zinc-600"
@@ -156,11 +140,6 @@ export function ProposedStrategyTradeCard({
             {trade.structure_modified ? (
               <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
                 Modified
-              </span>
-            ) : null}
-            {relaxed && (trade.constraint_violations?.length ?? 0) > 0 ? (
-              <span className="shrink-0 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-medium text-amber-900 dark:text-amber-100">
-                Below your thresholds
               </span>
             ) : null}
           </div>
@@ -210,35 +189,16 @@ export function ProposedStrategyTradeCard({
                 {trade.ranking_summary}
               </p>
             ) : null}
-            {relaxed && (trade.constraint_violations?.length ?? 0) > 0 ? (
-              <p className="text-xs leading-snug text-amber-800 dark:text-amber-200">
-                {(trade.constraint_violations ?? [])
-                  .map((v) =>
-                    formatConstraintViolation(
-                      v,
-                      trade,
-                      minPopPct,
-                      minAnnReturnPct,
-                    ),
-                  )
-                  .join(" · ")}
-              </p>
-            ) : null}
             {useHeroMetric && secondaryFromApi.length > 0 ? (
               <div
                 className={`${rowClass} flex-wrap gap-x-3 gap-y-1 text-zinc-600 dark:text-zinc-300`}
               >
                 {secondaryFromApi.map((metric) => (
                   <span key={metric.label} className="inline-flex shrink-0 items-center gap-1">
-                    {isPopMetricLabel(metric.label) ? (
-                      <PopLabel variant="metric" showInfo={false} />
-                    ) : (
-                      <span>{metric.label}</span>
-                    )}
-                    :{" "}
+                    {metric.label}:{" "}
                     <strong
                       className={`tabular-nums ${
-                        isPopMetricLabel(metric.label)
+                        metric.label === "Est. PoP"
                           ? "font-normal text-zinc-500 dark:text-zinc-400"
                           : "text-zinc-800 dark:text-zinc-200"
                       }`}
@@ -247,11 +207,10 @@ export function ProposedStrategyTradeCard({
                     </strong>
                   </span>
                 ))}
-                {hasPopInSecondary ? <PopHelpTrigger /> : null}
               </div>
             ) : (
             <div
-              className={`${rowClass} flex-wrap gap-x-3 gap-y-1 text-zinc-600 dark:text-zinc-300`}
+              className={`${rowClass} gap-x-3 text-zinc-600 dark:text-zinc-300`}
             >
               <span className="inline-flex shrink-0 items-center gap-1">
                 Max loss:{" "}
@@ -270,16 +229,12 @@ export function ProposedStrategyTradeCard({
                 </strong>
               </span>
               {pop != null ? (
-                <>
-                  <span className="inline-flex shrink-0 items-center gap-1">
-                    <PopLabel variant="inline" showInfo={false} />
-                    :{" "}
-                    <strong className="text-zinc-800 dark:text-zinc-200">
-                      {pop.toFixed(1)}%
-                    </strong>
-                  </span>
-                  <PopHelpTrigger />
-                </>
+                <span className="shrink-0">
+                  PoP:{" "}
+                  <strong className="text-zinc-800 dark:text-zinc-200">
+                    {pop.toFixed(1)}%
+                  </strong>
+                </span>
               ) : null}
               <span className="inline-flex shrink-0 items-center gap-1">
                 SPAN:{" "}

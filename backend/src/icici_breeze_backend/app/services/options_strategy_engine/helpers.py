@@ -7,7 +7,6 @@ from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
-    POP_PRE_FILTER_TOLERANCE,
     EngineContext,
     QuoteRow,
     Right,
@@ -232,11 +231,6 @@ def sigma_for_pop(ctx: EngineContext) -> float:
 
 def requires_pop_gate(ctx: EngineContext) -> bool:
     return ctx.strategy_category == "income"
-
-
-def pre_filter_pop_floor(min_pop_pct: float) -> float:
-    """Soft PoP floor for strike/pair search only; never used as a hard reject gate."""
-    return max(0.0, min_pop_pct - POP_PRE_FILTER_TOLERANCE)
 
 
 def meets_pop_floor(ctx: EngineContext, pop: float) -> bool:

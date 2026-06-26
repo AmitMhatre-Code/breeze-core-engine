@@ -3,7 +3,6 @@
 import sqlite3
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.services.debug_session_log import agent_log
 
 _DEFAULT_PAUSE = 0.5
 _MIN = 0.5
@@ -35,14 +34,7 @@ def get_icici_rate_limit_pause_seconds(user_id: str) -> float:
         v = float(row[0])
     except (TypeError, ValueError):
         return _DEFAULT_PAUSE
-    clamped = max(_MIN, min(_MAX, v))
-    agent_log(
-        "A",
-        "user_rate_limit_prefs.py:get_icici_rate_limit_pause_seconds",
-        "pause_pref_read",
-        {"user_id": user_id, "raw_db": v, "clamped": clamped},
-    )
-    return clamped
+    return max(_MIN, min(_MAX, v))
 
 
 def set_icici_rate_limit_pause_seconds(user_id: str, seconds: float) -> float:
@@ -58,21 +50,15 @@ def set_icici_rate_limit_pause_seconds(user_id: str, seconds: float) -> float:
 
 
 def migrate_legacy_rate_limit_pause_default() -> None:
-    """Reset legacy factory default (5s only) to the current default (0.5s)."""
+    """Reset legacy factory defaults (5s, 1s) to the current default (0.5s)."""
     ensure_icici_rate_limit_pause_column()
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
-        cur = conn.execute(
+        conn.execute(
             "UPDATE user_account SET icici_rate_limit_pause_seconds = ? "
-            "WHERE icici_rate_limit_pause_seconds IN (5)",
+            "WHERE icici_rate_limit_pause_seconds IN (5, 1)",
             (_DEFAULT_PAUSE,),
         )
         conn.commit()
-        agent_log(
-            "A",
-            "user_rate_limit_prefs.py:migrate_legacy_rate_limit_pause_default",
-            "legacy_pause_migration",
-            {"rows_reset": cur.rowcount, "reset_to": _DEFAULT_PAUSE},
-        )
 
 
 def migrate_rate_limit_pause_bounds() -> None:

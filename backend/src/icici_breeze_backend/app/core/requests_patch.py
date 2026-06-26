@@ -45,13 +45,8 @@ def _log_breeze_parse_failure(
     body_len: int,
     body_preview: str,
 ) -> None:
-    from icici_breeze_backend.app.services.breeze_http_audit import is_breeze_http_audit_enabled
-
-    msg = (
-        "breeze_http_response_unusable reason=%s method=%s url=%s http_status=%s "
-        "content_type=%s body_len=%s html_like=%s preview=%r"
-    )
-    args = (
+    _logger.warning(
+        "breeze_http_response_unusable reason=%s method=%s url=%s http_status=%s content_type=%s body_len=%s html_like=%s preview=%r",
         reason,
         method,
         url,
@@ -61,16 +56,10 @@ def _log_breeze_parse_failure(
         _looks_like_html_body(body_preview),
         _preview_for_log(body_preview),
     )
-    if is_breeze_http_audit_enabled():
-        _logger.debug(msg, *args)
-    else:
-        _logger.warning(msg, *args)
 
 
 class _SyntheticRawResponse:
     """Minimal requests.Response stand-in for limiter-generated throttle payloads."""
-
-    breeze_origin = "synthetic"
 
     def __init__(self, status_code: int, text: str) -> None:
         self.status_code = status_code
@@ -202,7 +191,6 @@ def _run_breeze_request(method: str, url: str, perform_http):
         record_url=u,
         classify_response=_classify_requests_response,
         build_result=build_result,
-        method=m,
     )
     return _SafeBreezeResponse(out, method=m, url=u)
 

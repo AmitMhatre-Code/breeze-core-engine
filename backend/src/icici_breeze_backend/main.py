@@ -8,23 +8,12 @@ from typing import Optional
 _root = os.path.dirname(os.path.abspath(__file__))
 # backend/ directory (parent of src/) — stable when cwd is repo root (e.g. ./dev.sh).
 _BACKEND_ROOT = os.path.abspath(os.path.join(_root, "..", ".."))
-def _deployment_env_file_path() -> Optional[str]:
-    """Host-mounted runtime .env (CFN/docker), when present inside the container."""
-    path = (os.environ.get("DEPLOYMENT_ENV_FILE") or "/opt/breeze-core-engine/.env").strip()
-    if path and os.path.isfile(path):
-        return os.path.abspath(path)
-    return None
-
-
 _env_paths_tried = [
     os.path.abspath(os.path.join(_root, ".env")),
     os.path.abspath(os.path.join(os.getcwd(), ".env")),
 ]
-_deploy_env = _deployment_env_file_path()
-if _deploy_env:
-    _env_paths_tried.append(_deploy_env)
 
-# LOG_LEVEL / LOG_FILE: prefer .env file paths above, then os.environ (docker --env-file).
+# Keys read only from .env file (never from os.environ).
 _LOG_KEYS_FROM_ENV_FILE = ("LOG_LEVEL", "LOG_FILE")
 
 
@@ -48,7 +37,7 @@ def _parse_env_file_key(path: str, key: str) -> Optional[str]:
 
 
 def _get_log_config_from_env_file() -> dict:
-    """Read LOG_LEVEL and LOG_FILE from on-disk .env paths (see _env_paths_tried)."""
+    """Read LOG_LEVEL and LOG_FILE only from .env file. Never from os.environ."""
     out = {}
     for _p in _env_paths_tried:
         if not os.path.isfile(_p):
@@ -94,13 +83,10 @@ def _load_env_early():
 # Load .env before reading LOG_LEVEL/LOG_FILE so they are available from file
 _load_env_early()
 
+# LOG_LEVEL and LOG_FILE: only from .env file, never from os.environ
 _log_config = _get_log_config_from_env_file()
-LOG_LEVEL = (
-    _log_config.get("LOG_LEVEL")
-    or (os.environ.get("LOG_LEVEL") or "").strip()
-    or "INFO"
-)
-LOG_FILE = _log_config.get("LOG_FILE") or (os.environ.get("LOG_FILE") or "").strip() or None
+LOG_LEVEL = _log_config.get("LOG_LEVEL") or "INFO"
+LOG_FILE = _log_config.get("LOG_FILE")
 
 from icici_breeze_backend.app.core.logging import configure_logging
 
@@ -194,20 +180,6 @@ def _ensure_app_database() -> None:
 
             migrate_legacy_rate_limit_pause_default()
             migrate_rate_limit_pause_bounds()
-            from icici_breeze_backend.app.services.debug_session_log import (
-                agent_log,
-                debug_log_path,
-            )
-
-            agent_log(
-                "A",
-                "main.py:startup",
-                "debug_log_ready",
-                {
-                    "data_path": debug_log_path(),
-                    "tmp_mirror": f"/tmp/debug-d5296e.ndjson",
-                },
-            )
         except Exception:
             _logger.exception("user_account schema migration failed")
 

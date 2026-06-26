@@ -20,19 +20,6 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "2.0.2-a",
-    date: "26-Jun-2026",
-    releaseKind: "patch",
-    summary: "Multiple fixes and improvements",
-    changes: [
-      "Settings → API Usage spacing is now enforced proactively between all ICICI API calls (not only after a rate-limit response).",
-      "ICICI per-minute quota (HTTP 401 / Status 5) is detected as rate-limited: the server retries with exponential backoff capped at 5 seconds, then shows a clear error if ICICI still rate-limits the call.",
-      "Strategy engine first approximates PoP to identify candidates to evaluate and then recalculates exact PoP later for the seleced candidates. Fixed the fast PoP approximation logic so that valid candidates are not missed out.",
-      "Place Order and Strategy Builder support aggressive limit orders (ICICI derives price from LTP; no manual limit price required).",
-      "New Basket Order page: build multi-leg option baskets, view payoff and PoP, and execute all legs at once.",
-    ],
-  },
-  {
     version: "2.0.1",
     date: "16-Jun-2026",
     releaseKind: "patch",
@@ -42,7 +29,7 @@ export const changelogReleases: ChangelogRelease[] = [
       "Minor UI tweaks to the Dashboard so it doesn't throw errors while the data is being fetched.",
       "Cleanup of storage to remove old stopped containers and any dangling images.",
     ],
-  },
+  },  
   {
     version: "2.0.0",
     date: "14-Jun-2026",

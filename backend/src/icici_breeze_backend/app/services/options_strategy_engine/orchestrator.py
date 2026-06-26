@@ -29,9 +29,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.margin_async_fetc
     fetch_margins_concurrent,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.registry import CATEGORY_CALCULATORS
-from icici_breeze_backend.app.services.options_strategy_engine.compliance_split import (
-    split_and_segregate_results,
-)
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     STRATEGY_CATALOG,
     EngineContext,
@@ -171,38 +168,6 @@ async def attach_margins_and_returns(
                 )
 
 
-def _result_to_trade_dict(r: StrategyResult, ctx: EngineContext) -> dict[str, Any]:
-    hero = None
-    if r.hero_metric is not None:
-        hero = {"label": r.hero_metric.label, "value": r.hero_metric.value}
-    secondary = [{"label": m.label, "value": m.value} for m in (r.secondary_metrics or [])]
-    return {
-        "strategy_id": r.strategy_id,
-        "strategy_name": r.strategy_name,
-        "status": r.status,
-        "skip_reason": r.skip_reason,
-        "structure_modified": r.structure_modified or ctx.structure_modified,
-        "net_premium": r.net_premium,
-        "max_loss": r.max_loss,
-        "annualized_return_pct": r.annualized_return_pct,
-        "risk_reward_ratio": r.risk_reward_ratio,
-        "span_margin": getattr(r, "span_margin", None),
-        "elm_requirement": getattr(r, "elm_requirement", None),
-        "pop_pct": r.pop_pct,
-        "legs": [leg.to_out(ctx.cache) for leg in r.legs],
-        "variant_rank": r.variant_rank,
-        "engine_score": r.engine_score,
-        "ranking_summary": r.ranking_summary,
-        "score_breakdown": r.score_breakdown,
-        "conviction_profile": r.conviction_profile,
-        "hero_metric": hero,
-        "secondary_metrics": secondary,
-        "badges": r.badges or [],
-        "compliance": r.compliance,
-        "constraint_violations": list(r.constraint_violations or []),
-    }
-
-
 async def run_propose_trades(
     proc: processor,
     user_id: str,
@@ -211,8 +176,7 @@ async def run_propose_trades(
     stock_code: str,
     expiry_date: str,
     margin_lacs: float,
-    max_loss_lacs: float | None = None,
-    allow_infinite_loss: bool = False,
+    max_loss_lacs: float,
     min_pop_pct: float = 65.0,
     min_ann_return_pct: float = 5.0,
     provision_elm: bool,
@@ -239,7 +203,6 @@ async def run_propose_trades(
     if progress is not None:
         progress.register_base_units(strategy_count=len(calculators))
         progress.tick(phase="setup", message="Loading scrip master…")
-    max_loss_rupees = None if allow_infinite_loss else (max_loss_lacs or 0) * 100_000
     if enable_audit:
         audit = StrategyBuilderAuditSession(
             user_id=user_id,
@@ -252,7 +215,6 @@ async def run_propose_trades(
                 "expiry_date": expiry_date.strip(),
                 "margin_lacs": margin_lacs,
                 "max_loss_lacs": max_loss_lacs,
-                "allow_infinite_loss": allow_infinite_loss,
                 "min_pop_pct": min_pop_pct,
                 "min_ann_return_pct": min_ann_return_pct,
                 "provision_elm": provision_elm,
@@ -322,8 +284,7 @@ async def run_propose_trades(
                 "strike_step": step,
                 "search_interval": search_step,
                 "margin_rupees": margin_lacs * 100_000,
-                "max_loss_rupees": max_loss_rupees,
-                "allow_infinite_loss": allow_infinite_loss,
+                "max_loss_rupees": max_loss_lacs * 100_000,
                 "lot_size": int(lot_size),
             },
             rationale="Delta-anchored template parameters (no user strike range).",
@@ -338,8 +299,7 @@ async def run_propose_trades(
         exchange_code=exchange_code,
         expiry_display=expiry_display,
         margin_rupees=margin_lacs * 100_000,
-        max_loss_rupees=max_loss_rupees,
-        allow_infinite_loss=allow_infinite_loss,
+        max_loss_rupees=max_loss_lacs * 100_000,
         min_pop_pct=min_pop_pct,
         min_ann_return_pct=min_ann_return_pct,
         provision_elm=provision_elm,
@@ -416,22 +376,17 @@ async def run_propose_trades(
                     skip_reason=res.skip_reason,
                 )
 
-    recommended_results, relaxed_results = split_and_segregate_results(results, ctx)
-    all_ok = [
-        r for r in recommended_results + relaxed_results if r.status == "ok" and r.legs
-    ]
-
     await resize_results_to_budgets(
-        proc, user_id, exchange_code, ctx.stock_code, expiry_display, all_ok, ctx, audit
+        proc, user_id, exchange_code, ctx.stock_code, expiry_display, results, ctx, audit
     )
-    for res in recommended_results + relaxed_results:
+    for res in results:
         log_strategy_result(ctx, res)
 
     await attach_margins_and_returns(
-        proc, user_id, exchange_code, ctx.stock_code, expiry_display, all_ok, ctx, audit
+        proc, user_id, exchange_code, ctx.stock_code, expiry_display, results, ctx, audit
     )
 
-    for res in all_ok:
+    for res in results:
         refresh_directional_tile_metrics(res)
 
     atm_iv = compute_atm_iv(ctx)
@@ -443,13 +398,39 @@ async def run_propose_trades(
             rationale="Average IV from ATM call and put when both quoted.",
         )
 
-    trades_out = [_result_to_trade_dict(r, ctx) for r in recommended_results]
-    relaxed_trades_out = [
-        _result_to_trade_dict(r, ctx)
-        for r in relaxed_results
-        if r.status == "ok" and r.legs
-    ]
-    all_trades_out = trades_out + relaxed_trades_out
+    trades_out = []
+    for r in results:
+        hero = None
+        if r.hero_metric is not None:
+            hero = {"label": r.hero_metric.label, "value": r.hero_metric.value}
+        secondary = [
+            {"label": m.label, "value": m.value} for m in (r.secondary_metrics or [])
+        ]
+        trades_out.append(
+            {
+                "strategy_id": r.strategy_id,
+                "strategy_name": r.strategy_name,
+                "status": r.status,
+                "skip_reason": r.skip_reason,
+                "structure_modified": r.structure_modified or ctx.structure_modified,
+                "net_premium": r.net_premium,
+                "max_loss": r.max_loss,
+                "annualized_return_pct": r.annualized_return_pct,
+                "risk_reward_ratio": r.risk_reward_ratio,
+                "span_margin": getattr(r, "span_margin", None),
+                "elm_requirement": getattr(r, "elm_requirement", None),
+                "pop_pct": r.pop_pct,
+                "legs": [leg.to_out(ctx.cache) for leg in r.legs],
+                "variant_rank": r.variant_rank,
+                "engine_score": r.engine_score,
+                "ranking_summary": r.ranking_summary,
+                "score_breakdown": r.score_breakdown,
+                "conviction_profile": r.conviction_profile,
+                "hero_metric": hero,
+                "secondary_metrics": secondary,
+                "badges": r.badges or [],
+            }
+        )
 
     success_payload: dict[str, Any] = {
         "spot_price": round(ctx.spot, 2),
@@ -458,7 +439,6 @@ async def run_propose_trades(
         "atm_iv": atm_iv,
         "structure_modified": ctx.structure_modified,
         "trades": trades_out,
-        "relaxed_trades": relaxed_trades_out,
     }
 
     audit_summary = {
@@ -470,8 +450,7 @@ async def run_propose_trades(
         "liquid_ce_strikes": ctx.liquid_ce_strikes,
         "liquid_pe_strikes": ctx.liquid_pe_strikes,
         "icici_api_calls": audit.icici_api_call_stats if audit else {},
-        "strategies_ok": [t["strategy_id"] for t in all_trades_out if t["status"] == "ok"],
-        "strategies_relaxed": [t["strategy_id"] for t in relaxed_trades_out],
+        "strategies_ok": [t["strategy_id"] for t in trades_out if t["status"] == "ok"],
         "strategies_skipped": [
             {"strategy_id": t["strategy_id"], "skip_reason": t["skip_reason"]}
             for t in trades_out
@@ -487,13 +466,12 @@ async def run_propose_trades(
         request=audit.request if audit else {
             "margin_lacs": margin_lacs,
             "max_loss_lacs": max_loss_lacs,
-            "allow_infinite_loss": allow_infinite_loss,
             "min_pop_pct": min_pop_pct,
             "min_ann_return_pct": min_ann_return_pct,
             "strategy_category": strategy_category,
         },
         strategy_evaluations=audit.strategy_evaluations if audit else {},
-        trades=all_trades_out,
+        trades=trades_out,
         summary=audit_summary,
     )
     success_payload["user_report"] = user_report

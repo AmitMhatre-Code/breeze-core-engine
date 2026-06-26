@@ -14,8 +14,6 @@ export type StrategyLeg = {
   lots: number;
   /** Entry premium per unit (same units as chain LTP). */
   premiumPerUnit?: number;
-  /** When true, broker derives limit price from LTP (no user price). */
-  aggressiveLimit?: boolean;
 };
 
 export type ChainRow = {
@@ -122,8 +120,6 @@ export type ProposedTrade = {
   hero_metric?: TileMetric | null;
   secondary_metrics?: TileMetric[];
   badges?: string[];
-  compliance?: "recommended" | "relaxed";
-  constraint_violations?: string[];
 };
 
 /** Unique key for trade card selection (supports conviction variants). */
@@ -144,7 +140,6 @@ export type ProposeTradesSuccess = {
   atm_iv?: number | null;
   structure_modified?: boolean;
   trades: ProposedTrade[];
-  relaxed_trades?: ProposedTrade[];
   /** Server-side audit session id for downloading the build audit JSON. */
   audit_session_id?: string | null;
   user_report?: UserExplainabilityReport | null;
@@ -153,8 +148,7 @@ export type ProposeTradesSuccess = {
 export type UserInputsSummary = {
   strategy_category: string;
   margin_lacs: number;
-  max_loss_lacs?: number | null;
-  allow_infinite_loss?: boolean;
+  max_loss_lacs: number;
   min_pop_pct?: number;
   min_ann_return_pct?: number;
 };

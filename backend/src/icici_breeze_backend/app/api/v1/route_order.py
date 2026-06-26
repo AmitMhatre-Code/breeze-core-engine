@@ -16,7 +16,9 @@ from icici_breeze_backend.app.domain.order import (
     BreakOrderFinalizeRequest,
     OrderFormRequest,
 )
-from icici_breeze_backend.app.services.icici_api_pacing import client_pause_for_rate_limit_result
+from icici_breeze_backend.app.services.user_rate_limit_prefs import (
+    get_icici_rate_limit_pause_seconds,
+)
 from icici_breeze_backend.app.domain.responses import IciciApiResponse, OrderDetailResponse
 from icici_breeze_backend.audit.logger import AuditLogger
 from icici_breeze_backend.concurrency.idempotency import idempotency_store, IdempotencyResult
@@ -157,7 +159,6 @@ async def process_post(
                 req.price,
                 req.action,
                 exchange_code=body.exchange_code or cfg.NFO,
-                aggressive_limit=req.aggressive_limit,
             )
             breeze.store_messages(user_id, messages)
             redirect_url = "/book"
@@ -194,6 +195,7 @@ async def post_break_chunk(
         gate = _order_buy_sell_gate_errors(context.user_id)
         if gate:
             raise_route_errors(gate, log_context="route_order.post_break_chunk")
+    pause = get_icici_rate_limit_pause_seconds(context.user_id)
     out = breeze.break_order_place_chunk(
         context.user_id,
         body.stock_code,
@@ -207,9 +209,8 @@ async def post_break_chunk(
         body.exchange_code or cfg.NFO,
         body.chunk_index,
         body.chunk_qty,
-        aggressive_limit=body.aggressive_limit,
     )
-    out["rate_limit_pause_seconds"] = client_pause_for_rate_limit_result(context.user_id, out)
+    out["rate_limit_pause_seconds"] = pause
     if out.get("success") and int(out.get("placed_quantity") or 0) > 0:
         from icici_breeze_backend.app.services.broker_snapshot_cache import evict_broker_snapshot
 
@@ -237,7 +238,6 @@ async def post_break_finalize(
         price_f,
         list(body.success_quantities),
         list(body.danger_lines),
-        aggressive_limit=body.aggressive_limit,
     )
     breeze.store_messages(context.user_id, messages)
     return json_redirect("/book")

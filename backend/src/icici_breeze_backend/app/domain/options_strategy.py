@@ -1,7 +1,7 @@
 """Options strategy builder (v2) request/response schemas."""
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 StrategyCategory = Literal["income", "bullish", "bearish", "volatility"]
 RiskRewardProfile = Literal["conservative", "moderate", "aggressive"]
@@ -12,22 +12,13 @@ class ProposeTradesRequest(BaseModel):
     stock_code: str
     expiry_date: str
     margin_lacs: float = Field(gt=0)
-    max_loss_lacs: Optional[float] = Field(default=None, gt=0)
-    allow_infinite_loss: bool = False
+    max_loss_lacs: float = Field(gt=0)
     min_pop_pct: float = Field(default=65, ge=1, le=99)
     min_ann_return_pct: float = Field(default=5.0, ge=0, le=100)
     provision_elm: bool = False
     strategy_category: StrategyCategory
     risk_reward_profile: Optional[RiskRewardProfile] = None
     audit_detail_level: Literal["summary", "debug"] = "summary"
-
-    @model_validator(mode="after")
-    def _validate_max_loss_mode(self) -> "ProposeTradesRequest":
-        if self.allow_infinite_loss and self.max_loss_lacs is not None:
-            raise ValueError("Specify either max_loss_lacs or allow_infinite_loss, not both.")
-        if not self.allow_infinite_loss and self.max_loss_lacs is None:
-            raise ValueError("max_loss_lacs is required unless allow_infinite_loss is true.")
-        return self
 
 
 class ProposedTradeLegOut(BaseModel):
@@ -71,15 +62,12 @@ class ProposedTradeOut(BaseModel):
     hero_metric: Optional[TileMetricOut] = None
     secondary_metrics: List[TileMetricOut] = Field(default_factory=list)
     badges: List[str] = Field(default_factory=list)
-    compliance: Literal["recommended", "relaxed"] = "recommended"
-    constraint_violations: List[str] = Field(default_factory=list)
 
 
 class UserInputsSummaryOut(BaseModel):
     strategy_category: str
     margin_lacs: float
-    max_loss_lacs: Optional[float] = None
-    allow_infinite_loss: bool = False
+    max_loss_lacs: float
     min_pop_pct: Optional[float] = None
     min_ann_return_pct: Optional[float] = None
 
@@ -171,7 +159,6 @@ class ProposeTradesSuccess(BaseModel):
     atm_iv: Optional[float] = None
     structure_modified: bool = False
     trades: List[ProposedTradeOut] = Field(default_factory=list)
-    relaxed_trades: List[ProposedTradeOut] = Field(default_factory=list)
     audit_session_id: Optional[str] = None
     user_report: Optional[UserExplainabilityReportOut] = None
 

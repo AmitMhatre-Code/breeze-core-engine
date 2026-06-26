@@ -368,8 +368,6 @@ class StrategyAuditCollector:
         pop_pct: float | None = None,
         pop_detail: Any | None = None,
         credit: float | None = None,
-        estimated_pop: float | None = None,
-        rejected_stage: str | None = None,
         **fields: Any,
     ) -> None:
         entry: dict[str, Any] = {
@@ -385,13 +383,6 @@ class StrategyAuditCollector:
             entry["pop_pct"] = round(pop_pct, 4)
         else:
             entry["pop_pct"] = None
-
-        entry["actual_pop"] = round(pop_pct, 4) if pop_pct is not None else None
-        entry["estimated_pop"] = round(estimated_pop, 4) if estimated_pop is not None else None
-        entry["rejected_stage"] = (
-            rejected_stage if rejected_stage is not None
-            else (reject_reason if outcome == "rejected" else None)
-        )
 
         self.evaluations.append(entry)
 
@@ -700,7 +691,6 @@ def record_simple_attempt(
             outcome="rejected",
             reject_reason=reject_reason,
             pop_pct=pop_pct,
-            estimated_pop=pop_pct,
             **fields,
         )
     else:

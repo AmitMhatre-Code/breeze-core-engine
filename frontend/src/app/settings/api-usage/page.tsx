@@ -121,21 +121,20 @@ export default function ApiUsageSettingsPage() {
 
         <div className="rounded-lg border border-zinc-200/90 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            ICICI API spacing
+            Rate limit backoff
           </h3>
           <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-            Minimum gap between all outbound ICICI API calls while you are logged in.
-            On HTTP 429 or 503 the app adds exponential backoff (capped at 5 seconds)
-            before retrying; a countdown appears when that backoff exceeds 1 second.
-            Order place and cancel flows use the same backoff when ICICI rate-limits a
-            request.
+            Minimum seconds between ICICI API calls (0.5–3 seconds). On HTTP 429 or 503 the app
+            also applies exponential backoff (capped at 3 seconds) before retrying. Order place and
+            cancel flows show a countdown on screen; all other ICICI traffic is paced globally on
+            the server.
           </p>
           <div className="mt-4">
             <label
               htmlFor="rate-limit-pause-seconds"
               className="mb-1.5 block text-xs font-medium text-zinc-700 dark:text-zinc-300"
             >
-              Seconds between ICICI API calls
+              Seconds to wait
             </label>
             <div className="flex flex-wrap items-center gap-2">
               <input

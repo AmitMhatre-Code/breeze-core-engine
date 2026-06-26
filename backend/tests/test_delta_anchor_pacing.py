@@ -69,30 +69,22 @@ class TestIciciApiPacer(unittest.TestCase):
 
     def test_wait_for_slot_enforces_spacing(self):
         GlobalIciciApiPacer.mark_call_complete("test-user")
-        with patch(
-            "icici_breeze_backend.app.services.icici_api_pacing.time.sleep"
-        ) as mock_sleep:
+        t0 = time.monotonic()
+        with patch("icici_breeze_backend.app.services.icici_api_pacing.time.sleep") as mock_sleep:
             GlobalIciciApiPacer.wait_for_slot("test-user", 0.25, endpoint="test")
             mock_sleep.assert_called_once()
             wait_arg = mock_sleep.call_args[0][0]
             self.assertGreaterEqual(wait_arg, 0.0)
             self.assertLessEqual(wait_arg, 0.25)
+        _ = t0  # timing not asserted (patched sleep)
 
-    def test_throttling_inactive_by_default(self):
-        self.assertFalse(GlobalIciciApiPacer.is_throttling_active("test-user"))
-
-    def test_on_success_clears_throttling(self):
-        GlobalIciciApiPacer.activate_throttling("test-user")
-        GlobalIciciApiPacer.on_success("test-user")
-        self.assertFalse(GlobalIciciApiPacer.is_throttling_active("test-user"))
-
-    def test_503_backoff_capped_at_five_seconds(self):
-        GlobalIciciApiPacer.reset_user("test-user")
-        values = [
-            GlobalIciciApiPacer.rate_limit_backoff("test-user", 1.0, endpoint="test")
-            for _ in range(5)
-        ]
-        self.assertEqual(values[-1], 5.0)
+    def test_503_backoff_capped_at_three_seconds(self):
+        b1 = GlobalIciciApiPacer.rate_limit_backoff("test-user", 1.0, endpoint="test")
+        b2 = GlobalIciciApiPacer.rate_limit_backoff("test-user", 1.0, endpoint="test")
+        b3 = GlobalIciciApiPacer.rate_limit_backoff("test-user", 1.0, endpoint="test")
+        self.assertEqual(b1, 1.0)
+        self.assertEqual(b2, 2.0)
+        self.assertEqual(b3, 3.0)
 
 
 class TestUndefinedRiskSizing(unittest.TestCase):

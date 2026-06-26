@@ -9,7 +9,6 @@ export type OrderConfirmPayload = {
   quantity: string;
   price: string;
   action: "Buy" | "Sell";
-  aggressive_limit?: boolean;
 };
 
 export type PortfolioLikeRow = Record<string, unknown>;

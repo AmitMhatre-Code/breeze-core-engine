@@ -13,7 +13,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { ManualContractFieldWarningDialog } from "@/components/order/ManualContractFieldWarningDialog";
-import { AggressiveLimitOrderField } from "@/components/order/AggressiveLimitOrderField";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
@@ -143,7 +142,6 @@ function PlaceOrderPageInner() {
   const [scripDetails, setScripDetails] = useState<ScripDetailsState | null>(null);
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
-  const [aggressiveLimit, setAggressiveLimit] = useState(false);
   const [previewSide, setPreviewSide] = useState<OrderSide>("Buy");
   /** When set, the opposite side button is disabled (clone / square-off / URL prefill). */
   const [lockedOrderSide, setLockedOrderSide] = useState<OrderSide | null>(null);
@@ -399,13 +397,9 @@ function PlaceOrderPageInner() {
       effectiveStrike == null ||
       !stockCode.trim() ||
       !expiryDate.trim() ||
-      qtyNum <= 0
-    ) {
-      return null;
-    }
-    if (
-      !aggressiveLimit &&
-      (!Number.isFinite(priceNum) || priceNum < 0)
+      qtyNum <= 0 ||
+      !Number.isFinite(priceNum) ||
+      priceNum < 0
     ) {
       return null;
     }
@@ -416,8 +410,7 @@ function PlaceOrderPageInner() {
       right,
       side: previewSide,
       quantity: qtyNum,
-      premiumPerUnit: aggressiveLimit ? 0 : priceNum,
-      aggressiveLimit,
+      premiumPerUnit: priceNum,
       stockCode: stockCode.trim(),
       exchangeCode: segment,
       expiryDisplay: expDisplay,
@@ -428,7 +421,6 @@ function PlaceOrderPageInner() {
     expiryDate,
     qtyNum,
     priceNum,
-    aggressiveLimit,
     right,
     previewSide,
     segment,
@@ -440,13 +432,9 @@ function PlaceOrderPageInner() {
       effectiveStrike == null ||
       !stockCode.trim() ||
       !expiryDate.trim() ||
-      qtyNum <= 0
-    ) {
-      return;
-    }
-    if (
-      !aggressiveLimit &&
-      (!Number.isFinite(priceNum) || priceNum < 0)
+      qtyNum <= 0 ||
+      !Number.isFinite(priceNum) ||
+      priceNum < 0
     ) {
       return;
     }
@@ -463,8 +451,7 @@ function PlaceOrderPageInner() {
           right,
           side,
           quantity: qtyNum,
-          premiumPerUnit: aggressiveLimit ? 0 : priceNum,
-          aggressiveLimit,
+          premiumPerUnit: priceNum,
         },
       ],
     });
@@ -892,28 +879,18 @@ function PlaceOrderPageInner() {
                   placeholder="e.g. 65"
                 />
               </label>
-              <AggressiveLimitOrderField
-                id="place-order-aggressive-limit"
-                checked={aggressiveLimit}
-                onChange={(checked) => {
-                  setAggressiveLimit(checked);
-                  if (checked) setPrice("");
-                }}
-              />
-              {!aggressiveLimit ? (
-                <label className={sb.fieldLabel}>
-                  Limit price (₹)
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.05}
-                    className={sb.input}
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    placeholder="0"
-                  />
-                </label>
-              ) : null}
+              <label className={sb.fieldLabel}>
+                Limit price (₹)
+                <input
+                  type="number"
+                  min={0}
+                  step={0.05}
+                  className={sb.input}
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  placeholder="0"
+                />
+              </label>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <button
@@ -938,9 +915,8 @@ function PlaceOrderPageInner() {
             expiryDate &&
             effectiveStrike != null ? (
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {aggressiveLimit
-                  ? "Enter a positive quantity to enable execution preview."
-                  : "Enter a positive quantity and valid price to enable the execution preview."}
+                Enter a positive quantity and valid price to enable the
+                execution preview.
               </p>
             ) : null}
           </div>

@@ -11,7 +11,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     elm_addon,
     legs_to_margin_input,
     parse_float,
-    pre_filter_pop_floor,
     short_lots_in_legs,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.margin_async_fetch import (
@@ -21,7 +20,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.margin_async_fetc
 from icici_breeze_backend.app.services.options_strategy_engine.pop import (
     PopDetail,
     pop_detail_for_legs,
-    pop_for_legs,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
     legs_at_lots,
@@ -112,11 +110,10 @@ def iter_pop_band_expansions(user_min_pop: float) -> Iterator[tuple[float, float
     """Yield (floor_pop, ceiling_pop) pairs until the full chain is covered."""
     initial = pop_band(user_min_pop)
     attempt = 0
-    floor = pre_filter_pop_floor(user_min_pop)
     while True:
         band = expand_search_band(initial, attempt, user_min_pop)
         ceiling = pop_band_ceiling(user_min_pop, band)
-        yield floor, ceiling
+        yield user_min_pop, ceiling
         if ceiling >= 100.0:
             break
         attempt += 1
@@ -141,25 +138,6 @@ def pop_for_short_strike(ctx: EngineContext, strike: int, right: Right) -> float
     return pop_detail_for_legs(ctx, legs).pop_pct
 
 
-def estimate_short_strangle_pop(
-    ctx: EngineContext,
-    short_put: int,
-    short_call: int,
-) -> float:
-    """Breakeven PoP for a short put + short call pair (no wings); search-stage proxy."""
-    pe = ctx.cache.get((short_put, "Put"))
-    ce = ctx.cache.get((short_call, "Call"))
-    if not pe or not ce or not pe.liquid or not ce.liquid:
-        return 0.0
-    prem_p = pe.best_bid_price or pe.ltp
-    prem_c = ce.best_bid_price or ce.ltp
-    legs = [
-        TradeLeg("Put", "Sell", short_put, 1, prem_p),
-        TradeLeg("Call", "Sell", short_call, 1, prem_c),
-    ]
-    return pop_for_legs(ctx, legs)
-
-
 def strikes_for_pop_target(
     ctx: EngineContext,
     strikes: list[int],
@@ -169,10 +147,7 @@ def strikes_for_pop_target(
     ceiling_pop: float,
     spot_filter: Callable[[int], bool] | None = None,
 ) -> list[int]:
-    """Return liquid strikes whose single-short PoP lies in [floor_pop, ceiling_pop].
-
-    floor_pop is a soft search bound (typically pre_filter_pop_floor); not authoritative.
-    """
+    """Return liquid strikes whose single-short PoP lies in [floor_pop, ceiling_pop]."""
     selected: list[tuple[float, int]] = []
     for s in strikes:
         if spot_filter is not None and not spot_filter(s):
@@ -274,7 +249,7 @@ def passes_capital_gate(
         per_lot_margin,
         unit_max_loss * L,
         margin_rupees=ctx.margin_rupees,
-        max_loss_rupees=ctx.effective_max_loss_budget(),
+        max_loss_rupees=ctx.max_loss_rupees,
         lot_size=L,
         unit_short_lots=unit_short_lots,
         spot=ctx.spot,
@@ -477,64 +452,6 @@ def build_badge_ranking_summary(badges: list[str]) -> str:
     return f"This trade is the feasible-set champion for {joined}."
 
 
-def income_constraint_violations(
-    ctx: EngineContext,
-    *,
-    pop: float,
-    ann_return: float | None = None,
-) -> list[str]:
-    violations: list[str] = []
-    if pop < ctx.min_pop_pct:
-        violations.append("pop_floor")
-    if ann_return is not None and ann_return < ctx.min_ann_return_pct:
-        violations.append("min_ann_return")
-    return violations
-
-
-def mark_relaxed_result(
-    result: StrategyResult,
-    violations: list[str],
-    *,
-    ranking_summary: str | None = None,
-) -> StrategyResult:
-    result.compliance = "relaxed"
-    result.constraint_violations = violations
-    if ranking_summary:
-        result.ranking_summary = ranking_summary
-    elif not result.ranking_summary:
-        result.ranking_summary = (
-            "Best available structure that does not meet all of your PoP and/or "
-            "annualized return thresholds."
-        )
-    return result
-
-
-def select_best_relaxed_scored(
-    scored: list[SpanScoredCandidate],
-) -> SpanScoredCandidate | None:
-    if not scored:
-        return None
-    return max(scored, key=lambda s: (s.ann_return, s.candidate.net_collected))
-
-
-def build_relaxed_from_scored(
-    ctx: EngineContext,
-    scored: list[SpanScoredCandidate],
-    *,
-    to_result: Callable[[EngineContext, Any, int, float, list[str], str | None], StrategyResult],
-) -> StrategyResult | None:
-    best = select_best_relaxed_scored(scored)
-    if best is None:
-        return None
-    violations = income_constraint_violations(
-        ctx, pop=best.candidate.pop, ann_return=best.ann_return
-    )
-    if not violations:
-        return None
-    result = to_result(ctx, best.candidate, 1, best.ann_return, [], None)
-    return mark_relaxed_result(result, violations)
-
-
 def record_champion_audit(
     stats: StrategyAuditCollector | None,
     entries: list[ChampionEntry],
@@ -599,10 +516,10 @@ async def run_income_champion_pipeline(
     to_result: Callable[[EngineContext, Any, int, float, list[str], str | None], StrategyResult],
     span_phase: str,
     search_state: IncomeSearchState | None = None,
-) -> tuple[list[StrategyResult], list[StrategyResult]]:
-    """Score feasible candidates; return (recommended, relaxed) result lists."""
+) -> list[StrategyResult]:
+    """Score feasible candidates, pick objective champions, return deduped results."""
     if not candidates:
-        return [], []
+        return []
 
     scored = await span_score_candidates(
         ctx,
@@ -612,7 +529,7 @@ async def run_income_champion_pipeline(
         stats=stats,
     )
     if not scored:
-        return [], []
+        return []
 
     champions = select_objective_champions(
         scored, min_ann_return_pct=ctx.min_ann_return_pct
@@ -633,14 +550,12 @@ async def run_income_champion_pipeline(
                     f"{ctx.min_ann_return_pct:.1f}%."
                 ),
             )
-        relaxed = build_relaxed_from_scored(ctx, scored, to_result=to_result)
-        return [], ([relaxed] if relaxed else [])
+        return []
 
     entries = merge_champions_with_badges(champions)
     record_champion_audit(stats, entries, search_state=search_state)
 
-    recommended: list[StrategyResult] = []
-    relaxed: list[StrategyResult] = []
+    results: list[StrategyResult] = []
     for rank, entry in enumerate(entries, start=1):
         summary = build_badge_ranking_summary(entry.badges)
         result = to_result(
@@ -651,11 +566,5 @@ async def run_income_champion_pipeline(
             entry.badges,
             summary,
         )
-        violations = income_constraint_violations(
-            ctx, pop=entry.candidate.pop, ann_return=entry.ann_return
-        )
-        if violations:
-            relaxed.append(mark_relaxed_result(result, violations))
-        else:
-            recommended.append(result)
-    return recommended, relaxed
+        results.append(result)
+    return results

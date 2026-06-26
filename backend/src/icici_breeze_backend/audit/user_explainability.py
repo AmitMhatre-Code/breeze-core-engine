@@ -59,17 +59,12 @@ def build_user_explainability_report(
     min_pop = float(request.get("min_pop_pct") or 0)
     min_roi = float(request.get("min_ann_return_pct") or 0)
     margin_lacs = float(request.get("margin_lacs") or 0)
-    allow_infinite_loss = bool(request.get("allow_infinite_loss"))
-    max_loss_lacs = (
-        None if allow_infinite_loss else float(request.get("max_loss_lacs") or 0)
-    )
+    max_loss_lacs = float(request.get("max_loss_lacs") or 0)
     category = str(request.get("strategy_category") or "")
 
-    ok_trades = [t for t in trades if t.get("status") == "ok" and t.get("compliance") != "relaxed"]
-    relaxed_trades = [t for t in trades if t.get("status") == "ok" and t.get("compliance") == "relaxed"]
-    all_ok = ok_trades + relaxed_trades
+    ok_trades = [t for t in trades if t.get("status") == "ok"]
     skipped_trades = [t for t in trades if t.get("status") == "skipped"]
-    recommended_ids = sorted({str(t["strategy_id"]) for t in all_ok if t.get("strategy_id")})
+    recommended_ids = sorted({str(t["strategy_id"]) for t in ok_trades if t.get("strategy_id")})
 
     executive = _build_executive_summary(
         request=request,
@@ -79,12 +74,12 @@ def build_user_explainability_report(
         min_pop=min_pop,
         min_roi=min_roi,
         strategy_evaluations=strategy_evaluations,
-        ok_trades=all_ok,
+        ok_trades=ok_trades,
         recommended_ids=recommended_ids,
         skipped_trades=skipped_trades,
         summary=summary,
     )
-    why_this = _build_why_this(all_ok, strategy_evaluations)
+    why_this = _build_why_this(ok_trades, strategy_evaluations)
     why_not = _build_why_not(
         skipped_trades,
         strategy_evaluations,
@@ -94,7 +89,7 @@ def build_user_explainability_report(
         max_loss_lacs=max_loss_lacs,
     )
     what_if = _build_what_if_insights(
-        ok_trades=all_ok,
+        ok_trades=ok_trades,
         skipped_trades=skipped_trades,
         strategy_evaluations=strategy_evaluations,
         min_pop=min_pop,
@@ -162,12 +157,8 @@ def _build_executive_summary(
     user_inputs: dict[str, Any] = {
         "strategy_category": category,
         "margin_lacs": margin_lacs,
-        "allow_infinite_loss": allow_infinite_loss,
+        "max_loss_lacs": max_loss_lacs,
     }
-    if allow_infinite_loss:
-        user_inputs["max_loss_lacs"] = None
-    else:
-        user_inputs["max_loss_lacs"] = max_loss_lacs
     if category == "income":
         user_inputs["min_pop_pct"] = min_pop
         user_inputs["min_ann_return_pct"] = min_roi

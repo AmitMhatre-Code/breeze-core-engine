@@ -86,15 +86,6 @@ class DeploymentLicenseContactSales(BaseModel):
     app_version: Optional[str] = Field(None, description="Reported app version from heartbeat")
 
 
-class IciciPacingStatusResponse(BaseModel):
-    """Live ICICI API backoff / throttling state for UI polling."""
-
-    throttling_active: bool = False
-    backing_off: bool = False
-    reason: Optional[str] = None
-    seconds_remaining: int = 0
-
-
 class HomeDataResponse(BaseModel):
     """Home /data: customer and margin info."""
     customer: Dict[str, Any] = Field(default_factory=dict)

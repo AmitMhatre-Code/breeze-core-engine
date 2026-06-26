@@ -5,10 +5,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import sk
 from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_for_legs
 from icici_breeze_backend.app.services.options_strategy_engine.sizing import min_qty_for_one_lot
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.common import atm_with_liquidity, ok_with_pop
-from icici_breeze_backend.app.services.options_strategy_engine.strategies.income._common import (
-    income_constraint_violations,
-    mark_relaxed_result,
-)
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
     Right,
@@ -47,32 +43,14 @@ def calc_short_straddle(ctx: EngineContext) -> StrategyResult:
         TradeLeg("Put", "Sell", stp, qty, prem_p),
     ]
     pop = pop_for_legs(ctx, legs)
-    max_profit = (prem_c + prem_p) * qty
-    violations = income_constraint_violations(ctx, pop=pop)
-
-    if violations:
+    if pop < ctx.min_pop_pct:
         record_simple_attempt(collector, reject_reason="pop_floor", pop_pct=pop, strike=stp)
-        record_simple_winner(
-            collector,
-            legs,
-            metrics={"pop_pct": pop, "net_credit": max_profit},
-            stages_passed=list(_INCOME_STAGES),
-        )
-        result = ok_with_pop(
-            ctx,
+        return skip(
             sid,
             name,
-            legs,
-            max_loss=None,
-            rr=f"Unlimited : {max_profit:.0f}",
-            modified=ctx.structure_modified,
-            net_premium_val=max_profit,
-            require_pop=False,
+            f"PoP {pop:.1f}% below minimum {ctx.min_pop_pct:.1f}%.",
         )
-        if result.status != "ok":
-            return result
-        return mark_relaxed_result(result, violations)
-
+    max_profit = (prem_c + prem_p) * qty
     record_simple_attempt(collector, pop_pct=pop, strike=stp, credit=prem_c + prem_p)
     if collector is not None:
         collector.record_stage("passed_credit")
