@@ -14,7 +14,7 @@ def configure_logging(
     stream: Optional[object] = None,
     log_file: Optional[str] = None,
 ) -> None:
-    """Configure root logger with consistent format and level. log_file is from .env only."""
+    """Configure root logger with consistent format and level. log_file from .env or LOG_FILE env."""
     log_level = getattr(logging, level.upper(), logging.INFO)
     fmt = format_string or LOG_FORMAT
     formatter = logging.Formatter(fmt, datefmt=LOG_DATE_FORMAT)

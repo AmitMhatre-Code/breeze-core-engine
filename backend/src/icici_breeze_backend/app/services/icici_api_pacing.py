@@ -324,10 +324,54 @@ class GlobalIciciApiLimiter:
         record_url: str,
         classify_response: Callable[[T], tuple[int, dict[str, Any] | None, str | None]],
         build_result: Callable[[dict[str, Any]], T],
+        method: str = "?",
     ) -> T:
         """Execute one Breeze HTTP call with spacing, per-user lock, retry, and recording."""
+        from icici_breeze_backend.app.auth.context import (
+            get_current_correlation_id,
+            get_current_route_id,
+        )
+        from icici_breeze_backend.app.services.breeze_http_audit import (
+            _ORIGIN_DAILY_BLOCKED,
+            _ORIGIN_SYNTHETIC,
+            log_breeze_http_attempt,
+            new_breeze_call_id,
+            resolve_breeze_http_origin,
+        )
+
         uid = cls.resolve_user_id(user_id)
         ep = endpoint or cls._endpoint_from_url(record_url)
+        http_method = (method or "?").upper()
+        route_id = get_current_route_id()
+        correlation_id = get_current_correlation_id()
+
+        def _audit(
+            *,
+            breeze_call_id: str,
+            attempt: int,
+            origin: str,
+            elapsed_ms: float | None,
+            http_status: int,
+            body: dict[str, Any] | None,
+            err_text: str | None,
+            raw: Any = None,
+        ) -> None:
+            log_breeze_http_attempt(
+                breeze_call_id=breeze_call_id,
+                method=http_method,
+                url=record_url,
+                endpoint=ep,
+                attempt=attempt,
+                origin=origin,
+                elapsed_ms=elapsed_ms,
+                http_status=http_status,
+                body=body,
+                err_text=err_text,
+                raw=raw,
+                user_id=uid,
+                route_id=route_id,
+                correlation_id=correlation_id,
+            )
 
         if uid:
             from icici_breeze_backend.app.services.api_usage import is_daily_limit_reached
@@ -336,7 +380,18 @@ class GlobalIciciApiLimiter:
             )
 
             if is_daily_limit_reached(uid):
-                return build_result(cls.build_throttle_error(uid))
+                throttle = cls.build_throttle_error(uid)
+                _audit(
+                    breeze_call_id=new_breeze_call_id(),
+                    attempt=0,
+                    origin=_ORIGIN_DAILY_BLOCKED,
+                    elapsed_ms=None,
+                    http_status=int(throttle.get("Status") or 429),
+                    body=throttle,
+                    err_text=str(throttle.get("Error") or ""),
+                    raw=None,
+                )
+                return build_result(throttle)
 
             base_pause = get_icici_rate_limit_pause_seconds(uid)
             if GlobalIciciApiPacer.is_throttling_active(uid):
@@ -349,8 +404,22 @@ class GlobalIciciApiLimiter:
         def _attempt_loop() -> T:
             broker_error: str | None = None
             for attempt in range(_MAX_HTTP_ATTEMPTS):
+                breeze_call_id = new_breeze_call_id()
+                t0 = time.perf_counter()
                 raw = perform_http()
+                elapsed_ms = (time.perf_counter() - t0) * 1000.0
                 http_status, body, err_text = classify_response(raw)
+                origin = resolve_breeze_http_origin(raw)
+                _audit(
+                    breeze_call_id=breeze_call_id,
+                    attempt=attempt + 1,
+                    origin=origin,
+                    elapsed_ms=elapsed_ms,
+                    http_status=http_status,
+                    body=body,
+                    err_text=err_text,
+                    raw=raw,
+                )
                 broker_error = err_text or broker_error
                 if uid:
                     cls._record_call(uid, record_url)
@@ -380,7 +449,18 @@ class GlobalIciciApiLimiter:
                     sleep_sec = min(_MAX_BACKOFF_SEC, base_pause * (2**attempt))
                     time.sleep(sleep_sec)
 
-            return build_result(cls.build_throttle_error(uid, broker_error_text=broker_error))
+            throttle = cls.build_throttle_error(uid, broker_error_text=broker_error)
+            _audit(
+                breeze_call_id=new_breeze_call_id(),
+                attempt=_MAX_HTTP_ATTEMPTS,
+                origin=_ORIGIN_SYNTHETIC,
+                elapsed_ms=None,
+                http_status=int(throttle.get("Status") or 429),
+                body=throttle,
+                err_text=str(throttle.get("Error") or ""),
+                raw=None,
+            )
+            return build_result(throttle)
 
         if user_lock is not None:
             with user_lock:
@@ -395,6 +475,7 @@ class GlobalIciciApiLimiter:
         user_id: str | None = None,
         endpoint: str | None = None,
         record_url: str,
+        method: str = "?",
     ) -> dict[str, Any]:
         """Limiter entry for httpx/direct dict responses."""
 
@@ -414,6 +495,7 @@ class GlobalIciciApiLimiter:
             record_url=record_url,
             classify_response=classify,
             build_result=lambda d: d,
+            method=method,
         )
 
     @classmethod
@@ -473,6 +555,7 @@ class GlobalIciciApiLimiter:
             record_url=record_url,
             classify_response=classify,
             build_result=build_result,
+            method="GET",
         )
         return finalize(result)
 

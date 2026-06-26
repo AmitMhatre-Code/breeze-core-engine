@@ -96,12 +96,19 @@ Use the **same** host you type in the browser (`localhost` vs `127.0.0.1` are di
 
 ## Logging
 
-Read **only from the `.env` file** (not from the process environment) in `main.py`:
+`LOG_LEVEL` and `LOG_FILE` are resolved in `main.py` from, in order:
+
+1. On-disk `.env` paths (`backend/.env`, cwd `.env`, and `/opt/breeze-core-engine/.env` when mounted)
+2. Process environment (`docker run --env-file` / `--env-file` injection)
 
 | Variable | Purpose |
 |----------|---------|
-| `LOG_LEVEL` | e.g. `INFO`, `DEBUG`. |
+| `LOG_LEVEL` | e.g. `INFO` (default), `DEBUG`. |
 | `LOG_FILE` | Optional path for file logging under `backend/logs/` or absolute path. |
+
+### ICICI Breeze forensic traces (`LOG_LEVEL=DEBUG`)
+
+Set `LOG_LEVEL=DEBUG` in the host `.env`, recreate the container, then grep backend logs for `breeze_http_audit`. Each outbound Breeze REST call emits one DEBUG line with `breeze_call_id`, `correlation_id`, `origin` (`upstream` \| `synthetic` \| `daily_blocked`), HTTP vs Breeze body status, whitelisted response headers, and `icici_minute_limit` when ICICI returns per-minute limit text (including HTTP 401 + `Status:5`). At `INFO` or above, these lines are not emitted.
 
 ---
 
