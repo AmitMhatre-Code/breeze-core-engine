@@ -216,7 +216,7 @@ export default function ReferenceDataLoadsPage() {
                   })
                 }
               >
-                <AsyncLabelSpan pending={scheduleMut.isPending} pendingLabel="Saving…" idleLabel="Save schedule" />
+                <AsyncLabelSpan busy={scheduleMut.isPending} busyLabel="Saving…" idleLabel="Save schedule" />
               </button>
               <button
                 type="button"
@@ -224,7 +224,7 @@ export default function ReferenceDataLoadsPage() {
                 disabled={loadNowMut.isPending || refreshing}
                 onClick={() => loadNowMut.mutate()}
               >
-                <AsyncLabelSpan pending={loadNowMut.isPending || refreshing} pendingLabel="Loading…" idleLabel="Load now" />
+                <AsyncLabelSpan busy={loadNowMut.isPending || refreshing} busyLabel="Loading…" idleLabel="Load now" />
               </button>
             </div>
 
