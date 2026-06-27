@@ -126,7 +126,7 @@ class ReferenceDataLoadsStateResponse(BaseModel):
     span_refresh_in_progress: bool = False
     span_progress_pct: int = 0
     span_message: Optional[str] = None
-    ingest_history: List[ReferenceDataIngestHistoryItem] = Field(default_factory=list)
+    ingest_history: list[ReferenceDataIngestHistoryItem] = Field(default_factory=list)
 
 
 class ReferenceDataScheduleUpdateBody(BaseModel):
