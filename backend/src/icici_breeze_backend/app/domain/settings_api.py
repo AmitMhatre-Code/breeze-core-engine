@@ -92,6 +92,57 @@ class ScripMasterStateResponse(BaseModel):
     message: Optional[str] = None
 
 
+class ReferenceDataIngestHistoryItem(BaseModel):
+    id: str
+    kind: str
+    display_name: str
+    source_file_date: Optional[str] = None
+    row_count: int = 0
+    ingested_at: str
+    ok: bool = False
+    notes: Optional[str] = None
+    source_url: Optional[str] = None
+    upload_filename: Optional[str] = None
+
+
+class ReferenceDataLoadsStateResponse(BaseModel):
+    enabled: bool = True
+    hour_ist: int = 18
+    minute_ist: int = 0
+    running: bool = False
+    refresh_in_progress: bool = False
+    last_refresh_message: Optional[str] = None
+    nse_fo_refresh_in_progress: bool = False
+    nse_fo_progress_pct: int = 0
+    nse_fo_message: Optional[str] = None
+    nse_fo_source_date: Optional[str] = None
+    bse_fo_refresh_in_progress: bool = False
+    bse_fo_progress_pct: int = 0
+    bse_fo_message: Optional[str] = None
+    bse_fo_source_date: Optional[str] = None
+    scrip_refresh_in_progress: bool = False
+    scrip_progress_pct: int = 0
+    scrip_message: Optional[str] = None
+    span_refresh_in_progress: bool = False
+    span_progress_pct: int = 0
+    span_message: Optional[str] = None
+    ingest_history: List[ReferenceDataIngestHistoryItem] = Field(default_factory=list)
+
+
+class ReferenceDataScheduleUpdateBody(BaseModel):
+    enabled: bool = True
+    hour_ist: int = 18
+    minute_ist: int = 0
+
+
+class BreezeApiTesterWsSubscribeBody(BaseModel):
+    exchange_code: str = "NFO"
+    stock_code: str
+    expiry_date: str
+    strike_price: str
+    right: str = "call"
+
+
 class AiProviderHealthEntry(BaseModel):
     ok: bool = False
     message: Optional[str] = None
@@ -304,3 +355,51 @@ class StrategyBuilderAuditExplainabilityResponse(BaseModel):
     level_1: ExecutiveSummaryOut
     level_2: StrategyBuilderAuditExplainabilityLevel2Out
     level_3: list[WhatIfInsightOut] = Field(default_factory=list)
+
+
+class ExchangeCalendarWorkingHours(BaseModel):
+    open_hour: int = Field(ge=0, le=23)
+    open_minute: int = Field(ge=0, le=59)
+    close_hour: int = Field(ge=0, le=23)
+    close_minute: int = Field(ge=0, le=59)
+
+
+class ExchangeCalendarHolidayItem(BaseModel):
+    date: str
+    name: str
+
+
+class ExchangeCalendarUpdateBody(BaseModel):
+    working_hours: ExchangeCalendarWorkingHours
+    holidays: list[ExchangeCalendarHolidayItem] = Field(default_factory=list)
+
+
+class ExchangeCalendarAddHolidayBody(BaseModel):
+    date: str = Field(min_length=10, max_length=10)
+    name: str = Field(min_length=1, max_length=256)
+
+
+class ExchangeCalendarStateResponse(BaseModel):
+    user_id: str = ""
+    source: str = "local"
+    working_hours: ExchangeCalendarWorkingHours
+    holidays: dict[str, str] = Field(default_factory=dict)
+    holidays_list: list[ExchangeCalendarHolidayItem] = Field(default_factory=list)
+    portal_configured: bool = False
+    has_local_edits: bool = False
+    console_updated_at: str | None = None
+    local_updated_at: str | None = None
+    updated_at: str | None = None
+
+
+class ExchangeCalendarSyncPreviewResponse(BaseModel):
+    portal_configured: bool = False
+    would_overwrite_local: bool = False
+    console: ExchangeCalendarStateResponse | None = None
+    local_holiday_count: int = 0
+    console_holiday_count: int = 0
+    message: str | None = None
+
+
+class ExchangeCalendarSyncBody(BaseModel):
+    confirm_override: bool = False

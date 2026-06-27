@@ -9,22 +9,13 @@ import {
   useState,
 } from "react";
 
-const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
+import {
+  formatIsoDateDdMmmYyyy,
+  parseIsoDateParts,
+  toIsoDate,
+} from "@/lib/format-iso-date";
 
-const MONTH_SHORT = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const;
+const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
 const MONTH_LABELS = [
   "January",
@@ -40,32 +31,6 @@ const MONTH_LABELS = [
   "November",
   "December",
 ] as const;
-
-function parseIsoParts(iso: string): {
-  y: number;
-  m: number;
-  d: number;
-} | null {
-  const t = iso.trim();
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
-  if (!m) return null;
-  const y = Number(m[1]);
-  const mo = Number(m[2]);
-  const d = Number(m[3]);
-  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-  return { y, m: mo, d };
-}
-
-function toIso(y: number, m: number, d: number): string {
-  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-}
-
-function formatIsoDateDdMmmYyyy(iso: string): string {
-  const p = parseIsoParts(iso);
-  if (!p) return iso.trim();
-  const day = String(p.d).padStart(2, "0");
-  return `${day}-${MONTH_SHORT[p.m - 1]}-${p.y}`;
-}
 
 function monthMatrix(year: number, month: number): (number | null)[] {
   const dim = new Date(year, month, 0).getDate();
@@ -116,10 +81,10 @@ export function OrderBookDatePopover({
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
 
-  const parsed = useMemo(() => parseIsoParts(value), [value]);
+  const parsed = useMemo(() => parseIsoDateParts(value), [value]);
 
   const [view, setView] = useState(() => {
-    const p = parseIsoParts(value);
+    const p = parseIsoDateParts(value);
     if (p) return { y: p.y, m: p.m };
     const d = new Date();
     return { y: d.getFullYear(), m: d.getMonth() + 1 };
@@ -128,7 +93,7 @@ export function OrderBookDatePopover({
   const { y: viewY, m: viewM } = view;
 
   const syncViewToValueOrToday = useCallback(() => {
-    const p = parseIsoParts(value);
+    const p = parseIsoDateParts(value);
     if (p) setView({ y: p.y, m: p.m });
     else {
       const d = new Date();
@@ -142,7 +107,7 @@ export function OrderBookDatePopover({
   );
 
   const t = new Date();
-  const todayIso = toIso(
+  const todayIso = toIsoDate(
     t.getFullYear(),
     t.getMonth() + 1,
     t.getDate(),
@@ -179,7 +144,7 @@ export function OrderBookDatePopover({
 
   const selectDay = useCallback(
     (day: number) => {
-      onChange(toIso(viewY, viewM, day));
+      onChange(toIsoDate(viewY, viewM, day));
       setOpen(false);
     },
     [onChange, viewY, viewM],
@@ -190,7 +155,7 @@ export function OrderBookDatePopover({
     const y = d.getFullYear();
     const m = d.getMonth() + 1;
     const day = d.getDate();
-    onChange(toIso(y, m, day));
+    onChange(toIsoDate(y, m, day));
     setView({ y, m });
     setOpen(false);
   }, [onChange]);
@@ -278,7 +243,7 @@ export function OrderBookDatePopover({
               if (day == null) {
                 return <div key={`e-${i}`} className="aspect-square" />;
               }
-              const iso = toIso(viewY, viewM, day);
+              const iso = toIsoDate(viewY, viewM, day);
               const isToday = iso === todayIso;
               const isSelected = parsed && iso === value.trim();
               return (

@@ -73,7 +73,11 @@ async def list_underlyings(
 ):
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
-    raw = breeze.fetch_stock_codes(exchange_code=exchange_code) or []
+    from icici_breeze_backend.app.services.reference_data.scrip_index import get_underlyings
+
+    raw = get_underlyings(exchange_code)
+    if not raw:
+        raw = breeze.fetch_stock_codes(exchange_code=exchange_code) or []
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderUnderlyings")
     return StrategyBuilderUnderlyingsResponse(underlyings=raw)
 

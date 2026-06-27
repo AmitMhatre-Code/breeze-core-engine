@@ -151,6 +151,22 @@ The GitHub Actions deploy decodes a **base64-encoded full `.env`** into `/opt/br
 
 ---
 
+## Reference data and Redis
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `REDIS_URL` | *(empty)* | Redis connection URL for scrip index, bhavcopy cache, and WebSocket quote cache. Falls back to in-process memory when unset or unreachable. **CloudFormation bootstraps and fleet upgrades** auto-set `redis://breeze-redis:6379/0` and start a co-located `breeze-redis` sidecar (`redis:7-alpine`) on Docker network `breeze-core-net`. Redis is ephemeral (no volume); reference data reloads on schedule or manual load. |
+| `REDIS_HOST` | `127.0.0.1` | Used when `REDIS_URL` is empty. |
+| `REDIS_PORT` | `6379` | Used when `REDIS_URL` is empty. |
+| `REFERENCE_DATA_REFRESH_HOUR_IST` | `18` | Daily scheduled reference data load hour (IST). |
+| `REFERENCE_DATA_REFRESH_MINUTE_IST` | `0` | Daily scheduled reference data load minute (IST). |
+| `REFERENCE_DATA_LOOKBACK_DAYS` | `10` | Trading-day lookback when downloading NSE/BSE FO bhavcopy. |
+| `NSE_FO_BHAVCOPY_URL_TEMPLATE` | NSE archives FO zip URL | `{yyyymmdd}` placeholder. |
+| `BSE_FO_BHAVCOPY_URL_TEMPLATE` | BSE derivative CSV URL | `{yyyymmdd}` placeholder. |
+| `WEBSOCKET_QUOTE_TTL_SECONDS` | `300` | Redis TTL for WebSocket quote cells. |
+
+---
+
 ## Checklist before going live
 
 1. `JWT_SECRET` is unique and backed up offline.
@@ -159,3 +175,16 @@ The GitHub Actions deploy decodes a **base64-encoded full `.env`** into `/opt/br
 4. ICICI redirect is `{that origin}/icici-return`.
 5. `COOKIE_SECURE` matches your TLS posture.
 6. Persistent volume mounted at `/app/backend/data` if you need survival across container replace.
+
+---
+
+## Exchange calendar (user settings + Console sync)
+
+Per-user holidays and regular session hours (defaults 9:15–15:30 IST) live in `users.sqlite3` (`user_exchange_calendar` table). Users edit them under **Settings → Exchange calendar** or sync from Breeze Console when linked.
+
+| Variable | Purpose |
+|----------|---------|
+| `PORTAL_API_BASE_URL` | Base URL of breeze-saas-portal (e.g. `https://breeze-ui.com`). Required for **Sync from Breeze Console** on the exchange calendar settings page. |
+| `DEPLOYMENT_LICENSE_KEY` | Used for other portal features (terms, heartbeat); **not** required for exchange calendar sync (public read endpoint). |
+
+Bundled `backend/data/exchange_holidays.json` seeds new users and remains the system default for non-user-scoped checks (e.g. admin integration tests).

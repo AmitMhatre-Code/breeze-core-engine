@@ -168,11 +168,15 @@ def _ensure_app_database() -> None:
             from icici_breeze_backend.app.db.ai_provider_migrate import ensure_ai_provider_table
             from icici_breeze_backend.app.db.outlook_preferences_migrate import ensure_outlook_preferences_table
             from icici_breeze_backend.app.db.parked_orders_migrate import ensure_parked_orders_table
+            from icici_breeze_backend.app.db.user_exchange_calendar_migrate import (
+                ensure_user_exchange_calendar_table,
+            )
 
             migrate_user_account_if_needed(db_path)
             ensure_ai_provider_table(db_path)
             ensure_outlook_preferences_table(db_path)
             ensure_parked_orders_table(db_path)
+            ensure_user_exchange_calendar_table(db_path)
             from icici_breeze_backend.app.services.user_rate_limit_prefs import (
                 migrate_legacy_rate_limit_pause_default,
                 migrate_rate_limit_pause_bounds,
@@ -180,6 +184,9 @@ def _ensure_app_database() -> None:
 
             migrate_legacy_rate_limit_pause_default()
             migrate_rate_limit_pause_bounds()
+            from icici_breeze_backend.app.services.reference_data.state import ensure_reference_data_tables
+
+            ensure_reference_data_tables(db_path)
         except Exception:
             _logger.exception("user_account schema migration failed")
 
@@ -197,7 +204,7 @@ def _ensure_freeze_limit_files() -> None:
     tpl = getattr(cfg, "DB_TEMPLATE_PATH", "") or ""
     if not tpl or not os.path.isdir(tpl.rstrip(os.sep)):
         return
-    for name in (cfg.LIMITS_MASTER_NSE, cfg.LIMITS_MASTER_BSE):
+    for name in (cfg.LIMITS_MASTER_NSE, cfg.LIMITS_MASTER_BSE, "exchange_holidays.json"):
         dest = cfg.DATA_PATH + name
         if os.path.isfile(dest):
             continue
@@ -293,6 +300,12 @@ def start_application():
                 e,
                 exc_info=_logger.isEnabledFor(logging.DEBUG),
             )
+        try:
+            from icici_breeze_backend.app.services.reference_data.scrip_index import publish_scrip_index_from_db
+
+            publish_scrip_index_from_db()
+        except Exception as e:
+            _logger.warning("Scrip index publish at startup failed: %s", e)
     else:
         _logger.info("Skipping ICICI master download (ICICI_BROKER_MODE=mock).")
 
@@ -308,6 +321,11 @@ def start_application():
         if heartbeat_loop_enabled():
             await send_startup_heartbeat()
             task = asyncio.create_task(run_heartbeat_loop())
+        from icici_breeze_backend.app.services.reference_data.scheduler import (
+            bootstrap_reference_data_on_startup,
+        )
+
+        bootstrap_reference_data_on_startup()
         yield
         if task is not None:
             task.cancel()
@@ -315,6 +333,9 @@ def start_application():
                 await task
             except asyncio.CancelledError:
                 pass
+        from icici_breeze_backend.app.services.breeze_websocket_manager import shutdown_websocket
+
+        shutdown_websocket()
 
     app = FastAPI(trust_env=True, lifespan=_portal_heartbeat_lifespan)
     # CORS: allow web UI. .env uses ALLOWED_ORIGINS; CORS_ORIGINS overrides if set.

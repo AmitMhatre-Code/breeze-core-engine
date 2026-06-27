@@ -192,6 +192,13 @@ export function OrderExecutionConfirmDialog({
 
   const execMut = useMutation({
     mutationFn: async () => {
+      const batchGroupId =
+        sourceParkedIds.length === 0 && legs.length > 1 ? randomUuid() : undefined;
+      const deferParkedFinalize = legs.length > 1;
+      let anyParked = false;
+      let parkedReason: string | undefined;
+      let placedAny = false;
+
       for (const l of legs) {
         const qn = Math.round(l.quantity);
         if (qn <= 0) continue;
@@ -208,12 +215,37 @@ export function OrderExecutionConfirmDialog({
           onRateLimitWait: wait,
           chunk_qty: chunkQty.trim() || undefined,
           aggressive_limit: l.aggressiveLimit ?? false,
+          from_parked_execution: sourceParkedIds.length > 0,
+          batch_group_id: batchGroupId,
+          defer_parked_finalize: deferParkedFinalize,
         });
         if (!out.ok) {
           throw new Error(out.terminalError ?? "Order leg failed");
         }
+        if (out.parked) {
+          anyParked = true;
+          parkedReason = out.marketClosedReason ?? parkedReason;
+        } else {
+          placedAny = true;
+        }
       }
-      if (sourceParkedIds.length > 0) {
+
+      if (anyParked && deferParkedFinalize) {
+        await apiClient.post<{ redirect: string }>("/order/break-finalize", {
+          stock_code: stockCode,
+          expiry_date: expiryDisplay,
+          right: legs[0]?.right ?? "Call",
+          strike_price: String(legs[0]?.strike ?? 0),
+          product_type: productType,
+          exchange_code: exchangeCode,
+          price: legs[0]?.aggressiveLimit ? "0" : String(legs[0]?.premiumPerUnit ?? 0),
+          action: legs[0]?.side ?? "Buy",
+          parked_only: true,
+          market_closed_reason: parkedReason,
+        });
+      }
+
+      if (placedAny && sourceParkedIds.length > 0) {
         await deleteParkedOrdersMany(sourceParkedIds);
       }
     },

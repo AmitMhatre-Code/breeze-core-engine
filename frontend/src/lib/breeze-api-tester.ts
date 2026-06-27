@@ -62,3 +62,30 @@ export const RISK_GROUP_LABEL: Record<BreezeApiCatalogEntry["risk_level"], strin
   funds: "Funds",
   gtt: "GTT",
 };
+
+export function wsConnectPlayground() {
+  return apiClient.post<{ ok: boolean; message?: string }>(`${BASE}/ws/connect`, {});
+}
+
+export function wsDisconnectPlayground() {
+  return apiClient.post<{ ok: boolean; message?: string }>(`${BASE}/ws/disconnect`, {});
+}
+
+export function wsSubscribePlayground(params: {
+  exchange_code: string;
+  stock_code: string;
+  expiry_date: string;
+  strike_price: string;
+  right: string;
+}) {
+  return apiClient.post<{ ok: boolean; message?: string }, typeof params>(
+    `${BASE}/ws/subscribe`,
+    params,
+  );
+}
+
+export function wsStreamUrl(): string {
+  const base = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+  if (base) return `${base.replace(/\/$/, "")}${BASE}/ws/stream`;
+  return `${BASE}/ws/stream`;
+}

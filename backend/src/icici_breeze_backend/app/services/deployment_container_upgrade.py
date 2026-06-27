@@ -23,6 +23,71 @@ _DEPLOY_ROOT = "/opt/breeze-core-engine"
 _UPGRADE_HELPER_IMAGE = "docker:cli"
 _UPGRADE_PLATFORM = "linux/arm64"
 
+REDIS_NETWORK_NAME = "breeze-core-net"
+REDIS_CONTAINER_NAME = "breeze-redis"
+REDIS_IMAGE = "redis:7-alpine"
+DEFAULT_REDIS_URL = "redis://breeze-redis:6379/0"
+
+
+def ensure_redis_url_in_env(env: dict[str, str]) -> dict[str, str]:
+    """Set REDIS_URL when absent; preserve operator overrides."""
+    if not (env.get("REDIS_URL") or "").strip():
+        env["REDIS_URL"] = DEFAULT_REDIS_URL
+    return env
+
+
+def _redis_sidecar_shell_lines() -> list[str]:
+    """Idempotent bash to create network and start breeze-redis before app recreate."""
+    return [
+        'echo "=== ensuring redis sidecar ==="',
+        f"docker network create {REDIS_NETWORK_NAME} 2>/dev/null || true",
+        f'if ! docker ps --format \'{{{{.Names}}}}\' | grep -Fxq {REDIS_CONTAINER_NAME}; then',
+        f"  docker pull {REDIS_IMAGE}",
+        f"  docker rm -f {REDIS_CONTAINER_NAME} 2>/dev/null || true",
+        f"  docker run -d --name {REDIS_CONTAINER_NAME} --network {REDIS_NETWORK_NAME} "
+        f"--restart unless-stopped {REDIS_IMAGE}",
+        "fi",
+        f"for _i in $(seq 1 30); do",
+        f"  if docker exec {REDIS_CONTAINER_NAME} redis-cli ping 2>/dev/null | grep -q PONG; then break; fi",
+        "  sleep 1",
+        "done",
+        f"grep -q '^REDIS_URL=' \"$ENV_FILE\" || echo '{DEFAULT_REDIS_URL}' >> \"$ENV_FILE\"",
+    ]
+
+
+def ensure_redis_sidecar_sdk(client: Any) -> None:
+    """Ensure Docker network and breeze-redis container exist (SDK path)."""
+    from docker.errors import APIError, DockerException, NotFound
+
+    try:
+        client.networks.get(REDIS_NETWORK_NAME)
+    except NotFound:
+        try:
+            client.networks.create(REDIS_NETWORK_NAME, driver="bridge")
+        except APIError as exc:
+            if "already exists" not in str(exc).lower():
+                raise
+
+    try:
+        redis_container = client.containers.get(REDIS_CONTAINER_NAME)
+        if redis_container.status != "running":
+            redis_container.remove(force=True)
+            raise NotFound("redis not running")
+    except NotFound:
+        try:
+            client.images.pull(REDIS_IMAGE)
+        except (APIError, DockerException) as exc:
+            logger.warning("deployment upgrade: redis image pull failed: %s", exc)
+            raise
+        client.containers.run(
+            REDIS_IMAGE,
+            name=REDIS_CONTAINER_NAME,
+            detach=True,
+            restart_policy={"Name": "unless-stopped"},
+            network=REDIS_NETWORK_NAME,
+        )
+        logger.info("deployment upgrade: started %s on %s", REDIS_CONTAINER_NAME, REDIS_NETWORK_NAME)
+
 
 def deployment_env_file_path() -> str:
     return (getattr(cfg, "DEPLOYMENT_ENV_FILE", None) or _DEFAULT_ENV_FILE).strip() or _DEFAULT_ENV_FILE
@@ -202,11 +267,15 @@ def prepare_upgrade_env_file(client: Any, container_name: str) -> str:
         )
         return canonical
 
-    write_host_file_via_docker(client, _UPGRADE_ENV_FILE, format_dotenv_text(env))
+    env = ensure_redis_url_in_env(env)
+    dotenv_text = format_dotenv_text(env)
+    write_host_file_via_docker(client, _UPGRADE_ENV_FILE, dotenv_text)
+    write_host_file_via_docker(client, canonical, dotenv_text)
     logger.info(
-        "deployment upgrade: wrote %d keys to %s for helper recreate",
+        "deployment upgrade: wrote %d keys to %s and %s for helper recreate",
         len(env),
         _UPGRADE_ENV_FILE,
+        canonical,
     )
     return _UPGRADE_ENV_FILE
 
@@ -314,6 +383,7 @@ def upgrade_shell_script(
             'exec >>"$LOG" 2>&1',
             'echo "=== breeze upgrade $(date -Iseconds 2>/dev/null || date) image=$IMAGE container=$NAME ==="',
             f"test -f \"$ENV_FILE\" || {{ echo \"ERROR: env file missing: $ENV_FILE\"; exit 1; }}",
+            *_redis_sidecar_shell_lines(),
             f"docker pull \"$IMAGE\"",
             "docker rm -f \"$NAME\" 2>/dev/null || true",
             "if docker ps -a --format '{{.Names}}' | grep -Fxq \"$NAME\"; then",
@@ -323,6 +393,7 @@ def upgrade_shell_script(
             "docker run -d "
             '--name "$NAME" '
             "--restart unless-stopped "
+            f"--network {REDIS_NETWORK_NAME} "
             f"-p {int(host_port)}:{_CONTAINER_PORT} "
             f"-v {qd}:/app/backend/data "
             '-v "$ENV_FILE":"$ENV_FILE":ro '
@@ -414,7 +485,12 @@ def recreate_deployment_container(client: Any, *, image: str, container_name: st
     data_host = deployment_data_host_path()
     host_port = deployment_publish_port()
 
-    environment = resolve_recreate_environment(client, container_name, env_file)
+    ensure_redis_sidecar_sdk(client)
+    environment = ensure_redis_url_in_env(
+        resolve_recreate_environment(client, container_name, env_file)
+    )
+    if environment:
+        write_host_file_via_docker(client, env_file, format_dotenv_text(environment))
 
     try:
         old = client.containers.get(container_name)
@@ -446,6 +522,7 @@ def recreate_deployment_container(client: Any, *, image: str, container_name: st
         name=container_name,
         detach=True,
         restart_policy={"Name": "unless-stopped"},
+        network=REDIS_NETWORK_NAME,
         ports={f"{_CONTAINER_PORT}/tcp": host_port},
         volumes=volumes,
         environment=environment,

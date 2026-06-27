@@ -56,6 +56,17 @@ export default function SettingsPage() {
           </div>
           <div className="app-card-muted space-y-2 p-4 text-sm">
             <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Reference Data Loads
+            </div>
+            <p className="app-text-muted">
+              Schedule daily loads (default 6 PM IST) for bhavcopy, scrip master, and SPAN baseline.
+            </p>
+            <Link href="/settings/reference-data-loads" className="app-btn-outline">
+              Manage reference data
+            </Link>
+          </div>
+          <div className="app-card-muted space-y-2 p-4 text-sm">
+            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               Margin Calculation Source
             </div>
             <p className="app-text-muted">
@@ -70,6 +81,17 @@ export default function SettingsPage() {
             <p className="app-text-muted">Inspect scrip data age/expiry health and load latest scrip master from ICICI.</p>
             <Link href="/settings/scrip-master" className="app-btn-outline">
               Update scrip master
+            </Link>
+          </div>
+          <div className="app-card-muted space-y-2 p-4 text-sm">
+            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Exchange Calendar
+            </div>
+            <p className="app-text-muted">
+              Manage NSE/BSE holidays and market hours, or sync from Breeze Console Admin Settings.
+            </p>
+            <Link href="/settings/exchange-calendar" className="app-btn-outline">
+              Exchange calendar
             </Link>
           </div>
           <div className="app-card-muted space-y-2 p-4 text-sm">

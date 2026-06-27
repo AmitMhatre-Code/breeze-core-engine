@@ -8,6 +8,9 @@ export type BreakOrderChunkResponse = {
   price_f?: number;
   rate_limited: boolean;
   daily_limit_exhausted?: boolean;
+  parked_for_execution?: boolean;
+  parked_order_ids?: string[];
+  market_closed_reason?: string;
   success: boolean;
   placed_quantity: number;
   danger_line: string | null;
@@ -30,6 +33,18 @@ export type PlaceBreakOrderArgs = {
   /** Max units per exchange order; server lot-rounds and caps at freeze. Omit for backend default. */
   chunk_qty?: string;
   aggressive_limit?: boolean;
+  from_parked_execution?: boolean;
+  batch_group_id?: string;
+  /** When true, caller stores the parked info message after all legs (multi-leg). */
+  defer_parked_finalize?: boolean;
+};
+
+export type RunBreakOrderResult = {
+  ok: boolean;
+  parked?: boolean;
+  marketClosedReason?: string;
+  terminalError?: string;
+  redirect?: string;
 };
 
 /**
@@ -37,7 +52,7 @@ export type PlaceBreakOrderArgs = {
  */
 export async function runBreakOrderChunks(
   args: PlaceBreakOrderArgs,
-): Promise<{ ok: boolean; terminalError?: string; redirect?: string }> {
+): Promise<RunBreakOrderResult> {
   const successes: number[] = [];
   const dangers: string[] = [];
   let chunk = 0;
@@ -57,6 +72,8 @@ export async function runBreakOrderChunks(
     ...(args.chunk_qty != null && String(args.chunk_qty).trim() !== ""
       ? { chunk_qty: String(args.chunk_qty).trim() }
       : {}),
+    ...(args.from_parked_execution ? { from_parked_execution: true } : {}),
+    ...(args.batch_group_id ? { batch_group_id: args.batch_group_id } : {}),
   };
 
   for (;;) {
@@ -70,6 +87,34 @@ export async function runBreakOrderChunks(
       return {
         ok: false,
         terminalError: terminal.map((m) => String(m.message ?? "")).join(" "),
+      };
+    }
+
+    if (res.parked_for_execution) {
+      if (!args.defer_parked_finalize) {
+        const fin = await apiClient.post<{ redirect: string }>("/order/break-finalize", {
+          stock_code: args.stock_code,
+          expiry_date: args.expiry_date,
+          right: args.right,
+          strike_price: args.strike_price,
+          product_type: args.product_type,
+          exchange_code: args.exchange_code,
+          price: args.price,
+          action: args.action,
+          parked_only: true,
+          market_closed_reason: res.market_closed_reason ?? undefined,
+        });
+        return {
+          ok: true,
+          parked: true,
+          marketClosedReason: res.market_closed_reason,
+          redirect: fin.redirect,
+        };
+      }
+      return {
+        ok: true,
+        parked: true,
+        marketClosedReason: res.market_closed_reason,
       };
     }
 

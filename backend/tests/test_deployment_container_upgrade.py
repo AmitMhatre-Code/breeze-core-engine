@@ -21,6 +21,17 @@ def _mock_docker_errors():
     sys.modules.pop("docker.errors", None)
 
 
+def test_ensure_redis_url_in_env_adds_default():
+    env = dcu.ensure_redis_url_in_env({})
+    assert env["REDIS_URL"] == dcu.DEFAULT_REDIS_URL
+
+
+def test_ensure_redis_url_in_env_preserves_custom():
+    custom = "redis://custom-host:6380/1"
+    env = dcu.ensure_redis_url_in_env({"REDIS_URL": custom})
+    assert env["REDIS_URL"] == custom
+
+
 def test_parse_dotenv_file(tmp_path):
     env_path = tmp_path / ".env"
     env_path.write_text(
@@ -93,19 +104,31 @@ def test_upgrade_shell_script_uses_env_file():
     assert "prune complete:" in script
     assert "-p 80:3000" in script
     assert "upgrade.log" in script
+    assert "breeze-core-net" in script
+    assert "breeze-redis" in script
+    assert "redis:7-alpine" in script
+    assert dcu.DEFAULT_REDIS_URL in script
 
 
 def test_prepare_upgrade_env_file_writes_host(tmp_path, monkeypatch):
     mock_client = MagicMock()
+    written: dict[str, str] = {}
+
+    def _capture_write(_c, path, content, **_):
+        written[path] = content
+        return path
+
     monkeypatch.setattr(
         dcu,
         "resolve_recreate_environment",
         lambda _c, _n, _p: {"JWT_ACCESS_TOKEN_EXPIRE_MINUTES": "1440"},
     )
-    monkeypatch.setattr(dcu, "write_host_file_via_docker", lambda _c, path, content, **_: path)
+    monkeypatch.setattr(dcu, "write_host_file_via_docker", _capture_write)
 
     path = dcu.prepare_upgrade_env_file(mock_client, "breeze-core-engine")
     assert path == dcu._UPGRADE_ENV_FILE
+    assert dcu.DEFAULT_REDIS_URL in written[dcu._UPGRADE_ENV_FILE]
+    assert dcu.DEFAULT_REDIS_URL in written[dcu._DEFAULT_ENV_FILE]
 
 
 def test_schedule_recreate_via_helper_detached_cli(monkeypatch):
@@ -146,6 +169,8 @@ def test_recreate_deployment_container_stops_and_runs_with_env(tmp_path, monkeyp
     monkeypatch.setattr(dcu, "deployment_env_file_path", lambda: str(env_path))
     monkeypatch.setattr(dcu, "deployment_data_host_path", lambda: str(data_path))
     monkeypatch.setattr(dcu, "deployment_publish_port", lambda: 80)
+    monkeypatch.setattr(dcu, "ensure_redis_sidecar_sdk", lambda _c: None)
+    monkeypatch.setattr(dcu, "write_host_file_via_docker", lambda _c, _p, _t, **_: None)
 
     mock_client = MagicMock()
     mock_old = MagicMock()
@@ -165,6 +190,8 @@ def test_recreate_deployment_container_stops_and_runs_with_env(tmp_path, monkeyp
     _, kwargs = mock_client.containers.run.call_args
     assert kwargs["name"] == "breeze-core-engine"
     assert kwargs["environment"]["JWT_ACCESS_TOKEN_EXPIRE_MINUTES"] == "1440"
+    assert kwargs["environment"]["REDIS_URL"] == dcu.DEFAULT_REDIS_URL
+    assert kwargs["network"] == dcu.REDIS_NETWORK_NAME
     assert kwargs["ports"] == {"3000/tcp": 80}
     assert str(data_path) in kwargs["volumes"]
     assert str(env_path) in kwargs["volumes"]

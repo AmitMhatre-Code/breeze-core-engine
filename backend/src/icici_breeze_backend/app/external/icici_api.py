@@ -43,6 +43,8 @@ def fetch_customerdetails_session_token(
         user_id=user_id,
         endpoint="customerdetails",
         record_url=_CUSTOMER_DETAILS_URL,
+        record_method="GET",
+        record_body=body,
     )
     succ = data.get("Success") or data.get("success") or {}
     if not isinstance(succ, dict):
@@ -114,6 +116,8 @@ def call_icici_api_direct(
             perform,
             user_id=user_id,
             record_url=url,
+            record_method="GET",
+            record_body=payload,
         )
 
     checksum_sha = hashlib.sha256((time_stamp + payload + secret).encode("utf-8")).hexdigest()

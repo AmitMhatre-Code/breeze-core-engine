@@ -10,6 +10,10 @@ import time
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from icici_breeze_backend.app.services.market_calendar import (
+    is_market_open as is_user_market_open,
+    market_closed_reason as user_market_closed_reason,
+)
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.auth.ai_provider_keys import AiProviderKeyManager
 from icici_breeze_backend.app.auth.outlook_ai_provider_pref import (
@@ -63,9 +67,19 @@ from icici_breeze_backend.app.domain.settings_api import (
     StrategyBuilderAuditLogsResponse,
     StrategyBuilderAuditExplainabilityResponse,
     BreezeApiTesterRiskStatusResponse,
+    ExchangeCalendarAddHolidayBody,
+    ExchangeCalendarHolidayItem,
+    ExchangeCalendarStateResponse,
+    ExchangeCalendarSyncBody,
+    ExchangeCalendarSyncPreviewResponse,
+    ExchangeCalendarUpdateBody,
+    ExchangeCalendarWorkingHours,
     QuantityLimitsStateResponse,
     QuantityLimitsUpdateBody,
     ScripMasterStateResponse,
+    ReferenceDataLoadsStateResponse,
+    ReferenceDataScheduleUpdateBody,
+    BreezeApiTesterWsSubscribeBody,
 )
 from icici_breeze_backend.app.services.breeze_api_tester_risk import (
     get_breeze_api_tester_risk_accepted_at,
@@ -90,7 +104,11 @@ from icici_breeze_backend.app.services.gemini_model_catalog import (
     fetch_gemini_model_catalog,
     models_list_for_user,
 )
-from icici_breeze_backend.audit.strategy_builder_audit import (
+from icici_breeze_backend.app.repositories import user_exchange_calendar as uec_repo
+from icici_breeze_backend.app.services.portal_exchange_calendar import (
+    fetch_console_exchange_calendar,
+    portal_exchange_calendar_configured,
+)
     _MAX_AUDIT_LOGS_PER_USER,
     build_audit_zip_for_user,
     list_audit_log_index_for_user,
@@ -765,6 +783,35 @@ async def settings_scrip_master_refresh(ctx: RequestContext = Depends(get_reques
     return JSONResponse({"ok": True, "message": "Scrip master refreshed.", "result": meta})
 
 
+@router.get("/reference-data-loads/status", response_model=ReferenceDataLoadsStateResponse)
+async def settings_reference_data_status(ctx: RequestContext = Depends(get_request_context)):
+    from icici_breeze_backend.app.services.reference_data.admin_status import get_reference_data_admin_status
+
+    return ReferenceDataLoadsStateResponse(**get_reference_data_admin_status())
+
+
+@router.put("/reference-data-loads/schedule", response_model=ReferenceDataLoadsStateResponse)
+async def settings_reference_data_schedule(
+    body: ReferenceDataScheduleUpdateBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    from icici_breeze_backend.app.services.reference_data.scheduler import configure_reference_data_schedule
+
+    configure_reference_data_schedule(body.enabled, body.hour_ist, body.minute_ist)
+    from icici_breeze_backend.app.services.reference_data.admin_status import get_reference_data_admin_status
+
+    return ReferenceDataLoadsStateResponse(**get_reference_data_admin_status())
+
+
+@router.post("/reference-data-loads/load-now", response_model=ReferenceDataLoadsStateResponse)
+async def settings_reference_data_load_now(ctx: RequestContext = Depends(get_request_context)):
+    from icici_breeze_backend.app.services.reference_data.orchestrator import trigger_reference_data_load_now
+    from icici_breeze_backend.app.services.reference_data.admin_status import get_reference_data_admin_status
+
+    trigger_reference_data_load_now(force=True)
+    return ReferenceDataLoadsStateResponse(**get_reference_data_admin_status())
+
+
 @router.get("/ai-provider", response_model=AiProviderStateResponse)
 async def settings_ai_provider_data(
     background_tasks: BackgroundTasks,
@@ -1125,6 +1172,177 @@ async def settings_outlook_config_reset(
     )
 
 
+def _exchange_calendar_response(user_id: str) -> ExchangeCalendarStateResponse:
+    row = uec_repo.get_user_calendar(user_id)
+    holidays_list = [
+        ExchangeCalendarHolidayItem(date=k, name=v)
+        for k, v in sorted(row.holidays.items())
+    ]
+    return ExchangeCalendarStateResponse(
+        user_id=user_id,
+        source=row.source,
+        working_hours=ExchangeCalendarWorkingHours(
+            open_hour=row.open_hour,
+            open_minute=row.open_minute,
+            close_hour=row.close_hour,
+            close_minute=row.close_minute,
+        ),
+        holidays=dict(row.holidays),
+        holidays_list=holidays_list,
+        portal_configured=portal_exchange_calendar_configured(),
+        has_local_edits=uec_repo.has_local_edits(row),
+        console_updated_at=row.console_updated_at,
+        local_updated_at=row.local_updated_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _console_payload_to_state(payload: dict) -> ExchangeCalendarStateResponse:
+    wh = payload.get("working_hours") or {}
+    holidays_raw = payload.get("holidays") or {}
+    holidays = {str(k): str(v) for k, v in holidays_raw.items()}
+    holidays_list = [
+        ExchangeCalendarHolidayItem(date=k, name=v) for k, v in sorted(holidays.items())
+    ]
+    return ExchangeCalendarStateResponse(
+        user_id="",
+        source="console_sync",
+        working_hours=ExchangeCalendarWorkingHours(
+            open_hour=int(wh.get("open_hour", 9)),
+            open_minute=int(wh.get("open_minute", 15)),
+            close_hour=int(wh.get("close_hour", 15)),
+            close_minute=int(wh.get("close_minute", 30)),
+        ),
+        holidays=holidays,
+        holidays_list=holidays_list,
+        portal_configured=True,
+        has_local_edits=False,
+        console_updated_at=payload.get("updated_at"),
+        local_updated_at=None,
+        updated_at=payload.get("updated_at"),
+    )
+
+
+@router.get("/exchange-calendar/data", response_model=ExchangeCalendarStateResponse)
+async def settings_exchange_calendar_data(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    return _exchange_calendar_response(ctx.user_id)
+
+
+@router.put("/exchange-calendar", response_model=ExchangeCalendarStateResponse)
+async def settings_exchange_calendar_put(
+    body: ExchangeCalendarUpdateBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    holidays = {h.date.strip()[:10]: h.name.strip() for h in body.holidays}
+    uec_repo.save_user_calendar(
+        ctx.user_id,
+        open_hour=body.working_hours.open_hour,
+        open_minute=body.working_hours.open_minute,
+        close_hour=body.working_hours.close_hour,
+        close_minute=body.working_hours.close_minute,
+        holidays=holidays,
+        source="local",
+    )
+    return _exchange_calendar_response(ctx.user_id)
+
+
+@router.post("/exchange-calendar/holidays", response_model=ExchangeCalendarStateResponse)
+async def settings_exchange_calendar_add_holiday(
+    body: ExchangeCalendarAddHolidayBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    iso = body.date.strip()[:10]
+    uec_repo.add_holiday(ctx.user_id, iso, body.name.strip())
+    return _exchange_calendar_response(ctx.user_id)
+
+
+@router.delete("/exchange-calendar/holidays/{iso_date}", response_model=ExchangeCalendarStateResponse)
+async def settings_exchange_calendar_delete_holiday(
+    iso_date: str,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    row = uec_repo.delete_holiday(ctx.user_id, iso_date.strip()[:10])
+    if row is None:
+        raise HTTPException(status_code=404, detail="Holiday not found")
+    return _exchange_calendar_response(ctx.user_id)
+
+
+@router.get("/exchange-calendar/sync-preview", response_model=ExchangeCalendarSyncPreviewResponse)
+async def settings_exchange_calendar_sync_preview(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    local = _exchange_calendar_response(ctx.user_id)
+    if not portal_exchange_calendar_configured():
+        return ExchangeCalendarSyncPreviewResponse(
+            portal_configured=False,
+            would_overwrite_local=False,
+            message="Breeze Console is not configured (PORTAL_API_BASE_URL).",
+        )
+    payload = await fetch_console_exchange_calendar()
+    if not payload:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not fetch Breeze Console Admin Settings calendar.",
+        )
+    console = _console_payload_to_state(payload)
+    would = local.has_local_edits
+    msg = None
+    if would:
+        msg = (
+            "Your local holiday calendar and working hours will be replaced by "
+            "Breeze Console Admin Settings."
+        )
+    return ExchangeCalendarSyncPreviewResponse(
+        portal_configured=True,
+        would_overwrite_local=would,
+        console=console,
+        local_holiday_count=len(local.holidays),
+        console_holiday_count=len(console.holidays),
+        message=msg,
+    )
+
+
+@router.post("/exchange-calendar/sync", response_model=ExchangeCalendarStateResponse)
+async def settings_exchange_calendar_sync(
+    body: ExchangeCalendarSyncBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not portal_exchange_calendar_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Breeze Console is not configured (PORTAL_API_BASE_URL).",
+        )
+    local = _exchange_calendar_response(ctx.user_id)
+    if local.has_local_edits and not body.confirm_override:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Local calendar has edits that would be overwritten. "
+                "Set confirm_override=true after reviewing sync-preview."
+            ),
+        )
+    payload = await fetch_console_exchange_calendar()
+    if not payload:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not fetch Breeze Console Admin Settings calendar.",
+        )
+    wh = payload.get("working_hours") or {}
+    holidays_raw = payload.get("holidays") or {}
+    uec_repo.apply_console_sync(
+        ctx.user_id,
+        open_hour=int(wh.get("open_hour", 9)),
+        open_minute=int(wh.get("open_minute", 15)),
+        close_hour=int(wh.get("close_hour", 15)),
+        close_minute=int(wh.get("close_minute", 30)),
+        holidays={str(k): str(v) for k, v in holidays_raw.items()},
+        console_updated_at=payload.get("updated_at"),
+    )
+    return _exchange_calendar_response(ctx.user_id)
+
+
 @router.get("/breeze-api-tester/catalog", response_model=BreezeApiTesterCatalogResponse)
 async def settings_breeze_api_tester_catalog(
     ctx: RequestContext = Depends(get_request_context),
@@ -1193,6 +1411,39 @@ async def settings_breeze_api_tester_invoke(
             duration_ms=duration_ms,
             response=result,
             error=None,
+        )
+
+    if method in ("ws_connect", "ws_disconnect", "subscribe_feeds"):
+        from icici_breeze_backend.app.services import breeze_websocket_manager as bwm
+
+        if method == "ws_connect":
+            out = bwm.ws_connect_playground(breeze, ctx.user_id)
+        elif method == "ws_disconnect":
+            out = bwm.ws_disconnect_playground()
+        else:
+            try:
+                positional, kwargs = build_invoke_args(method, dict(body.params or {}))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            out = bwm.playground_subscribe(breeze, ctx.user_id, kwargs)
+        return BreezeApiTesterInvokeResponse(
+            ok=bool(out.get("ok")),
+            method=method,
+            duration_ms=0,
+            response=out,
+            error=None if out.get("ok") else out.get("message"),
+        )
+
+    if method == "place_order" and not is_user_market_open(ctx.user_id):
+        return BreezeApiTesterInvokeResponse(
+            ok=False,
+            method=method,
+            duration_ms=0,
+            response=None,
+            error=(
+                f"Market is closed ({user_market_closed_reason(ctx.user_id)}). "
+                "place_order is not available after market hours."
+            ),
         )
 
     try:
@@ -1311,3 +1562,74 @@ async def get_strategy_builder_audit_explainability(
             detail="Explainability is not available for this audit log.",
         )
     return StrategyBuilderAuditExplainabilityResponse(**payload)
+
+
+@router.post("/breeze-api-tester/ws/connect")
+async def settings_breeze_ws_connect(ctx: RequestContext = Depends(get_request_context)):
+    if not is_breeze_api_tester_risk_accepted(ctx.user_id):
+        raise HTTPException(status_code=403, detail="Accept the risk disclaimer first.")
+    from icici_breeze_backend.app.services.breeze_websocket_manager import ws_connect_playground
+
+    out = ws_connect_playground(breeze, ctx.user_id)
+    if not out.get("ok"):
+        raise HTTPException(status_code=503, detail=out.get("error") or "WebSocket connect failed")
+    return JSONResponse(out)
+
+
+@router.post("/breeze-api-tester/ws/disconnect")
+async def settings_breeze_ws_disconnect(ctx: RequestContext = Depends(get_request_context)):
+    from icici_breeze_backend.app.services.breeze_websocket_manager import ws_disconnect_playground
+
+    return JSONResponse(ws_disconnect_playground())
+
+
+@router.post("/breeze-api-tester/ws/subscribe")
+async def settings_breeze_ws_subscribe(
+    body: BreezeApiTesterWsSubscribeBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not is_breeze_api_tester_risk_accepted(ctx.user_id):
+        raise HTTPException(status_code=403, detail="Accept the risk disclaimer first.")
+    from icici_breeze_backend.app.services.breeze_websocket_manager import playground_subscribe
+
+    return JSONResponse(playground_subscribe(breeze, ctx.user_id, body.model_dump()))
+
+
+@router.get("/breeze-api-tester/ws/stream")
+async def settings_breeze_ws_stream(ctx: RequestContext = Depends(get_request_context)):
+    if not is_breeze_api_tester_risk_accepted(ctx.user_id):
+        raise HTTPException(status_code=403, detail="Accept the risk disclaimer first.")
+    import asyncio
+    import json
+
+    from starlette.responses import StreamingResponse
+
+    from icici_breeze_backend.app.services.breeze_websocket_manager import (
+        add_playground_listener,
+        remove_playground_listener,
+        ws_connect_playground,
+    )
+
+    ws_connect_playground(breeze, ctx.user_id)
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def _on_tick(cell: dict) -> None:
+        try:
+            queue.put_nowait(cell)
+        except Exception:
+            pass
+
+    add_playground_listener(_on_tick)
+
+    async def _gen():
+        try:
+            while True:
+                try:
+                    cell = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps(cell, default=str)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            remove_playground_listener(_on_tick)
+
+    return StreamingResponse(_gen(), media_type="text/event-stream")

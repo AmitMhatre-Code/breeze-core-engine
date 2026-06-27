@@ -17,7 +17,8 @@ FROM node:22-bookworm-slim AS frontend-builder
 
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+ENV NODE_OPTIONS=--max-old-space-size=4096
+RUN npm ci --no-audit --fund=false
 
 COPY frontend/ ./
 
@@ -43,6 +44,7 @@ COPY backend/src ./src
 COPY backend/static ./static
 COPY backend/data/users.empty.sqlite3 backend/data/scrips.empty.sqlite3 \
   backend/data/NSEFreezeLimits.txt backend/data/BSEFreezeLimits.txt \
+  backend/data/exchange_holidays.json \
   ./data/
 
 RUN python -m compileall -q -b /build/src
@@ -53,6 +55,7 @@ RUN mkdir -p db-templates data \
   && cp data/scrips.empty.sqlite3 db-templates/ \
   && cp data/NSEFreezeLimits.txt db-templates/ \
   && cp data/BSEFreezeLimits.txt db-templates/ \
+  && cp data/exchange_holidays.json db-templates/ \
   && cp data/users.empty.sqlite3 data/users.sqlite3 \
   && cp data/scrips.empty.sqlite3 data/scrips.sqlite3
 

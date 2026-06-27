@@ -34,3 +34,6 @@ python-json-logger==2.0.7
 
 # Date/Time
 pytz==2023.3
+
+# Cache (reference data + websocket quotes; optional with in-memory fallback)
+redis>=5.0.0,<6

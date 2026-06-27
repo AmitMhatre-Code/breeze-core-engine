@@ -154,7 +154,14 @@ class GlobalIciciApiLimiter:
         }
 
     @classmethod
-    def _record_call(cls, user_id: str | None, record_url: str) -> None:
+    def _record_call(
+        cls,
+        user_id: str | None,
+        record_url: str,
+        *,
+        record_method: str | None = None,
+        record_body: str | bytes | None = None,
+    ) -> None:
         try:
             from icici_breeze_backend.app.auth.context import get_current_route_id
             from icici_breeze_backend.app.services.api_usage import (
@@ -165,9 +172,19 @@ class GlobalIciciApiLimiter:
             uid = (user_id or "").strip()
             url = str(record_url or "")
             if uid:
-                record_breeze_call(user_id=uid, url=url, route_id=get_current_route_id())
+                record_breeze_call(
+                    user_id=uid,
+                    url=url,
+                    route_id=get_current_route_id(),
+                    http_method=record_method,
+                    request_body=record_body,
+                )
             else:
-                record_breeze_call_if_in_request(url)
+                record_breeze_call_if_in_request(
+                    url,
+                    http_method=record_method,
+                    request_body=record_body,
+                )
         except Exception:
             pass
 
@@ -189,6 +206,8 @@ class GlobalIciciApiLimiter:
         user_id: str | None = None,
         endpoint: str | None = None,
         record_url: str,
+        record_method: str | None = None,
+        record_body: str | bytes | None = None,
         classify_response: Callable[[T], tuple[int, dict[str, Any] | None, str | None]],
         build_result: Callable[[dict[str, Any]], T],
     ) -> T:
@@ -219,7 +238,12 @@ class GlobalIciciApiLimiter:
                 http_status, body, err_text = classify_response(raw)
                 broker_error = err_text or broker_error
                 if uid:
-                    cls._record_call(uid, record_url)
+                    cls._record_call(
+                        uid,
+                        record_url,
+                        record_method=record_method,
+                        record_body=record_body,
+                    )
                     GlobalIciciApiPacer.mark_call_complete(uid)
 
                 if not is_breeze_rate_limited(http_status, err_text) and not (
@@ -253,6 +277,8 @@ class GlobalIciciApiLimiter:
         user_id: str | None = None,
         endpoint: str | None = None,
         record_url: str,
+        record_method: str | None = None,
+        record_body: str | bytes | None = None,
     ) -> dict[str, Any]:
         """Limiter entry for httpx/direct dict responses."""
 
@@ -270,6 +296,8 @@ class GlobalIciciApiLimiter:
             user_id=user_id,
             endpoint=endpoint,
             record_url=record_url,
+            record_method=record_method,
+            record_body=record_body,
             classify_response=classify,
             build_result=lambda d: d,
         )
@@ -282,6 +310,8 @@ class GlobalIciciApiLimiter:
         user_id: str | None = None,
         endpoint: str | None = None,
         record_url: str,
+        record_method: str | None = None,
+        record_body: str | bytes | None = None,
     ) -> dict[str, Any]:
         """Limiter entry for httpx.Response objects; returns Breeze-style dict."""
 
@@ -329,6 +359,8 @@ class GlobalIciciApiLimiter:
             user_id=user_id,
             endpoint=endpoint,
             record_url=record_url,
+            record_method=record_method,
+            record_body=record_body,
             classify_response=classify,
             build_result=build_result,
         )

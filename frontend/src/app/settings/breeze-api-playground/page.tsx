@@ -14,6 +14,10 @@ import {
   getBreezeApiTesterRiskStatus,
   invokeBreezeApiTester,
   RISK_GROUP_LABEL,
+  wsConnectPlayground,
+  wsDisconnectPlayground,
+  wsStreamUrl,
+  wsSubscribePlayground,
   type BreezeApiCatalogEntry,
   type BreezeApiInvokeResponse,
 } from "@/lib/breeze-api-tester";
@@ -42,6 +46,14 @@ export default function BreezeApiPlaygroundPage() {
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const [lastResponse, setLastResponse] = useState<BreezeApiInvokeResponse | null>(null);
   const [invokeError, setInvokeError] = useState<string | null>(null);
+  const [wsTicks, setWsTicks] = useState<string[]>([]);
+  const [wsForm, setWsForm] = useState({
+    exchange_code: "NFO",
+    stock_code: "NIFTY",
+    expiry_date: "",
+    strike_price: "",
+    right: "call",
+  });
 
   const riskQ = useQuery({
     queryKey: ["settings", "breeze-api-tester", "risk"],
@@ -141,6 +153,21 @@ export default function BreezeApiPlaygroundPage() {
     } catch {
       /* ignore */
     }
+  };
+
+  const wsConnectM = useMutation({ mutationFn: wsConnectPlayground });
+  const wsDisconnectM = useMutation({ mutationFn: wsDisconnectPlayground });
+  const wsSubscribeM = useMutation({
+    mutationFn: () => wsSubscribePlayground(wsForm),
+  });
+
+  const startWsStream = () => {
+    setWsTicks([]);
+    const es = new EventSource(wsStreamUrl(), { withCredentials: true });
+    es.onmessage = (ev) => {
+      setWsTicks((prev) => [ev.data, ...prev].slice(0, 40));
+    };
+    return () => es.close();
   };
 
   return (
@@ -288,6 +315,52 @@ export default function BreezeApiPlaygroundPage() {
             </div>
           </>
         )}
+      </section>
+
+      <section
+        className={`app-card mt-4 space-y-4 p-4 ${showGate ? "pointer-events-none select-none opacity-40" : ""}`}
+      >
+        <header className="space-y-1">
+          <h3 className="text-lg font-semibold app-text-heading">WebSocket (market hours)</h3>
+          <p className="text-sm app-text-muted">
+            Connect to Breeze exchange-quote stream for NFO/BFO options. Subscribe to a contract, then
+            watch ticks below.
+          </p>
+        </header>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="app-btn-outline" onClick={() => wsConnectM.mutate()}>
+            Connect
+          </button>
+          <button type="button" className="app-btn-outline" onClick={() => wsDisconnectM.mutate()}>
+            Disconnect
+          </button>
+          <button type="button" className="app-btn-outline" onClick={() => startWsStream()}>
+            Start tick stream
+          </button>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {(["exchange_code", "stock_code", "expiry_date", "strike_price", "right"] as const).map((k) => (
+            <label key={k} className="block text-xs">
+              <span className="font-medium">{k}</span>
+              <input
+                className={inputCls}
+                value={wsForm[k]}
+                onChange={(e) => setWsForm((p) => ({ ...p, [k]: e.target.value }))}
+              />
+            </label>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="app-btn-primary"
+          disabled={wsSubscribeM.isPending}
+          onClick={() => wsSubscribeM.mutate()}
+        >
+          Subscribe
+        </button>
+        <pre className="max-h-48 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs dark:border-zinc-800 dark:bg-zinc-900/80">
+          {wsTicks.length ? wsTicks.join("\n\n") : "Ticks appear after connect, subscribe, and start stream."}
+        </pre>
       </section>
     </AppShell>
   );

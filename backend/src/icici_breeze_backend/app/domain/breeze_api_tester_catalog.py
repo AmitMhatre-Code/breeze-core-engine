@@ -436,6 +436,31 @@ _CATALOG: tuple[BreezeApiCatalogEntry, ...] = (
             _s("to_date", required=True, placeholder="2025-02-05T06:00:00.00Z"),
         ),
     ),
+    BreezeApiCatalogEntry(
+        method="ws_connect",
+        title="WebSocket Connect",
+        risk_level="read",
+        description="Open Breeze tick-by-tick WebSocket (market hours).",
+        notes="Use Settings playground WebSocket tab for live SSE stream after connect.",
+    ),
+    BreezeApiCatalogEntry(
+        method="ws_disconnect",
+        title="WebSocket Disconnect",
+        risk_level="read",
+    ),
+    BreezeApiCatalogEntry(
+        method="subscribe_feeds",
+        title="Subscribe Feeds (NFO/BFO Options)",
+        risk_level="read",
+        params=(
+            _s("exchange_code", required=True, placeholder="NFO"),
+            _s("stock_code", required=True, placeholder="NIFTY"),
+            _s("expiry_date", required=True, placeholder="27-Feb-2025"),
+            _s("strike_price", required=True, placeholder="24000"),
+            _s("right", required=True, placeholder="call"),
+        ),
+        notes="Sets get_exchange_quotes=True for buy/sell qty. Use /breeze-api-tester/ws/subscribe in playground.",
+    ),
 )
 
 _METHOD_INDEX: dict[str, BreezeApiCatalogEntry] = {e.method: e for e in _CATALOG}

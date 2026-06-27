@@ -1,0 +1,49 @@
+"""Redis key helpers for reference data versioning."""
+from __future__ import annotations
+
+CURRENT_VERSION_KEY = "refdata:current_version"
+
+
+def version_prefix(version: int) -> str:
+    return f"refdata:v{version}"
+
+
+def underlyings_key(version: int, exchange_code: str) -> str:
+    return f"{version_prefix(version)}:underlyings:{exchange_code.upper()}"
+
+
+def strikes_key(version: int, exchange_code: str, short_name: str, expiry_display: str) -> str:
+    return (
+        f"{version_prefix(version)}:strikes:"
+        f"{exchange_code.upper()}:{short_name.upper()}:{expiry_display}"
+    )
+
+
+def exchange_code_map_key(version: int) -> str:
+    return f"{version_prefix(version)}:exchange_code_map"
+
+
+def bhav_meta_key(version: int, exchange_segment: str) -> str:
+    return f"{version_prefix(version)}:bhav:{exchange_segment.lower()}:meta"
+
+
+def bhav_index_key(version: int, exchange_segment: str) -> str:
+    return f"{version_prefix(version)}:bhav:{exchange_segment.lower()}:index"
+
+
+def ws_quote_key(
+    exchange_code: str,
+    short_name: str,
+    expiry_display: str,
+    strike: int,
+    right: str,
+) -> str:
+    r = str(right or "").strip().lower()
+    if r in {"ce", "c"}:
+        r = "call"
+    elif r in {"pe", "p"}:
+        r = "put"
+    return (
+        f"quotes:ws:{exchange_code.upper()}:{short_name.upper()}:"
+        f"{expiry_display}:{strike}:{r}"
+    )

@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    # Native arm64 avoids QEMU emulation during npm ci (sharp / Next.js postinstalls).
+    runs-on: ubuntu-24.04-arm
     environment:
       name: production
     steps:
@@ -65,11 +66,8 @@ jobs:
           build-args: |
             PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64=${{ steps.portal_drm.outputs.public_key_b64 }}
             PORTAL_ALLOWED_HOSTS=${{ steps.portal_drm.outputs.allowed_hosts }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
 
       - name: Verify image contains no secrets or env files
         env:
@@ -77,9 +75,8 @@ jobs:
           CANARY: BREEZE_CI_CANARY_MARKER
         run: |
           set -euo pipefail
-          # Image is built for linux/arm64 only; GHA runners are amd64 — pull/run with explicit platform.
-          docker pull --platform linux/arm64 "$IMAGE"
-          docker run --rm --platform linux/arm64 "$IMAGE" sh -c '
+          docker pull "$IMAGE"
+          docker run --rm "$IMAGE" sh -c '
             set -e
             if find /app \( -name ".env*" -o -name "*.pem" \) 2>/dev/null | grep -q .; then
               echo "ERROR: .env or .pem files found under /app"

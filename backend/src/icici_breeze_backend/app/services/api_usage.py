@@ -3,6 +3,7 @@
 One 'call' = one HTTP request from this app to a Breeze REST endpoint (api.icicidirect.com/breezeapi/).
 Counted in: requests_patch (SDK via requests.api.request), CustomerDetails + call_icici_api_direct (httpx).
 """
+import json
 import sqlite3
 import threading
 from datetime import timedelta
@@ -29,22 +30,28 @@ def _is_breeze_url(url: str) -> bool:
     return bool(u and "api.icicidirect.com" in u and "breezeapi" in u)
 
 
-# Breeze REST path segment → breeze-connect SDK method (see breeze_connect.config.APIEndPoint).
-_ENDPOINT_TO_METHOD: dict[str, str] = {
+# Breeze REST path segment → breeze-connect SDK method for 1:1 endpoints only.
+# Shared endpoints (order, funds, trades, gttorder) are resolved via HTTP verb + body.
+_SIMPLE_ENDPOINT_TO_METHOD: dict[str, str] = {
     "customerdetails": "get_customer_details",
     "dematholdings": "get_demat_holdings",
-    "funds": "get_funds",
     "historicalcharts": "get_historical_data",
     "margin": "get_margin",
-    "order": "order",
     "portfolioholdings": "get_portfolio_holdings",
     "portfoliopositions": "get_portfolio_positions",
     "quotes": "get_quotes",
-    "trades": "get_trade_list",
     "optionchain": "get_option_chain_quotes",
     "squareoff": "square_off",
     "fnolmtpriceandqtycal": "limit_calculator",
     "margincalculator": "margin_calculator",
+    "preview_order": "preview_order",
+}
+
+# Best-effort normalization for legacy rows stored as raw path segments (no verb/body).
+_LEGACY_SEGMENT_NORMALIZE: dict[str, str] = {
+    **_SIMPLE_ENDPOINT_TO_METHOD,
+    "funds": "get_funds",
+    "trades": "get_trade_list",
     "gttorder": "gtt_order_book",
 }
 
@@ -64,24 +71,120 @@ def _path_segment_from_url(url: str) -> str:
         return "unknown"
 
 
-def _sdk_method_name(url: str, path_segment: str) -> str:
-    """Map Breeze URL path segment to breeze-connect SDK method name."""
+def _parse_request_body(raw: str | bytes | None) -> dict:
+    if raw is None:
+        return {}
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+    text = text.strip()
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def _body_has(body: dict, key: str) -> bool:
+    val = body.get(key)
+    if val is None:
+        return False
+    if isinstance(val, str) and not val.strip():
+        return False
+    return True
+
+
+def _gtt_type(body: dict) -> str:
+    return str(body.get("gtt_type") or "").strip().lower()
+
+
+def _resolve_shared_endpoint(seg: str, method: str | None, body: dict) -> str | None:
+    """Map shared REST paths to SDK methods using HTTP verb and JSON body (breeze_connect)."""
+    verb = (method or "").upper()
+
+    if seg == "order":
+        if verb == "POST":
+            return "place_order"
+        if verb == "PUT":
+            return "modify_order"
+        if verb == "DELETE":
+            return "cancel_order"
+        if verb == "GET":
+            if _body_has(body, "from_date"):
+                return "get_order_list"
+            if _body_has(body, "order_id"):
+                return "get_order_detail"
+        return None
+
+    if seg == "funds":
+        if verb == "POST":
+            return "set_funds"
+        if verb == "GET":
+            return "get_funds"
+        return None
+
+    if seg == "trades":
+        if verb == "GET":
+            if _body_has(body, "from_date"):
+                return "get_trade_list"
+            if _body_has(body, "order_id"):
+                return "get_trade_detail"
+        return None
+
+    if seg == "gttorder":
+        if verb == "GET" and _body_has(body, "from_date"):
+            return "gtt_order_book"
+        if verb == "POST":
+            if _body_has(body, "fresh_order_action") or _gtt_type(body) in ("oco", "cover_oco"):
+                return "gtt_three_leg_place_order"
+            if _gtt_type(body) == "single":
+                return "gtt_single_leg_place_order"
+            return "gtt_three_leg_place_order"
+        if verb == "PUT":
+            if _gtt_type(body) == "single":
+                return "gtt_single_leg_modify_order"
+            return "gtt_three_leg_modify_order"
+        if verb == "DELETE":
+            # Three-leg vs single-leg cancel share identical HTTP signatures.
+            return "gtt_three_leg_cancel_order"
+        return None
+
+    return None
+
+
+def _resolve_sdk_method_name(
+    url: str,
+    http_method: str | None = None,
+    request_body: str | bytes | None = None,
+) -> str:
+    """Map Breeze URL (+ optional verb/body) to breeze-connect SDK method name."""
+    path_segment = _path_segment_from_url(url)
     seg = (path_segment or "").lower()
+
     if seg == "historicalcharts" and "breezeapi.icicidirect.com/api/v2" in (url or "").lower():
         return "get_historical_data_v2"
-    return _ENDPOINT_TO_METHOD.get(seg, seg)
+
+    body = _parse_request_body(request_body) if request_body is not None else {}
+    shared = _resolve_shared_endpoint(seg, http_method, body)
+    if shared:
+        return shared
+
+    return _SIMPLE_ENDPOINT_TO_METHOD.get(seg, seg)
 
 
 def _normalize_api_name(api_name: str) -> str:
     """Normalize stored path segments (legacy rows) to SDK method names."""
     key = (api_name or "").strip().lower()
-    return _ENDPOINT_TO_METHOD.get(key, api_name)
+    return _LEGACY_SEGMENT_NORMALIZE.get(key, api_name)
 
 
-def _extract_api_name(url: str) -> str:
+def _extract_api_name(
+    url: str,
+    http_method: str | None = None,
+    request_body: str | bytes | None = None,
+) -> str:
     """Map Breeze URL to breeze-connect SDK method used for API-wise aggregates."""
-    path_segment = _path_segment_from_url(url)
-    return _sdk_method_name(url, path_segment)
+    return _resolve_sdk_method_name(url, http_method, request_body)
 
 
 def _ensure_usage_tables(conn: sqlite3.Connection) -> None:
@@ -122,13 +225,20 @@ def _ensure_usage_tables(conn: sqlite3.Connection) -> None:
     )
 
 
-def record_breeze_call(user_id: str, url: str, route_id: str | None = None) -> None:
+def record_breeze_call(
+    user_id: str,
+    url: str,
+    route_id: str | None = None,
+    *,
+    http_method: str | None = None,
+    request_body: str | bytes | None = None,
+) -> None:
     """Increment daily total + api-wise + route-wise usage for one Breeze HTTP call."""
     uid = (user_id or "").strip()
     if not uid:
         return
     usage_date = _today_ist()
-    api_name = _extract_api_name(url)
+    api_name = _extract_api_name(url, http_method, request_body)
     route = (route_id or "").strip() or "unknown"
     with _lock:
         try:
@@ -168,7 +278,12 @@ def record_breeze_call(user_id: str, url: str, route_id: str | None = None) -> N
             pass
 
 
-def record_breeze_call_if_in_request(url: str) -> None:
+def record_breeze_call_if_in_request(
+    url: str,
+    *,
+    http_method: str | None = None,
+    request_body: str | bytes | None = None,
+) -> None:
     """If url is a Breeze REST endpoint and we have user_id in request context, count one API call (per ICICI: one call = one HTTP request)."""
     if not _is_breeze_url(url):
         return
@@ -177,7 +292,13 @@ def record_breeze_call_if_in_request(url: str) -> None:
 
         user_id = get_current_user_id()
         if user_id:
-            record_breeze_call(user_id=user_id, url=url, route_id=get_current_route_id())
+            record_breeze_call(
+                user_id=user_id,
+                url=url,
+                route_id=get_current_route_id(),
+                http_method=http_method,
+                request_body=request_body,
+            )
     except Exception:
         pass
 

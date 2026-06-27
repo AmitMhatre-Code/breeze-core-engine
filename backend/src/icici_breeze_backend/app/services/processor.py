@@ -25,6 +25,10 @@ from typing import TYPE_CHECKING, Any
 from icici_breeze_backend.app.repositories import parked_orders as parked_orders_repo
 if TYPE_CHECKING:
     from icici_breeze_backend.audit.strategy_builder_audit import StrategyBuilderAuditSession
+from icici_breeze_backend.app.services.market_calendar import (
+    is_market_open as is_user_market_open,
+    market_closed_reason as user_market_closed_reason,
+)
 from icici_breeze_backend.app.domain.order import ParkedOrderItem, ParkedOrderListItem
 
 # Import ICICI client for real-time portfolio/orders fetch (Phase 5 US3)
@@ -1932,17 +1936,27 @@ class processor():
         exchange_code: str,
         expiry_date: str,
     ):
-        """Fetch full CE + PE option chain for order page. Expiry can be YYYY-MM-DD or DD-Mon-YYYY.
-        Returns dict with Status, Error, Success: { chain_rows, max_call_oi, max_put_oi, expiry_display, stock_code, exchange_code }.
-        chain_rows = list of { strike_price, call?: row, put?: row }; each row has OI, LTP, total_buy_qty, total_sell_qty, buy_sell_ratio, lot_size, best_bid_price, best_offer_price, etc.
-        """
-        # Normalize expiry: API format for Breeze, display for template/fetch_lot_size
+        """Fetch full CE + PE option chain for order page. Expiry can be YYYY-MM-DD or DD-Mon-YYYY."""
         expiry_display = expiry_date
         if expiry_date and len(expiry_date) == 10 and expiry_date[4] == "-":  # YYYY-MM-DD
             try:
                 expiry_display = datetime.datetime.strptime(expiry_date, "%Y-%m-%d").strftime("%d-%b-%Y")
             except ValueError:
                 pass
+        from icici_breeze_backend.app.services.quote_source_router import assemble_chain_with_router
+
+        return assemble_chain_with_router(
+            self, user_id, stock_code, exchange_code, expiry_display
+        )
+
+    def _get_full_option_chain_icici_rest(
+        self,
+        user_id: str,
+        stock_code: str,
+        exchange_code: str,
+        expiry_display: str,
+    ):
+        """Legacy REST path: two get_option_chain_quotes calls (CE + PE)."""
         expiry_api = _expiry_display_to_api(expiry_display)
 
         ce_res = self._fetch_icici_chain_side_raw(
@@ -1965,7 +1979,13 @@ class processor():
             stock_code, expiry_display, exchange_code, cfg.PUT, pe_raw
         )
 
-        strikes = sorted(set(r["strike_price"] for r in calls) | set(r["strike_price"] for r in puts))
+        from icici_breeze_backend.app.services.reference_data.scrip_index import get_strikes
+
+        scrip_strikes = get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
+        if scrip_strikes:
+            strikes = sorted(set(scrip_strikes))
+        else:
+            strikes = sorted(set(r["strike_price"] for r in calls) | set(r["strike_price"] for r in puts))
         call_by_strike = {r["strike_price"]: r for r in calls}
         put_by_strike = {r["strike_price"]: r for r in puts}
 
@@ -1986,11 +2006,9 @@ class processor():
             p_zero = p is None or (p.get("total_buy_qty", 0) == 0 and p.get("total_sell_qty", 0) == 0)
             return c_zero and p_zero
 
-        # BFO: keep strikes with no book on both sides so the full chain is visible (NFO still drops dead strikes).
         if exchange_code != cfg.BFO:
             chain_rows = [r for r in chain_rows if not _is_illiquid(r)]
 
-        # Spot and ATM from option chain response (no separate get_quote)
         spot_price = None
         if calls:
             raw = calls[0].get("spot_price")
@@ -2200,6 +2218,48 @@ class processor():
             )
         return messages
 
+    def _park_placement_for_execution(
+        self,
+        user_id: str,
+        *,
+        product_type: str,
+        stock_code: str,
+        exchange_code: str,
+        expiry_date: str,
+        right: str,
+        strike_price: str,
+        total_qty: str,
+        price: str,
+        action: str,
+        aggressive_limit: bool = False,
+        chunk_qty: str | None = None,
+        batch_group_id: str | None = None,
+    ) -> list[str]:
+        item = ParkedOrderItem(
+            product_type=product_type or "Options",
+            stock_code=stock_code,
+            exchange_code=exchange_code,
+            expiry_date=expiry_date,
+            right=right,
+            strike_price=str(strike_price),
+            quantity=str(total_qty),
+            price="0" if aggressive_limit else str(price),
+            action=action,  # type: ignore[arg-type]
+            aggressive_limit=aggressive_limit,
+            chunk_qty=chunk_qty,
+            batch_group_id=batch_group_id,
+        )
+        rows = self.create_parked_orders(user_id, [item])
+        return [r.id for r in rows]
+
+    @staticmethod
+    def _market_closed_park_message(reason: str | None = None) -> str:
+        r = reason or user_market_closed_reason(user_id)
+        return (
+            f"Market is closed ({r}). Order parked for execution — "
+            "execute it from Parked Execution when the market opens."
+        )
+
     def break_order_chunk_defaults(
         self, stock_code: str, expiry_date: str, exchange_code: str
     ) -> dict:
@@ -2252,6 +2312,8 @@ class processor():
         chunk_index: int,
         chunk_qty: str | None = None,
         aggressive_limit: bool = False,
+        from_parked_execution: bool = False,
+        batch_group_id: str | None = None,
     ) -> dict:
         """Place a single slice of a split order for client-driven pacing on 429."""
         contract_label = f"{stock_code}-{expiry_date}-{strike_price}-{right}"
@@ -2270,6 +2332,43 @@ class processor():
                 "contract_label": contract_label,
                 "price_f": price_f,
                 "rate_limited": False,
+                "parked_for_execution": False,
+                "success": False,
+                "placed_quantity": 0,
+                "danger_line": None,
+            }
+
+        if chunk_index == 0 and not is_user_market_open(user_id):
+            closed_reason = user_market_closed_reason(user_id)
+            if from_parked_execution:
+                return _terminal(
+                    f"Market is still closed ({closed_reason}). Your order remains parked."
+                )
+            parked_ids = self._park_placement_for_execution(
+                user_id,
+                product_type=product_type,
+                stock_code=stock_code,
+                exchange_code=exchange_code,
+                expiry_date=expiry_date,
+                right=right,
+                strike_price=strike_price,
+                total_qty=total_qty,
+                price=price,
+                action=action,
+                aggressive_limit=aggressive_limit,
+                chunk_qty=chunk_qty,
+                batch_group_id=batch_group_id,
+            )
+            return {
+                "terminal_messages": [],
+                "chunk_index": 0,
+                "total_chunks": 1,
+                "contract_label": contract_label,
+                "price_f": price_f,
+                "rate_limited": False,
+                "parked_for_execution": True,
+                "parked_order_ids": parked_ids,
+                "market_closed_reason": closed_reason,
                 "success": False,
                 "placed_quantity": 0,
                 "danger_line": None,
@@ -2367,6 +2466,7 @@ class processor():
             "price_f": price_f,
             "rate_limited": rl,
             "daily_limit_exhausted": daily_exhausted,
+            "parked_for_execution": False,
             "success": ok,
             "placed_quantity": int(qty_this) if ok else 0,
             "danger_line": danger_line,
@@ -2390,6 +2490,27 @@ class processor():
                     "message": "No entries for stock code "
                     + stock_code
                     + " in the Options Quantity Limits file",
+                }
+            )
+        elif not is_user_market_open(user_id):
+            closed_reason = user_market_closed_reason(user_id)
+            self._park_placement_for_execution(
+                user_id,
+                product_type=product_type,
+                stock_code=stock_code,
+                exchange_code=exchange_code,
+                expiry_date=expiry_date,
+                right=right,
+                strike_price=strike_price,
+                total_qty=str(total_qty),
+                price=price,
+                action=action,
+                aggressive_limit=aggressive_limit,
+            )
+            messages.append(
+                {
+                    "type": cfg.INFO,
+                    "message": self._market_closed_park_message(closed_reason),
                 }
             )
         else:
@@ -2581,6 +2702,12 @@ class processor():
                     self.load_scrip_master(target_path, exchange_code=exchange_code)
                 else:
                     _logger.warning("Scrip master file %s not found in ZIP", scrip_filename)
+            try:
+                from icici_breeze_backend.app.services.reference_data.scrip_index import publish_scrip_index_from_db
+
+                publish_scrip_index_from_db()
+            except Exception as exc:
+                _logger.warning("Scrip index publish failed after master load: %s", exc)
         except requests.RequestException as e:
             _logger.warning("Error downloading ICICI master: %s", e, exc_info=True)
         except zipfile.BadZipFile as e:
@@ -2808,7 +2935,25 @@ class processor():
     def list_option_strikes(
         self, stock_code: str, expiry_date: str, exchange_code: str = cfg.NFO
     ) -> list[int]:
-        """Distinct strike prices for an underlying + expiry from scrip_master."""
+        """Distinct strike prices for an underlying + expiry from scrip master."""
+        import datetime as dt
+
+        expiry_display = expiry_date
+        if expiry_date and len(expiry_date) == 10 and expiry_date[4] == "-":
+            try:
+                expiry_display = dt.datetime.strptime(expiry_date, "%Y-%m-%d").strftime("%d-%b-%Y")
+            except ValueError:
+                pass
+        from icici_breeze_backend.app.services.reference_data.scrip_index import get_strikes
+
+        cached = get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
+        if cached:
+            return cached
+        expiry_key = expiry_date
+        try:
+            expiry_key = dt.datetime.strptime(expiry_display, "%d-%b-%Y").date().isoformat()
+        except ValueError:
+            pass
         with _scrip_master_connection() as conn:
             if exchange_code == cfg.NFO:
                 cursor = conn.execute(
@@ -2819,7 +2964,7 @@ class processor():
                       AND StrikePrice IS NOT NULL AND StrikePrice > 0
                     ORDER BY StrikePrice
                     """,
-                    (stock_code, expiry_date, exchange_code),
+                    (stock_code, expiry_key, exchange_code),
                 )
             else:
                 cursor = conn.execute(
@@ -2830,7 +2975,7 @@ class processor():
                       AND StrikePrice IS NOT NULL AND StrikePrice > 0
                     ORDER BY StrikePrice
                     """,
-                    (stock_code, expiry_date, exchange_code),
+                    (stock_code, expiry_key, exchange_code),
                 )
             rows = cursor.fetchall()
         out: list[int] = []
@@ -2882,7 +3027,11 @@ class processor():
         return row[0] if row else None
 
     def fetch_stock_codes(self, exchange_code: str = cfg.NFO):
-        # Fetches all unique combinations of ShortName and CompanyName (long_name) where Series is 'OPTION', and returns a list of dictionaries with all expiry dates for each combination.
+        from icici_breeze_backend.app.services.reference_data.scrip_index import get_underlyings
+
+        cached = get_underlyings(exchange_code)
+        if cached:
+            return cached
         with _scrip_master_connection() as conn:
             if exchange_code == cfg.NFO:
                 cursor = conn.execute(

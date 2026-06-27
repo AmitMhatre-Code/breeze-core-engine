@@ -95,6 +95,14 @@ class BreakOrderChunkRequest(BaseModel):
         description="Optional max units per child order; lot-rounded, capped at exchange freeze.",
     )
     aggressive_limit: bool = False
+    from_parked_execution: bool = Field(
+        default=False,
+        description="True when executing an existing parked row; avoids duplicate auto-park.",
+    )
+    batch_group_id: Optional[str] = Field(
+        default=None,
+        description="Correlate multi-leg orders parked together after hours.",
+    )
 
 
 class BreakChunkDefaultsRequest(BaseModel):
@@ -119,6 +127,8 @@ class BreakOrderFinalizeRequest(BaseModel):
     success_quantities: list[int] = Field(default_factory=list)
     danger_lines: list[str] = Field(default_factory=list)
     aggressive_limit: bool = False
+    parked_only: bool = False
+    market_closed_reason: Optional[str] = None
 
 
 class BookCancelOneRequest(BaseModel):

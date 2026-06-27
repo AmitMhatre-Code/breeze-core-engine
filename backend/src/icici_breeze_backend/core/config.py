@@ -155,3 +155,55 @@ PARTIAL_EXECUTED_CANCELED = "Partially Executed And Cancelled"
 # Dashboard: economic calendar (AiTrados), news (optional)
 AITRADOS_SECRET_KEY = (os.environ.get("AITRADOS_SECRET_KEY") or "").strip()
 NEWS_API_KEY = (os.environ.get("NEWS_API_KEY") or "").strip()
+
+# Redis (optional; in-memory fallback when unreachable)
+REDIS_URL = (os.environ.get("REDIS_URL") or "").strip()
+REDIS_HOST = (os.environ.get("REDIS_HOST") or "127.0.0.1").strip()
+try:
+    REDIS_PORT = int(os.environ.get("REDIS_PORT") or "6379")
+except ValueError:
+    REDIS_PORT = 6379
+
+# Reference data loads (bhavcopy, scrip master, SPAN baseline)
+NSE_FO_BHAVCOPY_URL_TEMPLATE = (
+    os.environ.get("NSE_FO_BHAVCOPY_URL_TEMPLATE")
+    or "https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{yyyymmdd}_F_0000.csv.zip"
+).strip()
+BSE_FO_BHAVCOPY_URL_TEMPLATE = (
+    os.environ.get("BSE_FO_BHAVCOPY_URL_TEMPLATE")
+    or "https://www.bseindia.com/download/BhavCopy/Derivative/BhavCopy_BSE_FO_0_0_0_{yyyymmdd}_F_0000.CSV"
+).strip()
+try:
+    REFERENCE_DATA_LOOKBACK_DAYS = int(os.environ.get("REFERENCE_DATA_LOOKBACK_DAYS", "10") or "10")
+except ValueError:
+    REFERENCE_DATA_LOOKBACK_DAYS = 10
+try:
+    REFERENCE_DATA_REFRESH_HOUR_IST = int(os.environ.get("REFERENCE_DATA_REFRESH_HOUR_IST", "18") or "18")
+except ValueError:
+    REFERENCE_DATA_REFRESH_HOUR_IST = 18
+try:
+    REFERENCE_DATA_REFRESH_MINUTE_IST = int(os.environ.get("REFERENCE_DATA_REFRESH_MINUTE_IST", "0") or "0")
+except ValueError:
+    REFERENCE_DATA_REFRESH_MINUTE_IST = 0
+try:
+    REFERENCE_DATA_REQUEST_TIMEOUT_SECONDS = float(
+        os.environ.get("REFERENCE_DATA_REQUEST_TIMEOUT_SECONDS", "120") or "120"
+    )
+except ValueError:
+    REFERENCE_DATA_REQUEST_TIMEOUT_SECONDS = 120.0
+try:
+    REFERENCE_DATA_CONNECT_TIMEOUT_SECONDS = float(
+        os.environ.get("REFERENCE_DATA_CONNECT_TIMEOUT_SECONDS", "15") or "15"
+    )
+except ValueError:
+    REFERENCE_DATA_CONNECT_TIMEOUT_SECONDS = 15.0
+try:
+    WEBSOCKET_QUOTE_TTL_SECONDS = int(os.environ.get("WEBSOCKET_QUOTE_TTL_SECONDS", "300") or "300")
+except ValueError:
+    WEBSOCKET_QUOTE_TTL_SECONDS = 300
+
+
+def redis_connection_url() -> str:
+    if REDIS_URL:
+        return REDIS_URL
+    return f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
