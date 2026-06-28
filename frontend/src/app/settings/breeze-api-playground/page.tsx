@@ -28,32 +28,24 @@ const inputCls =
 
 const RISK_ORDER: BreezeApiCatalogEntry["risk_level"][] = ["read", "funds", "trade", "gtt"];
 
-function formatResponse(payload: BreezeApiInvokeResponse | null, invokeError: string | null): string {
-  if (invokeError) return invokeError;
-  if (!payload) return "";
-  if (payload.error) {
-    return JSON.stringify({ error: payload.error, response: payload.response }, null, 2);
-  }
+function formatJsonValue(value: unknown): string {
+  if (value === undefined || value === null) return "";
   try {
-    return JSON.stringify(payload.response ?? payload, null, 2);
+    return JSON.stringify(value, null, 2);
   } catch {
-    return String(payload.response ?? payload);
+    return String(value);
   }
 }
 
-function formatWsStatus(payload: BreezeApiWsStatus | null, fallback: string): string {
-  if (!payload) return fallback;
-  const parts: string[] = [];
-  if (payload.message) parts.push(payload.message);
-  if (payload.error) parts.push(payload.error);
-  if (payload.connected != null) {
-    parts.push(payload.connected ? "ICICI socket: connected" : "ICICI socket: not connected");
-  }
-  if (payload.active_subscriptions != null) {
-    parts.push(`${payload.active_subscriptions} active subscription(s)`);
-  }
-  if (payload.last_error) parts.push(`Last error: ${payload.last_error}`);
-  return parts.length ? parts.join(" · ") : fallback;
+function formatResponse(payload: BreezeApiInvokeResponse | null, invokeError: string | null): string {
+  if (invokeError) return invokeError;
+  if (!payload) return "";
+  return formatJsonValue(payload.response ?? payload);
+}
+
+function formatWsApiResponse(payload: BreezeApiWsStatus | null): string {
+  if (!payload) return "";
+  return formatJsonValue(payload);
 }
 
 export default function BreezeApiPlaygroundPage() {
@@ -63,7 +55,10 @@ export default function BreezeApiPlaygroundPage() {
   const [lastResponse, setLastResponse] = useState<BreezeApiInvokeResponse | null>(null);
   const [invokeError, setInvokeError] = useState<string | null>(null);
   const [wsTicks, setWsTicks] = useState<string[]>([]);
-  const [wsStatus, setWsStatus] = useState("Not connected. Click Connect, fill contract fields, Subscribe, then Start tick stream.");
+  const [wsLastResponse, setWsLastResponse] = useState<BreezeApiWsStatus | null>(null);
+  const [wsStatusHint, setWsStatusHint] = useState(
+    "Not connected. Click Connect, fill contract fields, Subscribe, then Start tick stream.",
+  );
   const [wsStreamOpen, setWsStreamOpen] = useState(false);
   const wsStreamRef = useRef<EventSource | null>(null);
   const [wsForm, setWsForm] = useState({
@@ -149,8 +144,6 @@ export default function BreezeApiPlaygroundPage() {
     if (!selected) return {};
     const out: Record<string, string> = {};
     for (const p of selected.params) {
-      const v = (paramValues[p.name] ?? "").trim();
-      if (!v && !p.required) continue;
       out[p.name] = paramValues[p.name] ?? "";
     }
     return out;
@@ -163,6 +156,8 @@ export default function BreezeApiPlaygroundPage() {
   };
 
   const responseText = formatResponse(lastResponse, invokeError);
+  const wsResponseText = formatWsApiResponse(wsLastResponse);
+  const wsResponseIsError = wsLastResponse?.ok === false;
   const showGate = riskQ.isSuccess && !riskQ.data?.accepted;
 
   const copyResponse = async () => {
@@ -174,58 +169,80 @@ export default function BreezeApiPlaygroundPage() {
     }
   };
 
+  const copyWsResponse = async () => {
+    if (!wsResponseText) return;
+    try {
+      await navigator.clipboard.writeText(wsResponseText);
+    } catch {
+      /* ignore */
+    }
+  };
+
   const wsConnectM = useMutation({
     mutationFn: wsConnectPlayground,
-    onSuccess: (data) => setWsStatus(formatWsStatus(data, "Connect finished")),
-    onError: (e) => setWsStatus(e instanceof Error ? e.message : "Connect failed"),
+    onSuccess: (data) => {
+      setWsLastResponse(data);
+      setWsStatusHint(
+        data.connected ? "ICICI socket connected." : "ICICI socket not connected.",
+      );
+    },
+    onError: (e) => {
+      setWsStatusHint(e instanceof Error ? e.message : "Connect failed");
+    },
   });
   const wsDisconnectM = useMutation({
     mutationFn: wsDisconnectPlayground,
     onSuccess: (data) => {
       setWsStreamOpen(false);
-      setWsStatus(formatWsStatus(data, "Disconnected"));
+      setWsLastResponse(data);
+      setWsStatusHint("Disconnected.");
     },
-    onError: (e) => setWsStatus(e instanceof Error ? e.message : "Disconnect failed"),
+    onError: (e) => {
+      setWsStatusHint(e instanceof Error ? e.message : "Disconnect failed");
+    },
   });
   const wsSubscribeM = useMutation({
     mutationFn: () => wsSubscribePlayground(wsForm),
     onSuccess: (data) => {
-      if (data.ok === false) {
-        setWsStatus(formatWsStatus(data, "Subscribe failed"));
-        return;
-      }
-      setWsStatus(formatWsStatus(data, "Subscribed"));
+      setWsLastResponse(data);
+      setWsStatusHint(
+        data.connected ? "ICICI socket connected." : "ICICI socket not connected.",
+      );
     },
-    onError: (e) => setWsStatus(e instanceof Error ? e.message : "Subscribe failed"),
+    onError: (e) => {
+      setWsStatusHint(e instanceof Error ? e.message : "Subscribe failed");
+    },
   });
 
   const startWsStream = () => {
     wsStreamRef.current?.close();
     setWsTicks([]);
-    setWsStatus("Opening tick stream…");
+    setWsStatusHint("Opening tick stream…");
     const es = new EventSource(wsStreamUrl(), { withCredentials: true });
     wsStreamRef.current = es;
 
     es.addEventListener("ws_status", (event) => {
       try {
         const payload = JSON.parse((event as MessageEvent).data) as BreezeApiWsStatus;
-        setWsStatus(formatWsStatus(payload, "Stream status"));
+        setWsLastResponse(payload);
         setWsStreamOpen(Boolean(payload.connected));
+        setWsStatusHint(
+          payload.connected ? "Tick stream open · ICICI socket connected." : "Tick stream open.",
+        );
       } catch {
-        setWsStatus("Invalid ws_status payload from server.");
+        setWsStatusHint("Invalid ws_status payload from server.");
       }
     });
     es.addEventListener("ws_error", (event) => {
       const msgEvent = event as MessageEvent;
-      if (!msgEvent.data) {
-        setWsStatus("WebSocket stream error (empty payload).");
-        return;
-      }
+      if (!msgEvent.data) return;
       try {
-        const payload = JSON.parse(msgEvent.data) as { message?: string; last_error?: string };
-        setWsStatus(payload.message || payload.last_error || "WebSocket stream error.");
+        const payload = JSON.parse(msgEvent.data) as BreezeApiWsStatus;
+        setWsLastResponse(payload);
+        setWsStreamOpen(false);
+        setWsStatusHint("Tick stream reported an error (see Response).");
       } catch {
-        setWsStatus("Invalid ws_error payload from server.");
+        setWsStatusHint("Invalid ws_error payload from server.");
       }
     });
     es.addEventListener("ws_tick", (event) => {
@@ -235,16 +252,13 @@ export default function BreezeApiPlaygroundPage() {
       try {
         const payload = JSON.parse((event as MessageEvent).data) as BreezeApiWsStatus & { ts?: number };
         setWsStreamOpen(Boolean(payload.connected));
-        if (payload.last_error) {
-          setWsStatus(formatWsStatus(payload, "Waiting for ticks"));
-        }
       } catch {
         /* ignore malformed ping */
       }
     });
     es.onerror = () => {
       setWsStreamOpen(false);
-      setWsStatus("Tick stream transport error (login expired or network issue).");
+      setWsStatusHint("Tick stream transport error (login expired or network issue).");
       es.close();
       if (wsStreamRef.current === es) wsStreamRef.current = null;
     };
@@ -418,7 +432,7 @@ export default function BreezeApiPlaygroundPage() {
               : "border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-300"
           }`}
         >
-          {wsStatus}
+          {wsStatusHint}
         </p>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="app-btn-outline" onClick={() => wsConnectM.mutate()}>
@@ -455,6 +469,30 @@ export default function BreezeApiPlaygroundPage() {
         >
           Subscribe
         </button>
+        <div className="flex min-h-[160px] flex-col">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Response</span>
+            {wsResponseText ? (
+              <button
+                type="button"
+                className="app-btn-outline text-xs"
+                onClick={() => void copyWsResponse()}
+              >
+                Copy
+              </button>
+            ) : null}
+          </div>
+          <pre
+            className={`mt-2 max-h-48 min-h-[120px] flex-1 overflow-auto rounded-md border p-3 font-mono text-xs ${
+              wsResponseIsError
+                ? "border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+                : "border-zinc-200 bg-zinc-50 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-100"
+            }`}
+          >
+            {wsResponseText ||
+              "ICICI response will appear here after Connect, Subscribe, or Disconnect."}
+          </pre>
+        </div>
         <pre className="max-h-48 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs dark:border-zinc-800 dark:bg-zinc-900/80">
           {wsTicks.length ? wsTicks.join("\n\n") : "Ticks appear after connect, subscribe, and start stream."}
         </pre>

@@ -33,8 +33,9 @@ from icici_breeze_backend.app.domain.outlook_defaults import (
 )
 from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
     ALLOWED_METHODS,
-    build_invoke_args,
+    build_invoke_args_permissive,
     get_catalog_response,
+    is_breeze_invoke_response_ok,
 )
 from icici_breeze_backend.app.domain.settings_api import (
     AiProviderHealthEntry,
@@ -1427,21 +1428,28 @@ async def settings_breeze_api_tester_invoke(
     _BREEZE_API_TESTER_INVOKE_LAST_TS[ctx.user_id] = now
 
     if method == "get_customer_details":
-        start = time.time()
-        result = breeze.get_customer_details(ctx.user_id)
-        duration_ms = int((time.time() - start) * 1000)
-        if result is None:
+        sdk = breeze.get_session_breeze(ctx.user_id)
+        if sdk is None:
             raise HTTPException(
                 status_code=503,
                 detail="No active ICICI broker session. Log in with your broker token first.",
             )
-        ok = True
-        if isinstance(result, dict):
-            st = result.get("Status") or result.get("status")
-            if st not in (200, None):
-                ok = False
+        session_token = breeze.get_session_token(ctx.user_id)
+        start = time.time()
+        try:
+            result = sdk.get_customer_details(session_token)
+        except Exception as exc:
+            duration_ms = int((time.time() - start) * 1000)
+            return BreezeApiTesterInvokeResponse(
+                ok=False,
+                method=method,
+                duration_ms=duration_ms,
+                response=str(exc),
+                error=None,
+            )
+        duration_ms = int((time.time() - start) * 1000)
         return BreezeApiTesterInvokeResponse(
-            ok=ok,
+            ok=is_breeze_invoke_response_ok(result),
             method=method,
             duration_ms=duration_ms,
             response=result,
@@ -1451,40 +1459,28 @@ async def settings_breeze_api_tester_invoke(
     if method in ("ws_connect", "ws_disconnect", "subscribe_feeds"):
         from icici_breeze_backend.app.services import breeze_websocket_manager as bwm
 
+        if method in ("ws_connect", "subscribe_feeds"):
+            if breeze.get_session_breeze(ctx.user_id) is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No active ICICI broker session. Log in with your broker token first.",
+                )
         if method == "ws_connect":
             out = bwm.ws_connect_playground(breeze, ctx.user_id)
         elif method == "ws_disconnect":
             out = bwm.ws_disconnect_playground()
         else:
-            try:
-                positional, kwargs = build_invoke_args(method, dict(body.params or {}))
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            _, kwargs = build_invoke_args_permissive(method, dict(body.params or {}))
             out = bwm.playground_subscribe(breeze, ctx.user_id, kwargs)
         return BreezeApiTesterInvokeResponse(
             ok=bool(out.get("ok")),
             method=method,
             duration_ms=0,
-            response=out,
-            error=None if out.get("ok") else out.get("message"),
+            response=out.get("response"),
+            error=None,
         )
 
-    if method == "place_order" and not is_user_market_open(ctx.user_id):
-        return BreezeApiTesterInvokeResponse(
-            ok=False,
-            method=method,
-            duration_ms=0,
-            response=None,
-            error=(
-                f"Market is closed ({user_market_closed_reason(ctx.user_id)}). "
-                "place_order is not available after market hours."
-            ),
-        )
-
-    try:
-        positional, kwargs = build_invoke_args(method, dict(body.params or {}))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    positional, kwargs = build_invoke_args_permissive(method, dict(body.params or {}))
 
     sdk = breeze.get_session_breeze(ctx.user_id)
     if sdk is None:
@@ -1506,18 +1502,13 @@ async def settings_breeze_api_tester_invoke(
             ok=False,
             method=method,
             duration_ms=duration_ms,
-            response=None,
-            error=str(exc),
+            response=str(exc),
+            error=None,
         )
 
     duration_ms = int((time.time() - start) * 1000)
-    ok = True
-    if isinstance(result, dict):
-        st = result.get("Status") or result.get("status")
-        if st not in (200, None):
-            ok = False
     return BreezeApiTesterInvokeResponse(
-        ok=ok,
+        ok=is_breeze_invoke_response_ok(result),
         method=method,
         duration_ms=duration_ms,
         response=result,
@@ -1603,18 +1594,21 @@ async def get_strategy_builder_audit_explainability(
 async def settings_breeze_ws_connect(ctx: RequestContext = Depends(get_request_context)):
     if not is_breeze_api_tester_risk_accepted(ctx.user_id):
         raise HTTPException(status_code=403, detail="Accept the risk disclaimer first.")
+    if breeze.get_session_breeze(ctx.user_id) is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No active ICICI broker session. Log in with your broker token first.",
+        )
     from icici_breeze_backend.app.services.breeze_websocket_manager import ws_connect_playground
 
     out = ws_connect_playground(breeze, ctx.user_id)
     _logger.info(
-        "breeze-api-tester ws/connect user_id=%s ok=%s connected=%s last_error=%s",
+        "breeze-api-tester ws/connect user_id=%s ok=%s connected=%s response=%r",
         ctx.user_id,
         out.get("ok"),
         out.get("connected"),
-        out.get("last_error"),
+        out.get("response"),
     )
-    if not out.get("ok"):
-        raise HTTPException(status_code=503, detail=out.get("error") or "WebSocket connect failed")
     return JSONResponse(out)
 
 
@@ -1643,18 +1637,23 @@ async def settings_breeze_ws_subscribe(
 ):
     if not is_breeze_api_tester_risk_accepted(ctx.user_id):
         raise HTTPException(status_code=403, detail="Accept the risk disclaimer first.")
+    if breeze.get_session_breeze(ctx.user_id) is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No active ICICI broker session. Log in with your broker token first.",
+        )
     from icici_breeze_backend.app.services.breeze_websocket_manager import playground_subscribe
 
     out = playground_subscribe(breeze, ctx.user_id, body.model_dump())
     _logger.info(
-        "breeze-api-tester ws/subscribe user_id=%s ok=%s stock=%s expiry=%s strike=%s right=%s last_error=%s",
+        "breeze-api-tester ws/subscribe user_id=%s ok=%s stock=%s expiry=%s strike=%s right=%s response=%r",
         ctx.user_id,
         out.get("ok"),
         body.stock_code,
         body.expiry_date,
         body.strike_price,
         body.right,
-        out.get("last_error"),
+        out.get("response"),
     )
     return JSONResponse(out)
 
@@ -1701,15 +1700,16 @@ async def settings_breeze_ws_stream(ctx: RequestContext = Depends(get_request_co
                 {
                     **get_playground_status(),
                     "ok": connect_out.get("ok"),
-                    "message": connect_out.get("message") or connect_out.get("error"),
+                    "response": connect_out.get("response"),
                 },
             )
             if not connect_out.get("ok"):
                 yield _sse(
                     "ws_error",
                     {
-                        "message": connect_out.get("error") or "WebSocket connect failed",
-                        "last_error": connect_out.get("last_error"),
+                        "ok": False,
+                        "response": connect_out.get("response"),
+                        "connected": connect_out.get("connected"),
                     },
                 )
             while True:

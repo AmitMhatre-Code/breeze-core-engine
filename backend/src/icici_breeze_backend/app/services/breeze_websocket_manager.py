@@ -6,6 +6,9 @@ import threading
 import time
 from typing import Any, TYPE_CHECKING
 
+from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
+    is_breeze_invoke_response_ok,
+)
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.app.services.reference_data.keys import ws_quote_key
@@ -284,13 +287,51 @@ def ensure_chain_subscriptions(
     }
 
 
-def ws_connect_playground(proc: "Processor", user_id: str) -> dict[str, Any]:
-    sdk = _ensure_ws(proc, user_id)
-    status = get_playground_status()
+def _playground_response(response: Any, ok: bool | None = None) -> dict[str, Any]:
+    if ok is None:
+        ok = is_breeze_invoke_response_ok(response) if response is not None else True
+    return {
+        "ok": ok,
+        "response": response,
+        **get_playground_status(),
+    }
+
+
+def _register_playground_connected(sdk: Any, user_id: str) -> None:
+    global _sdk, _sdk_user_id, _connected
+    with _lock:
+        _sdk = sdk
+        _sdk_user_id = user_id
+        _connected = True
+        _clear_error()
+
+
+def _ensure_playground_ws(proc: "Processor", user_id: str) -> Any | None:
+    """Connect SDK WebSocket for playground without synthesizing error messages."""
+    global _sdk, _sdk_user_id, _connected
+    with _lock:
+        if _sdk is not None and _sdk_user_id == user_id and _connected:
+            return _sdk
+    sdk = proc.get_session_breeze(user_id)
     if sdk is None:
-        err = _last_error or "No broker session"
-        return {"ok": False, "error": err, **status}
-    return {"ok": True, "message": "WebSocket connected", **status}
+        return None
+    sdk.ws_connect()
+    sdk.on_ticks = _on_ticks
+    _register_playground_connected(sdk, user_id)
+    _logger.info("WebSocket connected for user_id=%s (playground)", user_id)
+    return sdk
+
+
+def ws_connect_playground(proc: "Processor", user_id: str) -> dict[str, Any]:
+    if proc.get_session_breeze(user_id) is None:
+        return _playground_response(None, ok=False)
+    try:
+        _ensure_playground_ws(proc, user_id)
+        return _playground_response(None, ok=True)
+    except Exception as exc:
+        with _lock:
+            _connected = False
+        return _playground_response(str(exc), ok=False)
 
 
 def ws_disconnect_playground() -> dict[str, Any]:
@@ -305,7 +346,7 @@ def ws_disconnect_playground() -> dict[str, Any]:
         _sdk_user_id = None
         _connected = False
         _sub_refs.clear()
-    return {"ok": True, "message": "WebSocket disconnected"}
+    return _playground_response(None, ok=True)
 
 
 def add_playground_listener(cb: Any) -> None:
@@ -320,55 +361,32 @@ def remove_playground_listener(cb: Any) -> None:
 
 
 def playground_subscribe(proc: "Processor", user_id: str, params: dict[str, Any]) -> dict[str, Any]:
-    stock_code = str(params.get("stock_code") or "").strip()
-    expiry_display = str(params.get("expiry_date") or "").strip()
-    right = str(params.get("right") or "call").strip()
-    strike_raw = str(params.get("strike_price") or "").strip()
-    if not stock_code:
-        err = "stock_code is required"
-        _note_error("subscribe validation: %s", err)
-        return {"ok": False, "error": err, **get_playground_status()}
-    if not expiry_display:
-        err = "expiry_date is required (e.g. 26-Jun-2026)"
-        _note_error("subscribe validation: %s", err)
-        return {"ok": False, "error": err, **get_playground_status()}
-    if not strike_raw:
-        err = "strike_price is required"
-        _note_error("subscribe validation: %s", err)
-        return {"ok": False, "error": err, **get_playground_status()}
+    if proc.get_session_breeze(user_id) is None:
+        return _playground_response(None, ok=False)
     try:
-        strike = int(float(strike_raw))
-    except (TypeError, ValueError):
-        err = f"invalid strike_price: {strike_raw!r}"
-        _note_error("subscribe validation: %s", err)
-        return {"ok": False, "error": err, **get_playground_status()}
-    if strike <= 0:
-        err = "strike_price must be greater than zero"
-        _note_error("subscribe validation: %s", err)
-        return {"ok": False, "error": err, **get_playground_status()}
+        _ensure_playground_ws(proc, user_id)
+    except Exception as exc:
+        return _playground_response(str(exc), ok=False)
 
-    ok = subscribe_option(
-        proc,
-        user_id,
-        str(params.get("exchange_code") or cfg.NFO),
-        stock_code,
-        expiry_display,
-        strike,
-        right,
-    )
-    status = get_playground_status()
-    if ok:
-        return {
-            "ok": True,
-            "message": f"Subscribed to {stock_code} {expiry_display} {strike} {right}",
-            **status,
-        }
-    return {
-        "ok": False,
-        "error": _last_error or "Subscribe failed",
-        "message": _last_error or "Subscribe failed",
-        **status,
-    }
+    sdk = proc.get_session_breeze(user_id)
+    if sdk is None:
+        return _playground_response(None, ok=False)
+
+    try:
+        result = sdk.subscribe_feeds(
+            exchange_code=str(params.get("exchange_code") or ""),
+            stock_code=str(params.get("stock_code") or ""),
+            expiry_date=str(params.get("expiry_date") or ""),
+            strike_price=str(params.get("strike_price") or ""),
+            right=str(params.get("right") or ""),
+            product_type="options",
+            get_market_depth=False,
+            get_exchange_quotes=True,
+        )
+        ok = is_breeze_invoke_response_ok(result)
+        return _playground_response(result, ok=ok)
+    except Exception as exc:
+        return _playground_response(str(exc), ok=False)
 
 
 def shutdown_websocket() -> None:

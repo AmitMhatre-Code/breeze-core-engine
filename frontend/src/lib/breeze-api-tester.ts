@@ -65,13 +65,12 @@ export const RISK_GROUP_LABEL: Record<BreezeApiCatalogEntry["risk_level"], strin
 
 export type BreezeApiWsStatus = {
   ok?: boolean;
+  response?: unknown;
   connected?: boolean;
   user_id?: string | null;
   active_subscriptions?: number;
   subscription_keys?: string[];
-  last_error?: string | null;
-  message?: string;
-  error?: string;
+  ts?: number;
 };
 
 export function wsConnectPlayground() {

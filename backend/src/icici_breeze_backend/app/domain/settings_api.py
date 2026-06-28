@@ -141,9 +141,9 @@ class ReferenceDataScheduleUpdateBody(BaseModel):
 
 class BreezeApiTesterWsSubscribeBody(BaseModel):
     exchange_code: str = "NFO"
-    stock_code: str
-    expiry_date: str
-    strike_price: str
+    stock_code: str = ""
+    expiry_date: str = ""
+    strike_price: str = ""
     right: str = "call"
 
 

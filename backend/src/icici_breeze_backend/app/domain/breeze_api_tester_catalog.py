@@ -538,3 +538,54 @@ def build_invoke_args(method: str, params: dict[str, Any]) -> tuple[tuple[Any, .
         raise ValueError("margin_list is required for margin_calculator")
 
     return tuple(positional), kwargs
+
+
+def _coerce_param_value_permissive(pdef: Any, raw: Any) -> Any:
+    if pdef.type == "json":
+        if raw is None:
+            return ""
+        if not isinstance(raw, str):
+            return raw
+        stripped = raw.strip()
+        if not stripped:
+            return ""
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return raw
+    if raw is None:
+        return ""
+    return str(raw).strip() if isinstance(raw, str) else str(raw)
+
+
+def build_invoke_args_permissive(
+    method: str, params: dict[str, Any]
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Playground-only: pass catalog params to SDK without required/extra validation."""
+    entry = get_catalog_entry(method)
+    if entry is None:
+        raise ValueError(f"Unknown method: {method}")
+
+    kwargs: dict[str, Any] = {}
+    positional: list[Any] = []
+    params = dict(params or {})
+
+    for pdef in entry.params:
+        pname = pdef.name
+        val = _coerce_param_value_permissive(pdef, params.get(pname))
+        if method == "margin_calculator" and pname == "margin_list":
+            positional.append(val)
+        else:
+            kwargs[pname] = val
+
+    return tuple(positional), kwargs
+
+
+def is_breeze_invoke_response_ok(result: Any) -> bool:
+    if isinstance(result, str):
+        return "exception" not in result.lower()
+    if isinstance(result, dict):
+        st = result.get("Status") or result.get("status")
+        if st not in (200, None):
+            return False
+    return True
