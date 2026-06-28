@@ -1,12 +1,43 @@
 """Admin status aggregation for Reference Data Loads settings."""
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
+from icici_breeze_backend.app.services.nsccl_baseline import ensure_exchange_margin_baseline_table
 from icici_breeze_backend.app.services.reference_data.bhavcopy_store import get_bhavcopy_source_date
 from icici_breeze_backend.app.services.reference_data.scheduler import get_scheduler_status
 from icici_breeze_backend.app.services.reference_data.state import fetch_ingest_history, load_progress_state
 import icici_breeze_backend.app.core.config as cfg
+
+
+def _bfo_baseline_meta() -> dict[str, Any]:
+    ensure_exchange_margin_baseline_table()
+    with sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB) as conn:
+        row = conn.execute(
+            """
+            SELECT source_file, source_date, refreshed_at, COUNT(*)
+            FROM exchange_margin_baseline
+            WHERE exchange_code = ?
+            GROUP BY source_file, source_date, source_version, refreshed_at
+            ORDER BY source_date DESC, source_version DESC
+            LIMIT 1
+            """,
+            (cfg.BFO,),
+        ).fetchone()
+    if not row:
+        return {
+            "bse_span_source_file": None,
+            "bse_span_source_date": None,
+            "bse_span_refreshed_at": None,
+            "bse_span_row_count": None,
+        }
+    return {
+        "bse_span_source_file": row[0],
+        "bse_span_source_date": row[1],
+        "bse_span_refreshed_at": row[2],
+        "bse_span_row_count": int(row[3]),
+    }
 
 
 def get_reference_data_admin_status() -> dict[str, Any]:
@@ -36,4 +67,5 @@ def get_reference_data_admin_status() -> dict[str, Any]:
         "span_progress_pct": int(prog.get("span_progress_pct") or 0),
         "span_message": prog.get("span_message"),
         "ingest_history": fetch_ingest_history(),
+        **_bfo_baseline_meta(),
     }

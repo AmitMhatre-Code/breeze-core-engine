@@ -59,28 +59,10 @@ export default function SettingsPage() {
               Reference Data Loads
             </div>
             <p className="app-text-muted">
-              Schedule daily loads (default 6 PM IST) for bhavcopy, scrip master, and SPAN baseline.
+              Schedule daily loads for bhavcopy, scrip master, and SPAN baseline; choose SPAN vs Breeze API for Strategy Builder margins.
             </p>
             <Link href="/settings/reference-data-loads" className="app-btn-outline">
               Manage reference data
-            </Link>
-          </div>
-          <div className="app-card-muted space-y-2 p-4 text-sm">
-            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              Margin Calculation Source
-            </div>
-            <p className="app-text-muted">
-              Choose between Breeze API and Exchange Risk Baseline for margin calculations in Strategy Builder. Refresh the Baseline from NSE to get the latest data.
-            </p>
-            <Link href="/settings/margin-source" className="app-btn-outline">
-              Update margin source
-            </Link>
-          </div>
-          <div className="app-card-muted space-y-2 p-4 text-sm">
-            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Scrip Master</div>
-            <p className="app-text-muted">Inspect scrip data age/expiry health and load latest scrip master from ICICI.</p>
-            <Link href="/settings/scrip-master" className="app-btn-outline">
-              Update scrip master
             </Link>
           </div>
           <div className="app-card-muted space-y-2 p-4 text-sm">

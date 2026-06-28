@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
@@ -17,6 +17,10 @@ type IngestHistoryItem = {
   ok: boolean;
   notes: string | null;
   source_url: string | null;
+};
+
+type MarginSourceData = {
+  margin_source: "breeze_api" | "exchange_baseline";
 };
 
 type ReferenceDataState = {
@@ -40,6 +44,10 @@ type ReferenceDataState = {
   span_refresh_in_progress: boolean;
   span_progress_pct: number;
   span_message: string | null;
+  bse_span_source_file: string | null;
+  bse_span_source_date: string | null;
+  bse_span_refreshed_at: string | null;
+  bse_span_row_count: number | null;
   ingest_history: IngestHistoryItem[];
 };
 
@@ -73,6 +81,22 @@ const SOURCES = [
     dateKey: null,
   },
 ];
+
+const fileInputCls =
+  "mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
+
+function formatTime12h(hour: number, minute: number): string {
+  const h = hour % 12 || 12;
+  const ampm = hour < 12 ? "AM" : "PM";
+  return `${String(h).padStart(2, "0")}:${String(minute).padStart(2, "0")} ${ampm}`;
+}
+
+function scheduleHelperText(hour: number, minute: number, enabled: boolean): string {
+  if (!enabled) return "Daily schedule is off. Use Load now to refresh data manually.";
+  const timeLabel = formatTime12h(hour, minute);
+  if (hour === 18 && minute === 0) return "Default 6:00 PM after market close.";
+  return `Runs daily at ${timeLabel} IST after market close.`;
+}
 
 function ScheduleToggle({
   enabled,
@@ -112,12 +136,26 @@ export default function ReferenceDataLoadsPage() {
     minute_ist: number;
     enabled: boolean;
   } | null>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const q = useQuery({
     queryKey: ["settings", "reference-data-loads"],
     queryFn: () =>
       apiClient.get<ReferenceDataState>("/api/settings/reference-data-loads/status"),
     refetchInterval: (query) => (query.state.data?.refresh_in_progress ? 750 : 5000),
+  });
+
+  const marginQ = useQuery({
+    queryKey: ["settings", "margin-source"],
+    queryFn: () => apiClient.get<MarginSourceData>("/api/settings/margin-source/data"),
+  });
+
+  const marginSaveMut = useMutation({
+    mutationFn: (margin_source: "breeze_api" | "exchange_baseline") =>
+      apiClient.post("/api/settings/margin-source", { margin_source }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["settings", "margin-source"] }),
   });
 
   const server = q.data;
@@ -127,6 +165,14 @@ export default function ReferenceDataLoadsPage() {
     enabled: server?.enabled ?? true,
   };
   const scheduleTime = `${String(sch.hour_ist).padStart(2, "0")}:${String(sch.minute_ist).padStart(2, "0")}`;
+  const scheduleTimeLabel = `${formatTime12h(sch.hour_ist, sch.minute_ist)} IST`;
+
+  const scheduleDirty =
+    scheduleDraft !== null &&
+    server !== undefined &&
+    (scheduleDraft.enabled !== server.enabled ||
+      scheduleDraft.hour_ist !== server.hour_ist ||
+      scheduleDraft.minute_ist !== server.minute_ist);
 
   const loadNowMut = useMutation({
     mutationFn: () =>
@@ -149,7 +195,78 @@ export default function ReferenceDataLoadsPage() {
     },
   });
 
+  const uploadMut = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("market", "bse");
+      return apiClient.postForm<{ ok?: boolean; message?: string; result?: Record<string, unknown> }>(
+        "/api/settings/margin-source/upload-baseline",
+        fd,
+      );
+    },
+    onMutate: () => {
+      setUploadError(null);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["settings", "reference-data-loads"] });
+      setUploadFile(null);
+    },
+    onError: (e) => {
+      setUploadError(e instanceof Error ? e.message : "Upload failed");
+    },
+  });
+
+  useEffect(() => {
+    let tickTimer: ReturnType<typeof setInterval> | undefined;
+    let doneTimer: ReturnType<typeof setTimeout> | undefined;
+
+    if (uploadMut.isPending) {
+      tickTimer = setInterval(() => {
+        setUploadProgress((prev) => {
+          const step = Math.max(1, Math.round((95 - prev) / 9));
+          return Math.min(95, prev + step);
+        });
+      }, 350);
+    } else if (uploadMut.isSuccess) {
+      doneTimer = setTimeout(() => {
+        setUploadProgress(100);
+        setTimeout(() => {
+          setUploadProgress(0);
+          uploadMut.reset();
+        }, 900);
+      }, 0);
+    } else if (uploadMut.isError) {
+      doneTimer = setTimeout(() => {
+        setUploadProgress(0);
+      }, 0);
+    }
+
+    return () => {
+      if (tickTimer) clearInterval(tickTimer);
+      if (doneTimer) clearTimeout(doneTimer);
+    };
+  }, [uploadMut.isPending, uploadMut.isSuccess, uploadMut.isError, uploadMut]);
+
+  const uploadStatusText = useMemo(() => {
+    if (uploadMut.isPending) return "Uploading BSE SPAN file…";
+    if (uploadMut.isSuccess && uploadProgress > 0) {
+      const r = uploadMut.data?.result as { inserted_rows?: number } | undefined;
+      const n = r?.inserted_rows;
+      return typeof n === "number" ? `Upload complete (${n} rows)` : "Upload complete";
+    }
+    return "";
+  }, [uploadMut.isPending, uploadMut.isSuccess, uploadMut.data, uploadProgress]);
+
   const refreshing = Boolean(server?.refresh_in_progress);
+
+  const useExchangeBaseline = marginQ.data?.margin_source === "exchange_baseline";
+  const marginToggleDisabled =
+    marginSaveMut.isPending || marginQ.isLoading || !marginQ.data;
+
+  const bseSpanStatusText = server?.bse_span_source_date
+    ? `Data date: ${server.bse_span_source_date}`
+    : "Not loaded — upload required";
 
   return (
     <AppShell>
@@ -160,8 +277,8 @@ export default function ReferenceDataLoadsPage() {
         <header className="space-y-1">
           <h2 className="text-xl app-text-heading">Reference Data Loads</h2>
           <p className="text-sm app-text-muted">
-            Schedule and load NSE/BSE FO bhavcopy, ICICI scrip master, and NSE SPAN margin baseline.
-            Also manages data used by Place Order, Basket Order, and Strategy Builder.
+            Schedule and load NSE/BSE FO bhavcopy, ICICI scrip master, NSE SPAN margin baseline (auto), and BSE SPAN
+            baseline (manual upload). Choose SPAN vs Breeze API for Strategy Builder margin calculations.
           </p>
         </header>
 
@@ -174,40 +291,78 @@ export default function ReferenceDataLoadsPage() {
 
         {server && (
           <>
-            <div className="flex items-center justify-between gap-4 rounded-lg border border-zinc-200/80 px-4 py-3 dark:border-zinc-700">
-              <div>
-                <div className="text-sm font-semibold">Daily schedule (IST)</div>
-                <p className="text-xs app-text-muted">Default 6:00 PM after market close.</p>
+            <div className="space-y-3 rounded-lg border border-zinc-200/80 px-4 py-3 dark:border-zinc-700">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="text-sm font-semibold">Daily schedule (IST)</div>
+                  <p className="text-xs app-text-muted">
+                    {scheduleHelperText(sch.hour_ist, sch.minute_ist, sch.enabled)}
+                  </p>
+                </div>
+                <ScheduleToggle
+                  enabled={sch.enabled}
+                  disabled={scheduleMut.isPending}
+                  onChange={(next) => setScheduleDraft({ ...sch, enabled: next })}
+                />
               </div>
-              <ScheduleToggle
-                enabled={sch.enabled}
-                disabled={scheduleMut.isPending}
-                onChange={(next) => setScheduleDraft({ ...sch, enabled: next })}
-              />
+              <div className="flex flex-wrap items-end gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                <label className="block text-sm">
+                  <span className="app-text-muted">Schedule time</span>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <input
+                      type="time"
+                      className="app-input max-w-[9rem]"
+                      value={scheduleTime}
+                      disabled={scheduleMut.isPending}
+                      onChange={(e) => {
+                        const [h, m] = e.target.value.split(":");
+                        setScheduleDraft({
+                          ...sch,
+                          hour_ist: Number(h || 18),
+                          minute_ist: Number(m || 0),
+                        });
+                      }}
+                    />
+                    <span className="text-xs font-medium app-text-muted">{scheduleTimeLabel}</span>
+                  </div>
+                </label>
+                {scheduleDirty && (
+                  <span className="text-xs text-amber-600 dark:text-amber-400">Unsaved schedule changes</span>
+                )}
+              </div>
             </div>
 
-            <label className="block text-sm">
-              <span className="app-text-muted">Schedule time</span>
-              <input
-                type="time"
-                className="app-input mt-1 max-w-xs"
-                value={scheduleTime}
-                onChange={(e) => {
-                  const [h, m] = e.target.value.split(":");
-                  setScheduleDraft({
-                    ...sch,
-                    hour_ist: Number(h || 18),
-                    minute_ist: Number(m || 0),
-                  });
-                }}
-              />
-            </label>
+            <div className="space-y-3 rounded-lg border border-zinc-200/80 px-4 py-3 dark:border-zinc-700">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="text-sm font-semibold">Use SPAN files for margin calculation</div>
+                  <p className="text-xs app-text-muted">
+                    Off: Breeze API (default). On: Exchange Risk Baseline (SPAN) for Strategy Builder. ICICI margins may
+                    differ; contracts missing from the baseline fall back to Breeze API.
+                  </p>
+                </div>
+                <ScheduleToggle
+                  enabled={useExchangeBaseline}
+                  disabled={marginToggleDisabled}
+                  onChange={(next) => {
+                    const nextSource = next ? "exchange_baseline" : "breeze_api";
+                    if (marginQ.data?.margin_source === nextSource) return;
+                    marginSaveMut.mutate(nextSource);
+                  }}
+                />
+              </div>
+              {marginSaveMut.isPending && (
+                <p className="text-xs app-text-muted border-t border-zinc-100 pt-2 dark:border-zinc-800">
+                  Saving margin source…
+                </p>
+              )}
+            </div>
 
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
                 className="app-btn-outline"
-                disabled={scheduleMut.isPending}
+                disabled={scheduleMut.isPending || !scheduleDirty}
                 onClick={() =>
                   scheduleMut.mutate({
                     enabled: sch.enabled,
@@ -272,7 +427,77 @@ export default function ReferenceDataLoadsPage() {
                     </span>
                   </li>
                 ))}
+                <li className="flex justify-between gap-4 border-b border-zinc-100 py-2 dark:border-zinc-800">
+                  <span>BSE SPAN Baseline</span>
+                  <span className="app-text-muted">{bseSpanStatusText}</span>
+                </li>
               </ul>
+            </div>
+
+            <div className="space-y-3 rounded-lg border border-amber-200/70 bg-amber-50/40 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
+              <h3 className="text-sm font-semibold">BSE SPAN Baseline</h3>
+              <p className="text-xs app-text-muted">
+                BSE does not publish a direct archive URL like NSE. Download the SPAN XML (or ZIP containing it) from the{" "}
+                <a
+                  href="https://www.bseindia.com/markets/Derivatives/DeriReports/Riskparameternew.aspx"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="app-link"
+                >
+                  BSE Risk Parameter report
+                </a>{" "}
+                and upload it here. Only <strong>BSXOPT</strong> and <strong>BKXOPT</strong> portfolios (Sensex / BANKEX
+                on BFO) are ingested.
+              </p>
+              {server.bse_span_source_file && (
+                <p className="text-xs app-text-muted">
+                  Loaded: {server.bse_span_source_file}
+                  {server.bse_span_row_count != null ? ` (${server.bse_span_row_count} rows)` : ""}
+                  {server.bse_span_refreshed_at ? ` · ${server.bse_span_refreshed_at}` : ""}
+                </p>
+              )}
+              <label className="block text-xs app-text-muted">
+                Choose file
+                <input
+                  type="file"
+                  accept=".xml,.spn,.zip,application/xml,text/xml"
+                  disabled={uploadMut.isPending}
+                  className={fileInputCls}
+                  onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                />
+              </label>
+              {uploadError ? <div className="app-alert-error text-xs">{uploadError}</div> : null}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="app-btn-outline"
+                  disabled={uploadMut.isPending || !uploadFile}
+                  aria-busy={uploadMut.isPending}
+                  onClick={() => {
+                    if (!uploadFile) return;
+                    uploadMut.mutate(uploadFile);
+                  }}
+                >
+                  <AsyncLabelSpan
+                    busy={uploadMut.isPending}
+                    idleLabel="Upload BSE SPAN file"
+                    busyLabel="Uploading…"
+                  />
+                </button>
+              </div>
+              {uploadProgress > 0 ? (
+                <div className="space-y-1 pt-1">
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                    <div
+                      className="h-full bg-sky-600 transition-all duration-300 dark:bg-sky-500"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                  <div className="text-xs app-text-muted">
+                    {uploadStatusText} {uploadMut.isPending ? `${Math.round(uploadProgress)}%` : ""}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -302,18 +527,6 @@ export default function ReferenceDataLoadsPage() {
                 </table>
               </div>
             </div>
-
-            <p className="text-xs app-text-muted">
-              Margin source and scrip master can also be managed from{" "}
-              <Link href="/settings/margin-source" className="app-link">
-                Margin Calculation Source
-              </Link>{" "}
-              and{" "}
-              <Link href="/settings/scrip-master" className="app-link">
-                Scrip Master
-              </Link>
-              .
-            </p>
           </>
         )}
       </section>

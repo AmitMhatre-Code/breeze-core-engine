@@ -1,6 +1,7 @@
 """Settings JSON API under /api/settings."""
 import datetime
 import json
+import logging
 import os
 import sqlite3
 from typing import Any, List
@@ -118,6 +119,7 @@ from icici_breeze_backend.audit.strategy_builder_audit import (
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+_logger = logging.getLogger(__name__)
 breeze = processor()
 cred_manager = CredentialManager(encryption_key=(cfg.JWT_SECRET or "").strip())
 ai_key_manager = AiProviderKeyManager(encryption_key=(cfg.JWT_SECRET or "").strip())
@@ -766,6 +768,27 @@ async def settings_margin_source_upload_baseline(
     )
     if out.get("Status") != 200:
         raise HTTPException(status_code=400, detail=out.get("Error") or "Baseline upload failed")
+    market_l = (market or "").strip().lower()
+    if market_l == "bse":
+        import uuid
+
+        from icici_breeze_backend.app.core.timezone import now_ist
+        from icici_breeze_backend.app.services.reference_data.state import append_ingest_history
+
+        success = out.get("Success") or {}
+        append_ingest_history(
+            {
+                "id": str(uuid.uuid4()),
+                "kind": "bse_span_baseline",
+                "display_name": "BSE SPAN Baseline",
+                "source_file_date": success.get("source_date"),
+                "row_count": int(success.get("inserted_rows") or 0),
+                "ingested_at": now_ist().isoformat(timespec="seconds"),
+                "ok": True,
+                "notes": file.filename or "upload.xml",
+                "source_url": None,
+            }
+        )
     return JSONResponse({"ok": True, "message": "Exchange Risk Baseline updated from file.", "result": out.get("Success")})
 
 
@@ -1572,6 +1595,13 @@ async def settings_breeze_ws_connect(ctx: RequestContext = Depends(get_request_c
     from icici_breeze_backend.app.services.breeze_websocket_manager import ws_connect_playground
 
     out = ws_connect_playground(breeze, ctx.user_id)
+    _logger.info(
+        "breeze-api-tester ws/connect user_id=%s ok=%s connected=%s last_error=%s",
+        ctx.user_id,
+        out.get("ok"),
+        out.get("connected"),
+        out.get("last_error"),
+    )
     if not out.get("ok"):
         raise HTTPException(status_code=503, detail=out.get("error") or "WebSocket connect failed")
     return JSONResponse(out)
@@ -1581,7 +1611,18 @@ async def settings_breeze_ws_connect(ctx: RequestContext = Depends(get_request_c
 async def settings_breeze_ws_disconnect(ctx: RequestContext = Depends(get_request_context)):
     from icici_breeze_backend.app.services.breeze_websocket_manager import ws_disconnect_playground
 
-    return JSONResponse(ws_disconnect_playground())
+    out = ws_disconnect_playground()
+    _logger.info("breeze-api-tester ws/disconnect user_id=%s", ctx.user_id)
+    return JSONResponse(out)
+
+
+@router.get("/breeze-api-tester/ws/status")
+async def settings_breeze_ws_status(ctx: RequestContext = Depends(get_request_context)):
+    if not is_breeze_api_tester_risk_accepted(ctx.user_id):
+        raise HTTPException(status_code=403, detail="Accept the risk disclaimer first.")
+    from icici_breeze_backend.app.services.breeze_websocket_manager import get_playground_status
+
+    return JSONResponse(get_playground_status())
 
 
 @router.post("/breeze-api-tester/ws/subscribe")
@@ -1593,7 +1634,18 @@ async def settings_breeze_ws_subscribe(
         raise HTTPException(status_code=403, detail="Accept the risk disclaimer first.")
     from icici_breeze_backend.app.services.breeze_websocket_manager import playground_subscribe
 
-    return JSONResponse(playground_subscribe(breeze, ctx.user_id, body.model_dump()))
+    out = playground_subscribe(breeze, ctx.user_id, body.model_dump())
+    _logger.info(
+        "breeze-api-tester ws/subscribe user_id=%s ok=%s stock=%s expiry=%s strike=%s right=%s last_error=%s",
+        ctx.user_id,
+        out.get("ok"),
+        body.stock_code,
+        body.expiry_date,
+        body.strike_price,
+        body.right,
+        out.get("last_error"),
+    )
+    return JSONResponse(out)
 
 
 @router.get("/breeze-api-tester/ws/stream")
@@ -1601,17 +1653,26 @@ async def settings_breeze_ws_stream(ctx: RequestContext = Depends(get_request_co
     if not is_breeze_api_tester_risk_accepted(ctx.user_id):
         raise HTTPException(status_code=403, detail="Accept the risk disclaimer first.")
     import asyncio
-    import json
 
     from starlette.responses import StreamingResponse
 
     from icici_breeze_backend.app.services.breeze_websocket_manager import (
         add_playground_listener,
+        get_playground_status,
         remove_playground_listener,
         ws_connect_playground,
     )
 
-    ws_connect_playground(breeze, ctx.user_id)
+    def _sse(event: str, payload: dict[str, Any]) -> str:
+        return f"event: {event}\ndata: {json.dumps(payload, default=str)}\n\n"
+
+    connect_out = ws_connect_playground(breeze, ctx.user_id)
+    _logger.info(
+        "breeze-api-tester ws/stream opened user_id=%s ok=%s connected=%s",
+        ctx.user_id,
+        connect_out.get("ok"),
+        connect_out.get("connected"),
+    )
     queue: asyncio.Queue = asyncio.Queue()
 
     def _on_tick(cell: dict) -> None:
@@ -1624,13 +1685,31 @@ async def settings_breeze_ws_stream(ctx: RequestContext = Depends(get_request_co
 
     async def _gen():
         try:
+            yield _sse(
+                "ws_status",
+                {
+                    **get_playground_status(),
+                    "ok": connect_out.get("ok"),
+                    "message": connect_out.get("message") or connect_out.get("error"),
+                },
+            )
+            if not connect_out.get("ok"):
+                yield _sse(
+                    "ws_error",
+                    {
+                        "message": connect_out.get("error") or "WebSocket connect failed",
+                        "last_error": connect_out.get("last_error"),
+                    },
+                )
             while True:
                 try:
                     cell = await asyncio.wait_for(queue.get(), timeout=30.0)
-                    yield f"data: {json.dumps(cell, default=str)}\n\n"
+                    yield _sse("ws_tick", cell)
                 except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
+                    yield _sse("ws_ping", {**get_playground_status(), "ts": time.time()})
         finally:
             remove_playground_listener(_on_tick)
+            _logger.info("breeze-api-tester ws/stream closed user_id=%s", ctx.user_id)
 
-    return StreamingResponse(_gen(), media_type="text/event-stream")
+    headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
+    return StreamingResponse(_gen(), media_type="text/event-stream", headers=headers)

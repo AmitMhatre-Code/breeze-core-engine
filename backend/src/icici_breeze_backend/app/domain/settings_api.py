@@ -126,6 +126,10 @@ class ReferenceDataLoadsStateResponse(BaseModel):
     span_refresh_in_progress: bool = False
     span_progress_pct: int = 0
     span_message: Optional[str] = None
+    bse_span_source_file: Optional[str] = None
+    bse_span_source_date: Optional[str] = None
+    bse_span_refreshed_at: Optional[str] = None
+    bse_span_row_count: Optional[int] = None
     ingest_history: list[ReferenceDataIngestHistoryItem] = Field(default_factory=list)
 
 

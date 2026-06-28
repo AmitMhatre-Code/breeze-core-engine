@@ -21,7 +21,32 @@ _sub_refs: dict[str, int] = {}
 _sdk: Any = None
 _sdk_user_id: str | None = None
 _connected = False
+_last_error: str | None = None
 _playground_listeners: list[Any] = []
+
+
+def _note_error(message: str, *args: Any) -> str:
+    global _last_error
+    text = message % args if args else message
+    _last_error = text
+    _logger.warning(text)
+    return text
+
+
+def _clear_error() -> None:
+    global _last_error
+    _last_error = None
+
+
+def get_playground_status() -> dict[str, Any]:
+    with _lock:
+        return {
+            "connected": _connected,
+            "user_id": _sdk_user_id,
+            "active_subscriptions": len(_sub_refs),
+            "subscription_keys": sorted(_sub_refs.keys()),
+            "last_error": _last_error,
+        }
 
 
 def _sub_key(
@@ -107,6 +132,7 @@ def _ensure_ws(proc: "Processor", user_id: str) -> Any | None:
             return _sdk
         sdk = proc.get_session_breeze(user_id)
         if sdk is None:
+            _note_error("WebSocket connect: no broker session for user_id=%s", user_id)
             return None
         try:
             sdk.ws_connect()
@@ -114,9 +140,12 @@ def _ensure_ws(proc: "Processor", user_id: str) -> Any | None:
             _sdk = sdk
             _sdk_user_id = user_id
             _connected = True
+            _clear_error()
+            _logger.info("WebSocket connected for user_id=%s", user_id)
             return sdk
         except Exception as exc:
-            _logger.warning("WebSocket connect failed: %s", exc)
+            _connected = False
+            _note_error("WebSocket connect failed for user_id=%s: %s", user_id, exc)
             return None
 
 
@@ -145,7 +174,7 @@ def subscribe_option(
     else:
         r = "put"
     try:
-        sdk.subscribe_feeds(
+        result = sdk.subscribe_feeds(
             exchange_code=exchange_code,
             stock_code=stock_code,
             expiry_date=expiry_display,
@@ -156,9 +185,32 @@ def subscribe_option(
             get_exchange_quotes=True,
         )
         time.sleep(0.02)
+        if isinstance(result, dict):
+            st = result.get("Status") or result.get("status")
+            if st not in (200, None):
+                err = (
+                    result.get("Error")
+                    or result.get("error")
+                    or result.get("message")
+                    or str(result)
+                )
+                _note_error("subscribe_feeds ICICI error %s: %s", key, err)
+                with _lock:
+                    _sub_refs[key] = max(0, _sub_refs.get(key, 1) - 1)
+                return False
+        _logger.info(
+            "subscribe_feeds ok user_id=%s key=%s exchange=%s stock=%s expiry=%s strike=%s right=%s",
+            user_id,
+            key,
+            exchange_code,
+            stock_code,
+            expiry_display,
+            strike,
+            r,
+        )
         return True
     except Exception as exc:
-        _logger.debug("subscribe_feeds failed %s: %s", key, exc)
+        _note_error("subscribe_feeds failed %s: %s", key, exc)
         with _lock:
             _sub_refs[key] = max(0, _sub_refs.get(key, 1) - 1)
         return False
@@ -234,9 +286,11 @@ def ensure_chain_subscriptions(
 
 def ws_connect_playground(proc: "Processor", user_id: str) -> dict[str, Any]:
     sdk = _ensure_ws(proc, user_id)
+    status = get_playground_status()
     if sdk is None:
-        return {"ok": False, "error": "No broker session"}
-    return {"ok": True, "message": "WebSocket connected"}
+        err = _last_error or "No broker session"
+        return {"ok": False, "error": err, **status}
+    return {"ok": True, "message": "WebSocket connected", **status}
 
 
 def ws_disconnect_playground() -> dict[str, Any]:
@@ -266,16 +320,55 @@ def remove_playground_listener(cb: Any) -> None:
 
 
 def playground_subscribe(proc: "Processor", user_id: str, params: dict[str, Any]) -> dict[str, Any]:
+    stock_code = str(params.get("stock_code") or "").strip()
+    expiry_display = str(params.get("expiry_date") or "").strip()
+    right = str(params.get("right") or "call").strip()
+    strike_raw = str(params.get("strike_price") or "").strip()
+    if not stock_code:
+        err = "stock_code is required"
+        _note_error("subscribe validation: %s", err)
+        return {"ok": False, "error": err, **get_playground_status()}
+    if not expiry_display:
+        err = "expiry_date is required (e.g. 26-Jun-2026)"
+        _note_error("subscribe validation: %s", err)
+        return {"ok": False, "error": err, **get_playground_status()}
+    if not strike_raw:
+        err = "strike_price is required"
+        _note_error("subscribe validation: %s", err)
+        return {"ok": False, "error": err, **get_playground_status()}
+    try:
+        strike = int(float(strike_raw))
+    except (TypeError, ValueError):
+        err = f"invalid strike_price: {strike_raw!r}"
+        _note_error("subscribe validation: %s", err)
+        return {"ok": False, "error": err, **get_playground_status()}
+    if strike <= 0:
+        err = "strike_price must be greater than zero"
+        _note_error("subscribe validation: %s", err)
+        return {"ok": False, "error": err, **get_playground_status()}
+
     ok = subscribe_option(
         proc,
         user_id,
         str(params.get("exchange_code") or cfg.NFO),
-        str(params.get("stock_code") or ""),
-        str(params.get("expiry_date") or ""),
-        int(float(str(params.get("strike_price") or "0"))),
-        str(params.get("right") or "call"),
+        stock_code,
+        expiry_display,
+        strike,
+        right,
     )
-    return {"ok": ok, "message": "Subscribed" if ok else "Subscribe failed"}
+    status = get_playground_status()
+    if ok:
+        return {
+            "ok": True,
+            "message": f"Subscribed to {stock_code} {expiry_display} {strike} {right}",
+            **status,
+        }
+    return {
+        "ok": False,
+        "error": _last_error or "Subscribe failed",
+        "message": _last_error or "Subscribe failed",
+        **status,
+    }
 
 
 def shutdown_websocket() -> None:

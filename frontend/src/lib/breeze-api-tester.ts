@@ -63,12 +63,27 @@ export const RISK_GROUP_LABEL: Record<BreezeApiCatalogEntry["risk_level"], strin
   gtt: "GTT",
 };
 
+export type BreezeApiWsStatus = {
+  ok?: boolean;
+  connected?: boolean;
+  user_id?: string | null;
+  active_subscriptions?: number;
+  subscription_keys?: string[];
+  last_error?: string | null;
+  message?: string;
+  error?: string;
+};
+
 export function wsConnectPlayground() {
-  return apiClient.post<{ ok: boolean; message?: string }>(`${BASE}/ws/connect`, {});
+  return apiClient.post<BreezeApiWsStatus>(`${BASE}/ws/connect`, {});
 }
 
 export function wsDisconnectPlayground() {
-  return apiClient.post<{ ok: boolean; message?: string }>(`${BASE}/ws/disconnect`, {});
+  return apiClient.post<BreezeApiWsStatus>(`${BASE}/ws/disconnect`, {});
+}
+
+export function wsGetPlaygroundStatus() {
+  return apiClient.get<BreezeApiWsStatus>(`${BASE}/ws/status`);
 }
 
 export function wsSubscribePlayground(params: {
@@ -78,10 +93,7 @@ export function wsSubscribePlayground(params: {
   strike_price: string;
   right: string;
 }) {
-  return apiClient.post<{ ok: boolean; message?: string }, typeof params>(
-    `${BASE}/ws/subscribe`,
-    params,
-  );
+  return apiClient.post<BreezeApiWsStatus, typeof params>(`${BASE}/ws/subscribe`, params);
 }
 
 export function wsStreamUrl(): string {

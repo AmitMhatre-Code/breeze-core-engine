@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AppShell } from "@/components/layout/AppShell";
@@ -20,6 +20,7 @@ import {
   wsSubscribePlayground,
   type BreezeApiCatalogEntry,
   type BreezeApiInvokeResponse,
+  type BreezeApiWsStatus,
 } from "@/lib/breeze-api-tester";
 
 const inputCls =
@@ -40,6 +41,21 @@ function formatResponse(payload: BreezeApiInvokeResponse | null, invokeError: st
   }
 }
 
+function formatWsStatus(payload: BreezeApiWsStatus | null, fallback: string): string {
+  if (!payload) return fallback;
+  const parts: string[] = [];
+  if (payload.message) parts.push(payload.message);
+  if (payload.error) parts.push(payload.error);
+  if (payload.connected != null) {
+    parts.push(payload.connected ? "ICICI socket: connected" : "ICICI socket: not connected");
+  }
+  if (payload.active_subscriptions != null) {
+    parts.push(`${payload.active_subscriptions} active subscription(s)`);
+  }
+  if (payload.last_error) parts.push(`Last error: ${payload.last_error}`);
+  return parts.length ? parts.join(" · ") : fallback;
+}
+
 export default function BreezeApiPlaygroundPage() {
   const qc = useQueryClient();
   const [selectedMethod, setSelectedMethod] = useState("");
@@ -47,6 +63,9 @@ export default function BreezeApiPlaygroundPage() {
   const [lastResponse, setLastResponse] = useState<BreezeApiInvokeResponse | null>(null);
   const [invokeError, setInvokeError] = useState<string | null>(null);
   const [wsTicks, setWsTicks] = useState<string[]>([]);
+  const [wsStatus, setWsStatus] = useState("Not connected. Click Connect, fill contract fields, Subscribe, then Start tick stream.");
+  const [wsStreamOpen, setWsStreamOpen] = useState(false);
+  const wsStreamRef = useRef<EventSource | null>(null);
   const [wsForm, setWsForm] = useState({
     exchange_code: "NFO",
     stock_code: "NIFTY",
@@ -155,20 +174,85 @@ export default function BreezeApiPlaygroundPage() {
     }
   };
 
-  const wsConnectM = useMutation({ mutationFn: wsConnectPlayground });
-  const wsDisconnectM = useMutation({ mutationFn: wsDisconnectPlayground });
+  const wsConnectM = useMutation({
+    mutationFn: wsConnectPlayground,
+    onSuccess: (data) => setWsStatus(formatWsStatus(data, "Connect finished")),
+    onError: (e) => setWsStatus(e instanceof Error ? e.message : "Connect failed"),
+  });
+  const wsDisconnectM = useMutation({
+    mutationFn: wsDisconnectPlayground,
+    onSuccess: (data) => {
+      setWsStreamOpen(false);
+      setWsStatus(formatWsStatus(data, "Disconnected"));
+    },
+    onError: (e) => setWsStatus(e instanceof Error ? e.message : "Disconnect failed"),
+  });
   const wsSubscribeM = useMutation({
     mutationFn: () => wsSubscribePlayground(wsForm),
+    onSuccess: (data) => {
+      if (data.ok === false) {
+        setWsStatus(formatWsStatus(data, "Subscribe failed"));
+        return;
+      }
+      setWsStatus(formatWsStatus(data, "Subscribed"));
+    },
+    onError: (e) => setWsStatus(e instanceof Error ? e.message : "Subscribe failed"),
   });
 
   const startWsStream = () => {
+    wsStreamRef.current?.close();
     setWsTicks([]);
+    setWsStatus("Opening tick stream…");
     const es = new EventSource(wsStreamUrl(), { withCredentials: true });
-    es.onmessage = (ev) => {
-      setWsTicks((prev) => [ev.data, ...prev].slice(0, 40));
+    wsStreamRef.current = es;
+
+    es.addEventListener("ws_status", (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data) as BreezeApiWsStatus;
+        setWsStatus(formatWsStatus(payload, "Stream status"));
+        setWsStreamOpen(Boolean(payload.connected));
+      } catch {
+        setWsStatus("Invalid ws_status payload from server.");
+      }
+    });
+    es.addEventListener("ws_error", (event) => {
+      const msgEvent = event as MessageEvent;
+      if (!msgEvent.data) {
+        setWsStatus("WebSocket stream error (empty payload).");
+        return;
+      }
+      try {
+        const payload = JSON.parse(msgEvent.data) as { message?: string; last_error?: string };
+        setWsStatus(payload.message || payload.last_error || "WebSocket stream error.");
+      } catch {
+        setWsStatus("Invalid ws_error payload from server.");
+      }
+    });
+    es.addEventListener("ws_tick", (event) => {
+      setWsTicks((prev) => [(event as MessageEvent).data, ...prev].slice(0, 40));
+    });
+    es.addEventListener("ws_ping", (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data) as BreezeApiWsStatus & { ts?: number };
+        setWsStreamOpen(Boolean(payload.connected));
+        if (payload.last_error) {
+          setWsStatus(formatWsStatus(payload, "Waiting for ticks"));
+        }
+      } catch {
+        /* ignore malformed ping */
+      }
+    });
+    es.onerror = () => {
+      setWsStreamOpen(false);
+      setWsStatus("Tick stream transport error (login expired or network issue).");
+      es.close();
+      if (wsStreamRef.current === es) wsStreamRef.current = null;
     };
-    return () => es.close();
+
+    return es;
   };
+
+  useEffect(() => () => wsStreamRef.current?.close(), []);
 
   return (
     <AppShell>
@@ -327,6 +411,15 @@ export default function BreezeApiPlaygroundPage() {
             watch ticks below.
           </p>
         </header>
+        <p
+          className={`rounded-md border px-3 py-2 text-xs ${
+            wsStreamOpen
+              ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+              : "border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-300"
+          }`}
+        >
+          {wsStatus}
+        </p>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="app-btn-outline" onClick={() => wsConnectM.mutate()}>
             Connect
@@ -338,6 +431,10 @@ export default function BreezeApiPlaygroundPage() {
             Start tick stream
           </button>
         </div>
+        <p className="text-xs app-text-muted">
+          expiry_date format: <span className="font-mono">26-Jun-2026</span>. WebSocket ticks only arrive
+          during NSE/BSE market hours.
+        </p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {(["exchange_code", "stock_code", "expiry_date", "strike_price", "right"] as const).map((k) => (
             <label key={k} className="block text-xs">
