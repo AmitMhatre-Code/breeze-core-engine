@@ -136,16 +136,40 @@ def run_reference_data_load(*, force: bool = False, trigger_mode: str = "manual"
                 processor().update_ICICImaster()
                 _set_source("scrip", progress_pct=80, message="Publishing scrip index to cache")
                 scrip_index.publish_scrip_index_from_db(version=batch_version)
-                _set_source("scrip", in_progress=False, progress_pct=100, message="Scrip master loaded")
-                _record_ingest("scrip", ok=True, source_date=now_ist().date().isoformat(), row_count=0, url=cfg.ICICI_MASTERFILE_URL)
+                scrip_rows = scrip_index.scrip_master_row_count()
+                _set_source(
+                    "scrip",
+                    in_progress=False,
+                    progress_pct=100,
+                    message=f"Scrip master loaded ({scrip_rows} rows)",
+                )
+                _record_ingest(
+                    "scrip",
+                    ok=True,
+                    source_date=now_ist().date().isoformat(),
+                    row_count=scrip_rows,
+                    url=cfg.ICICI_MASTERFILE_URL,
+                )
             except Exception as exc:
                 ok_all = False
                 _set_source("scrip", in_progress=False, progress_pct=100, message=f"Scrip master failed: {exc}")
                 _record_ingest("scrip", ok=False, source_date=None, row_count=0, url=cfg.ICICI_MASTERFILE_URL, notes=str(exc))
         else:
             scrip_index.publish_scrip_index_from_db(version=batch_version)
-            _set_source("scrip", in_progress=False, progress_pct=100, message="Scrip index published (mock mode)")
-            _record_ingest("scrip", ok=True, source_date=now_ist().date().isoformat(), row_count=0, url=None)
+            scrip_rows = scrip_index.scrip_master_row_count()
+            _set_source(
+                "scrip",
+                in_progress=False,
+                progress_pct=100,
+                message=f"Scrip index published (mock mode, {scrip_rows} rows)",
+            )
+            _record_ingest(
+                "scrip",
+                ok=True,
+                source_date=now_ist().date().isoformat(),
+                row_count=scrip_rows,
+                url=None,
+            )
 
         # SPAN baseline
         _set_source("span", in_progress=True, progress_pct=20, message="Refreshing NSE SPAN baseline")
@@ -163,9 +187,9 @@ def run_reference_data_load(*, force: bool = False, trigger_mode: str = "manual"
         _record_ingest(
             "span",
             ok=span_ok,
-            source_date=str(success.get("archive_date") or "") or None,
-            row_count=int(success.get("contracts_loaded") or 0),
-            url=str(success.get("source_url") or "") or None,
+            source_date=str(success.get("source_date") or success.get("archive_date") or "") or None,
+            row_count=int(success.get("inserted_rows") or success.get("contracts_loaded") or 0),
+            url=str(success.get("source_url") or success.get("source_file") or "") or None,
             notes=None if span_ok else str(span_out.get("Error") or ""),
         )
 

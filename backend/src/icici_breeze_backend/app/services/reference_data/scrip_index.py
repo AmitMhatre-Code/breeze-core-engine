@@ -26,6 +26,16 @@ def _scrip_master_connection():
     return sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB)
 
 
+def scrip_master_row_count() -> int:
+    try:
+        with _scrip_master_connection() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM scrip_master").fetchone()
+            return int(row[0]) if row else 0
+    except Exception:
+        _logger.debug("scrip_master row count check failed", exc_info=True)
+        return 0
+
+
 def _expiry_to_display(raw: Any) -> str:
     if isinstance(raw, dt.date):
         return raw.strftime("%d-%b-%Y")
