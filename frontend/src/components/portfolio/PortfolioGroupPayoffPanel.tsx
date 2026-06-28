@@ -100,6 +100,8 @@ type Props = {
   exchangeCode: string;
   expiryDisplay: string;
   rows: PortfolioPositionRecord[];
+  /** Proposed protective wing to overlay on payoff (hedge preview). */
+  proposedLeg?: StrategyLeg | null;
 };
 
 const profitClass = "text-emerald-700 dark:text-emerald-400";
@@ -112,6 +114,7 @@ export function PortfolioGroupPayoffPanel({
   exchangeCode,
   expiryDisplay,
   rows,
+  proposedLeg = null,
 }: Props) {
   const cq = useQuery({
     queryKey: [
@@ -143,10 +146,13 @@ export function PortfolioGroupPayoffPanel({
     [chainSuccess],
   );
 
-  const legs = useMemo(
-    () => rowsToStrategyLegs(rows, lotSize),
-    [rows, lotSize],
-  );
+  const legs = useMemo(() => {
+    const base = rowsToStrategyLegs(rows, lotSize);
+    if (!proposedLeg) return base;
+    return [...base, proposedLeg];
+  }, [rows, lotSize, proposedLeg]);
+
+  const hasProposedHedge = proposedLeg != null;
 
   const strikes = useMemo(
     () =>
@@ -311,9 +317,15 @@ export function PortfolioGroupPayoffPanel({
           <p className="mb-2 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
             Solid green = P&amp;L at expiry; dotted violet = mark-to-model now.
             Amber dashes = breakevens. Uses average entry and chain IV.
+            {hasProposedHedge ? (
+              <span className="mt-1 block font-medium text-sky-700 dark:text-sky-300">
+                Includes proposed hedge leg (Buy {proposedLeg!.right}{" "}
+                {proposedLeg!.strike}).
+              </span>
+            ) : null}
           </p>
           <PayoffChart
-            key={`${stockCode}-${expiryDisplay}-${minS}-${maxS}`}
+            key={`${stockCode}-${expiryDisplay}-${minS}-${maxS}-${proposedLeg?.id ?? "none"}`}
             idle={!hasLegs}
             xs={xs}
             ys={ys}

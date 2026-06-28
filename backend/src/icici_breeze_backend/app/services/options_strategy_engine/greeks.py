@@ -15,6 +15,10 @@ def _norm_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
+def _norm_pdf(x: float) -> float:
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
 def norm_ppf(p: float) -> float:
     """Inverse standard normal CDF (Acklam rational approximation)."""
     p = min(max(p, 1e-12), 1.0 - 1e-12)
@@ -102,6 +106,25 @@ def bs_delta(
         return 0.0
     call_delta = _norm_cdf(d1)
     return call_delta if right == "Call" else call_delta - 1.0
+
+
+def bs_gamma(
+    spot: float,
+    strike: float,
+    t: float,
+    sigma: float,
+    *,
+    r: float = DEFAULT_R,
+    q: float = DEFAULT_Q,
+) -> float:
+    """Black-Scholes gamma (mirrors frontend blackScholes.ts bsGamma)."""
+    if t <= 0 or sigma <= 0 or spot <= 0 or strike <= 0:
+        return 0.0
+    d1 = _bs_d1(spot, strike, t, sigma, r=r, q=q)
+    if d1 is None:
+        return 0.0
+    sqrt_t = math.sqrt(t)
+    return (math.exp(-q * t) * _norm_pdf(d1)) / (spot * sigma * sqrt_t)
 
 
 def bs_theta(

@@ -1,11 +1,24 @@
 "use client";
 
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useState, type MouseEvent } from "react";
 import Link from "next/link";
+import {
+  OrderExecutionConfirmDialog,
+  type ExecutionPreviewLeg,
+} from "@/components/order/OrderExecutionConfirmDialog";
 import { PortfolioGroupPayoffPanel } from "@/components/portfolio/PortfolioGroupPayoffPanel";
+import { PortfolioHedgePanel } from "@/components/portfolio/PortfolioHedgePanel";
+import type { StrategyHedgeCandidate } from "@/lib/hedge/api";
+import {
+  candidateToExecutionLeg,
+  candidateToStrategyLeg,
+} from "@/lib/hedge/legs";
 import { buildPortfolioPositionGroups } from "@/lib/portfolio/groupPositions";
+import type { PortfolioPositionGroup } from "@/lib/portfolio/groupPositions";
 import { ltpAsOrderPrice, squareOffToOrderPayload } from "@/lib/order-confirm";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
+import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
+import type { StrategyLeg } from "@/lib/strategy-builder/types";
 
 /**
  * Matches legacy `templates/portfolio.html` fed by `get_positions` (see
@@ -178,6 +191,10 @@ const btnPrimaryTable =
   "app-btn-primary shrink-0 px-2.5 py-1.5 text-xs font-medium 2xl:px-3 2xl:py-2 2xl:text-sm";
 const btnPrimaryCard =
   "app-btn-primary px-3 py-2.5 text-sm font-medium";
+const btnHedgeTable =
+  "app-btn-secondary shrink-0 px-2.5 py-1.5 text-xs font-medium 2xl:px-3 2xl:py-2 2xl:text-sm";
+const btnHedgeCard =
+  "app-btn-secondary shrink-0 px-3 py-2 text-sm font-medium";
 
 function childRowKey(groupKey: string, localIdx: number): string {
   return `${groupKey}-${localIdx}`;
@@ -254,6 +271,66 @@ type OpenPositionsTableProps = {
   emptyMessage?: string;
 };
 
+function GroupHedgeButton({
+  className,
+  active,
+  onClick,
+}: {
+  className: string;
+  active: boolean;
+  onClick: (e: MouseEvent) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={className}
+      aria-pressed={active}
+      onClick={onClick}
+    >
+      {active ? "Hedging…" : "Hedge"}
+    </button>
+  );
+}
+
+function GroupExpandedExtras({
+  g,
+  hedgeActive,
+  proposedLeg,
+  selectedCandidate,
+  onSelectCandidate,
+  onLotSizeChange,
+  onExecuteHedge,
+}: {
+  g: PortfolioPositionGroup;
+  hedgeActive: boolean;
+  proposedLeg: StrategyLeg | null;
+  selectedCandidate: StrategyHedgeCandidate | null;
+  onSelectCandidate: (c: StrategyHedgeCandidate | null) => void;
+  onLotSizeChange: (lotSize: number) => void;
+  onExecuteHedge: () => void;
+}) {
+  return (
+    <>
+      <PortfolioGroupPayoffPanel
+        stockCode={g.stockCode}
+        exchangeCode={g.exchangeCode}
+        expiryDisplay={g.expiryDate}
+        rows={g.rows}
+        proposedLeg={proposedLeg}
+      />
+      {hedgeActive ? (
+        <PortfolioHedgePanel
+          group={g}
+          selectedCandidate={selectedCandidate}
+          onSelectCandidate={onSelectCandidate}
+          onExecute={onExecuteHedge}
+          onLotSizeChange={onLotSizeChange}
+        />
+      ) : null}
+    </>
+  );
+}
+
 export function OpenPositionsTable({
   positions,
   emptyMessage = "No positions to display",
@@ -265,13 +342,95 @@ export function OpenPositionsTable({
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(),
   );
-  const toggleGroup = useCallback((key: string) => {
+  const [hedgeActiveGroupKey, setHedgeActiveGroupKey] = useState<string | null>(
+    null,
+  );
+  const [selectedCandidate, setSelectedCandidate] =
+    useState<StrategyHedgeCandidate | null>(null);
+  const [hedgeLotSize, setHedgeLotSize] = useState(1);
+  const [executeOpen, setExecuteOpen] = useState(false);
+
+  const hedgeActiveGroup = useMemo(
+    () => groups.find((g) => g.key === hedgeActiveGroupKey) ?? null,
+    [groups, hedgeActiveGroupKey],
+  );
+
+  const proposedLegForActive = useMemo(() => {
+    if (!selectedCandidate || hedgeLotSize <= 0) return null;
+    return candidateToStrategyLeg(selectedCandidate, hedgeLotSize);
+  }, [selectedCandidate, hedgeLotSize]);
+
+  const executeLegs: ExecutionPreviewLeg[] = useMemo(
+    () => (selectedCandidate ? [candidateToExecutionLeg(selectedCandidate)] : []),
+    [selectedCandidate],
+  );
+
+  const { chunkQty, setChunkQty, defaultsQuery, chunkReady } = useBreakChunkQty({
+    stockCode: hedgeActiveGroup?.stockCode ?? "",
+    exchangeCode: hedgeActiveGroup?.exchangeCode ?? "NFO",
+    expiryDisplay: hedgeActiveGroup?.expiryDate ?? "",
+    enabled: executeOpen,
+  });
+
+  const clearHedgeState = useCallback(() => {
+    setHedgeActiveGroupKey(null);
+    setSelectedCandidate(null);
+    setHedgeLotSize(1);
+    setExecuteOpen(false);
+  }, []);
+
+  const toggleGroup = useCallback(
+    (key: string) => {
+      setExpandedGroups((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) {
+          next.delete(key);
+          if (hedgeActiveGroupKey === key) {
+            setHedgeActiveGroupKey(null);
+            setSelectedCandidate(null);
+            setHedgeLotSize(1);
+            setExecuteOpen(false);
+          }
+        } else {
+          next.add(key);
+        }
+        return next;
+      });
+    },
+    [hedgeActiveGroupKey],
+  );
+
+  const openHedgeForGroup = useCallback((key: string) => {
     setExpandedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      next.add(key);
       return next;
     });
+    setHedgeActiveGroupKey(key);
+    setSelectedCandidate(null);
+    setHedgeLotSize(1);
+    setExecuteOpen(false);
+  }, []);
+
+  const handleHedgeButtonClick = useCallback(
+    (e: MouseEvent, groupKey: string) => {
+      e.stopPropagation();
+      if (hedgeActiveGroupKey === groupKey) {
+        clearHedgeState();
+        return;
+      }
+      openHedgeForGroup(groupKey);
+    },
+    [clearHedgeState, hedgeActiveGroupKey, openHedgeForGroup],
+  );
+
+  const handleExecuteHedge = useCallback(() => {
+    if (!selectedCandidate || !hedgeActiveGroup) return;
+    setExecuteOpen(true);
+  }, [hedgeActiveGroup, selectedCandidate]);
+
+  const handleExecuteClose = useCallback(() => {
+    setExecuteOpen(false);
   }, []);
 
   const childRowNumber = useMemo(() => {
@@ -405,7 +564,13 @@ export function OpenPositionsTable({
                         >
                           —
                         </td>
-                        <td className={`${tdBase} text-right align-middle`} />
+                        <td className={`${tdBase} text-right align-middle`}>
+                          <GroupHedgeButton
+                            className={btnHedgeTable}
+                            active={hedgeActiveGroupKey === g.key}
+                            onClick={(e) => handleHedgeButtonClick(e, g.key)}
+                          />
+                        </td>
                       </tr>
                       {isOpen
                         ? g.rows.map((row, localIdx) => {
@@ -485,11 +650,22 @@ export function OpenPositionsTable({
                       {isOpen ? (
                         <tr className="app-table-row">
                           <td className="p-0 align-top" colSpan={13}>
-                            <PortfolioGroupPayoffPanel
-                              stockCode={g.stockCode}
-                              exchangeCode={g.exchangeCode}
-                              expiryDisplay={g.expiryDate}
-                              rows={g.rows}
+                            <GroupExpandedExtras
+                              g={g}
+                              hedgeActive={hedgeActiveGroupKey === g.key}
+                              proposedLeg={
+                                hedgeActiveGroupKey === g.key
+                                  ? proposedLegForActive
+                                  : null
+                              }
+                              selectedCandidate={
+                                hedgeActiveGroupKey === g.key
+                                  ? selectedCandidate
+                                  : null
+                              }
+                              onSelectCandidate={setSelectedCandidate}
+                              onLotSizeChange={setHedgeLotSize}
+                              onExecuteHedge={handleExecuteHedge}
                             />
                           </td>
                         </tr>
@@ -524,19 +700,20 @@ export function OpenPositionsTable({
                 key={`card-group-${g.key}`}
                 className="app-card-muted overflow-hidden text-sm"
               >
-                <button
-                  type="button"
-                  aria-expanded={isOpen}
-                  className="flex w-full items-start gap-3 p-4 text-left sm:p-5"
-                  onClick={() => toggleGroup(g.key)}
-                >
-                  <span
+                <div className="flex items-start gap-3 p-4 sm:p-5">
+                  <button
+                    type="button"
+                    aria-expanded={isOpen}
                     className="mt-0.5 shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400"
-                    aria-hidden
+                    onClick={() => toggleGroup(g.key)}
                   >
                     {isOpen ? "▼" : "▶"}
-                  </span>
-                  <div className="min-w-0 flex-1 space-y-2">
+                  </button>
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 space-y-2 text-left"
+                    onClick={() => toggleGroup(g.key)}
+                  >
                     <h3 className="text-base font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
                       {groupTitle}
                     </h3>
@@ -562,8 +739,13 @@ export function OpenPositionsTable({
                       <span className="app-text-muted">ELM (sum):</span>{" "}
                       {elmSum != null ? formatSpanElmLakhs(elmSum) : "—"}
                     </p>
-                  </div>
-                </button>
+                  </button>
+                  <GroupHedgeButton
+                    className={btnHedgeCard}
+                    active={hedgeActiveGroupKey === g.key}
+                    onClick={(e) => handleHedgeButtonClick(e, g.key)}
+                  />
+                </div>
                 {isOpen ? (
                   <div className="border-t border-zinc-200/80 dark:border-zinc-700/80">
                     <div className="space-y-3 p-4 sm:space-y-4 sm:p-5">
@@ -638,11 +820,20 @@ export function OpenPositionsTable({
                         );
                       })}
                     </div>
-                    <PortfolioGroupPayoffPanel
-                      stockCode={g.stockCode}
-                      exchangeCode={g.exchangeCode}
-                      expiryDisplay={g.expiryDate}
-                      rows={g.rows}
+                    <GroupExpandedExtras
+                      g={g}
+                      hedgeActive={hedgeActiveGroupKey === g.key}
+                      proposedLeg={
+                        hedgeActiveGroupKey === g.key
+                          ? proposedLegForActive
+                          : null
+                      }
+                      selectedCandidate={
+                        hedgeActiveGroupKey === g.key ? selectedCandidate : null
+                      }
+                      onSelectCandidate={setSelectedCandidate}
+                      onLotSizeChange={setHedgeLotSize}
+                      onExecuteHedge={handleExecuteHedge}
                     />
                   </div>
                 ) : null}
@@ -651,6 +842,23 @@ export function OpenPositionsTable({
           })
         )}
       </div>
+
+      {hedgeActiveGroup && selectedCandidate ? (
+        <OrderExecutionConfirmDialog
+          open={executeOpen}
+          onClose={handleExecuteClose}
+          stockCode={hedgeActiveGroup.stockCode}
+          exchangeCode={hedgeActiveGroup.exchangeCode}
+          expiryDisplay={hedgeActiveGroup.expiryDate}
+          legs={executeLegs}
+          controlledChunk={{
+            chunkQty,
+            onChunkQtyChange: setChunkQty,
+            defaultsQuery,
+            chunkReady,
+          }}
+        />
+      ) : null}
     </>
   );
 }

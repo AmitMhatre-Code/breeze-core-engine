@@ -15,6 +15,7 @@ from icici_breeze_backend.app.api.v1 import route_book
 from icici_breeze_backend.app.api.v1 import route_performance
 from icici_breeze_backend.app.api.v1 import route_admin
 from icici_breeze_backend.app.api.v1 import route_strategy_builder
+from icici_breeze_backend.app.api.v1 import route_hedge
 from icici_breeze_backend.app.api.v1 import route_dev_mock
 from icici_breeze_backend.app.api.v1 import route_deployment
 from icici_breeze_backend.app.api.v1 import route_terms
@@ -45,3 +46,4 @@ v1_router.include_router(
     tags=[""],
     include_in_schema=False,
 )
+v1_router.include_router(route_hedge.router, prefix="", include_in_schema=False)
