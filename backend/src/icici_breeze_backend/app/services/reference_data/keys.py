@@ -31,6 +31,22 @@ def bhav_index_key(version: int, exchange_segment: str) -> str:
     return f"{version_prefix(version)}:bhav:{exchange_segment.lower()}:index"
 
 
+def span_baseline_meta_key(version: int, exchange_code: str) -> str:
+    return f"{version_prefix(version)}:span:{exchange_code.upper()}:meta"
+
+
+def span_baseline_sheet_key(
+    version: int,
+    exchange_code: str,
+    short_name: str,
+    expiry_display: str,
+) -> str:
+    return (
+        f"{version_prefix(version)}:span:"
+        f"{exchange_code.upper()}:{short_name.upper()}:{expiry_display}"
+    )
+
+
 def ws_quote_key(
     exchange_code: str,
     short_name: str,

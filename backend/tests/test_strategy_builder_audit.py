@@ -19,7 +19,10 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
     QuoteRow,
 )
-from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_EXCHANGE
+from icici_breeze_backend.app.services.nsccl_baseline import (
+    MARGIN_SOURCE_BREEZE,
+    MARGIN_SOURCE_EXCHANGE,
+)
 from icici_breeze_backend.audit.strategy_builder_audit import (
     StrategyBuilderAuditSession,
     _MAX_AUDIT_LOGS_PER_USER,
@@ -698,6 +701,131 @@ class TestProcessorIciciAudit(unittest.TestCase):
         self.assertEqual(stats["total"], 1)
         self.assertEqual(stats["by_api"]["margin_calculator"]["success"], 1)
         mock_breeze.margin_calculator.assert_called_once()
+
+    def test_margin_source_override_uses_baseline_while_user_on_breeze(self):
+        from icici_breeze_backend.app.services.processor import processor
+
+        proc = processor()
+        legs = [
+            {
+                "stock_code": "NIFTY",
+                "exchange_code": "NFO",
+                "expiry_date": "09-Jun-2025",
+                "product_type": "Options",
+                "right": "Call",
+                "strike_price": "23500",
+                "quantity": "75",
+                "action": "Sell",
+            }
+        ]
+        mock_breeze = MagicMock()
+        with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch.object(
+            proc,
+            "get_strategy_builder_margin_source",
+            return_value=MARGIN_SOURCE_BREEZE,
+        ), patch(
+            "icici_breeze_backend.app.services.processor.resolve_exchange_baseline_margin",
+            return_value={"found": True, "span_margin_required": 42_000.0},
+        ):
+            res = proc.strategy_builder_margin(
+                "u1",
+                "NFO",
+                legs,
+                margin_source_override=MARGIN_SOURCE_EXCHANGE,
+            )
+        self.assertEqual(res["Status"], 200)
+        self.assertEqual(res["Success"]["span_margin_required"], 42_000.0)
+        self.assertEqual(res["Success"]["margin_source"], MARGIN_SOURCE_EXCHANGE)
+        mock_breeze.margin_calculator.assert_not_called()
+
+    def test_baseline_only_missing_contract_returns_null_span(self):
+        from icici_breeze_backend.app.services.processor import processor
+
+        proc = processor()
+        legs = [
+            {
+                "stock_code": "NIFTY",
+                "exchange_code": "NFO",
+                "expiry_date": "09-Jun-2025",
+                "product_type": "Options",
+                "right": "Call",
+                "strike_price": "23500",
+                "quantity": "75",
+                "action": "Sell",
+            }
+        ]
+        mock_breeze = MagicMock()
+        with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch.object(
+            proc,
+            "get_strategy_builder_margin_source",
+            return_value=MARGIN_SOURCE_EXCHANGE,
+        ), patch(
+            "icici_breeze_backend.app.services.processor.resolve_exchange_baseline_margin",
+            return_value={"found": False},
+        ):
+            res = proc.strategy_builder_margin(
+                "u1",
+                "NFO",
+                legs,
+                margin_source_override=MARGIN_SOURCE_EXCHANGE,
+                baseline_only=True,
+            )
+        self.assertEqual(res["Status"], 200)
+        self.assertIsNone(res["Success"]["span_margin_required"])
+        self.assertEqual(len(res["Success"]["warnings"]), 1)
+        mock_breeze.margin_calculator.assert_not_called()
+
+    def test_baseline_only_all_legs_found_sums_net_margin(self):
+        from icici_breeze_backend.app.services.processor import processor
+
+        proc = processor()
+        legs = [
+            {
+                "stock_code": "NIFTY",
+                "exchange_code": "NFO",
+                "expiry_date": "09-Jun-2025",
+                "product_type": "Options",
+                "right": "Call",
+                "strike_price": "23500",
+                "quantity": "75",
+                "action": "Sell",
+            },
+            {
+                "stock_code": "NIFTY",
+                "exchange_code": "NFO",
+                "expiry_date": "09-Jun-2025",
+                "product_type": "Options",
+                "right": "Put",
+                "strike_price": "23000",
+                "quantity": "75",
+                "action": "Sell",
+            },
+        ]
+        mock_breeze = MagicMock()
+
+        def _baseline(**kwargs):
+            if kwargs.get("right") == "Call":
+                return {"found": True, "span_margin_required": 50_000.0}
+            return {"found": True, "span_margin_required": 30_000.0}
+
+        with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch.object(
+            proc,
+            "get_strategy_builder_margin_source",
+            return_value=MARGIN_SOURCE_BREEZE,
+        ), patch(
+            "icici_breeze_backend.app.services.processor.resolve_exchange_baseline_margin",
+            side_effect=lambda **kwargs: _baseline(**kwargs),
+        ):
+            res = proc.strategy_builder_margin(
+                "u1",
+                "NFO",
+                legs,
+                margin_source_override=MARGIN_SOURCE_EXCHANGE,
+                baseline_only=True,
+            )
+        self.assertEqual(res["Status"], 200)
+        self.assertEqual(res["Success"]["span_margin_required"], 80_000.0)
+        mock_breeze.margin_calculator.assert_not_called()
 
 
 if __name__ == "__main__":

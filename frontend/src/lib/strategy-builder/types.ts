@@ -61,6 +61,41 @@ export type MarginApiResponse = {
   Success?: Record<string, unknown> | null;
 };
 
+export type MarginApiRequest = {
+  legs: {
+    stock_code: string;
+    exchange_code: string;
+    expiry_date: string;
+    product_type: string;
+    right: OptionRight;
+    strike_price: string;
+    quantity: string;
+    price: string;
+    action: OrderSide;
+    aggressive_limit?: boolean;
+  }[];
+  margin_source?: "breeze_api" | "exchange_baseline";
+  baseline_only?: boolean;
+};
+
+export type BasketLegMarginEntry = {
+  lots: number;
+  span: number | null;
+  loading?: boolean;
+};
+
+export type SpanBaselineContract = {
+  margin_per_lot: number;
+  lot_size: number;
+};
+
+export type SpanBaselineSheet = {
+  found: boolean;
+  contracts: Record<string, SpanBaselineContract>;
+  source_date?: string | null;
+  source_file?: string | null;
+};
+
 export type ExecuteLegResult = {
   index: number;
   success: boolean;

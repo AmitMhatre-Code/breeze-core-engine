@@ -1,53 +1,48 @@
 "use client";
 
-import { LegPositionChip } from "@/components/strategy-builder/LegPositionChip";
-import { LegQuantityInput } from "@/components/strategy-builder/LegQuantityInput";
-import { MarginRefreshIconButton } from "@/components/strategy-builder/MarginRefreshIconButton";
 import { InfoPopover } from "@/components/strategy-builder/InfoPopover";
-import {
-  formatNetPremiumCompactInr,
-  formatOptionSymbolLabel,
-} from "@/lib/strategy-builder/leg-ui-helpers";
-import { sb } from "@/lib/strategy-builder/ui";
-import type { StrategyLeg } from "@/lib/strategy-builder/types";
+import { LegQuantityInput } from "@/components/strategy-builder/LegQuantityInput";
+import { cloneLeg, LegRowActions } from "@/components/strategy-builder/LegRowActions";
+import { LegRightToggle, LegSideToggle } from "@/components/strategy-builder/LegToggles";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
-
-export type LegMarginEntry = {
-  lots: number;
-  span: number | null;
-  error?: string;
-};
+import { formatLegMargin } from "@/lib/strategy-builder/leg-ui-helpers";
+import { sb } from "@/lib/strategy-builder/ui";
+import type {
+  BasketLegMarginEntry,
+  OptionRight,
+  OrderSide,
+  StrategyLeg,
+} from "@/lib/strategy-builder/types";
 
 export function StrategyLegsPanel({
   sectionTitle = "4. Legs",
-  stockCode,
-  expiryDate,
   lotSize,
   legs,
   onLegsChange,
-  legMarginCache,
-  legMarginFetchingId,
-  onFetchLegMargin,
+  onRightChange,
+  onSideChange,
+  onPriceChange,
+  legMargins,
+  spanBaselineLoading = false,
   totalsNetPremium,
   totalsMargin,
   onExecute,
   executeDisabled,
 }: {
   sectionTitle?: string;
-  stockCode: string;
-  expiryDate: string;
   lotSize: number;
   legs: StrategyLeg[];
   onLegsChange: (updater: (prev: StrategyLeg[]) => StrategyLeg[]) => void;
-  legMarginCache: Record<string, LegMarginEntry>;
-  legMarginFetchingId: string | null;
-  onFetchLegMargin: (leg: StrategyLeg) => void;
+  onRightChange: (legId: string, right: OptionRight) => void;
+  onSideChange: (legId: string, side: OrderSide) => void;
+  onPriceChange: (legId: string, premiumPerUnit: number | undefined) => void;
+  legMargins: Record<string, BasketLegMarginEntry>;
+  spanBaselineLoading?: boolean;
   totalsNetPremium: number;
   totalsMargin: {
-    sum: number;
     hasPositiveLots: boolean;
-    hasMarginFetchInFlight: boolean;
-    hasMissingFreshMargin: boolean;
+    isFetching: boolean;
+    netMargin: number | null;
   };
   onExecute: () => void;
   executeDisabled: boolean;
@@ -62,13 +57,13 @@ export function StrategyLegsPanel({
       ) : (
         <>
           <div className="app-table-wrap">
-            <table className="w-full min-w-[62rem] border-collapse text-left text-xs">
+            <table className="w-full min-w-[58rem] border-collapse text-left text-xs">
               <thead className="app-table-head">
                 <tr>
-                  <th className="px-2 py-1.5 font-medium">Option</th>
+                  <th className="px-2 py-1.5 font-medium">Strike</th>
+                  <th className="px-2 py-1.5 font-medium">Type</th>
                   <th className="px-2 py-1.5 font-medium">Position</th>
                   <th className="px-2 py-1.5 font-medium">Quantity</th>
-                  <th className="px-2 py-1.5 font-medium">Lot Size</th>
                   <th className="px-2 py-1.5 font-medium">
                     <span className="inline-flex items-center gap-1">
                       Aggressive
@@ -79,8 +74,15 @@ export function StrategyLegsPanel({
                   </th>
                   <th className="px-2 py-1.5 font-medium">Price</th>
                   <th className="px-2 py-1.5 font-medium">Premium</th>
-                  <th className="px-2 py-1.5 font-medium">Margin / Lot</th>
-                  <th className="px-2 py-1.5 font-medium">Margin</th>
+                  <th className="px-2 py-1.5 font-medium">
+                    <span className="inline-flex items-center gap-1">
+                      Margin
+                      <InfoPopover title="SPAN margin" ariaLabel="SPAN margin help">
+                        Approximate margin from the exchange SPAN file for the quantity
+                        entered.
+                      </InfoPopover>
+                    </span>
+                  </th>
                   <th className="px-2 py-1.5 font-medium" />
                 </tr>
               </thead>
@@ -91,45 +93,45 @@ export function StrategyLegsPanel({
                   const premTotal = aggressive
                     ? null
                     : (l.premiumPerUnit ?? 0) * qtyU;
-                  const legEntry = legMarginCache[l.id];
-                  const legMarginFresh = legEntry != null && legEntry.lots === l.lots;
-                  const marginPerLot =
-                    legMarginFresh &&
-                    legEntry.span != null &&
-                    Number.isFinite(legEntry.span) &&
-                    l.lots > 0
-                      ? legEntry.span / l.lots
-                      : null;
+                  const legEntry = legMargins[l.id];
                   return (
                     <tr key={l.id} className="app-table-row">
-                      <td className="max-w-[14rem] px-2 py-1.5 text-xs text-zinc-800 dark:text-zinc-200">
-                        {formatOptionSymbolLabel(
-                          stockCode,
-                          expiryDate,
-                          l.strike,
-                          l.right,
-                        )}
+                      <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                        {l.strike.toLocaleString("en-IN")}
                       </td>
                       <td className="px-2 py-1.5">
-                        <LegPositionChip side={l.side} />
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <LegQuantityInput
-                          legId={l.id}
-                          lots={l.lots}
-                          lotSize={lotSize}
-                          onLotsChange={(newLots) =>
-                            onLegsChange((prev) =>
-                              prev.map((x) =>
-                                x.id === l.id ? { ...x, lots: newLots } : x,
-                              ),
-                            )
-                          }
-                          className={`${sb.tableInput} w-[7.5rem] tabular-nums`}
+                        <LegRightToggle
+                          value={l.right}
+                          onChange={(right) => onRightChange(l.id, right)}
                         />
                       </td>
-                      <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
-                        {lotSize.toLocaleString("en-IN")}
+                      <td className="px-2 py-1.5">
+                        <LegSideToggle
+                          value={l.side}
+                          onChange={(side) => onSideChange(l.id, side)}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex flex-col gap-0.5">
+                          <LegQuantityInput
+                            legId={l.id}
+                            lots={l.lots}
+                            lotSize={lotSize}
+                            maxDigits={8}
+                            snapWhileTyping
+                            onLotsChange={(newLots) =>
+                              onLegsChange((prev) =>
+                                prev.map((x) =>
+                                  x.id === l.id ? { ...x, lots: newLots } : x,
+                                ),
+                              )
+                            }
+                            className={`${sb.tableInput} w-[8ch] max-w-[5.5rem] tabular-nums`}
+                          />
+                          <span className="text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                            Lot {lotSize.toLocaleString("en-IN")}
+                          </span>
+                        </div>
                       </td>
                       <td className="px-2 py-1.5">
                         <input
@@ -161,6 +163,7 @@ export function StrategyLegsPanel({
                           min={0}
                           step={0.05}
                           disabled={aggressive}
+                          aria-label="Limit price per unit"
                           className={`${sb.tableInput} w-[6rem] tabular-nums disabled:cursor-not-allowed disabled:opacity-50`}
                           value={
                             aggressive
@@ -171,17 +174,9 @@ export function StrategyLegsPanel({
                           }
                           onChange={(e) => {
                             const v = parseFloat(e.target.value);
-                            onLegsChange((prev) =>
-                              prev.map((x) =>
-                                x.id === l.id
-                                  ? {
-                                      ...x,
-                                      premiumPerUnit: Number.isFinite(v)
-                                        ? v
-                                        : undefined,
-                                    }
-                                  : x,
-                              ),
+                            onPriceChange(
+                              l.id,
+                              Number.isFinite(v) ? v : undefined,
                             );
                           }}
                         />
@@ -192,87 +187,52 @@ export function StrategyLegsPanel({
                           : formatIndianMoneyCompact(premTotal)}
                       </td>
                       <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
-                        {l.lots <= 0 ? (
-                          "—"
-                        ) : legMarginFetchingId === l.id ? (
-                          "…"
-                        ) : marginPerLot != null && Number.isFinite(marginPerLot) ? (
-                          formatIndianMoneyCompact(marginPerLot)
-                        ) : legMarginFresh && legEntry?.error ? (
-                          "—"
-                        ) : (
-                          <MarginRefreshIconButton
-                            label="Fetch margin for this leg"
-                            onClick={() => onFetchLegMargin(l)}
-                          />
-                        )}
-                      </td>
-                      <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
-                        {l.lots <= 0 ? (
-                          "—"
-                        ) : legMarginFetchingId === l.id ? (
-                          "…"
-                        ) : legMarginFresh &&
-                          legEntry?.span != null &&
-                          Number.isFinite(legEntry.span) ? (
-                          formatIndianMoneyCompact(legEntry.span)
-                        ) : legMarginFresh && legEntry?.error ? (
-                          legEntry.error
-                        ) : (
-                          <MarginRefreshIconButton
-                            label="Fetch margin for this leg"
-                            onClick={() => onFetchLegMargin(l)}
-                          />
-                        )}
+                        {formatLegMargin(l, legEntry, spanBaselineLoading)}
                       </td>
                       <td className="px-2 py-1.5">
-                        <button
-                          type="button"
-                          className="text-red-600 dark:text-red-400"
-                          onClick={() =>
+                        <LegRowActions
+                          leg={l}
+                          onClone={() =>
+                            onLegsChange((prev) => [...prev, cloneLeg(l)])
+                          }
+                          onDelete={() =>
                             onLegsChange((prev) =>
                               prev.filter((x) => x.id !== l.id),
                             )
                           }
-                        >
-                          Delete
-                        </button>
+                        />
                       </td>
                     </tr>
                   );
                 })}
-                {legs.length > 0 ? (
-                  <tr className="border-t border-zinc-200/80 bg-zinc-50/80 dark:border-zinc-700/80 dark:bg-zinc-900/40">
-                    <td
-                      className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300"
-                      colSpan={6}
-                    >
-                      Totals
-                    </td>
-                    <td
-                      className={`px-2 py-2 text-xs font-semibold tabular-nums ${
-                        totalsNetPremium < 0
-                          ? "text-red-700 dark:text-red-400"
-                          : "text-zinc-900 dark:text-zinc-100"
-                      }`}
-                    >
-                      {formatNetPremiumCompactInr(totalsNetPremium)}
-                    </td>
-                    <td className="px-2 py-2 text-xs text-zinc-500 dark:text-zinc-400">
-                      —
-                    </td>
-                    <td className="px-2 py-2 text-xs font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                      {!totalsMargin.hasPositiveLots
-                        ? "—"
-                        : totalsMargin.hasMarginFetchInFlight
-                          ? "…"
-                          : totalsMargin.hasMissingFreshMargin
-                            ? "—"
-                            : formatIndianMoneyCompact(totalsMargin.sum)}
-                    </td>
-                    <td className="px-2 py-2" />
-                  </tr>
-                ) : null}
+                <tr className="border-t border-zinc-200/80 bg-zinc-50/80 dark:border-zinc-700/80 dark:bg-zinc-900/40">
+                  <td
+                    className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300"
+                    colSpan={6}
+                  >
+                    Totals
+                  </td>
+                  <td
+                    className={`px-2 py-2 text-xs font-semibold tabular-nums ${
+                      totalsNetPremium < 0
+                        ? "text-red-700 dark:text-red-400"
+                        : "text-zinc-900 dark:text-zinc-100"
+                    }`}
+                  >
+                    {formatIndianMoneyCompact(totalsNetPremium)}
+                  </td>
+                  <td className="px-2 py-2 text-xs font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                    {!totalsMargin.hasPositiveLots
+                      ? "—"
+                      : totalsMargin.isFetching || spanBaselineLoading
+                        ? "…"
+                        : totalsMargin.netMargin != null &&
+                            Number.isFinite(totalsMargin.netMargin)
+                          ? formatIndianMoneyCompact(totalsMargin.netMargin)
+                          : "—"}
+                  </td>
+                  <td className="px-2 py-2" />
+                </tr>
               </tbody>
             </table>
           </div>

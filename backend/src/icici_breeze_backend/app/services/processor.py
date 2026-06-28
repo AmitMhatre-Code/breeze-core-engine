@@ -3181,6 +3181,8 @@ class processor():
         exchange_code: str,
         legs: list,
         *,
+        margin_source_override: str | None = None,
+        baseline_only: bool = False,
         audit: "StrategyBuilderAuditSession | None" = None,
         audit_context: dict[str, Any] | None = None,
         audit_rationale: str | None = None,
@@ -3193,10 +3195,13 @@ class processor():
                 "Error": "Unable to connect to broker. Please check your credentials and re-login.",
                 "Success": None,
             }
-        margin_source = self.get_strategy_builder_margin_source(user_id)
+        margin_source = margin_source_override or self.get_strategy_builder_margin_source(user_id)
+        if margin_source not in (MARGIN_SOURCE_BREEZE, MARGIN_SOURCE_EXCHANGE):
+            margin_source = MARGIN_SOURCE_BREEZE
         margin_input = []
         baseline_total = 0.0
         warnings: list[dict] = []
+        missing_baseline_count = 0
         can_use_baseline = margin_source == MARGIN_SOURCE_EXCHANGE
         for leg in legs:
             ed = (leg.get("expiry_date") or "").strip()
@@ -3230,6 +3235,7 @@ class processor():
                 if baseline_margin.get("found"):
                     baseline_total += float(baseline_margin.get("span_margin_required") or 0.0)
                     continue
+                missing_baseline_count += 1
                 warnings.append(
                     {
                         "type": "baseline_missing_contract",
@@ -3237,9 +3243,15 @@ class processor():
                         "expiry_date": _expiry_api_to_display(expiry_api),
                         "strike_price": strike_price,
                         "right": right,
-                        "message": "Contract missing in Exchange Risk Baseline; Breeze fallback used.",
+                        "message": (
+                            "Contract missing in Exchange Risk Baseline."
+                            if baseline_only
+                            else "Contract missing in Exchange Risk Baseline; Breeze fallback used."
+                        ),
                     }
                 )
+                if baseline_only:
+                    continue
             margin_input.append(
                 {
                     "strike_price": strike_price,
@@ -3251,6 +3263,16 @@ class processor():
                     "right": right,
                 }
             )
+        if can_use_baseline and baseline_only and missing_baseline_count > 0:
+            return {
+                "Status": 200,
+                "Error": "",
+                "Success": {
+                    "span_margin_required": None,
+                    "margin_source": MARGIN_SOURCE_EXCHANGE,
+                    "warnings": warnings,
+                },
+            }
         if can_use_baseline and not margin_input:
             return {
                 "Status": 200,

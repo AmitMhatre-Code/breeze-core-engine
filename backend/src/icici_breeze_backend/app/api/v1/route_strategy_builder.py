@@ -28,6 +28,8 @@ from icici_breeze_backend.app.domain.strategy_builder import (
     StrategyBuilderLegResult,
     StrategyBuilderMarginRequest,
     StrategyBuilderMarginResponse,
+    SpanBaselineContract,
+    SpanBaselineSheetResponse,
     StrategyBuilderUnderlyingsResponse,
 )
 from icici_breeze_backend.app.services.options_strategy_engine import run_propose_trades
@@ -80,6 +82,42 @@ async def list_underlyings(
         raw = breeze.fetch_stock_codes(exchange_code=exchange_code) or []
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderUnderlyings")
     return StrategyBuilderUnderlyingsResponse(underlyings=raw)
+
+
+@router.get("/span-baseline", response_model=SpanBaselineSheetResponse)
+async def get_span_baseline_sheet(
+    stock_code: str,
+    expiry_date: str,
+    exchange_code: str = cfg.NFO,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    if not stock_code.strip() or not expiry_date.strip():
+        raise HTTPException(status_code=400, detail="stock_code and expiry_date required")
+    from icici_breeze_backend.app.services.reference_data.span_baseline_store import (
+        get_span_baseline_sheet as load_span_sheet,
+    )
+
+    raw = load_span_sheet(exchange_code, stock_code.strip(), expiry_date.strip())
+    contracts: dict[str, SpanBaselineContract] = {}
+    for key, entry in (raw.get("contracts") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        try:
+            contracts[str(key)] = SpanBaselineContract(
+                margin_per_lot=float(entry.get("margin_per_lot")),
+                lot_size=int(entry.get("lot_size") or 0),
+            )
+        except (TypeError, ValueError):
+            continue
+    AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderSpanBaseline")
+    return SpanBaselineSheetResponse(
+        found=bool(raw.get("found")),
+        contracts=contracts,
+        source_date=raw.get("source_date"),
+        source_file=raw.get("source_file"),
+    )
 
 
 @router.get("/chain", response_model=StrategyBuilderChainResponse)
@@ -246,11 +284,20 @@ async def post_margin(
     for leg in legs:
         if leg.get("exchange_code") != ex0:
             raise HTTPException(status_code=400, detail="All legs must use the same exchange_code")
-    data = breeze.strategy_builder_margin(ctx.user_id, ex0, legs)
+    effective_margin_source = (
+        body.margin_source or breeze.get_strategy_builder_margin_source(ctx.user_id)
+    )
+    data = breeze.strategy_builder_margin(
+        ctx.user_id,
+        ex0,
+        legs,
+        margin_source_override=body.margin_source,
+        baseline_only=body.baseline_only,
+    )
     if data.get("Status") == 200 and "Success" in data and isinstance(data.get("Success"), dict):
-        data["Success"]["margin_source"] = breeze.get_strategy_builder_margin_source(ctx.user_id)
+        data["Success"]["margin_source"] = effective_margin_source
     elif data.get("Status") != 200:
-        data["margin_source"] = breeze.get_strategy_builder_margin_source(ctx.user_id)
+        data["margin_source"] = effective_margin_source
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderMargin")
     return StrategyBuilderMarginResponse(**data)
 

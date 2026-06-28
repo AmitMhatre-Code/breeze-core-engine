@@ -1,5 +1,9 @@
-import type { StrategyLeg } from "@/lib/strategy-builder/types";
+import type {
+  BasketLegMarginEntry,
+  StrategyLeg,
+} from "@/lib/strategy-builder/types";
 import type { MarginApiResponse } from "@/lib/strategy-builder/types";
+import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 
 export function parseNum(v: unknown): number {
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -47,6 +51,18 @@ export function formatOptionSymbolLabel(
 
 export function formatNetPremiumCompactInr(v: number): string {
   if (!Number.isFinite(v)) return "—";
-  const abs = Math.abs(v).toLocaleString("en-IN", { maximumFractionDigits: 0 });
-  return v < 0 ? `(₹${abs})` : `₹${abs}`;
+  return formatIndianMoneyCompact(v);
+}
+
+export function formatLegMargin(
+  leg: StrategyLeg,
+  entry: BasketLegMarginEntry | undefined,
+  spanBaselineLoading: boolean,
+): string {
+  if (leg.lots <= 0) return "—";
+  if (spanBaselineLoading || entry?.loading) return "…";
+  if (entry?.span != null && Number.isFinite(entry.span)) {
+    return formatIndianMoneyCompact(entry.span);
+  }
+  return "—";
 }

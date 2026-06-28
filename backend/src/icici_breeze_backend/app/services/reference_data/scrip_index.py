@@ -8,16 +8,15 @@ from collections import defaultdict
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.db.redis_client import cache_delete_pattern, cache_get_json, cache_set_json, get_redis
+from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.app.services.reference_data.aliases import scrip_short_name, underlying_aliases
 from icici_breeze_backend.app.services.reference_data.bhavcopy_common import display_from_iso_date
 from icici_breeze_backend.app.services.reference_data.keys import (
-    CURRENT_VERSION_KEY,
     exchange_code_map_key,
     strikes_key,
     underlyings_key,
-    version_prefix,
 )
+from icici_breeze_backend.app.services.reference_data.versioning import bump_refdata_version
 
 _logger = logging.getLogger(__name__)
 
@@ -59,18 +58,15 @@ def _expiry_to_iso(raw: Any) -> str:
 
 
 def _next_version() -> int:
+    from icici_breeze_backend.app.db.redis_client import get_redis
+    from icici_breeze_backend.app.services.reference_data.keys import CURRENT_VERSION_KEY
+
     raw = get_redis().get(CURRENT_VERSION_KEY)
     try:
         current = int(raw or "0")
     except (TypeError, ValueError):
         current = 0
     return current + 1
-
-
-def _purge_version(version: int) -> None:
-    if version <= 0:
-        return
-    cache_delete_pattern(f"{version_prefix(version)}:*")
 
 
 def publish_scrip_index_from_db(version: int | None = None) -> int:
@@ -136,19 +132,15 @@ def publish_scrip_index_from_db(version: int | None = None) -> int:
             )
 
     cache_set_json(exchange_code_map_key(ver), exchange_code_map)
-    prev_raw = get_redis().get(CURRENT_VERSION_KEY)
-    try:
-        prev = int(prev_raw or "0")
-    except (TypeError, ValueError):
-        prev = 0
-    get_redis().set(CURRENT_VERSION_KEY, str(ver))
-    if prev and prev != ver:
-        _purge_version(prev)
+    bump_refdata_version(ver)
     _logger.info("Published scrip index version %s", ver)
     return ver
 
 
 def current_version() -> int:
+    from icici_breeze_backend.app.db.redis_client import get_redis
+    from icici_breeze_backend.app.services.reference_data.keys import CURRENT_VERSION_KEY
+
     raw = get_redis().get(CURRENT_VERSION_KEY)
     try:
         return int(raw or "0")

@@ -374,6 +374,8 @@ def ingest_exchange_baseline_upload(
             "Success": None,
         }
 
+    _publish_span_baseline_to_redis()
+
     return {
         "Status": 200,
         "Error": "",
@@ -455,6 +457,7 @@ def refresh_exchange_risk_baseline() -> dict:
         inserted,
         skipped,
     )
+    _publish_span_baseline_to_redis()
     return {
         "Status": 200,
         "Error": "",
@@ -468,6 +471,17 @@ def refresh_exchange_risk_baseline() -> dict:
     }
 
 
+def _publish_span_baseline_to_redis() -> None:
+    try:
+        from icici_breeze_backend.app.services.reference_data.span_baseline_store import (
+            publish_span_baseline_from_db,
+        )
+
+        publish_span_baseline_from_db()
+    except Exception as exc:
+        _logger.warning("SPAN baseline Redis publish failed: %s", exc)
+
+
 def resolve_exchange_baseline_margin(
     exchange_code: str,
     stock_code: str,
@@ -476,6 +490,24 @@ def resolve_exchange_baseline_margin(
     right: str,
     quantity: int,
 ) -> dict:
+    try:
+        from icici_breeze_backend.app.services.reference_data.span_baseline_store import (
+            resolve_margin_from_store,
+        )
+
+        out = resolve_margin_from_store(
+            exchange_code=exchange_code,
+            stock_code=stock_code,
+            expiry_display=expiry_display,
+            strike_price=strike_price,
+            right=right,
+            quantity=quantity,
+        )
+        if out.get("found"):
+            return out
+    except Exception:
+        _logger.debug("SPAN baseline store lookup failed; falling back to SQLite", exc_info=True)
+
     option_type = "CE" if right == cfg.CALL else "PE"
     with _scrip_conn() as conn:
         row = conn.execute(

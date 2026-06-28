@@ -21,10 +21,7 @@ import {
   type TradeSortKey,
 } from "@/components/strategy-builder/TradeSortLink";
 import { SectionGate } from "@/components/strategy-builder/SectionGate";
-import {
-  StrategyLegsPanel,
-  type LegMarginEntry,
-} from "@/components/strategy-builder/StrategyLegsPanel";
+import { StrategyLegsPanel } from "@/components/strategy-builder/StrategyLegsPanel";
 import { StrategyPayoffPanel } from "@/components/strategy-builder/StrategyPayoffPanel";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -38,11 +35,13 @@ import {
   buildYourOwnSlotKey,
 } from "@/lib/strategy-builder/build-your-own";
 import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
+import { premiumFromChainRow } from "@/lib/strategy-builder/chain-quote";
 import { expiryDisplayToYears, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import {
-  legsQtySignature,
-  parseSpanMarginFromResponse,
-} from "@/lib/strategy-builder/leg-ui-helpers";
+  buildLegMarginsFromSheet,
+  computeNetSpanMargin,
+  fetchSpanBaselineSheet,
+} from "@/lib/strategy-builder/span-baseline";
 import { proposedLegsToStrategyLegs } from "@/lib/strategy-builder/map-proposed-legs";
 import {
   ALL_OUTLOOKS,
@@ -57,7 +56,6 @@ import { sb } from "@/lib/strategy-builder/ui";
 import type {
   BuilderMode,
   ChainRow,
-  MarginApiResponse,
   OptionRight,
   OrderSide,
   Outlook,
@@ -167,15 +165,9 @@ export default function StrategyBuilderPage() {
   const [ivShockPct, setIvShockPct] = useState(0);
   const [showGreeks, setShowGreeks] = useState(false);
   const [showToday, setShowToday] = useState(true);
-  const [legMarginCache, setLegMarginCache] = useState<
-    Record<string, LegMarginEntry>
-  >({});
-  const [legMarginFetchingId, setLegMarginFetchingId] = useState<string | null>(
-    null,
+  const [priceManuallyEdited, setPriceManuallyEdited] = useState<Set<string>>(
+    new Set(),
   );
-  const [strategyMarginValidSig, setStrategyMarginValidSig] = useState<
-    string | null
-  >(null);
   const [outlookFilter, setOutlookFilter] = useState<Set<Outlook>>(
     () => new Set(ALL_OUTLOOKS),
   );
@@ -229,6 +221,7 @@ export default function StrategyBuilderPage() {
 
   const chainSuccess =
     chainQ.data?.Status === 200 ? chainQ.data.Success : null;
+  const chainRows = chainSuccess?.chain_rows ?? [];
   const chainSpot = chainSuccess?.spot_price ?? null;
 
   const expiryOptions = useMemo(() => {
@@ -326,7 +319,6 @@ export default function StrategyBuilderPage() {
       setBuilderMode(category);
       setSelectedTradeId(null);
       setLegs([]);
-      setLegMarginCache({});
     },
     [],
   );
@@ -487,8 +479,7 @@ export default function StrategyBuilderPage() {
     (trade: ProposedTrade) => {
       setSelectedTradeId(tradeSelectionKey(trade));
       setLegs(proposedLegsToStrategyLegs(trade.legs, lotSize));
-      setLegMarginCache({});
-      setStrategyMarginValidSig(null);
+      setPriceManuallyEdited(new Set());
     },
     [lotSize],
   );
@@ -510,108 +501,87 @@ export default function StrategyBuilderPage() {
     [legs],
   );
 
-  const marginLegKeyStructural = useMemo(
-    () =>
-      JSON.stringify({
-        segmentExchange,
-        stockCode,
-        expiryDate,
-        lotSize,
-        legs: legs.map((l) => ({
-          id: l.id,
-          strike: l.strike,
-          right: l.right,
-          side: l.side,
-        })),
-      }),
-    [segmentExchange, stockCode, expiryDate, lotSize, legs],
-  );
-
-  const marginQ = useQuery({
-    queryKey: ["strategy-builder", "margin", marginLegKeyStructural],
-    queryFn: () =>
-      apiClient.post<MarginApiResponse>("/strategy-builder/margin", {
-        legs: legsWithQtyForMargin.map((l) => ({
-          stock_code: stockCode,
-          exchange_code: segmentExchange,
-          expiry_date: expiryDate,
-          product_type: "Options",
-          right: l.right,
-          strike_price: String(l.strike),
-          quantity: String(Math.round(l.lots * lotSize)),
-          price: String(l.premiumPerUnit ?? 0),
-          action: l.side,
-        })),
-      }),
-    enabled: Boolean(
-      stockCode && expiryDate && legsWithQtyForMargin.length > 0,
-    ),
-    staleTime: 5000,
+  const spanBaselineQ = useQuery({
+    queryKey: [
+      "strategy-builder",
+      "span-baseline",
+      segmentExchange,
+      stockCode,
+      expiryDate,
+    ],
+    queryFn: ({ signal }) =>
+      fetchSpanBaselineSheet(segmentExchange, stockCode, expiryDate, signal),
+    enabled: Boolean(stockCode.trim() && expiryDate.trim()),
+    staleTime: Infinity,
   });
 
-  const spanMargin = parseSpanMarginFromResponse(marginQ.data);
+  const spanSheet = spanBaselineQ.data;
+  const spanMargin = useMemo(
+    () => computeNetSpanMargin(spanSheet, legs, lotSize),
+    [spanSheet, legs, lotSize],
+  );
+
+  const legMargins = useMemo(
+    () =>
+      buildLegMarginsFromSheet(
+        spanSheet,
+        legs,
+        lotSize,
+        spanBaselineQ.isFetching,
+      ),
+    [spanSheet, legs, lotSize, spanBaselineQ.isFetching],
+  );
+
   const strategyBuilderMarginWarnings = useMemo(() => {
-    const raw = (marginQ.data?.Success as { warnings?: unknown } | undefined)
-      ?.warnings;
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map((w) => {
-        if (!w || typeof w !== "object") return "";
-        return String((w as Record<string, unknown>).message ?? "").trim();
-      })
-      .filter(Boolean);
-  }, [marginQ.data]);
+    if (
+      spanSheet &&
+      !spanSheet.found &&
+      legsWithQtyForMargin.length > 0
+    ) {
+      return ["Contract missing in Exchange Risk Baseline."];
+    }
+    return [];
+  }, [spanSheet, legsWithQtyForMargin.length]);
 
-  useEffect(() => {
-    if (marginQ.isFetching || !marginQ.isSuccess || !marginQ.data) return;
-    setStrategyMarginValidSig(legsQtySignature(legs));
-  }, [marginQ.isFetching, marginQ.dataUpdatedAt, marginQ.isSuccess, marginQ.data, legs]);
-
-  const strategyMarginQtyStale =
-    marginQ.isSuccess &&
-    strategyMarginValidSig !== null &&
-    strategyMarginValidSig !== legsQtySignature(legs);
-
-  const fetchLegMargin = useCallback(
-    async (leg: StrategyLeg) => {
-      if (!stockCode || !expiryDate || leg.lots <= 0) return;
-      setLegMarginFetchingId(leg.id);
-      try {
-        const res = await apiClient.post<MarginApiResponse>(
-          "/strategy-builder/margin",
-          {
-            legs: [
-              {
-                stock_code: stockCode,
-                exchange_code: segmentExchange,
-                expiry_date: expiryDate,
-                product_type: "Options",
-                right: leg.right,
-                strike_price: String(leg.strike),
-                quantity: String(Math.round(leg.lots * lotSize)),
-                price: String(leg.premiumPerUnit ?? 0),
-                action: leg.side,
-              },
-            ],
-          },
+  const onRightChange = useCallback(
+    (legId: string, right: OptionRight) => {
+      setLegs((prev) => {
+        const updated = prev.map((x) =>
+          x.id === legId ? { ...x, right } : x,
         );
-        const span = parseSpanMarginFromResponse(res);
-        setLegMarginCache((prev) => ({
-          ...prev,
-          [leg.id]: {
-            lots: leg.lots,
-            span,
-            error:
-              span == null
-                ? String(res.Error ?? "Margin unavailable")
-                : undefined,
-          },
-        }));
-      } finally {
-        setLegMarginFetchingId(null);
-      }
+        if (priceManuallyEdited.has(legId)) return updated;
+        const leg = updated.find((l) => l.id === legId);
+        if (!leg || leg.aggressiveLimit) return updated;
+        const prem = premiumFromChainRow(chainRows, leg.strike, right);
+        if (prem == null) return updated;
+        return updated.map((x) =>
+          x.id === legId ? { ...x, premiumPerUnit: prem } : x,
+        );
+      });
     },
-    [stockCode, expiryDate, segmentExchange, lotSize],
+    [chainRows, priceManuallyEdited],
+  );
+
+  const onSideChange = useCallback((legId: string, side: OrderSide) => {
+    setLegs((prev) =>
+      prev.map((x) => (x.id === legId ? { ...x, side } : x)),
+    );
+  }, []);
+
+  const onPriceChange = useCallback(
+    (legId: string, premiumPerUnit: number | undefined) => {
+      setPriceManuallyEdited((prev) => {
+        const next = new Set(prev);
+        next.add(legId);
+        return next;
+      });
+      setLegs((prev) =>
+        prev.map((x) =>
+          x.id === legId ? { ...x, premiumPerUnit } : x,
+        ),
+      );
+    },
+    [],
   );
 
   const totalsNetPremium = useMemo(() => {
@@ -626,26 +596,17 @@ export default function StrategyBuilderPage() {
   }, [legs, lotSize]);
 
   const totalsMargin = useMemo(() => {
-    let sum = 0;
-    let hasPositiveLots = false;
-    const hasMarginFetchInFlight = legMarginFetchingId != null;
-    let hasMissingFreshMargin = false;
-    for (const l of legs) {
-      if (l.lots <= 0) continue;
-      hasPositiveLots = true;
-      const entry = legMarginCache[l.id];
-      if (!entry || entry.lots !== l.lots) {
-        hasMissingFreshMargin = true;
-        continue;
-      }
-      if (entry.span != null && Number.isFinite(entry.span)) {
-        sum += entry.span;
-      } else {
-        hasMissingFreshMargin = true;
-      }
-    }
-    return { sum, hasPositiveLots, hasMarginFetchInFlight, hasMissingFreshMargin };
-  }, [legs, legMarginCache, legMarginFetchingId]);
+    const hasPositiveLots = legsWithQtyForMargin.length > 0;
+    return {
+      hasPositiveLots,
+      isFetching: spanBaselineQ.isFetching,
+      netMargin: hasPositiveLots ? spanMargin : null,
+    };
+  }, [
+    legsWithQtyForMargin.length,
+    spanBaselineQ.isFetching,
+    spanMargin,
+  ]);
 
   const { chunkQty, setChunkQty, defaultsQuery: chunkDefaultsQ, chunkReady } =
     useBreakChunkQty({
@@ -694,7 +655,7 @@ export default function StrategyBuilderPage() {
     setProposedData(null);
     setSelectedTradeId(null);
     setLegs([]);
-    setLegMarginCache({});
+    setPriceManuallyEdited(new Set());
     setBuilderMode("build_your_own");
   }, []);
 
@@ -1117,14 +1078,14 @@ export default function StrategyBuilderPage() {
           <SectionGate locked={!section4Ready}>
             <div id="strategy-builder-legs" className="space-y-5">
             <StrategyLegsPanel
-              stockCode={stockCode}
-              expiryDate={expiryDate}
               lotSize={lotSize}
               legs={legs}
               onLegsChange={setLegs}
-              legMarginCache={legMarginCache}
-              legMarginFetchingId={legMarginFetchingId}
-              onFetchLegMargin={(leg) => void fetchLegMargin(leg)}
+              onRightChange={onRightChange}
+              onSideChange={onSideChange}
+              onPriceChange={onPriceChange}
+              legMargins={legMargins}
+              spanBaselineLoading={spanBaselineQ.isFetching}
               totalsNetPremium={totalsNetPremium}
               totalsMargin={totalsMargin}
               onExecute={() => setExecutePreviewOpen(true)}
@@ -1149,10 +1110,14 @@ export default function StrategyBuilderPage() {
               showGreeks={showGreeks}
               onShowGreeksChange={setShowGreeks}
               spanMargin={spanMargin}
-              marginFetching={marginQ.isFetching}
-              marginQtyStale={strategyMarginQtyStale}
-              onRefreshMargin={() => void marginQ.refetch()}
-              marginError={marginQ.data?.Error ?? null}
+              marginFetching={spanBaselineQ.isFetching}
+              marginQtyStale={false}
+              onRefreshMargin={() => void spanBaselineQ.refetch()}
+              marginError={
+                spanBaselineQ.isError
+                  ? String(spanBaselineQ.error ?? "SPAN baseline unavailable")
+                  : null
+              }
               marginWarnings={strategyBuilderMarginWarnings}
             />
             </div>

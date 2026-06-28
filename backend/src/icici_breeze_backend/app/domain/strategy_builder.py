@@ -21,6 +21,8 @@ class StrategyBuilderLegIn(BaseModel):
 
 class StrategyBuilderMarginRequest(BaseModel):
     legs: List[StrategyBuilderLegIn] = Field(min_length=1, max_length=12)
+    margin_source: Optional[Literal["breeze_api", "exchange_baseline"]] = None
+    baseline_only: bool = False
 
 
 class StrategyBuilderExecuteLeg(StrategyBuilderLegIn):
@@ -63,3 +65,15 @@ class StrategyBuilderMarginResponse(BaseModel):
     Status: int
     Error: Optional[str] = None
     Success: Optional[dict[str, Any]] = None
+
+
+class SpanBaselineContract(BaseModel):
+    margin_per_lot: float
+    lot_size: int
+
+
+class SpanBaselineSheetResponse(BaseModel):
+    found: bool
+    contracts: dict[str, SpanBaselineContract] = Field(default_factory=dict)
+    source_date: Optional[str] = None
+    source_file: Optional[str] = None

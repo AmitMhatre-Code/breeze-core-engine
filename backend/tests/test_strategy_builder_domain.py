@@ -25,6 +25,24 @@ class TestStrategyBuilderDomain(unittest.TestCase):
         )
         self.assertEqual(len(body.legs), 1)
 
+    def test_margin_request_baseline_only_fields(self):
+        body = StrategyBuilderMarginRequest(
+            legs=[
+                StrategyBuilderLegIn(
+                    stock_code="NIFTY",
+                    expiry_date="27-Mar-2025",
+                    right="Call",
+                    strike_price="22000",
+                    quantity="75",
+                    action="Buy",
+                )
+            ],
+            margin_source="exchange_baseline",
+            baseline_only=True,
+        )
+        self.assertEqual(body.margin_source, "exchange_baseline")
+        self.assertTrue(body.baseline_only)
+
     def test_execute_request_with_idempotency(self):
         body = StrategyBuilderExecuteRequest(
             legs=[

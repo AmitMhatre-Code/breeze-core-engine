@@ -77,11 +77,13 @@ def bootstrap_reference_data_schedule() -> None:
 
 def bootstrap_reference_data_on_startup() -> None:
     """Load all reference data sources during application startup."""
-    from icici_breeze_backend.app.services.reference_data.bhavcopy_store import load_local_from_redis
+    from icici_breeze_backend.app.services.reference_data.cache_bootstrap import (
+        ensure_all_reference_data_cached,
+    )
     from icici_breeze_backend.app.services.reference_data.orchestrator import run_reference_data_load
 
     bootstrap_reference_data_schedule()
-    load_local_from_redis()
+    ensure_all_reference_data_cached()
     try:
         run_reference_data_load(force=True, trigger_mode="startup")
     except Exception:

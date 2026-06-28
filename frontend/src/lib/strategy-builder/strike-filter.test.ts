@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { filterStrikes } from "@/lib/strategy-builder/strike-filter";
 
 describe("filterStrikes", () => {
-  const strikes = [24000, 24500, 25000, 25500];
+  const strikes = [24000, 24500, 25000, 25050, 25500];
 
   it("returns all strikes when query is empty", () => {
     expect(filterStrikes(strikes, "")).toEqual(strikes);
@@ -11,7 +11,12 @@ describe("filterStrikes", () => {
 
   it("matches numeric prefix on raw strike", () => {
     expect(filterStrikes(strikes, "245")).toEqual([24500]);
-    expect(filterStrikes(strikes, "25")).toEqual([25000, 25500]);
+    expect(filterStrikes(strikes, "25")).toEqual([25000, 25050, 25500]);
+    expect(filterStrikes(strikes, "250")).toEqual([25000, 25050]);
+  });
+
+  it("does not match strikes where digits appear mid-string", () => {
+    expect(filterStrikes(strikes, "25")).not.toContain(24500);
   });
 
   it("matches digits stripped from formatted labels", () => {

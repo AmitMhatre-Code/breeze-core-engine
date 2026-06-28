@@ -1,55 +1,19 @@
 "use client";
 
-import type { LegMarginEntry } from "@/components/strategy-builder/StrategyLegsPanel";
 import { InfoPopover } from "@/components/strategy-builder/InfoPopover";
 import { LegQuantityInput } from "@/components/strategy-builder/LegQuantityInput";
-import { MarginRefreshIconButton } from "@/components/strategy-builder/MarginRefreshIconButton";
+import { cloneLeg, LegRowActions } from "@/components/strategy-builder/LegRowActions";
+import { LegRightToggle, LegSideToggle } from "@/components/strategy-builder/LegToggles";
 import { StrikeSelectPill } from "@/components/strategy-builder/StrikeSelectPill";
-import { formatNetPremiumCompactInr } from "@/lib/strategy-builder/leg-ui-helpers";
-import { sb } from "@/lib/strategy-builder/ui";
-import type { OptionRight, OrderSide, StrategyLeg } from "@/lib/strategy-builder/types";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
-
-function legDeleteLabel(leg: StrategyLeg): string {
-  const right = leg.right === "Call" ? "CE" : "PE";
-  return `Delete leg ${leg.strike.toLocaleString("en-IN")} ${right} ${leg.side}`;
-}
-
-function SegmentedToggle<T extends string>({
-  value,
-  options,
-  onChange,
-  ariaLabel,
-}: {
-  value: T;
-  options: { value: T; label: string; activeClass: string }[];
-  onChange: (v: T) => void;
-  ariaLabel: string;
-}) {
-  return (
-    <div
-      className="inline-flex rounded-md bg-zinc-100 p-0.5 ring-1 ring-zinc-200/80 dark:bg-zinc-800/80 dark:ring-zinc-700/80"
-      role="group"
-      aria-label={ariaLabel}
-    >
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          type="button"
-          aria-pressed={value === opt.value}
-          onClick={() => onChange(opt.value)}
-          className={`rounded px-2 py-0.5 text-[11px] font-semibold transition ${
-            value === opt.value
-              ? opt.activeClass
-              : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
-          }`}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+import { formatLegMargin } from "@/lib/strategy-builder/leg-ui-helpers";
+import { sb } from "@/lib/strategy-builder/ui";
+import type {
+  BasketLegMarginEntry,
+  OptionRight,
+  OrderSide,
+  StrategyLeg,
+} from "@/lib/strategy-builder/types";
 
 export function BasketLegsPanel({
   sectionNumber,
@@ -67,9 +31,8 @@ export function BasketLegsPanel({
   onRightChange,
   onSideChange,
   onPriceChange,
-  legMarginCache,
-  legMarginFetchingId,
-  onFetchLegMargin,
+  legMargins,
+  spanBaselineLoading = false,
   totalsNetPremium,
   totalsMargin,
   onExecute,
@@ -91,15 +54,13 @@ export function BasketLegsPanel({
   onRightChange: (legId: string, right: OptionRight) => void;
   onSideChange: (legId: string, side: OrderSide) => void;
   onPriceChange: (legId: string, premiumPerUnit: number | undefined) => void;
-  legMarginCache: Record<string, LegMarginEntry>;
-  legMarginFetchingId: string | null;
-  onFetchLegMargin: (leg: StrategyLeg) => void;
+  legMargins: Record<string, BasketLegMarginEntry>;
+  spanBaselineLoading?: boolean;
   totalsNetPremium: number;
   totalsMargin: {
-    sum: number;
     hasPositiveLots: boolean;
-    hasMarginFetchInFlight: boolean;
-    hasMissingFreshMargin: boolean;
+    isFetching: boolean;
+    netMargin: number | null;
   };
   onExecute: () => void;
   executeDisabled: boolean;
@@ -168,14 +129,13 @@ export function BasketLegsPanel({
         </p>
       ) : (
         <div className="app-table-wrap">
-          <table className="w-full min-w-[72rem] border-collapse text-left text-xs">
+          <table className="w-full min-w-[58rem] border-collapse text-left text-xs">
             <thead className="app-table-head">
               <tr>
                 <th className="px-2 py-1.5 font-medium">Strike</th>
                 <th className="px-2 py-1.5 font-medium">Type</th>
                 <th className="px-2 py-1.5 font-medium">Position</th>
                 <th className="px-2 py-1.5 font-medium">Quantity</th>
-                <th className="px-2 py-1.5 font-medium">Lot Size</th>
                 <th className="px-2 py-1.5 font-medium">
                   <span className="inline-flex items-center gap-1">
                     Aggressive
@@ -186,8 +146,15 @@ export function BasketLegsPanel({
                 </th>
                 <th className="px-2 py-1.5 font-medium">Price</th>
                 <th className="px-2 py-1.5 font-medium">Premium</th>
-                <th className="px-2 py-1.5 font-medium">Margin / Lot</th>
-                <th className="px-2 py-1.5 font-medium">Margin</th>
+                <th className="px-2 py-1.5 font-medium">
+                  <span className="inline-flex items-center gap-1">
+                    Margin
+                    <InfoPopover title="SPAN margin" ariaLabel="SPAN margin help">
+                      Approximate margin from the exchange SPAN file for the quantity
+                      entered.
+                    </InfoPopover>
+                  </span>
+                </th>
                 <th className="px-2 py-1.5 font-medium" />
               </tr>
             </thead>
@@ -198,15 +165,7 @@ export function BasketLegsPanel({
                 const premTotal = aggressive
                   ? null
                   : (l.premiumPerUnit ?? 0) * qtyU;
-                const legEntry = legMarginCache[l.id];
-                const legMarginFresh = legEntry != null && legEntry.lots === l.lots;
-                const marginPerLot =
-                  legMarginFresh &&
-                  legEntry.span != null &&
-                  Number.isFinite(legEntry.span) &&
-                  l.lots > 0
-                    ? legEntry.span / l.lots
-                    : null;
+                const legEntry = legMargins[l.id];
                 return (
                   <tr key={l.id} className="app-table-row">
                     <td className="px-2 py-1.5">
@@ -218,68 +177,42 @@ export function BasketLegsPanel({
                         layout="toolbar"
                         tone="default"
                         hideLabel
-                        rootClassName="min-w-[7rem]"
+                        rootClassName="w-[8ch] max-w-[7.5rem]"
                       />
                     </td>
                     <td className="px-2 py-1.5">
-                      <SegmentedToggle
+                      <LegRightToggle
                         value={l.right}
-                        ariaLabel="Call or Put"
-                        options={[
-                          {
-                            value: "Call" as const,
-                            label: "CE",
-                            activeClass:
-                              "bg-sky-100 text-sky-900 dark:bg-sky-950/50 dark:text-sky-300",
-                          },
-                          {
-                            value: "Put" as const,
-                            label: "PE",
-                            activeClass:
-                              "bg-violet-100 text-violet-900 dark:bg-violet-950/50 dark:text-violet-300",
-                          },
-                        ]}
                         onChange={(right) => onRightChange(l.id, right)}
                       />
                     </td>
                     <td className="px-2 py-1.5">
-                      <SegmentedToggle
+                      <LegSideToggle
                         value={l.side}
-                        ariaLabel="Buy or Sell"
-                        options={[
-                          {
-                            value: "Buy" as const,
-                            label: "Buy",
-                            activeClass:
-                              "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300",
-                          },
-                          {
-                            value: "Sell" as const,
-                            label: "Sell",
-                            activeClass:
-                              "bg-red-100 text-red-900 dark:bg-red-950/50 dark:text-red-300",
-                          },
-                        ]}
                         onChange={(side) => onSideChange(l.id, side)}
                       />
                     </td>
                     <td className="px-2 py-1.5">
-                      <LegQuantityInput
-                        legId={l.id}
-                        lots={l.lots}
-                        lotSize={lotSize}
-                        onLotsChange={(newLots) =>
-                          onLegsChange((prev) =>
-                            prev.map((x) =>
-                              x.id === l.id ? { ...x, lots: newLots } : x,
-                            ),
-                          )
-                        }
-                        className={`${sb.tableInput} w-[7.5rem] tabular-nums`}
-                      />
-                    </td>
-                    <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
-                      {lotSize.toLocaleString("en-IN")}
+                      <div className="flex flex-col gap-0.5">
+                        <LegQuantityInput
+                          legId={l.id}
+                          lots={l.lots}
+                          lotSize={lotSize}
+                          maxDigits={8}
+                          snapWhileTyping
+                          onLotsChange={(newLots) =>
+                            onLegsChange((prev) =>
+                              prev.map((x) =>
+                                x.id === l.id ? { ...x, lots: newLots } : x,
+                              ),
+                            )
+                          }
+                          className={`${sb.tableInput} w-[8ch] max-w-[5.5rem] tabular-nums`}
+                        />
+                        <span className="text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                          Lot {lotSize.toLocaleString("en-IN")}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-2 py-1.5">
                       <input
@@ -335,52 +268,20 @@ export function BasketLegsPanel({
                         : formatIndianMoneyCompact(premTotal)}
                     </td>
                     <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
-                      {l.lots <= 0 ? (
-                        "—"
-                      ) : legMarginFetchingId === l.id ? (
-                        "…"
-                      ) : marginPerLot != null && Number.isFinite(marginPerLot) ? (
-                        formatIndianMoneyCompact(marginPerLot)
-                      ) : legMarginFresh && legEntry?.error ? (
-                        "—"
-                      ) : (
-                        <MarginRefreshIconButton
-                          label="Fetch margin for this leg"
-                          onClick={() => onFetchLegMargin(l)}
-                        />
-                      )}
-                    </td>
-                    <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
-                      {l.lots <= 0 ? (
-                        "—"
-                      ) : legMarginFetchingId === l.id ? (
-                        "…"
-                      ) : legMarginFresh &&
-                        legEntry?.span != null &&
-                        Number.isFinite(legEntry.span) ? (
-                        formatIndianMoneyCompact(legEntry.span)
-                      ) : legMarginFresh && legEntry?.error ? (
-                        legEntry.error
-                      ) : (
-                        <MarginRefreshIconButton
-                          label="Fetch margin for this leg"
-                          onClick={() => onFetchLegMargin(l)}
-                        />
-                      )}
+                      {formatLegMargin(l, legEntry, spanBaselineLoading)}
                     </td>
                     <td className="px-2 py-1.5">
-                      <button
-                        type="button"
-                        className="text-red-600 dark:text-red-400"
-                        aria-label={legDeleteLabel(l)}
-                        onClick={() =>
+                      <LegRowActions
+                        leg={l}
+                        onClone={() =>
+                          onLegsChange((prev) => [...prev, cloneLeg(l)])
+                        }
+                        onDelete={() =>
                           onLegsChange((prev) =>
                             prev.filter((x) => x.id !== l.id),
                           )
                         }
-                      >
-                        Delete
-                      </button>
+                      />
                     </td>
                   </tr>
                 );
@@ -388,7 +289,7 @@ export function BasketLegsPanel({
               <tr className="border-t border-zinc-200/80 bg-zinc-50/80 dark:border-zinc-700/80 dark:bg-zinc-900/40">
                 <td
                   className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300"
-                  colSpan={7}
+                  colSpan={6}
                 >
                   Totals
                 </td>
@@ -399,19 +300,17 @@ export function BasketLegsPanel({
                       : "text-zinc-900 dark:text-zinc-100"
                   }`}
                 >
-                  {formatNetPremiumCompactInr(totalsNetPremium)}
-                </td>
-                <td className="px-2 py-2 text-xs text-zinc-500 dark:text-zinc-400">
-                  —
+                  {formatIndianMoneyCompact(totalsNetPremium)}
                 </td>
                 <td className="px-2 py-2 text-xs font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
                   {!totalsMargin.hasPositiveLots
                     ? "—"
-                    : totalsMargin.hasMarginFetchInFlight
+                    : totalsMargin.isFetching || spanBaselineLoading
                       ? "…"
-                      : totalsMargin.hasMissingFreshMargin
-                        ? "—"
-                        : formatIndianMoneyCompact(totalsMargin.sum)}
+                      : totalsMargin.netMargin != null &&
+                          Number.isFinite(totalsMargin.netMargin)
+                        ? formatIndianMoneyCompact(totalsMargin.netMargin)
+                        : "—"}
                 </td>
                 <td className="px-2 py-2" />
               </tr>

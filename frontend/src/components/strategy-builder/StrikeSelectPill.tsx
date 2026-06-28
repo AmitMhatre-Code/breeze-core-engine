@@ -118,7 +118,7 @@ export function StrikeSelectPill({
   };
 
   const handleInputChange = (next: string) => {
-    setQ(next.replace(/\D/g, ""));
+    setQ(next.replace(/\D/g, "").slice(0, 8));
     if (!open) setOpen(true);
   };
 

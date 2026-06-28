@@ -3,25 +3,21 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import sqlite3
 import threading
-from collections import defaultdict
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json, get_redis
+from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.app.services.reference_data.aliases import underlying_aliases
 from icici_breeze_backend.app.services.reference_data.bhavcopy_common import safe_float, safe_int
-from icici_breeze_backend.app.services.reference_data.keys import (
-    CURRENT_VERSION_KEY,
-    bhav_index_key,
-    bhav_meta_key,
-    version_prefix,
-)
+from icici_breeze_backend.app.services.reference_data.keys import bhav_index_key, bhav_meta_key
 from icici_breeze_backend.app.services.reference_data.scrip_index import (
     current_version,
     get_exchange_ticker,
     get_strikes,
 )
+from icici_breeze_backend.app.services.reference_data.versioning import bump_refdata_version
 
 _logger = logging.getLogger(__name__)
 _lock = threading.RLock()
@@ -32,9 +28,273 @@ _local: dict[str, Any] = {
     "bfo": {"meta": {}, "by_strike": {}},
 }
 
+_BHAVCOPY_DB_COLUMNS = (
+    "segment",
+    "stock_code",
+    "expiry_display",
+    "expiry_date",
+    "right",
+    "strike_price",
+    "ltp",
+    "best_bid_price",
+    "best_offer_price",
+    "total_buy_qty",
+    "total_sell_qty",
+    "open_interest",
+    "spot_price",
+    "open",
+    "high",
+    "low",
+    "previous_close",
+    "source_date",
+    "source_url",
+    "ingested_at",
+)
+
+
+def _scrip_conn() -> sqlite3.Connection:
+    return sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB)
+
+
+def ensure_fo_bhavcopy_table() -> None:
+    with _scrip_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fo_bhavcopy (
+                segment TEXT NOT NULL,
+                stock_code TEXT NOT NULL,
+                expiry_display TEXT NOT NULL,
+                expiry_date TEXT,
+                right TEXT NOT NULL,
+                strike_price INTEGER NOT NULL,
+                ltp TEXT,
+                best_bid_price TEXT,
+                best_offer_price TEXT,
+                total_buy_qty TEXT,
+                total_sell_qty TEXT,
+                open_interest TEXT,
+                spot_price TEXT,
+                open TEXT,
+                high TEXT,
+                low TEXT,
+                previous_close TEXT,
+                source_date TEXT NOT NULL,
+                source_url TEXT,
+                ingested_at TEXT NOT NULL,
+                PRIMARY KEY (segment, stock_code, expiry_display, right, strike_price)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_fo_bhavcopy_segment
+            ON fo_bhavcopy(segment)
+            """
+        )
+        conn.commit()
+
 
 def _segment_key(exchange_code: str) -> str:
     return "nfo" if exchange_code == cfg.NFO else "bfo"
+
+
+def _row_dict_from_db(
+    segment: str,
+    stock_code: str,
+    expiry_display: str,
+    expiry_date: str | None,
+    right: str,
+    strike_price: int,
+    ltp: str | None,
+    best_bid: str | None,
+    best_offer: str | None,
+    total_buy: str | None,
+    total_sell: str | None,
+    open_interest: str | None,
+    spot_price: str | None,
+    open_p: str | None,
+    high: str | None,
+    low: str | None,
+    previous_close: str | None,
+) -> dict[str, str]:
+    return {
+        "stock_code": str(stock_code or "").strip().upper(),
+        "expiry_display": str(expiry_display or "").strip(),
+        "expiry_date": str(expiry_date or "").strip(),
+        "right": str(right or "").strip(),
+        "strike_price": str(int(strike_price)),
+        "ltp": str(ltp or ""),
+        "best_bid_price": str(best_bid or ""),
+        "best_offer_price": str(best_offer or ""),
+        "total_buy_qty": str(total_buy or ""),
+        "total_sell_qty": str(total_sell or ""),
+        "open_interest": str(open_interest or ""),
+        "spot_price": str(spot_price or ""),
+        "open": str(open_p or ""),
+        "high": str(high or ""),
+        "low": str(low or ""),
+        "previous_close": str(previous_close or ""),
+        "segment": cfg.NFO if segment == "nfo" else cfg.BFO,
+    }
+
+
+def persist_bhavcopy_rows(
+    rows: list[dict[str, str]],
+    segment: str,
+    source_date: dt.date,
+    source_url: str,
+) -> None:
+    """Replace all bhavcopy rows for a segment in SQLite."""
+    ensure_fo_bhavcopy_table()
+    seg = segment.lower()
+    ingested_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    source_date_s = source_date.isoformat()
+    source_url_s = str(source_url or "")
+
+    batch: list[tuple] = []
+    for row in rows or []:
+        stock = str(row.get("stock_code") or "").strip().upper()
+        disp = str(row.get("expiry_display") or "").strip()
+        right = str(row.get("right") or "").strip()
+        try:
+            strike = int(float(str(row.get("strike_price") or "0")))
+        except (TypeError, ValueError):
+            continue
+        if not stock or not disp or not right or strike <= 0:
+            continue
+        batch.append(
+            (
+                seg,
+                stock,
+                disp,
+                str(row.get("expiry_date") or "").strip(),
+                right,
+                strike,
+                str(row.get("ltp") or ""),
+                str(row.get("best_bid_price") or ""),
+                str(row.get("best_offer_price") or ""),
+                str(row.get("total_buy_qty") or ""),
+                str(row.get("total_sell_qty") or ""),
+                str(row.get("open_interest") or ""),
+                str(row.get("spot_price") or ""),
+                str(row.get("open") or ""),
+                str(row.get("high") or ""),
+                str(row.get("low") or ""),
+                str(row.get("previous_close") or ""),
+                source_date_s,
+                source_url_s,
+                ingested_at,
+            )
+        )
+
+    with _scrip_conn() as conn:
+        conn.execute("DELETE FROM fo_bhavcopy WHERE segment = ?", (seg,))
+        if batch:
+            conn.executemany(
+                f"""
+                INSERT INTO fo_bhavcopy ({", ".join(_BHAVCOPY_DB_COLUMNS)})
+                VALUES ({", ".join("?" for _ in _BHAVCOPY_DB_COLUMNS)})
+                """,
+                batch,
+            )
+        conn.commit()
+    _logger.info("Persisted bhavcopy %s rows=%s date=%s", seg, len(batch), source_date_s)
+
+
+def bhavcopy_row_count(segment: str) -> int:
+    try:
+        ensure_fo_bhavcopy_table()
+        with _scrip_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM fo_bhavcopy WHERE segment = ?",
+                (segment.lower(),),
+            ).fetchone()
+            return int(row[0]) if row else 0
+    except Exception:
+        _logger.debug("bhavcopy row count failed", exc_info=True)
+        return 0
+
+
+def load_bhavcopy_rows_from_db(segment: str) -> list[dict[str, str]]:
+    ensure_fo_bhavcopy_table()
+    seg = segment.lower()
+    try:
+        with _scrip_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT stock_code, expiry_display, expiry_date, right, strike_price,
+                       ltp, best_bid_price, best_offer_price, total_buy_qty, total_sell_qty,
+                       open_interest, spot_price, open, high, low, previous_close
+                FROM fo_bhavcopy
+                WHERE segment = ?
+                """,
+                (seg,),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    out: list[dict[str, str]] = []
+    for row in rows:
+        out.append(_row_dict_from_db(seg, *row))
+    return out
+
+
+def _load_bhavcopy_meta_from_db(segment: str) -> tuple[dt.date | None, str]:
+    ensure_fo_bhavcopy_table()
+    seg = segment.lower()
+    try:
+        with _scrip_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT source_date, source_url
+                FROM fo_bhavcopy
+                WHERE segment = ?
+                LIMIT 1
+                """,
+                (seg,),
+            ).fetchone()
+    except sqlite3.Error:
+        return None, ""
+    if not row:
+        return None, ""
+    raw_date = str(row[0] or "").strip()
+    try:
+        return dt.date.fromisoformat(raw_date[:10]), str(row[1] or "")
+    except ValueError:
+        return None, str(row[1] or "")
+
+
+def _lookup_bhav_row_from_db(
+    segment: str,
+    aliases: set[str],
+    expiry_display: str,
+    right: str,
+    strike: int,
+) -> dict[str, str] | None:
+    ensure_fo_bhavcopy_table()
+    seg = segment.lower()
+    names = sorted({str(a).strip().upper() for a in aliases if a})
+    if not names:
+        return None
+    placeholders = ",".join("?" for _ in names)
+    try:
+        with _scrip_conn() as conn:
+            row = conn.execute(
+                f"""
+                SELECT stock_code, expiry_display, expiry_date, right, strike_price,
+                       ltp, best_bid_price, best_offer_price, total_buy_qty, total_sell_qty,
+                       open_interest, spot_price, open, high, low, previous_close
+                FROM fo_bhavcopy
+                WHERE segment = ? AND expiry_display = ? AND right = ? AND strike_price = ?
+                  AND stock_code IN ({placeholders})
+                LIMIT 1
+                """,
+                (seg, expiry_display, right, int(strike), *names),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    return _row_dict_from_db(seg, *row)
 
 
 def _rebuild_indexes(rows: list[dict[str, str]], segment: str) -> dict[str, Any]:
@@ -54,15 +314,14 @@ def _rebuild_indexes(rows: list[dict[str, str]], segment: str) -> dict[str, Any]
     return {"by_strike": by_strike}
 
 
-def publish_bhavcopy_rows(
+def _publish_bhavcopy_to_redis(
     rows: list[dict[str, str]],
     *,
     segment: str,
     source_date: dt.date,
     source_url: str,
-    version: int | None = None,
+    version: int,
 ) -> int:
-    ver = version if version is not None else _next_version_for_bhav()
     seg = segment.lower()
     index = _rebuild_indexes(rows, seg)
     meta = {
@@ -71,13 +330,57 @@ def publish_bhavcopy_rows(
         "row_count": len(rows),
         "segment": seg,
     }
-    cache_set_json(bhav_meta_key(ver, seg), meta)
-    cache_set_json(bhav_index_key(ver, seg), index)
+    cache_set_json(bhav_meta_key(version, seg), meta)
+    cache_set_json(bhav_index_key(version, seg), index)
     with _lock:
         _local[seg] = {"meta": meta, "by_strike": index["by_strike"]}
-    get_redis().set(CURRENT_VERSION_KEY, str(ver))
-    _logger.info("Published bhavcopy %s version %s rows=%s date=%s", seg, ver, len(rows), source_date)
-    return ver
+    bump_refdata_version(version)
+    _logger.info(
+        "Published bhavcopy %s version %s rows=%s date=%s",
+        seg,
+        version,
+        len(rows),
+        source_date,
+    )
+    return version
+
+
+def publish_bhavcopy_rows(
+    rows: list[dict[str, str]],
+    *,
+    segment: str,
+    source_date: dt.date,
+    source_url: str,
+    version: int | None = None,
+) -> int:
+    seg = segment.lower()
+    persist_bhavcopy_rows(rows, seg, source_date, source_url)
+    ver = version if version is not None else _next_version_for_bhav()
+    return _publish_bhavcopy_to_redis(
+        rows,
+        segment=seg,
+        source_date=source_date,
+        source_url=source_url,
+        version=ver,
+    )
+
+
+def publish_bhavcopy_from_db(segment: str, version: int | None = None) -> int:
+    seg = segment.lower()
+    rows = load_bhavcopy_rows_from_db(seg)
+    if not rows:
+        return current_version()
+    source_date, source_url = _load_bhavcopy_meta_from_db(seg)
+    if source_date is None:
+        source_date = dt.date.today()
+    ver = version if version is not None else _next_version_for_bhav()
+    return _publish_bhavcopy_to_redis(
+        rows,
+        segment=seg,
+        source_date=source_date,
+        source_url=source_url,
+        version=ver,
+    )
 
 
 def _next_version_for_bhav() -> int:
@@ -110,7 +413,8 @@ def get_bhavcopy_source_date(exchange_code: str) -> dt.date | None:
             meta = _local.get(seg, {}).get("meta") or {}
     raw = str(meta.get("source_date") or "").strip()
     if not raw:
-        return None
+        db_date, _ = _load_bhavcopy_meta_from_db(seg)
+        return db_date
     try:
         return dt.date.fromisoformat(raw[:10])
     except ValueError:
@@ -138,7 +442,7 @@ def _lookup_bhav_row(
         row = by_strike.get(key)
         if row:
             return row
-    return None
+    return _lookup_bhav_row_from_db(seg, aliases, expiry_display, right, strike)
 
 
 def has_bhavcopy_quote(
@@ -241,11 +545,3 @@ def build_chain_from_bhavcopy(
         "quote_source": "bhavcopy",
         "bhavcopy_date": bhav_date.isoformat() if bhav_date else None,
     }
-
-
-def purge_old_bhav_versions(keep_version: int) -> None:
-    from icici_breeze_backend.app.db.redis_client import cache_delete_pattern
-
-    for seg in ("nfo", "bfo"):
-        for v in range(1, keep_version):
-            cache_delete_pattern(f"{version_prefix(v)}:bhav:{seg}:*")
