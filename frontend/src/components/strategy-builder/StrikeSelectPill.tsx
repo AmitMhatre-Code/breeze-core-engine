@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { filterStrikes } from "@/lib/strategy-builder/strike-filter";
+import {
+  useComboboxBlurClose,
+  useListboxCombobox,
+} from "@/lib/ui/use-listbox-combobox";
 
 type Props = {
   strikes: number[];
-  /** Displayed strike (`null` until chain loads). */
   value: number | null;
   onChange: (strike: number) => void;
   disabled?: boolean;
@@ -16,7 +19,6 @@ type Props = {
   hideLabel?: boolean;
 };
 
-/** Listbox styled like {@link ExpirySelectPill} for consistent option-chain UI. */
 export function StrikeSelectPill({
   strikes,
   value,
@@ -39,12 +41,24 @@ export function StrikeSelectPill({
     setQ("");
   }, []);
 
-  const pick = (k: number) => {
-    onChange(k);
-    closeDropdown();
-  };
-
   const filteredStrikes = useMemo(() => filterStrikes(strikes, q), [strikes, q]);
+
+  const handleSelect = useCallback(
+    (k: number) => {
+      onChange(k);
+      closeDropdown();
+    },
+    [onChange, closeDropdown],
+  );
+
+  const { highlightIndex, listRef, handleKeyDown } = useListboxCombobox({
+    open,
+    options: filteredStrikes,
+    onSelect: handleSelect,
+    onClose: closeDropdown,
+  });
+
+  const handleInputBlur = useComboboxBlurClose(rootRef, [], closeDropdown);
 
   useEffect(() => {
     if (!open) return;
@@ -87,11 +101,7 @@ export function StrikeSelectPill({
 
   const disabledCombined = Boolean(disabled || busy || !strikes.length);
 
-  const closedDisplay = busy
-    ? ""
-    : valueLabel
-      ? valueLabel
-      : "";
+  const closedDisplay = busy ? "" : valueLabel ? valueLabel : "";
 
   const placeholder = busy
     ? "Loading strikes…"
@@ -108,16 +118,8 @@ export function StrikeSelectPill({
   };
 
   const handleInputChange = (next: string) => {
-    const digits = next.replace(/\D/g, "");
-    setQ(digits);
+    setQ(next.replace(/\D/g, ""));
     if (!open) setOpen(true);
-  };
-
-  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && open && filteredStrikes.length > 0) {
-      e.preventDefault();
-      pick(filteredStrikes[0]!);
-    }
   };
 
   const buttonClass = (() => {
@@ -149,12 +151,37 @@ export function StrikeSelectPill({
     return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm font-semibold tabular-nums text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-400 focus:ring-0 disabled:cursor-not-allowed dark:text-zinc-100 dark:placeholder:text-zinc-500";
   })();
 
+  const optionClass = (k: number, highlighted: boolean) => {
+    if (darkToolbar) {
+      return `flex w-full rounded-lg px-3 py-2 text-left text-sm transition ${
+        highlighted
+          ? "bg-sky-200 text-sky-950 dark:bg-sky-900/60 dark:text-sky-300"
+          : value === k
+            ? "bg-sky-100 text-sky-900 dark:bg-sky-950/55 dark:text-sky-400"
+            : "text-zinc-900 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700/50"
+      }`;
+    }
+    return `flex w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800/80 ${
+      highlighted
+        ? "bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-200"
+        : value === k
+          ? "bg-sky-50 text-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
+          : "text-zinc-900 dark:text-zinc-100"
+    }`;
+  };
+
   const mobileSearchClass = darkToolbar
     ? "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm tabular-nums text-zinc-900 outline-none placeholder:text-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
     : "w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm tabular-nums text-zinc-900 outline-none placeholder:text-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
 
-  const renderStrikeUl = (options: number[]) => (
-    <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1 lg:max-h-[min(18rem,50vh)]">
+  const renderStrikeUl = (
+    options: number[],
+    ulRef?: React.RefObject<HTMLUListElement | null>,
+  ) => (
+    <ul
+      ref={ulRef}
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1 lg:max-h-[min(18rem,50vh)]"
+    >
       {options.length === 0 ? (
         <li
           className={
@@ -166,27 +193,16 @@ export function StrikeSelectPill({
           {busy ? "Loading…" : strikes.length === 0 ? "No strikes" : "No matches"}
         </li>
       ) : (
-        options.map((k) => (
+        options.map((k, index) => (
           <li key={k}>
             <button
               type="button"
               role="option"
               aria-selected={value === k}
-              className={
-                darkToolbar
-                  ? `flex w-full rounded-lg px-3 py-2 text-left text-sm transition ${
-                      value === k
-                        ? "bg-sky-100 text-sky-900 dark:bg-sky-950/55 dark:text-sky-400"
-                        : "text-zinc-900 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700/50"
-                    }`
-                  : `flex w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800/80 ${
-                      value === k
-                        ? "bg-sky-50 text-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
-                        : "text-zinc-900 dark:text-zinc-100"
-                    }`
-              }
+              data-combobox-index={index}
+              className={optionClass(k, index === highlightIndex)}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => pick(k)}
+              onClick={() => handleSelect(k)}
             >
               <span className="font-semibold tabular-nums">
                 {k.toLocaleString("en-IN")}
@@ -243,7 +259,8 @@ export function StrikeSelectPill({
           value={inputDisplay}
           onChange={(e) => handleInputChange(e.target.value)}
           onFocus={handleInputFocus}
-          onKeyDown={handleInputKeyDown}
+          onKeyDown={handleKeyDown}
+          onBlur={handleInputBlur}
           placeholder={placeholder}
           className={inputClass}
         />
@@ -327,13 +344,14 @@ export function StrikeSelectPill({
                 autoComplete="off"
                 value={q}
                 onChange={(e) => handleInputChange(e.target.value)}
-                onKeyDown={handleInputKeyDown}
+                onKeyDown={handleKeyDown}
+                onBlur={handleInputBlur}
                 placeholder="Type strike…"
                 className={mobileSearchClass}
               />
             </div>
 
-            {renderStrikeUl(filteredStrikes)}
+            {renderStrikeUl(filteredStrikes, listRef)}
           </div>
         </>
       ) : null}

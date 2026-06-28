@@ -7,29 +7,29 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import {
   filterExpiryDates,
   formatExpiryChipShort,
 } from "@/lib/strategy-builder/expiry";
+import {
+  useComboboxBlurClose,
+  useListboxCombobox,
+} from "@/lib/ui/use-listbox-combobox";
 
 type Props = {
   dates: string[];
   value: string;
   onChange: (expiryDisplay: string) => void;
   disabled?: boolean;
-  /** Dark charcoal control strip (e.g. option chain toolbar). */
   tone?: "default" | "darkToolbar";
-  /** Single-row toolbar: "Expiry" label + value + chevron (no stacked label). */
   layout?: "default" | "toolbar";
-  /** Merged onto the root wrapper (e.g. `w-full !max-w-none` for stacked forms). */
   rootClassName?: string;
-  /** Hide the built-in title span (use an external field label). */
   hideLabel?: boolean;
 };
 
-/** Custom listbox (same pattern as `UnderlyingSearchPill`) so fonts match; native `<select>` menus use OS styling. */
 export function ExpirySelectPill({
   dates,
   value,
@@ -45,6 +45,7 @@ export function ExpirySelectPill({
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const mobileInputRef = useRef<HTMLInputElement>(null);
+  const mobileListRef = useRef<HTMLUListElement>(null);
   const mobilePortalRef = useRef<HTMLDivElement>(null);
   const portalReady = useSyncExternalStore(
     () => () => {},
@@ -57,14 +58,31 @@ export function ExpirySelectPill({
     setQ("");
   }, []);
 
-  const pick = (d: string) => {
-    onChange(d);
-    closeDropdown();
-  };
-
   const filteredDates = useMemo(
     () => filterExpiryDates(dates, q),
     [dates, q],
+  );
+
+  const handleSelect = useCallback(
+    (d: string) => {
+      onChange(d);
+      closeDropdown();
+    },
+    [onChange, closeDropdown],
+  );
+
+  const { highlightIndex, listRef, handleKeyDown } = useListboxCombobox({
+    open,
+    options: filteredDates,
+    onSelect: handleSelect,
+    onClose: closeDropdown,
+    extraListRefs: [mobileListRef],
+  });
+
+  const handleInputBlur = useComboboxBlurClose(
+    rootRef,
+    [mobilePortalRef],
+    closeDropdown,
   );
 
   useEffect(() => {
@@ -102,14 +120,12 @@ export function ExpirySelectPill({
 
   const darkToolbar = tone === "darkToolbar";
   const toolbarLayout = layout === "toolbar";
-
   const expiryChip = value ? formatExpiryChipShort(value) : null;
   const closedDisplay = toolbarLayout
     ? value
       ? (expiryChip ?? value)
       : ""
     : value;
-
   const inputDisplay = open ? q : closedDisplay;
 
   const handleInputFocus = () => {
@@ -121,13 +137,6 @@ export function ExpirySelectPill({
   const handleInputChange = (next: string) => {
     setQ(next);
     if (!open) setOpen(true);
-  };
-
-  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && open && filteredDates.length > 0) {
-      e.preventDefault();
-      pick(filteredDates[0]!);
-    }
   };
 
   const buttonClass = (() => {
@@ -159,42 +168,33 @@ export function ExpirySelectPill({
     return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-400 focus:ring-0 disabled:cursor-not-allowed dark:text-zinc-100 dark:placeholder:text-zinc-500";
   })();
 
-  const mobilePanelClass =
-    darkToolbar && toolbarLayout
-      ? "absolute inset-0 z-[1] flex flex-col bg-white dark:bg-zinc-900"
-      : toolbarLayout
-        ? "absolute inset-0 z-[1] flex flex-col bg-zinc-50 dark:bg-zinc-950"
-        : darkToolbar
-          ? "absolute inset-0 z-[1] flex flex-col bg-white dark:bg-zinc-900"
-          : "absolute inset-0 z-[1] flex flex-col bg-zinc-50 dark:bg-zinc-950";
+  const optionClass = (d: string, highlighted: boolean) => {
+    if (darkToolbar) {
+      return `flex w-full rounded-lg px-3 py-2 text-left text-sm transition ${
+        highlighted
+          ? "bg-sky-200 text-sky-950 dark:bg-sky-900/60 dark:text-sky-300"
+          : d === value
+            ? "bg-sky-100 text-sky-900 dark:bg-sky-950/55 dark:text-sky-400"
+            : "text-zinc-900 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700/50"
+      }`;
+    }
+    return `flex w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800/80 ${
+      highlighted
+        ? "bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-200"
+        : d === value
+          ? "bg-sky-50 text-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
+          : "text-zinc-900 dark:text-zinc-100"
+    }`;
+  };
 
-  const desktopListboxClass =
-    darkToolbar && toolbarLayout
-      ? "absolute left-0 top-full z-[300] mt-1 hidden max-h-[min(22rem,70vh)] w-52 min-w-[12rem] rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-600 dark:bg-zinc-800 lg:flex lg:flex-col"
-      : toolbarLayout
-        ? "absolute left-0 top-full z-[300] mt-1 hidden max-h-[min(22rem,70vh)] w-52 min-w-[12rem] rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900 lg:flex lg:flex-col"
-        : darkToolbar
-          ? "absolute left-0 top-full z-[300] mt-0 hidden max-h-[min(22rem,70vh)] w-full min-w-[18rem] max-w-lg rounded-b-lg rounded-t-none border border-t-0 border-zinc-200 bg-white shadow-xl dark:border-zinc-600 dark:bg-zinc-800 lg:flex lg:flex-col"
-          : "absolute left-0 top-full z-[300] mt-1.5 hidden max-h-[min(22rem,70vh)] w-full min-w-[18rem] max-w-lg rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900 lg:flex lg:flex-col";
-
-  const mobileHeaderBarClass = darkToolbar
-    ? "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-700"
-    : "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800";
-
-  const mobileTitleClass = darkToolbar
-    ? "text-sm font-semibold text-zinc-900 dark:text-zinc-100"
-    : "text-sm font-semibold text-zinc-900 dark:text-zinc-50";
-
-  const mobileCloseBtnClass = darkToolbar
-    ? "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:text-zinc-400 dark:hover:bg-zinc-700/80"
-    : "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:hover:bg-zinc-800";
-
-  const mobileSearchClass = darkToolbar
-    ? "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-    : "w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
-
-  const renderExpiryUl = (options: string[]) => (
-    <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1 lg:max-h-[min(18rem,50vh)]">
+  const renderExpiryUl = (
+    options: string[],
+    ulRef?: RefObject<HTMLUListElement | null>,
+  ) => (
+    <ul
+      ref={ulRef}
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1 lg:max-h-[min(18rem,50vh)]"
+    >
       {value ? (
         <li>
           <button
@@ -206,7 +206,8 @@ export function ExpirySelectPill({
                 ? "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700/50"
                 : "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/80"
             }
-            onClick={() => pick("")}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => handleSelect("")}
           >
             Clear expiry
           </button>
@@ -225,27 +226,16 @@ export function ExpirySelectPill({
             : "No matches"}
         </li>
       ) : (
-        options.map((d) => (
+        options.map((d, index) => (
           <li key={d}>
             <button
               type="button"
               role="option"
               aria-selected={d === value}
-              className={
-                darkToolbar
-                  ? `flex w-full rounded-lg px-3 py-2 text-left text-sm transition ${
-                      d === value
-                        ? "bg-sky-100 text-sky-900 dark:bg-sky-950/55 dark:text-sky-400"
-                        : "text-zinc-900 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700/50"
-                    }`
-                  : `flex w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800/80 ${
-                      d === value
-                        ? "bg-sky-50 text-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
-                        : "text-zinc-900 dark:text-zinc-100"
-                    }`
-              }
+              data-combobox-index={index}
+              className={optionClass(d, index === highlightIndex)}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => pick(d)}
+              onClick={() => handleSelect(d)}
             >
               <span className="font-semibold">{d}</span>
             </button>
@@ -254,6 +244,28 @@ export function ExpirySelectPill({
       )}
     </ul>
   );
+
+  const mobilePanelClass =
+    darkToolbar && toolbarLayout
+      ? "absolute inset-0 z-[1] flex flex-col bg-white dark:bg-zinc-900"
+      : toolbarLayout
+        ? "absolute inset-0 z-[1] flex flex-col bg-zinc-50 dark:bg-zinc-950"
+        : darkToolbar
+          ? "absolute inset-0 z-[1] flex flex-col bg-white dark:bg-zinc-900"
+          : "absolute inset-0 z-[1] flex flex-col bg-zinc-50 dark:bg-zinc-950";
+
+  const desktopListboxClass =
+    darkToolbar && toolbarLayout
+      ? "absolute left-0 top-full z-[300] mt-1 hidden max-h-[min(22rem,70vh)] w-52 min-w-[12rem] rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-600 dark:bg-zinc-800 lg:flex lg:flex-col"
+      : toolbarLayout
+        ? "absolute left-0 top-full z-[300] mt-1 hidden max-h-[min(22rem,70vh)] w-52 min-w-[12rem] rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900 lg:flex lg:flex-col"
+        : darkToolbar
+          ? "absolute left-0 top-full z-[300] mt-0 hidden max-h-[min(22rem,70vh)] w-full min-w-[18rem] max-w-lg rounded-b-lg rounded-t-none border border-t-0 border-zinc-200 bg-white shadow-xl dark:border-zinc-600 dark:bg-zinc-800 lg:flex lg:flex-col"
+          : "absolute left-0 top-full z-[300] mt-1.5 hidden max-h-[min(22rem,70vh)] w-full min-w-[18rem] max-w-lg rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900 lg:flex lg:flex-col";
+
+  const mobileSearchClass = darkToolbar
+    ? "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+    : "w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
 
   const mobileLayer =
     portalReady && open ? (
@@ -269,11 +281,29 @@ export function ExpirySelectPill({
           role="listbox"
           aria-label="Expiry dates"
         >
-          <div className={mobileHeaderBarClass}>
-            <span className={mobileTitleClass}>Choose expiry</span>
+          <div
+            className={
+              darkToolbar
+                ? "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-700"
+                : "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800"
+            }
+          >
+            <span
+              className={
+                darkToolbar
+                  ? "text-sm font-semibold text-zinc-900 dark:text-zinc-100"
+                  : "text-sm font-semibold text-zinc-900 dark:text-zinc-50"
+              }
+            >
+              Choose expiry
+            </span>
             <button
               type="button"
-              className={mobileCloseBtnClass}
+              className={
+                darkToolbar
+                  ? "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:text-zinc-400 dark:hover:bg-zinc-700/80"
+                  : "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:hover:bg-zinc-800"
+              }
               aria-label="Close"
               onClick={closeDropdown}
             >
@@ -293,12 +323,13 @@ export function ExpirySelectPill({
               autoComplete="off"
               value={q}
               onChange={(e) => handleInputChange(e.target.value)}
-              onKeyDown={handleInputKeyDown}
+              onKeyDown={handleKeyDown}
+              onBlur={handleInputBlur}
               placeholder="Type expiry date…"
               className={mobileSearchClass}
             />
           </div>
-          {renderExpiryUl(filteredDates)}
+          {renderExpiryUl(filteredDates, mobileListRef)}
         </div>
       </div>
     ) : null;
@@ -347,7 +378,8 @@ export function ExpirySelectPill({
           value={inputDisplay}
           onChange={(e) => handleInputChange(e.target.value)}
           onFocus={handleInputFocus}
-          onKeyDown={handleInputKeyDown}
+          onKeyDown={handleKeyDown}
+          onBlur={handleInputBlur}
           placeholder="Select expiry…"
           className={inputClass}
         />
@@ -375,7 +407,7 @@ export function ExpirySelectPill({
             role="listbox"
             aria-label="Expiry dates"
           >
-            {renderExpiryUl(filteredDates)}
+            {renderExpiryUl(filteredDates, listRef)}
           </div>
         </>
       ) : null}

@@ -22,6 +22,7 @@ import {
   type BreezeApiInvokeResponse,
   type BreezeApiWsStatus,
 } from "@/lib/breeze-api-tester";
+import { copyTextToClipboard } from "@/lib/copy-to-clipboard";
 
 const inputCls =
   "mt-1 w-full rounded-md border border-zinc-300/80 bg-white/95 px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition-all hover:border-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-blue-400 dark:focus:ring-blue-400/20";
@@ -68,6 +69,11 @@ export default function BreezeApiPlaygroundPage() {
     strike_price: "",
     right: "call",
   });
+  const [responseCopyState, setResponseCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [wsResponseCopyState, setWsResponseCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
+  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const riskQ = useQuery({
     queryKey: ["settings", "breeze-api-tester", "risk"],
@@ -160,22 +166,33 @@ export default function BreezeApiPlaygroundPage() {
   const wsResponseIsError = wsLastResponse?.ok === false;
   const showGate = riskQ.isSuccess && !riskQ.data?.accepted;
 
-  const copyResponse = async () => {
-    if (!responseText) return;
-    try {
-      await navigator.clipboard.writeText(responseText);
-    } catch {
-      /* ignore */
-    }
+  const flashCopyState = useCallback(
+    (target: "response" | "ws", result: ReturnType<typeof copyTextToClipboard>) => {
+      const next = result.ok ? "copied" : "failed";
+      if (target === "response") {
+        setResponseCopyState(next);
+      } else {
+        setWsResponseCopyState(next);
+      }
+      if (copyResetRef.current) clearTimeout(copyResetRef.current);
+      copyResetRef.current = setTimeout(() => {
+        if (target === "response") {
+          setResponseCopyState("idle");
+        } else {
+          setWsResponseCopyState("idle");
+        }
+        copyResetRef.current = null;
+      }, 2000);
+    },
+    [],
+  );
+
+  const copyResponse = () => {
+    flashCopyState("response", copyTextToClipboard(responseText));
   };
 
-  const copyWsResponse = async () => {
-    if (!wsResponseText) return;
-    try {
-      await navigator.clipboard.writeText(wsResponseText);
-    } catch {
-      /* ignore */
-    }
+  const copyWsResponse = () => {
+    flashCopyState("ws", copyTextToClipboard(wsResponseText));
   };
 
   const wsConnectM = useMutation({
@@ -266,7 +283,13 @@ export default function BreezeApiPlaygroundPage() {
     return es;
   };
 
-  useEffect(() => () => wsStreamRef.current?.close(), []);
+  useEffect(
+    () => () => {
+      wsStreamRef.current?.close();
+      if (copyResetRef.current) clearTimeout(copyResetRef.current);
+    },
+    [],
+  );
 
   return (
     <AppShell>
@@ -394,9 +417,18 @@ export default function BreezeApiPlaygroundPage() {
                     <button
                       type="button"
                       className="app-btn-outline text-xs"
-                      onClick={() => void copyResponse()}
+                      onClick={copyResponse}
+                      title={
+                        responseCopyState === "failed"
+                          ? "Copy failed — select the response text and copy manually"
+                          : undefined
+                      }
                     >
-                      Copy
+                      {responseCopyState === "copied"
+                        ? "Copied!"
+                        : responseCopyState === "failed"
+                          ? "Copy failed"
+                          : "Copy"}
                     </button>
                   ) : null}
                 </div>
@@ -476,9 +508,18 @@ export default function BreezeApiPlaygroundPage() {
               <button
                 type="button"
                 className="app-btn-outline text-xs"
-                onClick={() => void copyWsResponse()}
+                onClick={copyWsResponse}
+                title={
+                  wsResponseCopyState === "failed"
+                    ? "Copy failed — select the response text and copy manually"
+                    : undefined
+                }
               >
-                Copy
+                {wsResponseCopyState === "copied"
+                  ? "Copied!"
+                  : wsResponseCopyState === "failed"
+                    ? "Copy failed"
+                    : "Copy"}
               </button>
             ) : null}
           </div>

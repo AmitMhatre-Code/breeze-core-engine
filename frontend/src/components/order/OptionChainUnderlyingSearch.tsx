@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UnderlyingEntry } from "@/lib/strategy-builder/types";
+import {
+  useComboboxBlurClose,
+  useListboxCombobox,
+} from "@/lib/ui/use-listbox-combobox";
 
 type Props = {
   underlyings: UnderlyingEntry[];
@@ -110,6 +114,23 @@ export function OptionChainUnderlyingSearch({
     setQ("");
   }, []);
 
+  const handleSelect = useCallback(
+    (u: UnderlyingEntry) => {
+      onChange(u.stock_code);
+      closeDropdown();
+    },
+    [onChange, closeDropdown],
+  );
+
+  const { highlightIndex, listRef, handleKeyDown } = useListboxCombobox({
+    open,
+    options: filtered,
+    onSelect: handleSelect,
+    onClose: closeDropdown,
+  });
+
+  const handleInputBlur = useComboboxBlurClose(rootRef, [], closeDropdown);
+
   useEffect(() => {
     if (!open) return;
     const fn = (e: MouseEvent) => {
@@ -131,8 +152,7 @@ export function OptionChainUnderlyingSearch({
 
   const select = (code: string) => {
     onChange(code);
-    setOpen(false);
-    setQ("");
+    closeDropdown();
   };
 
   const inputDisplay = open ? q : value;
@@ -148,119 +168,107 @@ export function OptionChainUnderlyingSearch({
     if (!open) setOpen(true);
   };
 
-  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && open && filtered.length > 0) {
-      e.preventDefault();
-      select(filtered[0]!.stock_code);
-    }
-  };
+  const renderUnderlyingList = (
+    variant: "default" | "chainBar",
+    options: UnderlyingEntry[],
+  ) => {
+    const ulClass =
+      variant === "chainBar"
+        ? "mx-2 mb-2 max-h-[min(60vh,20rem)] overflow-y-auto overscroll-contain py-0.5 lg:max-h-[min(18rem,50vh)]"
+        : "max-h-[min(60vh,20rem)] overflow-y-auto overscroll-contain py-1 lg:max-h-[min(18rem,50vh)]";
 
-  const listSectionDefault = (
-    <ul className="max-h-[min(60vh,20rem)] overflow-y-auto overscroll-contain py-1 lg:max-h-[min(18rem,50vh)]">
-      {filtered.length === 0 ? (
-        <li className="px-4 py-8 text-center text-sm text-zinc-500">
-          No matches
-        </li>
-      ) : (
-        filtered.map((u) => {
-          const selected = u.stock_code === value;
-          return (
-            <li key={u.stock_code}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={selected}
-                className={[
-                  "flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm transition",
-                  selected
-                    ? "bg-sky-950/55 text-sky-400"
-                    : "text-zinc-100 hover:bg-zinc-700/50",
-                ].join(" ")}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => select(u.stock_code)}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-semibold tracking-tight">
-                    {u.stock_code}
-                  </span>
-                  {u.long_name ? (
+    return (
+      <ul ref={listRef} className={ulClass}>
+        {options.length === 0 ? (
+          <li
+            className={
+              variant === "chainBar"
+                ? "px-4 py-10 text-center text-sm text-zinc-500"
+                : "px-4 py-8 text-center text-sm text-zinc-500"
+            }
+          >
+            No matches
+          </li>
+        ) : (
+          options.map((u, index) => {
+            const selected = u.stock_code === value;
+            const highlighted = index === highlightIndex;
+            const chainBar = variant === "chainBar";
+            return (
+              <li key={u.stock_code}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  data-combobox-index={index}
+                  className={[
+                    "flex w-full items-center justify-between gap-3 text-left text-sm transition",
+                    chainBar ? "px-4 py-3" : "px-4 py-2.5",
+                    chainBar
+                      ? highlighted
+                        ? "bg-sky-100 dark:bg-zinc-600/50"
+                        : selected
+                          ? "bg-sky-100 dark:bg-zinc-600/35"
+                          : "text-zinc-900 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-600/25"
+                      : highlighted
+                        ? "bg-zinc-600/60 text-zinc-100"
+                        : selected
+                          ? "bg-sky-950/55 text-sky-400"
+                          : "text-zinc-100 hover:bg-zinc-700/50",
+                  ].join(" ")}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => select(u.stock_code)}
+                >
+                  <span className="min-w-0 flex-1">
                     <span
                       className={[
-                        "mt-0.5 block truncate text-xs font-normal leading-snug",
-                        selected ? "text-zinc-400" : "text-zinc-500",
+                        "block truncate font-semibold tracking-tight",
+                        chainBar
+                          ? "text-sm uppercase tracking-wide"
+                          : "",
+                        chainBar
+                          ? selected || highlighted
+                            ? "text-sky-800 dark:text-sky-400"
+                            : "text-zinc-900 hover:text-sky-700 dark:text-zinc-100 dark:hover:text-sky-300"
+                          : "",
                       ].join(" ")}
                     >
-                      {u.long_name}
+                      {u.stock_code}
                     </span>
-                  ) : null}
-                </span>
-                {selected ? (
-                  <CheckIcon className="shrink-0 text-sky-400" />
-                ) : (
-                  <span className="size-[18px] shrink-0" aria-hidden />
-                )}
-              </button>
-            </li>
-          );
-        })
-      )}
-    </ul>
-  );
-
-  /** Dark terminal-style list (chain bar picker). */
-  const listSectionChainBar = (
-    <ul className="mx-2 mb-2 max-h-[min(60vh,20rem)] overflow-y-auto overscroll-contain py-0.5 lg:max-h-[min(18rem,50vh)]">
-      {filtered.length === 0 ? (
-        <li className="px-4 py-10 text-center text-sm text-zinc-500">
-          No matches
-        </li>
-      ) : (
-        filtered.map((u) => {
-          const selected = u.stock_code === value;
-          return (
-            <li key={u.stock_code}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={selected}
-                className={[
-                  "flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm transition",
-                  selected
-                    ? "bg-sky-100 dark:bg-zinc-600/35"
-                    : "text-zinc-900 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-600/25",
-                ].join(" ")}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => select(u.stock_code)}
-              >
-                <span className="min-w-0 flex-1">
-                  <span
-                    className={[
-                      "block truncate text-sm font-semibold uppercase tracking-wide",
-                      selected
-                        ? "text-sky-800 dark:text-sky-400"
-                        : "text-zinc-900 hover:text-sky-700 dark:text-zinc-100 dark:hover:text-sky-300",
-                    ].join(" ")}
-                  >
-                    {u.stock_code}
+                    {u.long_name ? (
+                      <span
+                        className={[
+                          "mt-0.5 block truncate text-xs font-normal leading-snug",
+                          chainBar
+                            ? "text-[11px] normal-case text-zinc-500"
+                            : selected
+                              ? "text-zinc-400"
+                              : "text-zinc-500",
+                        ].join(" ")}
+                      >
+                        {u.long_name}
+                      </span>
+                    ) : null}
                   </span>
-                  {u.long_name ? (
-                    <span className="mt-0.5 block truncate text-[11px] font-normal normal-case leading-snug text-zinc-500">
-                      {u.long_name}
-                    </span>
-                  ) : null}
-                </span>
-                {selected ? (
-                  <CheckIcon className="size-[1.125rem] shrink-0 text-sky-600 dark:text-sky-400" />
-                ) : (
-                  <span className="size-[18px] shrink-0" aria-hidden />
-                )}
-              </button>
-            </li>
-          );
-        })
-      )}
-    </ul>
-  );
+                  {selected ? (
+                    <CheckIcon
+                      className={
+                        chainBar
+                          ? "size-[1.125rem] shrink-0 text-sky-600 dark:text-sky-400"
+                          : "shrink-0 text-sky-400"
+                      }
+                    />
+                  ) : (
+                    <span className="size-[18px] shrink-0" aria-hidden />
+                  )}
+                </button>
+              </li>
+            );
+          })
+        )}
+      </ul>
+    );
+  };
 
   const filterInputDefault = (
     <div className="border-b border-zinc-700 p-2">
@@ -277,6 +285,8 @@ export function OptionChainUnderlyingSearch({
           disabled={disabled}
           value={open ? q : ""}
           onChange={(e) => setQ(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={handleInputBlur}
           placeholder="Type stock name: SBIN, TCS etc."
           className="w-full rounded-md border border-zinc-600/80 bg-zinc-900/80 py-2 pl-9 pr-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-sky-500/50 focus:ring-1 focus:ring-sky-500/30"
         />
@@ -324,7 +334,8 @@ export function OptionChainUnderlyingSearch({
               value={inputDisplay}
               onChange={(e) => handleInputChange(e.target.value)}
               onFocus={handleInputFocus}
-              onKeyDown={handleInputKeyDown}
+              onKeyDown={handleKeyDown}
+              onBlur={handleInputBlur}
               placeholder="Select underlying"
               className={
                 chainBar
@@ -381,7 +392,7 @@ export function OptionChainUnderlyingSearch({
               aria-label="Underlying symbols"
             >
               {chainBar ? (
-                listSectionChainBar
+                renderUnderlyingList("chainBar", filtered)
               ) : (
                 <>
                   <div className="flex items-center justify-between border-b border-zinc-700 px-3 py-2 lg:hidden">
@@ -400,7 +411,7 @@ export function OptionChainUnderlyingSearch({
                     </button>
                   </div>
                   {filterInputDefault}
-                  {listSectionDefault}
+                  {renderUnderlyingList("default", filtered)}
                 </>
               )}
             </div>
@@ -435,7 +446,8 @@ export function OptionChainUnderlyingSearch({
             value={inputDisplay}
             onChange={(e) => handleInputChange(e.target.value)}
             onFocus={handleInputFocus}
-            onKeyDown={handleInputKeyDown}
+            onKeyDown={handleKeyDown}
+            onBlur={handleInputBlur}
             placeholder="Type stock name: SBIN, TCS etc."
             className="w-full border-0 bg-transparent py-2.5 pl-10 pr-3 text-sm text-zinc-100 outline-none ring-0 placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-500"
           />
@@ -470,7 +482,7 @@ export function OptionChainUnderlyingSearch({
                 </span>
               </button>
             </div>
-            {listSectionDefault}
+            {renderUnderlyingList("default", filtered)}
           </div>
         </>
       ) : null}
