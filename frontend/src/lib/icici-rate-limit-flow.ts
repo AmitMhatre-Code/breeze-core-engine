@@ -1,5 +1,10 @@
 import { apiClient } from "@/lib/api-client";
 
+function rateLimitWaitSeconds(raw: unknown, fallback = 0): number {
+  const n = Number(raw);
+  return Math.max(0, Math.floor(Number.isFinite(n) ? n : fallback));
+}
+
 export type BreakOrderChunkResponse = {
   terminal_messages?: Array<{ type?: string; message?: string }>;
   chunk_index: number;
@@ -132,10 +137,7 @@ export async function runBreakOrderChunks(
             "You have been throttled by ICICI and have reached the daily API limit.",
         };
       }
-      const sec = Math.max(
-        1,
-        Math.floor(Number(res.rate_limit_pause_seconds) || 0.5),
-      );
+      const sec = rateLimitWaitSeconds(res.rate_limit_pause_seconds);
       await args.onRateLimitWait(sec);
       continue;
     }
@@ -200,10 +202,7 @@ export async function runCancelOrdersWithPacing(args: {
           });
           break;
         }
-        const sec = Math.max(
-          1,
-          Math.floor(Number(res.rate_limit_pause_seconds) || 0.5),
-        );
+        const sec = rateLimitWaitSeconds(res.rate_limit_pause_seconds);
         await args.onRateLimitWait(sec);
         continue;
       }

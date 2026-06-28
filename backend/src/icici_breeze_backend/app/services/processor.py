@@ -52,12 +52,12 @@ from icici_breeze_backend.app.services.icici_api_pacing import (
 class OptionChainBackoff:
     """Legacy holder for per-run pause config; pacing uses GlobalIciciApiLimiter."""
 
-    pause_seconds: float = 0.5
+    pause_seconds: float = 0.0
     consecutive_rate_limited: int = 0
 
     def on_rate_limit(self) -> float:
         self.consecutive_rate_limited += 1
-        return float(max(0.5, self.pause_seconds))
+        return float(max(0.0, self.pause_seconds))
 
     def on_success(self) -> None:
         self.consecutive_rate_limited = 0

@@ -124,7 +124,7 @@ export default function ApiUsageSettingsPage() {
             Rate limit backoff
           </h3>
           <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-            Minimum seconds between ICICI API calls (0.5–3 seconds). On HTTP 429 or 503 the app
+            Minimum seconds between ICICI API calls (0–3 seconds). On HTTP 429 or 503 the app
             also applies exponential backoff (capped at 3 seconds) before retrying. Order place and
             cancel flows show a countdown on screen; all other ICICI traffic is paced globally on
             the server.
@@ -140,7 +140,7 @@ export default function ApiUsageSettingsPage() {
               <input
                 id="rate-limit-pause-seconds"
                 type="number"
-                min={0.5}
+                min={0}
                 max={3}
                 step={0.5}
                 inputMode="numeric"
@@ -160,8 +160,8 @@ export default function ApiUsageSettingsPage() {
                 aria-busy={savePause.isPending}
                 onClick={() => {
                   const n = parseFloat(pauseDraft.trim());
-                  if (!Number.isFinite(n) || n < 0.5 || n > 3) {
-                    alert("Enter a number between 0.5 and 3.");
+                  if (!Number.isFinite(n) || n < 0 || n > 3) {
+                    alert("Enter a number between 0 and 3.");
                     return;
                   }
                   savePause.mutate(n, {

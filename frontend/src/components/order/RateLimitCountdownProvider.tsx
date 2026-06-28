@@ -22,7 +22,10 @@ export function RateLimitCountdownProvider({ children }: { children: ReactNode }
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
 
   const wait = useCallback(async (total: number) => {
-    const n = Math.max(1, Math.floor(total));
+    const n = Math.max(0, Math.floor(total));
+    if (n === 0) {
+      return;
+    }
     for (let i = n; i > 0; i--) {
       setSecondsRemaining(i);
       await new Promise((r) => setTimeout(r, 1000));

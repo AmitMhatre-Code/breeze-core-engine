@@ -4,8 +4,8 @@ import sqlite3
 
 import icici_breeze_backend.app.core.config as cfg
 
-_DEFAULT_PAUSE = 0.5
-_MIN = 0.5
+_DEFAULT_PAUSE = 0.0
+_MIN = 0.0
 _MAX = 3.0
 
 
@@ -14,7 +14,7 @@ def ensure_icici_rate_limit_pause_column() -> None:
         try:
             conn.execute(
                 "ALTER TABLE user_account ADD COLUMN icici_rate_limit_pause_seconds "
-                "REAL NOT NULL DEFAULT 0.5"
+                "REAL NOT NULL DEFAULT 0"
             )
             conn.commit()
         except sqlite3.OperationalError:
@@ -50,19 +50,19 @@ def set_icici_rate_limit_pause_seconds(user_id: str, seconds: float) -> float:
 
 
 def migrate_legacy_rate_limit_pause_default() -> None:
-    """Reset legacy factory defaults (5s, 1s) to the current default (0.5s)."""
+    """Reset legacy factory defaults (5s, 1s, 0.5s) to the current default (0s)."""
     ensure_icici_rate_limit_pause_column()
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         conn.execute(
             "UPDATE user_account SET icici_rate_limit_pause_seconds = ? "
-            "WHERE icici_rate_limit_pause_seconds IN (5, 1)",
+            "WHERE icici_rate_limit_pause_seconds IN (5, 1, 0.5)",
             (_DEFAULT_PAUSE,),
         )
         conn.commit()
 
 
 def migrate_rate_limit_pause_bounds() -> None:
-    """Clamp stored pause values to the supported 0.5–3s range."""
+    """Clamp stored pause values to the supported 0–3s range."""
     ensure_icici_rate_limit_pause_column()
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         conn.execute(

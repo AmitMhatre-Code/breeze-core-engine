@@ -103,6 +103,15 @@ class TestGlobalIciciApiLimiter(unittest.TestCase):
         self.assertAlmostEqual(b2, 2.0)
         self.assertAlmostEqual(b3, 3.0)
 
+    def test_backoff_from_zero_base(self):
+        GlobalIciciApiPacer.reset_user("zero-user")
+        b1 = GlobalIciciApiPacer.rate_limit_backoff("zero-user", 0.0, endpoint="test")
+        b2 = GlobalIciciApiPacer.rate_limit_backoff("zero-user", 0.0, endpoint="test")
+        b3 = GlobalIciciApiPacer.rate_limit_backoff("zero-user", 0.0, endpoint="test")
+        self.assertEqual(b1, 0.0)
+        self.assertEqual(b2, 0.0)
+        self.assertEqual(b3, 0.0)
+
 
 class TestUserRateLimitPrefsBounds(unittest.TestCase):
     def test_clamp_on_read(self):
@@ -126,9 +135,35 @@ class TestUserRateLimitPrefsBounds(unittest.TestCase):
         ), patch("sqlite3.connect") as mock_conn:
             inst = mock_conn.return_value.__enter__.return_value
             v = prefs.set_icici_rate_limit_pause_seconds("u1", 0.1)
-        self.assertEqual(v, 0.5)
+        self.assertEqual(v, 0.1)
         args = inst.execute.call_args[0][1]
-        self.assertEqual(args[0], 0.5)
+        self.assertEqual(args[0], 0.1)
+
+    def test_clamp_on_write_zero(self):
+        from icici_breeze_backend.app.services import user_rate_limit_prefs as prefs
+
+        with patch.object(
+            prefs,
+            "ensure_icici_rate_limit_pause_column",
+        ), patch("sqlite3.connect") as mock_conn:
+            inst = mock_conn.return_value.__enter__.return_value
+            v = prefs.set_icici_rate_limit_pause_seconds("u1", 0)
+        self.assertEqual(v, 0.0)
+        args = inst.execute.call_args[0][1]
+        self.assertEqual(args[0], 0.0)
+
+    def test_clamp_on_write_negative(self):
+        from icici_breeze_backend.app.services import user_rate_limit_prefs as prefs
+
+        with patch.object(
+            prefs,
+            "ensure_icici_rate_limit_pause_column",
+        ), patch("sqlite3.connect") as mock_conn:
+            inst = mock_conn.return_value.__enter__.return_value
+            v = prefs.set_icici_rate_limit_pause_seconds("u1", -1)
+        self.assertEqual(v, 0.0)
+        args = inst.execute.call_args[0][1]
+        self.assertEqual(args[0], 0.0)
 
 
 class TestApiUsageWarning(unittest.TestCase):
