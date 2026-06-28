@@ -6,6 +6,7 @@ import math
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_for_broker
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     POP_PRE_FILTER_TOLERANCE,
     EngineContext,
@@ -69,7 +70,7 @@ def annualized_carry_percent_on_span(
     return (pr / dte) * (365.0 / sm) * 100.0
 
 
-def quote_from_api(strike: int, right: Right, payload: dict) -> QuoteRow:
+def quote_from_api(strike: Strike, right: Right, payload: dict) -> QuoteRow:
     tb = int(payload.get("total_buy_qty") or 0)
     ts = int(payload.get("total_sell_qty") or 0)
     ratio: float | str = 0.0
@@ -91,24 +92,24 @@ def quote_from_api(strike: int, right: Right, payload: dict) -> QuoteRow:
     )
 
 
-def nearest_atm(strikes: list[int], spot: float) -> int:
+def nearest_atm(strikes: list[Strike], spot: float) -> Strike:
     return min(strikes, key=lambda s: abs(s - spot))
 
 
-def snap_user_range(strikes: list[int], range_lower: float, range_upper: float) -> tuple[float, float]:
+def snap_user_range(strikes: list[Strike], range_lower: float, range_upper: float) -> tuple[float, float]:
     lo_strike = min(strikes, key=lambda s: abs(s - range_lower))
     hi_strike = min(strikes, key=lambda s: abs(s - range_upper))
     return (float(min(lo_strike, hi_strike)), float(max(lo_strike, hi_strike)))
 
 
 def strike_window(
-    all_strikes: list[int],
+    all_strikes: list[Strike],
     range_lower: float,
     range_upper: float,
-    atm: int,
-    step: int,
+    atm: Strike,
+    step: float,
     pad_intervals: int = 3,
-) -> list[int]:
+) -> list[Strike]:
     lo = range_lower - pad_intervals * step
     hi = range_upper + pad_intervals * step
     window = [s for s in all_strikes if lo <= s <= hi]
@@ -118,13 +119,13 @@ def strike_window(
 
 
 def strategy_boundary_strikes(
-    all_strikes: list[int],
+    all_strikes: list[Strike],
     range_lower: float,
     range_upper: float,
     spot: float,
-    atm: int,
-) -> set[int]:
-    needed: set[int] = set()
+    atm: Strike,
+) -> set[Strike]:
+    needed: set[Strike] = set()
     if atm in all_strikes:
         needed.add(atm)
     needed.add(min(all_strikes, key=lambda s: abs(s - spot)))
@@ -139,7 +140,7 @@ def strategy_boundary_strikes(
     return needed
 
 
-def tail_strikes_needed(needed_strikes: list[int], chain_strikes: set[int]) -> list[int]:
+def tail_strikes_needed(needed_strikes: list[Strike], chain_strikes: set[Strike]) -> list[Strike]:
     if not chain_strikes:
         return list(needed_strikes)
     lo, hi = min(chain_strikes), max(chain_strikes)
@@ -178,7 +179,7 @@ def legs_to_margin_input(
                 "expiry_date": expiry_display,
                 "product_type": cfg.OPTIONS,
                 "right": leg.right,
-                "strike_price": str(leg.strike),
+                "strike_price": strike_for_broker(leg.strike),
                 "quantity": str(leg.quantity),
                 "price": str(leg.premium_per_unit),
                 "action": leg.side,

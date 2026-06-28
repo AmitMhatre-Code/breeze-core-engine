@@ -1,10 +1,14 @@
-/** Filter strikes by numeric prefix (raw or en-IN formatted without commas). */
+import { formatStrike, normalizeStrikeKey } from "@/lib/strategy-builder/format-strike";
+
+/** Filter strikes by numeric prefix (supports fractional strikes). */
 export function filterStrikes(strikes: number[], query: string): number[] {
-  const digits = query.replace(/\D/g, "");
-  if (!digits) return strikes;
+  const normalized = query.replace(/,/g, "").trim();
+  if (!normalized) return strikes;
+  const prefix = normalized.replace(/[^\d.]/g, "");
+  if (!prefix) return strikes;
   return strikes.filter((k) => {
-    const raw = String(k);
-    const formatted = k.toLocaleString("en-IN").replace(/,/g, "");
-    return raw.startsWith(digits) || formatted.startsWith(digits);
+    const raw = normalizeStrikeKey(k);
+    const formatted = formatStrike(k).replace(/,/g, "");
+    return raw.startsWith(prefix) || formatted.startsWith(prefix);
   });
 }

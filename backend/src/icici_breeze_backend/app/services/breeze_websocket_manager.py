@@ -10,6 +10,7 @@ from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
     is_breeze_invoke_response_ok,
 )
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_for_broker, strike_key
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.app.services.reference_data.keys import ws_quote_key
 
@@ -56,7 +57,7 @@ def _sub_key(
     exchange_code: str,
     stock_code: str,
     expiry_display: str,
-    strike: int,
+    strike: Strike,
     right: str,
 ) -> str:
     r = str(right or "").strip().lower()
@@ -64,10 +65,10 @@ def _sub_key(
         r = "call"
     else:
         r = "put"
-    return f"{exchange_code.upper()}|{stock_code.upper()}|{expiry_display}|{strike}|{r}"
+    return f"{exchange_code.upper()}|{stock_code.upper()}|{expiry_display}|{strike_key(strike)}|{r}"
 
 
-def _normalize_tick(tick: dict[str, Any], stock_code: str, expiry_display: str, right: str, strike: int) -> dict[str, Any]:
+def _normalize_tick(tick: dict[str, Any], stock_code: str, expiry_display: str, right: str, strike: Strike) -> dict[str, Any]:
     total_buy = int(tick.get("totalBuyQt") or tick.get("total_buy_qty") or 0)
     total_sell = int(tick.get("totalSellQ") or tick.get("total_sell_qty") or 0)
     if total_sell > 0:
@@ -100,11 +101,8 @@ def _on_ticks(ticks: Any) -> None:
     expiry = str(ticks.get("expiry_date") or "").strip()
     strike_raw = ticks.get("strike_price")
     right_raw = ticks.get("right") or ticks.get("right_type") or ""
-    try:
-        strike = int(float(str(strike_raw or "0")))
-    except (TypeError, ValueError):
-        return
-    if not stock or not expiry or strike <= 0:
+    strike = parse_strike(strike_raw)
+    if not stock or not expiry or strike is None:
         return
     if "T" in expiry or len(expiry) == 10:
         import datetime as dt
@@ -158,7 +156,7 @@ def subscribe_option(
     exchange_code: str,
     stock_code: str,
     expiry_display: str,
-    strike: int,
+    strike: Strike,
     right: str,
 ) -> bool:
     key = _sub_key(exchange_code, stock_code, expiry_display, strike, right)
@@ -181,7 +179,7 @@ def subscribe_option(
             exchange_code=exchange_code,
             stock_code=stock_code,
             expiry_date=expiry_display,
-            strike_price=str(strike),
+            strike_price=strike_for_broker(strike),
             right=r,
             product_type="options",
             get_market_depth=False,
@@ -225,7 +223,7 @@ def ensure_chain_subscriptions(
     stock_code: str,
     exchange_code: str,
     expiry_display: str,
-    strikes: list[int],
+    strikes: list[Strike],
     *,
     lot_size: int = 0,
     freeze_quantity: int | None = None,
@@ -258,8 +256,8 @@ def ensure_chain_subscriptions(
     if not calls and not puts:
         return None
 
-    call_by = {int(r["strike_price"]): r for r in calls}
-    put_by = {int(r["strike_price"]): r for r in puts}
+    call_by = {parse_strike(r["strike_price"]): r for r in calls if parse_strike(r.get("strike_price")) is not None}
+    put_by = {parse_strike(r["strike_price"]): r for r in puts if parse_strike(r.get("strike_price")) is not None}
     chain_strikes = sorted(set(strikes) | set(call_by) | set(put_by))
     chain_rows = [
         {"strike_price": k, "call": call_by.get(k), "put": put_by.get(k)}

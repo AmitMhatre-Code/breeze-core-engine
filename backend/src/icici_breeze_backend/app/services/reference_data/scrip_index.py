@@ -8,6 +8,7 @@ from collections import defaultdict
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike, strikes_sorted
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.app.services.reference_data.aliases import scrip_short_name, underlying_aliases
 from icici_breeze_backend.app.services.reference_data.bhavcopy_common import display_from_iso_date
@@ -96,7 +97,7 @@ def publish_scrip_index_from_db(version: int | None = None) -> int:
                 ).fetchall()
 
         grouped: dict[tuple[str, str], list[str]] = defaultdict(list)
-        strikes_by_key: dict[tuple[str, str], set[int]] = defaultdict(set)
+        strikes_by_key: dict[tuple[str, str], set[Strike]] = defaultdict(set)
 
         for short, long_name, expiry, ex_code, strike in rows:
             short_s = str(short or "").strip()
@@ -106,12 +107,9 @@ def publish_scrip_index_from_db(version: int | None = None) -> int:
             grouped[(short_s, str(long_name or ""))].append(disp)
             if ex_code:
                 exchange_code_map[short_s.upper()] = str(ex_code).strip().upper()
-            try:
-                strike_i = int(float(strike))
-                if strike_i > 0:
-                    strikes_by_key[(short_s, disp)].add(strike_i)
-            except (TypeError, ValueError):
-                pass
+            strike_f = parse_strike(strike)
+            if strike_f is not None:
+                strikes_by_key[(short_s, disp)].add(strike_f)
 
         underlyings = [
             {
@@ -128,7 +126,7 @@ def publish_scrip_index_from_db(version: int | None = None) -> int:
         for (short, disp), strike_set in strikes_by_key.items():
             cache_set_json(
                 strikes_key(ver, exchange_code, short, disp),
-                sorted(strike_set),
+                strikes_sorted(strike_set),
             )
 
     cache_set_json(exchange_code_map_key(ver), exchange_code_map)
@@ -160,18 +158,18 @@ def get_strikes(
     stock_code: str,
     expiry_display: str,
     exchange_code: str = cfg.NFO,
-) -> list[int] | None:
+) -> list[Strike] | None:
     version = current_version()
     if version <= 0:
         return None
     short = scrip_short_name(stock_code)
     data = cache_get_json(strikes_key(version, exchange_code, short, expiry_display))
     if isinstance(data, list) and data:
-        return [int(x) for x in data]
+        return strikes_sorted(data)
     for alias in underlying_aliases(stock_code):
         data = cache_get_json(strikes_key(version, exchange_code, alias, expiry_display))
         if isinstance(data, list) and data:
-            return [int(x) for x in data]
+            return strikes_sorted(data)
     return None
 
 

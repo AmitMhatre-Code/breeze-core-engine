@@ -7,6 +7,7 @@ import time
 from typing import Any, TYPE_CHECKING
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_for_broker, strike_key
 from icici_breeze_backend.app.core.market_hours import is_india_market_open
 from icici_breeze_backend.app.core.timezone import IST, now_ist
 from icici_breeze_backend.app.db.redis_client import cache_get_json
@@ -100,10 +101,8 @@ def _normalize_right_key(right: str) -> str:
 def _is_spot_strike(strike_price: Any) -> bool:
     if strike_price is None:
         return True
-    try:
-        return int(float(str(strike_price).strip() or "0")) <= 0
-    except (TypeError, ValueError):
-        return True
+    strike_f = parse_strike(strike_price)
+    return strike_f is None or strike_f <= 0
 
 
 def _cell_to_icici_row(cell: dict[str, Any]) -> dict[str, Any]:
@@ -119,7 +118,7 @@ def _cell_to_icici_row(cell: dict[str, Any]) -> dict[str, Any]:
             ratio = "NA"
     return {
         "stock_code": cell.get("stock_code"),
-        "strike_price": int(float(cell.get("strike_price") or 0)),
+        "strike_price": parse_strike(cell.get("strike_price")) or 0.0,
         "right": cell.get("right"),
         "expiry_date": cell.get("expiry_date"),
         "ltp": cell.get("ltp"),
@@ -165,7 +164,7 @@ def _fetch_cell_from_cache(
     exchange_code: str,
     stock_code: str,
     expiry_display: str,
-    strike: int,
+    strike: Strike,
     right: str,
     *,
     lot_size: int | None = None,
@@ -479,9 +478,8 @@ def fetch_quote_icici_response(
             audit_rationale=audit_rationale,
         )
 
-    try:
-        strike = int(float(str(strike_price)))
-    except (TypeError, ValueError):
+    strike = parse_strike(strike_price)
+    if strike is None:
         return {"Status": 400, "Error": f"Invalid strike_price: {strike_price!r}"}
 
     lot_size = proc.fetch_lot_size(stock_code, expiry_display, exchange_code=exchange_code)
@@ -515,7 +513,7 @@ def fetch_quote_icici_response(
         exchange_code,
         expiry_raw,
         right,
-        str(strike),
+        strike_for_broker(strike),
         audit=audit,
         audit_rationale=audit_rationale,
     )

@@ -1,6 +1,8 @@
 """Redis key helpers for reference data versioning."""
 from __future__ import annotations
 
+from icici_breeze_backend.app.core.strike import Strike, strike_key
+
 CURRENT_VERSION_KEY = "refdata:current_version"
 
 
@@ -51,7 +53,7 @@ def ws_quote_key(
     exchange_code: str,
     short_name: str,
     expiry_display: str,
-    strike: int,
+    strike: Strike,
     right: str,
 ) -> str:
     r = str(right or "").strip().lower()
@@ -61,5 +63,5 @@ def ws_quote_key(
         r = "put"
     return (
         f"quotes:ws:{exchange_code.upper()}:{short_name.upper()}:"
-        f"{expiry_display}:{strike}:{r}"
+        f"{expiry_display}:{strike_key(strike)}:{r}"
     )

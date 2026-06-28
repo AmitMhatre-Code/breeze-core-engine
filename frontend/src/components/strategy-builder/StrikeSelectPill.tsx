@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { filterStrikes } from "@/lib/strategy-builder/strike-filter";
+import { formatStrike } from "@/lib/strategy-builder/format-strike";
 import {
   useComboboxBlurClose,
   useListboxCombobox,
@@ -95,9 +96,7 @@ export function StrikeSelectPill({
   const toolbarLayout = layout === "toolbar";
 
   const valueLabel =
-    value != null && Number.isFinite(value)
-      ? value.toLocaleString("en-IN")
-      : null;
+    value != null && Number.isFinite(value) ? formatStrike(value) : null;
 
   const disabledCombined = Boolean(disabled || busy || !strikes.length);
 
@@ -118,7 +117,13 @@ export function StrikeSelectPill({
   };
 
   const handleInputChange = (next: string) => {
-    setQ(next.replace(/\D/g, "").slice(0, 8));
+    const cleaned = next.replace(/[^\d.]/g, "");
+    const dotParts = cleaned.split(".");
+    const normalized =
+      dotParts.length <= 1
+        ? dotParts[0]?.slice(0, 8) ?? ""
+        : `${dotParts[0]?.slice(0, 8) ?? ""}.${dotParts.slice(1).join("").slice(0, 2)}`;
+    setQ(normalized);
     if (!open) setOpen(true);
   };
 
@@ -206,7 +211,7 @@ export function StrikeSelectPill({
               onClick={() => handleSelect(k)}
             >
               <span className="font-semibold tabular-nums">
-                {k.toLocaleString("en-IN")}
+                {formatStrike(k)}
               </span>
             </button>
           </li>

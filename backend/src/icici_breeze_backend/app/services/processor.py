@@ -7,6 +7,7 @@ import time
 from breeze_connect import BreezeConnect
 import json
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_for_broker, strike_key, strikes_sorted
 from icici_breeze_backend.app.core.timezone import IST, now_ist, today_ist_date
 import requests
 import zipfile
@@ -421,7 +422,7 @@ class processor():
         exchange_code: str,
         stock_code: str,
         expiry_display: str,
-        strike_price: int,
+        strike_price: Strike,
         right: str,
         quantity: int,
         margin_source: str,
@@ -434,7 +435,7 @@ class processor():
                 exchange_code=exchange_code,
                 stock_code=stock_code,
                 expiry_display=expiry_display,
-                strike_price=int(strike_price),
+                strike_price=parse_strike(strike_price) or 0,
                 right=right,
                 quantity=int(quantity),
             )
@@ -452,7 +453,7 @@ class processor():
                     "type": "baseline_missing_contract",
                     "stock_code": stock_code,
                     "expiry_date": expiry_display,
-                    "strike_price": int(strike_price),
+                    "strike_price": parse_strike(strike_price) or 0,
                     "right": right,
                     "message": "Contract missing in Exchange Risk Baseline; Breeze fallback used.",
                 }
@@ -464,7 +465,7 @@ class processor():
             out = breeze.margin_calculator(
                 [
                     {
-                        "strike_price": int(strike_price),
+                        "strike_price": strike_for_broker(strike_price),
                         "quantity": int(quantity),
                         "product": product,
                         "action": action,
@@ -740,12 +741,15 @@ class processor():
                 # Identifying the best option to BUY inside the defined range
                 options = []
                 for i in options_chain.get('Success') or []:
-                    if int(i["total_buy_qty"]) > 0 and ((right == cfg.CALL and int(i["strike_price"]) < int(range_lower) and int(i["strike_price"]) > float(i['spot_price'])) or (right == cfg.PUT and int(i["strike_price"]) > int(range_upper) and int(i["strike_price"]) < float(i['spot_price'])) ):
+                    strike_f = parse_strike(i["strike_price"])
+                    if strike_f is None:
+                        continue
+                    if int(i["total_buy_qty"]) > 0 and ((right == cfg.CALL and strike_f < range_lower and strike_f > float(i['spot_price'])) or (right == cfg.PUT and strike_f > range_upper and strike_f < float(i['spot_price'])) ):
                         temp = {}
                         temp['stock_code'] = stock_code
                         temp['sell_leg'] = sell_leg
                         temp['buy_leg'] = {}
-                        temp['buy_leg']['strike_price'] = int(i["strike_price"])
+                        temp['buy_leg']['strike_price'] = strike_f
                         temp['buy_leg']['ltp'] = i['ltp']
                         temp['buy_leg']['best_bid_price'] = i['best_bid_price']
                         temp['buy_leg']['best_offer_price'] = i['best_offer_price']
@@ -761,9 +765,9 @@ class processor():
                         if temp['buy_leg']['quantity'] <= int(i['total_sell_qty']):
                             temp['buy_leg']['best_offer_price'] = i["best_offer_price"]
                             if right == cfg.CALL:
-                                temp['profit'] = temp['buy_leg']['quantity'] * (range_lower - int(i["strike_price"]))
+                                temp['profit'] = temp['buy_leg']['quantity'] * (range_lower - strike_f)
                             else:
-                                temp['profit'] = temp['buy_leg']['quantity'] * (int(i["strike_price"]) - range_upper)
+                                temp['profit'] = temp['buy_leg']['quantity'] * (strike_f - range_upper)
                             days_to_expiry = _days_to_expiry(expiry_date)
                             temp['carry_returns'] = (temp['profit']/(limits * 100000)) * (365/days_to_expiry) * 100
                             options.append(copy.deepcopy(temp))
@@ -900,10 +904,12 @@ class processor():
             max_pct = max(min_pct, float(otm_max))
             for i in options_chain.get('Success') or []:
                 spot = float(i["spot_price"])
-                strike = int(i["strike_price"])
+                strike = parse_strike(i["strike_price"])
+                if strike is None:
+                    continue
                 in_range = (
-                    (right == cfg.CALL and strike >= int(spot * (1 + min_pct / 100)) and strike <= int(spot * (1 + max_pct / 100)))
-                    or (right == cfg.PUT and strike <= int(spot * (1 - min_pct / 100)) and strike >= int(spot * (1 - max_pct / 100)))
+                    (right == cfg.CALL and strike >= spot * (1 + min_pct / 100) and strike <= spot * (1 + max_pct / 100))
+                    or (right == cfg.PUT and strike <= spot * (1 - min_pct / 100) and strike >= spot * (1 - min_pct / 100))
                 )
                 if _uncovered_scan_row_has_bid_side(i, exchange_code) and in_range:
                     range_eligible_rows += 1
@@ -913,7 +919,7 @@ class processor():
                         exchange_code=exchange_code,
                         stock_code=stock_code,
                         expiry_display=_expiry_api_to_display(expiry_date),
-                        strike_price=int(i["strike_price"]),
+                        strike_price=strike,
                         right=right,
                         quantity=int(lot_size),
                         margin_source=margin_source,
@@ -926,7 +932,7 @@ class processor():
 
                     temp = {}
                     temp['stock_code'] = stock_code
-                    temp['strike_price'] = int(i["strike_price"])
+                    temp['strike_price'] = strike
                     temp['ltp'] = i['ltp']
                     temp['best_bid_price'] = i['best_bid_price']
                     temp['best_offer_price'] = i['best_offer_price']
@@ -1179,10 +1185,8 @@ class processor():
             return {}
 
         def _strike_key(raw: Any) -> str:
-            try:
-                return "{:.0f}".format(float(raw))
-            except (TypeError, ValueError):
-                return str(raw or "").strip()
+            key = strike_key(raw)
+            return key if key else str(raw or "").strip()
 
         def _expiry_display(raw: str) -> str:
             s = str(raw or "").strip()
@@ -1579,8 +1583,11 @@ class processor():
 
                 hedge_chain = []
                 for option in full_chain.get("Success") or []:
-                    strike_price = int(strike_price)
-                    option['strike_price'] = int(option['strike_price'])
+                    strike_price = parse_strike(strike_price)
+                    opt_strike = parse_strike(option.get('strike_price'))
+                    if strike_price is None or opt_strike is None:
+                        continue
+                    option['strike_price'] = opt_strike
                     option['spot_price'] = float(option['spot_price'])
 
                     if self.is_valid_hedge(strike_price,right,option) == True:
@@ -1779,7 +1786,7 @@ class processor():
                 rows.append(
                     {
                         "stock_code": stock_code,
-                        "strike_price": int(float(i.get("strike_price", 0))),
+                        "strike_price": parse_strike(i.get("strike_price")) or 0.0,
                         "right": right,
                         "expiry_date": expiry_display,
                         "ltp": i.get("ltp"),
@@ -1975,7 +1982,7 @@ class processor():
         act = str(action or "").strip().lower()
         rgt = str(right or "").strip().lower() if right not in (None, "") else ""
         try:
-            strike = str(int(float(strike_price)))
+            strike = strike_for_broker(strike_price)
         except (TypeError, ValueError):
             strike = str(strike_price)
         try:
@@ -2828,7 +2835,7 @@ class processor():
 
     def list_option_strikes(
         self, stock_code: str, expiry_date: str, exchange_code: str = cfg.NFO
-    ) -> list[int]:
+    ) -> list[Strike]:
         """Distinct strike prices for an underlying + expiry from scrip master."""
         import datetime as dt
 
@@ -2872,16 +2879,15 @@ class processor():
                     (stock_code, expiry_key, exchange_code),
                 )
             rows = cursor.fetchall()
-        out: list[int] = []
+        out: list[Strike] = []
         for row in rows:
-            try:
-                out.append(int(float(row[0])))
-            except (TypeError, ValueError):
-                continue
-        return sorted(set(out))
+            strike_f = parse_strike(row[0])
+            if strike_f is not None:
+                out.append(strike_f)
+        return strikes_sorted(out)
 
     @staticmethod
-    def strike_interval(strikes: list[int]) -> int:
+    def strike_interval(strikes: list[Strike]) -> float:
         """Minimum positive gap between adjacent strikes (fallback 50)."""
         if len(strikes) < 2:
             return 50
@@ -2889,7 +2895,7 @@ class processor():
         return min(gaps) if gaps else 50
 
     @staticmethod
-    def search_interval(strikes: list[int], spot: float) -> int:
+    def search_interval(strikes: list[Strike], spot: float) -> float:
         """Modal strike gap near spot for range padding (fallback 50)."""
         if len(strikes) < 2:
             return 50
@@ -3215,7 +3221,9 @@ class processor():
                 except Exception:
                     return {"Status": 400, "Error": f"Invalid expiry_date: {ed}", "Success": None}
             try:
-                strike_price = int(float(leg["strike_price"]))
+                strike_price = parse_strike(leg["strike_price"])
+                if strike_price is None:
+                    return {"Status": 400, "Error": "Invalid strike_price", "Success": None}
                 quantity = int(leg["quantity"])
                 action = leg["action"]
                 product = leg.get("product_type") or cfg.OPTIONS

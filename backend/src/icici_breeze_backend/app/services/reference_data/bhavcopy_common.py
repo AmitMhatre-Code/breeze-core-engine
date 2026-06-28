@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import parse_strike, strike_key
 
 NSE_ARCHIVES_HTTP_HEADERS = {
     "User-Agent": (
@@ -110,8 +111,8 @@ def normalize_nse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
     )
     if not expiry_key:
         return None
-    strike = safe_int(raw_row.get("StrkPric") or bhav_row_get(raw_row, "StrkPric", "STRKPRIC"), 0)
-    if strike <= 0:
+    strike = parse_strike(raw_row.get("StrkPric") or bhav_row_get(raw_row, "StrkPric", "STRKPRIC"))
+    if strike is None:
         return None
     cls = safe_float(raw_row.get("ClsPric") or bhav_row_get(raw_row, "ClsPric", "CLSPRIC"), 0.0)
     if cls <= 0:
@@ -131,7 +132,7 @@ def normalize_nse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
         "expiry_display": display_from_iso_date(expiry_key),
         "expiry_date": expiry_key,
         "right": right,
-        "strike_price": str(strike),
+        "strike_price": strike_key(strike),
         "ltp": fmt2(cls),
         "best_bid_price": fmt2(bid if bid > 0 else cls),
         "best_offer_price": fmt2(ask if ask > 0 else cls),
@@ -177,8 +178,9 @@ def normalize_bse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
     )
     if not expiry_key:
         return None
-    strike = safe_int(bhav_row_get(raw_row, "STRK_PRIC", "StrkPric", "STRIKE_PR", "STRIKE_PRICE"), 0)
-    if strike <= 0:
+    strike_raw = bhav_row_get(raw_row, "STRK_PRIC", "StrkPric", "STRIKE_PR", "STRIKE_PRICE")
+    strike = parse_strike(strike_raw)
+    if strike is None:
         return None
     cls = safe_float(bhav_row_get(raw_row, "CLSPRIC", "CLS_PRIC", "CLOSE", "CLOSE_PR"), 0.0)
     if cls <= 0:
@@ -196,7 +198,7 @@ def normalize_bse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
             "TckrSymb": symbol,
             "XpryDt": expiry_key,
             "OptnTp": right,
-            "StrkPric": str(strike),
+            "StrkPric": strike_raw or strike_key(strike),
             "ClsPric": str(cls),
             "BidPric": str(bid),
             "AskPric": str(ask),

@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from icici_breeze_backend.app.core.strike import Strike
+
 Right = Literal["Call", "Put"]
 Side = Literal["Buy", "Sell"]
 StrategyCategory = Literal["income", "bullish", "bearish", "volatility"]
@@ -42,7 +44,7 @@ POP_PRE_FILTER_TOLERANCE = 2.0
 
 @dataclass
 class QuoteRow:
-    strike: int
+    strike: Strike
     right: Right
     ltp: float
     best_bid_price: float
@@ -77,11 +79,11 @@ class QuoteRow:
 class TradeLeg:
     right: Right
     side: Side
-    strike: int
+    strike: Strike
     quantity: int
     premium_per_unit: float
 
-    def to_out(self, cache: dict[tuple[int, Right], QuoteRow]) -> dict[str, Any]:
+    def to_out(self, cache: dict[tuple[Strike, Right], QuoteRow]) -> dict[str, Any]:
         q = cache.get((self.strike, self.right))
         return {
             "right": self.right,
@@ -145,16 +147,16 @@ class EngineContext:
     provision_elm: bool
     strategy_category: StrategyCategory
     lot_size: int
-    strikes: list[int]
-    strike_step: int
-    search_interval: int
+    strikes: list[Strike]
+    strike_step: float
+    search_interval: float
     spot: float
-    atm_strike: int
+    atm_strike: Strike
     allow_infinite_loss: bool = False
     risk_reward_profile: RiskRewardProfile = "moderate"
     min_ann_return_pct: float = 5.0
     atm_iv: float | None = None
-    cache: dict[tuple[int, Right], QuoteRow] = field(default_factory=dict)
+    cache: dict[tuple[Strike, Right], QuoteRow] = field(default_factory=dict)
     structure_modified: bool = False
     halted: bool = False
     halt_reason: str | None = None
@@ -177,13 +179,13 @@ class EngineContext:
         return min(self.margin_rupees, self.max_loss_rupees)
 
     @property
-    def liquid_ce_strikes(self) -> list[int]:
+    def liquid_ce_strikes(self) -> list[Strike]:
         return sorted(
             s for s in self.strikes if (s, "Call") in self.cache and self.cache[(s, "Call")].liquid
         )
 
     @property
-    def liquid_pe_strikes(self) -> list[int]:
+    def liquid_pe_strikes(self) -> list[Strike]:
         return sorted(
             s for s in self.strikes if (s, "Put") in self.cache and self.cache[(s, "Put")].liquid
         )

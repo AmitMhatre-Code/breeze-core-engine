@@ -8,6 +8,7 @@ import threading
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_key
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.app.services.reference_data.aliases import scrip_short_name, underlying_aliases
 from icici_breeze_backend.app.services.reference_data.keys import (
@@ -34,8 +35,8 @@ def _sheet_local_key(exchange_code: str, short_name: str, expiry_display: str) -
     return f"{exchange_code.upper()}|{short_name.upper()}|{expiry_display}"
 
 
-def _contract_key(strike_price: int, option_type: str) -> str:
-    return f"{int(strike_price)}:{option_type.upper()}"
+def _contract_key(strike_price: Strike | float | int | str, option_type: str) -> str:
+    return f"{strike_key(strike_price)}:{option_type.upper()}"
 
 
 def _right_to_option_type(right: str) -> str:
@@ -97,17 +98,19 @@ def publish_span_baseline_from_db(version: int | None = None) -> int:
         opt = str(opt_type or "").strip().upper()
         if not ex_u or not short_u or not expiry_s or opt not in ("CE", "PE"):
             continue
+        strike_f = parse_strike(strike)
+        if strike_f is None:
+            continue
         try:
-            strike_i = int(strike)
             margin_per_lot = float(mpl)
             lot_size = int(ls) if ls else 0
         except (TypeError, ValueError):
             continue
-        if strike_i <= 0 or margin_per_lot < 0:
+        if margin_per_lot < 0:
             continue
 
         sheet_key = _sheet_local_key(ex_u, short_u, expiry_s)
-        sheets.setdefault(sheet_key, {})[_contract_key(strike_i, opt)] = {
+        sheets.setdefault(sheet_key, {})[_contract_key(strike_f, opt)] = {
             "margin_per_lot": margin_per_lot,
             "lot_size": lot_size,
         }
@@ -253,7 +256,7 @@ def _load_sheet_from_sqlite(
     out: dict[str, dict[str, float | int]] = {}
     for strike, opt_type, mpl, ls in rows:
         try:
-            out[_contract_key(int(strike), str(opt_type))] = {
+            out[_contract_key(strike, str(opt_type))] = {
                 "margin_per_lot": float(mpl),
                 "lot_size": int(ls) if ls else 0,
             }
@@ -264,7 +267,7 @@ def _load_sheet_from_sqlite(
 
 def compute_span_margin_required(
     contracts: dict[str, Any],
-    strike_price: int,
+    strike_price: Strike,
     right: str,
     quantity: int,
 ) -> dict[str, Any]:
@@ -292,7 +295,7 @@ def resolve_margin_from_store(
     exchange_code: str,
     stock_code: str,
     expiry_display: str,
-    strike_price: int,
+    strike_price: Strike,
     right: str,
     quantity: int,
 ) -> dict[str, Any]:

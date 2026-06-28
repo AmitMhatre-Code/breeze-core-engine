@@ -14,7 +14,7 @@ from icici_breeze_backend.app.services.reference_data.cache_bootstrap import is_
 from icici_breeze_backend.app.services.reference_data.scrip_index import current_version
 
 
-def _sample_row(strike: int = 23500) -> dict[str, str]:
+def _sample_row(strike: str | float | int = 23500) -> dict[str, str]:
     return {
         "stock_code": "NIFTY",
         "expiry_display": "26-Jun-2026",
@@ -67,3 +67,40 @@ def test_publish_bhavcopy_from_db_restores_redis(monkeypatch, tmp_path):
     publish_bhavcopy_from_db("nfo")
     assert current_version() >= ver_before
     assert is_bhavcopy_cached("nfo")
+
+
+def _bankindia_put(strike: str) -> dict[str, str]:
+    return {
+        "stock_code": "BANKINDIA",
+        "expiry_display": "30-Jun-2026",
+        "expiry_date": "2026-06-30",
+        "right": cfg.PUT,
+        "strike_price": strike,
+        "ltp": "5.37",
+        "best_bid_price": "5.00",
+        "best_offer_price": "5.50",
+        "total_buy_qty": "4",
+        "total_sell_qty": "4",
+        "open_interest": "525200",
+        "spot_price": "150.00",
+        "open": "5.00",
+        "high": "5.50",
+        "low": "4.90",
+        "previous_close": "5.30",
+        "segment": cfg.NFO,
+    }
+
+
+def test_persist_fractional_strikes_no_collision(monkeypatch, tmp_path):
+    """150.00 and 150.35 are distinct contracts (NSE bhavcopy collision case)."""
+    monkeypatch.setattr(cfg, "DATA_PATH", str(tmp_path) + "/")
+    monkeypatch.setattr(cfg, "SCRIP_DB", "scrips.sqlite3")
+    get_redis()
+
+    day = dt.date(2026, 6, 25)
+    rows = [_bankindia_put("150.00"), _bankindia_put("150.35")]
+    persist_bhavcopy_rows(rows, "nfo", day, "http://example/nse")
+    assert bhavcopy_row_count("nfo") == 2
+    loaded = load_bhavcopy_rows_from_db("nfo")
+    strikes = sorted(r["strike_price"] for r in loaded)
+    assert strikes == ["150", "150.35"]

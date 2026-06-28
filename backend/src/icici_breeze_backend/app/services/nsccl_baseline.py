@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike
 
 _logger = logging.getLogger(__name__)
 
@@ -25,31 +26,75 @@ BSE_SPAN_PF_CODE_TO_SHORT_NAME = {"BSXOPT": "BSESEN", "BKXOPT": "BANKEX"}
 
 _MAX_BASELINE_UPLOAD_BYTES = 120 * 1024 * 1024
 
+_BASELINE_DB_COLUMNS = (
+    "exchange_code",
+    "short_name",
+    "expiry_date",
+    "strike_price",
+    "option_type",
+    "margin_per_lot",
+    "lot_size",
+    "source_file",
+    "source_date",
+    "source_version",
+    "refreshed_at",
+)
 
-def _scrip_conn() -> sqlite3.Connection:
-    return sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB)
+_EXCHANGE_MARGIN_BASELINE_DDL = """
+CREATE TABLE {name} (
+    exchange_code TEXT NOT NULL,
+    short_name TEXT NOT NULL,
+    expiry_date TEXT NOT NULL,
+    strike_price REAL NOT NULL,
+    option_type TEXT NOT NULL,
+    margin_per_lot REAL NOT NULL,
+    lot_size INTEGER,
+    source_file TEXT NOT NULL,
+    source_date TEXT NOT NULL,
+    source_version INTEGER NOT NULL,
+    refreshed_at TEXT NOT NULL,
+    PRIMARY KEY (exchange_code, short_name, expiry_date, strike_price, option_type)
+)
+"""
+
+
+def _baseline_strike_column_is_integer(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute("PRAGMA table_info(exchange_margin_baseline)").fetchall()
+    if not rows:
+        return False
+    for _cid, name, col_type, *_rest in rows:
+        if str(name) == "strike_price":
+            return str(col_type or "").upper() == "INTEGER"
+    return False
+
+
+def _migrate_exchange_margin_baseline_strike_to_real(conn: sqlite3.Connection) -> None:
+    if not _baseline_strike_column_is_integer(conn):
+        return
+    _logger.info("Migrating exchange_margin_baseline.strike_price from INTEGER to REAL")
+    conn.execute("ALTER TABLE exchange_margin_baseline RENAME TO exchange_margin_baseline_legacy")
+    conn.execute(_EXCHANGE_MARGIN_BASELINE_DDL.format(name="exchange_margin_baseline"))
+    conn.execute(
+        f"""
+        INSERT INTO exchange_margin_baseline ({", ".join(_BASELINE_DB_COLUMNS)})
+        SELECT {", ".join(_BASELINE_DB_COLUMNS)}
+        FROM exchange_margin_baseline_legacy
+        """
+    )
+    conn.execute("DROP TABLE exchange_margin_baseline_legacy")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_exchange_margin_baseline_source
+        ON exchange_margin_baseline(source_date, source_version)
+        """
+    )
+    conn.commit()
+    _logger.info("exchange_margin_baseline strike_price migration complete")
 
 
 def ensure_exchange_margin_baseline_table() -> None:
     with _scrip_conn() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS exchange_margin_baseline (
-                exchange_code TEXT NOT NULL,
-                short_name TEXT NOT NULL,
-                expiry_date TEXT NOT NULL,
-                strike_price INTEGER NOT NULL,
-                option_type TEXT NOT NULL,
-                margin_per_lot REAL NOT NULL,
-                lot_size INTEGER,
-                source_file TEXT NOT NULL,
-                source_date TEXT NOT NULL,
-                source_version INTEGER NOT NULL,
-                refreshed_at TEXT NOT NULL,
-                PRIMARY KEY (exchange_code, short_name, expiry_date, strike_price, option_type)
-            )
-            """
-        )
+        conn.execute(_EXCHANGE_MARGIN_BASELINE_DDL.format(name="IF NOT EXISTS exchange_margin_baseline"))
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_exchange_margin_baseline_source
@@ -57,6 +102,11 @@ def ensure_exchange_margin_baseline_table() -> None:
             """
         )
         conn.commit()
+        _migrate_exchange_margin_baseline_strike_to_real(conn)
+
+
+def _scrip_conn() -> sqlite3.Connection:
+    return sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB)
 
 
 def _ymd_to_display(ymd: str) -> str:
@@ -173,10 +223,13 @@ def _ingest_span_xml_stream(
         FROM scrip_master
         """
     ).fetchall()
-    lot_by_contract: dict[tuple[str, str, int, str], int] = {}
+    lot_by_contract: dict[tuple[str, str, Strike, str], int] = {}
     for sn, ed, sp, ot, ls in lot_rows:
         try:
-            key = (str(sn).strip().upper(), str(ed).strip(), int(sp), str(ot).strip().upper())
+            strike_f = parse_strike(sp)
+            if strike_f is None:
+                continue
+            key = (str(sn).strip().upper(), str(ed).strip(), strike_f, str(ot).strip().upper())
             lot_by_contract[key] = int(ls)
         except Exception:
             continue
@@ -223,7 +276,11 @@ def _ingest_span_xml_stream(
                     elem.clear()
                     continue
                 strike_raw = (elem.findtext("k") or "").strip()
-                strike_price = int(round(float(strike_raw)))
+                strike_price = parse_strike(strike_raw)
+                if strike_price is None:
+                    skipped += 1
+                    elem.clear()
+                    continue
                 ra = elem.find("ra")
                 if ra is None:
                     skipped += 1
@@ -486,7 +543,7 @@ def resolve_exchange_baseline_margin(
     exchange_code: str,
     stock_code: str,
     expiry_display: str,
-    strike_price: int,
+    strike_price: Strike,
     right: str,
     quantity: int,
 ) -> dict:
@@ -518,7 +575,7 @@ def resolve_exchange_baseline_margin(
               AND strike_price = ? AND option_type = ?
             LIMIT 1
             """,
-            (exchange_code, stock_code, expiry_display, int(strike_price), option_type),
+            (exchange_code, stock_code, expiry_display, parse_strike(strike_price), option_type),
         ).fetchone()
     if not row:
         return {"found": False}

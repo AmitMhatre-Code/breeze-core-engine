@@ -8,6 +8,7 @@ import threading
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_key
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.app.services.reference_data.aliases import underlying_aliases
 from icici_breeze_backend.app.services.reference_data.bhavcopy_common import safe_float, safe_int
@@ -56,35 +57,70 @@ def _scrip_conn() -> sqlite3.Connection:
     return sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB)
 
 
+_FO_BHAVCOPY_DDL = """
+CREATE TABLE {name} (
+    segment TEXT NOT NULL,
+    stock_code TEXT NOT NULL,
+    expiry_display TEXT NOT NULL,
+    expiry_date TEXT,
+    right TEXT NOT NULL,
+    strike_price REAL NOT NULL,
+    ltp TEXT,
+    best_bid_price TEXT,
+    best_offer_price TEXT,
+    total_buy_qty TEXT,
+    total_sell_qty TEXT,
+    open_interest TEXT,
+    spot_price TEXT,
+    open TEXT,
+    high TEXT,
+    low TEXT,
+    previous_close TEXT,
+    source_date TEXT NOT NULL,
+    source_url TEXT,
+    ingested_at TEXT NOT NULL,
+    PRIMARY KEY (segment, stock_code, expiry_display, right, strike_price)
+)
+"""
+
+
+def _strike_column_is_integer(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute("PRAGMA table_info(fo_bhavcopy)").fetchall()
+    if not rows:
+        return False
+    for _cid, name, col_type, *_rest in rows:
+        if str(name) == "strike_price":
+            return str(col_type or "").upper() == "INTEGER"
+    return False
+
+
+def _migrate_fo_bhavcopy_strike_to_real(conn: sqlite3.Connection) -> None:
+    if not _strike_column_is_integer(conn):
+        return
+    _logger.info("Migrating fo_bhavcopy.strike_price from INTEGER to REAL")
+    conn.execute("ALTER TABLE fo_bhavcopy RENAME TO fo_bhavcopy_legacy")
+    conn.execute(_FO_BHAVCOPY_DDL.format(name="fo_bhavcopy"))
+    conn.execute(
+        f"""
+        INSERT INTO fo_bhavcopy ({", ".join(_BHAVCOPY_DB_COLUMNS)})
+        SELECT {", ".join(_BHAVCOPY_DB_COLUMNS)}
+        FROM fo_bhavcopy_legacy
+        """
+    )
+    conn.execute("DROP TABLE fo_bhavcopy_legacy")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fo_bhavcopy_segment
+        ON fo_bhavcopy(segment)
+        """
+    )
+    conn.commit()
+    _logger.info("fo_bhavcopy strike_price migration complete")
+
+
 def ensure_fo_bhavcopy_table() -> None:
     with _scrip_conn() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS fo_bhavcopy (
-                segment TEXT NOT NULL,
-                stock_code TEXT NOT NULL,
-                expiry_display TEXT NOT NULL,
-                expiry_date TEXT,
-                right TEXT NOT NULL,
-                strike_price INTEGER NOT NULL,
-                ltp TEXT,
-                best_bid_price TEXT,
-                best_offer_price TEXT,
-                total_buy_qty TEXT,
-                total_sell_qty TEXT,
-                open_interest TEXT,
-                spot_price TEXT,
-                open TEXT,
-                high TEXT,
-                low TEXT,
-                previous_close TEXT,
-                source_date TEXT NOT NULL,
-                source_url TEXT,
-                ingested_at TEXT NOT NULL,
-                PRIMARY KEY (segment, stock_code, expiry_display, right, strike_price)
-            )
-            """
-        )
+        conn.execute(_FO_BHAVCOPY_DDL.format(name="IF NOT EXISTS fo_bhavcopy"))
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_fo_bhavcopy_segment
@@ -92,6 +128,7 @@ def ensure_fo_bhavcopy_table() -> None:
             """
         )
         conn.commit()
+        _migrate_fo_bhavcopy_strike_to_real(conn)
 
 
 def _segment_key(exchange_code: str) -> str:
@@ -104,7 +141,7 @@ def _row_dict_from_db(
     expiry_display: str,
     expiry_date: str | None,
     right: str,
-    strike_price: int,
+    strike_price: float,
     ltp: str | None,
     best_bid: str | None,
     best_offer: str | None,
@@ -122,7 +159,7 @@ def _row_dict_from_db(
         "expiry_display": str(expiry_display or "").strip(),
         "expiry_date": str(expiry_date or "").strip(),
         "right": str(right or "").strip(),
-        "strike_price": str(int(strike_price)),
+        "strike_price": strike_key(strike_price),
         "ltp": str(ltp or ""),
         "best_bid_price": str(best_bid or ""),
         "best_offer_price": str(best_offer or ""),
@@ -156,11 +193,8 @@ def persist_bhavcopy_rows(
         stock = str(row.get("stock_code") or "").strip().upper()
         disp = str(row.get("expiry_display") or "").strip()
         right = str(row.get("right") or "").strip()
-        try:
-            strike = int(float(str(row.get("strike_price") or "0")))
-        except (TypeError, ValueError):
-            continue
-        if not stock or not disp or not right or strike <= 0:
+        strike = parse_strike(row.get("strike_price"))
+        if not stock or not disp or not right or strike is None:
             continue
         batch.append(
             (
@@ -268,7 +302,7 @@ def _lookup_bhav_row_from_db(
     aliases: set[str],
     expiry_display: str,
     right: str,
-    strike: int,
+    strike: Strike,
 ) -> dict[str, str] | None:
     ensure_fo_bhavcopy_table()
     seg = segment.lower()
@@ -288,7 +322,7 @@ def _lookup_bhav_row_from_db(
                   AND stock_code IN ({placeholders})
                 LIMIT 1
                 """,
-                (seg, expiry_display, right, int(strike), *names),
+                (seg, expiry_display, right, parse_strike(strike), *names),
             ).fetchone()
     except sqlite3.Error:
         return None
@@ -303,13 +337,10 @@ def _rebuild_indexes(rows: list[dict[str, str]], segment: str) -> dict[str, Any]
         stock = str(row.get("stock_code") or "").strip().upper()
         disp = str(row.get("expiry_display") or "").strip()
         right = str(row.get("right") or "").strip()
-        try:
-            strike = int(float(str(row.get("strike_price") or "0")))
-        except (TypeError, ValueError):
+        strike = parse_strike(row.get("strike_price"))
+        if not stock or not disp or not right or strike is None:
             continue
-        if not stock or not disp or strike <= 0:
-            continue
-        key = f"{stock}|{disp}|{right}|{strike}"
+        key = f"{stock}|{disp}|{right}|{strike_key(strike)}"
         by_strike[key] = row
     return {"by_strike": by_strike}
 
@@ -425,7 +456,7 @@ def _lookup_bhav_row(
     stock_code: str,
     expiry_display: str,
     right: str,
-    strike: int,
+    strike: Strike,
     exchange_code: str,
 ) -> dict[str, str] | None:
     seg = _segment_key(exchange_code)
@@ -438,7 +469,7 @@ def _lookup_bhav_row(
         with _lock:
             by_strike = _local.get(seg, {}).get("by_strike") or {}
     for alias in aliases:
-        key = f"{alias.upper()}|{expiry_display}|{right}|{strike}"
+        key = f"{alias.upper()}|{expiry_display}|{right}|{strike_key(strike)}"
         row = by_strike.get(key)
         if row:
             return row
@@ -449,7 +480,7 @@ def has_bhavcopy_quote(
     stock_code: str,
     expiry_display: str,
     right: str,
-    strike: int,
+    strike: Strike,
     exchange_code: str,
 ) -> bool:
     """True when the published bhavcopy index has a row for this contract."""
@@ -470,9 +501,10 @@ def _row_to_chain_cell(
         ratio: float | str = total_buy / total_sell
     else:
         ratio = 0.0 if total_buy == 0 else "NA"
+    strike_val = parse_strike(row.get("strike_price"))
     return {
         "stock_code": stock_code,
-        "strike_price": safe_int(row.get("strike_price"), 0),
+        "strike_price": strike_val if strike_val is not None else 0.0,
         "right": right,
         "expiry_date": expiry_display,
         "ltp": safe_float(row.get("ltp")),

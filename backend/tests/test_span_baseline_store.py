@@ -54,3 +54,29 @@ def test_publish_and_compute_span_margin(monkeypatch, tmp_path):
     resolved = resolve_margin_from_store("NFO", "NIFTY", "26-Jun-2026", 23500, "Call", 75)
     assert resolved["found"] is True
     assert resolved["span_margin_required"] == 1000.0
+
+
+def test_fractional_strike_contract_key(monkeypatch, tmp_path):
+    _seed_baseline(tmp_path, monkeypatch)
+    db = tmp_path / "scrips.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO exchange_margin_baseline (
+            exchange_code, short_name, expiry_date, strike_price, option_type,
+            margin_per_lot, lot_size, source_file, source_date, source_version, refreshed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        ("NFO", "BANKINDIA", "30-Jun-2026", 150.35, "PE", 500.0, 675, "test.xml", "20260625", 1),
+    )
+    conn.commit()
+    conn.close()
+
+    publish_span_baseline_from_db()
+    sheet = get_span_baseline_sheet("NFO", "BANKINDIA", "30-Jun-2026")
+    assert sheet["found"] is True
+    assert "150.35:PE" in sheet["contracts"]
+
+    out = compute_span_margin_required(sheet["contracts"], 150.35, "Put", 675)
+    assert out["found"] is True
+    assert out["span_margin_required"] == 500.0

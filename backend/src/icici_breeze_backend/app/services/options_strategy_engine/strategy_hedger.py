@@ -5,6 +5,7 @@ import math
 from typing import Any, Literal
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike
 from icici_breeze_backend.app.services.iv_compute import implied_volatility
 from icici_breeze_backend.app.services.options_strategy_engine.greeks import (
     bs_delta,
@@ -27,8 +28,8 @@ def flatten_chain_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
             cell = chain_row.get(side)
             if not cell or not isinstance(cell, dict):
                 continue
-            strike = _parse_int(cell.get("strike_price"))
-            if strike is None or strike <= 0:
+            strike = parse_strike(cell.get("strike_price"))
+            if strike is None:
                 continue
             right: Right = "Call" if side == "call" else "Put"
             rows.append(
@@ -154,11 +155,11 @@ def _atm_sigma_from_chain(
     """Back out ATM IV from chain; fallback 0.20 (matches sigma_for_pop default)."""
     if spot <= 0 or not options_chain:
         return 0.20
-    best_strike: int | None = None
+    best_strike: Strike | None = None
     best_dist = float("inf")
     for opt in options_chain:
-        strike = _parse_int(opt.get("strike_price"))
-        if strike is None or strike <= 0:
+        strike = parse_strike(opt.get("strike_price"))
+        if strike is None:
             continue
         dist = abs(strike - spot)
         if dist < best_dist:
@@ -168,7 +169,7 @@ def _atm_sigma_from_chain(
         return 0.20
     ivs: list[float] = []
     for opt in options_chain:
-        if _parse_int(opt.get("strike_price")) != best_strike:
+        if parse_strike(opt.get("strike_price")) != best_strike:
             continue
         ltp = _parse_float(opt.get("ltp")) or 0.0
         if ltp <= 0:
@@ -202,13 +203,13 @@ def _signed_qty(row: dict) -> float:
     return abs(qty)
 
 
-def _aggregate_legs(positions: list[dict]) -> dict[tuple[int, Right], dict[str, Any]]:
+def _aggregate_legs(positions: list[dict]) -> dict[tuple[Strike, Right], dict[str, Any]]:
     """Net quantity and metadata per (strike, right)."""
-    merged: dict[tuple[int, Right], dict[str, Any]] = {}
+    merged: dict[tuple[Strike, Right], dict[str, Any]] = {}
     for row in positions:
         right = _normalize_right(row.get("right"))
-        strike = _parse_int(row.get("strike_price"))
-        if right is None or strike is None or strike <= 0:
+        strike = parse_strike(row.get("strike_price"))
+        if right is None or strike is None:
             continue
         key = (strike, right)
         signed = _signed_qty(row)
@@ -230,7 +231,7 @@ def _aggregate_legs(positions: list[dict]) -> dict[tuple[int, Right], dict[str, 
 
 
 def _aggregate_greeks(
-    net_legs: dict[tuple[int, Right], dict[str, Any]],
+    net_legs: dict[tuple[Strike, Right], dict[str, Any]],
     spot: float,
     t_years: float,
     fallback_sigma: float,
@@ -260,7 +261,7 @@ def _aggregate_greeks(
 
 
 def _detect_risk_profile(
-    net_legs: dict[tuple[int, Right], dict[str, Any]],
+    net_legs: dict[tuple[Strike, Right], dict[str, Any]],
     spot: float,
 ) -> tuple[RiskProfile, list[dict[str, Any]]]:
     """Identify naked short tails or already-defined spreads."""
@@ -283,7 +284,7 @@ def _detect_risk_profile(
                         "span_margin": leg["span_margin"],
                         "short_ltp": leg["ltp"] or 0.0,
                         "hedge_type": "bear_call_spread_wing",
-                        "min_wing_strike": max(strike, int(spot)) + 1,
+                        "min_wing_strike": max(strike, spot) + 1,
                     }
                 )
         else:
@@ -298,7 +299,7 @@ def _detect_risk_profile(
                         "span_margin": leg["span_margin"],
                         "short_ltp": leg["ltp"] or 0.0,
                         "hedge_type": "bull_put_spread_wing",
-                        "max_wing_strike": min(strike, int(spot)) - 1,
+                        "max_wing_strike": min(strike, spot) - 1,
                     }
                 )
 
@@ -314,9 +315,9 @@ def _detect_risk_profile(
 
 
 def _covered_qty(
-    net_legs: dict[tuple[int, Right], dict[str, Any]],
+    net_legs: dict[tuple[Strike, Right], dict[str, Any]],
     right: Right,
-    short_strike: int,
+    short_strike: Strike,
     *,
     higher: bool,
 ) -> float:
@@ -332,10 +333,10 @@ def _covered_qty(
     return covered
 
 
-def _is_liquid_wing(option: dict, spot: float, short_strike: int, right: Right) -> bool:
+def _is_liquid_wing(option: dict, spot: float, short_strike: Strike, right: Right) -> bool:
     ltp = _parse_float(option.get("ltp")) or 0.0
     offer = _parse_float(option.get("best_offer_price")) or ltp
-    strike = _parse_int(option.get("strike_price")) or 0
+    strike = parse_strike(option.get("strike_price")) or 0.0
     sell_qty = int(option.get("total_sell_qty") or 0)
     if offer <= 0 or ltp <= 0 or sell_qty <= 0 or strike <= 0:
         return False
@@ -407,7 +408,7 @@ def _generate_wing_candidates(
 
 
 def _generate_reopt_candidates(
-    net_legs: dict[tuple[int, Right], dict[str, Any]],
+    net_legs: dict[tuple[Strike, Right], dict[str, Any]],
     options_chain: list[dict],
     spot: float,
     user_max_loss: float,

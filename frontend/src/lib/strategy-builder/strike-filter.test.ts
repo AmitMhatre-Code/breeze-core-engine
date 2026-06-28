@@ -1,8 +1,24 @@
 import { describe, expect, it } from "vitest";
+import { formatStrike, normalizeStrikeKey } from "@/lib/strategy-builder/format-strike";
 import { filterStrikes } from "@/lib/strategy-builder/strike-filter";
 
+describe("formatStrike", () => {
+  it("formats whole numbers without decimals", () => {
+    expect(formatStrike(24000)).toBe("24,000");
+  });
+
+  it("formats fractional strikes", () => {
+    expect(formatStrike(150.35)).toBe("150.35");
+  });
+
+  it("normalizes strike keys", () => {
+    expect(normalizeStrikeKey(150)).toBe("150");
+    expect(normalizeStrikeKey(150.35)).toBe("150.35");
+  });
+});
+
 describe("filterStrikes", () => {
-  const strikes = [24000, 24500, 25000, 25050, 25500];
+  const strikes = [24000, 24500, 25000, 25050, 25500, 150.35];
 
   it("returns all strikes when query is empty", () => {
     expect(filterStrikes(strikes, "")).toEqual(strikes);
@@ -21,5 +37,9 @@ describe("filterStrikes", () => {
 
   it("matches digits stripped from formatted labels", () => {
     expect(filterStrikes(strikes, "24,500")).toEqual([24500]);
+  });
+
+  it("matches fractional strike prefix", () => {
+    expect(filterStrikes(strikes, "150.3")).toEqual([150.35]);
   });
 });

@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_for_broker
 from icici_breeze_backend.audit.strategy_builder_audit import quote_row_to_audit
 from icici_breeze_backend.app.services.processor import OptionChainBackoff, _expiry_display_to_api, processor
 from icici_breeze_backend.app.services.user_rate_limit_prefs import get_icici_rate_limit_pause_seconds
@@ -16,23 +17,22 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, QuoteRow, Right
 
 
-def ingest_chain_rows(rows: list[Any], right: Right) -> dict[tuple[int, Right], QuoteRow]:
-    cache: dict[tuple[int, Right], QuoteRow] = {}
+def ingest_chain_rows(rows: list[Any], right: Right) -> dict[tuple[Strike, Right], QuoteRow]:
+    cache: dict[tuple[Strike, Right], QuoteRow] = {}
     for row in rows:
-        try:
-            strike = int(float(row.get("strike_price", 0)))
-        except (TypeError, ValueError):
+        strike = parse_strike(row.get("strike_price"))
+        if strike is None:
             continue
         cache[(strike, right)] = quote_from_api(strike, right, row)
     return cache
 
 
-def chain_strikes_for_right(cache: dict[tuple[int, Right], QuoteRow], right: Right) -> set[int]:
+def chain_strikes_for_right(cache: dict[tuple[Strike, Right], QuoteRow], right: Right) -> set[Strike]:
     return {s for (s, r) in cache if r == right}
 
 
-def missing_tail_pairs(ctx: EngineContext, needed_strikes: list[int]) -> set[tuple[int, Right]]:
-    pairs: set[tuple[int, Right]] = set()
+def missing_tail_pairs(ctx: EngineContext, needed_strikes: list[Strike]) -> set[tuple[Strike, Right]]:
+    pairs: set[tuple[Strike, Right]] = set()
     for right in ("Call", "Put"):
         chain = chain_strikes_for_right(ctx.cache, right)
         for s in tail_strikes_needed(needed_strikes, chain):
@@ -43,7 +43,7 @@ def missing_tail_pairs(ctx: EngineContext, needed_strikes: list[int]) -> set[tup
 
 def record_ingested_strikes(
     audit: Any | None,
-    ingested: dict[tuple[int, Right], QuoteRow],
+    ingested: dict[tuple[Strike, Right], QuoteRow],
     *,
     context: str | None = None,
 ) -> None:
@@ -66,13 +66,13 @@ def fetch_quotes(
     stock_code: str,
     exchange_code: str,
     expiry_display: str,
-    pairs: set[tuple[int, Right]],
+    pairs: set[tuple[Strike, Right]],
     audit: Any | None = None,
     *,
     fetch_reason: str | None = None,
     backoff: OptionChainBackoff | None = None,
-) -> dict[tuple[int, Right], QuoteRow]:
-    cache: dict[tuple[int, Right], QuoteRow] = {}
+) -> dict[tuple[Strike, Right], QuoteRow]:
+    cache: dict[tuple[Strike, Right], QuoteRow] = {}
     expiry_api = _expiry_display_to_api(expiry_display)
     if audit and pairs:
         audit.record(
@@ -92,7 +92,7 @@ def fetch_quotes(
                 exchange_code,
                 expiry_api,
                 right,
-                strike_price=str(strike),
+                strike_price=strike_for_broker(strike),
                 audit=audit,
                 audit_rationale=fetch_reason or "Live option quote for liquidity and premium.",
                 backoff=backoff,
@@ -163,7 +163,7 @@ def fetch_full_chain_side(
         )
 
 
-def fetch_missing_tails(ctx: EngineContext, needed_strikes: list[int], *, fetch_reason: str) -> None:
+def fetch_missing_tails(ctx: EngineContext, needed_strikes: list[Strike], *, fetch_reason: str) -> None:
     pairs = missing_tail_pairs(ctx, needed_strikes)
     if not pairs:
         return
@@ -194,11 +194,11 @@ def fetch_missing_tails(ctx: EngineContext, needed_strikes: list[int], *, fetch_
 
 def fetch_pairs_for_strikes(
     ctx: EngineContext,
-    strikes: set[int] | list[int],
+    strikes: set[Strike] | list[Strike],
     *,
     fetch_reason: str | None = None,
 ) -> None:
-    pairs: set[tuple[int, Right]] = set()
+    pairs: set[tuple[Strike, Right]] = set()
     for s in strikes:
         pairs.add((s, "Call"))
         pairs.add((s, "Put"))
@@ -219,7 +219,7 @@ def fetch_pairs_for_strikes(
         )
 
 
-def ensure_quote(ctx: EngineContext, strike: int, right: Right, *, fetch_reason: str) -> QuoteRow | None:
+def ensure_quote(ctx: EngineContext, strike: Strike, right: Right, *, fetch_reason: str) -> QuoteRow | None:
     key = (strike, right)
     if key not in ctx.cache:
         ctx.cache.update(
@@ -271,7 +271,7 @@ def expand_chain_to_liquidity_boundary(ctx: EngineContext) -> None:
         )
 
 
-def _resolve_spot_and_atm(ctx: EngineContext, all_strikes: list[int], mid: float) -> None:
+def _resolve_spot_and_atm(ctx: EngineContext, all_strikes: list[Strike], mid: float) -> None:
     spot = ctx.spot
     for q in ctx.cache.values():
         if q.spot_price and q.spot_price > 0:
@@ -364,7 +364,7 @@ def build_bulk_chain_cache(ctx: EngineContext) -> None:
             pass
     if success.get("atm_strike") is not None:
         try:
-            ctx.atm_strike = int(success["atm_strike"])
+            ctx.atm_strike = parse_strike(success["atm_strike"]) or ctx.atm_strike
         except (TypeError, ValueError):
             pass
     _resolve_spot_and_atm(ctx, all_strikes, mid)

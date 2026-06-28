@@ -1,4 +1,5 @@
 import { apiClient } from "@/lib/api-client";
+import { normalizeStrikeKey } from "@/lib/strategy-builder/format-strike";
 import type {
   OptionRight,
   SpanBaselineSheet,
@@ -6,7 +7,7 @@ import type {
 } from "@/lib/strategy-builder/types";
 
 export function contractKey(strike: number, right: OptionRight): string {
-  return `${strike}:${right === "Call" ? "CE" : "PE"}`;
+  return `${normalizeStrikeKey(strike)}:${right === "Call" ? "CE" : "PE"}`;
 }
 
 export async function fetchSpanBaselineSheet(
