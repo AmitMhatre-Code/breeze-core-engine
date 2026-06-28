@@ -14,6 +14,8 @@ type Props = {
   minS: number;
   maxS: number;
   height?: number;
+  labelledBy?: string;
+  describedBy?: string;
   /**
    * Initial fraction of the full [minS, maxS] span shown on the x-axis (centered on spot or midpoint).
    * Zoom out reaches 1 (full range). Default 0.5: when the domain is spot ±40%, the initial view is spot ±20%.
@@ -173,6 +175,8 @@ export function PayoffChart({
   maxS,
   height = 220,
   defaultSpanFraction = 0.5,
+  labelledBy,
+  describedBy,
 }: Props) {
   const clipId = useId().replace(/:/g, "");
   const [spanFrac, setSpanFrac] = useState(() =>
@@ -359,7 +363,9 @@ export function PayoffChart({
         viewBox={`0 0 ${W} ${H}`}
         className="pointer-events-none h-auto w-full max-w-full text-zinc-500 dark:text-zinc-400"
         role="img"
-        aria-label="Payoff diagram"
+        aria-labelledby={labelledBy}
+        aria-describedby={describedBy}
+        aria-label={labelledBy ? undefined : "Payoff diagram"}
       >
         <defs>
           <clipPath id={clipId}>

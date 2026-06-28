@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MarkdownContent } from "@/components/markdown/MarkdownContent";
+import { Modal } from "@/components/ui/Modal";
 
 const SCROLL_THRESHOLD_PX = 32;
 
@@ -26,8 +27,6 @@ function useScrollReachedBottom(contentKey: string, open: boolean) {
     setHasReachedBottom(atBottom);
   }, []);
 
-  // Re-check when content changes or the dialog opens. While closed, scrollRef is
-  // not mounted (early return), so a content-only effect can miss the first open.
   useEffect(() => {
     if (!open) return;
     setHasReachedBottom(false);
@@ -43,7 +42,6 @@ function useScrollReachedBottom(contentKey: string, open: boolean) {
     };
   }, [contentKey, open, checkScrollPosition]);
 
-  // Markdown/terms can grow after the initial layout pass.
   useEffect(() => {
     if (!open) return;
     const el = scrollRef.current;
@@ -75,69 +73,69 @@ export function LoginDisclosureDialog({
     open,
   );
 
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4"
-      role="presentation"
+    <Modal
+      open={open}
+      onClose={() => {}}
+      dismissible={false}
+      pending={pending}
+      titleId="login-disclosure-title"
+      descriptionId="login-disclosure-scroll-hint"
+      zIndexClass="z-[200]"
+      panelClassName="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl border border-zinc-700 bg-zinc-950 shadow-2xl"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="login-disclosure-title"
-        className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl border border-zinc-700 bg-zinc-950 shadow-2xl"
-      >
-        <header className="shrink-0 border-b border-zinc-800 px-5 py-4">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-blue-400">
-            Required
+      <header className="shrink-0 border-b border-zinc-800 px-5 py-4">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-blue-400">
+          Required
+        </p>
+        <h2
+          id="login-disclosure-title"
+          className="text-lg font-bold tracking-tight text-zinc-50"
+        >
+          SEBI Risk Disclosure
+        </h2>
+        {version != null ? (
+          <p className="mt-1 text-xs text-zinc-500">
+            Version {version}
+            {effectiveDate ? ` · Effective ${effectiveDate}` : null}
           </p>
-          <h2
-            id="login-disclosure-title"
-            className="text-lg font-bold tracking-tight text-zinc-50"
+        ) : null}
+      </header>
+
+      <div
+        ref={scrollRef}
+        onScroll={checkScrollPosition}
+        className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
+      >
+        <MarkdownContent
+          markdown={contentMarkdown}
+          className="text-sm leading-relaxed text-zinc-300"
+        />
+      </div>
+
+      <footer className="shrink-0 border-t border-zinc-800 px-5 py-4">
+        <p
+          id="login-disclosure-scroll-hint"
+          className="mb-3 text-xs leading-relaxed text-zinc-500"
+        >
+          You must read and acknowledge the risk disclosure before using Breeze Modern.
+        </p>
+        <div className="flex flex-col items-end gap-2">
+          <button
+            type="button"
+            disabled={pending || !hasReachedBottom}
+            onClick={onProceed}
+            className="app-btn-primary min-w-[10rem] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            SEBI Risk Disclosure
-          </h2>
-          {version != null ? (
-            <p className="mt-1 text-xs text-zinc-500">
-              Version {version}
-              {effectiveDate ? ` · Effective ${effectiveDate}` : null}
+            {pending ? "Saving…" : "Proceed"}
+          </button>
+          {!hasReachedBottom ? (
+            <p className="max-w-xs text-right text-xs leading-relaxed text-zinc-500">
+              Scroll to the bottom of the message to enable Proceed.
             </p>
           ) : null}
-        </header>
-
-        <div
-          ref={scrollRef}
-          onScroll={checkScrollPosition}
-          className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
-        >
-          <MarkdownContent
-            markdown={contentMarkdown}
-            className="text-sm leading-relaxed text-zinc-300"
-          />
         </div>
-
-        <footer className="shrink-0 border-t border-zinc-800 px-5 py-4">
-          <p className="mb-3 text-xs leading-relaxed text-zinc-500">
-            You must read and acknowledge the risk disclosure before using Breeze Modern.
-          </p>
-          <div className="flex flex-col items-end gap-2">
-            <button
-              type="button"
-              disabled={pending || !hasReachedBottom}
-              onClick={onProceed}
-              className="app-btn-primary min-w-[10rem] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {pending ? "Saving…" : "Proceed"}
-            </button>
-            {!hasReachedBottom ? (
-              <p className="max-w-xs text-right text-xs leading-relaxed text-zinc-500">
-                Scroll to the bottom of the message to enable Proceed.
-              </p>
-            ) : null}
-          </div>
-        </footer>
-      </div>
-    </div>
+      </footer>
+    </Modal>
   );
 }

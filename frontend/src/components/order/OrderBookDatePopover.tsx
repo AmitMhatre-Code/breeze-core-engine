@@ -14,6 +14,7 @@ import {
   parseIsoDateParts,
   toIsoDate,
 } from "@/lib/format-iso-date";
+import { useCalendarKeyboard } from "@/lib/ui/use-calendar-keyboard";
 
 const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
@@ -79,6 +80,7 @@ export function OrderBookDatePopover({
 }: OrderBookDatePopoverProps) {
   const listboxId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
 
   const parsed = useMemo(() => parseIsoDateParts(value), [value]);
@@ -125,23 +127,6 @@ export function OrderBookDatePopover({
     );
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      const el = rootRef.current;
-      if (!el?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   const selectDay = useCallback(
     (day: number) => {
       onChange(toIsoDate(viewY, viewM, day));
@@ -149,6 +134,46 @@ export function OrderBookDatePopover({
     },
     [onChange, viewY, viewM],
   );
+
+  const closeCalendar = useCallback(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = rootRef.current;
+      if (!el?.contains(e.target as Node)) closeCalendar();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeCalendar();
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, closeCalendar]);
+
+  const selectedDay =
+    parsed && parsed.y === viewY && parsed.m === viewM ? parsed.d : null;
+  const todayParts = parseIsoDateParts(todayIso);
+  const todayDay =
+    todayParts && todayParts.y === viewY && todayParts.m === viewM
+      ? todayParts.d
+      : null;
+
+  const { getDayButtonProps } = useCalendarKeyboard({
+    open,
+    cells,
+    selectedDay,
+    todayDay,
+    onSelectDay: selectDay,
+    onClose: closeCalendar,
+    triggerRef,
+  });
 
   const goToday = useCallback(() => {
     const d = new Date();
@@ -169,6 +194,7 @@ export function OrderBookDatePopover({
       </label>
       <CalendarGlyph className="pointer-events-none absolute left-3 top-1/2 z-[2] size-4 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
       <button
+        ref={triggerRef}
         type="button"
         id={id}
         aria-haspopup="dialog"
@@ -250,6 +276,8 @@ export function OrderBookDatePopover({
                 <button
                   key={`${viewY}-${viewM}-${day}`}
                   type="button"
+                  {...getDayButtonProps(i, day)}
+                  aria-label={formatIsoDateDdMmmYyyy(iso)}
                   className={[
                     "aspect-square rounded-lg text-sm font-medium tabular-nums transition",
                     isSelected

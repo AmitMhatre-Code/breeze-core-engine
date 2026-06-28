@@ -14,6 +14,7 @@ import {
   parseIsoDateParts,
   toIsoDate,
 } from "@/lib/format-iso-date";
+import { useCalendarKeyboard } from "@/lib/ui/use-calendar-keyboard";
 
 const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
@@ -80,6 +81,7 @@ export function DatePicker({
   placeholder = "dd-MMM-yyyy",
 }: DatePickerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverId = useId();
   const [open, setOpen] = useState(false);
 
@@ -101,6 +103,19 @@ export function DatePicker({
 
   const cells = useMemo(() => monthMatrix(view.y, view.m), [view.y, view.m]);
 
+  const selectDay = useCallback(
+    (day: number) => {
+      onChange(toIsoDate(view.y, view.m, day));
+      setOpen(false);
+    },
+    [onChange, view.y, view.m],
+  );
+
+  const closeCalendar = useCallback(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+
   const todayIso = useMemo(() => {
     const t = new Date();
     return toIsoDate(t.getFullYear(), t.getMonth() + 1, t.getDate());
@@ -109,10 +124,10 @@ export function DatePicker({
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(e.target as Node)) closeCalendar();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") closeCalendar();
     };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
@@ -120,15 +135,25 @@ export function DatePicker({
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, closeCalendar]);
 
-  const selectDay = useCallback(
-    (day: number) => {
-      onChange(toIsoDate(view.y, view.m, day));
-      setOpen(false);
-    },
-    [onChange, view.y, view.m],
-  );
+  const selectedDay =
+    parsed && parsed.y === view.y && parsed.m === view.m ? parsed.d : null;
+  const todayParts = parseIsoDateParts(todayIso);
+  const todayDay =
+    todayParts && todayParts.y === view.y && todayParts.m === view.m
+      ? todayParts.d
+      : null;
+
+  const { getDayButtonProps } = useCalendarKeyboard({
+    open,
+    cells,
+    selectedDay,
+    todayDay,
+    onSelectDay: selectDay,
+    onClose: closeCalendar,
+    triggerRef,
+  });
 
   const goToday = useCallback(() => {
     const t = new Date();
@@ -148,6 +173,7 @@ export function DatePicker({
       className={["relative min-w-[11rem]", className].filter(Boolean).join(" ")}
     >
       <button
+        ref={triggerRef}
         type="button"
         id={id}
         disabled={disabled}
@@ -242,6 +268,8 @@ export function DatePicker({
                 <button
                   key={`${view.y}-${view.m}-${day}`}
                   type="button"
+                  {...getDayButtonProps(i, day)}
+                  aria-label={formatIsoDateDdMmmYyyy(iso)}
                   className={[
                     "aspect-square rounded-md text-sm font-medium tabular-nums transition",
                     isSelected

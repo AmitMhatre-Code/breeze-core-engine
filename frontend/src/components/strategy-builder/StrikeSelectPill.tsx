@@ -198,6 +198,7 @@ export function StrikeSelectPill({
             <button
               type="button"
               role="option"
+              tabIndex={-1}
               aria-selected={value === k}
               data-combobox-index={index}
               className={optionClass(k, index === highlightIndex)}

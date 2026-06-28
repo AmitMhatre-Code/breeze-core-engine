@@ -10,6 +10,11 @@ import { sb } from "@/lib/strategy-builder/ui";
 import type { OptionRight, OrderSide, StrategyLeg } from "@/lib/strategy-builder/types";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 
+function legDeleteLabel(leg: StrategyLeg): string {
+  const right = leg.right === "Call" ? "CE" : "PE";
+  return `Delete leg ${leg.strike.toLocaleString("en-IN")} ${right} ${leg.side}`;
+}
+
 function SegmentedToggle<T extends string>({
   value,
   options,
@@ -31,6 +36,7 @@ function SegmentedToggle<T extends string>({
         <button
           key={opt.value}
           type="button"
+          aria-pressed={value === opt.value}
           onClick={() => onChange(opt.value)}
           className={`rounded px-2 py-0.5 text-[11px] font-semibold transition ${
             value === opt.value
@@ -46,8 +52,13 @@ function SegmentedToggle<T extends string>({
 }
 
 export function BasketLegsPanel({
+  sectionNumber,
   strikes,
   chainBusy,
+  chainReady,
+  showOptionChain,
+  onShowOptionChain,
+  onHideOptionChain,
   lotSize,
   legs,
   onLegsChange,
@@ -65,8 +76,13 @@ export function BasketLegsPanel({
   executeDisabled,
   addLegDisabled,
 }: {
+  sectionNumber: number;
   strikes: number[];
   chainBusy: boolean;
+  chainReady: boolean;
+  showOptionChain: boolean;
+  onShowOptionChain: () => void;
+  onHideOptionChain: () => void;
   lotSize: number;
   legs: StrategyLeg[];
   onLegsChange: (updater: (prev: StrategyLeg[]) => StrategyLeg[]) => void;
@@ -92,20 +108,63 @@ export function BasketLegsPanel({
   return (
     <section id="basket-order-legs" className={`${sb.section} space-y-4`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className={sb.sectionTitle}>3. Legs</h2>
-        <button
-          type="button"
-          disabled={addLegDisabled}
-          onClick={onAddLeg}
-          className={sb.btnSecondary}
-        >
-          Add leg
-        </button>
+        <h2 className={sb.sectionTitle}>{sectionNumber}. Legs</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          {showOptionChain ? (
+            <button
+              type="button"
+              onClick={onHideOptionChain}
+              className={sb.btnSecondary}
+            >
+              Hide option chain
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={!chainReady}
+              onClick={onShowOptionChain}
+              className={sb.btnSecondary}
+            >
+              Pick from option chain
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={addLegDisabled}
+            onClick={onAddLeg}
+            className={sb.btnSecondary}
+          >
+            Add leg
+          </button>
+        </div>
       </div>
+
+      {!chainReady ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          {chainBusy ? "Loading contract details…" : "Waiting for option chain data…"}
+        </p>
+      ) : null}
 
       {legs.length === 0 ? (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Add a leg below or pick Buy/Sell from the option chain.
+          Click{" "}
+          <span className="font-medium text-zinc-700 dark:text-zinc-300">Add leg</span>{" "}
+          to build your basket manually, or{" "}
+          {showOptionChain ? (
+            "pick Buy/Sell from the option chain above."
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={!chainReady}
+                onClick={onShowOptionChain}
+                className="font-medium text-sky-700 underline underline-offset-2 hover:text-sky-800 disabled:cursor-not-allowed disabled:no-underline disabled:opacity-50 dark:text-sky-400 dark:hover:text-sky-300"
+              >
+                pick from the option chain
+              </button>
+              .
+            </>
+          )}
         </p>
       ) : (
         <div className="app-table-wrap">
@@ -252,6 +311,7 @@ export function BasketLegsPanel({
                         min={0}
                         step={0.05}
                         disabled={aggressive}
+                        aria-label="Limit price per unit"
                         className={`${sb.tableInput} w-[6rem] tabular-nums disabled:cursor-not-allowed disabled:opacity-50`}
                         value={
                           aggressive
@@ -312,6 +372,7 @@ export function BasketLegsPanel({
                       <button
                         type="button"
                         className="text-red-600 dark:text-red-400"
+                        aria-label={legDeleteLabel(l)}
                         onClick={() =>
                           onLegsChange((prev) =>
                             prev.filter((x) => x.id !== l.id),

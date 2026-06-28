@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import {
   BarElement,
   CategoryScale,
@@ -12,6 +12,7 @@ import {
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
 import type { MonthlyPerformanceRow } from "@/lib/performance-data";
+import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 
 ChartJS.register(BarElement, CategoryScale, Legend, LinearScale, Tooltip);
 
@@ -63,6 +64,8 @@ export function PerformanceMonthlyChart({
 }: {
   monthly: MonthlyPerformanceRow[];
 }) {
+  const [viewMode, setViewMode] = useState<"chart" | "table">("chart");
+
   const isDark = useSyncExternalStore(
     subscribeDarkClass,
     snapshotDarkClass,
@@ -213,8 +216,80 @@ export function PerformanceMonthlyChart({
   }
 
   return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-end gap-1">
+        <button
+          type="button"
+          className={[
+            "rounded-md px-2.5 py-1 text-xs font-medium transition",
+            viewMode === "chart"
+              ? "bg-sky-100 text-sky-900 dark:bg-sky-950/60 dark:text-sky-100"
+              : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
+          ].join(" ")}
+          aria-pressed={viewMode === "chart"}
+          onClick={() => setViewMode("chart")}
+        >
+          Chart
+        </button>
+        <button
+          type="button"
+          className={[
+            "rounded-md px-2.5 py-1 text-xs font-medium transition",
+            viewMode === "table"
+              ? "bg-sky-100 text-sky-900 dark:bg-sky-950/60 dark:text-sky-100"
+              : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
+          ].join(" ")}
+          aria-pressed={viewMode === "table"}
+          onClick={() => setViewMode("table")}
+        >
+          Table
+        </button>
+      </div>
+
+      {viewMode === "table" ? (
+        <div className="overflow-x-auto rounded-lg border border-zinc-200/90 dark:border-zinc-800/90">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-400">
+              <tr>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  Month
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  P &amp; L
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  Brokerage
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  Taxes
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              {monthly.map((row) => (
+                <tr key={row.month}>
+                  <td className="px-3 py-1.5 text-zinc-800 dark:text-zinc-200">
+                    {row.month}
+                  </td>
+                  <td className="px-3 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                    {formatIndianMoneyCompact(row.pnl)}
+                  </td>
+                  <td className="px-3 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                    {formatIndianMoneyCompact(row.brokerage)}
+                  </td>
+                  <td className="px-3 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                    {formatIndianMoneyCompact(row.taxes)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
     <div className="min-h-[min(420px,max(300px,42vh))] w-full min-w-0 rounded-lg border border-zinc-200/90 bg-gradient-to-b from-zinc-50/90 to-white/40 px-3 pb-2 pt-1 dark:border-zinc-800/90 dark:from-zinc-950/50 dark:to-zinc-900/20">
       <Bar key={isDark ? "dark" : "light"} data={data} options={options} />
+    </div>
+      )}
     </div>
   );
 }

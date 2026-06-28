@@ -1,7 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { FinancialYearOption } from "@/lib/performance-data";
+import {
+  useListboxMenu,
+  useListboxOutsideClose,
+} from "@/lib/ui/use-listbox-menu";
 
 function ChevronDown({ open }: { open: boolean }) {
   return (
@@ -40,31 +44,35 @@ export function FinancialYearDropdown({
   years: FinancialYearOption[];
   selectedYear: string;
   onSelect: (y: FinancialYearOption) => void;
-  /** Visible label element id for aria-labelledby */
   labelId: string;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const listId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const listId = "financial-year-listbox";
 
   const close = useCallback(() => setOpen(false), []);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      const el = rootRef.current;
-      if (el && e.target instanceof Node && !el.contains(e.target)) close();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, close]);
+  useListboxOutsideClose(open, rootRef, close);
+
+  const { highlightIndex, handleTriggerKeyDown } = useListboxMenu({
+    open,
+    optionCount: years.length,
+    onOpen: () => setOpen(true),
+    onClose: () => {
+      close();
+      triggerRef.current?.focus();
+    },
+    onSelectIndex: (index) => {
+      const y = years[index];
+      if (y) onSelect(y);
+      close();
+      triggerRef.current?.focus();
+    },
+    triggerRef,
+    listRef,
+  });
 
   if (years.length === 0) return null;
 
@@ -74,6 +82,7 @@ export function FinancialYearDropdown({
   return (
     <div ref={rootRef} className="relative inline-block min-w-[8.5rem] text-left">
       <button
+        ref={triggerRef}
         type="button"
         className={[
           "flex w-full items-center justify-between gap-3 px-4 py-2.5 text-sm font-normal transition-colors",
@@ -86,6 +95,7 @@ export function FinancialYearDropdown({
         aria-controls={listId}
         aria-labelledby={labelId}
         onClick={() => setOpen((v) => !v)}
+        onKeyDown={handleTriggerKeyDown}
       >
         <span className="truncate tabular-nums">{display}</span>
         <ChevronDown open={open} />
@@ -93,6 +103,7 @@ export function FinancialYearDropdown({
 
       {open ? (
         <ul
+          ref={listRef}
           id={listId}
           role="listbox"
           aria-labelledby={labelId}
@@ -101,20 +112,25 @@ export function FinancialYearDropdown({
             surface,
           ].join(" ")}
         >
-          {years.map((y) => {
+          {years.map((y, index) => {
             const selected = y.year === selectedYear;
+            const highlighted = index === highlightIndex;
             return (
               <li key={y.year} role="presentation">
                 <button
                   type="button"
                   role="option"
+                  tabIndex={-1}
+                  data-menu-index={index}
                   aria-selected={selected}
                   className={[
                     "flex w-full items-center px-4 py-2.5 text-left text-sm font-normal transition-colors",
                     "text-zinc-900 dark:text-zinc-50",
-                    selected
-                      ? "bg-zinc-200/90 dark:bg-zinc-700/60"
-                      : "hover:bg-zinc-200/70 dark:hover:bg-zinc-700/50",
+                    highlighted
+                      ? "bg-sky-100 dark:bg-sky-900/50"
+                      : selected
+                        ? "bg-zinc-200/90 dark:bg-zinc-700/60"
+                        : "hover:bg-zinc-200/70 dark:hover:bg-zinc-700/50",
                   ].join(" ")}
                   onClick={() => {
                     onSelect(y);

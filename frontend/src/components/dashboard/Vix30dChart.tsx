@@ -1,8 +1,9 @@
 "use client";
 
-import type { PointerEvent } from "react";
+import type { KeyboardEvent, PointerEvent } from "react";
 import {
   useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -156,6 +157,8 @@ export function Vix30dChart({
   loading?: boolean;
 }) {
   const [hoverI, setHoverI] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<"chart" | "table">("chart");
+  const [keyboardI, setKeyboardI] = useState<number | null>(null);
   const gradId = useId().replace(/:/g, "");
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -316,6 +319,31 @@ export function Vix30dChart({
 
   const onPointerLeave = useCallback(() => setHoverI(null), []);
 
+  const activeI = hoverI ?? keyboardI;
+
+  const onChartKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      if (!series?.length) return;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        setKeyboardI((prev) => {
+          const start = prev ?? 0;
+          if (e.key === "ArrowLeft") {
+            return Math.max(0, start - 1);
+          }
+          return Math.min(series.length - 1, start + 1);
+        });
+      }
+    },
+    [series],
+  );
+
+  useEffect(() => {
+    if (viewMode === "chart" && keyboardI == null && series?.length) {
+      setKeyboardI(series.length - 1);
+    }
+  }, [viewMode, keyboardI, series]);
+
   if (loading) {
     return (
       <div className="space-y-2" role="status">
@@ -333,7 +361,7 @@ export function Vix30dChart({
 
   const { minV, spread, innerH, pts, smoothTop, areaD, yTicks, yBase, xTicks } =
     layout;
-  const hi = hoverI;
+  const hi = activeI;
 
   let hoverLabel: { x: number; y: number; date: string; val: string } | null =
     null;
@@ -351,16 +379,88 @@ export function Vix30dChart({
     hoverLabel = { x: lx, y: ly, date, val };
   }
 
+  const liveAnnouncement =
+    hi != null && series[hi]
+      ? `${formatChartDate(series[hi].date)}, VIX ${series[hi].value.toFixed(2)}`
+      : "";
+
   return (
     <div className="space-y-2">
-      <div ref={containerRef} className="w-full min-w-0">
+      <div className="flex items-center justify-end gap-1">
+        <button
+          type="button"
+          className={[
+            "rounded-md px-2.5 py-1 text-xs font-medium transition",
+            viewMode === "chart"
+              ? "bg-sky-100 text-sky-900 dark:bg-sky-950/60 dark:text-sky-100"
+              : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
+          ].join(" ")}
+          aria-pressed={viewMode === "chart"}
+          onClick={() => setViewMode("chart")}
+        >
+          Chart
+        </button>
+        <button
+          type="button"
+          className={[
+            "rounded-md px-2.5 py-1 text-xs font-medium transition",
+            viewMode === "table"
+              ? "bg-sky-100 text-sky-900 dark:bg-sky-950/60 dark:text-sky-100"
+              : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
+          ].join(" ")}
+          aria-pressed={viewMode === "table"}
+          onClick={() => setViewMode("table")}
+        >
+          Table
+        </button>
+      </div>
+
+      {viewMode === "table" ? (
+        <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-400">
+              <tr>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  Date
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  VIX
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              {series.map((row) => (
+                <tr key={row.date}>
+                  <td className="px-3 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                    {formatChartDate(row.date)}
+                  </td>
+                  <td className="px-3 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                    {row.value.toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+      <div
+        ref={containerRef}
+        className="w-full min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40"
+        tabIndex={0}
+        role="group"
+        aria-label="India VIX last three months. Use left and right arrow keys to move through dates."
+        onKeyDown={onChartKeyDown}
+      >
+        <p className="sr-only" aria-live="polite">
+          {liveAnnouncement}
+        </p>
         <svg
           ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}
           className="block w-full min-w-0 cursor-crosshair touch-none overflow-visible"
           style={{ aspectRatio: `${W} / ${H}` }}
           role="img"
-          aria-label="India VIX last three months; hover for date and value"
+          aria-label="India VIX line chart"
           onPointerMove={onPointerMove}
           onPointerLeave={onPointerLeave}
           onPointerCancel={onPointerLeave}
@@ -500,9 +600,13 @@ export function Vix30dChart({
           ))}
         </svg>
       </div>
+      )}
+
       <p className="app-text-muted">
-        India VIX (INDVIX), daily close — last ~3 months · hover for date
-        &amp; value on chart
+        India VIX (INDVIX), daily close — last ~3 months
+        {viewMode === "chart"
+          ? " · use arrow keys on the chart or switch to Table view"
+          : null}
       </p>
     </div>
   );

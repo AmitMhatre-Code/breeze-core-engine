@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
@@ -72,12 +72,15 @@ export default function BasketOrderPage() {
   const [strategyMarginValidSig, setStrategyMarginValidSig] = useState<
     string | null
   >(null);
+  const [showOptionChain, setShowOptionChain] = useState(false);
+  const optionChainRef = useRef<HTMLElement>(null);
 
   const resetBasket = useCallback(() => {
     setLegs([]);
     setLegMarginCache({});
     setStrategyMarginValidSig(null);
     setPriceManuallyEdited(new Set());
+    setShowOptionChain(false);
   }, []);
 
   const uq = useQuery({
@@ -409,6 +412,25 @@ export default function BasketOrderPage() {
     resetBasket();
   };
 
+  const legsSectionNumber = showOptionChain ? 3 : 2;
+  const payoffSectionNumber = showOptionChain ? 4 : 3;
+
+  const handleShowOptionChain = useCallback(() => {
+    setShowOptionChain(true);
+  }, []);
+
+  const handleHideOptionChain = useCallback(() => {
+    setShowOptionChain(false);
+  }, []);
+
+  useEffect(() => {
+    if (!showOptionChain) return;
+    const id = requestAnimationFrame(() => {
+      optionChainRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [showOptionChain]);
+
   return (
     <AppShell>
       <RevokedTradingPageGuard>
@@ -485,13 +507,13 @@ export default function BasketOrderPage() {
             </div>
           </section>
 
-          <SectionGate locked={!section2Ready}>
-            <section className={`${sb.section} space-y-4`}>
+          {showOptionChain && section2Ready ? (
+            <section
+              ref={optionChainRef}
+              id="basket-option-chain"
+              className={`${sb.section} space-y-4`}
+            >
               <h2 className={sb.sectionTitle}>2. Option chain</h2>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                Pick Buy/Sell from the chain to add legs quickly, or use Add leg
-                below to build manually.
-              </p>
               <BuildYourOwnChainSection
                 chainSuccess={chainSuccess ?? null}
                 isFetching={chainQ.isFetching}
@@ -515,10 +537,17 @@ export default function BasketOrderPage() {
                 }
               />
             </section>
+          ) : null}
 
+          <SectionGate locked={!section1Complete}>
             <BasketLegsPanel
+              sectionNumber={legsSectionNumber}
               strikes={strikes}
               chainBusy={chainQ.isFetching}
+              chainReady={section2Ready}
+              showOptionChain={showOptionChain}
+              onShowOptionChain={handleShowOptionChain}
+              onHideOptionChain={handleHideOptionChain}
               lotSize={lotSize}
               legs={legs}
               onLegsChange={setLegs}
@@ -538,7 +567,7 @@ export default function BasketOrderPage() {
             />
 
             <StrategyPayoffPanel
-              sectionTitle="4. Payoff simulation"
+              sectionTitle={`${payoffSectionNumber}. Payoff simulation`}
               legs={legs}
               spot={spot}
               atmIv={atmIv}

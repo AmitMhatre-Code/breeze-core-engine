@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { DatePicker } from "@/components/ui/DatePicker";
+import { Modal } from "@/components/ui/Modal";
 import {
   fetchExchangeCalendar,
   fetchExchangeCalendarSyncPreview,
@@ -307,36 +308,37 @@ export default function ExchangeCalendarSettingsPage() {
         </div>
 
         {showSyncConfirm ? (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-            role="dialog"
-            aria-modal="true"
+          <Modal
+            open={showSyncConfirm}
+            onClose={() => setShowSyncConfirm(false)}
+            titleId="exchange-calendar-sync-title"
+            panelClassName="app-card max-w-md space-y-4 p-4"
           >
-            <div className="app-card max-w-md space-y-4 p-4">
-              <h3 className="font-semibold">Overwrite local calendar?</h3>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                {syncPreviewMsg ??
-                  "Your local holiday calendar and working hours will be replaced by Breeze Console Admin Settings."}
-              </p>
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  className="app-btn-outline"
-                  onClick={() => setShowSyncConfirm(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="app-btn-primary"
-                  disabled={syncMut.isPending}
-                  onClick={() => syncMut.mutate(true)}
-                >
-                  Continue
-                </button>
-              </div>
+            <h3 id="exchange-calendar-sync-title" className="font-semibold">
+              Overwrite local calendar?
+            </h3>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              {syncPreviewMsg ??
+                "Your local holiday calendar and working hours will be replaced by Breeze Console Admin Settings."}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="app-btn-outline"
+                onClick={() => setShowSyncConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="app-btn-primary"
+                disabled={syncMut.isPending}
+                onClick={() => syncMut.mutate(true)}
+              >
+                Continue
+              </button>
             </div>
-          </div>
+          </Modal>
         ) : null}
       </section>
     </AppShell>

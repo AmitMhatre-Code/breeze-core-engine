@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { InfinitySymbol } from "@/components/strategy-builder/InfinitySymbol";
 import { IvShockSlider } from "@/components/strategy-builder/IvShockSlider";
 import { MarginRefreshIconButton } from "@/components/strategy-builder/MarginRefreshIconButton";
@@ -108,6 +108,25 @@ export function StrategyPayoffPanel({
 
   const profitClass = "text-emerald-700 dark:text-emerald-400";
   const lossClass = "text-red-700 dark:text-red-400";
+  const payoffTitleId = useId();
+  const payoffDescId = useId();
+
+  const payoffDescription = useMemo(() => {
+    if (!hasStrategyLegs) {
+      return "Payoff chart idle. Add legs to see max profit, max loss, and breakevens.";
+    }
+    const be =
+      summary.breakevens.length > 0
+        ? summary.breakevens.map((b) => b.toFixed(0)).join(", ")
+        : "none";
+    const maxP = isUnlimitedMaxProfit(summary.maxProfit)
+      ? "unlimited"
+      : formatIndianMoneyCompact(summary.maxProfit);
+    const maxL = isUnlimitedMaxLoss(summary.maxLoss)
+      ? "unlimited"
+      : formatIndianMoneyCompact(summary.maxLoss);
+    return `Max profit ${maxP}, max loss ${maxL}, breakevens at ${be}, probability of profit ${pop.toFixed(1)} percent.`;
+  }, [hasStrategyLegs, summary, pop]);
 
   return (
     <section className={`${sb.section} space-y-5`}>
@@ -209,7 +228,10 @@ export function StrategyPayoffPanel({
 
       <div className="space-y-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <h3
+            id={payoffTitleId}
+            className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
+          >
             Payoff chart
           </h3>
           <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-700 dark:text-zinc-300">
@@ -223,6 +245,9 @@ export function StrategyPayoffPanel({
             <span>Show today (model)</span>
           </label>
         </div>
+        <p id={payoffDescId} className="sr-only">
+          {payoffDescription}
+        </p>
         <PayoffChart
           key={`${minS}-${maxS}`}
           idle={!hasStrategyLegs}
@@ -234,6 +259,8 @@ export function StrategyPayoffPanel({
           breakevens={summary.breakevens}
           minS={minS}
           maxS={maxS}
+          labelledBy={payoffTitleId}
+          describedBy={payoffDescId}
         />
       </div>
 

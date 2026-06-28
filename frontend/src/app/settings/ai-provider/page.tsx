@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { Modal } from "@/components/ui/Modal";
 import {
   deleteAiProvider,
   getGeminiModels,
@@ -90,14 +91,16 @@ function GeminiModelPickerModal({
   onAdd: () => void;
   addPending: boolean;
 }) {
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-      <button type="button" className="absolute inset-0 bg-black/50" aria-label="Close" onClick={onClose} />
-      <div className="relative flex max-h-[min(90vh,720px)] w-full max-w-3xl flex-col rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-          <div>
-            <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Add Gemini models</h2>
+    <Modal
+      open={open}
+      onClose={onClose}
+      titleId="gemini-model-picker-title"
+      panelClassName="flex max-h-[min(90vh,720px)] w-full max-w-3xl flex-col rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+    >
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+        <div>
+          <h2 id="gemini-model-picker-title" className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Add Gemini models</h2>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
               Select models to show in your list. Click a card to toggle. Already listed models start selected.
             </p>
@@ -159,8 +162,7 @@ function GeminiModelPickerModal({
             {addPending ? "Saving…" : "Add models"}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -403,14 +405,16 @@ function KeyModal({
   onTest: () => void;
   onSave: () => void;
 }) {
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-      <button type="button" className="absolute inset-0 bg-black/50" aria-label="Close modal" onClick={onClose} />
-      <div className="relative w-full max-w-lg rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{title}</div>
+    <Modal
+      open={open}
+      onClose={onClose}
+      titleId="ai-key-modal-title"
+      panelClassName="w-full max-w-lg rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div id="ai-key-modal-title" className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{title}</div>
             <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{providerLabel}</div>
           </div>
           <button
@@ -475,8 +479,7 @@ function KeyModal({
             Save is enabled only after a successful test. Use the star icon on the provider card to pick the primary model after saving.
           </p>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

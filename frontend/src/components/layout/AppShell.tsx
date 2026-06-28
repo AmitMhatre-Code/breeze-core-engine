@@ -16,10 +16,12 @@ import { useQuery } from "@tanstack/react-query";
 import breezeMark from "@/app/android-chrome-192x192.png";
 import { ApiUsageWarningDialog } from "@/components/api-usage/ApiUsageWarningDialog";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
+import { KeyboardShortcutsProvider } from "@/components/keyboard/KeyboardShortcutsProvider";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
+import { Modal } from "@/components/ui/Modal";
 import { apiClient } from "@/lib/api-client";
 import { formatAppVersionLabel } from "@/lib/app-version";
 import { getLatestRelease } from "@/lib/changelog";
@@ -76,35 +78,6 @@ export function AppShell({
   const drawerCloseRef = useRef<HTMLButtonElement>(null);
 
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
-
-  useEffect(() => {
-    if (!mobileNavOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        closeMobileNav();
-        menuButtonRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [mobileNavOpen, closeMobileNav]);
-
-  useEffect(() => {
-    if (!mobileNavOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [mobileNavOpen]);
-
-  useEffect(() => {
-    if (!mobileNavOpen) return;
-    const id = window.requestAnimationFrame(() => {
-      drawerCloseRef.current?.focus();
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [mobileNavOpen]);
 
   const { licenseStatus, contactSalesMailto } = useLicenseRestrictions();
 
@@ -182,7 +155,14 @@ export function AppShell({
   const latestVersionLabel = formatAppVersionLabel(getLatestRelease()?.version);
 
   return (
+    <KeyboardShortcutsProvider>
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[300] focus:rounded-md focus:border focus:border-zinc-200 focus:bg-white focus:px-4 focus:py-2.5 focus:text-sm focus:font-medium focus:text-sky-700 focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-sky-500/45 dark:focus:border-zinc-700 dark:focus:bg-zinc-900 dark:focus:text-sky-300"
+      >
+        Skip to main content
+      </a>
       <aside className="hidden w-60 border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 md:flex md:flex-col">
         <div className="mb-4 flex items-stretch gap-3 px-3 pt-1">
           <div className="flex w-11 shrink-0 flex-col items-center justify-center">
@@ -203,7 +183,7 @@ export function AppShell({
             </div>
           </div>
         </div>
-        <nav className="space-y-0.5 px-2 text-sm">
+        <nav className="space-y-0.5 px-2 text-sm" aria-label="Primary">
           {navItems.map((item) => {
             const active = navItemActive(pathname, item.href);
             const Icon = item.icon;
@@ -326,24 +306,19 @@ export function AppShell({
             </Link>
           </div>
         </header>
-        {mobileNavOpen ? (
-          <div
-            className="fixed inset-0 z-50 md:hidden"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={mobileNavTitleId}
-            id="mobile-app-nav"
-          >
-            <button
-              type="button"
-              className="absolute inset-0 bg-zinc-950/55 dark:bg-black/60"
-              aria-label="Close menu"
-              onClick={() => {
-                closeMobileNav();
-                menuButtonRef.current?.focus();
-              }}
-            />
-            <div className="absolute inset-y-0 left-0 flex w-[min(18rem,85vw)] max-w-[calc(100vw-env(safe-area-inset-left)-0.5rem)] flex-col border-r border-zinc-200 bg-white pt-[env(safe-area-inset-top)] ps-[max(0.5rem,env(safe-area-inset-left))] shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+        <Modal
+          open={mobileNavOpen}
+          onClose={closeMobileNav}
+          variant="drawer"
+          titleId={mobileNavTitleId}
+          initialFocusRef={drawerCloseRef}
+          className="md:hidden"
+          panelClassName="flex w-[min(18rem,85vw)] max-w-[calc(100vw-env(safe-area-inset-left)-0.5rem)] flex-col border-r border-zinc-200 bg-white pt-[env(safe-area-inset-top)] ps-[max(0.5rem,env(safe-area-inset-left))] shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+        >
+            <div
+              id="mobile-app-nav"
+              className="flex min-h-0 flex-1 flex-col"
+            >
               <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2.5 pe-2 dark:border-zinc-800">
                 <div className="min-w-0">
                   <div
@@ -402,8 +377,7 @@ export function AppShell({
                 })}
               </nav>
             </div>
-          </div>
-        ) : null}
+        </Modal>
         <ChangelogDialog
           open={changelogOpen}
           onClose={() => setChangelogOpen(false)}
@@ -417,7 +391,11 @@ export function AppShell({
           status={licenseStatus}
           contactSalesMailto={contactSalesMailto}
         />
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-50 py-4 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-zinc-950 md:py-5 md:ps-5 md:pe-5">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-50 py-4 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-zinc-950 md:py-5 md:ps-5 md:pe-5"
+        >
           <div
             className={[
               "mx-auto w-full min-w-0",
@@ -431,6 +409,7 @@ export function AppShell({
         </main>
       </div>
     </div>
+    </KeyboardShortcutsProvider>
   );
 }
 

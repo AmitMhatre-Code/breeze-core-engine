@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { Modal } from "@/components/ui/Modal";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { apiClient } from "@/lib/api-client";
@@ -233,15 +234,6 @@ export function OptionChainPlaceSection() {
     ],
   );
 
-  useEffect(() => {
-    if (!sheet) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") closeSheet();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [sheet, closeSheet]);
-
   const sheetHasCall = Boolean(sheet?.row.call);
   const sheetHasPut = Boolean(sheet?.row.put);
 
@@ -411,20 +403,15 @@ export function OptionChainPlaceSection() {
       ) : null}
 
       {sheet && chainSuccess ? (
-        <>
-          <div
-            className="fixed inset-0 z-[105] bg-black/40 dark:bg-black/55"
-            role="presentation"
-            aria-hidden
-            onClick={closeSheet}
-          />
-          <div
-            className="fixed inset-x-4 bottom-0 z-[106] mx-auto flex max-h-[min(85dvh,28rem)] w-full max-w-[17.5rem] flex-col overflow-y-auto rounded-t-[1.25rem] border border-zinc-200/90 bg-white/95 px-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_12px_48px_-8px_rgba(0,0,0,0.28)] backdrop-blur-xl dark:border-zinc-700/90 dark:bg-zinc-950/95 dark:shadow-[0_12px_48px_-8px_rgba(0,0,0,0.55)] sm:px-4 sm:pt-3.5 lg:inset-x-auto lg:bottom-auto lg:left-1/2 lg:top-1/2 lg:max-h-[min(85dvh,30rem)] lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-lg lg:px-4 lg:pb-4 lg:pt-4 lg:ring-1 lg:ring-zinc-950/[0.06] lg:dark:ring-white/[0.08]"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="option-chain-sheet-title"
-          >
-            <div className="mx-auto mb-2.5 h-1 w-9 shrink-0 rounded-full bg-zinc-300/90 dark:bg-zinc-600 lg:hidden" />
+        <Modal
+          open
+          onClose={closeSheet}
+          variant="bottomSheet"
+          titleId="option-chain-sheet-title"
+          zIndexClass="z-[106]"
+          panelClassName="mx-auto flex max-h-[min(85dvh,28rem)] w-full max-w-[17.5rem] flex-col overflow-y-auto rounded-t-[1.25rem] border border-zinc-200/90 bg-white/95 px-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_12px_48px_-8px_rgba(0,0,0,0.28)] backdrop-blur-xl dark:border-zinc-700/90 dark:bg-zinc-950/95 dark:shadow-[0_12px_48px_-8px_rgba(0,0,0,0.55)] sm:px-4 sm:pt-3.5 lg:max-h-[min(85dvh,30rem)] lg:max-w-lg lg:rounded-lg lg:px-4 lg:pb-4 lg:pt-4 lg:ring-1 lg:ring-zinc-950/[0.06] lg:dark:ring-white/[0.08]"
+        >
+          <div className="mx-auto mb-2.5 h-1 w-9 shrink-0 rounded-full bg-zinc-300/90 dark:bg-zinc-600 lg:hidden" />
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <h2
@@ -568,8 +555,7 @@ export function OptionChainPlaceSection() {
                 Sell
               </button>
             </div>
-          </div>
-        </>
+        </Modal>
       ) : null}
     </section>
   );

@@ -199,6 +199,7 @@ export function OptionChainUnderlyingSearch({
                 <button
                   type="button"
                   role="option"
+                  tabIndex={-1}
                   aria-selected={selected}
                   data-combobox-index={index}
                   className={[
@@ -280,6 +281,7 @@ export function OptionChainUnderlyingSearch({
         <input
           id="option-chain-underlying-filter"
           ref={inputRef}
+          data-scrip-input
           type="search"
           autoComplete="off"
           disabled={disabled}
@@ -328,6 +330,7 @@ export function OptionChainUnderlyingSearch({
             <input
               id="option-chain-underlying-ticker"
               ref={inputRef}
+              data-scrip-input
               type="search"
               autoComplete="off"
               disabled={disabled}
@@ -440,6 +443,7 @@ export function OptionChainUnderlyingSearch({
           <input
             id="option-chain-underlying-search"
             ref={inputRef}
+            data-scrip-input
             type="search"
             autoComplete="off"
             disabled={disabled}

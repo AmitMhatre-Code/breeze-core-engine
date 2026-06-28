@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
+import { Modal } from "@/components/ui/Modal";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionConfirmDialog";
 import { BuildYourOwnChainSection } from "@/components/strategy-builder/BuildYourOwnChainSection";
@@ -1173,52 +1174,43 @@ export default function StrategyBuilderPage() {
           }}
         />
 
-        {unlimitedRiskTrade ? (
-          <div
-            className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4"
-            role="presentation"
-            onClick={() => setUnlimitedRiskTrade(null)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setUnlimitedRiskTrade(null);
-            }}
+        <Modal
+          open={Boolean(unlimitedRiskTrade)}
+          onClose={() => setUnlimitedRiskTrade(null)}
+          titleId="unlimited-risk-title"
+          panelClassName={`${sb.modalPanel} w-full max-w-md`}
+        >
+          <h3
+            id="unlimited-risk-title"
+            className="text-base font-semibold text-red-700 dark:text-red-400"
           >
-            <div
-              role="dialog"
-              aria-modal="true"
-              className={`${sb.modalPanel} w-full max-w-md`}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.stopPropagation()}
+            Risk warning — unlimited loss
+          </h3>
+          <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+            {unlimitedRiskTrade?.strategy_name} can have large or unlimited
+            loss if the market moves against you. Confirm you understand the
+            exposure before selecting this strategy.
+          </p>
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              className={sb.btnSecondary}
+              onClick={() => setUnlimitedRiskTrade(null)}
             >
-              <h3 className="text-base font-semibold text-red-700 dark:text-red-400">
-                Risk warning — unlimited loss
-              </h3>
-              <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-                {unlimitedRiskTrade.strategy_name} can have large or unlimited
-                loss if the market moves against you. Confirm you understand the
-                exposure before selecting this strategy.
-              </p>
-              <div className="flex justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  className={sb.btnSecondary}
-                  onClick={() => setUnlimitedRiskTrade(null)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className={sb.btnDanger}
-                  onClick={() => {
-                    applySelectedTrade(unlimitedRiskTrade);
-                    setUnlimitedRiskTrade(null);
-                  }}
-                >
-                  I understand — select
-                </button>
-              </div>
-            </div>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className={sb.btnDanger}
+              onClick={() => {
+                if (unlimitedRiskTrade) applySelectedTrade(unlimitedRiskTrade);
+                setUnlimitedRiskTrade(null);
+              }}
+            >
+              I understand — select
+            </button>
           </div>
-        ) : null}
+        </Modal>
       </RevokedTradingPageGuard>
     </AppShell>
   );

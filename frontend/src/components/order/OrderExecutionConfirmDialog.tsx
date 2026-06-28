@@ -23,6 +23,7 @@ import type {
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
 import { invalidateTradingShellQueries } from "@/lib/trading-cache";
 import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
+import { Modal } from "@/components/ui/Modal";
 
 export type ExecutionPreviewLeg = {
   strike: number;
@@ -316,29 +317,17 @@ export function OrderExecutionConfirmDialog({
     },
   });
 
-  if (!open) return null;
-
   const pending = execMut.isPending || parkMut.isPending;
 
   return (
-    <div
-      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4 dark:bg-black/60"
-      role="presentation"
-      onClick={() => {
-        if (!pending) onClose();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && !pending) onClose();
-      }}
+    <Modal
+      open={open}
+      onClose={onClose}
+      pending={pending}
+      titleId="order-exec-confirm-title"
+      zIndexClass="z-[120]"
+      panelClassName={`${sb.modalPanel} !w-max max-w-[min(96vw,42rem)] mx-auto`}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="order-exec-confirm-title"
-        className={`${sb.modalPanel} !w-max max-w-[min(96vw,42rem)] mx-auto`}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-      >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h3
@@ -512,7 +501,6 @@ export function OrderExecutionConfirmDialog({
             />
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

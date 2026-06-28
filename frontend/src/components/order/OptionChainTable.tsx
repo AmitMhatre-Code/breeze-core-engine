@@ -505,12 +505,34 @@ export function OptionChainTable({
                 ? "cursor-pointer border-b border-zinc-200/90 transition hover:bg-zinc-100/70 dark:border-zinc-800/90 dark:hover:bg-zinc-800/35"
                 : "border-b border-zinc-200/90 dark:border-zinc-800/90";
 
+            const trInteractiveCls =
+              mode === "trade" && onRowClick
+                ? " focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-sky-500"
+                : "";
+
             return (
               <tr
                 key={strike}
                 data-atm-strike={isAtm ? "true" : undefined}
-                className={trCls}
+                className={trCls + trInteractiveCls}
+                role={mode === "trade" && onRowClick ? "button" : undefined}
+                tabIndex={mode === "trade" && onRowClick ? 0 : undefined}
+                aria-label={
+                  mode === "trade" && onRowClick
+                    ? `Open order sheet for strike ${strike.toLocaleString("en-IN")}`
+                    : undefined
+                }
                 onClick={rowClick}
+                onKeyDown={
+                  mode === "trade" && onRowClick
+                    ? (e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onRowClick(row);
+                        }
+                      }
+                    : undefined
+                }
               >
                 {c ? (
                   <>

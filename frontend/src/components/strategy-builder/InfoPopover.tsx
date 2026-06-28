@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 type Props = {
   title?: string;
@@ -12,16 +12,22 @@ type Props = {
 export function InfoPopover({ title, children, ariaLabel }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const panelId = useId();
   const triggerLabel = ariaLabel ?? title ?? "More information";
+
+  const close = useCallback(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(e.target as Node)) close();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") close();
     };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
@@ -29,11 +35,12 @@ export function InfoPopover({ title, children, ariaLabel }: Props) {
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, close]);
 
   return (
     <div ref={rootRef} className="relative inline-flex shrink-0">
       <button
+        ref={triggerRef}
         type="button"
         className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full text-[10px] font-bold leading-none text-zinc-400 ring-1 ring-zinc-300/80 transition hover:text-zinc-600 hover:ring-zinc-400 dark:text-zinc-500 dark:ring-zinc-600 dark:hover:text-zinc-300 dark:hover:ring-zinc-500"
         aria-expanded={open}

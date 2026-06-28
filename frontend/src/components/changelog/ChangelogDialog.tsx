@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
 import { formatAppVersionForDisplay } from "@/lib/app-version";
+import { Modal } from "@/components/ui/Modal";
 import {
   getHistoryReleases,
   getLatestFeatureRelease,
@@ -172,26 +172,6 @@ function UnifiedLatestPanel({ release }: { release: ChangelogRelease }) {
 }
 
 export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
-  if (!open) return null;
-
   const latest = getLatestRelease();
   const latestFeature = getLatestFeatureRelease();
 
@@ -209,25 +189,13 @@ export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end sm:items-center sm:justify-center sm:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="changelog-dialog-title"
+    <Modal
+      open={open}
+      onClose={onClose}
+      variant="bottomSheet"
+      titleId="changelog-dialog-title"
     >
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/50"
-        aria-label="Close dialog"
-        onClick={onClose}
-      />
-      <div
-        className={[
-          "relative z-[1] flex max-h-[min(32rem,88dvh)] w-full min-w-0 flex-col overflow-hidden border-x border-t border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950",
-          "rounded-t-2xl sm:mx-auto sm:mb-0 sm:max-h-[min(32rem,85vh)] sm:w-full sm:max-w-lg sm:rounded-lg sm:border",
-          "mb-[max(0px,env(safe-area-inset-bottom))]",
-        ].join(" ")}
-      >
-        <div className="sticky top-0 z-[1] flex items-start justify-between gap-3 border-b border-zinc-100 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950 sm:px-5 sm:py-4">
+      <div className="sticky top-0 z-[1] flex items-start justify-between gap-3 border-b border-zinc-100 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950 sm:px-5 sm:py-4">
           <div className="min-w-0">
             <h2
               id="changelog-dialog-title"
@@ -286,8 +254,7 @@ export function ChangelogDialog({ open, onClose }: ChangelogDialogProps) {
             </>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

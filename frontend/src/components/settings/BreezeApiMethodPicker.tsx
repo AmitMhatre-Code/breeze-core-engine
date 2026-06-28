@@ -6,6 +6,10 @@ import {
   RISK_GROUP_LABEL,
   type BreezeApiCatalogEntry,
 } from "@/lib/breeze-api-tester";
+import {
+  useListboxMenu,
+  useListboxOutsideClose,
+} from "@/lib/ui/use-listbox-menu";
 
 type ApiGroup = {
   level: BreezeApiCatalogEntry["risk_level"];
@@ -71,6 +75,8 @@ export function BreezeApiMethodPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listId = useId();
   const labelId = useId();
@@ -93,38 +99,49 @@ export function BreezeApiMethodPicker({
       .filter((g) => g.items.length > 0);
   }, [groups, query]);
 
+  const flatItems = useMemo(
+    () => filteredGroups.flatMap((g) => g.items),
+    [filteredGroups],
+  );
+
+  const indexByMethod = useMemo(() => {
+    const map = new Map<string, number>();
+    flatItems.forEach((item, index) => map.set(item.method, index));
+    return map;
+  }, [flatItems]);
+
   const close = useCallback(() => {
     setOpen(false);
     setQuery("");
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      const el = rootRef.current;
-      if (el && e.target instanceof Node && !el.contains(e.target)) close();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, close]);
+  useListboxOutsideClose(open, rootRef, close);
+
+  const { highlightIndex, handleTriggerKeyDown } = useListboxMenu({
+    open,
+    optionCount: flatItems.length,
+    onOpen: () => setOpen(true),
+    onClose: () => {
+      close();
+      triggerRef.current?.focus();
+    },
+    onSelectIndex: (index) => {
+      const item = flatItems[index];
+      if (item) {
+        onSelect(item.method);
+        close();
+        triggerRef.current?.focus();
+      }
+    },
+    triggerRef,
+    listRef,
+  });
 
   useEffect(() => {
     if (!open) return;
     const t = window.setTimeout(() => searchRef.current?.focus(), 0);
     return () => window.clearTimeout(t);
   }, [open]);
-
-  const pick = (method: string) => {
-    onSelect(method);
-    close();
-  };
 
   return (
     <div ref={rootRef} className="relative w-full text-left">
@@ -133,6 +150,7 @@ export function BreezeApiMethodPicker({
       </span>
 
       <button
+        ref={triggerRef}
         type="button"
         className={[
           "mt-1.5 flex w-full items-center gap-3 rounded-lg border border-zinc-300/80 bg-white/95 px-3.5 py-3 text-left shadow-sm outline-none transition-all",
@@ -147,6 +165,7 @@ export function BreezeApiMethodPicker({
         aria-controls={listId}
         aria-labelledby={labelId}
         onClick={() => setOpen((v) => !v)}
+        onKeyDown={handleTriggerKeyDown}
       >
         <span className="min-w-0 flex-1">
           {selected ? (
@@ -200,6 +219,7 @@ export function BreezeApiMethodPicker({
           </div>
 
           <ul
+            ref={listRef}
             id={listId}
             role="listbox"
             aria-labelledby={labelId}
@@ -220,20 +240,28 @@ export function BreezeApiMethodPicker({
                   </div>
                   <ul className="space-y-0.5">
                     {g.items.map((item) => {
+                      const menuIndex = indexByMethod.get(item.method) ?? 0;
                       const isSelected = item.method === selectedMethod;
+                      const highlighted = menuIndex === highlightIndex;
                       return (
                         <li key={item.method} role="presentation">
                           <button
                             type="button"
                             role="option"
                             aria-selected={isSelected}
+                            data-menu-index={menuIndex}
+                            tabIndex={-1}
                             className={[
                               "flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors",
-                              isSelected
+                              isSelected || highlighted
                                 ? "bg-blue-500/10 ring-1 ring-inset ring-blue-500/30 dark:bg-blue-400/10 dark:ring-blue-400/30"
                                 : "hover:bg-zinc-100 dark:hover:bg-zinc-800/80",
                             ].join(" ")}
-                            onClick={() => pick(item.method)}
+                            onClick={() => {
+                              onSelect(item.method);
+                              close();
+                              triggerRef.current?.focus();
+                            }}
                           >
                             <span className="min-w-0 flex-1">
                               <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">

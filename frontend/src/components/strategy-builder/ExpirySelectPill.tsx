@@ -200,6 +200,7 @@ export function ExpirySelectPill({
           <button
             type="button"
             role="option"
+            tabIndex={-1}
             aria-selected={false}
             className={
               darkToolbar
@@ -231,6 +232,7 @@ export function ExpirySelectPill({
             <button
               type="button"
               role="option"
+              tabIndex={-1}
               aria-selected={d === value}
               data-combobox-index={index}
               className={optionClass(d, index === highlightIndex)}
