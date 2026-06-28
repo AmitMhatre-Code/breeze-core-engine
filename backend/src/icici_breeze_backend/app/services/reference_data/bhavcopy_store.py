@@ -141,6 +141,17 @@ def _lookup_bhav_row(
     return None
 
 
+def has_bhavcopy_quote(
+    stock_code: str,
+    expiry_display: str,
+    right: str,
+    strike: int,
+    exchange_code: str,
+) -> bool:
+    """True when the published bhavcopy index has a row for this contract."""
+    return _lookup_bhav_row(stock_code, expiry_display, right, strike, exchange_code) is not None
+
+
 def _row_to_chain_cell(
     row: dict[str, str],
     stock_code: str,

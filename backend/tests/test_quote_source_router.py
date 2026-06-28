@@ -117,9 +117,10 @@ def test_fetch_quote_returns_cached_cell(mock_cache):
     assert out["Success"][0]["strike_price"] == 23500
 
 
+@patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="icici_api")
 @patch("icici_breeze_backend.app.services.quote_source_router._fetch_quote_icici_rest")
 @patch("icici_breeze_backend.app.services.quote_source_router._fetch_cell_from_cache", return_value=(None, None))
-def test_fetch_quote_rest_fallback(mock_cell, mock_rest):
+def test_fetch_quote_rest_fallback(mock_cell, mock_rest, _mock_source):
     proc = MagicMock()
     mock_rest.return_value = {"Status": 200, "Success": [{"strike_price": 23500}], "quote_source": "icici_api"}
     out = fetch_quote_icici_response(
@@ -127,3 +128,26 @@ def test_fetch_quote_rest_fallback(mock_cell, mock_rest):
     )
     assert out["Status"] == 200
     mock_rest.assert_called_once()
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="bhavcopy")
+@patch("icici_breeze_backend.app.services.quote_source_router._fetch_quote_icici_rest")
+@patch("icici_breeze_backend.app.services.quote_source_router._fetch_cell_from_cache", return_value=(None, None))
+def test_fetch_quote_skips_rest_when_bhavcopy_active(mock_cell, mock_rest, _mock_source):
+    proc = MagicMock()
+    out = fetch_quote_icici_response(
+        proc, "u1", "NIFTY", "NFO", "09-Jun-2025", "Call", "23500"
+    )
+    assert out["Status"] == 404
+    assert out["quote_source"] == "bhavcopy"
+    mock_rest.assert_not_called()
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="bhavcopy")
+@patch("icici_breeze_backend.app.services.quote_source_router.fetch_chain_payload_routed", return_value=None)
+def test_fetch_chain_side_skips_rest_when_bhavcopy_active(mock_payload, _mock_source):
+    proc = MagicMock()
+    out = fetch_chain_side_icici_response(proc, "u1", "NIFTY", "NFO", "09-Jun-2025", "Call")
+    assert out["Status"] == 404
+    assert out["quote_source"] == "bhavcopy"
+    proc._fetch_icici_chain_side_raw.assert_not_called()

@@ -61,6 +61,19 @@ def resolve_quote_source(exchange_code: str, now: dt.datetime | None = None) -> 
     return "icici_api"
 
 
+def _rest_fallback_allowed(exchange_code: str) -> bool:
+    return resolve_quote_source(exchange_code) != "bhavcopy"
+
+
+def _bhavcopy_miss_response() -> dict[str, Any]:
+    return {
+        "Status": 404,
+        "Error": "Quote not available in bhavcopy",
+        "Success": None,
+        "quote_source": "bhavcopy",
+    }
+
+
 def _normalize_expiry_display(expiry: str) -> str:
     s = str(expiry or "").strip()
     if not s:
@@ -403,6 +416,9 @@ def fetch_chain_side_icici_response(
                 "quote_source": payload.get("quote_source"),
             }
 
+    if not _rest_fallback_allowed(exchange_code):
+        return _bhavcopy_miss_response()
+
     from icici_breeze_backend.app.services.processor import _expiry_display_to_api
 
     try:
@@ -449,6 +465,8 @@ def fetch_quote_icici_response(
                     "Success": [{"spot_price": spot, "strike_price": 0}],
                     "quote_source": payload.get("quote_source"),
                 }
+        if not _rest_fallback_allowed(exchange_code):
+            return _bhavcopy_miss_response()
         return _fetch_quote_icici_rest(
             proc,
             user_id,
@@ -486,6 +504,9 @@ def fetch_quote_icici_response(
             "Success": [row],
             "quote_source": quote_source,
         }
+
+    if not _rest_fallback_allowed(exchange_code):
+        return _bhavcopy_miss_response()
 
     quote = _fetch_quote_icici_rest(
         proc,
