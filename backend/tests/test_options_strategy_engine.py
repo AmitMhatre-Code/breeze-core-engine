@@ -223,6 +223,27 @@ def _mock_fetch_chain_sb(*_args, **kwargs):
     return {"Status": 200, "Success": [_chain_row(int(strike_price), right)]}
 
 
+def _mock_full_option_chain(*_args, **_kwargs):
+    strikes = list(range(23000, 24100, 50))
+    chain_rows = [
+        {
+            "strike_price": s,
+            "call": _chain_row(s, "Call"),
+            "put": _chain_row(s, "Put"),
+        }
+        for s in strikes
+    ]
+    return {
+        "Status": 200,
+        "Success": {
+            "chain_rows": chain_rows,
+            "spot_price": 23500.0,
+            "atm_strike": 23500,
+            "quote_source": "websocket",
+        },
+    }
+
+
 class TestBuildLiquidityCache(unittest.TestCase):
     def _ctx(self, proc: MagicMock) -> EngineContext:
         strikes = list(range(23000, 24100, 50))
@@ -245,23 +266,13 @@ class TestBuildLiquidityCache(unittest.TestCase):
             atm_strike=23500,
         )
 
-    def test_two_full_chain_calls_when_range_within_chain(self):
+    def test_single_routed_chain_call_populates_bulk_cache(self):
         proc = MagicMock()
-        proc.fetch_option_chain_quotes_sb.side_effect = _mock_fetch_chain_sb
+        proc.get_full_option_chain.return_value = _mock_full_option_chain()
         ctx = self._ctx(proc)
         _build_liquidity_cache(ctx)
-        full_chain_calls = [
-            c
-            for c in proc.fetch_option_chain_quotes_sb.call_args_list
-            if c.kwargs.get("strike_price") is None
-        ]
-        tail_calls = [
-            c
-            for c in proc.fetch_option_chain_quotes_sb.call_args_list
-            if c.kwargs.get("strike_price") is not None
-        ]
-        self.assertEqual(len(full_chain_calls), 2)
-        self.assertEqual(len(tail_calls), 0)
+        self.assertEqual(proc.get_full_option_chain.call_count, 1)
+        proc.fetch_option_chain_quotes_sb.assert_not_called()
         self.assertFalse(ctx.halted)
         self.assertIn((23500, "Call"), ctx.cache)
 
@@ -277,6 +288,26 @@ class TestBuildLiquidityCache(unittest.TestCase):
                 return {"Status": 200, "Success": [_chain_row(s, right) for s in narrow]}
             return {"Status": 200, "Success": [_chain_row(int(strike_price), right)]}
 
+        def narrow_full_chain(*_args, **_kwargs):
+            narrow = [23400, 23500, 23600]
+            chain_rows = [
+                {
+                    "strike_price": s,
+                    "call": _chain_row(s, "Call"),
+                    "put": _chain_row(s, "Put"),
+                }
+                for s in narrow
+            ]
+            return {
+                "Status": 200,
+                "Success": {
+                    "chain_rows": chain_rows,
+                    "spot_price": 23500.0,
+                    "quote_source": "websocket",
+                },
+            }
+
+        proc.get_full_option_chain.side_effect = narrow_full_chain
         proc.fetch_lot_size.return_value = 75
         proc.list_option_strikes.return_value = strikes
         proc.strike_interval.return_value = 50
@@ -313,7 +344,8 @@ class TestBuildLiquidityCache(unittest.TestCase):
             for c in proc.fetch_option_chain_quotes_sb.call_args_list
             if c.kwargs.get("strike_price") is None
         ]
-        self.assertEqual(len(bulk_calls), 2)
+        self.assertEqual(proc.get_full_option_chain.call_count, 1)
+        self.assertEqual(len(bulk_calls), 0)
         self.assertGreater(len(targeted_calls), 0)
         self.assertLessEqual(len(targeted_calls), 20)
 
@@ -397,7 +429,10 @@ class TestFetchOptionChainBackoff(unittest.TestCase):
                 }
             ],
         }
-        with patch.object(proc, "get_session_breeze", return_value=mock_breeze):
+        with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch(
+            "icici_breeze_backend.app.services.quote_source_router.fetch_chain_payload_routed",
+            return_value=None,
+        ):
             res = proc.fetch_option_chain_quotes_sb(
                 "u1",
                 "NIFTY",
@@ -458,19 +493,37 @@ class TestBuildLiquidityCacheUserBackoff(unittest.TestCase):
     def test_chain_backoff_uses_settings_pause_seconds(self):
         strikes = list(range(23400, 23700, 50))
         proc = MagicMock()
-        proc.fetch_option_chain_quotes_sb.return_value = {
+        proc.get_full_option_chain.return_value = {
             "Status": 200,
-            "Success": [
-                {
-                    "strike_price": 23500,
-                    "total_buy_qty": 10,
-                    "total_sell_qty": 10,
-                    "ltp": 1,
-                    "best_bid_price": 1,
-                    "best_offer_price": 1,
-                    "spot_price": 23500,
-                }
-            ],
+            "Success": {
+                "chain_rows": [
+                    {
+                        "strike_price": 23500,
+                        "call": {
+                            "strike_price": 23500,
+                            "total_buy_qty": 10,
+                            "total_sell_qty": 10,
+                            "ltp": 1,
+                            "best_bid_price": 1,
+                            "best_offer_price": 1,
+                            "spot_price": 23500,
+                            "right": "Call",
+                        },
+                        "put": {
+                            "strike_price": 23500,
+                            "total_buy_qty": 10,
+                            "total_sell_qty": 10,
+                            "ltp": 1,
+                            "best_bid_price": 1,
+                            "best_offer_price": 1,
+                            "spot_price": 23500,
+                            "right": "Put",
+                        },
+                    }
+                ],
+                "spot_price": 23500.0,
+                "quote_source": "websocket",
+            },
         }
         ctx = EngineContext(
             processor=proc,

@@ -407,3 +407,8 @@ class ExchangeCalendarSyncPreviewResponse(BaseModel):
 
 class ExchangeCalendarSyncBody(BaseModel):
     confirm_override: bool = False
+
+
+class MarketStatusResponse(BaseModel):
+    is_open: bool
+    closed_reason: str

@@ -34,6 +34,7 @@ from icici_breeze_backend.audit.strategy_builder_audit import (
 )
 from icici_breeze_backend.audit.user_explainability import build_user_explainability_report
 
+
 def _chain_row(strike: int, right: str) -> dict:
     return {
         "strike_price": strike,
@@ -44,6 +45,26 @@ def _chain_row(strike: int, right: str) -> dict:
         "total_sell_qty": 100,
         "spot_price": 23500.0,
         "right": right,
+    }
+
+
+def _mock_full_option_chain_for_audit(*_args, **_kwargs):
+    strikes = list(range(23000, 24100, 50))
+    return {
+        "Status": 200,
+        "Success": {
+            "chain_rows": [
+                {
+                    "strike_price": s,
+                    "call": _chain_row(s, "Call"),
+                    "put": _chain_row(s, "Put"),
+                }
+                for s in strikes
+            ],
+            "spot_price": 23500.0,
+            "atm_strike": 23500,
+            "quote_source": "websocket",
+        },
     }
 
 
@@ -366,6 +387,7 @@ class TestEngineAuditIntegration(unittest.TestCase):
         proc.list_option_strikes.return_value = strikes
         proc.strike_interval.return_value = 50
         proc.search_interval.return_value = 50
+        proc.get_full_option_chain.side_effect = _mock_full_option_chain_for_audit
         proc.fetch_option_chain_quotes_sb.side_effect = _mock_fetch_option_chain_quotes_sb
         proc.strategy_builder_margin.side_effect = _mock_strategy_builder_margin
 
@@ -403,9 +425,9 @@ class TestEngineAuditIntegration(unittest.TestCase):
                 self.assertTrue(os.path.isfile(path))
                 with open(path, encoding="utf-8") as fh:
                     doc = json.load(fh)
-                chain_stats = doc["icici_api_calls"]["by_api"]["get_option_chain_quotes"]
-                self.assertGreaterEqual(chain_stats["total"], 2)
-                self.assertLess(chain_stats["total"], 20)
+                chain_stats = doc["icici_api_calls"]["by_api"].get("get_option_chain_quotes", {})
+                self.assertGreaterEqual(chain_stats.get("total", 0), 0)
+                self.assertLess(chain_stats.get("total", 0), 20)
                 self.assertIn("temp_liquid_cache", doc)
 
 

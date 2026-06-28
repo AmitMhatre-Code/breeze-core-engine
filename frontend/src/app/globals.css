@@ -89,6 +89,26 @@
   .app-text-muted {
     @apply text-xs leading-snug text-zinc-500 dark:text-zinc-400;
   }
+  .app-input {
+    @apply w-full rounded-md border px-3 py-2 text-sm transition;
+    @apply border-zinc-300 bg-white text-zinc-900 placeholder:text-zinc-400;
+    @apply focus:border-sky-500/60 focus:outline-none focus:ring-2 focus:ring-sky-500/30;
+    @apply dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500;
+    @apply dark:focus:border-sky-400/45 dark:focus:ring-sky-400/25;
+  }
+  input.app-input:is([type="date"], [type="time"], [type="datetime-local"]) {
+    @apply min-h-10 w-full min-w-0 tabular-nums;
+  }
+  input.app-input:is([type="date"], [type="time"], [type="datetime-local"])::-webkit-calendar-picker-indicator {
+    @apply size-5 shrink-0 cursor-pointer rounded-md opacity-55 transition-opacity hover:opacity-90;
+  }
+  .dark input.app-input:is([type="date"], [type="time"], [type="datetime-local"]) {
+    color-scheme: dark;
+  }
+  .dark
+    input.app-input:is([type="date"], [type="time"], [type="datetime-local"])::-webkit-calendar-picker-indicator {
+    filter: invert(1) brightness(0.9);
+  }
   /** Loading placeholders — contrasting fill + moving highlight (not nested app-card-muted). */
   @keyframes app-skeleton-shimmer {
     0% {

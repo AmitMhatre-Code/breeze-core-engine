@@ -315,28 +315,25 @@ def _historical_vix_range(
     return [{"date": d, "value": by_date[d]} for d in sorted(by_date.keys())]
 
 
-def _option_chain(breeze, expiry_api: str, right: str) -> List[Dict]:
-    """Get NIFTY option chain for one expiry and right. Returns list of strike info with ltp. Retries on transient failure."""
-    if breeze is None:
-        return []
+def _option_chain(processor, user_id: str, expiry_api: str, right: str) -> List[Dict]:
+    """Get NIFTY option chain for one expiry and right. Cache-first with REST fallback."""
+    from icici_breeze_backend.app.services.quote_source_router import fetch_chain_side_icici_response
 
-    def _get() -> List[Dict]:
-        r = breeze.get_option_chain_quotes(
-            stock_code=NIFTY_SYMBOL,
-            exchange_code=NFO,
-            product_type=PRODUCT_OPTIONS,
-            right=right,
-            expiry_date=expiry_api,
+    try:
+        r = fetch_chain_side_icici_response(
+            processor,
+            user_id,
+            NIFTY_SYMBOL,
+            NFO,
+            expiry_api,
+            right,
         )
         if not isinstance(r, dict) or (r.get("Status") or r.get("status")) != 200:
             return []
         succ = r.get("Success") or r.get("success")
         return list(succ) if isinstance(succ, list) else []
-
-    try:
-        return _retry_breeze(lambda: _get(), f"get_option_chain_quotes NIFTY {expiry_api} {right}")
     except Exception as e:
-        _logger.warning("get_option_chain_quotes NIFTY %s %s failed after retries: %s", expiry_api, right, e)
+        _logger.warning("option chain NIFTY %s %s failed: %s", expiry_api, right, e)
         return []
 
 
@@ -837,8 +834,8 @@ def fetch_vix_options(
     expiry_api = _expiry_display_to_api(exp)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        fut_call = executor.submit(_option_chain, breeze, expiry_api, "call")
-        fut_put = executor.submit(_option_chain, breeze, expiry_api, "put")
+        fut_call = executor.submit(_option_chain, processor, user_id, expiry_api, "call")
+        fut_put = executor.submit(_option_chain, processor, user_id, expiry_api, "put")
         calls = fut_call.result()
         puts = fut_put.result()
     pcr, strike_call_oi, strike_put_oi = _option_chain_oi_metrics(calls, puts)
@@ -932,8 +929,8 @@ def fetch_vix_options_atm_skew(user_id: str, processor) -> Dict[str, Any]:
     try:
         t2 = time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            fut_call = executor.submit(_option_chain, breeze, expiry_api, "call")
-            fut_put = executor.submit(_option_chain, breeze, expiry_api, "put")
+            fut_call = executor.submit(_option_chain, processor, user_id, expiry_api, "call")
+            fut_put = executor.submit(_option_chain, processor, user_id, expiry_api, "put")
             calls = fut_call.result()
             puts = fut_put.result()
         _log_timing("atm_skew.option_chain_parallel", (time.perf_counter() - t2) * 1000, f"call={len(calls)} put={len(puts)}")

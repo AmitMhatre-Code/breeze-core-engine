@@ -291,7 +291,7 @@ def _resolve_spot_and_atm(ctx: EngineContext, all_strikes: list[int], mid: float
 
 
 def build_bulk_chain_cache(ctx: EngineContext) -> None:
-    """Primary core fetch: two chain-wide quotes (CE + PE) without strike_price."""
+    """Primary core fetch: routed full chain (websocket / bhavcopy / REST fallback)."""
     all_strikes = ctx.strikes
     if not all_strikes:
         ctx.halted = True
@@ -310,11 +310,63 @@ def build_bulk_chain_cache(ctx: EngineContext) -> None:
             "liquidity_protocol",
             "Fetch full CE and PE option chains",
             {"strike_count_master": len(all_strikes), "initial_spot_guess": mid},
-            rationale="Two chain-wide quotes populate the bulk strike cache (~60 strikes per side).",
+            rationale="Cache-first routed chain populates the bulk strike cache.",
         )
 
-    fetch_full_chain_side(ctx, "Call", fetch_reason="Fetch full CE chain")
-    fetch_full_chain_side(ctx, "Put", fetch_reason="Fetch full PE chain")
+    chain = ctx.processor.get_full_option_chain(
+        ctx.user_id,
+        ctx.stock_code,
+        ctx.exchange_code,
+        ctx.expiry_display,
+    )
+    if chain.get("Status") != 200:
+        ctx.halted = True
+        ctx.halt_reason = chain.get("Error") or "Unable to fetch option chain."
+        if ctx.audit:
+            ctx.audit.record("halt", ctx.halt_reason, {"phase": "liquidity_cache"})
+        return
+
+    success = chain.get("Success") or {}
+    quote_source = success.get("quote_source", "unknown")
+    if ctx.audit:
+        ctx.audit.record(
+            "liquidity_protocol",
+            "Ingest routed option chain",
+            {
+                "quote_source": quote_source,
+                "chain_row_count": len(success.get("chain_rows") or []),
+            },
+            rationale="Bulk cache from websocket, bhavcopy, or REST fallback.",
+        )
+
+    call_rows: list[Any] = []
+    put_rows: list[Any] = []
+    for row in success.get("chain_rows") or []:
+        strike = row.get("strike_price")
+        if row.get("call"):
+            call_rows.append({**row["call"], "strike_price": strike})
+        if row.get("put"):
+            put_rows.append({**row["put"], "strike_price": strike})
+
+    ingested_ce = ingest_chain_rows(call_rows, "Call")
+    ingested_pe = ingest_chain_rows(put_rows, "Put")
+    ctx.cache.update(ingested_ce)
+    ctx.cache.update(ingested_pe)
+    record_ingested_strikes(ctx.audit, ingested_ce, context="Fetch full CE chain")
+    record_ingested_strikes(ctx.audit, ingested_pe, context="Fetch full PE chain")
+    if ctx.progress is not None:
+        ctx.progress.tick(phase="fetch_chain", message="Fetching option chain…")
+
+    if success.get("spot_price") is not None:
+        try:
+            ctx.spot = float(success["spot_price"])
+        except (TypeError, ValueError):
+            pass
+    if success.get("atm_strike") is not None:
+        try:
+            ctx.atm_strike = int(success["atm_strike"])
+        except (TypeError, ValueError):
+            pass
     _resolve_spot_and_atm(ctx, all_strikes, mid)
 
 

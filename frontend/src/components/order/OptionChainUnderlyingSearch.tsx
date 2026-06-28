@@ -137,10 +137,22 @@ export function OptionChainUnderlyingSearch({
 
   const inputDisplay = open ? q : value;
 
-  const openPicker = () => {
+  const handleInputFocus = () => {
     if (disabled) return;
     setOpen(true);
     setQ(value);
+  };
+
+  const handleInputChange = (next: string) => {
+    setQ(next);
+    if (!open) setOpen(true);
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && open && filtered.length > 0) {
+      e.preventDefault();
+      select(filtered[0]!.stock_code);
+    }
   };
 
   const listSectionDefault = (
@@ -272,28 +284,6 @@ export function OptionChainUnderlyingSearch({
     </div>
   );
 
-  const filterInputChainBar = (
-    <div className="border-b border-zinc-200 p-2.5 dark:border-zinc-600/50">
-      <label className="sr-only" htmlFor="option-chain-underlying-filter-chain">
-        Filter symbols
-      </label>
-      <div className="relative flex items-center">
-        <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-[1.125rem] -translate-y-1/2 text-zinc-500" />
-        <input
-          id="option-chain-underlying-filter-chain"
-          ref={inputRef}
-          type="search"
-          autoComplete="off"
-          disabled={disabled}
-          value={open ? q : ""}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Type stock name: SBIN, TCS etc."
-          className="w-full rounded-lg border border-zinc-300 bg-white py-2.5 pl-10 pr-3 text-sm text-zinc-900 outline-none placeholder:text-zinc-500 focus:border-zinc-400 focus:ring-1 focus:ring-sky-500/30 dark:border-zinc-600/50 dark:bg-[#121214] dark:text-zinc-100 dark:focus:border-zinc-500 dark:focus:ring-sky-500/25"
-        />
-      </div>
-    </div>
-  );
-
   const changeStr =
     changePct != null && Number.isFinite(changePct)
       ? `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`
@@ -310,16 +300,14 @@ export function OptionChainUnderlyingSearch({
         className={`relative min-w-0 flex-1 ${open ? "z-[300]" : "z-0"}`}
       >
         <div className={rowClass}>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={openPicker}
+          <label
             className={
               chainBar
-                ? "flex min-w-0 max-w-full items-center gap-x-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-400 dark:focus-visible:ring-offset-[#1b1c1f] dark:disabled:text-zinc-500 sm:gap-x-3"
-                : "flex min-w-0 max-w-full items-center gap-x-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:cursor-not-allowed disabled:text-zinc-400 dark:disabled:text-zinc-500 sm:gap-x-3"
+                ? "flex min-w-0 max-w-full flex-1 items-center gap-x-2.5 sm:gap-x-3"
+                : "flex min-w-0 max-w-full flex-1 items-center gap-x-2 sm:gap-x-3"
             }
           >
+            <span className="sr-only">Search underlying</span>
             <SearchIcon
               className={
                 chainBar
@@ -327,20 +315,24 @@ export function OptionChainUnderlyingSearch({
                   : "pointer-events-none size-[1.125rem] shrink-0 text-zinc-500 dark:text-zinc-400"
               }
             />
-            <span
+            <input
+              id="option-chain-underlying-ticker"
+              ref={inputRef}
+              type="search"
+              autoComplete="off"
+              disabled={disabled}
+              value={inputDisplay}
+              onChange={(e) => handleInputChange(e.target.value)}
+              onFocus={handleInputFocus}
+              onKeyDown={handleInputKeyDown}
+              placeholder="Select underlying"
               className={
-                value
-                  ? chainBar
-                    ? "min-w-0 truncate text-sm font-semibold tracking-tight text-zinc-900 hover:text-sky-700 dark:text-white dark:hover:text-sky-300"
-                    : "min-w-0 truncate text-sm font-semibold tracking-tight text-zinc-900 hover:text-sky-700 dark:text-zinc-100 dark:hover:text-sky-300"
-                  : chainBar
-                    ? "min-w-0 truncate text-sm font-normal tracking-normal text-zinc-500 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-400"
-                    : "min-w-0 truncate text-sm font-normal tracking-normal text-zinc-400 hover:text-zinc-500 dark:text-zinc-500 dark:hover:text-zinc-400"
+                chainBar
+                  ? "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm outline-none ring-0 placeholder:font-normal placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-400 dark:placeholder:text-zinc-500 dark:disabled:text-zinc-500 font-semibold tracking-tight text-zinc-900 dark:text-white placeholder:tracking-normal"
+                  : "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm outline-none ring-0 placeholder:font-normal placeholder:text-zinc-400 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-400 dark:placeholder:text-zinc-500 dark:disabled:text-zinc-500 font-semibold tracking-tight text-zinc-900 dark:text-zinc-100"
               }
-            >
-              {value || "Select underlying"}
-            </span>
-          </button>
+            />
+          </label>
           {spot != null && Number.isFinite(spot) ? (
             <span
               className={
@@ -389,10 +381,7 @@ export function OptionChainUnderlyingSearch({
               aria-label="Underlying symbols"
             >
               {chainBar ? (
-                <>
-                  {filterInputChainBar}
-                  {listSectionChainBar}
-                </>
+                listSectionChainBar
               ) : (
                 <>
                   <div className="flex items-center justify-between border-b border-zinc-700 px-3 py-2 lg:hidden">
@@ -444,14 +433,9 @@ export function OptionChainUnderlyingSearch({
             autoComplete="off"
             disabled={disabled}
             value={inputDisplay}
-            onChange={(e) => {
-              setQ(e.target.value);
-              if (!open) setOpen(true);
-            }}
-            onFocus={() => {
-              setOpen(true);
-              setQ(value);
-            }}
+            onChange={(e) => handleInputChange(e.target.value)}
+            onFocus={handleInputFocus}
+            onKeyDown={handleInputKeyDown}
             placeholder="Type stock name: SBIN, TCS etc."
             className="w-full border-0 bg-transparent py-2.5 pl-10 pr-3 text-sm text-zinc-100 outline-none ring-0 placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-500"
           />

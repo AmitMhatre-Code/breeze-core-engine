@@ -731,12 +731,11 @@ class processor():
 
             if sell_options['Status'] == 200:
                 sell_leg = sell_options['Success'][0] # only one sell leg
-                breeze = self.get_session_breeze(user_id)
-                try:
-                    _pt, _rt = _icici_option_chain_enums(product_type, right)
-                    options_chain = breeze.get_option_chain_quotes(stock_code=stock_code,exchange_code=exchange_code,product_type=_pt,expiry_date=expiry_date,right=_rt)
-                except Exception as e:
-                    options_chain = _icici_error(f"Error calling ICICI Breeze API get_option_chain_quotes(stock_code={stock_code},exchange_code={exchange_code},product_type={product_type},expiry_date={expiry_date},right={right}): {e}")
+                from icici_breeze_backend.app.services.quote_source_router import fetch_chain_side_icici_response
+
+                options_chain = fetch_chain_side_icici_response(
+                    self, user_id, stock_code, exchange_code, expiry_date, right
+                )
 
                 # Identifying the best option to BUY inside the defined range
                 options = []
@@ -885,12 +884,11 @@ class processor():
         product_type = cfg.OPTIONS
         action = cfg.SELL
         sorted_options = {}
-        breeze = self.get_session_breeze(user_id)
-        try:
-            _pt, _rt = _icici_option_chain_enums(product_type, right)
-            options_chain = breeze.get_option_chain_quotes(stock_code=stock_code,exchange_code=exchange_code,product_type=_pt,expiry_date=expiry_date,right=_rt)
-        except Exception as e:
-            options_chain = _icici_error(f"Error calling ICICI Breeze API get_option_chain_quotes(stock_code={stock_code},exchange_code={exchange_code},product_type={product_type},expiry_date={expiry_date},right={right}): {e}")
+        from icici_breeze_backend.app.services.quote_source_router import fetch_chain_side_icici_response
+
+        options_chain = fetch_chain_side_icici_response(
+            self, user_id, stock_code, exchange_code, expiry_date, right
+        )
 
         if options_chain.get('Status') == 200:
             # Calculating the premium that can be collected for every Liquid OTM CE option
@@ -1224,28 +1222,19 @@ class processor():
             bucket = (stock_code, expiry_display, exchange_code, right)
             chain_buckets.setdefault(bucket, set()).add(strike)
 
-        breeze = self.get_session_breeze(user_id)
+        from icici_breeze_backend.app.services.quote_source_router import fetch_chain_side_icici_response
+
         strike_ltps: dict[tuple[str, str, str, str, str], float | None] = {}
 
         for (stock_code, expiry_display, exchange_code, right), strikes in chain_buckets.items():
-            if breeze is None:
-                for strike in strikes:
-                    strike_ltps[(stock_code, expiry_display, strike, right, exchange_code)] = None
-                continue
             try:
-                expiry_api = _expiry_to_breeze_place_order(expiry_display)
-            except (ValueError, TypeError):
-                for strike in strikes:
-                    strike_ltps[(stock_code, expiry_display, strike, right, exchange_code)] = None
-                continue
-            _pt, _rt = _icici_option_chain_enums(cfg.OPTIONS, right)
-            try:
-                chain = breeze.get_option_chain_quotes(
-                    stock_code=stock_code,
-                    exchange_code=exchange_code,
-                    product_type=_pt,
-                    expiry_date=expiry_api,
-                    right=_rt,
+                chain = fetch_chain_side_icici_response(
+                    self,
+                    user_id,
+                    stock_code,
+                    exchange_code,
+                    expiry_display,
+                    right,
                 )
             except Exception as e:
                 _logger.warning(
@@ -1510,12 +1499,6 @@ class processor():
                                 else:
                                     i['span_margin_required'] = None
                                     i['carry_margin_returns'] = None
-                                
-                                hedgeable_set = (cfg.HEDGEABLE_UNDERLYINGS or {}).get(i.get("exchange_code") or "", set())
-                                if i.get("action") == cfg.SELL and i.get("stock_code") in hedgeable_set:
-                                    i["hedgeable"] = True
-                                else:
-                                    i["hedgeable"] = False
 
                                 # Extreme Loss Margin (ELM) calculations applicable for Index shorts only
                                 if (i['stock_index_indicator'] == cfg.INDEX and i['action'] == cfg.SELL):
@@ -1547,7 +1530,6 @@ class processor():
                                 i['span_margin_required'] = None
                                 i['elm_margin_required'] = None
                                 i['carry_margin_returns'] = None
-                                i['hedgeable'] = False
                 if positions.get("Status") == 200 and positions.get("Success") == []:
                     positions["Error"] = None
             else:
@@ -1587,18 +1569,16 @@ class processor():
         if stock_code in hedgeable_set and action == cfg.SELL:
             
             try:
-                # collect option chain between the current spot and strike
-                breeze = self.get_session_breeze(user_id)
-                product_type = cfg.OPTIONS
-                _pt, _rt = _icici_option_chain_enums(product_type, right)
-                full_chain = breeze.get_option_chain_quotes(stock_code=stock_code,
-                                    exchange_code=exchange_code,
-                                    product_type=_pt,
-                                    expiry_date=expiry_date,
-                                    right=_rt)
-                
+                from icici_breeze_backend.app.services.quote_source_router import fetch_chain_side_icici_response
+
+                full_chain = fetch_chain_side_icici_response(
+                    self, user_id, stock_code, exchange_code, expiry_date, right
+                )
+                if full_chain.get("Status") != 200:
+                    raise ValueError(full_chain.get("Error") or "chain fetch failed")
+
                 hedge_chain = []
-                for option in full_chain['Success']:
+                for option in full_chain.get("Success") or []:
                     strike_price = int(strike_price)
                     option['strike_price'] = int(option['strike_price'])
                     option['spot_price'] = float(option['spot_price'])
@@ -1701,81 +1681,36 @@ class processor():
         max_attempts: int = 3,
     ) -> dict[str, Any]:
         """Strategy-builder option chain fetch with user-configured pause on 429/503 (up to max_attempts)."""
-        breeze = self.get_session_breeze(user_id)
-        icici_request: dict[str, Any] = {
-            "stock_code": stock_code,
-            "exchange_code": exchange_code,
-            "expiry_date": expiry_api,
-            "product_type": cfg.OPTIONS,
-            "right": right,
-        }
+        del max_attempts
+        from icici_breeze_backend.app.services.quote_source_router import (
+            fetch_chain_side_icici_response,
+            fetch_quote_icici_response,
+        )
+
         if strike_price is not None:
-            icici_request["strike_price"] = strike_price
-
-        if breeze is None:
-            quote: dict[str, Any] = {
-                "Status": 400,
-                "Error": "Unable to connect to broker. Please check your credentials and re-login.",
-            }
-            if audit:
-                audit.record_icici_api_call(
-                    "get_option_chain_quotes",
-                    icici_request,
-                    quote,
-                    rationale=audit_rationale,
-                    latency_ms=0.0,
-                )
-            return quote
-
-        _pt, _rt = _icici_option_chain_enums(cfg.OPTIONS, right)
-        _t0 = time.perf_counter()
-        try:
-            if strike_price is not None:
-                quote = breeze.get_option_chain_quotes(
-                    stock_code, exchange_code, expiry_api, _pt, _rt, strike_price
-                )
-            else:
-                quote = breeze.get_option_chain_quotes(
-                    stock_code=stock_code,
-                    exchange_code=exchange_code,
-                    product_type=_pt,
-                    expiry_date=expiry_api,
-                    right=_rt,
-                )
-        except Exception as e:
-            quote = {
-                "Status": 400,
-                "Error": f"Error calling ICICI Breeze API get_option_chain_quotes: {e}",
-            }
-        _latency_ms = (time.perf_counter() - _t0) * 1000
-        if audit:
-            audit.record_icici_api_call(
-                "get_option_chain_quotes",
-                icici_request,
-                quote if isinstance(quote, dict) else None,
-                rationale=audit_rationale,
-                latency_ms=_latency_ms,
+            quote = fetch_quote_icici_response(
+                self,
+                user_id,
+                stock_code,
+                exchange_code,
+                expiry_api,
+                right,
+                strike_price,
+                audit=audit,
+                audit_rationale=audit_rationale,
             )
-        if not isinstance(quote, dict):
-            quote = {"Status": 400, "Error": "Invalid response from get_option_chain_quotes"}
-            backoff.on_success()
-            return quote
+        else:
+            quote = fetch_chain_side_icici_response(
+                self, user_id, stock_code, exchange_code, expiry_api, right
+            )
 
         if quote.get("Status") == 200:
             backoff.on_success()
-            if strike_price is not None:
-                try:
-                    if int(quote["Success"][0]["total_sell_qty"]) > 0:
-                        quote["Success"][0]["buy_sell_ratio"] = int(
-                            quote["Success"][0]["total_buy_qty"]
-                        ) / int(quote["Success"][0]["total_sell_qty"])
-                    else:
-                        quote["Success"][0]["buy_sell_ratio"] = 0
-                except (KeyError, IndexError, TypeError, ZeroDivisionError):
-                    pass
             return quote
 
-        if quote.get("Status") not in (429, 503):
+        if quote.get("quote_source") == "icici_api" and quote.get("Status") in (429, 503):
+            pass
+        else:
             backoff.on_success()
         if quote.get("Error"):
             _logger.warning(
@@ -1801,62 +1736,21 @@ class processor():
         audit_rationale: str | None = None,
         audit_request: dict[str, Any] | None = None,
     ):
-        breeze = self.get_session_breeze(user_id)
-        icici_request = audit_request or {
-            "stock_code": stock_code,
-            "exchange_code": exchange_code,
-            "expiry_date": expiry_date,
-            "product_type": product_type,
-            "right": right,
-            "strike_price": strike_price,
-        }
-        quote: dict[str, Any]
-        if breeze is None:
-            quote = {
-                "Status": 400,
-                "Error": "Unable to connect to broker. Please check your credentials and re-login.",
-            }
-        else:
-            try:
-                _pt, _rt = _icici_option_chain_enums(product_type, right)
-                quote = breeze.get_option_chain_quotes(
-                    stock_code, exchange_code, expiry_date, _pt, _rt, strike_price
-                )
-                if audit:
-                    audit.record_icici_api_call(
-                        "get_option_chain_quotes",
-                        icici_request,
-                        quote if isinstance(quote, dict) else None,
-                        rationale=audit_rationale,
-                    )
-            except Exception as e:
-                quote = {
-                    "Status": 400,
-                    "Error": f"Error calling ICICI Breeze API get_option_chain_quotes: {e}",
-                }
-                if audit:
-                    audit.record_icici_api_call(
-                        "get_option_chain_quotes",
-                        icici_request,
-                        quote,
-                        rationale=audit_rationale,
-                    )
-        if not isinstance(quote, dict):
-            quote = {"Status": 400, "Error": "Invalid response from get_option_chain_quotes"}
-        if quote.get("Status") != 200:
-            if quote.get("Error"):
-                _logger.warning("get_quote failed: stock_code=%s error=%s", stock_code, quote["Error"])
-            return quote
-        try:
-            if int(quote["Success"][0]["total_sell_qty"]) > 0:
-                quote["Success"][0]["buy_sell_ratio"] = int(quote["Success"][0]["total_buy_qty"]) / int(
-                    quote["Success"][0]["total_sell_qty"]
-                )
-            else:
-                quote["Success"][0]["buy_sell_ratio"] = 0
-        except (KeyError, IndexError, TypeError, ZeroDivisionError):
-            pass
-        return quote
+        from icici_breeze_backend.app.services.quote_source_router import fetch_quote_icici_response
+
+        return fetch_quote_icici_response(
+            self,
+            user_id,
+            stock_code,
+            exchange_code,
+            expiry_date,
+            right,
+            strike_price,
+            product_type=product_type,
+            audit=audit,
+            audit_rationale=audit_rationale,
+            audit_request=audit_request,
+        )
 
     def _transform_icici_chain_rows(
         self,

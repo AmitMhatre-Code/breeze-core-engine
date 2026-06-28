@@ -75,6 +75,7 @@ from icici_breeze_backend.app.domain.settings_api import (
     ExchangeCalendarSyncPreviewResponse,
     ExchangeCalendarUpdateBody,
     ExchangeCalendarWorkingHours,
+    MarketStatusResponse,
     QuantityLimitsStateResponse,
     QuantityLimitsUpdateBody,
     ScripMasterStateResponse,
@@ -1244,6 +1245,16 @@ def _console_payload_to_state(payload: dict) -> ExchangeCalendarStateResponse:
         console_updated_at=payload.get("updated_at"),
         local_updated_at=None,
         updated_at=payload.get("updated_at"),
+    )
+
+
+@router.get("/market-status", response_model=MarketStatusResponse)
+async def settings_market_status(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    return MarketStatusResponse(
+        is_open=is_user_market_open(ctx.user_id),
+        closed_reason=user_market_closed_reason(ctx.user_id),
     )
 
 

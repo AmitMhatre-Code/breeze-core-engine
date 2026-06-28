@@ -29,7 +29,9 @@ export const changelogReleases: ChangelogRelease[] = [
       "Place Order and Strategy Builder support aggressive limit orders (ICICI derives price from LTP; no manual limit price required).",
       "Infinite Loss strategies and strategies that were missed out because of user provided constraints are shown separately in the Strategy Builder.",
       "After Market-hours Orders (AMO) now parked for execution. User has to manually trigger them when market opens.",
+      "Order placement modal (Place Order, Basket Order, Strategy Builder) disables live execution when the market is closed and shows a reminder to fire parked orders from the Orders page after open.",
       "Instead of get_option_chain_quotes API, we now use websocket during market hours and NSE/BSE Bhavopy data after market hours.",
+      "Strategy Builder propose-trades, legacy scans, and single-strike quotes now share the same cache-first quote path (REST only on cache miss).",
     ],
   },  
   {

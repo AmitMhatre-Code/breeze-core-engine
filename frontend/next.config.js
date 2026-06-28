@@ -81,10 +81,6 @@ const nextConfig = {
         source: "/portfolio/data",
         destination: `${backendUpstream}/portfolio/data`,
       },
-      {
-        source: "/portfolio/hedge-candidates",
-        destination: `${backendUpstream}/portfolio/hedge-candidates`,
-      },
       // Do not rewrite GET /portfolio — backend returns 302 → /portfolio (same URL) and breaks
       // when proxied through Next. App Router serves `src/app/portfolio/page.tsx`.
       {
@@ -126,10 +122,6 @@ const nextConfig = {
       {
         source: "/book",
         destination: `${backendUpstream}/book`,
-      },
-      {
-        source: "/hedge/data",
-        destination: `${backendUpstream}/hedge/data`,
       },
       {
         source: "/vertical-spread/data",

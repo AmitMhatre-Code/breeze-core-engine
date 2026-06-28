@@ -1,8 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { createPortal } from "react-dom";
-import { formatExpiryChipShort } from "@/lib/strategy-builder/expiry";
+import {
+  filterExpiryDates,
+  formatExpiryChipShort,
+} from "@/lib/strategy-builder/expiry";
 
 type Props = {
   dates: string[];
@@ -31,7 +41,10 @@ export function ExpirySelectPill({
   hideLabel,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const mobileInputRef = useRef<HTMLInputElement>(null);
   const mobilePortalRef = useRef<HTMLDivElement>(null);
   const portalReady = useSyncExternalStore(
     () => () => {},
@@ -39,10 +52,20 @@ export function ExpirySelectPill({
     () => false,
   );
 
+  const closeDropdown = useCallback(() => {
+    setOpen(false);
+    setQ("");
+  }, []);
+
   const pick = (d: string) => {
     onChange(d);
-    setOpen(false);
+    closeDropdown();
   };
+
+  const filteredDates = useMemo(
+    () => filterExpiryDates(dates, q),
+    [dates, q],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -50,40 +73,90 @@ export function ExpirySelectPill({
       const t = e.target as Node;
       if (rootRef.current?.contains(t)) return;
       if (mobilePortalRef.current?.contains(t)) return;
-      setOpen(false);
+      closeDropdown();
     };
     document.addEventListener("mousedown", fn);
     return () => document.removeEventListener("mousedown", fn);
-  }, [open]);
+  }, [open, closeDropdown]);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") closeDropdown();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+  }, [open, closeDropdown]);
+
+  useEffect(() => {
+    if (!open) return;
+    const id = requestAnimationFrame(() => {
+      if (window.matchMedia("(max-width: 1023px)").matches) {
+        mobileInputRef.current?.focus();
+      } else {
+        inputRef.current?.focus();
+      }
+    });
+    return () => cancelAnimationFrame(id);
   }, [open]);
 
   const darkToolbar = tone === "darkToolbar";
   const toolbarLayout = layout === "toolbar";
 
   const expiryChip = value ? formatExpiryChipShort(value) : null;
+  const closedDisplay = toolbarLayout
+    ? value
+      ? (expiryChip ?? value)
+      : ""
+    : value;
+
+  const inputDisplay = open ? q : closedDisplay;
+
+  const handleInputFocus = () => {
+    if (disabled) return;
+    setOpen(true);
+    setQ(closedDisplay);
+  };
+
+  const handleInputChange = (next: string) => {
+    setQ(next);
+    if (!open) setOpen(true);
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && open && filteredDates.length > 0) {
+      e.preventDefault();
+      pick(filteredDates[0]!);
+    }
+  };
 
   const buttonClass = (() => {
     if (toolbarLayout && darkToolbar) {
-      return "flex min-w-[8.5rem] shrink-0 items-center gap-1 rounded border-0 bg-transparent py-1 pl-0 pr-0.5 text-left text-sm font-semibold text-zinc-900 outline-none transition hover:bg-zinc-200/60 dark:text-white dark:hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-sky-500/40 disabled:cursor-not-allowed disabled:text-zinc-400 dark:disabled:text-zinc-500";
+      return "flex min-w-[8.5rem] shrink-0 items-center gap-1 rounded border-0 bg-transparent py-1 pl-0 pr-0.5 text-left text-sm font-semibold text-zinc-900 outline-none transition hover:bg-zinc-200/60 dark:text-white dark:hover:bg-white/5 focus-within:ring-2 focus-within:ring-sky-500/40 disabled:cursor-not-allowed disabled:text-zinc-400 dark:disabled:text-zinc-500";
     }
     if (toolbarLayout) {
-      return "flex min-w-[11rem] shrink-0 items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus-visible:border-sky-500 focus-visible:ring-4 focus-visible:ring-sky-500/15 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus-visible:border-sky-400 dark:focus-visible:ring-sky-400/20";
+      return "flex min-w-[11rem] shrink-0 items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus-within:border-sky-500 focus-within:ring-4 focus-within:ring-sky-500/15 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus-within:border-sky-400 dark:focus-within:ring-sky-400/20";
     }
     if (darkToolbar) {
       return [
-        "flex w-full min-w-0 items-center justify-between gap-2 border border-zinc-300 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-400 focus-visible:border-sky-500 focus-visible:ring-2 focus-visible:ring-sky-500/35 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-600 dark:disabled:bg-zinc-900 dark:disabled:text-zinc-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:border-zinc-500",
+        "flex w-full min-w-0 items-center justify-between gap-2 border border-zinc-300 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-400 focus-within:border-sky-500 focus-within:ring-2 focus-within:ring-sky-500/35 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-600 dark:disabled:bg-zinc-900 dark:disabled:text-zinc-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:border-zinc-500",
         open ? "rounded-t-md rounded-b-none border-b-0" : "rounded-md",
       ].join(" ");
     }
-    return "flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus-visible:border-sky-500 focus-visible:ring-4 focus-visible:ring-sky-500/15 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus-visible:border-sky-400 dark:focus-visible:ring-sky-400/20";
+    return "flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus-within:border-sky-500 focus-within:ring-4 focus-within:ring-sky-500/15 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus-within:border-sky-400 dark:focus-within:ring-sky-400/20";
+  })();
+
+  const inputClass = (() => {
+    if (toolbarLayout && darkToolbar) {
+      return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm font-semibold text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed dark:text-white dark:placeholder:text-zinc-500";
+    }
+    if (toolbarLayout) {
+      return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm font-semibold text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-400 focus:ring-0 disabled:cursor-not-allowed dark:text-zinc-100 dark:placeholder:text-zinc-500";
+    }
+    if (darkToolbar) {
+      return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm font-semibold text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed dark:text-zinc-100 dark:placeholder:text-zinc-500";
+    }
+    return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-400 focus:ring-0 disabled:cursor-not-allowed dark:text-zinc-100 dark:placeholder:text-zinc-500";
   })();
 
   const mobilePanelClass =
@@ -116,7 +189,11 @@ export function ExpirySelectPill({
     ? "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:text-zinc-400 dark:hover:bg-zinc-700/80"
     : "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:hover:bg-zinc-800";
 
-  const renderExpiryUl = () => (
+  const mobileSearchClass = darkToolbar
+    ? "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+    : "w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
+
+  const renderExpiryUl = (options: string[]) => (
     <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1 lg:max-h-[min(18rem,50vh)]">
       {value ? (
         <li>
@@ -135,7 +212,7 @@ export function ExpirySelectPill({
           </button>
         </li>
       ) : null}
-      {dates.length === 0 ? (
+      {options.length === 0 ? (
         <li
           className={
             darkToolbar
@@ -143,10 +220,12 @@ export function ExpirySelectPill({
               : "px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400"
           }
         >
-          No expiries for this underlying
+          {dates.length === 0
+            ? "No expiries for this underlying"
+            : "No matches"}
         </li>
       ) : (
-        dates.map((d) => (
+        options.map((d) => (
           <li key={d}>
             <button
               type="button"
@@ -165,6 +244,7 @@ export function ExpirySelectPill({
                         : "text-zinc-900 dark:text-zinc-100"
                     }`
               }
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => pick(d)}
             >
               <span className="font-semibold">{d}</span>
@@ -177,15 +257,12 @@ export function ExpirySelectPill({
 
   const mobileLayer =
     portalReady && open ? (
-      <div
-        ref={mobilePortalRef}
-        className="fixed inset-0 z-[520] lg:hidden"
-      >
+      <div ref={mobilePortalRef} className="fixed inset-0 z-[520] lg:hidden">
         <div
           className="absolute inset-0 z-0 bg-black/45"
           role="presentation"
           aria-hidden
-          onClick={() => setOpen(false)}
+          onClick={closeDropdown}
         />
         <div
           className={mobilePanelClass}
@@ -198,14 +275,30 @@ export function ExpirySelectPill({
               type="button"
               className={mobileCloseBtnClass}
               aria-label="Close"
-              onClick={() => setOpen(false)}
+              onClick={closeDropdown}
             >
               <span className="text-xl leading-none" aria-hidden>
                 ×
               </span>
             </button>
           </div>
-          {renderExpiryUl()}
+          <div className="shrink-0 border-b border-zinc-200 px-3 py-2 dark:border-zinc-700">
+            <label className="sr-only" htmlFor="expiry-select-mobile-filter">
+              Filter expiry dates
+            </label>
+            <input
+              id="expiry-select-mobile-filter"
+              ref={mobileInputRef}
+              type="search"
+              autoComplete="off"
+              value={q}
+              onChange={(e) => handleInputChange(e.target.value)}
+              onKeyDown={handleInputKeyDown}
+              placeholder="Type expiry date…"
+              className={mobileSearchClass}
+            />
+          </div>
+          {renderExpiryUl(filteredDates)}
         </div>
       </div>
     ) : null;
@@ -242,44 +335,22 @@ export function ExpirySelectPill({
           Expiry (earliest first)
         </span>
       )}
-      <button
-        type="button"
-        disabled={disabled}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-label="Expiry date"
-        onClick={() => !disabled && setOpen((o) => !o)}
-        className={buttonClass}
-      >
-        <span className="min-w-0 flex-1 truncate">
-          {toolbarLayout ? (
-            <span
-              className={
-                value
-                  ? darkToolbar
-                    ? "text-zinc-900 dark:text-white"
-                    : "font-semibold text-zinc-900 dark:text-zinc-100"
-                  : darkToolbar
-                    ? "font-normal text-zinc-500 dark:text-zinc-500"
-                    : "font-normal text-zinc-400 dark:text-zinc-500"
-              }
-            >
-              {value ? (expiryChip ?? value) : "Select expiry…"}
-            </span>
-          ) : value ? (
-            <span className="font-semibold">{value}</span>
-          ) : (
-            <span
-              className={
-                darkToolbar
-                  ? "text-zinc-500 dark:text-zinc-500"
-                  : "text-zinc-400 dark:text-zinc-500"
-              }
-            >
-              Select expiry…
-            </span>
-          )}
-        </span>
+      <div className={buttonClass}>
+        <input
+          ref={inputRef}
+          type="search"
+          autoComplete="off"
+          disabled={disabled}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-label="Expiry date"
+          value={inputDisplay}
+          onChange={(e) => handleInputChange(e.target.value)}
+          onFocus={handleInputFocus}
+          onKeyDown={handleInputKeyDown}
+          placeholder="Select expiry…"
+          className={inputClass}
+        />
         <span
           className={
             toolbarLayout && darkToolbar
@@ -294,13 +365,17 @@ export function ExpirySelectPill({
         >
           ▾
         </span>
-      </button>
+      </div>
 
       {open ? (
         <>
           {mobileLayer ? createPortal(mobileLayer, document.body) : null}
-          <div className={desktopListboxClass} role="listbox" aria-label="Expiry dates">
-            {renderExpiryUl()}
+          <div
+            className={desktopListboxClass}
+            role="listbox"
+            aria-label="Expiry dates"
+          >
+            {renderExpiryUl(filteredDates)}
           </div>
         </>
       ) : null}

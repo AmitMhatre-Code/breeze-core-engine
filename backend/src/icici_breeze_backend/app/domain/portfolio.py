@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 class PortfolioActionRequest(BaseModel):
-    """Request for portfolio form actions (SQUAREOFF, HEDGE)."""
+    """Request for portfolio form actions (SQUAREOFF)."""
     product_type: str
     stock_code: str
     exchange_code: str = ""
@@ -13,7 +13,7 @@ class PortfolioActionRequest(BaseModel):
     right: str
     strike_price: str
     quantity: str
-    action: Literal["SquareOff", "Hedge"]
+    action: Literal["SquareOff"]
 
 
 class Position(BaseModel):
@@ -33,7 +33,6 @@ class Position(BaseModel):
     current_profit: Optional[float] = None
     carry_profit: Optional[float] = None
     span_margin_required: Optional[float] = None
-    hedgeable: bool = False
 
     model_config = ConfigDict(extra="allow")
 

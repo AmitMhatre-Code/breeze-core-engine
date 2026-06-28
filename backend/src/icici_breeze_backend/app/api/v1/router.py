@@ -7,7 +7,6 @@ from icici_breeze_backend.app.api.v1 import route_portfolio
 from icici_breeze_backend.app.api.v1 import route_order
 from icici_breeze_backend.app.api.v1 import route_uncovered_shorts
 from icici_breeze_backend.app.api.v1 import route_vertical_spread
-from icici_breeze_backend.app.api.v1 import route_hedge
 from icici_breeze_backend.app.api.v1 import route_settings
 from icici_breeze_backend.app.api.v1 import route_dashboard
 from icici_breeze_backend.app.api.v1 import route_outlook
@@ -35,7 +34,6 @@ v1_router.include_router(route_order.router, prefix="/order", tags=[""], include
 v1_router.include_router(route_book.router, prefix="/book", tags=[""], include_in_schema=False)
 v1_router.include_router(route_uncovered_shorts.router, prefix="/uncovered-shorts", tags=[""], include_in_schema=False)
 v1_router.include_router(route_vertical_spread.router, prefix="/vertical-spread", tags=[""], include_in_schema=False)
-v1_router.include_router(route_hedge.router, prefix="/hedge", tags=[""], include_in_schema=False)
 v1_router.include_router(route_settings.router, prefix="", include_in_schema=False)
 v1_router.include_router(route_dashboard.router, prefix="/dashboard", tags=["dashboard"], include_in_schema=False)
 v1_router.include_router(route_outlook.router, prefix="", tags=["outlook"], include_in_schema=False)

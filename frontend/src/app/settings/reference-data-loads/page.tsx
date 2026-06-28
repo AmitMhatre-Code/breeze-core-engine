@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
+import { formatSourceFileDate } from "@/lib/format-iso-date";
 
 type IngestHistoryItem = {
   id: string;
@@ -165,7 +166,6 @@ export default function ReferenceDataLoadsPage() {
     enabled: server?.enabled ?? true,
   };
   const scheduleTime = `${String(sch.hour_ist).padStart(2, "0")}:${String(sch.minute_ist).padStart(2, "0")}`;
-  const scheduleTimeLabel = `${formatTime12h(sch.hour_ist, sch.minute_ist)} IST`;
 
   const scheduleDirty =
     scheduleDraft !== null &&
@@ -265,7 +265,7 @@ export default function ReferenceDataLoadsPage() {
     marginSaveMut.isPending || marginQ.isLoading || !marginQ.data;
 
   const bseSpanStatusText = server?.bse_span_source_date
-    ? `Data date: ${server.bse_span_source_date}`
+    ? `Data date: ${formatSourceFileDate(server.bse_span_source_date)}`
     : "Not loaded — upload required";
 
   return (
@@ -306,25 +306,23 @@ export default function ReferenceDataLoadsPage() {
                 />
               </div>
               <div className="flex flex-wrap items-end gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
-                <label className="block text-sm">
-                  <span className="app-text-muted">Schedule time</span>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <input
-                      type="time"
-                      className="app-input max-w-[9rem]"
-                      value={scheduleTime}
-                      disabled={scheduleMut.isPending}
-                      onChange={(e) => {
-                        const [h, m] = e.target.value.split(":");
-                        setScheduleDraft({
-                          ...sch,
-                          hour_ist: Number(h || 18),
-                          minute_ist: Number(m || 0),
-                        });
-                      }}
-                    />
-                    <span className="text-xs font-medium app-text-muted">{scheduleTimeLabel}</span>
-                  </div>
+                <label className="block max-w-xs text-sm">
+                  <span className="app-text-muted">Schedule time (IST)</span>
+                  <input
+                    type="time"
+                    step={60}
+                    className="app-input mt-1 max-w-xs"
+                    value={scheduleTime}
+                    disabled={scheduleMut.isPending}
+                    onChange={(e) => {
+                      const [h, m] = e.target.value.split(":");
+                      setScheduleDraft({
+                        ...sch,
+                        hour_ist: Number(h || 18),
+                        minute_ist: Number(m || 0),
+                      });
+                    }}
+                  />
                 </label>
                 {scheduleDirty && (
                   <span className="text-xs text-amber-600 dark:text-amber-400">Unsaved schedule changes</span>
@@ -422,7 +420,7 @@ export default function ReferenceDataLoadsPage() {
                     <span>{src.label}</span>
                     <span className="app-text-muted">
                       {src.dateKey && server[src.dateKey]
-                        ? `Data date: ${server[src.dateKey]}`
+                        ? `Data date: ${formatSourceFileDate(server[src.dateKey])}`
                         : server[src.msgKey] || "—"}
                     </span>
                   </li>
@@ -517,7 +515,7 @@ export default function ReferenceDataLoadsPage() {
                     {(server.ingest_history ?? []).map((row) => (
                       <tr key={row.id} className="border-b border-zinc-100 dark:border-zinc-800">
                         <td className="py-2">{row.display_name}</td>
-                        <td className="py-2">{row.source_file_date ?? "—"}</td>
+                        <td className="py-2">{formatSourceFileDate(row.source_file_date)}</td>
                         <td className="py-2">{row.row_count}</td>
                         <td className="py-2">{row.ok ? "OK" : "Failed"}</td>
                         <td className="py-2">{row.ingested_at}</td>

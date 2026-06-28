@@ -2,6 +2,7 @@
 
 import type { UseQueryResult } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 import { ChunkSizeOrderField } from "@/components/order/ChunkSizeOrderField";
@@ -10,6 +11,7 @@ import { apiClient } from "@/lib/api-client";
 import type { BreakChunkDefaultsResponse } from "@/lib/break-chunk-defaults";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { runBreakOrderChunks } from "@/lib/icici-rate-limit-flow";
+import { fetchMarketStatus } from "@/lib/market-status";
 import { createParkedOrders, deleteParkedOrdersMany, patchParkedOrder } from "@/lib/parked-orders";
 import { randomUuid } from "@/lib/random-uuid";
 import { sb } from "@/lib/strategy-builder/ui";
@@ -186,6 +188,18 @@ export function OrderExecutionConfirmDialog({
       expiryDisplay.trim().length > 0,
     staleTime: 5000,
   });
+
+  const marketStatusQ = useQuery({
+    queryKey: ["settings", "market-status"],
+    queryFn: fetchMarketStatus,
+    enabled: open,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+
+  const marketStatus = marketStatusQ.data;
+  const marketClosed = marketStatus != null && !marketStatus.is_open;
+  const executeAllowed = marketStatus?.is_open === true;
 
   const marginState = marginQ.data;
   const spanMargin = parseSpanMarginFromResponse(marginState);
@@ -437,6 +451,25 @@ export function OrderExecutionConfirmDialog({
           </p>
         ) : null}
 
+        {marketClosed ? (
+          <div
+            role="status"
+            className="mt-3 rounded-md border border-amber-500/60 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-950 dark:text-amber-100"
+          >
+            The market is currently closed ({marketStatus.closed_reason}). Orders
+            can only be{" "}
+            <span className="font-semibold">parked for execution</span>. Go to
+            the{" "}
+            <Link
+              href="/orders"
+              className="font-medium underline underline-offset-2 text-amber-900 hover:text-amber-950 dark:text-amber-50 dark:hover:text-white"
+            >
+              Orders
+            </Link>{" "}
+            page and execute your parked orders once the market opens.
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-2 pt-3 sm:grid-cols-2 sm:gap-3">
           <button
             type="button"
@@ -461,7 +494,13 @@ export function OrderExecutionConfirmDialog({
               !expiryDisplay.trim() ||
               !legs.length ||
               !chunkReady ||
+              !executeAllowed ||
               legs.some((x) => x.quantity <= 0)
+            }
+            title={
+              marketClosed
+                ? "Market is closed — park the order and execute from Orders when the market opens."
+                : undefined
             }
             aria-busy={execMut.isPending}
             onClick={() => execMut.mutate()}

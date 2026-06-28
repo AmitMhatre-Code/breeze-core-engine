@@ -97,15 +97,6 @@ def test_fetch_group_ltps_batch_dedupes_contract_and_buckets_chains(mock_broker_
     from icici_breeze_backend.app.services.processor import processor
 
     proc = processor()
-    mock_breeze = MagicMock()
-    mock_breeze.get_option_chain_quotes.return_value = {
-        "Status": 200,
-        "Success": [
-            {"strike_price": 24000, "ltp": 101.25},
-            {"strike_price": 24100, "ltp": 88.0},
-        ],
-    }
-
     groups = [
         {
             "group": "buy-g0",
@@ -133,10 +124,24 @@ def test_fetch_group_ltps_batch_dedupes_contract_and_buckets_chains(mock_broker_
         },
     ]
 
-    with patch.object(proc, "get_session_breeze", return_value=mock_breeze):
+    def side_effect_chain(_proc, _user_id, _stock_code, _exchange_code, _expiry, right):
+        if str(right).lower().startswith("p"):
+            return {
+                "Status": 200,
+                "Success": [{"strike_price": 24100, "ltp": 88.0}],
+            }
+        return {
+            "Status": 200,
+            "Success": [{"strike_price": 24000, "ltp": 101.25}],
+        }
+
+    with patch(
+        "icici_breeze_backend.app.services.quote_source_router.fetch_chain_side_icici_response",
+        side_effect=side_effect_chain,
+    ) as mock_chain:
         ltps = proc.fetch_group_ltps_batch("U1", groups)
 
-    assert mock_breeze.get_option_chain_quotes.call_count == 2
+    assert mock_chain.call_count == 2
     assert ltps["buy-g0"] == 101.25
     assert ltps["sell-g1"] == 101.25
     assert ltps["put-g2"] == 88.0
