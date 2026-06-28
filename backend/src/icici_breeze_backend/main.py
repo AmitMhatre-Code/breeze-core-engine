@@ -114,7 +114,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from icici_breeze_backend.app.services.processor import processor
 from fastapi.responses import RedirectResponse
 from icici_breeze_backend.core.errors import ConflictError, UnauthorizedError, ForbiddenError
 from icici_breeze_backend.app.auth.context import RedirectToLogin
@@ -290,25 +289,6 @@ def start_application():
             "Set JWT_SECRET=... or ENCRYPTION_KEY=... in .env. Paths tried: %s",
             _env_paths_tried or "none",
         )
-    breeze = processor()
-    if getattr(core_cfg, "ICICI_BROKER_MODE", "live") != "mock":
-        try:
-            breeze.update_ICICImaster()
-        except Exception as e:
-            _logger.warning(
-                "ICICI master update failed at startup: %s",
-                e,
-                exc_info=_logger.isEnabledFor(logging.DEBUG),
-            )
-        try:
-            from icici_breeze_backend.app.services.reference_data.scrip_index import publish_scrip_index_from_db
-
-            publish_scrip_index_from_db()
-        except Exception as e:
-            _logger.warning("Scrip index publish at startup failed: %s", e)
-    else:
-        _logger.info("Skipping ICICI master download (ICICI_BROKER_MODE=mock).")
-
     from icici_breeze_backend.app.services.portal_deployment_heartbeat import (
         heartbeat_loop_enabled,
         run_heartbeat_loop,

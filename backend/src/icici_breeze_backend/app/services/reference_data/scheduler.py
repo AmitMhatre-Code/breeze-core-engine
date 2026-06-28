@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 
-import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import now_ist
 from icici_breeze_backend.app.services.reference_data.orchestrator import run_reference_data_load
 from icici_breeze_backend.app.services.reference_data.state import load_schedule, save_schedule
@@ -78,12 +76,13 @@ def bootstrap_reference_data_schedule() -> None:
 
 
 def bootstrap_reference_data_on_startup() -> None:
-    """Non-blocking startup load when cache is empty."""
+    """Load all reference data sources during application startup."""
     from icici_breeze_backend.app.services.reference_data.bhavcopy_store import load_local_from_redis
-    from icici_breeze_backend.app.services.reference_data.orchestrator import trigger_reference_data_load_now
-    from icici_breeze_backend.app.services.reference_data.scrip_index import current_version, get_underlyings
+    from icici_breeze_backend.app.services.reference_data.orchestrator import run_reference_data_load
 
     bootstrap_reference_data_schedule()
     load_local_from_redis()
-    if current_version() <= 0 or not get_underlyings(cfg.NFO):
-        trigger_reference_data_load_now(force=False)
+    try:
+        run_reference_data_load(force=True, trigger_mode="startup")
+    except Exception:
+        _logger.exception("Startup reference data load failed")

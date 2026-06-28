@@ -202,7 +202,7 @@ def run_reference_data_load(*, force: bool = False, trigger_mode: str = "manual"
         return {"ok": False, "message": str(exc)}
 
 
-def trigger_reference_data_load_now(*, force: bool = False) -> dict[str, Any]:
+def trigger_reference_data_load_now(*, force: bool = False, trigger_mode: str = "manual") -> dict[str, Any]:
     global _refresh_thread
     with _lock:
         state = load_progress_state()
@@ -212,7 +212,7 @@ def trigger_reference_data_load_now(*, force: bool = False) -> dict[str, Any]:
     def _run() -> None:
         global _refresh_thread
         try:
-            run_reference_data_load(force=force, trigger_mode="manual")
+            run_reference_data_load(force=force, trigger_mode=trigger_mode)
         finally:
             _refresh_thread = None
 
