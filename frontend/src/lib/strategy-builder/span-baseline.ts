@@ -56,7 +56,7 @@ export async function fetchSpanPortfolioMargin(
       spot: params.spot,
       iv: params.iv ?? undefined,
     },
-    signal,
+    {signal: signal},
   );
 }
 
