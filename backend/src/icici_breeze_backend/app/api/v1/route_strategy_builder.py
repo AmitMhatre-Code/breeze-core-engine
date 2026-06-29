@@ -125,17 +125,20 @@ async def get_chain(
     stock_code: str,
     expiry_date: str,
     exchange_code: str = cfg.NFO,
+    subscription_holder: str | None = None,
     ctx: RequestContext = Depends(get_request_context),
 ):
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
     if not stock_code.strip() or not expiry_date.strip():
         raise HTTPException(status_code=400, detail="stock_code and expiry_date required")
+    holder = (subscription_holder or "").strip() or None
     data = breeze.get_full_option_chain(
         ctx.user_id,
         stock_code.strip(),
         exchange_code,
         expiry_date.strip(),
+        holder_id=holder,
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderChain")
     return StrategyBuilderChainResponse(**data)

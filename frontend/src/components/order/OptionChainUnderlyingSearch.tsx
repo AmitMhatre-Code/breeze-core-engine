@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { UnderlyingEntry } from "@/lib/strategy-builder/types";
+import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
+import type { QuoteMeta, UnderlyingEntry } from "@/lib/strategy-builder/types";
 import {
   useComboboxBlurClose,
   useListboxCombobox,
@@ -18,6 +19,8 @@ type Props = {
   spot?: number | null;
   /** Day change % when available (optional). */
   changePct?: number | null;
+  /** Quote provenance for loaded chain (WebSocket / Bhavcopy / API). */
+  quoteMeta?: QuoteMeta | null;
   /**
    * When true with `variant="ticker"`, render as a flat strip (no box border) for embedding in the dark chain bar.
    */
@@ -78,6 +81,7 @@ export function OptionChainUnderlyingSearch({
   variant = "field",
   spot = null,
   changePct = null,
+  quoteMeta = null,
   chainBar = false,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -374,6 +378,9 @@ export function OptionChainUnderlyingSearch({
                 {changeStr}
               </span>
             ) : null
+          ) : null}
+          {chainBar && quoteMeta ? (
+            <QuoteSourceBadge meta={quoteMeta} variant="compact" className="shrink-0" />
           ) : null}
         </div>
 

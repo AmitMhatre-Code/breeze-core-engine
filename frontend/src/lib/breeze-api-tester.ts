@@ -104,6 +104,12 @@ export function wsDisconnectPlayground() {
   return apiClient.post<BreezeApiWsStatus>(`${BASE}/ws/disconnect`, {});
 }
 
+export function wsReleasePlayground(holderId: string) {
+  return apiClient.post<BreezeApiWsStatus, { holder_id: string }>(`${BASE}/ws/release`, {
+    holder_id: holderId,
+  });
+}
+
 export function wsGetPlaygroundStatus() {
   return apiClient.get<BreezeApiWsStatus>(`${BASE}/ws/status`);
 }
@@ -118,6 +124,7 @@ export function wsSubscribePlayground(params: {
   expiry_date: string;
   strike_price: string;
   right: string;
+  holder_id?: string;
 }) {
   return apiClient.post<BreezeApiWsStatus, typeof params>(`${BASE}/ws/subscribe`, params);
 }

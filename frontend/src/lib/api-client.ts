@@ -31,7 +31,17 @@ function normalizeGetOpts(opts?: AbortSignal | ApiRequestOpts): ApiRequestOpts {
 }
 
 function formatErrorPayload(payload: unknown): string {
-  if (typeof payload === "string") return payload;
+  if (typeof payload === "string") {
+    const trimmed = payload.trimStart();
+    if (
+      trimmed.startsWith("<!DOCTYPE") ||
+      trimmed.startsWith("<html") ||
+      trimmed.startsWith("<HTML")
+    ) {
+      return "Request to backend failed. Check logs for details.";
+    }
+    return payload;
+  }
   if (payload && typeof payload === "object") {
     const o = payload as Record<string, unknown>;
     const detail = o.detail;

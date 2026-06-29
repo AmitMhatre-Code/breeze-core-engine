@@ -1,7 +1,10 @@
 "use client";
 
+import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
 import { InfoPopover } from "@/components/strategy-builder/InfoPopover";
+import { LegAggressivePriceInput } from "@/components/strategy-builder/LegAggressivePriceInput";
 import { LegQuantityInput } from "@/components/strategy-builder/LegQuantityInput";
+import { LegQuantityHeader } from "@/components/strategy-builder/LegQuantityHeader";
 import { cloneLeg, LegRowActions } from "@/components/strategy-builder/LegRowActions";
 import { LegRightToggle, LegSideToggle } from "@/components/strategy-builder/LegToggles";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
@@ -11,6 +14,7 @@ import type {
   BasketLegMarginEntry,
   OptionRight,
   OrderSide,
+  QuoteMeta,
   StrategyLeg,
 } from "@/lib/strategy-builder/types";
 
@@ -28,6 +32,7 @@ export function StrategyLegsPanel({
   totalsMargin,
   onExecute,
   executeDisabled,
+  quoteMeta = null,
 }: {
   sectionTitle?: string;
   lotSize: number;
@@ -46,6 +51,7 @@ export function StrategyLegsPanel({
   };
   onExecute: () => void;
   executeDisabled: boolean;
+  quoteMeta?: QuoteMeta | null;
 }) {
   return (
     <section id="strategy-builder-legs" className={`${sb.section} space-y-4`}>
@@ -56,22 +62,19 @@ export function StrategyLegsPanel({
         </p>
       ) : (
         <>
+          {quoteMeta ? (
+            <div className="mb-1">
+              <QuoteSourceBadge meta={quoteMeta} variant="footnote" />
+            </div>
+          ) : null}
           <div className="app-table-wrap">
-            <table className="w-full min-w-[58rem] border-collapse text-left text-xs">
+            <table className="w-full min-w-[52rem] border-collapse text-left text-xs">
               <thead className="app-table-head">
                 <tr>
                   <th className="px-2 py-1.5 font-medium">Strike</th>
                   <th className="px-2 py-1.5 font-medium">Type</th>
                   <th className="px-2 py-1.5 font-medium">Position</th>
-                  <th className="px-2 py-1.5 font-medium">Quantity</th>
-                  <th className="px-2 py-1.5 font-medium">
-                    <span className="inline-flex items-center gap-1">
-                      Aggressive
-                      <InfoPopover title="Aggressive limit" ariaLabel="Aggressive limit help">
-                        ICICI sets the limit price from LTP. No manual price needed.
-                      </InfoPopover>
-                    </span>
-                  </th>
+                  <LegQuantityHeader />
                   <th className="px-2 py-1.5 font-medium">Price</th>
                   <th className="px-2 py-1.5 font-medium">Premium</th>
                   <th className="px-2 py-1.5 font-medium">
@@ -112,35 +115,28 @@ export function StrategyLegsPanel({
                         />
                       </td>
                       <td className="px-2 py-1.5">
-                        <div className="flex flex-col gap-0.5">
-                          <LegQuantityInput
-                            legId={l.id}
-                            lots={l.lots}
-                            lotSize={lotSize}
-                            maxDigits={8}
-                            snapWhileTyping
-                            onLotsChange={(newLots) =>
-                              onLegsChange((prev) =>
-                                prev.map((x) =>
-                                  x.id === l.id ? { ...x, lots: newLots } : x,
-                                ),
-                              )
-                            }
-                            className={`${sb.tableInput} w-[8ch] max-w-[5.5rem] tabular-nums`}
-                          />
-                          <span className="text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400">
-                            Lot {lotSize.toLocaleString("en-IN")}
-                          </span>
-                        </div>
+                        <LegQuantityInput
+                          legId={l.id}
+                          lots={l.lots}
+                          lotSize={lotSize}
+                          maxDigits={8}
+                          snapWhileTyping
+                          onLotsChange={(newLots) =>
+                            onLegsChange((prev) =>
+                              prev.map((x) =>
+                                x.id === l.id ? { ...x, lots: newLots } : x,
+                              ),
+                            )
+                          }
+                          className={`${sb.tableInput} w-[8ch] max-w-[5.5rem] tabular-nums`}
+                        />
                       </td>
                       <td className="px-2 py-1.5">
-                        <input
-                          type="checkbox"
-                          className="size-4 rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500/40 dark:border-zinc-600"
-                          checked={aggressive}
-                          aria-label={`Aggressive limit for ${l.strike} ${l.right}`}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
+                        <LegAggressivePriceInput
+                          aggressive={aggressive}
+                          premiumPerUnit={l.premiumPerUnit}
+                          ariaLabel={`Aggressive limit for ${l.strike} ${l.right}`}
+                          onAggressiveChange={(checked) =>
                             onLegsChange((prev) =>
                               prev.map((x) =>
                                 x.id === l.id
@@ -153,32 +149,11 @@ export function StrategyLegsPanel({
                                     }
                                   : x,
                               ),
-                            );
-                          }}
-                        />
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.05}
-                          disabled={aggressive}
-                          aria-label="Limit price per unit"
-                          className={`${sb.tableInput} w-[6rem] tabular-nums disabled:cursor-not-allowed disabled:opacity-50`}
-                          value={
-                            aggressive
-                              ? ""
-                              : l.premiumPerUnit != null
-                                ? l.premiumPerUnit
-                                : ""
+                            )
                           }
-                          onChange={(e) => {
-                            const v = parseFloat(e.target.value);
-                            onPriceChange(
-                              l.id,
-                              Number.isFinite(v) ? v : undefined,
-                            );
-                          }}
+                          onPriceChange={(premiumPerUnit) =>
+                            onPriceChange(l.id, premiumPerUnit)
+                          }
                         />
                       </td>
                       <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
@@ -208,7 +183,7 @@ export function StrategyLegsPanel({
                 <tr className="border-t border-zinc-200/80 bg-zinc-50/80 dark:border-zinc-700/80 dark:bg-zinc-900/40">
                   <td
                     className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300"
-                    colSpan={6}
+                    colSpan={5}
                   >
                     Totals
                   </td>

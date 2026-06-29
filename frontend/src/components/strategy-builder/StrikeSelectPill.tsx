@@ -15,7 +15,7 @@ type Props = {
   disabled?: boolean;
   busy?: boolean;
   tone?: "default" | "darkToolbar";
-  layout?: "default" | "toolbar";
+  layout?: "default" | "toolbar" | "table";
   rootClassName?: string;
   hideLabel?: boolean;
 };
@@ -94,6 +94,8 @@ export function StrikeSelectPill({
 
   const darkToolbar = tone === "darkToolbar";
   const toolbarLayout = layout === "toolbar";
+  const tableLayout = layout === "table";
+  const inlineLayout = toolbarLayout || tableLayout;
 
   const valueLabel =
     value != null && Number.isFinite(value) ? formatStrike(value) : null;
@@ -128,6 +130,9 @@ export function StrikeSelectPill({
   };
 
   const buttonClass = (() => {
+    if (tableLayout) {
+      return "flex w-full min-w-0 max-w-full items-center justify-between gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-left text-xs text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus-within:border-sky-500 focus-within:ring-2 focus-within:ring-sky-500/20 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus-within:border-sky-400 dark:focus-within:ring-sky-400/20";
+    }
     if (toolbarLayout && darkToolbar) {
       return "flex min-w-[8.5rem] shrink-0 items-center gap-1 rounded border-0 bg-transparent py-1 pl-0 pr-0.5 text-left text-sm font-semibold text-zinc-900 outline-none transition hover:bg-zinc-200/60 dark:text-white dark:hover:bg-white/5 focus-within:ring-2 focus-within:ring-sky-500/40 disabled:cursor-not-allowed disabled:text-zinc-400 dark:disabled:text-zinc-500";
     }
@@ -144,6 +149,9 @@ export function StrikeSelectPill({
   })();
 
   const inputClass = (() => {
+    if (tableLayout) {
+      return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-xs font-semibold tabular-nums text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-400 focus:ring-0 disabled:cursor-not-allowed dark:text-zinc-100 dark:placeholder:text-zinc-500";
+    }
     if (toolbarLayout && darkToolbar) {
       return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm font-semibold tabular-nums text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed dark:text-white dark:placeholder:text-zinc-500";
     }
@@ -224,12 +232,14 @@ export function StrikeSelectPill({
     <div
       ref={rootRef}
       className={
-        toolbarLayout
-          ? `relative flex shrink-0 items-center gap-2 ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
-          : `relative min-w-[min(100%,12rem)] flex-1 lg:max-w-md ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
+        tableLayout
+          ? `relative w-full min-w-0 max-w-[7.5rem] ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
+          : toolbarLayout
+            ? `relative flex shrink-0 items-center gap-2 ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
+            : `relative min-w-[min(100%,12rem)] flex-1 lg:max-w-md ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
       }
     >
-      {toolbarLayout ? (
+      {tableLayout ? null : toolbarLayout ? (
         hideLabel ? null : (
           <span
             className={
@@ -272,13 +282,15 @@ export function StrikeSelectPill({
         />
         <span
           className={
-            toolbarLayout && darkToolbar
-              ? "shrink-0 text-zinc-500 dark:text-zinc-400"
-              : toolbarLayout
-                ? "shrink-0 text-zinc-400 dark:text-zinc-500"
-                : darkToolbar
-                  ? "shrink-0 text-zinc-500 dark:text-zinc-500"
-                  : "shrink-0 text-zinc-400"
+            tableLayout
+              ? "shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500"
+              : toolbarLayout && darkToolbar
+                ? "shrink-0 text-zinc-500 dark:text-zinc-400"
+                : toolbarLayout
+                  ? "shrink-0 text-zinc-400 dark:text-zinc-500"
+                  : darkToolbar
+                    ? "shrink-0 text-zinc-500 dark:text-zinc-500"
+                    : "shrink-0 text-zinc-400"
           }
           aria-hidden
         >
@@ -296,9 +308,9 @@ export function StrikeSelectPill({
           />
           <div
             className={
-              darkToolbar && toolbarLayout
+              darkToolbar && inlineLayout
                 ? "fixed inset-0 z-[300] flex flex-col bg-white dark:bg-zinc-900 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-1 lg:max-h-[min(22rem,70vh)] lg:w-52 lg:min-w-[12rem] lg:rounded-lg lg:border lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-600 lg:dark:bg-zinc-800"
-                : toolbarLayout
+                : inlineLayout
                   ? "fixed inset-0 z-[300] flex flex-col bg-zinc-50 dark:bg-zinc-950 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-1 lg:max-h-[min(22rem,70vh)] lg:w-52 lg:min-w-[12rem] lg:rounded-md lg:border lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-700 lg:dark:bg-zinc-900"
                   : darkToolbar
                     ? "fixed inset-0 z-[300] flex flex-col bg-white dark:bg-zinc-900 lg:absolute lg:inset-x-auto lg:inset-y-auto lg:left-0 lg:top-full lg:z-[300] lg:mt-0 lg:max-h-[min(22rem,70vh)] lg:w-full lg:min-w-[18rem] lg:max-w-lg lg:rounded-b-lg lg:rounded-t-none lg:border lg:border-t-0 lg:border-zinc-200 lg:bg-white lg:shadow-xl lg:dark:border-zinc-600 lg:dark:bg-zinc-800"

@@ -14,6 +14,7 @@ export async function fetchStrategyBuilderChain(
     stock_code: string;
     expiry_date: string;
     exchange_code: string;
+    subscription_holder?: string;
   },
   signal?: AbortSignal,
 ): Promise<ChainApiResponse> {
@@ -22,6 +23,10 @@ export async function fetchStrategyBuilderChain(
     expiry_date: params.expiry_date,
     exchange_code: params.exchange_code,
   });
+  const holder = params.subscription_holder?.trim();
+  if (holder) {
+    q.set("subscription_holder", holder);
+  }
   return apiClient.get<ChainApiResponse>(
     `/strategy-builder/chain?${q.toString()}`,
     signal,

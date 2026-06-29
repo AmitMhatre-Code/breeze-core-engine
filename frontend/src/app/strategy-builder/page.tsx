@@ -25,10 +25,12 @@ import { StrategyLegsPanel } from "@/components/strategy-builder/StrategyLegsPan
 import { StrategyPayoffPanel } from "@/components/strategy-builder/StrategyPayoffPanel";
 import { apiClient } from "@/lib/api-client";
 import {
-  fetchStrategyBuilderChain,
   getProposeTradesJobStatus,
   startProposeTradesJob,
 } from "@/lib/strategy-builder/api";
+import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import { quoteMetaFromChain } from "@/lib/quote-source";
+import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 import {
   appendLegFromChainRow,
   buildYourOwnAddedSlots,
@@ -140,6 +142,7 @@ function resetDownstream(
 }
 
 export default function StrategyBuilderPage() {
+  const subscriptionHolder = useWsSubscriptionHolder();
   const [segmentExchange, setSegmentExchange] = useState<"NFO" | "BFO">("NFO");
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
@@ -200,29 +203,23 @@ export default function StrategyBuilderPage() {
   });
 
   const chainQ = useQuery({
-    queryKey: [
-      "strategy-builder",
-      "chain",
-      stockCode,
-      expiryDate,
-      segmentExchange,
-    ],
-    queryFn: ({ signal }) =>
-      fetchStrategyBuilderChain(
-        {
-          stock_code: stockCode.trim(),
-          expiry_date: expiryDate.trim(),
-          exchange_code: segmentExchange,
-        },
-        signal,
-      ),
-    enabled: Boolean(stockCode.trim() && expiryDate.trim()),
+    ...chainQueryOptions({
+      queryKeyPrefix: ["strategy-builder"],
+      stock_code: stockCode,
+      expiry_date: expiryDate,
+      exchange_code: segmentExchange,
+      subscription_holder: subscriptionHolder,
+    }),
   });
 
   const chainSuccess =
     chainQ.data?.Status === 200 ? chainQ.data.Success : null;
   const chainRows = chainSuccess?.chain_rows ?? [];
   const chainSpot = chainSuccess?.spot_price ?? null;
+  const chainQuoteMeta = useMemo(
+    () => quoteMetaFromChain(chainSuccess),
+    [chainSuccess],
+  );
 
   const expiryOptions = useMemo(() => {
     const entry = uq.data?.underlyings?.find((u) => u.stock_code === stockCode);
@@ -709,6 +706,7 @@ export default function StrategyBuilderPage() {
                   value={stockCode}
                   disabled={uq.isLoading}
                   spot={spot}
+                  quoteMeta={chainQuoteMeta}
                   onChange={(code) => {
                     setStockCode(code);
                     setExpiryDate("");
@@ -1095,6 +1093,7 @@ export default function StrategyBuilderPage() {
                 !stockCode ||
                 !expiryDate
               }
+              quoteMeta={chainQuoteMeta}
             />
 
             <StrategyPayoffPanel
@@ -1131,6 +1130,7 @@ export default function StrategyBuilderPage() {
           exchangeCode={segmentExchange}
           expiryDisplay={expiryDate}
           legs={strategyExecuteLegs}
+          quoteMeta={chainQuoteMeta}
           controlledChunk={{
             chunkQty,
             onChunkQtyChange: setChunkQty,

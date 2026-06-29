@@ -12,17 +12,22 @@ from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
 from icici_breeze_backend.app.services.breeze_websocket_manager import (
     get_playground_event_log,
     playground_subscribe,
+    release_holder,
     ws_connect_playground,
+    ws_disconnect_playground,
+    ws_release_playground,
 )
 
 
 def _reset_bwm(monkeypatch) -> None:
     import icici_breeze_backend.app.services.breeze_websocket_manager as bwm
 
+    monkeypatch.setattr(bwm, "_holders", {})
+    monkeypatch.setattr(bwm, "_sub_holders", {})
+    monkeypatch.setattr(bwm, "_sub_meta", {})
     monkeypatch.setattr(bwm, "_sdk", None)
     monkeypatch.setattr(bwm, "_sdk_user_id", None)
     monkeypatch.setattr(bwm, "_connected", False)
-    monkeypatch.setattr(bwm, "_sub_refs", {})
     monkeypatch.setattr(bwm, "_playground_events", [])
     monkeypatch.setattr(bwm, "_playground_event_seq", 0)
     monkeypatch.setattr(bwm, "_last_error", None)
@@ -60,15 +65,15 @@ def test_is_breeze_invoke_response_ok_string_exception():
     assert is_breeze_invoke_response_ok({"Status": 400, "Error": "bad"}) is False
 
 
-def test_playground_subscribe_empty_strike_passthrough_icici_response(monkeypatch):
-    """ICICI SDK may return success even when strike_price is empty (live playground behaviour)."""
+def test_playground_subscribe_empty_strike_rejected(monkeypatch):
     sdk = MagicMock()
-    sdk.ws_connect.return_value = None
-    sdk.subscribe_feeds.return_value = {"message": "Stock NIFTY subscribed successfully"}
-
     proc = MagicMock()
     proc.get_session_breeze.return_value = sdk
     _reset_bwm(monkeypatch)
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.breeze_websocket_manager.start_tick_pipeline",
+        lambda: None,
+    )
 
     out = playground_subscribe(
         proc,
@@ -79,13 +84,12 @@ def test_playground_subscribe_empty_strike_passthrough_icici_response(monkeypatc
             "expiry_date": "30-Jun-2026",
             "strike_price": "",
             "right": "call",
+            "holder_id": "h1",
         },
     )
 
-    assert out["ok"] is True
-    assert out["response"] == {"message": "Stock NIFTY subscribed successfully"}
-    assert out["icici_command"]["sdk_args"]["strike_price"] == ""
-    sdk.subscribe_feeds.assert_called_once()
+    assert out["ok"] is False
+    sdk.subscribe_feeds.assert_not_called()
 
 
 def test_playground_subscribe_sdk_exception_in_response(monkeypatch):
@@ -118,6 +122,10 @@ def test_ws_connect_playground_includes_icici_command(monkeypatch):
     proc = MagicMock()
     proc.get_session_breeze.return_value = sdk
     _reset_bwm(monkeypatch)
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.breeze_websocket_manager.start_tick_pipeline",
+        lambda: None,
+    )
 
     out = ws_connect_playground(proc, "u1")
 
@@ -136,6 +144,13 @@ def test_playground_subscribe_success_tracks_active_subscriptions(monkeypatch):
     proc = MagicMock()
     proc.get_session_breeze.return_value = sdk
     _reset_bwm(monkeypatch)
+    monkeypatch.setattr(bwm := __import__(
+        "icici_breeze_backend.app.services.breeze_websocket_manager",
+        fromlist=["_sdk"],
+    ), "_sdk", sdk)
+    monkeypatch.setattr(bwm, "_connected", True)
+    monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
+    monkeypatch.setattr(bwm, "start_tick_pipeline", lambda: None)
 
     out = playground_subscribe(
         proc,
@@ -146,14 +161,12 @@ def test_playground_subscribe_success_tracks_active_subscriptions(monkeypatch):
             "expiry_date": "30-Jun-2026",
             "strike_price": "25000",
             "right": "call",
+            "holder_id": "pg1",
         },
     )
 
     assert out["ok"] is True
     assert out["active_subscriptions"] == 1
-    assert out["icici_command"]["sdk_args"]["strike_price"] == "25000"
-    assert out["icici_command"]["sdk_args"]["product_type"] == "options"
-    assert out["icici_command"]["sdk_args"]["get_exchange_quotes"] is True
     sdk.subscribe_feeds.assert_called_once_with(
         exchange_code="NFO",
         stock_code="NIFTY",
@@ -164,6 +177,30 @@ def test_playground_subscribe_success_tracks_active_subscriptions(monkeypatch):
         get_market_depth=False,
         get_exchange_quotes=True,
     )
+
+
+def test_release_keeps_socket_ws_disconnect_closes(monkeypatch):
+    sdk = MagicMock()
+    sdk.subscribe_feeds.return_value = {"message": "ok"}
+    proc = MagicMock()
+    proc.get_session_breeze.return_value = sdk
+    _reset_bwm(monkeypatch)
+    import icici_breeze_backend.app.services.breeze_websocket_manager as bwm
+
+    monkeypatch.setattr(bwm, "start_tick_pipeline", lambda: None)
+    monkeypatch.setattr(bwm, "stop_tick_pipeline", lambda: None)
+    monkeypatch.setattr(bwm, "_sdk", sdk)
+    monkeypatch.setattr(bwm, "_connected", True)
+    monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
+
+    bwm.subscribe_option(proc, "u1", "NFO", "NIFTY", "30-Jun-2026", 25000.0, "call", holder_id="h1")
+    out = ws_release_playground("h1")
+    assert out["ok"] is True
+    sdk.unsubscribe_feeds.assert_called_once()
+    sdk.ws_disconnect.assert_not_called()
+
+    ws_disconnect_playground()
+    sdk.ws_disconnect.assert_called_once()
 
 
 def test_sse_tick_queue_uses_threadsafe_put():

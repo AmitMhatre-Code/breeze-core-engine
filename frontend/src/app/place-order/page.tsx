@@ -14,6 +14,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { ManualContractFieldWarningDialog } from "@/components/order/ManualContractFieldWarningDialog";
 import { AggressiveLimitOrderField } from "@/components/order/AggressiveLimitOrderField";
+import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
 import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
 import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
@@ -25,14 +26,18 @@ import {
   consumePlaceOrderClonePayload,
   placeOrderPrefillFromSearchParams,
 } from "@/lib/place-order-clone";
+import { fetchStrategyBuilderChain } from "@/lib/strategy-builder/api";
+import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import { quoteMetaFromChain } from "@/lib/quote-source";
 import { sb } from "@/lib/strategy-builder/ui";
+import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 import type {
-  ChainApiResponse,
   ChainRow,
   ChainSuccess,
   MarginApiResponse,
   OptionRight,
   OrderSide,
+  QuoteMeta,
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
 
@@ -93,6 +98,7 @@ type ScripDetailsState = {
   marginPerLotBuy: number | null;
   marginPerLotSell: number | null;
   marginError?: string;
+  quoteMeta?: QuoteMeta | null;
 };
 
 function parseNum(v: unknown): number {
@@ -130,6 +136,7 @@ function formatRatio(raw: unknown): string {
 }
 
 function PlaceOrderPageInner() {
+  const subscriptionHolder = useWsSubscriptionHolder();
   const searchParams = useSearchParams();
   const { openExecutionConfirm } = useOrderConfirm();
   const queryClient = useQueryClient();
@@ -189,19 +196,14 @@ function PlaceOrderPageInner() {
   });
 
   const chainQ = useQuery({
-    queryKey: ["place-order", "chain", segment, stockCode, expiryDate],
-    queryFn: () =>
-      apiClient.get<ChainApiResponse>(
-        `/strategy-builder/chain?${new URLSearchParams({
-          stock_code: stockCode,
-          expiry_date: expiryDate,
-          exchange_code: segment,
-        }).toString()}`,
-      ),
-    enabled: Boolean(
-      !contractFieldsLocked && stockCode.trim() && expiryDate.trim(),
-    ),
-    staleTime: 5_000,
+    ...chainQueryOptions({
+      queryKeyPrefix: ["place-order"],
+      stock_code: stockCode,
+      expiry_date: expiryDate,
+      exchange_code: segment,
+      subscription_holder: subscriptionHolder,
+      enabled: !contractFieldsLocked,
+    }),
   });
 
   const chainSuccess: ChainSuccess | null =
@@ -277,17 +279,17 @@ function PlaceOrderPageInner() {
 
   const fetchDetailsMut = useMutation({
     mutationFn: async (): Promise<ScripDetailsState> => {
-      const data = await apiClient.get<ChainApiResponse>(
-        `/strategy-builder/chain?${new URLSearchParams({
-          stock_code: stockCode,
-          expiry_date: expiryDate,
-          exchange_code: segment,
-        }).toString()}`,
-      );
+      const data = await fetchStrategyBuilderChain({
+        stock_code: stockCode,
+        expiry_date: expiryDate,
+        exchange_code: segment,
+        subscription_holder: subscriptionHolder,
+      });
       if (data.Status !== 200 || !data.Success) {
         throw new Error(data.Error ?? "Could not load option chain");
       }
       const success = data.Success;
+      const quoteMeta = quoteMetaFromChain(success);
       const row = success.chain_rows.find(
         (r) =>
           Math.round(r.strike_price) === Math.round(effectiveStrike ?? NaN),
@@ -321,6 +323,7 @@ function PlaceOrderPageInner() {
           marginPerLotBuy: null,
           marginPerLotSell: null,
           marginError: "Lot size unavailable",
+          quoteMeta,
         };
       }
 
@@ -364,6 +367,7 @@ function PlaceOrderPageInner() {
         marginPerLotBuy,
         marginPerLotSell,
         marginError,
+        quoteMeta,
       };
     },
     onSuccess: (d) => {
@@ -457,6 +461,7 @@ function PlaceOrderPageInner() {
       stockCode: stockCode.trim(),
       exchangeCode: segment,
       expiryDisplay: expDisplay,
+      quoteMeta: scripDetails?.quoteMeta ?? quoteMetaFromChain(chainSuccess),
       legs: [
         {
           strike: effectiveStrike,
@@ -478,6 +483,10 @@ function PlaceOrderPageInner() {
         : null;
 
   const spot = chainSuccess?.spot_price ?? null;
+  const chainQuoteMeta = useMemo(
+    () => quoteMetaFromChain(chainSuccess),
+    [chainSuccess],
+  );
 
   const expiryInvalid =
     expiryFieldMode === "manual" &&
@@ -573,6 +582,7 @@ function PlaceOrderPageInner() {
                 value={stockCode}
                 disabled={uq.isLoading || contractFieldsLocked}
                 spot={spot}
+                quoteMeta={chainQuoteMeta}
                 onChange={(code) => {
                   setStockCode(code);
                   setExpiryDate("");
@@ -785,8 +795,15 @@ function PlaceOrderPageInner() {
               className="rounded-lg border border-zinc-200/85 bg-zinc-50/90 p-3 shadow-sm dark:border-zinc-700/80 dark:bg-zinc-950/55"
               aria-label="Scrip details from fetch"
             >
-              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                Scrip details
+              <p className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                <span>Scrip details</span>
+                {scripDetails.quoteMeta ? (
+                  <QuoteSourceBadge
+                    meta={scripDetails.quoteMeta}
+                    variant="compact"
+                    showAsOf
+                  />
+                ) : null}
               </p>
               <div className="grid grid-cols-2 gap-2 gap-y-2.5 sm:grid-cols-3">
                 <div className="min-w-0">

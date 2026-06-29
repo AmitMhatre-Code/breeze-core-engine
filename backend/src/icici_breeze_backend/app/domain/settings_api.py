@@ -145,6 +145,11 @@ class BreezeApiTesterWsSubscribeBody(BaseModel):
     expiry_date: str = ""
     strike_price: str = ""
     right: str = "call"
+    holder_id: str = ""
+
+
+class WsReleaseRequest(BaseModel):
+    holder_id: str = Field(..., min_length=1, max_length=128)
 
 
 class AiProviderHealthEntry(BaseModel):

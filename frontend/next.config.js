@@ -152,6 +152,10 @@ const nextConfig = {
         destination: `${backendUpstream}/strategy-builder/chain`,
       },
       {
+        source: "/market-data/:path*",
+        destination: `${backendUpstream}/market-data/:path*`,
+      },
+      {
         source: "/strategy-builder/covered-shorts-scan",
         destination: `${backendUpstream}/strategy-builder/covered-shorts-scan`,
       },
@@ -162,6 +166,10 @@ const nextConfig = {
       {
         source: "/strategy-builder/propose-trades/jobs/:path*",
         destination: `${backendUpstream}/strategy-builder/propose-trades/jobs/:path*`,
+      },
+      {
+        source: "/strategy-builder/span-baseline",
+        destination: `${backendUpstream}/strategy-builder/span-baseline`,
       },
       {
         source: "/strategy-builder/margin",

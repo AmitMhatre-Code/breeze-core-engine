@@ -12,6 +12,7 @@ import type { BreakChunkDefaultsResponse } from "@/lib/break-chunk-defaults";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { runBreakOrderChunks } from "@/lib/icici-rate-limit-flow";
 import { fetchMarketStatus } from "@/lib/market-status";
+import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
 import { createParkedOrders, deleteParkedOrdersMany, patchParkedOrder } from "@/lib/parked-orders";
 import { randomUuid } from "@/lib/random-uuid";
 import { sb } from "@/lib/strategy-builder/ui";
@@ -19,6 +20,7 @@ import type {
   MarginApiResponse,
   OptionRight,
   OrderSide,
+  QuoteMeta,
 } from "@/lib/strategy-builder/types";
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
 import { invalidateTradingShellQueries } from "@/lib/trading-cache";
@@ -55,6 +57,7 @@ export type OrderExecutionConfirmDialogProps = {
   productType?: string;
   /** Use host page chunk state instead of internal defaults (Strategy Builder). */
   controlledChunk?: ControlledChunkProps;
+  quoteMeta?: QuoteMeta | null;
 };
 
 function parseNum(v: unknown): number {
@@ -126,6 +129,7 @@ export function OrderExecutionConfirmDialog({
   sourceParkedIds = [],
   productType = "Options",
   controlledChunk,
+  quoteMeta = null,
 }: OrderExecutionConfirmDialogProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -354,7 +358,16 @@ export function OrderExecutionConfirmDialog({
           </button>
         </div>
 
-        <ul className="max-h-64 divide-y divide-zinc-200/90 overflow-x-auto overflow-y-auto rounded-md border border-zinc-200/80 dark:divide-zinc-700/90 dark:border-zinc-700/80">
+        {quoteMeta ? (
+          <div
+            role="status"
+            className="mt-3 rounded-md border border-zinc-200/90 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700/80 dark:bg-zinc-900/50"
+          >
+            <QuoteSourceBadge meta={quoteMeta} variant="default" />
+          </div>
+        ) : null}
+
+        <ul className="mt-3 max-h-64 divide-y divide-zinc-200/90 overflow-x-auto overflow-y-auto rounded-md border border-zinc-200/80 dark:divide-zinc-700/90 dark:border-zinc-700/80">
           {legs.map((l, idx) => {
             const q = Math.round(l.quantity);
             const linePrem = l.aggressiveLimit ? null : l.premiumPerUnit * q;

@@ -17,6 +17,7 @@ import {
   wsConnectPlayground,
   wsDisconnectPlayground,
   wsGetPlaygroundEventLog,
+  wsReleasePlayground,
   wsStreamUrl,
   wsSubscribePlayground,
   type BreezeApiCatalogEntry,
@@ -25,6 +26,7 @@ import {
   type BreezeApiWsStatus,
 } from "@/lib/breeze-api-tester";
 import { copyTextToClipboard } from "@/lib/copy-to-clipboard";
+import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 
 const inputCls =
   "mt-1 w-full rounded-md border border-zinc-300/80 bg-white/95 px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition-all hover:border-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-blue-400 dark:focus:ring-blue-400/20";
@@ -114,6 +116,7 @@ function tickPayloadToLogEntry(rawJson: string): BreezeApiWsEventLogEntry | null
 }
 
 export default function BreezeApiPlaygroundPage() {
+  const subscriptionHolder = useWsSubscriptionHolder();
   const qc = useQueryClient();
   const [selectedMethod, setSelectedMethod] = useState("");
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
@@ -290,6 +293,12 @@ export default function BreezeApiPlaygroundPage() {
     flashCopyState("wsLog", copyTextToClipboard(wsCommandLogText));
   };
 
+  const closeWsStream = useCallback(() => {
+    wsStreamRef.current?.close();
+    wsStreamRef.current = null;
+    setWsStreamOpen(false);
+  }, []);
+
   const wsConnectM = useMutation({
     mutationFn: wsConnectPlayground,
     onSuccess: (data) => {
@@ -308,21 +317,38 @@ export default function BreezeApiPlaygroundPage() {
       setWsStatusHint(e instanceof Error ? e.message : "Connect failed");
     },
   });
+  const wsReleaseM = useMutation({
+    mutationFn: () => wsReleasePlayground(subscriptionHolder),
+    onSuccess: (data) => {
+      closeWsStream();
+      setWsLastResponse(data);
+      appendWsLog(statusToLogEntry(data, "ws_release"));
+      void refreshEventLog();
+      setWsStatusHint("Subscriptions released. ICICI socket remains connected.");
+    },
+    onError: (e) => {
+      setWsStatusHint(e instanceof Error ? e.message : "Release failed");
+    },
+  });
   const wsDisconnectM = useMutation({
     mutationFn: wsDisconnectPlayground,
     onSuccess: (data) => {
-      setWsStreamOpen(false);
+      closeWsStream();
       setWsLastResponse(data);
       appendWsLog(statusToLogEntry(data, "ws_disconnect"));
       void refreshEventLog();
-      setWsStatusHint("Disconnected.");
+      setWsStatusHint("Socket disconnected and subscriptions cleared.");
     },
     onError: (e) => {
       setWsStatusHint(e instanceof Error ? e.message : "Disconnect failed");
     },
   });
   const wsSubscribeM = useMutation({
-    mutationFn: () => wsSubscribePlayground(wsForm),
+    mutationFn: () =>
+      wsSubscribePlayground({
+        ...wsForm,
+        holder_id: subscriptionHolder,
+      }),
     onSuccess: (data) => {
       setWsLastResponse(data);
       appendWsLog(statusToLogEntry(data, "subscribe_feeds"));
@@ -422,10 +448,10 @@ export default function BreezeApiPlaygroundPage() {
 
   useEffect(
     () => () => {
-      wsStreamRef.current?.close();
+      closeWsStream();
       if (copyResetRef.current) clearTimeout(copyResetRef.current);
     },
-    [],
+    [closeWsStream],
   );
 
   return (
@@ -607,13 +633,32 @@ export default function BreezeApiPlaygroundPage() {
           <button type="button" className="app-btn-outline" onClick={() => wsConnectM.mutate()}>
             Connect
           </button>
-          <button type="button" className="app-btn-outline" onClick={() => wsDisconnectM.mutate()}>
-            Disconnect
+          <button
+            type="button"
+            className="app-btn-outline"
+            disabled={wsReleaseM.isPending}
+            onClick={() => wsReleaseM.mutate()}
+          >
+            Release subscriptions
+          </button>
+          <button
+            type="button"
+            className="app-btn-outline"
+            disabled={wsDisconnectM.isPending}
+            onClick={() => wsDisconnectM.mutate()}
+          >
+            Disconnect socket
           </button>
           <button type="button" className="app-btn-outline" onClick={() => startWsStream()}>
             Start tick stream
           </button>
         </div>
+        <p className="text-xs text-amber-800 dark:text-amber-200">
+          Frequent connect/disconnect cycles may be treated as connection thrashing by ICICI.
+          Prefer <span className="font-medium">Release subscriptions</span> when you only want to
+          stop ticks; use <span className="font-medium">Disconnect socket</span> only when you need
+          to tear down the WebSocket entirely.
+        </p>
         <p className="text-xs app-text-muted">
           expiry_date format: <span className="font-mono">26-Jun-2026</span>. WebSocket ticks only arrive
           during NSE/BSE market hours.

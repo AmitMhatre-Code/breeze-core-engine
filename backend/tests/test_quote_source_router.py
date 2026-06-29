@@ -5,7 +5,9 @@ from unittest.mock import MagicMock, patch
 from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.services.quote_source_router import (
     _cell_to_icici_row,
+    _enrich_quote_metadata,
     _flatten_chain_side_rows,
+    _max_cell_updated_at,
     bhavcopy_is_fresh,
     fetch_chain_side_icici_response,
     fetch_quote_icici_response,
@@ -68,6 +70,56 @@ def test_cell_to_icici_row_computes_ratio():
     )
     assert row["buy_sell_ratio"] == 2.0
     assert row["strike_price"] == 24000
+
+
+def test_max_cell_updated_at_picks_latest():
+    rows = [
+        {
+            "strike_price": 23500,
+            "call": {"updated_at": 1000.0},
+            "put": {"updated_at": 2000.5},
+        },
+        {
+            "strike_price": 23600,
+            "call": {"updated_at": 1500.0},
+            "put": None,
+        },
+    ]
+    assert _max_cell_updated_at(rows) == 2000.5
+
+
+def test_enrich_quote_metadata_websocket():
+    payload = {
+        "quote_source": "websocket",
+        "chain_rows": [
+            {
+                "strike_price": 23500,
+                "call": {"updated_at": 1_700_000_000.0},
+                "put": None,
+            }
+        ],
+    }
+    out = _enrich_quote_metadata(payload)
+    assert out["quote_as_of"] is not None
+    assert "1700000000" in out["quote_as_of"] or "2023" in out["quote_as_of"]
+
+
+def test_enrich_quote_metadata_bhavcopy():
+    payload = {
+        "quote_source": "bhavcopy",
+        "bhavcopy_date": "2026-06-27",
+        "chain_rows": [],
+    }
+    out = _enrich_quote_metadata(payload)
+    assert out["quote_as_of"] == "2026-06-27"
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.now_ist")
+def test_enrich_quote_metadata_icici_api(mock_now):
+    mock_now.return_value = datetime(2026, 6, 27, 16, 0, tzinfo=IST)
+    payload = {"quote_source": "icici_api", "chain_rows": []}
+    out = _enrich_quote_metadata(payload)
+    assert out["quote_as_of"] == mock_now.return_value.isoformat()
 
 
 @patch("icici_breeze_backend.app.services.quote_source_router.fetch_chain_payload_routed")

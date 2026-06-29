@@ -24,6 +24,14 @@ export type ChainRow = {
   put?: Record<string, unknown> | null;
 };
 
+export type QuoteSource = "websocket" | "bhavcopy" | "icici_api";
+
+export type QuoteMeta = {
+  quote_source: QuoteSource;
+  bhavcopy_date?: string | null;
+  quote_as_of?: string | null;
+};
+
 export type ChainSuccess = {
   chain_rows: ChainRow[];
   spot_price: number | null;
@@ -37,6 +45,9 @@ export type ChainSuccess = {
   lot_size?: number | null;
   /** Max order quantity per exchange freeze rule (multiple of lot size). */
   freeze_quantity?: number | null;
+  quote_source?: QuoteSource;
+  bhavcopy_date?: string | null;
+  quote_as_of?: string | null;
 };
 
 export type ChainApiResponse = {

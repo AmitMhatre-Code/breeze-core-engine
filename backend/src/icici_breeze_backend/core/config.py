@@ -200,6 +200,14 @@ try:
     WEBSOCKET_QUOTE_TTL_SECONDS = int(os.environ.get("WEBSOCKET_QUOTE_TTL_SECONDS", "300") or "300")
 except ValueError:
     WEBSOCKET_QUOTE_TTL_SECONDS = 300
+try:
+    WS_TICK_INGEST_QUEUE_SIZE = int(os.environ.get("WS_TICK_INGEST_QUEUE_SIZE", "10000") or "10000")
+except ValueError:
+    WS_TICK_INGEST_QUEUE_SIZE = 10000
+try:
+    WS_TICK_COALESCE_MS = int(os.environ.get("WS_TICK_COALESCE_MS", "50") or "50")
+except ValueError:
+    WS_TICK_COALESCE_MS = 50
 
 
 def redis_connection_url() -> str:

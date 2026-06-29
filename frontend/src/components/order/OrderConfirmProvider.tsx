@@ -14,11 +14,12 @@ import {
   type ExecutionPreviewLeg,
 } from "@/components/order/OrderExecutionConfirmDialog";
 import type { OrderConfirmPayload } from "@/lib/order-confirm";
-import type { OptionRight } from "@/lib/strategy-builder/types";
+import type { OptionRight, QuoteMeta } from "@/lib/strategy-builder/types";
 
 export type OpenOrderConfirmOptions = {
   /** When executing from parked rows, remove them after successful place */
   sourceParkedIds?: string[];
+  quoteMeta?: QuoteMeta | null;
 };
 
 export type OpenExecutionConfirmArgs = {
@@ -28,6 +29,7 @@ export type OpenExecutionConfirmArgs = {
   legs: ExecutionPreviewLeg[];
   sourceParkedIds?: string[];
   productType?: string;
+  quoteMeta?: QuoteMeta | null;
 };
 
 type OrderConfirmContextValue = {
@@ -57,6 +59,7 @@ type ConfirmModalState =
       mode: "single";
       base: OrderConfirmPayload;
       sourceParkedIds: string[];
+      quoteMeta: QuoteMeta | null;
     }
   | {
       open: true;
@@ -67,6 +70,7 @@ type ConfirmModalState =
       legs: ExecutionPreviewLeg[];
       sourceParkedIds: string[];
       productType: string;
+      quoteMeta: QuoteMeta | null;
     };
 
 function orderPayloadToLeg(base: OrderConfirmPayload): ExecutionPreviewLeg {
@@ -104,6 +108,7 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
           mode: "single",
           base: payload,
           sourceParkedIds: [...(opts?.sourceParkedIds ?? [])],
+          quoteMeta: opts?.quoteMeta ?? null,
         });
       });
     },
@@ -122,6 +127,7 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
           legs: args.legs,
           sourceParkedIds: [...(args.sourceParkedIds ?? [])],
           productType: args.productType ?? "Options",
+          quoteMeta: args.quoteMeta ?? null,
         });
       });
     },
@@ -146,6 +152,7 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
           legs={[orderPayloadToLeg(modal.base)]}
           sourceParkedIds={modal.sourceParkedIds}
           productType={modal.base.product_type || "Options"}
+          quoteMeta={modal.quoteMeta}
         />
       ) : modal.open && modal.mode === "multi" ? (
         <OrderExecutionConfirmDialog
@@ -157,6 +164,7 @@ export function OrderConfirmProvider({ children }: { children: ReactNode }) {
           legs={modal.legs}
           sourceParkedIds={modal.sourceParkedIds}
           productType={modal.productType}
+          quoteMeta={modal.quoteMeta}
         />
       ) : null}
     </OrderConfirmContext.Provider>

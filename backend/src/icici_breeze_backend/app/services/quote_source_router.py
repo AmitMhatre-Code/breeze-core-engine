@@ -62,6 +62,44 @@ def resolve_quote_source(exchange_code: str, now: dt.datetime | None = None) -> 
     return "icici_api"
 
 
+def _cell_updated_at(cell: Any) -> float | None:
+    if not isinstance(cell, dict):
+        return None
+    try:
+        ts = float(cell.get("updated_at"))
+    except (TypeError, ValueError):
+        return None
+    return ts if ts > 0 else None
+
+
+def _max_cell_updated_at(chain_rows: list[Any]) -> float | None:
+    best: float | None = None
+    for row in chain_rows:
+        if not isinstance(row, dict):
+            continue
+        for side in ("call", "put"):
+            ts = _cell_updated_at(row.get(side))
+            if ts is not None and (best is None or ts > best):
+                best = ts
+    return best
+
+
+def _enrich_quote_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    """Attach chain-level quote_as_of for frontend transparency."""
+    source = payload.get("quote_source")
+    if source == "websocket":
+        ts = _max_cell_updated_at(payload.get("chain_rows") or [])
+        if ts is not None:
+            payload["quote_as_of"] = dt.datetime.fromtimestamp(ts, tz=IST).isoformat()
+    elif source == "bhavcopy":
+        bd = payload.get("bhavcopy_date")
+        if bd:
+            payload["quote_as_of"] = str(bd)
+    elif source == "icici_api":
+        payload["quote_as_of"] = now_ist().isoformat()
+    return payload
+
+
 def _rest_fallback_allowed(exchange_code: str) -> bool:
     return resolve_quote_source(exchange_code) != "bhavcopy"
 
@@ -168,6 +206,7 @@ def _fetch_cell_from_cache(
     right: str,
     *,
     lot_size: int | None = None,
+    holder_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Return (cell, quote_source) or (None, None) on miss."""
     source = resolve_quote_source(exchange_code)
@@ -177,7 +216,7 @@ def _fetch_cell_from_cache(
     if source == "websocket":
         from icici_breeze_backend.app.services.breeze_websocket_manager import subscribe_option
 
-        subscribe_option(proc, user_id, exchange_code, stock_code, expiry_display, strike, right_key)
+        subscribe_option(proc, user_id, exchange_code, stock_code, expiry_display, strike, right_key, holder_id=holder_id)
         key = ws_quote_key(exchange_code, stock_code, expiry_display, strike, right_key)
         cell = cache_get_json(key)
         if cell:
@@ -231,6 +270,8 @@ def fetch_chain_payload_routed(
     stock_code: str,
     exchange_code: str,
     expiry_display: str,
+    *,
+    holder_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Build inner Success payload using websocket / bhavcopy / REST per routing rules."""
     expiry_display = _normalize_expiry_display(expiry_display)
@@ -251,9 +292,10 @@ def fetch_chain_payload_routed(
             strikes,
             lot_size=int(lot_size) if lot_size else 0,
             freeze_quantity=freeze_quantity,
+            holder_id=holder_id,
         )
         if ws_payload is not None:
-            return ws_payload
+            return _enrich_quote_metadata(ws_payload)
 
         _logger.warning("WebSocket chain empty for %s %s; falling back", stock_code, expiry_display)
         if bhavcopy_is_fresh(exchange_code):
@@ -274,7 +316,7 @@ def fetch_chain_payload_routed(
                 payload["chain_rows"] = [
                     {"strike_price": s, "call": None, "put": None} for s in strikes
                 ]
-            return payload
+            return _enrich_quote_metadata(payload)
         _logger.warning("Bhavcopy chain missing for %s %s; falling back to REST", stock_code, expiry_display)
         source = "icici_api"
 
@@ -286,7 +328,7 @@ def fetch_chain_payload_routed(
             payload = dict(result["Success"])
             payload["quote_source"] = "icici_api"
             payload["bhavcopy_date"] = None
-            return payload
+            return _enrich_quote_metadata(payload)
     return None
 
 
@@ -296,10 +338,14 @@ def assemble_chain_with_router(
     stock_code: str,
     exchange_code: str,
     expiry_display: str,
+    *,
+    holder_id: str | None = None,
 ) -> dict[str, Any]:
     """Build option chain using websocket / bhavcopy / REST per routing rules."""
     expiry_display = _normalize_expiry_display(expiry_display)
-    payload = fetch_chain_payload_routed(proc, user_id, stock_code, exchange_code, expiry_display)
+    payload = fetch_chain_payload_routed(
+        proc, user_id, stock_code, exchange_code, expiry_display, holder_id=holder_id
+    )
     if payload:
         return {"Status": 200, "Error": None, "Success": payload}
     return {

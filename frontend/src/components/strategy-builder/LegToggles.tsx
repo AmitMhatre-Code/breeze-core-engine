@@ -18,7 +18,7 @@ export function LegRightToggle({
   return (
     <button
       type="button"
-      aria-pressed
+      aria-pressed={isCall}
       aria-label={
         isCall
           ? "Call (CE). Click to switch to Put."
@@ -43,7 +43,7 @@ export function LegSideToggle({
   return (
     <button
       type="button"
-      aria-pressed
+      aria-pressed={isBuy}
       aria-label={
         isBuy
           ? "Buy. Click to switch to Sell."

@@ -10,7 +10,10 @@ import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnder
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { ltpAsOrderPrice } from "@/lib/order-confirm";
+import { fetchStrategyBuilderChain } from "@/lib/strategy-builder/api";
+import { quoteMetaFromChain } from "@/lib/quote-source";
 import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 import {
   chainLotSize,
   legLotSize,
@@ -67,6 +70,7 @@ function spanFromMarginResponse(res: MarginApiResponse): number | null {
 type SheetState = { strike: number; row: ChainRow };
 
 export function OptionChainPlaceSection() {
+  const subscriptionHolder = useWsSubscriptionHolder();
   const { openOrderConfirm } = useOrderConfirm();
   const [segmentExchange, setSegmentExchange] = useState<"NFO" | "BFO">("NFO");
   const [stockCode, setStockCode] = useState("");
@@ -106,16 +110,13 @@ export function OptionChainPlaceSection() {
   }, [uq.data?.underlyings, stockCode]);
 
   const chainMut = useMutation({
-    mutationFn: async () => {
-      const q = new URLSearchParams({
+    mutationFn: async () =>
+      fetchStrategyBuilderChain({
         stock_code: stockCode.trim(),
         exchange_code: segmentExchange,
         expiry_date: expiryDate.trim(),
-      });
-      return apiClient.get<ChainApiResponse>(
-        `/strategy-builder/chain?${q.toString()}`,
-      );
-    },
+        subscription_holder: subscriptionHolder,
+      }),
     onSuccess: (data) => {
       if (data.Status === 200 && data.Success) {
         setChainSuccess(data.Success);
@@ -139,6 +140,11 @@ export function OptionChainPlaceSection() {
   const defaultLot = useMemo(
     () => chainLotSize(chainSuccess?.chain_rows ?? []),
     [chainSuccess?.chain_rows],
+  );
+
+  const chainQuoteMeta = useMemo(
+    () => quoteMetaFromChain(chainSuccess),
+    [chainSuccess],
   );
 
   useEffect(() => {
@@ -211,17 +217,20 @@ export function OptionChainPlaceSection() {
       }
       setSheetFormError(null);
       closeSheet();
-      openOrderConfirm({
-        product_type: "Options",
-        stock_code: chainSuccess.stock_code,
-        exchange_code: chainSuccess.exchange_code,
-        expiry_date: chainSuccess.expiry_display,
-        right: sheetRight,
-        strike_price: String(sheet.strike),
-        quantity: String(qn),
-        price: (sheetPrice.trim() || "0") as string,
-        action,
-      });
+      openOrderConfirm(
+        {
+          product_type: "Options",
+          stock_code: chainSuccess.stock_code,
+          exchange_code: chainSuccess.exchange_code,
+          expiry_date: chainSuccess.expiry_display,
+          right: sheetRight,
+          strike_price: String(sheet.strike),
+          quantity: String(qn),
+          price: (sheetPrice.trim() || "0") as string,
+          action,
+        },
+        { quoteMeta: chainQuoteMeta },
+      );
     },
     [
       chainSuccess,
@@ -231,6 +240,7 @@ export function OptionChainPlaceSection() {
       sheetPrice,
       closeSheet,
       openOrderConfirm,
+      chainQuoteMeta,
     ],
   );
 
@@ -341,6 +351,7 @@ export function OptionChainPlaceSection() {
             value={stockCode}
             disabled={uq.isLoading}
             spot={chainSuccess?.spot_price ?? null}
+            quoteMeta={chainQuoteMeta}
             onChange={(code) => {
               setStockCode(code);
               setExpiryDate("");

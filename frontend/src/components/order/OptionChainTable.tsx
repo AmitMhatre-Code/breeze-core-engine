@@ -2,6 +2,8 @@
 
 import type { RefObject } from "react";
 import { Fragment } from "react";
+import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
+import { quoteMetaFromChain } from "@/lib/quote-source";
 import type { ChainRow, ChainSuccess, OrderSide, OptionRight } from "@/lib/strategy-builder/types";
 
 const LAKH = 100_000;
@@ -213,8 +215,15 @@ export function OptionChainTable({
   const outerHeader =
     mode === "strategyBuilder" ? "B/S" : "Buy/Sell";
 
+  const quoteMeta = quoteMetaFromChain(chainSuccess);
+
   return (
     <div ref={scrollRef} className="min-w-0 space-y-0">
+      {quoteMeta ? (
+        <div className="mb-2 flex flex-wrap items-center justify-end gap-2 px-0.5">
+          <QuoteSourceBadge meta={quoteMeta} variant="default" />
+        </div>
+      ) : null}
       <div className="space-y-2 md:hidden">
         {chainSuccess.chain_rows.map((row) => {
           const c = row.call ?? null;

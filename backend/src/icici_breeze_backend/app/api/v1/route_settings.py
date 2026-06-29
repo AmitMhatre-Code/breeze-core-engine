@@ -83,6 +83,7 @@ from icici_breeze_backend.app.domain.settings_api import (
     ReferenceDataLoadsStateResponse,
     ReferenceDataScheduleUpdateBody,
     BreezeApiTesterWsSubscribeBody,
+    WsReleaseRequest,
 )
 from icici_breeze_backend.app.services.breeze_api_tester_risk import (
     get_breeze_api_tester_risk_accepted_at,
@@ -1618,6 +1619,20 @@ async def settings_breeze_ws_disconnect(ctx: RequestContext = Depends(get_reques
 
     out = ws_disconnect_playground()
     _logger.info("breeze-api-tester ws/disconnect user_id=%s", ctx.user_id)
+    return JSONResponse(out)
+
+
+@router.post("/breeze-api-tester/ws/release")
+async def settings_breeze_ws_release(
+    body: WsReleaseRequest,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not is_breeze_api_tester_risk_accepted(ctx.user_id):
+        raise HTTPException(status_code=403, detail="Accept the risk disclaimer first.")
+    from icici_breeze_backend.app.services.breeze_websocket_manager import ws_release_playground
+
+    out = ws_release_playground(body.holder_id.strip())
+    _logger.info("breeze-api-tester ws/release user_id=%s holder=%s", ctx.user_id, body.holder_id)
     return JSONResponse(out)
 
 

@@ -112,6 +112,34 @@ def _expiry_api_to_display(expiry: str) -> str:
     return datetime.datetime.strptime(s, fmt).strftime("%d-%b-%Y")
 
 
+def _scrip_master_expiry_sql_values(expiry: str) -> tuple[str, ...]:
+    """Deduped ExpiryDate forms for scrip_master SQL (display + ISO)."""
+    s = str(expiry or "").strip()
+    if not s:
+        return ()
+    display = s
+    if "T" in s:
+        try:
+            display = _expiry_api_to_display(s)
+        except ValueError:
+            pass
+    elif len(s) == 10 and s[4] == "-" and len(s.split("-")[0]) == 4:
+        try:
+            display = datetime.datetime.strptime(s, "%Y-%m-%d").strftime("%d-%b-%Y")
+        except ValueError:
+            pass
+    keys: list[str] = []
+    if display:
+        keys.append(display)
+    try:
+        iso = datetime.datetime.strptime(display, "%d-%b-%Y").date().isoformat()
+        if iso not in keys:
+            keys.append(iso)
+    except ValueError:
+        pass
+    return tuple(keys)
+
+
 def _expiry_to_breeze_place_order(expiry_date) -> str:
     """ICICI Breeze place_order expects API expiry; accept DD-Mon-YYYY or YYYY-MM-DD… from callers."""
     s = str(expiry_date).strip()
@@ -1836,6 +1864,8 @@ class processor():
         stock_code: str,
         exchange_code: str,
         expiry_date: str,
+        *,
+        holder_id: str | None = None,
     ):
         """Fetch full CE + PE option chain for order page. Expiry can be YYYY-MM-DD or DD-Mon-YYYY."""
         expiry_display = expiry_date
@@ -1847,7 +1877,7 @@ class processor():
         from icici_breeze_backend.app.services.quote_source_router import assemble_chain_with_router
 
         return assemble_chain_with_router(
-            self, user_id, stock_code, exchange_code, expiry_display
+            self, user_id, stock_code, exchange_code, expiry_display, holder_id=holder_id
         )
 
     def _get_full_option_chain_icici_rest(
@@ -2837,46 +2867,38 @@ class processor():
         self, stock_code: str, expiry_date: str, exchange_code: str = cfg.NFO
     ) -> list[Strike]:
         """Distinct strike prices for an underlying + expiry from scrip master."""
-        import datetime as dt
-
-        expiry_display = expiry_date
-        if expiry_date and len(expiry_date) == 10 and expiry_date[4] == "-":
-            try:
-                expiry_display = dt.datetime.strptime(expiry_date, "%Y-%m-%d").strftime("%d-%b-%Y")
-            except ValueError:
-                pass
+        expiry_sql_values = _scrip_master_expiry_sql_values(expiry_date)
+        if not expiry_sql_values:
+            return []
+        expiry_display = expiry_sql_values[0]
         from icici_breeze_backend.app.services.reference_data.scrip_index import get_strikes
 
         cached = get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
         if cached:
             return cached
-        expiry_key = expiry_date
-        try:
-            expiry_key = dt.datetime.strptime(expiry_display, "%d-%b-%Y").date().isoformat()
-        except ValueError:
-            pass
+        expiry_placeholders = ",".join("?" * len(expiry_sql_values))
         with _scrip_master_connection() as conn:
             if exchange_code == cfg.NFO:
                 cursor = conn.execute(
-                    """
+                    f"""
                     SELECT DISTINCT StrikePrice FROM scrip_master
-                    WHERE ShortName = ? AND ExpiryDate = ?
+                    WHERE ShortName = ? AND ExpiryDate IN ({expiry_placeholders})
                       AND (SegmentCode = ? OR SegmentCode IS NULL)
                       AND StrikePrice IS NOT NULL AND StrikePrice > 0
                     ORDER BY StrikePrice
                     """,
-                    (stock_code, expiry_key, exchange_code),
+                    (stock_code, *expiry_sql_values, exchange_code),
                 )
             else:
                 cursor = conn.execute(
-                    """
+                    f"""
                     SELECT DISTINCT StrikePrice FROM scrip_master
-                    WHERE ShortName = ? AND ExpiryDate = ?
+                    WHERE ShortName = ? AND ExpiryDate IN ({expiry_placeholders})
                       AND SegmentCode = ?
                       AND StrikePrice IS NOT NULL AND StrikePrice > 0
                     ORDER BY StrikePrice
                     """,
-                    (stock_code, expiry_key, exchange_code),
+                    (stock_code, *expiry_sql_values, exchange_code),
                 )
             rows = cursor.fetchall()
         out: list[Strike] = []
@@ -2912,16 +2934,20 @@ class processor():
 
     def fetch_lot_size(self, stock_code, expiry_date, exchange_code: str = cfg.NFO):
         # Fetches the lot size for the provided stock_code from the scrip_master table.
+        expiry_sql_values = _scrip_master_expiry_sql_values(expiry_date)
+        if not expiry_sql_values:
+            return None
+        expiry_placeholders = ",".join("?" * len(expiry_sql_values))
         with _scrip_master_connection() as conn:
             if exchange_code == cfg.NFO:
                 cursor = conn.execute(
-                    "SELECT LotSize FROM scrip_master WHERE ShortName = ? AND ExpiryDate = ? AND (SegmentCode = ? OR SegmentCode IS NULL) LIMIT 1",
-                    (stock_code, expiry_date, exchange_code),
+                    f"SELECT LotSize FROM scrip_master WHERE ShortName = ? AND ExpiryDate IN ({expiry_placeholders}) AND (SegmentCode = ? OR SegmentCode IS NULL) LIMIT 1",
+                    (stock_code, *expiry_sql_values, exchange_code),
                 )
             else:
                 cursor = conn.execute(
-                    "SELECT LotSize FROM scrip_master WHERE ShortName = ? AND ExpiryDate = ? AND SegmentCode = ? LIMIT 1",
-                    (stock_code, expiry_date, exchange_code),
+                    f"SELECT LotSize FROM scrip_master WHERE ShortName = ? AND ExpiryDate IN ({expiry_placeholders}) AND SegmentCode = ? LIMIT 1",
+                    (stock_code, *expiry_sql_values, exchange_code),
                 )
             row = cursor.fetchone()
         return row[0] if row else None
