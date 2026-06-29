@@ -156,9 +156,6 @@ export default function BreezeApiPlaygroundPage() {
     }
   }, []);
 
-  const wsSubscribeInvalid =
-    !wsForm.expiry_date.trim() || !wsForm.strike_price.trim();
-
   const riskQ = useQuery({
     queryKey: ["settings", "breeze-api-tester", "risk"],
     queryFn: getBreezeApiTesterRiskStatus,
@@ -624,10 +621,7 @@ export default function BreezeApiPlaygroundPage() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {(["exchange_code", "stock_code", "expiry_date", "strike_price", "right"] as const).map((k) => (
             <label key={k} className="block text-xs">
-              <span className="font-medium">
-                {k}
-                {(k === "expiry_date" || k === "strike_price") ? " *" : ""}
-              </span>
+              <span className="font-medium">{k}</span>
               <input
                 className={inputCls}
                 value={wsForm[k]}
@@ -637,15 +631,10 @@ export default function BreezeApiPlaygroundPage() {
             </label>
           ))}
         </div>
-        {wsSubscribeInvalid ? (
-          <p className="text-xs text-amber-800 dark:text-amber-200">
-            expiry_date and strike_price are required before subscribing.
-          </p>
-        ) : null}
         <button
           type="button"
           className="app-btn-primary"
-          disabled={wsSubscribeM.isPending || wsSubscribeInvalid}
+          disabled={wsSubscribeM.isPending}
           onClick={() => wsSubscribeM.mutate()}
         >
           Subscribe

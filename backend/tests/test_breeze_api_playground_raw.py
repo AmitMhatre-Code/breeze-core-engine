@@ -60,8 +60,13 @@ def test_is_breeze_invoke_response_ok_string_exception():
     assert is_breeze_invoke_response_ok({"Status": 400, "Error": "bad"}) is False
 
 
-def test_playground_subscribe_empty_strike_validates_before_sdk(monkeypatch):
+def test_playground_subscribe_empty_strike_returns_verbatim_icici_error(monkeypatch):
     sdk = MagicMock()
+    sdk.ws_connect.return_value = None
+    sdk.subscribe_feeds.return_value = (
+        "Exception while subscribing to feeds Strike Price cannot be empty for Product-Type 'Options'."
+    )
+
     proc = MagicMock()
     proc.get_session_breeze.return_value = sdk
     _reset_bwm(monkeypatch)
@@ -79,10 +84,9 @@ def test_playground_subscribe_empty_strike_validates_before_sdk(monkeypatch):
     )
 
     assert out["ok"] is False
-    assert out["response"] == "strike_price is required"
+    assert "Strike Price cannot be empty" in str(out.get("response"))
     assert out["icici_command"]["sdk_method"] == "subscribe_feeds"
-    sdk.subscribe_feeds.assert_not_called()
-    sdk.ws_connect.assert_not_called()
+    sdk.subscribe_feeds.assert_called_once()
 
 
 def test_playground_subscribe_sdk_exception_in_response(monkeypatch):
