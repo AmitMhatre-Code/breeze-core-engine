@@ -107,6 +107,21 @@ export type SpanBaselineSheet = {
   source_file?: string | null;
 };
 
+export type SpanPortfolioMarginSuccess = {
+  span_margin_required?: number | null;
+  scanning_risk?: number | null;
+  net_option_value?: number | null;
+  margin_benefit?: number | null;
+  per_leg_standalone: Record<string, number>;
+  warnings: string[];
+};
+
+export type SpanPortfolioMarginResponse = {
+  Status: number;
+  Error?: string | null;
+  Success?: SpanPortfolioMarginSuccess | null;
+};
+
 export type ExecuteLegResult = {
   index: number;
   success: boolean;

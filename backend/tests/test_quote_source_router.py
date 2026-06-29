@@ -1,19 +1,24 @@
 """Tests for quote source routing."""
+import datetime as dt
 from datetime import date, datetime
 from unittest.mock import MagicMock, patch
 
+import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import IST
+from icici_breeze_backend.app.db.redis_client import get_redis
 from icici_breeze_backend.app.services.quote_source_router import (
     _cell_to_icici_row,
     _enrich_quote_metadata,
     _flatten_chain_side_rows,
     _max_cell_updated_at,
     bhavcopy_is_fresh,
+    fetch_chain_payload_routed,
     fetch_chain_side_icici_response,
     fetch_quote_icici_response,
     latest_concluded_trading_day,
     resolve_quote_source,
 )
+from icici_breeze_backend.app.services.reference_data.bhavcopy_store import publish_bhavcopy_rows
 
 
 @patch("icici_breeze_backend.app.services.quote_source_router.is_india_market_open", return_value=True)
@@ -203,3 +208,65 @@ def test_fetch_chain_side_skips_rest_when_bhavcopy_active(mock_payload, _mock_so
     assert out["Status"] == 404
     assert out["quote_source"] == "bhavcopy"
     proc._fetch_icici_chain_side_raw.assert_not_called()
+
+
+def _nifty_bhav_row(strike: int, right: str, ltp: str) -> dict[str, str]:
+    return {
+        "stock_code": "NIFTY",
+        "expiry_display": "30-Jun-2026",
+        "expiry_date": "2026-06-30",
+        "right": right,
+        "strike_price": str(strike),
+        "ltp": ltp,
+        "best_bid_price": ltp,
+        "best_offer_price": ltp,
+        "total_buy_qty": "10",
+        "total_sell_qty": "12",
+        "open_interest": "5000",
+        "spot_price": "23946.25",
+        "open": ltp,
+        "high": ltp,
+        "low": ltp,
+        "previous_close": ltp,
+        "segment": cfg.NFO,
+    }
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="bhavcopy")
+@patch("icici_breeze_backend.app.services.reference_data.scrip_index.get_strikes", return_value=None)
+def test_fetch_chain_payload_routed_bhavcopy_with_sqlite_strikes(
+    _mock_get_strikes,
+    _mock_source,
+    monkeypatch,
+    tmp_path,
+):
+    """Router passes scrip-master strikes into Bhavcopy build when Redis index is empty."""
+    monkeypatch.setattr(cfg, "DATA_PATH", str(tmp_path) + "/")
+    monkeypatch.setattr(cfg, "SCRIP_DB", "scrips.sqlite3")
+    get_redis()
+
+    day = dt.date(2026, 6, 29)
+    publish_bhavcopy_rows(
+        [
+            _nifty_bhav_row(23900, cfg.CALL, "117.90"),
+            _nifty_bhav_row(23900, cfg.PUT, "50.35"),
+            _nifty_bhav_row(24000, cfg.CALL, "64.30"),
+            _nifty_bhav_row(24000, cfg.PUT, "96.45"),
+        ],
+        segment="nfo",
+        source_date=day,
+        source_url="http://example/nse",
+    )
+
+    proc = MagicMock()
+    proc.fetch_lot_size.return_value = 65
+    proc.fetch_qty_limits.return_value = None
+    proc.list_option_strikes.return_value = [23900, 24000]
+
+    payload = fetch_chain_payload_routed(proc, "u1", "NIFTY", cfg.NFO, "30-Jun-2026")
+    assert payload is not None
+    assert payload["quote_source"] == "bhavcopy"
+    assert payload["bhavcopy_date"] == "2026-06-29"
+    by_strike = {r["strike_price"]: r for r in payload["chain_rows"]}
+    assert by_strike[23900]["call"]["ltp"] == 117.90
+    proc._get_full_option_chain_icici_rest.assert_not_called()

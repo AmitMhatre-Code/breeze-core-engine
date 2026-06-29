@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
-import { SetupChecklistCard } from "@/components/help/SetupChecklistCard";
 import { InterpretationBadge } from "@/components/dashboard/InterpretationBadge";
 import {
   DashboardMetricSkeleton,
@@ -445,9 +444,6 @@ export default function DashboardPage() {
 
   return (
     <AppShell contentWidth="wide">
-      <div className="mb-4">
-        <SetupChecklistCard variant="dashboard" />
-      </div>
       <div className="grid min-w-0 gap-4 md:grid-cols-3">
           <div ref={marketTriggerRef} aria-hidden className="h-px w-full md:col-start-3" />
           <section

@@ -48,6 +48,7 @@ export function StrategyLegsPanel({
     hasPositiveLots: boolean;
     isFetching: boolean;
     netMargin: number | null;
+    marginBenefit?: number | null;
   };
   onExecute: () => void;
   executeDisabled: boolean;
@@ -81,8 +82,9 @@ export function StrategyLegsPanel({
                     <span className="inline-flex items-center gap-1">
                       Margin
                       <InfoPopover title="SPAN margin" ariaLabel="SPAN margin help">
-                        Approximate margin from the exchange SPAN file for the quantity
-                        entered.
+                        Portfolio SPAN from the exchange risk file (scenario scan
+                        with hedge benefit). Sell legs show standalone margin; buys
+                        are ₹0. Totals include net option value when spot is known.
                       </InfoPopover>
                     </span>
                   </th>
@@ -128,7 +130,7 @@ export function StrategyLegsPanel({
                               ),
                             )
                           }
-                          className={`${sb.tableInput} w-[8ch] max-w-[5.5rem] tabular-nums`}
+                          className={`${sb.tableInput} w-[10ch] min-w-[7rem] max-w-[8rem] tabular-nums`}
                         />
                       </td>
                       <td className="px-2 py-1.5">

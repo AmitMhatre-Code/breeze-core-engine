@@ -171,13 +171,16 @@ export function BasketLegsPanel({
                   : (l.premiumPerUnit ?? 0) * qtyU;
                 const legEntry = legMargins[l.id];
                 return (
-                  <tr key={l.id} className="app-table-row">
-                    <td className="max-w-[8rem] overflow-hidden px-2 py-1.5">
+                  <tr
+                    key={l.id}
+                    className="app-table-row relative z-0 [&:has([aria-expanded=true])]:z-[300]"
+                  >
+                    <td className="max-w-[8rem] px-2 py-1.5">
                       <StrikeSelectPill
                         strikes={strikes}
                         value={l.strike}
                         onChange={(strike) => onStrikeChange(l.id, strike)}
-                        busy={chainBusy}
+                        busy={chainBusy && strikes.length === 0}
                         layout="table"
                         hideLabel
                       />
@@ -208,7 +211,7 @@ export function BasketLegsPanel({
                             ),
                           )
                         }
-                        className={`${sb.tableInput} w-[8ch] max-w-[5.5rem] tabular-nums`}
+                        className={`${sb.tableInput} w-[10ch] min-w-[7rem] max-w-[8rem] tabular-nums`}
                       />
                     </td>
                     <td className="px-2 py-1.5">

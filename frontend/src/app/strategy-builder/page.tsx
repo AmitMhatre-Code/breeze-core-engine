@@ -41,9 +41,11 @@ import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
 import { premiumFromChainRow } from "@/lib/strategy-builder/chain-quote";
 import { expiryDisplayToYears, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import {
-  buildLegMarginsFromSheet,
+  buildLegMarginsFromPortfolio,
   computeNetSpanMargin,
   fetchSpanBaselineSheet,
+  fetchSpanPortfolioMargin,
+  portfolioMarginFromResponse,
 } from "@/lib/strategy-builder/span-baseline";
 import { proposedLegsToStrategyLegs } from "@/lib/strategy-builder/map-proposed-legs";
 import {
@@ -515,32 +517,106 @@ export default function StrategyBuilderPage() {
   });
 
   const spanSheet = spanBaselineQ.data;
-  const spanMargin = useMemo(
+
+  const portfolioMarginLegKey = useMemo(
+    () =>
+      JSON.stringify(
+        legsWithQtyForMargin.map((l) => [
+          l.id,
+          l.strike,
+          l.right,
+          l.side,
+          l.lots,
+        ]),
+      ),
+    [legsWithQtyForMargin],
+  );
+
+  const portfolioMarginQ = useQuery({
+    queryKey: [
+      "strategy-builder",
+      "span-portfolio-margin",
+      segmentExchange,
+      stockCode,
+      expiryDate,
+      portfolioMarginLegKey,
+      spot,
+      atmIv,
+    ],
+    queryFn: ({ signal }) =>
+      fetchSpanPortfolioMargin(
+        {
+          exchange_code: segmentExchange,
+          stock_code: stockCode.trim(),
+          expiry_date: expiryDate.trim(),
+          legs: legsWithQtyForMargin.map((l) => ({
+            strike_price: String(l.strike),
+            right: l.right,
+            action: l.side,
+            quantity: String(Math.round(l.lots * lotSize)),
+          })),
+          spot: spot!,
+          iv: atmIv,
+        },
+        signal,
+      ),
+    enabled:
+      Boolean(stockCode.trim() && expiryDate.trim()) &&
+      legsWithQtyForMargin.length > 0 &&
+      spot != null &&
+      spot > 0,
+    staleTime: 30_000,
+  });
+
+  const fallbackSpanMargin = useMemo(
     () => computeNetSpanMargin(spanSheet, legs, lotSize),
     [spanSheet, legs, lotSize],
   );
 
+  const spanMargin = useMemo(
+    () =>
+      portfolioMarginFromResponse(portfolioMarginQ.data, fallbackSpanMargin),
+    [portfolioMarginQ.data, fallbackSpanMargin],
+  );
+
   const legMargins = useMemo(
     () =>
-      buildLegMarginsFromSheet(
+      buildLegMarginsFromPortfolio(
         spanSheet,
         legs,
         lotSize,
-        spanBaselineQ.isFetching,
+        portfolioMarginQ.data?.Success ?? null,
+        spanBaselineQ.isFetching || portfolioMarginQ.isFetching,
       ),
-    [spanSheet, legs, lotSize, spanBaselineQ.isFetching],
+    [
+      spanSheet,
+      legs,
+      lotSize,
+      portfolioMarginQ.data,
+      spanBaselineQ.isFetching,
+      portfolioMarginQ.isFetching,
+    ],
   );
 
   const strategyBuilderMarginWarnings = useMemo(() => {
+    const warnings: string[] = [];
     if (
       spanSheet &&
       !spanSheet.found &&
       legsWithQtyForMargin.length > 0
     ) {
-      return ["Contract missing in Exchange Risk Baseline."];
+      warnings.push("Contract missing in Exchange Risk Baseline.");
     }
-    return [];
-  }, [spanSheet, legsWithQtyForMargin.length]);
+    const apiWarnings = portfolioMarginQ.data?.Success?.warnings ?? [];
+    for (const w of apiWarnings) {
+      if (w && !warnings.includes(w)) warnings.push(w);
+    }
+    return warnings;
+  }, [
+    spanSheet,
+    legsWithQtyForMargin.length,
+    portfolioMarginQ.data,
+  ]);
 
   const onRightChange = useCallback(
     (legId: string, right: OptionRight) => {
@@ -598,12 +674,15 @@ export default function StrategyBuilderPage() {
     const hasPositiveLots = legsWithQtyForMargin.length > 0;
     return {
       hasPositiveLots,
-      isFetching: spanBaselineQ.isFetching,
+      isFetching: spanBaselineQ.isFetching || portfolioMarginQ.isFetching,
       netMargin: hasPositiveLots ? spanMargin : null,
+      marginBenefit: portfolioMarginQ.data?.Success?.margin_benefit ?? null,
     };
   }, [
     legsWithQtyForMargin.length,
     spanBaselineQ.isFetching,
+    portfolioMarginQ.isFetching,
+    portfolioMarginQ.data,
     spanMargin,
   ]);
 
@@ -1156,9 +1235,12 @@ export default function StrategyBuilderPage() {
               showGreeks={showGreeks}
               onShowGreeksChange={setShowGreeks}
               spanMargin={spanMargin}
-              marginFetching={spanBaselineQ.isFetching}
+              marginFetching={spanBaselineQ.isFetching || portfolioMarginQ.isFetching}
               marginQtyStale={false}
-              onRefreshMargin={() => void spanBaselineQ.refetch()}
+              onRefreshMargin={() => {
+                void spanBaselineQ.refetch();
+                void portfolioMarginQ.refetch();
+              }}
               marginError={
                 spanBaselineQ.isError
                   ? String(spanBaselineQ.error ?? "SPAN baseline unavailable")

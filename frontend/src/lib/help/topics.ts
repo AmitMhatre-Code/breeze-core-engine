@@ -99,11 +99,11 @@ export const helpTopics: HelpTopic[] = [
   {
     id: "aggressive-limit",
     category: "orders",
-    title: "Aggressive limit (MKT) orders",
+    title: "Aggressive limit orders",
     summary:
       "ICICI derives the limit price from LTP within the exchange daily price band.",
     body: [
-      "Enable Aggressive limit or tap MKT on a leg. ICICI sets the limit from the last traded price (LTP) within the exchange daily price range.",
+      "Enable Aggressive limit or tap the lightning bolt on a leg. ICICI sets the limit from the last traded price (LTP) within the exchange daily price range.",
       "Buy orders use a higher price; sell orders use a lower price. You do not enter a manual limit.",
       "Orders may partially fill, remain pending, or be rejected depending on market conditions.",
     ],
@@ -161,7 +161,7 @@ export const helpTopics: HelpTopic[] = [
     body: [
       "Basket Order lets you pick buy/sell legs from the full option chain for one underlying and expiry.",
       "Simulate payoff and probability of profit before execution.",
-      "Each leg supports manual limit price or aggressive limit (MKT). Execute all legs in one confirm flow.",
+      "Each leg supports manual limit price or aggressive limit (lightning bolt). Execute all legs in one confirm flow.",
       "Use Strategy Builder instead when you want the app to propose strategies from margin, PoP, and risk parameters.",
     ],
     keywords: ["basket", "multi-leg", "legs"],

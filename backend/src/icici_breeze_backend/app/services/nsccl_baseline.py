@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import json
 import logging
 import math
 import re
@@ -34,6 +35,7 @@ _BASELINE_DB_COLUMNS = (
     "option_type",
     "margin_per_lot",
     "lot_size",
+    "risk_array",
     "source_file",
     "source_date",
     "source_version",
@@ -49,6 +51,7 @@ CREATE TABLE {name} (
     option_type TEXT NOT NULL,
     margin_per_lot REAL NOT NULL,
     lot_size INTEGER,
+    risk_array TEXT,
     source_file TEXT NOT NULL,
     source_date TEXT NOT NULL,
     source_version INTEGER NOT NULL,
@@ -68,16 +71,33 @@ def _baseline_strike_column_is_integer(conn: sqlite3.Connection) -> bool:
     return False
 
 
+_LEGACY_BASELINE_DB_COLUMNS = (
+    "exchange_code",
+    "short_name",
+    "expiry_date",
+    "strike_price",
+    "option_type",
+    "margin_per_lot",
+    "lot_size",
+    "source_file",
+    "source_date",
+    "source_version",
+    "refreshed_at",
+)
+
+
 def _migrate_exchange_margin_baseline_strike_to_real(conn: sqlite3.Connection) -> None:
     if not _baseline_strike_column_is_integer(conn):
         return
     _logger.info("Migrating exchange_margin_baseline.strike_price from INTEGER to REAL")
     conn.execute("ALTER TABLE exchange_margin_baseline RENAME TO exchange_margin_baseline_legacy")
     conn.execute(_EXCHANGE_MARGIN_BASELINE_DDL.format(name="exchange_margin_baseline"))
+    legacy_cols = ", ".join(_LEGACY_BASELINE_DB_COLUMNS)
+    new_cols = ", ".join(_LEGACY_BASELINE_DB_COLUMNS + ("risk_array",))
     conn.execute(
         f"""
-        INSERT INTO exchange_margin_baseline ({", ".join(_BASELINE_DB_COLUMNS)})
-        SELECT {", ".join(_BASELINE_DB_COLUMNS)}
+        INSERT INTO exchange_margin_baseline ({new_cols})
+        SELECT {legacy_cols}, NULL
         FROM exchange_margin_baseline_legacy
         """
     )
@@ -92,6 +112,19 @@ def _migrate_exchange_margin_baseline_strike_to_real(conn: sqlite3.Connection) -
     _logger.info("exchange_margin_baseline strike_price migration complete")
 
 
+def _baseline_has_risk_array_column(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute("PRAGMA table_info(exchange_margin_baseline)").fetchall()
+    return any(str(name) == "risk_array" for _cid, name, *_rest in rows)
+
+
+def _migrate_exchange_margin_baseline_add_risk_array(conn: sqlite3.Connection) -> None:
+    if _baseline_has_risk_array_column(conn):
+        return
+    _logger.info("Adding exchange_margin_baseline.risk_array column")
+    conn.execute("ALTER TABLE exchange_margin_baseline ADD COLUMN risk_array TEXT")
+    conn.commit()
+
+
 def ensure_exchange_margin_baseline_table() -> None:
     with _scrip_conn() as conn:
         conn.execute(_EXCHANGE_MARGIN_BASELINE_DDL.format(name="IF NOT EXISTS exchange_margin_baseline"))
@@ -103,6 +136,7 @@ def ensure_exchange_margin_baseline_table() -> None:
         )
         conn.commit()
         _migrate_exchange_margin_baseline_strike_to_real(conn)
+        _migrate_exchange_margin_baseline_add_risk_array(conn)
 
 
 def _scrip_conn() -> sqlite3.Connection:
@@ -305,6 +339,7 @@ def _ingest_span_xml_stream(
                 else:
                     missing_lot += 1
                 margin_per_lot = per_unit * (lot_size if lot_size and lot_size > 0 else 1)
+                risk_array_json = json.dumps(a_vals)
                 batch_rows.append(
                     (
                         exchange_code,
@@ -314,6 +349,7 @@ def _ingest_span_xml_stream(
                         option_type,
                         float(margin_per_lot),
                         lot_size,
+                        risk_array_json,
                         source_file,
                         source_date,
                         int(source_version),
@@ -326,8 +362,8 @@ def _ingest_span_xml_stream(
                         """
                         INSERT OR REPLACE INTO exchange_margin_baseline (
                             exchange_code, short_name, expiry_date, strike_price, option_type, margin_per_lot,
-                            lot_size, source_file, source_date, source_version, refreshed_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            lot_size, risk_array, source_file, source_date, source_version, refreshed_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         batch_rows,
                     )
@@ -352,8 +388,8 @@ def _ingest_span_xml_stream(
             """
             INSERT OR REPLACE INTO exchange_margin_baseline (
                 exchange_code, short_name, expiry_date, strike_price, option_type, margin_per_lot,
-                lot_size, source_file, source_date, source_version, refreshed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                lot_size, risk_array, source_file, source_date, source_version, refreshed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             batch_rows,
         )

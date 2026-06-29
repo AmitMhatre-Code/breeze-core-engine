@@ -1,6 +1,7 @@
 """SPAN baseline margin index in Redis with process-local mirror."""
 from __future__ import annotations
 
+import json
 import logging
 import math
 import sqlite3
@@ -46,6 +47,53 @@ def _right_to_option_type(right: str) -> str:
     return "PE"
 
 
+def _parse_risk_array(raw: Any) -> list[float] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        vals = [float(x) for x in raw if isinstance(x, (int, float))]
+        return vals if vals else None
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, list):
+            vals = [float(x) for x in parsed if isinstance(x, (int, float))]
+            return vals if vals else None
+    return None
+
+
+def _contract_entry(
+    margin_per_lot: float,
+    lot_size: int,
+    risk_array: list[float] | None = None,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "margin_per_lot": margin_per_lot,
+        "lot_size": lot_size,
+    }
+    if risk_array:
+        entry["risk_array"] = risk_array
+    return entry
+
+
+def strip_risk_arrays_from_sheet(contracts: dict[str, Any]) -> dict[str, dict[str, float | int]]:
+    """Public API shape: margin_per_lot and lot_size only."""
+    out: dict[str, dict[str, float | int]] = {}
+    for key, entry in contracts.items():
+        if not isinstance(entry, dict):
+            continue
+        try:
+            out[str(key)] = {
+                "margin_per_lot": float(entry.get("margin_per_lot")),
+                "lot_size": int(entry.get("lot_size") or 0),
+            }
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def span_baseline_row_count(exchange_code: str | None = None) -> int:
     try:
         with _scrip_conn() as conn:
@@ -72,8 +120,10 @@ def is_span_baseline_cached(exchange_code: str) -> bool:
 
 def publish_span_baseline_from_db(version: int | None = None) -> int:
     """Publish all SPAN baseline rows from SQLite to Redis. Returns version number."""
+    from icici_breeze_backend.app.services.nsccl_baseline import ensure_exchange_margin_baseline_table
     from icici_breeze_backend.app.services.reference_data.scrip_index import _next_version
 
+    ensure_exchange_margin_baseline_table()
     ver = version if version is not None else _next_version()
     sheets: dict[str, dict[str, dict[str, float | int]]] = {}
     meta_by_exchange: dict[str, dict[str, Any]] = {}
@@ -83,7 +133,7 @@ def publish_span_baseline_from_db(version: int | None = None) -> int:
             rows = conn.execute(
                 """
                 SELECT exchange_code, short_name, expiry_date, strike_price, option_type,
-                       margin_per_lot, lot_size, source_file, source_date
+                       margin_per_lot, lot_size, risk_array, source_file, source_date
                 FROM exchange_margin_baseline
                 """
             ).fetchall()
@@ -91,7 +141,7 @@ def publish_span_baseline_from_db(version: int | None = None) -> int:
         _logger.warning("SPAN baseline publish failed reading SQLite: %s", exc)
         return ver
 
-    for ex, short, expiry, strike, opt_type, mpl, ls, src_file, src_date in rows:
+    for ex, short, expiry, strike, opt_type, mpl, ls, risk_raw, src_file, src_date in rows:
         ex_u = str(ex or "").strip().upper()
         short_u = str(short or "").strip().upper()
         expiry_s = str(expiry or "").strip()
@@ -110,10 +160,12 @@ def publish_span_baseline_from_db(version: int | None = None) -> int:
             continue
 
         sheet_key = _sheet_local_key(ex_u, short_u, expiry_s)
-        sheets.setdefault(sheet_key, {})[_contract_key(strike_f, opt)] = {
-            "margin_per_lot": margin_per_lot,
-            "lot_size": lot_size,
-        }
+        risk_array = _parse_risk_array(risk_raw)
+        sheets.setdefault(sheet_key, {})[_contract_key(strike_f, opt)] = _contract_entry(
+            margin_per_lot,
+            lot_size,
+            risk_array,
+        )
         m = meta_by_exchange.setdefault(
             ex_u,
             {
@@ -189,8 +241,27 @@ def get_span_baseline_sheet(
     exchange_code: str,
     stock_code: str,
     expiry_display: str,
+    *,
+    include_risk_arrays: bool = False,
 ) -> dict[str, Any]:
     """Return margin contracts for one underlying expiry (Redis/local first, SQLite fallback)."""
+    sheet = _get_span_baseline_sheet_raw(exchange_code, stock_code, expiry_display)
+    if not sheet.get("found"):
+        return sheet
+    contracts = sheet.get("contracts") or {}
+    if not include_risk_arrays:
+        contracts = strip_risk_arrays_from_sheet(contracts)
+    return {
+        **sheet,
+        "contracts": contracts,
+    }
+
+
+def _get_span_baseline_sheet_raw(
+    exchange_code: str,
+    stock_code: str,
+    expiry_display: str,
+) -> dict[str, Any]:
     ex = str(exchange_code or cfg.NFO).strip().upper()
     expiry = str(expiry_display or "").strip()
     if not expiry:
@@ -218,7 +289,7 @@ def get_span_baseline_sheet(
                 "source_file": meta.get("source_file"),
             }
 
-    contracts = _load_sheet_from_sqlite(ex, stock_code, expiry, short_candidates)
+    contracts = _load_sheet_from_sqlite(ex, stock_code, expiry, short_candidates, include_risk_arrays=True)
     if contracts:
         return {
             "found": True,
@@ -234,7 +305,9 @@ def _load_sheet_from_sqlite(
     stock_code: str,
     expiry_display: str,
     short_candidates: tuple[str, ...] | list[str],
-) -> dict[str, dict[str, float | int]] | None:
+    *,
+    include_risk_arrays: bool = False,
+) -> dict[str, dict[str, Any]] | None:
     names = {str(s).strip().upper() for s in short_candidates if s}
     if not names:
         names = {scrip_short_name(stock_code)}
@@ -243,7 +316,7 @@ def _load_sheet_from_sqlite(
             placeholders = ",".join("?" for _ in names)
             rows = conn.execute(
                 f"""
-                SELECT strike_price, option_type, margin_per_lot, lot_size
+                SELECT strike_price, option_type, margin_per_lot, lot_size, risk_array
                 FROM exchange_margin_baseline
                 WHERE exchange_code = ? AND expiry_date = ? AND short_name IN ({placeholders})
                 """,
@@ -253,13 +326,16 @@ def _load_sheet_from_sqlite(
         return None
     if not rows:
         return None
-    out: dict[str, dict[str, float | int]] = {}
-    for strike, opt_type, mpl, ls in rows:
+    out: dict[str, dict[str, Any]] = {}
+    for strike, opt_type, mpl, ls, risk_raw in rows:
         try:
-            out[_contract_key(strike, str(opt_type))] = {
-                "margin_per_lot": float(mpl),
-                "lot_size": int(ls) if ls else 0,
-            }
+            lot_size = int(ls) if ls else 0
+            risk_array = _parse_risk_array(risk_raw) if include_risk_arrays else None
+            out[_contract_key(strike, str(opt_type))] = _contract_entry(
+                float(mpl),
+                lot_size,
+                risk_array,
+            )
         except (TypeError, ValueError):
             continue
     return out or None

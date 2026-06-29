@@ -133,7 +133,7 @@ def run_reference_data_load(*, force: bool = False, trigger_mode: str = "manual"
         _set_source("scrip", in_progress=True, progress_pct=10, message="Downloading ICICI scrip master")
         if getattr(cfg, "ICICI_BROKER_MODE", "live") != "mock":
             try:
-                processor().update_ICICImaster()
+                processor().update_ICICImaster(publish_scrip_index=False)
                 _set_source("scrip", progress_pct=80, message="Publishing scrip index to cache")
                 scrip_index.publish_scrip_index_from_db(version=batch_version)
                 scrip_rows = scrip_index.scrip_master_row_count()

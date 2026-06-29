@@ -172,6 +172,10 @@ const nextConfig = {
         destination: `${backendUpstream}/strategy-builder/span-baseline`,
       },
       {
+        source: "/strategy-builder/span-portfolio-margin",
+        destination: `${backendUpstream}/strategy-builder/span-portfolio-margin`,
+      },
+      {
         source: "/strategy-builder/margin",
         destination: `${backendUpstream}/strategy-builder/margin`,
       },

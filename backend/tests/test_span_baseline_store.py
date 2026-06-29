@@ -1,4 +1,5 @@
 """Tests for SPAN baseline Redis store."""
+import json
 import sqlite3
 
 import icici_breeze_backend.app.core.config as cfg
@@ -23,10 +24,22 @@ def _seed_baseline(tmp_path, monkeypatch) -> None:
         """
         INSERT OR REPLACE INTO exchange_margin_baseline (
             exchange_code, short_name, expiry_date, strike_price, option_type,
-            margin_per_lot, lot_size, source_file, source_date, source_version, refreshed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            margin_per_lot, lot_size, risk_array, source_file, source_date, source_version, refreshed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         """,
-        ("NFO", "NIFTY", "26-Jun-2026", 23500, "CE", 1000.0, 75, "test.xml", "20260626", 1),
+        (
+            "NFO",
+            "NIFTY",
+            "26-Jun-2026",
+            23500,
+            "CE",
+            1000.0,
+            75,
+            json.dumps([100.0] * 16),
+            "test.xml",
+            "20260626",
+            1,
+        ),
     )
     conn.commit()
     conn.close()
@@ -64,10 +77,22 @@ def test_fractional_strike_contract_key(monkeypatch, tmp_path):
         """
         INSERT OR REPLACE INTO exchange_margin_baseline (
             exchange_code, short_name, expiry_date, strike_price, option_type,
-            margin_per_lot, lot_size, source_file, source_date, source_version, refreshed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            margin_per_lot, lot_size, risk_array, source_file, source_date, source_version, refreshed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         """,
-        ("NFO", "BANKINDIA", "30-Jun-2026", 150.35, "PE", 500.0, 675, "test.xml", "20260625", 1),
+        (
+            "NFO",
+            "BANKINDIA",
+            "30-Jun-2026",
+            150.35,
+            "PE",
+            500.0,
+            675,
+            json.dumps([50.0] * 16),
+            "test.xml",
+            "20260625",
+            1,
+        ),
     )
     conn.commit()
     conn.close()

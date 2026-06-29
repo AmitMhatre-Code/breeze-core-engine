@@ -910,27 +910,14 @@ function PlaceOrderPageInner() {
                 />
               </label>
               <AggressiveLimitOrderField
-                id="place-order-aggressive-limit"
-                checked={aggressiveLimit}
-                onChange={(checked) => {
+                aggressive={aggressiveLimit}
+                price={price}
+                onAggressiveChange={(checked) => {
                   setAggressiveLimit(checked);
                   if (checked) setPrice("");
                 }}
+                onPriceChange={setPrice}
               />
-              {!aggressiveLimit ? (
-                <label className={sb.fieldLabel}>
-                  Limit price (₹)
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.05}
-                    className={sb.input}
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    placeholder="0"
-                  />
-                </label>
-              ) : null}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <button

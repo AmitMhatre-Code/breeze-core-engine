@@ -4,6 +4,24 @@ import { InfoPopover } from "@/components/strategy-builder/InfoPopover";
 import { aggressiveLimitPopoverParagraphs } from "@/lib/help/topic-content";
 import { sb } from "@/lib/strategy-builder/ui";
 
+function LightningBoltIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+    </svg>
+  );
+}
+
 export function LegAggressivePriceInput({
   aggressive,
   premiumPerUnit,
@@ -40,15 +58,16 @@ export function LegAggressivePriceInput({
         <button
           type="button"
           aria-pressed={aggressive}
-          aria-label={`${ariaLabel}. Market aggressive limit from LTP.`}
+          aria-label={`${ariaLabel}. Toggle aggressive limit from LTP.`}
+          title="Aggressive limit"
           onClick={() => onAggressiveChange(!aggressive)}
-          className={`rounded px-1.5 py-1 text-[10px] font-bold tracking-wide transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 ${
+          className={`rounded p-1 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 ${
             aggressive
               ? "border border-amber-400 bg-amber-100 text-amber-900 dark:border-amber-600 dark:bg-amber-950/60 dark:text-amber-300"
-              : `${sb.tableToggle} border`
+              : `${sb.tableToggle} border text-zinc-600 dark:text-zinc-300`
           }`}
         >
-          MKT
+          <LightningBoltIcon />
         </button>
         <InfoPopover
           title="Aggressive limit"

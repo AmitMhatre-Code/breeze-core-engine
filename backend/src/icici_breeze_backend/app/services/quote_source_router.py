@@ -310,6 +310,7 @@ def fetch_chain_payload_routed(
             exchange_code,
             lot_size=int(lot_size) if lot_size else None,
             freeze_quantity=freeze_quantity,
+            strikes=strikes,
         )
         if payload:
             if not payload.get("chain_rows") and strikes:

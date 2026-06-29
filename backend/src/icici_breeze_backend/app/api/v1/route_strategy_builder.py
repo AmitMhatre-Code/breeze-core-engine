@@ -30,6 +30,9 @@ from icici_breeze_backend.app.domain.strategy_builder import (
     StrategyBuilderMarginResponse,
     SpanBaselineContract,
     SpanBaselineSheetResponse,
+    SpanPortfolioMarginRequest,
+    SpanPortfolioMarginResponse,
+    SpanPortfolioMarginSuccess,
     StrategyBuilderUnderlyingsResponse,
 )
 from icici_breeze_backend.app.services.options_strategy_engine import run_propose_trades
@@ -117,6 +120,65 @@ async def get_span_baseline_sheet(
         contracts=contracts,
         source_date=raw.get("source_date"),
         source_file=raw.get("source_file"),
+    )
+
+
+@router.post("/span-portfolio-margin", response_model=SpanPortfolioMarginResponse)
+async def post_span_portfolio_margin(
+    body: SpanPortfolioMarginRequest,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    if not body.stock_code.strip() or not body.expiry_date.strip():
+        raise HTTPException(status_code=400, detail="stock_code and expiry_date required")
+    if body.spot is None or body.spot <= 0:
+        raise HTTPException(status_code=400, detail="spot is required for portfolio SPAN with NOV")
+
+    from icici_breeze_backend.app.services.options_strategy_engine.helpers import days_to_expiry
+    from icici_breeze_backend.app.services.reference_data.span_portfolio_scan import (
+        resolve_portfolio_span_margin,
+    )
+
+    time_years = body.time_years
+    if time_years is None:
+        time_years = max(1, days_to_expiry(body.expiry_date.strip())) / 365.0
+
+    margin_legs = [leg.model_dump() for leg in body.legs]
+    result = resolve_portfolio_span_margin(
+        body.exchange_code.strip() or cfg.NFO,
+        body.stock_code.strip(),
+        body.expiry_date.strip(),
+        margin_legs,
+        spot=float(body.spot),
+        time_years=float(time_years),
+        sigma=float(body.iv) if body.iv and body.iv > 0 else None,
+    )
+    AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderSpanPortfolioMargin")
+    if not result.get("found"):
+        return SpanPortfolioMarginResponse(
+            Status=200,
+            Error=None,
+            Success=SpanPortfolioMarginSuccess(
+                span_margin_required=None,
+                scanning_risk=result.get("scanning_risk"),
+                net_option_value=result.get("net_option_value"),
+                margin_benefit=result.get("margin_benefit"),
+                per_leg_standalone=result.get("per_leg_standalone") or {},
+                warnings=result.get("warnings") or [],
+            ),
+        )
+    return SpanPortfolioMarginResponse(
+        Status=200,
+        Error=None,
+        Success=SpanPortfolioMarginSuccess(
+            span_margin_required=result.get("span_margin_required"),
+            scanning_risk=result.get("scanning_risk"),
+            net_option_value=result.get("net_option_value"),
+            margin_benefit=result.get("margin_benefit"),
+            per_leg_standalone=result.get("per_leg_standalone") or {},
+            warnings=result.get("warnings") or [],
+        ),
     )
 
 
@@ -296,6 +358,9 @@ async def post_margin(
         legs,
         margin_source_override=body.margin_source,
         baseline_only=body.baseline_only,
+        spot=body.spot,
+        iv=body.iv,
+        time_years=body.time_years,
     )
     if data.get("Status") == 200 and "Success" in data and isinstance(data.get("Success"), dict):
         data["Success"]["margin_source"] = effective_margin_source

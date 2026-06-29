@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
 import { HelpLink } from "@/components/help/HelpLink";
-import { SetupChecklistCard } from "@/components/help/SetupChecklistCard";
-
 function SettingsCardHelp({ topicId }: { topicId: string }) {
   return (
     <p className="text-xs">
@@ -17,7 +15,6 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <div className="space-y-4">
-        <SetupChecklistCard variant="settings" />
         <section className="app-card space-y-3 p-4">
           <header className="flex items-center justify-between">
             <h2 className="app-text-title">Settings</h2>

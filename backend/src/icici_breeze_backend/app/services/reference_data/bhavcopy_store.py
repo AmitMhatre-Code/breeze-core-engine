@@ -526,15 +526,16 @@ def build_chain_from_bhavcopy(
     *,
     lot_size: int | None = None,
     freeze_quantity: int | None = None,
+    strikes: list[Strike] | None = None,
 ) -> dict[str, Any] | None:
-    strikes = get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
-    if not strikes:
+    strike_list = strikes if strikes else get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
+    if not strike_list:
         return None
     lot_val = int(lot_size or 0)
     calls: list[dict[str, Any]] = []
     puts: list[dict[str, Any]] = []
     spot_price: float | None = None
-    for strike in strikes:
+    for strike in strike_list:
         for right in (cfg.CALL, cfg.PUT):
             row = _lookup_bhav_row(stock_code, expiry_display, right, strike, exchange_code)
             if not row:

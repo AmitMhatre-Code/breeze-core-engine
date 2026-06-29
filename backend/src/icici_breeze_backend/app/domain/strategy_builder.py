@@ -23,6 +23,9 @@ class StrategyBuilderMarginRequest(BaseModel):
     legs: List[StrategyBuilderLegIn] = Field(min_length=1, max_length=12)
     margin_source: Optional[Literal["breeze_api", "exchange_baseline"]] = None
     baseline_only: bool = False
+    spot: Optional[float] = None
+    iv: Optional[float] = None
+    time_years: Optional[float] = None
 
 
 class StrategyBuilderExecuteLeg(StrategyBuilderLegIn):
@@ -77,3 +80,35 @@ class SpanBaselineSheetResponse(BaseModel):
     contracts: dict[str, SpanBaselineContract] = Field(default_factory=dict)
     source_date: Optional[str] = None
     source_file: Optional[str] = None
+
+
+class SpanPortfolioMarginLeg(BaseModel):
+    strike_price: str
+    right: Literal["Call", "Put"]
+    action: Literal["Buy", "Sell"]
+    quantity: str
+
+
+class SpanPortfolioMarginRequest(BaseModel):
+    exchange_code: str = "NFO"
+    stock_code: str
+    expiry_date: str
+    legs: List[SpanPortfolioMarginLeg] = Field(min_length=1, max_length=12)
+    spot: Optional[float] = None
+    iv: Optional[float] = None
+    time_years: Optional[float] = None
+
+
+class SpanPortfolioMarginSuccess(BaseModel):
+    span_margin_required: Optional[float] = None
+    scanning_risk: Optional[float] = None
+    net_option_value: Optional[float] = None
+    margin_benefit: Optional[float] = None
+    per_leg_standalone: dict[str, float] = Field(default_factory=dict)
+    warnings: List[str] = Field(default_factory=list)
+
+
+class SpanPortfolioMarginResponse(BaseModel):
+    Status: int
+    Error: Optional[str] = None
+    Success: Optional[SpanPortfolioMarginSuccess] = None

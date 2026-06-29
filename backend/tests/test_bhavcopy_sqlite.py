@@ -1,5 +1,6 @@
 """Tests for bhavcopy SQLite persistence."""
 import datetime as dt
+from unittest.mock import patch
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.redis_client import get_redis
@@ -104,3 +105,58 @@ def test_persist_fractional_strikes_no_collision(monkeypatch, tmp_path):
     loaded = load_bhavcopy_rows_from_db("nfo")
     strikes = sorted(r["strike_price"] for r in loaded)
     assert strikes == ["150", "150.35"]
+
+
+def _nifty_30jun_row(strike: int | float, right: str, ltp: str) -> dict[str, str]:
+    return {
+        "stock_code": "NIFTY",
+        "expiry_display": "30-Jun-2026",
+        "expiry_date": "2026-06-30",
+        "right": right,
+        "strike_price": str(strike),
+        "ltp": ltp,
+        "best_bid_price": ltp,
+        "best_offer_price": ltp,
+        "total_buy_qty": "10",
+        "total_sell_qty": "12",
+        "open_interest": "5000",
+        "spot_price": "23946.25",
+        "open": ltp,
+        "high": ltp,
+        "low": ltp,
+        "previous_close": ltp,
+        "segment": cfg.NFO,
+    }
+
+
+@patch("icici_breeze_backend.app.services.reference_data.bhavcopy_store.get_strikes", return_value=None)
+def test_build_chain_from_bhavcopy_uses_passed_strikes(mock_get_strikes, monkeypatch, tmp_path):
+    """Bhavcopy chain must not depend on Redis scrip strikes when caller passes a list."""
+    monkeypatch.setattr(cfg, "DATA_PATH", str(tmp_path) + "/")
+    monkeypatch.setattr(cfg, "SCRIP_DB", "scrips.sqlite3")
+    get_redis()
+
+    day = dt.date(2026, 6, 29)
+    rows = [
+        _nifty_30jun_row(23900, cfg.CALL, "117.90"),
+        _nifty_30jun_row(23900, cfg.PUT, "50.35"),
+        _nifty_30jun_row(24000, cfg.CALL, "64.30"),
+        _nifty_30jun_row(24000, cfg.PUT, "96.45"),
+    ]
+    publish_bhavcopy_rows(rows, segment="nfo", source_date=day, source_url="http://example/nse")
+
+    from icici_breeze_backend.app.services.reference_data.bhavcopy_store import build_chain_from_bhavcopy
+
+    payload = build_chain_from_bhavcopy(
+        "NIFTY",
+        "30-Jun-2026",
+        cfg.NFO,
+        strikes=[23900, 24000],
+    )
+    assert payload is not None
+    assert payload["quote_source"] == "bhavcopy"
+    assert payload["bhavcopy_date"] == "2026-06-29"
+    by_strike = {r["strike_price"]: r for r in payload["chain_rows"]}
+    assert by_strike[23900]["call"]["ltp"] == 117.90
+    assert by_strike[24000]["put"]["ltp"] == 96.45
+    mock_get_strikes.assert_not_called()

@@ -65,4 +65,29 @@ export function formatSourceFileDate(input: string | null | undefined): string {
   return s;
 }
 
+const IST_TIME_ZONE = "Asia/Kolkata";
+const IST_LOCALE = "en-IN";
+
+function parseApiDateTime(raw: string): Date | null {
+  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const d = new Date(normalized);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** API ISO datetime → `29 Jun 2026, 8:52 pm IST`. */
+export function formatApiDateTime(raw: string | null | undefined): string {
+  if (!raw) return "—";
+  try {
+    const d = parseApiDateTime(raw);
+    if (!d) return raw;
+    return `${d.toLocaleString(IST_LOCALE, {
+      timeZone: IST_TIME_ZONE,
+      dateStyle: "medium",
+      timeStyle: "short",
+    })} IST`;
+  } catch {
+    return raw;
+  }
+}
+
 export { MONTH_SHORT };

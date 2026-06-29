@@ -7,7 +7,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { HelpLink } from "@/components/help/HelpLink";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
-import { formatSourceFileDate } from "@/lib/format-iso-date";
+import { formatApiDateTime, formatSourceFileDate } from "@/lib/format-iso-date";
 
 type IngestHistoryItem = {
   id: string;
@@ -141,6 +141,8 @@ export default function ReferenceDataLoadsPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [marginDraft, setMarginDraft] = useState<"breeze_api" | "exchange_baseline" | null>(null);
+  const [showFullHistory, setShowFullHistory] = useState(false);
 
   const q = useQuery({
     queryKey: ["settings", "reference-data-loads"],
@@ -157,7 +159,15 @@ export default function ReferenceDataLoadsPage() {
   const marginSaveMut = useMutation({
     mutationFn: (margin_source: "breeze_api" | "exchange_baseline") =>
       apiClient.post("/api/settings/margin-source", { margin_source }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["settings", "margin-source"] }),
+    onSuccess: (_data, margin_source) => {
+      setMarginDraft(null);
+      qc.setQueryData<MarginSourceData>(["settings", "margin-source"], (old) =>
+        old ? { ...old, margin_source } : { margin_source },
+      );
+    },
+    onError: () => {
+      setMarginDraft(null);
+    },
   });
 
   const server = q.data;
@@ -261,13 +271,24 @@ export default function ReferenceDataLoadsPage() {
 
   const refreshing = Boolean(server?.refresh_in_progress);
 
-  const useExchangeBaseline = marginQ.data?.margin_source === "exchange_baseline";
-  const marginToggleDisabled =
-    marginSaveMut.isPending || marginQ.isLoading || !marginQ.data;
+  const marginSource = marginDraft ?? marginQ.data?.margin_source ?? "breeze_api";
+  const useExchangeBaseline = marginSource === "exchange_baseline";
+  const marginToggleDisabled = marginQ.isLoading && !marginQ.data;
 
   const bseSpanStatusText = server?.bse_span_source_date
     ? `Data date: ${formatSourceFileDate(server.bse_span_source_date)}`
     : "Not loaded — upload required";
+
+  const ingestHistory = server?.ingest_history ?? [];
+  const displayedIngestHistory = useMemo(() => {
+    if (showFullHistory) return ingestHistory;
+    const seen = new Set<string>();
+    return ingestHistory.filter((row) => {
+      if (seen.has(row.kind)) return false;
+      seen.add(row.kind);
+      return true;
+    });
+  }, [ingestHistory, showFullHistory]);
 
   return (
     <AppShell>
@@ -348,16 +369,12 @@ export default function ReferenceDataLoadsPage() {
                   disabled={marginToggleDisabled}
                   onChange={(next) => {
                     const nextSource = next ? "exchange_baseline" : "breeze_api";
-                    if (marginQ.data?.margin_source === nextSource) return;
+                    if (marginSource === nextSource || marginSaveMut.isPending) return;
+                    setMarginDraft(nextSource);
                     marginSaveMut.mutate(nextSource);
                   }}
                 />
               </div>
-              {marginSaveMut.isPending && (
-                <p className="text-xs app-text-muted border-t border-zinc-100 pt-2 dark:border-zinc-800">
-                  Saving margin source…
-                </p>
-              )}
             </div>
 
             <div className="flex flex-wrap gap-3">
@@ -503,31 +520,79 @@ export default function ReferenceDataLoadsPage() {
             </div>
 
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold">Ingest history</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-zinc-200 dark:border-zinc-700">
-                      <th className="py-2 text-left font-medium">Source</th>
-                      <th className="py-2 text-left font-medium">File date</th>
-                      <th className="py-2 text-left font-medium">Rows</th>
-                      <th className="py-2 text-left font-medium">Status</th>
-                      <th className="py-2 text-left font-medium">Ingested</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(server.ingest_history ?? []).map((row) => (
-                      <tr key={row.id} className="border-b border-zinc-100 dark:border-zinc-800">
-                        <td className="py-2">{row.display_name}</td>
-                        <td className="py-2">{formatSourceFileDate(row.source_file_date)}</td>
-                        <td className="py-2">{row.row_count}</td>
-                        <td className="py-2">{row.ok ? "OK" : "Failed"}</td>
-                        <td className="py-2">{row.ingested_at}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="space-y-0.5">
+                  <h3 className="text-sm font-semibold">Ingest history</h3>
+                  <p className="text-xs app-text-muted">
+                    {showFullHistory
+                      ? `All ingest events (${ingestHistory.length})`
+                      : "Latest ingest per source"}
+                  </p>
+                </div>
+                {ingestHistory.length > 0 ? (
+                  <button
+                    type="button"
+                    className="app-link text-xs"
+                    onClick={() => setShowFullHistory((prev) => !prev)}
+                  >
+                    {showFullHistory
+                      ? "Show latest only"
+                      : `Show all history (${ingestHistory.length})`}
+                  </button>
+                ) : null}
               </div>
+              {ingestHistory.length === 0 ? (
+                <p className="text-xs app-text-muted">No ingest history yet.</p>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-zinc-200/90 dark:border-zinc-800">
+                  <table className="min-w-full text-left text-sm">
+                    <thead className="bg-zinc-50/90 text-xs uppercase tracking-wide text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-400">
+                      <tr>
+                        <th className="px-3 py-2 font-medium whitespace-nowrap">Source</th>
+                        <th className="px-3 py-2 font-medium whitespace-nowrap">File date</th>
+                        <th className="px-3 py-2 text-right font-medium whitespace-nowrap">Rows</th>
+                        <th className="px-3 py-2 font-medium whitespace-nowrap">Status</th>
+                        <th className="px-3 py-2 font-medium whitespace-nowrap">Ingested</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200/80 dark:divide-zinc-800">
+                      {displayedIngestHistory.map((row) => (
+                        <tr key={row.id}>
+                          <td className="px-3 py-2 whitespace-nowrap">{row.display_name}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {formatSourceFileDate(row.source_file_date)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                            {row.row_count.toLocaleString("en-IN")}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <div className="space-y-1">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                  row.ok
+                                    ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
+                                    : "bg-red-500/15 text-red-800 dark:text-red-200"
+                                }`}
+                              >
+                                {row.ok ? "OK" : "Failed"}
+                              </span>
+                              {!row.ok && row.notes ? (
+                                <p className="max-w-xs text-xs app-text-muted">{row.notes}</p>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td
+                            className="px-3 py-2 tabular-nums whitespace-nowrap"
+                            title={row.ingested_at}
+                          >
+                            {formatApiDateTime(row.ingested_at)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </>
         )}

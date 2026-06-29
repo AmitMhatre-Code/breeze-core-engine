@@ -444,6 +444,53 @@ class processor():
         except Exception:
             return MARGIN_SOURCE_BREEZE
 
+    def _portfolio_baseline_span_margin(
+        self,
+        exchange_code: str,
+        legs: list,
+        *,
+        spot: float | None = None,
+        iv: float | None = None,
+        time_years: float | None = None,
+    ) -> dict[str, Any]:
+        """Portfolio SPAN from exchange baseline when every leg resolves with risk arrays."""
+        from icici_breeze_backend.app.services.reference_data.span_portfolio_scan import (
+            resolve_portfolio_span_margin,
+        )
+
+        if not legs:
+            return {"found": False}
+        stock_code = str(legs[0].get("stock_code") or "").strip()
+        expiry_raw = str(legs[0].get("expiry_date") or "").strip()
+        if not stock_code or not expiry_raw:
+            return {"found": False}
+        if "T" in expiry_raw:
+            expiry_display = _expiry_api_to_display(expiry_raw)
+        else:
+            expiry_display = expiry_raw
+        for leg in legs[1:]:
+            sc = str(leg.get("stock_code") or "").strip()
+            ed = str(leg.get("expiry_date") or "").strip()
+            if "T" in ed:
+                ed = _expiry_api_to_display(ed)
+            if sc != stock_code or ed != expiry_display:
+                return {"found": False}
+        if time_years is None and expiry_display:
+            from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
+                days_to_expiry,
+            )
+
+            time_years = max(1, days_to_expiry(expiry_display)) / 365.0
+        return resolve_portfolio_span_margin(
+            exchange_code,
+            stock_code,
+            expiry_display,
+            legs,
+            spot=spot,
+            time_years=time_years,
+            sigma=iv,
+        )
+
     def _resolve_leg_margin_with_source(
         self,
         user_id: str,
@@ -2580,7 +2627,7 @@ class processor():
                 return p
         return direct
 
-    def update_ICICImaster(self):
+    def update_ICICImaster(self, *, publish_scrip_index: bool = True):
         url = cfg.ICICI_MASTERFILE_URL
         output_path = cfg.DATA_PATH
         temp_zip_path = os.path.join(output_path, "temp_icici_master.zip")
@@ -2633,12 +2680,13 @@ class processor():
                     self.load_scrip_master(target_path, exchange_code=exchange_code)
                 else:
                     _logger.warning("Scrip master file %s not found in ZIP", scrip_filename)
-            try:
-                from icici_breeze_backend.app.services.reference_data.scrip_index import publish_scrip_index_from_db
+            if publish_scrip_index:
+                try:
+                    from icici_breeze_backend.app.services.reference_data.scrip_index import publish_scrip_index_from_db
 
-                publish_scrip_index_from_db()
-            except Exception as exc:
-                _logger.warning("Scrip index publish failed after master load: %s", exc)
+                    publish_scrip_index_from_db()
+                except Exception as exc:
+                    _logger.warning("Scrip index publish failed after master load: %s", exc)
         except requests.RequestException as e:
             _logger.warning("Error downloading ICICI master: %s", e, exc_info=True)
         except zipfile.BadZipFile as e:
@@ -3215,6 +3263,9 @@ class processor():
         *,
         margin_source_override: str | None = None,
         baseline_only: bool = False,
+        spot: float | None = None,
+        iv: float | None = None,
+        time_years: float | None = None,
         audit: "StrategyBuilderAuditSession | None" = None,
         audit_context: dict[str, Any] | None = None,
         audit_rationale: str | None = None,
@@ -3308,6 +3359,31 @@ class processor():
                 },
             }
         if can_use_baseline and not margin_input:
+            portfolio_margin = self._portfolio_baseline_span_margin(
+                exchange_code,
+                legs,
+                spot=spot,
+                iv=iv,
+                time_years=time_years,
+            )
+            if portfolio_margin.get("found"):
+                success: dict[str, Any] = {
+                    "span_margin_required": portfolio_margin.get("span_margin_required"),
+                    "margin_source": MARGIN_SOURCE_EXCHANGE,
+                    "scanning_risk": portfolio_margin.get("scanning_risk"),
+                    "net_option_value": portfolio_margin.get("net_option_value"),
+                    "margin_benefit": portfolio_margin.get("margin_benefit"),
+                }
+                if warnings:
+                    success["warnings"] = warnings
+                scan_warnings = portfolio_margin.get("warnings") or []
+                if scan_warnings:
+                    success.setdefault("warnings", [])
+                    if isinstance(success["warnings"], list):
+                        success["warnings"].extend(
+                            {"type": "portfolio_span", "message": w} for w in scan_warnings
+                        )
+                return {"Status": 200, "Error": "", "Success": success}
             return {
                 "Status": 200,
                 "Error": "",
