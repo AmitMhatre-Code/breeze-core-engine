@@ -20,6 +20,7 @@ from icici_breeze_backend.app.api.v1 import route_dev_mock
 from icici_breeze_backend.app.api.v1 import route_deployment
 from icici_breeze_backend.app.api.v1 import route_terms
 from icici_breeze_backend.app.api.v1 import route_market_data
+from icici_breeze_backend.app.api.v1 import route_login_disclosure
 
 v1_router = APIRouter()
 
