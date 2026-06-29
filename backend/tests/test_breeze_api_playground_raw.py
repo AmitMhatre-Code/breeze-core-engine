@@ -60,12 +60,11 @@ def test_is_breeze_invoke_response_ok_string_exception():
     assert is_breeze_invoke_response_ok({"Status": 400, "Error": "bad"}) is False
 
 
-def test_playground_subscribe_empty_strike_returns_verbatim_icici_error(monkeypatch):
+def test_playground_subscribe_empty_strike_passthrough_icici_response(monkeypatch):
+    """ICICI SDK may return success even when strike_price is empty (live playground behaviour)."""
     sdk = MagicMock()
     sdk.ws_connect.return_value = None
-    sdk.subscribe_feeds.return_value = (
-        "Exception while subscribing to feeds Strike Price cannot be empty for Product-Type 'Options'."
-    )
+    sdk.subscribe_feeds.return_value = {"message": "Stock NIFTY subscribed successfully"}
 
     proc = MagicMock()
     proc.get_session_breeze.return_value = sdk
@@ -83,9 +82,9 @@ def test_playground_subscribe_empty_strike_returns_verbatim_icici_error(monkeypa
         },
     )
 
-    assert out["ok"] is False
-    assert "Strike Price cannot be empty" in str(out.get("response"))
-    assert out["icici_command"]["sdk_method"] == "subscribe_feeds"
+    assert out["ok"] is True
+    assert out["response"] == {"message": "Stock NIFTY subscribed successfully"}
+    assert out["icici_command"]["sdk_args"]["strike_price"] == ""
     sdk.subscribe_feeds.assert_called_once()
 
 
