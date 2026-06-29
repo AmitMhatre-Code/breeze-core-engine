@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { HelpLink } from "@/components/help/HelpLink";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
 
@@ -94,6 +95,9 @@ export default function ApiUsageSettingsPage() {
         </Link>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-xl app-text-heading">API Usage</h2>
+          <HelpLink topicId="api-usage-limits" className="text-xs">
+            Help
+          </HelpLink>
           <label className="text-xs text-zinc-600 dark:text-zinc-400">
             Days
             <div className="relative ml-2 inline-block">

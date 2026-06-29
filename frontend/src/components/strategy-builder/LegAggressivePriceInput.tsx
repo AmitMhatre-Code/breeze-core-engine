@@ -1,16 +1,8 @@
 "use client";
 
 import { InfoPopover } from "@/components/strategy-builder/InfoPopover";
+import { aggressiveLimitPopoverParagraphs } from "@/lib/help/topic-content";
 import { sb } from "@/lib/strategy-builder/ui";
-
-const AGGRESSIVE_HELP = (
-  <>
-    ICICI derives the limit price from the last traded price (LTP), within
-    exchange daily price range. Buy orders use a higher price; sell orders use a
-    lower price. Orders may partially fill, remain pending, or be rejected
-    depending on market conditions.
-  </>
-);
 
 export function LegAggressivePriceInput({
   aggressive,
@@ -25,6 +17,8 @@ export function LegAggressivePriceInput({
   onAggressiveChange: (checked: boolean) => void;
   onPriceChange: (premiumPerUnit: number | undefined) => void;
 }) {
+  const paragraphs = aggressiveLimitPopoverParagraphs();
+
   return (
     <div className="flex items-center gap-1">
       <input
@@ -59,8 +53,11 @@ export function LegAggressivePriceInput({
         <InfoPopover
           title="Aggressive limit"
           ariaLabel="Aggressive limit help"
+          learnMoreTopicId="aggressive-limit"
         >
-          {AGGRESSIVE_HELP}
+          {paragraphs.map((p, i) => (
+            <p key={i}>{p}</p>
+          ))}
         </InfoPopover>
       </div>
     </div>

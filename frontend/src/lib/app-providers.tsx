@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { HelpProvider } from "@/lib/help/help-context";
 import { LicenseRestrictionProvider } from "@/components/license/LicenseRestrictionProvider";
 import { LoginDisclosureProvider } from "@/components/login-disclosure/LoginDisclosureProvider";
 import { QueryProvider } from "@/lib/query-client";
@@ -10,13 +11,15 @@ import { RateLimitCountdownProvider } from "@/components/order/RateLimitCountdow
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <QueryProvider>
-      <LicenseRestrictionProvider>
-        <LoginDisclosureProvider>
-          <RateLimitCountdownProvider>
-            <OrderConfirmProvider>{children}</OrderConfirmProvider>
-          </RateLimitCountdownProvider>
-        </LoginDisclosureProvider>
-      </LicenseRestrictionProvider>
+      <HelpProvider>
+        <LicenseRestrictionProvider>
+          <LoginDisclosureProvider>
+            <RateLimitCountdownProvider>
+              <OrderConfirmProvider>{children}</OrderConfirmProvider>
+            </RateLimitCountdownProvider>
+          </LoginDisclosureProvider>
+        </LicenseRestrictionProvider>
+      </HelpProvider>
     </QueryProvider>
   );
 }

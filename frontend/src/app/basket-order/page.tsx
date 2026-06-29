@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { HelpLink } from "@/components/help/HelpLink";
 import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { BasketLegsPanel } from "@/components/basket-order/BasketLegsPanel";
@@ -344,7 +345,10 @@ export default function BasketOrderPage() {
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
               Build a multi-leg option basket, simulate payoff, and execute all
-              legs at once.
+              legs at once.{" "}
+              <HelpLink topicId="basket-order" className="text-sm">
+                Learn more
+              </HelpLink>
             </p>
           </header>
 

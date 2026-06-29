@@ -1,15 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { HelpLink } from "@/components/help/HelpLink";
 
 type Props = {
   title?: string;
   children: ReactNode;
   /** Accessible label for the trigger button when title is absent. */
   ariaLabel?: string;
+  /** Opens full help topic from the popover footer. */
+  learnMoreTopicId?: string;
 };
 
-export function InfoPopover({ title, children, ariaLabel }: Props) {
+export function InfoPopover({ title, children, ariaLabel, learnMoreTopicId }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -63,6 +66,13 @@ export function InfoPopover({ title, children, ariaLabel }: Props) {
             </p>
           ) : null}
           {children}
+          {learnMoreTopicId ? (
+            <p className="mt-2 border-t border-zinc-100 pt-2 dark:border-zinc-700">
+              <HelpLink topicId={learnMoreTopicId} className="text-[11px]">
+                Learn more
+              </HelpLink>
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>

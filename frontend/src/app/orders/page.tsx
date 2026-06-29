@@ -12,6 +12,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
+import { HelpLink } from "@/components/help/HelpLink";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import type { ExecutionPreviewLeg } from "@/components/order/OrderExecutionConfirmDialog";
 import { OrderBookDatePopover } from "@/components/order/OrderBookDatePopover";
@@ -677,13 +678,22 @@ function OrdersBody() {
       </Suspense>
 
       <section className="app-card min-w-0 space-y-3 p-4">
-        <header className="flex items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-            Parked Execution
-          </h2>
-          <span className="app-text-muted text-xs">
-            Edit qty/price before execute
-          </span>
+        <header className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+              Parked Execution
+            </h2>
+            <span className="app-text-muted text-xs">
+              Edit qty/price before execute
+            </span>
+          </div>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            Orders placed when the market is closed are saved here until you
+            execute them to ICICI.{" "}
+            <HelpLink topicId="parked-orders" className="text-sm">
+              How parking works
+            </HelpLink>
+          </p>
         </header>
         {parkedQuery.isLoading ? (
           <div className="app-card-muted space-y-2 border-dashed p-4">
@@ -700,7 +710,12 @@ function OrdersBody() {
           </div>
         ) : parkedRows.length === 0 ? (
           <div className="app-card-muted border-dashed p-4 text-sm app-text-muted">
-            No parked orders.
+            No parked orders. After-hours placements from Place Order, Basket
+            Order, or Strategy Builder appear here for execution when the market
+            opens.{" "}
+            <HelpLink topicId="parked-orders" className="text-sm">
+              Learn more
+            </HelpLink>
           </div>
         ) : (
           <div className="space-y-3">

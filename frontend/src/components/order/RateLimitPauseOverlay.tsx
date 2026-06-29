@@ -1,5 +1,7 @@
 "use client";
 
+import { HelpLink } from "@/components/help/HelpLink";
+
 /** Full-screen overlay while waiting out an ICICI 429 rate limit. */
 export function RateLimitPauseOverlay(props: {
   secondsRemaining: number;
@@ -24,7 +26,10 @@ export function RateLimitPauseOverlay(props: {
         {secondsRemaining}s
       </div>
       <p className="max-w-xs text-xs text-white/80 dark:text-zinc-400">
-        Pausing before retrying. You can change the wait duration under Settings → API Usage.
+        Pausing before retrying. You can change the wait duration under Settings → API Usage.{" "}
+        <HelpLink topicId="rate-limit-429" className="text-xs text-white/90 dark:text-zinc-300">
+          Why?
+        </HelpLink>
       </p>
     </div>
   );

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { HelpLink } from "@/components/help/HelpLink";
 import { DatePicker } from "@/components/ui/DatePicker";
 import { Modal } from "@/components/ui/Modal";
 import {
@@ -138,7 +139,10 @@ export default function ExchangeCalendarSettingsPage() {
           <h2 className="text-xl app-text-heading">Exchange Calendar</h2>
           <p className="app-text-muted text-sm">
             Holidays and regular session hours used for after-hours order parking.
-            Weekends are always non-trading.
+            Weekends are always non-trading.{" "}
+            <HelpLink topicId="exchange-calendar" className="text-sm">
+              Help
+            </HelpLink>
           </p>
           {data ? (
             <p className="text-xs text-zinc-500">

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MarkdownContent } from "@/components/markdown/MarkdownContent";
+import { HelpLink } from "@/components/help/HelpLink";
 import { Modal } from "@/components/ui/Modal";
 
 const SCROLL_THRESHOLD_PX = 32;
@@ -118,7 +119,10 @@ export function LoginDisclosureDialog({
           id="login-disclosure-scroll-hint"
           className="mb-3 text-xs leading-relaxed text-zinc-500"
         >
-          You must read and acknowledge the risk disclosure before using Breeze Modern.
+          You must read and acknowledge the risk disclosure before using Breeze Modern.{" "}
+          <HelpLink topicId="risk-disclosure-login" className="text-zinc-400">
+            Why every login?
+          </HelpLink>
         </p>
         <div className="flex flex-col items-end gap-2">
           <button

@@ -16,7 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import breezeMark from "@/app/android-chrome-192x192.png";
 import { ApiUsageWarningDialog } from "@/components/api-usage/ApiUsageWarningDialog";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
-import { KeyboardShortcutsProvider } from "@/components/keyboard/KeyboardShortcutsProvider";
+import { useHelp } from "@/lib/help/help-context";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -79,6 +79,7 @@ export function AppShell({
 
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
 
+  const { openHelp } = useHelp();
   const { licenseStatus, contactSalesMailto } = useLicenseRestrictions();
 
   const homeQ = useQuery({
@@ -155,7 +156,6 @@ export function AppShell({
   const latestVersionLabel = formatAppVersionLabel(getLatestRelease()?.version);
 
   return (
-    <KeyboardShortcutsProvider>
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
       <a
         href="#main-content"
@@ -288,6 +288,16 @@ export function AppShell({
             />
             <button
               type="button"
+              onClick={() => openHelp()}
+              className="inline-flex min-h-11 min-w-9 shrink-0 items-center justify-center rounded-md px-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 sm:min-h-9 sm:min-w-0 sm:px-2 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+              aria-haspopup="dialog"
+              aria-label="Open help"
+              title="Help (?)"
+            >
+              Help
+            </button>
+            <button
+              type="button"
               onClick={() => setChangelogOpen(true)}
               className="inline-flex min-h-11 min-w-9 shrink-0 items-center justify-center truncate rounded-md px-1.5 text-xs font-medium text-sky-700 underline-offset-2 hover:underline sm:min-h-9 sm:min-w-0 sm:px-2 dark:text-sky-400"
               aria-haspopup="dialog"
@@ -409,7 +419,6 @@ export function AppShell({
         </main>
       </div>
     </div>
-    </KeyboardShortcutsProvider>
   );
 }
 

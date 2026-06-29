@@ -13,6 +13,7 @@ import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { runBreakOrderChunks } from "@/lib/icici-rate-limit-flow";
 import { fetchMarketStatus } from "@/lib/market-status";
 import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
+import { HelpLink } from "@/components/help/HelpLink";
 import { createParkedOrders, deleteParkedOrdersMany, patchParkedOrder } from "@/lib/parked-orders";
 import { randomUuid } from "@/lib/random-uuid";
 import { sb } from "@/lib/strategy-builder/ui";
@@ -468,7 +469,10 @@ export function OrderExecutionConfirmDialog({
             >
               Orders
             </Link>{" "}
-            page and execute your parked orders once the market opens.
+            page and execute your parked orders once the market opens.{" "}
+            <HelpLink topicId="parked-orders" className="text-sm text-amber-900 dark:text-amber-50">
+              Help
+            </HelpLink>
           </div>
         ) : null}
 

@@ -1,4 +1,5 @@
 import type { ChainSuccess, QuoteMeta, QuoteSource } from "@/lib/strategy-builder/types";
+import { quoteSourceDetailLine } from "@/lib/help/topic-content";
 
 const VALID_SOURCES: QuoteSource[] = ["websocket", "bhavcopy", "icici_api"];
 
@@ -40,13 +41,11 @@ export function formatQuoteSourceLabel(meta: QuoteMeta): string {
 export function formatQuoteSourceDetail(meta: QuoteMeta): string {
   switch (meta.quote_source) {
     case "websocket":
-      return "Prices and depth are streamed from the ICICI Breeze WebSocket during market hours. Values refresh automatically while you stay on this page.";
+      return quoteSourceDetailLine("websocket");
     case "bhavcopy":
-      return meta.bhavcopy_date
-        ? `Closing prices from the NSE/BSE FO Bhavcopy for ${meta.bhavcopy_date}. Open interest and depth reflect the last concluded session, not live market data.`
-        : "Closing prices from the NSE/BSE FO Bhavcopy after market hours. Not live market data.";
+      return quoteSourceDetailLine("bhavcopy", meta.bhavcopy_date);
     case "icici_api":
-      return "Quotes were fetched via the ICICI Breeze REST API because live WebSocket or Bhavcopy data was unavailable.";
+      return quoteSourceDetailLine("icici_api");
     default:
       return "Quote source could not be determined.";
   }

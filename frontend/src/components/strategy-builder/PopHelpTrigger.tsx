@@ -11,7 +11,11 @@ import {
 
 export function PopHelpTrigger() {
   return (
-    <InfoPopover title={POP_HELP_TITLE} ariaLabel="What is probability of profit?">
+    <InfoPopover
+      title={POP_HELP_TITLE}
+      ariaLabel="What is probability of profit?"
+      learnMoreTopicId="probability-of-profit"
+    >
       <div className="space-y-2">
         <p>{POP_HELP_DEFINITION}</p>
         <div>

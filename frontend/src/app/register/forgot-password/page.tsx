@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { HelpLink } from "@/components/help/HelpLink";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { apiClient } from "@/lib/api-client";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
@@ -41,7 +42,10 @@ export default function RegisterForgotPasswordPage() {
         <h1 className="text-xl font-semibold tracking-tight">Reset app password</h1>
         <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
           Enter your ICICI user id. We use your saved broker API key from our records to send you to
-          ICICI for verification. After that, you will set a new app password only.
+          ICICI for verification. After that, you will set a new app password only.{" "}
+          <HelpLink topicId="forgot-password" className="text-xs">
+            More help
+          </HelpLink>
         </p>
         {err && (
           <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200">

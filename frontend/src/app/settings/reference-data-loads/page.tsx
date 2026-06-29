@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { HelpLink } from "@/components/help/HelpLink";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
 import { formatSourceFileDate } from "@/lib/format-iso-date";
@@ -278,7 +279,10 @@ export default function ReferenceDataLoadsPage() {
           <h2 className="text-xl app-text-heading">Reference Data Loads</h2>
           <p className="text-sm app-text-muted">
             Schedule and load NSE/BSE FO bhavcopy, ICICI scrip master, NSE SPAN margin baseline (auto), and BSE SPAN
-            baseline (manual upload). Choose SPAN vs Breeze API for Strategy Builder margin calculations.
+            baseline (manual upload). Choose SPAN vs Breeze API for Strategy Builder margin calculations.{" "}
+            <HelpLink topicId="reference-data-loads" className="text-sm">
+              Help
+            </HelpLink>
           </p>
         </header>
 

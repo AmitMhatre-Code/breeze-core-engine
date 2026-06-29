@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { HelpLink } from "@/components/help/HelpLink";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { Modal } from "@/components/ui/Modal";
 import {
@@ -1042,6 +1043,9 @@ export default function AiProviderSettingsPage() {
           Back to Settings
         </Link>
         <h2 className="app-text-heading text-xl">Gen AI Settings</h2>
+        <p className="text-sm app-text-muted">
+          <HelpLink topicId="genai-byok">GenAI market outlook help</HelpLink>
+        </p>
         {q.isLoading ? <div className="text-sm app-text-muted">Loading…</div> : null}
         {q.error ? (
           <div className="app-alert-error text-sm">

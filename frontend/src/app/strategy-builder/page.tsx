@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { HelpLink } from "@/components/help/HelpLink";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { Modal } from "@/components/ui/Modal";
 import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
@@ -168,6 +169,7 @@ export default function StrategyBuilderPage() {
   const [ivShockPct, setIvShockPct] = useState(0);
   const [showGreeks, setShowGreeks] = useState(false);
   const [showToday, setShowToday] = useState(true);
+  const [showBuilderTip, setShowBuilderTip] = useState(false);
   const [priceManuallyEdited, setPriceManuallyEdited] = useState<Set<string>>(
     new Set(),
   );
@@ -635,16 +637,35 @@ export default function StrategyBuilderPage() {
     resetDownstream(downstreamSetters, true);
   };
 
-  const buildYourOwnSlots = useMemo(
-    () => buildYourOwnAddedSlots(legs, stockCode, expiryDate),
-    [legs, stockCode, expiryDate],
-  );
-
   const handleStrategyChainBuySell = useCallback(
     (side: OrderSide, row: ChainRow, right: OptionRight) => {
       setLegs((prev) => appendLegFromChainRow(prev, side, row, right));
     },
     [],
+  );
+
+  useEffect(() => {
+    try {
+      setShowBuilderTip(
+        sessionStorage.getItem("strategyBuilderTipsDismissed") !== "1",
+      );
+    } catch {
+      setShowBuilderTip(true);
+    }
+  }, []);
+
+  const dismissBuilderTip = useCallback(() => {
+    setShowBuilderTip(false);
+    try {
+      sessionStorage.setItem("strategyBuilderTipsDismissed", "1");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const buildYourOwnSlots = useMemo(
+    () => buildYourOwnAddedSlots(legs, stockCode, expiryDate),
+    [legs, stockCode, expiryDate],
   );
 
   const startBuildYourOwn = useCallback(() => {
@@ -737,6 +758,23 @@ export default function StrategyBuilderPage() {
               className={`${sb.section} space-y-4`}
             >
               <h2 className={sb.sectionTitle}>2. Parameters</h2>
+              {showBuilderTip ? (
+                <div className="flex items-start justify-between gap-3 rounded-md border border-sky-200/80 bg-sky-50/50 px-3 py-2.5 text-sm text-zinc-700 dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-zinc-300">
+                  <p>
+                    Set margin, PoP, and max loss to discover strategies.{" "}
+                    <HelpLink topicId="strategy-builder-overview" className="text-sm">
+                      Overview
+                    </HelpLink>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={dismissBuilderTip}
+                    className="shrink-0 text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              ) : null}
               <div className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <label className={sb.fieldRow}>
@@ -999,7 +1037,10 @@ export default function StrategyBuilderPage() {
               ) : displayedTrades.length === 0 &&
                 displayedRelaxedTrades.length === 0 ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  No strategies match the selected outlook filters.
+                  No strategies match the selected outlook filters.{" "}
+                  <HelpLink topicId="strategy-builder-constraints" className="text-sm">
+                    Troubleshooting
+                  </HelpLink>
                 </p>
               ) : (
                 <>
@@ -1041,7 +1082,13 @@ export default function StrategyBuilderPage() {
                           annualized return thresholds, or are unlimited-loss
                           structures excluded while a max-loss limit is set.
                           They are the best available options if those
-                          constraints were relaxed.
+                          constraints were relaxed.{" "}
+                          <HelpLink
+                            topicId="near-threshold-alternatives"
+                            className="text-sm"
+                          >
+                            Learn more
+                          </HelpLink>
                         </p>
                       </div>
                       <MasonryGrid

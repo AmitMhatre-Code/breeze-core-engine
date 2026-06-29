@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useRef } from "react";
+import { HelpLink } from "@/components/help/HelpLink";
 import { Modal } from "@/components/ui/Modal";
 
 export function ApiUsageWarningDialog(props: {
@@ -29,6 +30,9 @@ export function ApiUsageWarningDialog(props: {
       </h2>
       <p className="mt-3 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
         {message}
+      </p>
+      <p className="mt-2 text-sm">
+        <HelpLink topicId="api-usage-limits">API usage limits</HelpLink>
       </p>
       <div className="mt-5 flex justify-end">
         <button

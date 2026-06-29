@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { HelpLink } from "@/components/help/HelpLink";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import {
   ExplainabilityLevel1View,
@@ -214,7 +215,10 @@ export default function StrategyAuditLogsSettingsPage() {
             <p className="mt-1 text-sm app-text-muted">
               Up to {maxLogs} recent propose-trades audit logs are stored on your server
               (persistent data volume). Levels 1–3 provide user-friendly explainability;
-              Level 4 is the full technical audit JSON download.
+              Level 4 is the full technical audit JSON download.{" "}
+              <HelpLink topicId="audit-logs" className="text-sm">
+                Help
+              </HelpLink>
             </p>
           </div>
           <button

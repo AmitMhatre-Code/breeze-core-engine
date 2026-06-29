@@ -36,16 +36,10 @@ export function displayPopLabel(
   return apiLabel;
 }
 
-export const POP_HELP_TITLE = "Probability of profit (PoP)";
-
-export const POP_HELP_DEFINITION =
-  "Estimated chance the strategy is profitable at expiry, based on current spot, implied volatility, and days to expiry (analytic model).";
-
-export const POP_HELP_INCOME =
-  "Your minimum PoP filters out trades below that threshold. A higher minimum pushes short strikes further out of the money.";
-
-export const POP_HELP_DIRECTIONAL =
-  "PoP is shown for reference only — it does not filter or rank directional variants. Conservative, Moderate, and Aggressive picks are chosen by conviction (delta, cost, liquidity).";
-
-export const POP_HELP_DISCLAIMER =
-  "This is a model estimate, not a guarantee of outcome.";
+export {
+  POP_HELP_DEFINITION,
+  POP_HELP_DIRECTIONAL,
+  POP_HELP_DISCLAIMER,
+  POP_HELP_INCOME,
+  POP_HELP_TITLE,
+} from "@/lib/help/topic-content";

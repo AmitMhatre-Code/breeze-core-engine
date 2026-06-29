@@ -79,7 +79,11 @@ export function QuoteSourceBadge({
       <span className={`inline-flex flex-wrap items-center gap-1.5 ${className}`.trim()}>
         <span className="text-[11px] text-zinc-500 dark:text-zinc-400">Leg prices from</span>
         {pill}
-        <InfoPopover title="Quote source" ariaLabel="Quote source details">
+        <InfoPopover
+          title="Quote source"
+          ariaLabel="Quote source details"
+          learnMoreTopicId="quote-sources"
+        >
           <p className="text-sm leading-relaxed text-zinc-700 dark:text-zinc-200">{detail}</p>
         </InfoPopover>
       </span>
@@ -89,7 +93,11 @@ export function QuoteSourceBadge({
   return (
     <span className={`inline-flex items-center gap-1 ${className}`.trim()}>
       {pill}
-      <InfoPopover title="Quote source" ariaLabel="Quote source details">
+      <InfoPopover
+        title="Quote source"
+        ariaLabel="Quote source details"
+        learnMoreTopicId="quote-sources"
+      >
         <p className="text-sm leading-relaxed text-zinc-700 dark:text-zinc-200">{detail}</p>
       </InfoPopover>
     </span>

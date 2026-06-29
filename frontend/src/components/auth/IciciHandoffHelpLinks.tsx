@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { HelpLink } from "@/components/help/HelpLink";
 import { apiClient } from "@/lib/api-client";
 import {
   breezeUserHandoffUrlForCurrentDeployment,
@@ -47,6 +48,12 @@ export function IciciHandoffHelpLinks() {
 
   return (
     <div className="space-y-1 pt-2">
+      <p className="text-center text-[11px] text-zinc-500">
+        New to Breeze Modern?{" "}
+        <HelpLink topicId="login-flow" className="text-[11px]">
+          Login &amp; registration help
+        </HelpLink>
+      </p>
       {staticIpUrl ? (
         <p className="text-center text-[11px] text-zinc-500">
           Need help in registering Static IP with ICICI Direct? Read instructions{" "}

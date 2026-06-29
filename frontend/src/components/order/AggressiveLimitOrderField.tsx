@@ -1,23 +1,7 @@
 "use client";
 
 import { InfoPopover } from "@/components/strategy-builder/InfoPopover";
-
-type Props = {
-  id?: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  disabled?: boolean;
-  className?: string;
-};
-
-const HELP = (
-  <>
-    ICICI derives the limit price from the last traded price (LTP), within
-    exchange daily price range. Buy orders use a higher price; sell orders use a
-    lower price. Orders may partially fill, remain pending, or be rejected
-    depending on market conditions.
-  </>
-);
+import { aggressiveLimitPopoverParagraphs } from "@/lib/help/topic-content";
 
 export function AggressiveLimitOrderField({
   id,
@@ -25,7 +9,15 @@ export function AggressiveLimitOrderField({
   onChange,
   disabled = false,
   className = "",
-}: Props) {
+}: {
+  id?: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const paragraphs = aggressiveLimitPopoverParagraphs();
+
   return (
     <label
       htmlFor={id}
@@ -41,8 +33,14 @@ export function AggressiveLimitOrderField({
       />
       <span className="inline-flex flex-wrap items-center gap-1.5">
         <span className="font-medium">Aggressive limit order</span>
-        <InfoPopover title="Aggressive limit order" ariaLabel="Aggressive limit order help">
-          {HELP}
+        <InfoPopover
+          title="Aggressive limit order"
+          ariaLabel="Aggressive limit order help"
+          learnMoreTopicId="aggressive-limit"
+        >
+          {paragraphs.map((p, i) => (
+            <p key={i}>{p}</p>
+          ))}
         </InfoPopover>
       </span>
     </label>

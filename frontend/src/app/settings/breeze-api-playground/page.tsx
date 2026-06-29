@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { HelpLink } from "@/components/help/HelpLink";
 import { BreezeApiMethodPicker } from "@/components/settings/BreezeApiMethodPicker";
 import { BreezeApiRiskGateDialog } from "@/components/settings/BreezeApiRiskGateDialog";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
@@ -474,7 +475,10 @@ export default function BreezeApiPlaygroundPage() {
           <h2 className="text-xl app-text-heading">Breeze API Playground</h2>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             Invoke ICICI Breeze REST APIs from the official breeze-connect client. Responses are
-            live from your broker session.
+            live from your broker session.{" "}
+            <HelpLink topicId="breeze-api-playground" className="text-sm">
+              Safety notes
+            </HelpLink>
           </p>
         </header>
 
