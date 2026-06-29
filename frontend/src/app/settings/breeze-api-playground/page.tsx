@@ -16,10 +16,12 @@ import {
   RISK_GROUP_LABEL,
   wsConnectPlayground,
   wsDisconnectPlayground,
+  wsGetPlaygroundEventLog,
   wsStreamUrl,
   wsSubscribePlayground,
   type BreezeApiCatalogEntry,
   type BreezeApiInvokeResponse,
+  type BreezeApiWsEventLogEntry,
   type BreezeApiWsStatus,
 } from "@/lib/breeze-api-tester";
 import { copyTextToClipboard } from "@/lib/copy-to-clipboard";
@@ -28,6 +30,16 @@ const inputCls =
   "mt-1 w-full rounded-md border border-zinc-300/80 bg-white/95 px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition-all hover:border-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-blue-400 dark:focus:ring-blue-400/20";
 
 const RISK_ORDER: BreezeApiCatalogEntry["risk_level"][] = ["read", "funds", "trade", "gtt"];
+
+const WS_FORM_PLACEHOLDERS = {
+  exchange_code: "NFO",
+  stock_code: "NIFTY",
+  expiry_date: "26-Jun-2026",
+  strike_price: "25000",
+  right: "call",
+} as const;
+
+const WS_LOG_LIMIT = 50;
 
 function formatJsonValue(value: unknown): string {
   if (value === undefined || value === null) return "";
@@ -49,6 +61,58 @@ function formatWsApiResponse(payload: BreezeApiWsStatus | null): string {
   return formatJsonValue(payload);
 }
 
+function formatCommandLogEntry(entry: BreezeApiWsEventLogEntry): string {
+  const ts = new Date(entry.ts * 1000).toLocaleTimeString();
+  const lines = [
+    `[${ts}] ${entry.step} · ok=${entry.ok}`,
+    entry.note ? `note: ${entry.note}` : "",
+    `command: ${formatJsonValue(entry.icici_command)}`,
+    `response: ${formatJsonValue(entry.icici_response)}`,
+  ];
+  return lines.filter(Boolean).join("\n");
+}
+
+function statusToLogEntry(data: BreezeApiWsStatus, step: string): BreezeApiWsEventLogEntry | null {
+  if (!data.icici_command && data.event_id == null) return null;
+  return {
+    id: data.event_id ?? Date.now(),
+    ts: Date.now() / 1000,
+    step,
+    icici_command: data.icici_command ?? { sdk_method: step, sdk_args: {}, side_effects: [] },
+    icici_response: data.response ?? null,
+    ok: data.ok !== false,
+  };
+}
+
+function mergeLogEntries(
+  prev: BreezeApiWsEventLogEntry[],
+  incoming: BreezeApiWsEventLogEntry[],
+): BreezeApiWsEventLogEntry[] {
+  const byId = new Map<number, BreezeApiWsEventLogEntry>();
+  for (const entry of [...incoming, ...prev]) {
+    byId.set(entry.id, entry);
+  }
+  return [...byId.values()]
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, WS_LOG_LIMIT);
+}
+
+function tickPayloadToLogEntry(rawJson: string): BreezeApiWsEventLogEntry | null {
+  try {
+    const payload = JSON.parse(rawJson) as { raw?: unknown; normalized?: unknown };
+    return {
+      id: -Date.now(),
+      ts: Date.now() / 1000,
+      step: "tick_received",
+      icici_command: { sdk_method: "", sdk_args: {}, side_effects: [] },
+      icici_response: { raw: payload.raw, normalized: payload.normalized },
+      ok: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function BreezeApiPlaygroundPage() {
   const qc = useQueryClient();
   const [selectedMethod, setSelectedMethod] = useState("");
@@ -56,12 +120,14 @@ export default function BreezeApiPlaygroundPage() {
   const [lastResponse, setLastResponse] = useState<BreezeApiInvokeResponse | null>(null);
   const [invokeError, setInvokeError] = useState<string | null>(null);
   const [wsTicks, setWsTicks] = useState<string[]>([]);
+  const [wsCommandLog, setWsCommandLog] = useState<BreezeApiWsEventLogEntry[]>([]);
   const [wsLastResponse, setWsLastResponse] = useState<BreezeApiWsStatus | null>(null);
   const [wsStatusHint, setWsStatusHint] = useState(
     "Not connected. Click Connect, fill contract fields, Subscribe, then Start tick stream.",
   );
   const [wsStreamOpen, setWsStreamOpen] = useState(false);
   const wsStreamRef = useRef<EventSource | null>(null);
+  const wsTickLoggedRef = useRef(false);
   const [wsForm, setWsForm] = useState({
     exchange_code: "NFO",
     stock_code: "NIFTY",
@@ -73,7 +139,25 @@ export default function BreezeApiPlaygroundPage() {
   const [wsResponseCopyState, setWsResponseCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   );
+  const [wsLogCopyState, setWsLogCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const appendWsLog = useCallback((entry: BreezeApiWsEventLogEntry | null) => {
+    if (!entry) return;
+    setWsCommandLog((prev) => mergeLogEntries(prev, [entry]));
+  }, []);
+
+  const refreshEventLog = useCallback(async () => {
+    try {
+      const { events } = await wsGetPlaygroundEventLog();
+      setWsCommandLog((prev) => mergeLogEntries(prev, events));
+    } catch {
+      /* ignore when not logged in */
+    }
+  }, []);
+
+  const wsSubscribeInvalid =
+    !wsForm.expiry_date.trim() || !wsForm.strike_price.trim();
 
   const riskQ = useQuery({
     queryKey: ["settings", "breeze-api-tester", "risk"],
@@ -164,22 +248,32 @@ export default function BreezeApiPlaygroundPage() {
   const responseText = formatResponse(lastResponse, invokeError);
   const wsResponseText = formatWsApiResponse(wsLastResponse);
   const wsResponseIsError = wsLastResponse?.ok === false;
+  const wsCommandLogText = wsCommandLog.map(formatCommandLogEntry).join("\n\n---\n\n");
   const showGate = riskQ.isSuccess && !riskQ.data?.accepted;
 
+  useEffect(() => {
+    if (!riskQ.data?.accepted) return;
+    void refreshEventLog();
+  }, [riskQ.data?.accepted, refreshEventLog]);
+
   const flashCopyState = useCallback(
-    (target: "response" | "ws", result: ReturnType<typeof copyTextToClipboard>) => {
+    (target: "response" | "ws" | "wsLog", result: ReturnType<typeof copyTextToClipboard>) => {
       const next = result.ok ? "copied" : "failed";
       if (target === "response") {
         setResponseCopyState(next);
-      } else {
+      } else if (target === "ws") {
         setWsResponseCopyState(next);
+      } else {
+        setWsLogCopyState(next);
       }
       if (copyResetRef.current) clearTimeout(copyResetRef.current);
       copyResetRef.current = setTimeout(() => {
         if (target === "response") {
           setResponseCopyState("idle");
-        } else {
+        } else if (target === "ws") {
           setWsResponseCopyState("idle");
+        } else {
+          setWsLogCopyState("idle");
         }
         copyResetRef.current = null;
       }, 2000);
@@ -195,12 +289,22 @@ export default function BreezeApiPlaygroundPage() {
     flashCopyState("ws", copyTextToClipboard(wsResponseText));
   };
 
+  const copyWsLog = () => {
+    flashCopyState("wsLog", copyTextToClipboard(wsCommandLogText));
+  };
+
   const wsConnectM = useMutation({
     mutationFn: wsConnectPlayground,
     onSuccess: (data) => {
       setWsLastResponse(data);
+      appendWsLog(statusToLogEntry(data, "ws_connect"));
+      void refreshEventLog();
       setWsStatusHint(
-        data.connected ? "ICICI socket connected." : "ICICI socket not connected.",
+        data.ok && data.connected
+          ? "ICICI socket connected."
+          : data.connected
+            ? "ICICI socket connected with warnings (see log)."
+            : "ICICI socket not connected.",
       );
     },
     onError: (e) => {
@@ -212,6 +316,8 @@ export default function BreezeApiPlaygroundPage() {
     onSuccess: (data) => {
       setWsStreamOpen(false);
       setWsLastResponse(data);
+      appendWsLog(statusToLogEntry(data, "ws_disconnect"));
+      void refreshEventLog();
       setWsStatusHint("Disconnected.");
     },
     onError: (e) => {
@@ -222,9 +328,20 @@ export default function BreezeApiPlaygroundPage() {
     mutationFn: () => wsSubscribePlayground(wsForm),
     onSuccess: (data) => {
       setWsLastResponse(data);
-      setWsStatusHint(
-        data.connected ? "ICICI socket connected." : "ICICI socket not connected.",
-      );
+      appendWsLog(statusToLogEntry(data, "subscribe_feeds"));
+      void refreshEventLog();
+      if (data.ok) {
+        const subs = data.active_subscriptions ?? 0;
+        setWsStatusHint(
+          `Subscribed · ${subs} active subscription${subs === 1 ? "" : "s"} on ICICI socket.`,
+        );
+      } else {
+        const err =
+          typeof data.response === "string"
+            ? data.response
+            : data.last_error || "Subscribe failed (see command log).";
+        setWsStatusHint(`Subscribe failed: ${err}`);
+      }
     },
     onError: (e) => {
       setWsStatusHint(e instanceof Error ? e.message : "Subscribe failed");
@@ -234,6 +351,7 @@ export default function BreezeApiPlaygroundPage() {
   const startWsStream = () => {
     wsStreamRef.current?.close();
     setWsTicks([]);
+    wsTickLoggedRef.current = false;
     setWsStatusHint("Opening tick stream…");
     const es = new EventSource(wsStreamUrl(), { withCredentials: true });
     wsStreamRef.current = es;
@@ -241,13 +359,23 @@ export default function BreezeApiPlaygroundPage() {
     es.addEventListener("ws_status", (event) => {
       try {
         const payload = JSON.parse((event as MessageEvent).data) as BreezeApiWsStatus;
-        setWsLastResponse(payload);
         setWsStreamOpen(Boolean(payload.connected));
         setWsStatusHint(
-          payload.connected ? "Tick stream open · ICICI socket connected." : "Tick stream open.",
+          payload.connected
+            ? "Tick stream open · ICICI socket connected."
+            : "Tick stream open · ICICI socket not connected.",
         );
       } catch {
         setWsStatusHint("Invalid ws_status payload from server.");
+      }
+    });
+    es.addEventListener("ws_command", (event) => {
+      try {
+        const entry = JSON.parse((event as MessageEvent).data) as BreezeApiWsEventLogEntry;
+        appendWsLog(entry);
+        void refreshEventLog();
+      } catch {
+        /* ignore malformed ws_command */
       }
     });
     es.addEventListener("ws_error", (event) => {
@@ -255,15 +383,27 @@ export default function BreezeApiPlaygroundPage() {
       if (!msgEvent.data) return;
       try {
         const payload = JSON.parse(msgEvent.data) as BreezeApiWsStatus;
-        setWsLastResponse(payload);
         setWsStreamOpen(false);
-        setWsStatusHint("Tick stream reported an error (see Response).");
+        setWsStatusHint("Tick stream reported an error (see command log).");
+        appendWsLog({
+          id: Date.now(),
+          ts: Date.now() / 1000,
+          step: "sse_stream_error",
+          icici_command: { sdk_method: "", sdk_args: {}, side_effects: [] },
+          icici_response: payload,
+          ok: false,
+        });
       } catch {
         setWsStatusHint("Invalid ws_error payload from server.");
       }
     });
     es.addEventListener("ws_tick", (event) => {
-      setWsTicks((prev) => [(event as MessageEvent).data, ...prev].slice(0, 40));
+      const data = (event as MessageEvent).data;
+      setWsTicks((prev) => [data, ...prev].slice(0, 40));
+      if (!wsTickLoggedRef.current) {
+        appendWsLog(tickPayloadToLogEntry(data));
+        wsTickLoggedRef.current = true;
+      }
     });
     es.addEventListener("ws_ping", (event) => {
       try {
@@ -484,59 +624,123 @@ export default function BreezeApiPlaygroundPage() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {(["exchange_code", "stock_code", "expiry_date", "strike_price", "right"] as const).map((k) => (
             <label key={k} className="block text-xs">
-              <span className="font-medium">{k}</span>
+              <span className="font-medium">
+                {k}
+                {(k === "expiry_date" || k === "strike_price") ? " *" : ""}
+              </span>
               <input
                 className={inputCls}
                 value={wsForm[k]}
+                placeholder={WS_FORM_PLACEHOLDERS[k]}
                 onChange={(e) => setWsForm((p) => ({ ...p, [k]: e.target.value }))}
               />
             </label>
           ))}
         </div>
+        {wsSubscribeInvalid ? (
+          <p className="text-xs text-amber-800 dark:text-amber-200">
+            expiry_date and strike_price are required before subscribing.
+          </p>
+        ) : null}
         <button
           type="button"
           className="app-btn-primary"
-          disabled={wsSubscribeM.isPending}
+          disabled={wsSubscribeM.isPending || wsSubscribeInvalid}
           onClick={() => wsSubscribeM.mutate()}
         >
           Subscribe
         </button>
-        <div className="flex min-h-[160px] flex-col">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Response</span>
-            {wsResponseText ? (
-              <button
-                type="button"
-                className="app-btn-outline text-xs"
-                onClick={copyWsResponse}
-                title={
-                  wsResponseCopyState === "failed"
-                    ? "Copy failed — select the response text and copy manually"
-                    : undefined
-                }
-              >
-                {wsResponseCopyState === "copied"
-                  ? "Copied!"
-                  : wsResponseCopyState === "failed"
-                    ? "Copy failed"
-                    : "Copy"}
-              </button>
-            ) : null}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="flex min-h-[160px] flex-col">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                ICICI command log
+              </span>
+              {wsCommandLogText ? (
+                <button
+                  type="button"
+                  className="app-btn-outline text-xs"
+                  onClick={copyWsLog}
+                  title={
+                    wsLogCopyState === "failed"
+                      ? "Copy failed — select the log text and copy manually"
+                      : undefined
+                  }
+                >
+                  {wsLogCopyState === "copied"
+                    ? "Copied!"
+                    : wsLogCopyState === "failed"
+                      ? "Copy failed"
+                      : "Copy"}
+                </button>
+              ) : null}
+            </div>
+            <pre className="mt-2 max-h-56 min-h-[140px] flex-1 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-100">
+              {wsCommandLogText ||
+                "Commands and ICICI responses appear here after Connect, Subscribe, Disconnect, or Start tick stream."}
+            </pre>
           </div>
-          <pre
-            className={`mt-2 max-h-48 min-h-[120px] flex-1 overflow-auto rounded-md border p-3 font-mono text-xs ${
-              wsResponseIsError
-                ? "border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
-                : "border-zinc-200 bg-zinc-50 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-100"
-            }`}
-          >
-            {wsResponseText ||
-              "ICICI response will appear here after Connect, Subscribe, or Disconnect."}
+          <div className="flex min-h-[160px] flex-col">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                Latest operation
+              </span>
+              {wsResponseText ? (
+                <button
+                  type="button"
+                  className="app-btn-outline text-xs"
+                  onClick={copyWsResponse}
+                  title={
+                    wsResponseCopyState === "failed"
+                      ? "Copy failed — select the response text and copy manually"
+                      : undefined
+                  }
+                >
+                  {wsResponseCopyState === "copied"
+                    ? "Copied!"
+                    : wsResponseCopyState === "failed"
+                      ? "Copy failed"
+                      : "Copy"}
+                </button>
+              ) : null}
+            </div>
+            <pre
+              className={`mt-2 max-h-56 min-h-[140px] flex-1 overflow-auto rounded-md border p-3 font-mono text-xs ${
+                wsResponseIsError
+                  ? "border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+                  : "border-zinc-200 bg-zinc-50 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-100"
+              }`}
+            >
+              {wsResponseText ||
+                "ICICI response will appear here after Connect, Subscribe, or Disconnect."}
+            </pre>
+          </div>
+        </div>
+        <div>
+          <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Ticks</span>
+          <pre className="mt-2 max-h-48 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs dark:border-zinc-800 dark:bg-zinc-900/80">
+            {wsTicks.length
+              ? wsTicks
+                  .map((tick) => {
+                    try {
+                      const payload = JSON.parse(tick) as { raw?: unknown; normalized?: unknown };
+                      if (payload.normalized) {
+                        return [
+                          formatJsonValue(payload.normalized),
+                          payload.raw ? `raw: ${formatJsonValue(payload.raw)}` : "",
+                        ]
+                          .filter(Boolean)
+                          .join("\n");
+                      }
+                    } catch {
+                      /* fall through */
+                    }
+                    return tick;
+                  })
+                  .join("\n\n")
+              : "Ticks appear after connect, subscribe, and start stream (during market hours)."}
           </pre>
         </div>
-        <pre className="max-h-48 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs dark:border-zinc-800 dark:bg-zinc-900/80">
-          {wsTicks.length ? wsTicks.join("\n\n") : "Ticks appear after connect, subscribe, and start stream."}
-        </pre>
       </section>
     </AppShell>
   );

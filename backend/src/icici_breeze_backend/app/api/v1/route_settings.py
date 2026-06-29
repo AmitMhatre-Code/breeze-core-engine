@@ -1630,6 +1630,15 @@ async def settings_breeze_ws_status(ctx: RequestContext = Depends(get_request_co
     return JSONResponse(get_playground_status())
 
 
+@router.get("/breeze-api-tester/ws/event-log")
+async def settings_breeze_ws_event_log(ctx: RequestContext = Depends(get_request_context)):
+    if not is_breeze_api_tester_risk_accepted(ctx.user_id):
+        raise HTTPException(status_code=403, detail="Accept the risk disclaimer first.")
+    from icici_breeze_backend.app.services.breeze_websocket_manager import get_playground_event_log
+
+    return JSONResponse({"events": get_playground_event_log()})
+
+
 @router.post("/breeze-api-tester/ws/subscribe")
 async def settings_breeze_ws_subscribe(
     body: BreezeApiTesterWsSubscribeBody,
@@ -1669,6 +1678,7 @@ async def settings_breeze_ws_stream(ctx: RequestContext = Depends(get_request_co
     from icici_breeze_backend.app.services.breeze_websocket_manager import (
         add_playground_listener,
         get_playground_status,
+        record_playground_stream_open,
         remove_playground_listener,
         ws_connect_playground,
     )
@@ -1677,6 +1687,7 @@ async def settings_breeze_ws_stream(ctx: RequestContext = Depends(get_request_co
         return f"event: {event}\ndata: {json.dumps(payload, default=str)}\n\n"
 
     connect_out = ws_connect_playground(breeze, ctx.user_id)
+    stream_event = record_playground_stream_open(ctx.user_id)
     _logger.info(
         "breeze-api-tester ws/stream opened user_id=%s ok=%s connected=%s",
         ctx.user_id,
@@ -1684,10 +1695,11 @@ async def settings_breeze_ws_stream(ctx: RequestContext = Depends(get_request_co
         connect_out.get("connected"),
     )
     queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
 
-    def _on_tick(cell: dict) -> None:
+    def _on_tick(payload: dict[str, Any]) -> None:
         try:
-            queue.put_nowait(cell)
+            loop.call_soon_threadsafe(queue.put_nowait, payload)
         except Exception:
             pass
 
@@ -1701,8 +1713,11 @@ async def settings_breeze_ws_stream(ctx: RequestContext = Depends(get_request_co
                     **get_playground_status(),
                     "ok": connect_out.get("ok"),
                     "response": connect_out.get("response"),
+                    "icici_command": connect_out.get("icici_command"),
+                    "event_id": connect_out.get("event_id"),
                 },
             )
+            yield _sse("ws_command", stream_event)
             if not connect_out.get("ok"):
                 yield _sse(
                     "ws_error",
@@ -1714,8 +1729,8 @@ async def settings_breeze_ws_stream(ctx: RequestContext = Depends(get_request_co
                 )
             while True:
                 try:
-                    cell = await asyncio.wait_for(queue.get(), timeout=30.0)
-                    yield _sse("ws_tick", cell)
+                    payload = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield _sse("ws_tick", payload)
                 except asyncio.TimeoutError:
                     yield _sse("ws_ping", {**get_playground_status(), "ts": time.time()})
         finally:

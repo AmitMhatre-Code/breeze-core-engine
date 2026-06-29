@@ -27,6 +27,9 @@ _sdk_user_id: str | None = None
 _connected = False
 _last_error: str | None = None
 _playground_listeners: list[Any] = []
+_PLAYGROUND_EVENT_LIMIT = 50
+_playground_events: list[dict[str, Any]] = []
+_playground_event_seq = 0
 
 
 def _note_error(message: str, *args: Any) -> str:
@@ -51,6 +54,59 @@ def get_playground_status() -> dict[str, Any]:
             "subscription_keys": sorted(_sub_refs.keys()),
             "last_error": _last_error,
         }
+
+
+def _icici_command(sdk_method: str, sdk_args: dict[str, Any], *, side_effects: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "sdk_method": sdk_method,
+        "sdk_args": sdk_args,
+        "side_effects": side_effects or [],
+    }
+
+
+def _record_playground_event(
+    step: str,
+    sdk_method: str,
+    sdk_args: dict[str, Any],
+    icici_response: Any,
+    ok: bool,
+    *,
+    note: str | None = None,
+    side_effects: list[str] | None = None,
+) -> dict[str, Any]:
+    global _playground_event_seq
+    with _lock:
+        _playground_event_seq += 1
+        entry: dict[str, Any] = {
+            "id": _playground_event_seq,
+            "ts": time.time(),
+            "step": step,
+            "icici_command": _icici_command(sdk_method, sdk_args, side_effects=side_effects),
+            "icici_response": icici_response,
+            "ok": ok,
+        }
+        if note:
+            entry["note"] = note
+        _playground_events.append(entry)
+        if len(_playground_events) > _PLAYGROUND_EVENT_LIMIT:
+            _playground_events.pop(0)
+        return dict(entry)
+
+
+def get_playground_event_log() -> list[dict[str, Any]]:
+    with _lock:
+        return list(reversed(_playground_events))
+
+
+def record_playground_stream_open(user_id: str) -> dict[str, Any]:
+    return _record_playground_event(
+        "sse_stream_open",
+        "",
+        {},
+        None,
+        True,
+        note=f"SSE tick listener registered for user_id={user_id}",
+    )
 
 
 def _sub_key(
@@ -119,9 +175,10 @@ def _on_ticks(ticks: Any) -> None:
     ex = cfg.NFO if str(ticks.get("exchange_code") or ticks.get("exchange") or "").upper().find("BSE") < 0 else cfg.BFO
     key = ws_quote_key(ex, short, expiry, strike, right)
     cache_set_json(key, cell, ex=cfg.WEBSOCKET_QUOTE_TTL_SECONDS)
+    payload = {"raw": dict(ticks), "normalized": cell}
     for listener in list(_playground_listeners):
         try:
-            listener(cell)
+            listener(payload)
         except Exception:
             pass
 
@@ -285,14 +342,25 @@ def ensure_chain_subscriptions(
     }
 
 
-def _playground_response(response: Any, ok: bool | None = None) -> dict[str, Any]:
+def _playground_response(
+    response: Any,
+    ok: bool | None = None,
+    *,
+    icici_command: dict[str, Any] | None = None,
+    event_id: int | None = None,
+) -> dict[str, Any]:
     if ok is None:
         ok = is_breeze_invoke_response_ok(response) if response is not None else True
-    return {
+    out: dict[str, Any] = {
         "ok": ok,
         "response": response,
         **get_playground_status(),
     }
+    if icici_command is not None:
+        out["icici_command"] = icici_command
+    if event_id is not None:
+        out["event_id"] = event_id
+    return out
 
 
 def _register_playground_connected(sdk: Any, user_id: str) -> None:
@@ -321,30 +389,44 @@ def _ensure_playground_ws(proc: "Processor", user_id: str) -> Any | None:
 
 
 def ws_connect_playground(proc: "Processor", user_id: str) -> dict[str, Any]:
+    cmd = _icici_command("ws_connect", {}, side_effects=["sdk.on_ticks = _on_ticks"])
     if proc.get_session_breeze(user_id) is None:
-        return _playground_response(None, ok=False)
+        entry = _record_playground_event(
+            "ws_connect", "ws_connect", {}, None, False, note="no broker session", side_effects=cmd["side_effects"]
+        )
+        return _playground_response(None, ok=False, icici_command=cmd, event_id=entry["id"])
     try:
         _ensure_playground_ws(proc, user_id)
-        return _playground_response(None, ok=True)
+        entry = _record_playground_event(
+            "ws_connect", "ws_connect", {}, None, True, side_effects=cmd["side_effects"]
+        )
+        return _playground_response(None, ok=True, icici_command=cmd, event_id=entry["id"])
     except Exception as exc:
         with _lock:
             _connected = False
-        return _playground_response(str(exc), ok=False)
+        entry = _record_playground_event(
+            "ws_connect", "ws_connect", {}, str(exc), False, side_effects=cmd["side_effects"]
+        )
+        return _playground_response(str(exc), ok=False, icici_command=cmd, event_id=entry["id"])
 
 
 def ws_disconnect_playground() -> dict[str, Any]:
     global _sdk, _sdk_user_id, _connected
+    cmd = _icici_command("ws_disconnect", {})
+    err: str | None = None
     with _lock:
         if _sdk is not None:
             try:
                 _sdk.ws_disconnect()
-            except Exception:
-                pass
+            except Exception as exc:
+                err = str(exc)
         _sdk = None
         _sdk_user_id = None
         _connected = False
         _sub_refs.clear()
-    return _playground_response(None, ok=True)
+    ok = err is None
+    entry = _record_playground_event("ws_disconnect", "ws_disconnect", {}, err, ok)
+    return _playground_response(err, ok=ok, icici_command=cmd, event_id=entry["id"])
 
 
 def add_playground_listener(cb: Any) -> None:
@@ -358,33 +440,114 @@ def remove_playground_listener(cb: Any) -> None:
         pass
 
 
+def _subscribe_feeds_sdk_args(
+    exchange_code: str,
+    stock_code: str,
+    expiry_date: str,
+    strike_price: str,
+    right: str,
+) -> dict[str, Any]:
+    return {
+        "exchange_code": exchange_code,
+        "stock_code": stock_code,
+        "expiry_date": expiry_date,
+        "strike_price": strike_price,
+        "right": right,
+        "product_type": "options",
+        "get_market_depth": False,
+        "get_exchange_quotes": True,
+    }
+
+
 def playground_subscribe(proc: "Processor", user_id: str, params: dict[str, Any]) -> dict[str, Any]:
+    exchange_code = str(params.get("exchange_code") or "")
+    stock_code = str(params.get("stock_code") or "")
+    expiry_display = str(params.get("expiry_date") or "").strip()
+    strike_raw = str(params.get("strike_price") or "").strip()
+    right_in = str(params.get("right") or "")
+
     if proc.get_session_breeze(user_id) is None:
-        return _playground_response(None, ok=False)
+        sdk_args = _subscribe_feeds_sdk_args(exchange_code, stock_code, expiry_display, strike_raw, right_in)
+        cmd = _icici_command("subscribe_feeds", sdk_args)
+        entry = _record_playground_event(
+            "subscribe_feeds", "subscribe_feeds", sdk_args, None, False, note="no broker session"
+        )
+        return _playground_response(None, ok=False, icici_command=cmd, event_id=entry["id"])
+
+    if not expiry_display:
+        sdk_args = _subscribe_feeds_sdk_args(exchange_code, stock_code, expiry_display, strike_raw, right_in)
+        cmd = _icici_command("subscribe_feeds", sdk_args)
+        msg = "expiry_date is required"
+        entry = _record_playground_event("subscribe_feeds", "subscribe_feeds", sdk_args, msg, False)
+        return _playground_response(msg, ok=False, icici_command=cmd, event_id=entry["id"])
+
+    if not strike_raw:
+        sdk_args = _subscribe_feeds_sdk_args(exchange_code, stock_code, expiry_display, strike_raw, right_in)
+        cmd = _icici_command("subscribe_feeds", sdk_args)
+        msg = "strike_price is required"
+        entry = _record_playground_event("subscribe_feeds", "subscribe_feeds", sdk_args, msg, False)
+        return _playground_response(msg, ok=False, icici_command=cmd, event_id=entry["id"])
+
+    strike = parse_strike(strike_raw)
+    if strike is None:
+        sdk_args = _subscribe_feeds_sdk_args(exchange_code, stock_code, expiry_display, strike_raw, right_in)
+        cmd = _icici_command("subscribe_feeds", sdk_args)
+        msg = f"Invalid strike_price: {strike_raw!r}"
+        entry = _record_playground_event("subscribe_feeds", "subscribe_feeds", sdk_args, msg, False)
+        return _playground_response(msg, ok=False, icici_command=cmd, event_id=entry["id"])
+
+    try:
+        strike_wire = strike_for_broker(strike)
+    except ValueError as exc:
+        sdk_args = _subscribe_feeds_sdk_args(exchange_code, stock_code, expiry_display, strike_raw, right_in)
+        cmd = _icici_command("subscribe_feeds", sdk_args)
+        msg = str(exc)
+        entry = _record_playground_event("subscribe_feeds", "subscribe_feeds", sdk_args, msg, False)
+        return _playground_response(msg, ok=False, icici_command=cmd, event_id=entry["id"])
+
+    r = str(right_in or "").strip().lower()
+    if r in {cfg.CALL.lower(), "call"}:
+        r = "call"
+    else:
+        r = "put"
+
+    sdk_args = _subscribe_feeds_sdk_args(exchange_code, stock_code, expiry_display, strike_wire, r)
+    cmd = _icici_command("subscribe_feeds", sdk_args)
+    sub_key = _sub_key(exchange_code, stock_code, expiry_display, strike, r)
+
     try:
         _ensure_playground_ws(proc, user_id)
     except Exception as exc:
-        return _playground_response(str(exc), ok=False)
+        entry = _record_playground_event("subscribe_feeds", "subscribe_feeds", sdk_args, str(exc), False)
+        return _playground_response(str(exc), ok=False, icici_command=cmd, event_id=entry["id"])
 
     sdk = proc.get_session_breeze(user_id)
     if sdk is None:
-        return _playground_response(None, ok=False)
+        entry = _record_playground_event(
+            "subscribe_feeds", "subscribe_feeds", sdk_args, None, False, note="no broker session after connect"
+        )
+        return _playground_response(None, ok=False, icici_command=cmd, event_id=entry["id"])
 
     try:
-        result = sdk.subscribe_feeds(
-            exchange_code=str(params.get("exchange_code") or ""),
-            stock_code=str(params.get("stock_code") or ""),
-            expiry_date=str(params.get("expiry_date") or ""),
-            strike_price=str(params.get("strike_price") or ""),
-            right=str(params.get("right") or ""),
-            product_type="options",
-            get_market_depth=False,
-            get_exchange_quotes=True,
-        )
+        result = sdk.subscribe_feeds(**sdk_args)
         ok = is_breeze_invoke_response_ok(result)
-        return _playground_response(result, ok=ok)
+        if not ok:
+            err = result if isinstance(result, str) else (
+                (result.get("Error") or result.get("error") or result.get("message") or str(result))
+                if isinstance(result, dict)
+                else str(result)
+            )
+            _note_error("subscribe_feeds ICICI error %s: %s", sub_key, err)
+        else:
+            with _lock:
+                _sub_refs[sub_key] = _sub_refs.get(sub_key, 0) + 1
+            _clear_error()
+        entry = _record_playground_event("subscribe_feeds", "subscribe_feeds", sdk_args, result, ok)
+        return _playground_response(result, ok=ok, icici_command=cmd, event_id=entry["id"])
     except Exception as exc:
-        return _playground_response(str(exc), ok=False)
+        _note_error("subscribe_feeds failed %s: %s", sub_key, exc)
+        entry = _record_playground_event("subscribe_feeds", "subscribe_feeds", sdk_args, str(exc), False)
+        return _playground_response(str(exc), ok=False, icici_command=cmd, event_id=entry["id"])
 
 
 def shutdown_websocket() -> None:

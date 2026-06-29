@@ -63,6 +63,22 @@ export const RISK_GROUP_LABEL: Record<BreezeApiCatalogEntry["risk_level"], strin
   gtt: "GTT",
 };
 
+export type BreezeIciciCommand = {
+  sdk_method: string;
+  sdk_args: Record<string, unknown>;
+  side_effects?: string[];
+};
+
+export type BreezeApiWsEventLogEntry = {
+  id: number;
+  ts: number;
+  step: string;
+  icici_command: BreezeIciciCommand;
+  icici_response: unknown;
+  ok: boolean;
+  note?: string;
+};
+
 export type BreezeApiWsStatus = {
   ok?: boolean;
   response?: unknown;
@@ -70,7 +86,14 @@ export type BreezeApiWsStatus = {
   user_id?: string | null;
   active_subscriptions?: number;
   subscription_keys?: string[];
+  last_error?: string | null;
+  icici_command?: BreezeIciciCommand;
+  event_id?: number;
   ts?: number;
+};
+
+export type BreezeApiWsEventLogResponse = {
+  events: BreezeApiWsEventLogEntry[];
 };
 
 export function wsConnectPlayground() {
@@ -83,6 +106,10 @@ export function wsDisconnectPlayground() {
 
 export function wsGetPlaygroundStatus() {
   return apiClient.get<BreezeApiWsStatus>(`${BASE}/ws/status`);
+}
+
+export function wsGetPlaygroundEventLog() {
+  return apiClient.get<BreezeApiWsEventLogResponse>(`${BASE}/ws/event-log`);
 }
 
 export function wsSubscribePlayground(params: {
