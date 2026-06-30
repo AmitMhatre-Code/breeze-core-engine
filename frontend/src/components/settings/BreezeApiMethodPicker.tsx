@@ -145,7 +145,7 @@ export function BreezeApiMethodPicker({
 
   return (
     <div ref={rootRef} className="relative w-full text-left">
-      <span id={labelId} className="font-medium text-zinc-800 dark:text-zinc-200">
+      <span id={labelId} className="app-text-muted">
         API
       </span>
 
@@ -153,12 +153,10 @@ export function BreezeApiMethodPicker({
         ref={triggerRef}
         type="button"
         className={[
-          "mt-1.5 flex w-full items-center gap-3 rounded-lg border border-zinc-300/80 bg-white/95 px-3.5 py-3 text-left shadow-sm outline-none transition-all",
-          "hover:border-zinc-400 hover:shadow-md",
-          "focus-visible:border-blue-500 focus-visible:ring-2 focus-visible:ring-blue-500/20",
-          "dark:border-zinc-700 dark:bg-zinc-950 dark:hover:border-zinc-600",
-          "dark:focus-visible:border-blue-400 dark:focus-visible:ring-blue-400/20",
-          open ? "border-blue-500 ring-2 ring-blue-500/20 dark:border-blue-400 dark:ring-blue-400/20" : "",
+          "app-input mt-1.5 flex items-center gap-3 py-2.5 text-left",
+          open
+            ? "border-sky-500/60 ring-2 ring-sky-500/30 dark:border-sky-400/45 dark:ring-sky-400/25"
+            : "",
         ].join(" ")}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -197,8 +195,8 @@ export function BreezeApiMethodPicker({
       {open ? (
         <div
           className={[
-            "absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-xl",
-            "dark:border-zinc-700 dark:bg-zinc-900",
+            "absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-hidden rounded-md border shadow-lg",
+            "border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900",
           ].join(" ")}
         >
           <div className="border-b border-zinc-200/80 p-2 dark:border-zinc-800">
@@ -208,12 +206,7 @@ export function BreezeApiMethodPicker({
               value={query}
               placeholder="Search APIs…"
               aria-label="Search APIs"
-              className={[
-                "w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none",
-                "placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15",
-                "dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500",
-                "dark:focus:border-blue-400 dark:focus:ring-blue-400/20",
-              ].join(" ")}
+              className="app-input py-2"
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
@@ -252,9 +245,9 @@ export function BreezeApiMethodPicker({
                             data-menu-index={menuIndex}
                             tabIndex={-1}
                             className={[
-                              "flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors",
+                              "flex w-full items-start gap-2 rounded-sm px-2.5 py-2 text-left transition-colors",
                               isSelected || highlighted
-                                ? "bg-blue-500/10 ring-1 ring-inset ring-blue-500/30 dark:bg-blue-400/10 dark:ring-blue-400/30"
+                                ? "bg-sky-50 ring-1 ring-inset ring-sky-500/25 dark:bg-sky-950/40 dark:ring-sky-400/30"
                                 : "hover:bg-zinc-100 dark:hover:bg-zinc-800/80",
                             ].join(" ")}
                             onClick={() => {

@@ -8,6 +8,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { HelpLink } from "@/components/help/HelpLink";
 import { BreezeApiMethodPicker } from "@/components/settings/BreezeApiMethodPicker";
 import { BreezeApiRiskGateDialog } from "@/components/settings/BreezeApiRiskGateDialog";
+import { WsSubscribeModePicker } from "@/components/settings/WsSubscribeModePicker";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import {
   acknowledgeBreezeApiTesterRisk,
@@ -31,14 +32,10 @@ import {
   buildWsSubscribeParams,
   WS_FIELD_PLACEHOLDERS,
   WS_FORM_INITIAL,
-  WS_SUBSCRIBE_MODE_OPTIONS,
   WS_SUBSCRIBE_MODES,
   type WsSubscribeMode,
 } from "@/lib/breeze-api-playground-ws-subscribe";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
-
-const inputCls =
-  "mt-1 w-full rounded-md border border-zinc-300/80 bg-white/95 px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition-all hover:border-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-blue-400 dark:focus:ring-blue-400/20";
 
 const RISK_ORDER: BreezeApiCatalogEntry["risk_level"][] = ["read", "funds", "trade", "gtt"];
 
@@ -485,8 +482,8 @@ export default function BreezeApiPlaygroundPage() {
         </Link>
 
         <header className="space-y-1">
-          <h2 className="text-xl app-text-heading">Breeze API Playground</h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          <h2 className="app-text-title">Breeze API Playground</h2>
+          <p className="app-text-muted max-w-prose text-sm">
             Invoke ICICI Breeze REST APIs from the official breeze-connect client. Responses are
             live from your broker session.{" "}
             <HelpLink topicId="breeze-api-playground" className="text-sm">
@@ -533,21 +530,17 @@ export default function BreezeApiPlaygroundPage() {
                   </p>
                 )}
 
-                <div className="space-y-3 rounded-md border border-zinc-200/80 p-3 dark:border-zinc-800">
-                  <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Parameters
-                  </div>
+                <div className="app-card-muted space-y-3 p-4">
+                  <h4 className="app-text-heading">Parameters</h4>
                   {selected.params.length === 0 ? (
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">No parameters required.</p>
+                    <p className="app-text-muted">No parameters required.</p>
                   ) : (
                     selected.params.map((p) => (
-                      <label key={p.name} className="block text-xs">
-                        <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                          {p.label}
-                        </span>
+                      <label key={p.name} className="block space-y-1.5">
+                        <span className="app-text-muted">{p.label}</span>
                         {p.type === "json" ? (
                           <textarea
-                            className={`${inputCls} min-h-[120px] font-mono text-xs`}
+                            className="app-input min-h-[120px] font-mono text-xs"
                             value={paramValues[p.name] ?? ""}
                             placeholder={p.placeholder}
                             onChange={(e) =>
@@ -557,7 +550,7 @@ export default function BreezeApiPlaygroundPage() {
                         ) : (
                           <input
                             type="text"
-                            className={inputCls}
+                            className="app-input"
                             value={paramValues[p.name] ?? ""}
                             placeholder={p.placeholder}
                             onChange={(e) =>
@@ -565,23 +558,19 @@ export default function BreezeApiPlaygroundPage() {
                             }
                           />
                         )}
-                        {p.help ? (
-                          <span className="mt-0.5 block text-zinc-500 dark:text-zinc-500">{p.help}</span>
-                        ) : null}
+                        {p.help ? <span className="app-text-muted block">{p.help}</span> : null}
                       </label>
                     ))
                   )}
-                  <label className="block text-xs">
-                    <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                      Additional parameters (JSON)
-                    </span>
+                  <label className="block space-y-1.5">
+                    <span className="app-text-muted">Additional parameters (JSON)</span>
                     <textarea
-                      className={`${inputCls} min-h-[80px] font-mono text-xs`}
+                      className="app-input min-h-[80px] font-mono text-xs"
                       value={extraParamsJson}
                       placeholder='{"custom_key": "value"}'
                       onChange={(e) => setExtraParamsJson(e.target.value)}
                     />
-                    <span className="mt-0.5 block text-zinc-500 dark:text-zinc-500">
+                    <span className="app-text-muted block">
                       Optional keys not in the catalog. Form fields override on conflict.
                     </span>
                   </label>
@@ -603,9 +592,7 @@ export default function BreezeApiPlaygroundPage() {
 
               <div className="flex min-h-[280px] flex-col">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Response
-                  </span>
+                  <h4 className="app-text-heading">Response</h4>
                   {responseText ? (
                     <button
                       type="button"
@@ -631,7 +618,7 @@ export default function BreezeApiPlaygroundPage() {
                     {lastResponse.ok === false ? " · failed" : ""}
                   </p>
                 )}
-                <pre className="mt-2 max-h-[50vh] min-h-[200px] flex-1 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-100">
+                <pre className="app-pre mt-2 max-h-[50vh] min-h-[200px] flex-1 text-xs">
                   {responseText || "Response will appear here after you fire an API."}
                 </pre>
               </div>
@@ -644,8 +631,8 @@ export default function BreezeApiPlaygroundPage() {
         className={`app-card mt-4 space-y-4 p-4 ${showGate ? "pointer-events-none select-none opacity-40" : ""}`}
       >
         <header className="space-y-1">
-          <h3 className="text-lg font-semibold app-text-heading">WebSocket (market hours)</h3>
-          <p className="text-sm app-text-muted">
+          <h3 className="app-text-title">WebSocket (market hours)</h3>
+          <p className="app-text-muted max-w-prose text-sm">
             Connect to Breeze exchange-quote stream for NFO/BFO options. Subscribe to a contract, then
             watch ticks below.
           </p>
@@ -692,29 +679,18 @@ export default function BreezeApiPlaygroundPage() {
         <p className="text-xs app-text-muted">
           WebSocket ticks only arrive during NSE/BSE market hours.
         </p>
-        <label className="block text-xs">
-          <span className="font-medium text-zinc-700 dark:text-zinc-300">Subscribe mode</span>
-          <select
-            className={inputCls}
-            value={wsSubscribeMode}
-            onChange={(e) => setWsSubscribeMode(e.target.value as WsSubscribeMode)}
-          >
-            {WS_SUBSCRIBE_MODE_OPTIONS.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="text-xs app-text-muted">
+        <WsSubscribeModePicker value={wsSubscribeMode} onChange={setWsSubscribeMode} />
+        <p className="app-text-muted">
           Fields depend on subscription type per ICICI docs. Only filled fields are sent.
         </p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="app-card-muted grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
           {WS_SUBSCRIBE_MODES[wsSubscribeMode].map((key) => (
-            <label key={key} className="block text-xs">
-              <span className="font-medium">{key}</span>
+            <label key={key} className="block space-y-1.5">
+              <span className="app-text-muted font-mono text-[11px] uppercase tracking-wide">
+                {key}
+              </span>
               <input
-                className={inputCls}
+                className="app-input font-mono text-xs"
                 value={wsForm[key] ?? ""}
                 placeholder={WS_FIELD_PLACEHOLDERS[key] ?? ""}
                 onChange={(e) => setWsForm((p) => ({ ...p, [key]: e.target.value }))}
@@ -733,9 +709,7 @@ export default function BreezeApiPlaygroundPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="flex min-h-[160px] flex-col">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                ICICI command log
-              </span>
+              <h4 className="app-text-heading">ICICI command log</h4>
               {wsCommandLogText ? (
                 <button
                   type="button"
@@ -755,16 +729,14 @@ export default function BreezeApiPlaygroundPage() {
                 </button>
               ) : null}
             </div>
-            <pre className="mt-2 max-h-56 min-h-[140px] flex-1 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-100">
+            <pre className="app-pre mt-2 max-h-56 min-h-[140px] flex-1 text-xs">
               {wsCommandLogText ||
                 "Commands and ICICI responses appear here after Connect, Subscribe, Disconnect, or Start tick stream."}
             </pre>
           </div>
           <div className="flex min-h-[160px] flex-col">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                Latest operation
-              </span>
+              <h4 className="app-text-heading">Latest operation</h4>
               {wsResponseText ? (
                 <button
                   type="button"
@@ -785,11 +757,12 @@ export default function BreezeApiPlaygroundPage() {
               ) : null}
             </div>
             <pre
-              className={`mt-2 max-h-56 min-h-[140px] flex-1 overflow-auto rounded-md border p-3 font-mono text-xs ${
+              className={[
+                "app-pre mt-2 max-h-56 min-h-[140px] flex-1 text-xs",
                 wsResponseIsError
                   ? "border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
-                  : "border-zinc-200 bg-zinc-50 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-100"
-              }`}
+                  : "",
+              ].join(" ")}
             >
               {wsResponseText ||
                 "ICICI response will appear here after Connect, Subscribe, or Disconnect."}
@@ -797,8 +770,8 @@ export default function BreezeApiPlaygroundPage() {
           </div>
         </div>
         <div>
-          <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Ticks</span>
-          <pre className="mt-2 max-h-48 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs dark:border-zinc-800 dark:bg-zinc-900/80">
+          <h4 className="app-text-heading">Ticks</h4>
+          <pre className="app-pre mt-2 max-h-48 text-xs">
             {wsTicks.length
               ? wsTicks.map((tick) => formatTickForDisplay(tick)).join("\n\n")
               : "Ticks appear after connect, subscribe, and start stream (during market hours)."}
