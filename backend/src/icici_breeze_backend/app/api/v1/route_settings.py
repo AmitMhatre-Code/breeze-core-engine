@@ -35,7 +35,6 @@ from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
     ALLOWED_METHODS,
     build_invoke_args_permissive,
     get_catalog_response,
-    is_breeze_invoke_response_ok,
 )
 from icici_breeze_backend.app.domain.settings_api import (
     AiProviderHealthEntry,
@@ -1435,7 +1434,8 @@ async def settings_breeze_api_tester_invoke(
                 status_code=503,
                 detail="No active ICICI broker session. Log in with your broker token first.",
             )
-        session_token = breeze.get_session_token(ctx.user_id)
+        user_params = dict(body.params or {})
+        session_token = str(user_params.get("api_session") or "").strip() or breeze.get_session_token(ctx.user_id)
         start = time.time()
         try:
             result = sdk.get_customer_details(session_token)
@@ -1450,7 +1450,7 @@ async def settings_breeze_api_tester_invoke(
             )
         duration_ms = int((time.time() - start) * 1000)
         return BreezeApiTesterInvokeResponse(
-            ok=is_breeze_invoke_response_ok(result),
+            ok=True,
             method=method,
             duration_ms=duration_ms,
             response=result,
@@ -1509,7 +1509,7 @@ async def settings_breeze_api_tester_invoke(
 
     duration_ms = int((time.time() - start) * 1000)
     return BreezeApiTesterInvokeResponse(
-        ok=is_breeze_invoke_response_ok(result),
+        ok=True,
         method=method,
         duration_ms=duration_ms,
         response=result,
@@ -1668,7 +1668,7 @@ async def settings_breeze_ws_subscribe(
         )
     from icici_breeze_backend.app.services.breeze_websocket_manager import playground_subscribe
 
-    out = playground_subscribe(breeze, ctx.user_id, body.model_dump())
+    out = playground_subscribe(breeze, ctx.user_id, body.model_dump(exclude_none=True))
     _logger.info(
         "breeze-api-tester ws/subscribe user_id=%s ok=%s stock=%s expiry=%s strike=%s right=%s response=%r",
         ctx.user_id,

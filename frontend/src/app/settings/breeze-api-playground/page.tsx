@@ -34,13 +34,23 @@ const inputCls =
 
 const RISK_ORDER: BreezeApiCatalogEntry["risk_level"][] = ["read", "funds", "trade", "gtt"];
 
-const WS_FORM_PLACEHOLDERS = {
-  exchange_code: "NFO",
-  stock_code: "NIFTY",
-  expiry_date: "26-Jun-2026",
-  strike_price: "25000",
-  right: "call",
-} as const;
+const WS_SUBSCRIBE_FIELDS = [
+  { key: "stock_token", placeholder: "4.1!2885" },
+  { key: "exchange_code", placeholder: "NFO / BFO" },
+  { key: "stock_code", placeholder: "NIFTY / BSESEN" },
+  { key: "product_type", placeholder: "options / cash / futures" },
+  { key: "expiry_date", placeholder: "30-Jun-2026" },
+  { key: "strike_price", placeholder: "25000" },
+  { key: "right", placeholder: "call" },
+  { key: "get_market_depth", placeholder: "true / false" },
+  { key: "get_exchange_quotes", placeholder: "true / false" },
+  { key: "interval", placeholder: "1minute" },
+  { key: "get_order_notification", placeholder: "true" },
+] as const;
+
+const WS_FORM_INITIAL: Record<string, string> = Object.fromEntries(
+  WS_SUBSCRIBE_FIELDS.map((f) => [f.key, ""]),
+);
 
 const WS_LOG_LIMIT = 50;
 
@@ -100,15 +110,15 @@ function mergeLogEntries(
     .slice(0, WS_LOG_LIMIT);
 }
 
-function tickPayloadToLogEntry(rawJson: string): BreezeApiWsEventLogEntry | null {
+function tickPayloadToLogEntry(rawJson: string, seq: number): BreezeApiWsEventLogEntry | null {
   try {
-    const payload = JSON.parse(rawJson) as { raw?: unknown; normalized?: unknown };
+    const tick = JSON.parse(rawJson) as unknown;
     return {
-      id: -Date.now(),
+      id: -(Date.now() * 1000 + seq),
       ts: Date.now() / 1000,
       step: "tick_received",
       icici_command: { sdk_method: "", sdk_args: {}, side_effects: [] },
-      icici_response: { raw: payload.raw, normalized: payload.normalized },
+      icici_response: tick,
       ok: true,
     };
   } catch {
@@ -116,11 +126,31 @@ function tickPayloadToLogEntry(rawJson: string): BreezeApiWsEventLogEntry | null
   }
 }
 
+function formatTickForDisplay(rawJson: string): string {
+  try {
+    return formatJsonValue(JSON.parse(rawJson) as unknown);
+  } catch {
+    return rawJson;
+  }
+}
+
+function buildWsSubscribeParams(
+  form: Record<string, string>,
+  holderId: string,
+): Record<string, string> {
+  const out: Record<string, string> = { holder_id: holderId };
+  for (const [key, value] of Object.entries(form)) {
+    if (value.trim()) out[key] = value.trim();
+  }
+  return out;
+}
+
 export default function BreezeApiPlaygroundPage() {
   const subscriptionHolder = useWsSubscriptionHolder();
   const qc = useQueryClient();
   const [selectedMethod, setSelectedMethod] = useState("");
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
+  const [extraParamsJson, setExtraParamsJson] = useState("");
   const [lastResponse, setLastResponse] = useState<BreezeApiInvokeResponse | null>(null);
   const [invokeError, setInvokeError] = useState<string | null>(null);
   const [wsTicks, setWsTicks] = useState<string[]>([]);
@@ -131,14 +161,8 @@ export default function BreezeApiPlaygroundPage() {
   );
   const [wsStreamOpen, setWsStreamOpen] = useState(false);
   const wsStreamRef = useRef<EventSource | null>(null);
-  const wsTickLoggedRef = useRef(false);
-  const [wsForm, setWsForm] = useState({
-    exchange_code: "NFO",
-    stock_code: "NIFTY",
-    expiry_date: "",
-    strike_price: "",
-    right: "call",
-  });
+  const tickLogSeqRef = useRef(0);
+  const [wsForm, setWsForm] = useState<Record<string, string>>({ ...WS_FORM_INITIAL });
   const [responseCopyState, setResponseCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [wsResponseCopyState, setWsResponseCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
@@ -234,11 +258,25 @@ export default function BreezeApiPlaygroundPage() {
   const buildParamsForInvoke = useCallback((): Record<string, string> => {
     if (!selected) return {};
     const out: Record<string, string> = {};
+    const extraTrimmed = extraParamsJson.trim();
+    if (extraTrimmed) {
+      try {
+        const extra = JSON.parse(extraTrimmed) as Record<string, unknown>;
+        for (const [key, value] of Object.entries(extra)) {
+          if (value == null) continue;
+          const s = String(value).trim();
+          if (s) out[key] = s;
+        }
+      } catch {
+        /* invalid JSON ignored; catalog params still sent */
+      }
+    }
     for (const p of selected.params) {
-      out[p.name] = paramValues[p.name] ?? "";
+      const v = (paramValues[p.name] ?? "").trim();
+      if (v) out[p.name] = v;
     }
     return out;
-  }, [selected, paramValues]);
+  }, [selected, paramValues, extraParamsJson]);
 
   const onFire = () => {
     if (!selected) return;
@@ -345,11 +383,7 @@ export default function BreezeApiPlaygroundPage() {
     },
   });
   const wsSubscribeM = useMutation({
-    mutationFn: () =>
-      wsSubscribePlayground({
-        ...wsForm,
-        holder_id: subscriptionHolder,
-      }),
+    mutationFn: () => wsSubscribePlayground(buildWsSubscribeParams(wsForm, subscriptionHolder)),
     onSuccess: (data) => {
       setWsLastResponse(data);
       appendWsLog(statusToLogEntry(data, "subscribe_feeds"));
@@ -375,7 +409,7 @@ export default function BreezeApiPlaygroundPage() {
   const startWsStream = () => {
     wsStreamRef.current?.close();
     setWsTicks([]);
-    wsTickLoggedRef.current = false;
+    tickLogSeqRef.current = 0;
     setWsStatusHint("Opening tick stream…");
     const es = new EventSource(wsStreamUrl(), { withCredentials: true });
     wsStreamRef.current = es;
@@ -424,10 +458,8 @@ export default function BreezeApiPlaygroundPage() {
     es.addEventListener("ws_tick", (event) => {
       const data = (event as MessageEvent).data;
       setWsTicks((prev) => [data, ...prev].slice(0, 40));
-      if (!wsTickLoggedRef.current) {
-        appendWsLog(tickPayloadToLogEntry(data));
-        wsTickLoggedRef.current = true;
-      }
+      tickLogSeqRef.current += 1;
+      appendWsLog(tickPayloadToLogEntry(data, tickLogSeqRef.current));
     });
     es.addEventListener("ws_ping", (event) => {
       try {
@@ -531,7 +563,6 @@ export default function BreezeApiPlaygroundPage() {
                       <label key={p.name} className="block text-xs">
                         <span className="font-medium text-zinc-700 dark:text-zinc-300">
                           {p.label}
-                          {p.required ? " *" : ""}
                         </span>
                         {p.type === "json" ? (
                           <textarea
@@ -559,6 +590,20 @@ export default function BreezeApiPlaygroundPage() {
                       </label>
                     ))
                   )}
+                  <label className="block text-xs">
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                      Additional parameters (JSON)
+                    </span>
+                    <textarea
+                      className={`${inputCls} min-h-[80px] font-mono text-xs`}
+                      value={extraParamsJson}
+                      placeholder='{"custom_key": "value"}'
+                      onChange={(e) => setExtraParamsJson(e.target.value)}
+                    />
+                    <span className="mt-0.5 block text-zinc-500 dark:text-zinc-500">
+                      Optional keys not in the catalog. Form fields override on conflict.
+                    </span>
+                  </label>
                 </div>
 
                 <button
@@ -602,7 +647,7 @@ export default function BreezeApiPlaygroundPage() {
                 {lastResponse && (
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                     {lastResponse.method} · {lastResponse.duration_ms} ms
-                    {lastResponse.ok === false ? " · non-200 Status in payload" : ""}
+                    {lastResponse.ok === false ? " · failed" : ""}
                   </p>
                 )}
                 <pre className="mt-2 max-h-[50vh] min-h-[200px] flex-1 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-100">
@@ -667,15 +712,15 @@ export default function BreezeApiPlaygroundPage() {
           expiry_date format: <span className="font-mono">26-Jun-2026</span>. WebSocket ticks only arrive
           during NSE/BSE market hours.
         </p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {(["exchange_code", "stock_code", "expiry_date", "strike_price", "right"] as const).map((k) => (
-            <label key={k} className="block text-xs">
-              <span className="font-medium">{k}</span>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {WS_SUBSCRIBE_FIELDS.map(({ key, placeholder }) => (
+            <label key={key} className="block text-xs">
+              <span className="font-medium">{key}</span>
               <input
                 className={inputCls}
-                value={wsForm[k]}
-                placeholder={WS_FORM_PLACEHOLDERS[k]}
-                onChange={(e) => setWsForm((p) => ({ ...p, [k]: e.target.value }))}
+                value={wsForm[key] ?? ""}
+                placeholder={placeholder}
+                onChange={(e) => setWsForm((p) => ({ ...p, [key]: e.target.value }))}
               />
             </label>
           ))}
@@ -758,24 +803,7 @@ export default function BreezeApiPlaygroundPage() {
           <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Ticks</span>
           <pre className="mt-2 max-h-48 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs dark:border-zinc-800 dark:bg-zinc-900/80">
             {wsTicks.length
-              ? wsTicks
-                  .map((tick) => {
-                    try {
-                      const payload = JSON.parse(tick) as { raw?: unknown; normalized?: unknown };
-                      if (payload.normalized) {
-                        return [
-                          formatJsonValue(payload.normalized),
-                          payload.raw ? `raw: ${formatJsonValue(payload.raw)}` : "",
-                        ]
-                          .filter(Boolean)
-                          .join("\n");
-                      }
-                    } catch {
-                      /* fall through */
-                    }
-                    return tick;
-                  })
-                  .join("\n\n")
+              ? wsTicks.map((tick) => formatTickForDisplay(tick)).join("\n\n")
               : "Ticks appear after connect, subscribe, and start stream (during market hours)."}
           </pre>
         </div>

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
     build_invoke_args_permissive,
     is_breeze_invoke_response_ok,
+    sdk_args_from_user_params,
 )
 from icici_breeze_backend.app.services.breeze_websocket_manager import (
     get_playground_event_log,
@@ -33,7 +34,7 @@ def _reset_bwm(monkeypatch) -> None:
     monkeypatch.setattr(bwm, "_last_error", None)
 
 
-def test_build_invoke_args_permissive_allows_empty_required_params():
+def test_build_invoke_args_permissive_omits_empty_params():
     pos, kw = build_invoke_args_permissive(
         "subscribe_feeds",
         {
@@ -45,8 +46,35 @@ def test_build_invoke_args_permissive_allows_empty_required_params():
         },
     )
     assert pos == ()
-    assert kw["stock_code"] == ""
-    assert kw["strike_price"] == ""
+    assert kw == {"exchange_code": "NFO"}
+    assert "stock_code" not in kw
+    assert "strike_price" not in kw
+
+
+def test_build_invoke_args_permissive_allows_extra_keys():
+    pos, kw = build_invoke_args_permissive(
+        "get_quotes",
+        {"stock_code": "NIFTY", "exchange_code": "NFO", "custom_flag": "yes"},
+    )
+    assert pos == ()
+    assert kw["custom_flag"] == "yes"
+
+
+def test_sdk_args_from_user_params_coerces_bools():
+    args = sdk_args_from_user_params(
+        {
+            "exchange_code": "NFO",
+            "get_exchange_quotes": "true",
+            "get_market_depth": "false",
+            "holder_id": "h1",
+        }
+    )
+    assert args == {
+        "exchange_code": "NFO",
+        "get_exchange_quotes": True,
+        "get_market_depth": False,
+    }
+    assert "holder_id" not in args
 
 
 def test_build_invoke_args_permissive_invalid_json_passes_raw_string():
@@ -65,8 +93,10 @@ def test_is_breeze_invoke_response_ok_string_exception():
     assert is_breeze_invoke_response_ok({"Status": 400, "Error": "bad"}) is False
 
 
-def test_playground_subscribe_empty_strike_rejected(monkeypatch):
+def test_playground_subscribe_empty_strike_calls_sdk(monkeypatch):
     sdk = MagicMock()
+    err = "Exception while subscribing to feeds Strike Price cannot be empty for Product-Type 'Options'."
+    sdk.subscribe_feeds.return_value = err
     proc = MagicMock()
     proc.get_session_breeze.return_value = sdk
     _reset_bwm(monkeypatch)
@@ -74,6 +104,11 @@ def test_playground_subscribe_empty_strike_rejected(monkeypatch):
         "icici_breeze_backend.app.services.breeze_websocket_manager.start_tick_pipeline",
         lambda: None,
     )
+    import icici_breeze_backend.app.services.breeze_websocket_manager as bwm
+
+    monkeypatch.setattr(bwm, "_sdk", sdk)
+    monkeypatch.setattr(bwm, "_connected", True)
+    monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
 
     out = playground_subscribe(
         proc,
@@ -88,8 +123,14 @@ def test_playground_subscribe_empty_strike_rejected(monkeypatch):
         },
     )
 
-    assert out["ok"] is False
-    sdk.subscribe_feeds.assert_not_called()
+    assert out["ok"] is True
+    assert out["response"] == err
+    sdk.subscribe_feeds.assert_called_once_with(
+        exchange_code="NFO",
+        stock_code="NIFTY",
+        expiry_date="30-Jun-2026",
+        right="call",
+    )
 
 
 def test_playground_subscribe_sdk_exception_in_response(monkeypatch):
@@ -166,6 +207,7 @@ def test_playground_subscribe_success_tracks_active_subscriptions(monkeypatch):
     )
 
     assert out["ok"] is True
+    assert out["response"] == {"message": "Stock NIFTY subscribed successfully"}
     assert out["active_subscriptions"] == 1
     sdk.subscribe_feeds.assert_called_once_with(
         exchange_code="NFO",
@@ -173,9 +215,6 @@ def test_playground_subscribe_success_tracks_active_subscriptions(monkeypatch):
         expiry_date="30-Jun-2026",
         strike_price="25000",
         right="call",
-        product_type="options",
-        get_market_depth=False,
-        get_exchange_quotes=True,
     )
 
 
@@ -219,3 +258,62 @@ def test_sse_tick_queue_uses_threadsafe_put():
 
     received = asyncio.run(_run())
     assert received == [{"raw": {"ltp": 1}, "normalized": {"ltp": 1}}]
+
+
+BFO_RAW_TICK = {
+    "symbol": "8.1!844663",
+    "open": 96,
+    "last": 98,
+    "bPrice": 96.8,
+    "sPrice": 97.25,
+    "OI": 37020,
+    "totalBuyQt": 30800,
+    "totalSellQ": 12360,
+    "close": 100.05,
+}
+
+
+def test_raw_bfo_tick_reaches_playground_listener(monkeypatch):
+    from icici_breeze_backend.app.services import ws_tick_pipeline as pipeline
+
+    received: list[dict] = []
+
+    def _on_raw(payload: dict) -> None:
+        received.append(payload)
+
+    monkeypatch.setattr(pipeline, "_ingest_queue", __import__("queue").Queue())
+    monkeypatch.setattr(pipeline, "_process_queue", __import__("queue").Queue())
+    monkeypatch.setattr(pipeline, "_started", True)
+    pipeline.register_raw_tick_listener(_on_raw)
+    try:
+        pipeline.ingest_tick(BFO_RAW_TICK)
+    finally:
+        pipeline.unregister_raw_tick_listener(_on_raw)
+
+    assert len(received) == 1
+    assert received[0] == BFO_RAW_TICK
+
+
+def test_playground_listener_not_on_normalized_path(monkeypatch):
+    from icici_breeze_backend.app.services import ws_tick_pipeline as pipeline
+
+    raw_received: list[dict] = []
+    norm_received: list[dict] = []
+
+    def on_raw(payload: dict) -> None:
+        raw_received.append(payload)
+
+    def on_norm(payload: dict) -> None:
+        norm_received.append(payload)
+
+    pipeline.register_raw_tick_listener(on_raw)
+    pipeline.register_tick_listener(on_norm)
+    try:
+        monkeypatch.setattr(pipeline, "_ingest_queue", None)
+        pipeline.ingest_tick(BFO_RAW_TICK)
+    finally:
+        pipeline.unregister_raw_tick_listener(on_raw)
+        pipeline.unregister_tick_listener(on_norm)
+
+    assert len(raw_received) == 1
+    assert norm_received == []

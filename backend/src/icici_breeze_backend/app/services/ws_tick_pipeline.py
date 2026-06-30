@@ -25,6 +25,7 @@ _drain_thread: threading.Thread | None = None
 _cache_thread: threading.Thread | None = None
 _process_queue: queue.Queue[list[dict[str, Any]]] | None = None
 _listeners: list[TickListener] = []
+_raw_listeners: list[TickListener] = []
 _dropped_ticks = 0
 _started = False
 _start_lock = threading.Lock()
@@ -48,9 +49,21 @@ def _tick_coalesce_key(parsed_exchange: str, stock: str, expiry: str, strike: fl
     return f"{parsed_exchange}|{stock}|{expiry}|{strike}|{right}"
 
 
+def _raw_tick_payload(raw: Any) -> Any:
+    if isinstance(raw, dict):
+        return dict(raw)
+    return raw
+
+
 def ingest_tick(raw: Any) -> None:
-    """Called from SDK on_ticks — enqueue only."""
+    """Called from SDK on_ticks — notify raw listeners, then enqueue for normalized pipeline."""
     global _dropped_ticks
+    payload = _raw_tick_payload(raw)
+    for listener in list(_raw_listeners):
+        try:
+            listener(payload)
+        except Exception:
+            pass
     q = _ingest_queue
     if q is None:
         return
@@ -72,6 +85,17 @@ def register_tick_listener(cb: TickListener) -> None:
 def unregister_tick_listener(cb: TickListener) -> None:
     try:
         _listeners.remove(cb)
+    except ValueError:
+        pass
+
+
+def register_raw_tick_listener(cb: TickListener) -> None:
+    _raw_listeners.append(cb)
+
+
+def unregister_raw_tick_listener(cb: TickListener) -> None:
+    try:
+        _raw_listeners.remove(cb)
     except ValueError:
         pass
 

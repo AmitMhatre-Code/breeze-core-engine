@@ -118,14 +118,7 @@ export function wsGetPlaygroundEventLog() {
   return apiClient.get<BreezeApiWsEventLogResponse>(`${BASE}/ws/event-log`);
 }
 
-export function wsSubscribePlayground(params: {
-  exchange_code: string;
-  stock_code: string;
-  expiry_date: string;
-  strike_price: string;
-  right: string;
-  holder_id?: string;
-}) {
+export function wsSubscribePlayground(params: Record<string, string | boolean | undefined>) {
   return apiClient.post<BreezeApiWsStatus, typeof params>(`${BASE}/ws/subscribe`, params);
 }
 

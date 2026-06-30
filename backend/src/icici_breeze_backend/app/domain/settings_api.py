@@ -1,7 +1,7 @@
 """JSON settings API models."""
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from icici_breeze_backend.app.domain.options_strategy import (
     ExecutiveSummaryOut,
@@ -140,12 +140,20 @@ class ReferenceDataScheduleUpdateBody(BaseModel):
 
 
 class BreezeApiTesterWsSubscribeBody(BaseModel):
-    exchange_code: str = "NFO"
-    stock_code: str = ""
-    expiry_date: str = ""
-    strike_price: str = ""
-    right: str = "call"
-    holder_id: str = ""
+    model_config = ConfigDict(extra="allow")
+
+    stock_token: Optional[str] = None
+    exchange_code: Optional[str] = None
+    stock_code: Optional[str] = None
+    product_type: Optional[str] = None
+    expiry_date: Optional[str] = None
+    strike_price: Optional[str] = None
+    right: Optional[str] = None
+    get_market_depth: Optional[str] = None
+    get_exchange_quotes: Optional[str] = None
+    interval: Optional[str] = None
+    get_order_notification: Optional[str] = None
+    holder_id: Optional[str] = None
 
 
 class WsReleaseRequest(BaseModel):

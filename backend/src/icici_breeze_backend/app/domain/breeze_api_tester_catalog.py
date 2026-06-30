@@ -450,16 +450,22 @@ _CATALOG: tuple[BreezeApiCatalogEntry, ...] = (
     ),
     BreezeApiCatalogEntry(
         method="subscribe_feeds",
-        title="Subscribe Feeds (NFO/BFO Options)",
+        title="Subscribe Feeds (WebSocket)",
         risk_level="read",
         params=(
-            _s("exchange_code", required=True, placeholder="NFO"),
-            _s("stock_code", required=True, placeholder="NIFTY"),
-            _s("expiry_date", required=True, placeholder="27-Feb-2025"),
-            _s("strike_price", required=True, placeholder="24000"),
-            _s("right", required=True, placeholder="call"),
+            _s("stock_token", placeholder="4.1!2885"),
+            _s("exchange_code", placeholder="NFO"),
+            _s("stock_code", placeholder="NIFTY"),
+            _s("product_type", placeholder="options"),
+            _s("expiry_date", placeholder="27-Feb-2025"),
+            _s("strike_price", placeholder="24000"),
+            _s("right", placeholder="call"),
+            _s("get_market_depth", placeholder="true"),
+            _s("get_exchange_quotes", placeholder="true"),
+            _s("interval", placeholder="1minute"),
+            _s("get_order_notification", placeholder="true"),
         ),
-        notes="Sets get_exchange_quotes=True for buy/sell qty. Use /breeze-api-tester/ws/subscribe in playground.",
+        notes="ICICI subscribe_feeds fields only; pass what you need. WebSocket tab mirrors the same shape.",
     ),
 )
 
@@ -558,26 +564,72 @@ def _coerce_param_value_permissive(pdef: Any, raw: Any) -> Any:
     return str(raw).strip() if isinstance(raw, str) else str(raw)
 
 
+PLAYGROUND_INTERNAL_PARAM_NAMES = frozenset({"holder_id"})
+BOOL_PARAM_NAMES = frozenset({"get_market_depth", "get_exchange_quotes", "get_order_notification"})
+
+
+def _should_omit_playground_param(raw: Any) -> bool:
+    if raw is None:
+        return True
+    if isinstance(raw, str) and not raw.strip():
+        return True
+    return False
+
+
+def coerce_playground_bool(raw: Any) -> Any:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        lowered = raw.strip().lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+    return raw
+
+
+def sdk_args_from_user_params(
+    params: dict[str, Any],
+    *,
+    param_types: dict[str, BreezeApiParamDef] | None = None,
+) -> dict[str, Any]:
+    """Build SDK kwargs from user-supplied playground params only (no defaults)."""
+    out: dict[str, Any] = {}
+    for pname, raw in (params or {}).items():
+        if pname in PLAYGROUND_INTERNAL_PARAM_NAMES:
+            continue
+        if _should_omit_playground_param(raw):
+            continue
+        pdef = param_types.get(pname) if param_types else None
+        if pdef is not None:
+            val = _coerce_param_value_permissive(pdef, raw)
+        elif isinstance(raw, str):
+            val = raw.strip()
+        else:
+            val = raw
+        if pname in BOOL_PARAM_NAMES:
+            val = coerce_playground_bool(val)
+        out[pname] = val
+    return out
+
+
 def build_invoke_args_permissive(
     method: str, params: dict[str, Any]
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
-    """Playground-only: pass catalog params to SDK without required/extra validation."""
+    """Playground-only: pass only user-supplied params to SDK (extras allowed)."""
     entry = get_catalog_entry(method)
     if entry is None:
         raise ValueError(f"Unknown method: {method}")
 
-    kwargs: dict[str, Any] = {}
+    param_types = {p.name: p for p in entry.params}
+    sdk_args = sdk_args_from_user_params(params, param_types=param_types)
     positional: list[Any] = []
-    params = dict(params or {})
-
-    for pdef in entry.params:
-        pname = pdef.name
-        val = _coerce_param_value_permissive(pdef, params.get(pname))
+    kwargs: dict[str, Any] = {}
+    for pname, val in sdk_args.items():
         if method == "margin_calculator" and pname == "margin_list":
             positional.append(val)
         else:
             kwargs[pname] = val
-
     return tuple(positional), kwargs
 
 
