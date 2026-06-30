@@ -22,14 +22,15 @@ def _init_scrip_db(tmp_path, monkeypatch) -> None:
                 StrikePrice INTEGER,
                 OptionType TEXT,
                 LotSize INTEGER,
-                SegmentCode TEXT
+                SegmentCode TEXT,
+                MarginPercentage INTEGER
             )
             """
         )
         conn.execute(
             """
-            INSERT INTO scrip_master (ShortName, ExpiryDate, StrikePrice, OptionType, LotSize, SegmentCode)
-            VALUES ('NIFTY', '30-Jun-2026', 24000, 'CE', 75, 'NFO')
+            INSERT INTO scrip_master (ShortName, ExpiryDate, StrikePrice, OptionType, LotSize, SegmentCode, MarginPercentage)
+            VALUES ('NIFTY', '30-Jun-2026', 24000, 'CE', 75, 'NFO', 10)
             """
         )
 

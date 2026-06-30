@@ -93,3 +93,57 @@ def test_bse_exchange_maps_to_bfo():
     parsed = parse_icici_tick(raw)
     assert parsed is not None
     assert parsed.exchange_code == cfg.BFO
+
+
+def _seed_bfo_token_index(monkeypatch, tmp_path) -> None:
+    import sqlite3
+
+    monkeypatch.setattr(cfg, "DATA_PATH", str(tmp_path) + "/")
+    monkeypatch.setattr(cfg, "SCRIP_DB", "scrips.sqlite3")
+    with sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB, timeout=30) as conn:
+        conn.execute(
+            """
+            CREATE TABLE ws_token_index (
+                Token INTEGER PRIMARY KEY,
+                SegmentCode TEXT,
+                ShortName TEXT,
+                ExpiryDate DATE,
+                StrikePrice REAL,
+                OptionType TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO ws_token_index (Token, SegmentCode, ShortName, ExpiryDate, StrikePrice, OptionType)
+            VALUES (820390, 'BFO', 'BSESEN', '2026-07-02', 77000, 'CE')
+            """
+        )
+    from icici_breeze_backend.app.services.reference_data.ws_token_index import clear_token_lookup_cache
+
+    clear_token_lookup_cache()
+
+
+def test_bfo_symbol_only_tick_normalization(monkeypatch, tmp_path):
+    _seed_bfo_token_index(monkeypatch, tmp_path)
+    raw = _load_fixture("bfo_call_77000_raw.json")
+    result = normalize_icici_tick(raw, updated_at=10.0)
+    assert result is not None
+    parsed, cell = result
+    assert parsed.exchange_code == cfg.BFO
+    assert parsed.stock_code == "BSESEN"
+    assert parsed.expiry_display == "02-Jul-2026"
+    assert parsed.strike == 77000.0
+    assert parsed.right == "call"
+    assert cell["ltp"] == 227.35
+    assert cell["open_interest"] == 1547880
+    assert cell["right"] == cfg.CALL
+
+
+def test_symbol_prefix_exchange_mapping(monkeypatch, tmp_path):
+    from icici_breeze_backend.app.services.reference_data.ws_token_index import (
+        exchange_from_ws_prefix,
+    )
+
+    assert exchange_from_ws_prefix("8.1") == cfg.BFO
+    assert exchange_from_ws_prefix("4.1") == cfg.NFO

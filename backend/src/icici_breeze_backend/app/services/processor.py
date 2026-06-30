@@ -113,31 +113,11 @@ def _expiry_api_to_display(expiry: str) -> str:
 
 
 def _scrip_master_expiry_sql_values(expiry: str) -> tuple[str, ...]:
-    """Deduped ExpiryDate forms for scrip_master SQL (display + ISO)."""
-    s = str(expiry or "").strip()
-    if not s:
-        return ()
-    display = s
-    if "T" in s:
-        try:
-            display = _expiry_api_to_display(s)
-        except ValueError:
-            pass
-    elif len(s) == 10 and s[4] == "-" and len(s.split("-")[0]) == 4:
-        try:
-            display = datetime.datetime.strptime(s, "%Y-%m-%d").strftime("%d-%b-%Y")
-        except ValueError:
-            pass
-    keys: list[str] = []
-    if display:
-        keys.append(display)
-    try:
-        iso = datetime.datetime.strptime(display, "%d-%b-%Y").date().isoformat()
-        if iso not in keys:
-            keys.append(iso)
-    except ValueError:
-        pass
-    return tuple(keys)
+    from icici_breeze_backend.app.services.reference_data.scrip_master_sql import (
+        scrip_master_expiry_sql_values,
+    )
+
+    return scrip_master_expiry_sql_values(expiry)
 
 
 def _expiry_to_breeze_place_order(expiry_date) -> str:
@@ -1958,12 +1938,22 @@ class processor():
         )
 
         from icici_breeze_backend.app.services.reference_data.scrip_index import get_strikes
+        from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
+            is_tradeable_contract,
+            list_tradeable_strikes,
+        )
 
         scrip_strikes = get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
         if scrip_strikes:
             strikes = sorted(set(scrip_strikes))
         else:
-            strikes = sorted(set(r["strike_price"] for r in calls) | set(r["strike_price"] for r in puts))
+            strikes = list_tradeable_strikes(
+                stock_code, expiry_display, exchange_code=exchange_code
+            )
+            if not strikes:
+                strikes = sorted(
+                    set(r["strike_price"] for r in calls) | set(r["strike_price"] for r in puts)
+                )
         call_by_strike = {r["strike_price"]: r for r in calls}
         put_by_strike = {r["strike_price"]: r for r in puts}
 
@@ -1972,10 +1962,22 @@ class processor():
 
         chain_rows = []
         for k in strikes:
+            call_cell = call_by_strike.get(k)
+            put_cell = put_by_strike.get(k)
+            if call_cell and not is_tradeable_contract(
+                stock_code, expiry_display, k, cfg.CALL, exchange_code=exchange_code
+            ):
+                call_cell = None
+            if put_cell and not is_tradeable_contract(
+                stock_code, expiry_display, k, cfg.PUT, exchange_code=exchange_code
+            ):
+                put_cell = None
+            if call_cell is None and put_cell is None:
+                continue
             chain_rows.append({
                 "strike_price": k,
-                "call": call_by_strike.get(k),
-                "put": put_by_strike.get(k),
+                "call": call_cell,
+                "put": put_cell,
             })
 
         def _is_illiquid(row):
@@ -2003,8 +2005,9 @@ class processor():
                 except (TypeError, ValueError):
                     pass
         atm_strike = None
-        if spot_price is not None and strikes:
-            atm_strike = min(strikes, key=lambda s: abs(s - spot_price))
+        chain_strike_prices = [r["strike_price"] for r in chain_rows]
+        if spot_price is not None and chain_strike_prices:
+            atm_strike = min(chain_strike_prices, key=lambda s: abs(s - spot_price))
 
         lot_size_for_series = self.fetch_lot_size(
             stock_code, expiry_display, exchange_code=exchange_code
@@ -2920,10 +2923,18 @@ class processor():
             return []
         expiry_display = expiry_sql_values[0]
         from icici_breeze_backend.app.services.reference_data.scrip_index import get_strikes
+        from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
+            list_tradeable_strikes,
+        )
 
         cached = get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
         if cached:
             return cached
+        tradeable = list_tradeable_strikes(
+            stock_code, expiry_display, exchange_code=exchange_code
+        )
+        if tradeable:
+            return tradeable
         expiry_placeholders = ",".join("?" * len(expiry_sql_values))
         with _scrip_master_connection() as conn:
             if exchange_code == cfg.NFO:
@@ -2933,6 +2944,7 @@ class processor():
                     WHERE ShortName = ? AND ExpiryDate IN ({expiry_placeholders})
                       AND (SegmentCode = ? OR SegmentCode IS NULL)
                       AND StrikePrice IS NOT NULL AND StrikePrice > 0
+                      AND MarginPercentage > 0
                     ORDER BY StrikePrice
                     """,
                     (stock_code, *expiry_sql_values, exchange_code),
@@ -2944,6 +2956,7 @@ class processor():
                     WHERE ShortName = ? AND ExpiryDate IN ({expiry_placeholders})
                       AND SegmentCode = ?
                       AND StrikePrice IS NOT NULL AND StrikePrice > 0
+                      AND MarginPercentage > 0
                     ORDER BY StrikePrice
                     """,
                     (stock_code, *expiry_sql_values, exchange_code),
@@ -3139,7 +3152,8 @@ class processor():
                 QuantityLimit INTEGER,
                 CompanyName TEXT,
                 ExchangeCode TEXT,
-                SegmentCode TEXT
+                SegmentCode TEXT,
+                MarginPercentage INTEGER
             )
             ''')
             _logger.debug("Created scrip_master table")
@@ -3147,6 +3161,10 @@ class processor():
             # Backward compatible schema upgrade for existing DBs.
             try:
                 cursor.execute("ALTER TABLE scrip_master ADD COLUMN SegmentCode TEXT")
+            except Exception:
+                pass
+            try:
+                cursor.execute("ALTER TABLE scrip_master ADD COLUMN MarginPercentage INTEGER")
             except Exception:
                 pass
 
@@ -3190,7 +3208,7 @@ class processor():
             # Requires raw_limits_data populated by load_qty_limits (master load fails if limits missing).
             cursor.execute(
                 """
-            INSERT INTO scrip_master (ShortName, ExpiryDate, StrikePrice, OptionType, LotSize, QuantityLimit, CompanyName, ExchangeCode, SegmentCode)
+            INSERT INTO scrip_master (ShortName, ExpiryDate, StrikePrice, OptionType, LotSize, QuantityLimit, CompanyName, ExchangeCode, SegmentCode, MarginPercentage)
             SELECT 
                 scrips.ShortName, 
                 scrips.ExpiryDate, 
@@ -3200,7 +3218,8 @@ class processor():
                 limits.QtyLimit AS QuantityLimit, 
                 scrips.CompanyName, 
                 scrips.ExchangeCode,
-                limits.SegmentCode
+                limits.SegmentCode,
+                scrips.MarginPercentage
             FROM raw_scrip_data scrips
             JOIN raw_limits_data limits
               ON scrips.ShortName = limits.ShortName
@@ -3211,6 +3230,18 @@ class processor():
                 (exchange_code,),
             )
             _logger.info("Inserted filtered data into scrip_master")
+
+            from icici_breeze_backend.app.services.reference_data.ws_token_index import (
+                clear_token_lookup_cache,
+                populate_ws_token_index_from_raw,
+            )
+
+            populate_ws_token_index_from_raw(cursor, exchange_code)
+            _logger.info("Updated ws_token_index for %s", exchange_code)
+            try:
+                clear_token_lookup_cache()
+            except Exception:
+                pass
 
             # Drop temp table (raw_limits_data is persistent)
             cursor.execute('DROP TABLE IF EXISTS raw_scrip_data')

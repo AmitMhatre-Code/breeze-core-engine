@@ -310,79 +310,95 @@ export function OptionChainUnderlyingSearch({
       ? "flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 sm:gap-x-3"
       : "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-zinc-200 bg-white px-3 py-2 shadow-sm sm:gap-x-3 dark:border-zinc-700 dark:bg-zinc-950/80";
 
+    const tickerRow = (
+      <div className={rowClass}>
+        <label
+          className={
+            chainBar
+              ? "flex min-w-0 max-w-full flex-1 items-center gap-x-2.5 sm:gap-x-3"
+              : "flex min-w-0 max-w-full flex-1 items-center gap-x-2 sm:gap-x-3"
+          }
+        >
+          <span className="sr-only">Search underlying</span>
+          <SearchIcon
+            className={
+              chainBar
+                ? "pointer-events-none size-[1.125rem] shrink-0 text-zinc-500 dark:text-zinc-500"
+                : "pointer-events-none size-[1.125rem] shrink-0 text-zinc-500 dark:text-zinc-400"
+            }
+          />
+          <input
+            id="option-chain-underlying-ticker"
+            ref={inputRef}
+            data-scrip-input
+            type="search"
+            autoComplete="off"
+            disabled={disabled}
+            value={inputDisplay}
+            onChange={(e) => handleInputChange(e.target.value)}
+            onFocus={handleInputFocus}
+            onKeyDown={handleKeyDown}
+            onBlur={handleInputBlur}
+            placeholder="Select underlying"
+            className={
+              chainBar
+                ? "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm outline-none ring-0 placeholder:font-normal placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-400 dark:placeholder:text-zinc-500 dark:disabled:text-zinc-500 font-semibold tracking-tight text-zinc-900 dark:text-white placeholder:tracking-normal"
+                : "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm outline-none ring-0 placeholder:font-normal placeholder:text-zinc-400 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-400 dark:placeholder:text-zinc-500 dark:disabled:text-zinc-500 font-semibold tracking-tight text-zinc-900 dark:text-zinc-100"
+            }
+          />
+        </label>
+        {spot != null && Number.isFinite(spot) ? (
+          <span
+            className={
+              chainBar
+                ? "shrink-0 tabular-nums text-sm font-semibold text-zinc-900 dark:text-white"
+                : "shrink-0 tabular-nums text-sm font-semibold text-zinc-800 dark:text-zinc-100"
+            }
+          >
+            {formatSpot(spot)}
+          </span>
+        ) : chainBar ? null : (
+          <span className="shrink-0 text-sm font-medium text-zinc-400 dark:text-zinc-500">
+            —
+          </span>
+        )}
+        {chainBar ? (
+          changeStr ? (
+            <span
+              className={
+                (changePct ?? 0) < 0
+                  ? "shrink-0 text-sm font-semibold tabular-nums text-orange-700 dark:text-orange-400"
+                  : "shrink-0 text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400"
+              }
+            >
+              {changeStr}
+            </span>
+          ) : null
+        ) : null}
+      </div>
+    );
+
     return (
       <div
         ref={rootRef}
         className={`relative min-w-0 flex-1 ${open ? "z-[300]" : "z-0"}`}
       >
-        <div className={rowClass}>
-          <label
-            className={
-              chainBar
-                ? "flex min-w-0 max-w-full flex-1 items-center gap-x-2.5 sm:gap-x-3"
-                : "flex min-w-0 max-w-full flex-1 items-center gap-x-2 sm:gap-x-3"
-            }
-          >
-            <span className="sr-only">Search underlying</span>
-            <SearchIcon
-              className={
-                chainBar
-                  ? "pointer-events-none size-[1.125rem] shrink-0 text-zinc-500 dark:text-zinc-500"
-                  : "pointer-events-none size-[1.125rem] shrink-0 text-zinc-500 dark:text-zinc-400"
-              }
-            />
-            <input
-              id="option-chain-underlying-ticker"
-              ref={inputRef}
-              data-scrip-input
-              type="search"
-              autoComplete="off"
-              disabled={disabled}
-              value={inputDisplay}
-              onChange={(e) => handleInputChange(e.target.value)}
-              onFocus={handleInputFocus}
-              onKeyDown={handleKeyDown}
-              onBlur={handleInputBlur}
-              placeholder="Select underlying"
-              className={
-                chainBar
-                  ? "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm outline-none ring-0 placeholder:font-normal placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-400 dark:placeholder:text-zinc-500 dark:disabled:text-zinc-500 font-semibold tracking-tight text-zinc-900 dark:text-white placeholder:tracking-normal"
-                  : "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm outline-none ring-0 placeholder:font-normal placeholder:text-zinc-400 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-400 dark:placeholder:text-zinc-500 dark:disabled:text-zinc-500 font-semibold tracking-tight text-zinc-900 dark:text-zinc-100"
-              }
-            />
-          </label>
-          {spot != null && Number.isFinite(spot) ? (
-            <span
-              className={
-                chainBar
-                  ? "shrink-0 tabular-nums text-sm font-semibold text-zinc-900 dark:text-white"
-                  : "shrink-0 tabular-nums text-sm font-semibold text-zinc-800 dark:text-zinc-100"
-              }
-            >
-              {formatSpot(spot)}
-            </span>
-          ) : chainBar ? null : (
-            <span className="shrink-0 text-sm font-medium text-zinc-400 dark:text-zinc-500">
-              —
-            </span>
-          )}
-          {chainBar ? (
-            changeStr ? (
-              <span
-                className={
-                  (changePct ?? 0) < 0
-                    ? "shrink-0 text-sm font-semibold tabular-nums text-orange-700 dark:text-orange-400"
-                    : "shrink-0 text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400"
-                }
-              >
-                {changeStr}
-              </span>
-            ) : null
-          ) : null}
-          {chainBar && quoteMeta ? (
-            <QuoteSourceBadge meta={quoteMeta} variant="compact" className="shrink-0" />
-          ) : null}
-        </div>
+        {chainBar ? (
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            {tickerRow}
+            {quoteMeta ? (
+              <div className="flex w-full justify-end">
+                <QuoteSourceBadge
+                  meta={quoteMeta}
+                  variant="compact"
+                  className="shrink-0"
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          tickerRow
+        )}
 
         {open && !disabled ? (
           <>

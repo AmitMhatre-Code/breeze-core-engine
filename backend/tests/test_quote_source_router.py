@@ -245,6 +245,34 @@ def test_fetch_chain_payload_routed_bhavcopy_with_sqlite_strikes(
     monkeypatch.setattr(cfg, "SCRIP_DB", "scrips.sqlite3")
     get_redis()
 
+    import sqlite3
+
+    db_path = cfg.DATA_PATH + cfg.SCRIP_DB
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE scrip_master (
+                ShortName TEXT,
+                ExpiryDate TEXT,
+                StrikePrice INTEGER,
+                OptionType TEXT,
+                LotSize INTEGER,
+                SegmentCode TEXT,
+                MarginPercentage INTEGER
+            )
+            """
+        )
+        for strike in (23900, 24000):
+            for opt in ("CE", "PE"):
+                conn.execute(
+                    """
+                    INSERT INTO scrip_master
+                    (ShortName, ExpiryDate, StrikePrice, OptionType, LotSize, SegmentCode, MarginPercentage)
+                    VALUES ('NIFTY', '30-Jun-2026', ?, ?, 65, 'NFO', 10)
+                    """,
+                    (strike, opt),
+                )
+
     day = dt.date(2026, 6, 29)
     publish_bhavcopy_rows(
         [

@@ -14,8 +14,9 @@ def _raw_nifty_call_25000() -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@patch("icici_breeze_backend.app.services.ws_tick_pipeline.cache_publish")
 @patch("icici_breeze_backend.app.services.ws_tick_pipeline.cache_set_json")
-def test_pipeline_writes_from_worker_not_callback(mock_cache):
+def test_pipeline_writes_raw_ticks_not_normalized_cells(mock_cache, _mock_publish):
     pipeline.stop_tick_pipeline()
     pipeline.start_tick_pipeline()
     try:
@@ -25,9 +26,12 @@ def test_pipeline_writes_from_worker_not_callback(mock_cache):
         while time.time() < deadline and mock_cache.call_count == 0:
             time.sleep(0.05)
         assert mock_cache.call_count >= 1
-        key, cell = mock_cache.call_args[0]
-        assert "quotes:ws:NFO:NIFTY" in key
-        assert cell["ltp"] == 1.4
+        key, payload = mock_cache.call_args[0]
+        assert "quotes:ws:raw:NFO:" in key
+        assert isinstance(payload, dict)
+        assert "raw" in payload
+        assert payload["raw"]["last"] == 1.4
+        assert "ltp" not in payload
     finally:
         pipeline.stop_tick_pipeline()
 

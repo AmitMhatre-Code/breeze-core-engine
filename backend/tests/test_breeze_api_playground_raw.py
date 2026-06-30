@@ -294,6 +294,44 @@ def test_raw_bfo_tick_reaches_playground_listener(monkeypatch):
     assert received[0] == BFO_RAW_TICK
 
 
+def test_bfo_raw_tick_normalizes_with_token_index(monkeypatch, tmp_path):
+    import sqlite3
+
+    import icici_breeze_backend.app.core.config as cfg
+    from icici_breeze_backend.app.services.reference_data.ws_token_index import clear_token_lookup_cache
+    from icici_breeze_backend.app.services.ws_tick_normalize import normalize_icici_tick
+
+    monkeypatch.setattr(cfg, "DATA_PATH", str(tmp_path) + "/")
+    monkeypatch.setattr(cfg, "SCRIP_DB", "scrips.sqlite3")
+    with sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB, timeout=30) as conn:
+        conn.execute(
+            """
+            CREATE TABLE ws_token_index (
+                Token INTEGER PRIMARY KEY,
+                SegmentCode TEXT,
+                ShortName TEXT,
+                ExpiryDate DATE,
+                StrikePrice REAL,
+                OptionType TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO ws_token_index (Token, SegmentCode, ShortName, ExpiryDate, StrikePrice, OptionType)
+            VALUES (844663, 'BFO', 'BSESEN', '2026-07-02', 82000, 'CE')
+            """
+        )
+    clear_token_lookup_cache()
+
+    result = normalize_icici_tick(BFO_RAW_TICK)
+    assert result is not None
+    parsed, cell = result
+    assert parsed.exchange_code == cfg.BFO
+    assert parsed.stock_code == "BSESEN"
+    assert cell["ltp"] == 98
+
+
 def test_playground_listener_not_on_normalized_path(monkeypatch):
     from icici_breeze_backend.app.services import ws_tick_pipeline as pipeline
 

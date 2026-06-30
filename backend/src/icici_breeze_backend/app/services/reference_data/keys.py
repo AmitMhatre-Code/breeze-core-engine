@@ -65,3 +65,16 @@ def ws_quote_key(
         f"quotes:ws:{exchange_code.upper()}:{short_name.upper()}:"
         f"{expiry_display}:{strike_key(strike)}:{r}"
     )
+
+
+def ws_raw_quote_key(segment_code: str, token: int) -> str:
+    return f"quotes:ws:raw:{segment_code.upper()}:{int(token)}"
+
+
+def canonical_chain_key(exchange_code: str, stock_code: str, expiry_display: str) -> str:
+    return (
+        f"quotes:chain:{exchange_code.upper()}:{stock_code.upper()}:{expiry_display}"
+    )
+
+
+WS_TICK_DIRTY_CHANNEL = "ws:tick:dirty"

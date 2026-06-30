@@ -1,4 +1,4 @@
-"""Two-worker pipeline: fast SDK callback drain + Redis cache updates."""
+"""Two-worker pipeline: fast SDK callback drain + raw tick Redis cache."""
 from __future__ import annotations
 
 import logging
@@ -9,9 +9,15 @@ from collections.abc import Callable
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.db.redis_client import cache_set_json
-from icici_breeze_backend.app.services.reference_data.keys import ws_quote_key
-from icici_breeze_backend.app.services.ws_tick_normalize import normalize_icici_tick
+from icici_breeze_backend.app.db.redis_client import cache_publish, cache_set_json
+from icici_breeze_backend.app.services.reference_data.keys import (
+    WS_TICK_DIRTY_CHANNEL,
+    ws_raw_quote_key,
+)
+from icici_breeze_backend.app.services.reference_data.ws_token_index import (
+    exchange_from_ws_prefix,
+    parse_ws_symbol,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -23,7 +29,7 @@ _coalesce_lock = threading.Lock()
 _stop = threading.Event()
 _drain_thread: threading.Thread | None = None
 _cache_thread: threading.Thread | None = None
-_process_queue: queue.Queue[list[dict[str, Any]]] | None = None
+_process_queue: queue.Queue[list[tuple[str, dict[str, Any]]]] | None = None
 _listeners: list[TickListener] = []
 _raw_listeners: list[TickListener] = []
 _dropped_ticks = 0
@@ -45,18 +51,41 @@ def _coalesce_seconds() -> float:
         return 0.05
 
 
-def _tick_coalesce_key(parsed_exchange: str, stock: str, expiry: str, strike: float, right: str) -> str:
-    return f"{parsed_exchange}|{stock}|{expiry}|{strike}|{right}"
-
-
 def _raw_tick_payload(raw: Any) -> Any:
     if isinstance(raw, dict):
         return dict(raw)
     return raw
 
 
+def raw_tick_storage_key(raw: dict[str, Any]) -> str | None:
+    """Redis storage key segment for coalescing raw ticks (segment:token)."""
+    symbol = raw.get("symbol")
+    if symbol:
+        parsed = parse_ws_symbol(str(symbol))
+        if parsed is not None:
+            prefix, token = parsed
+            segment = exchange_from_ws_prefix(prefix)
+            if segment:
+                return ws_raw_quote_key(segment, token)
+    for field in ("token", "Token"):
+        token_raw = raw.get(field)
+        if token_raw is None:
+            continue
+        try:
+            token = int(token_raw)
+        except (TypeError, ValueError):
+            continue
+        exchange_raw = str(raw.get("exchange_code") or raw.get("exchange") or "").upper()
+        if "BSE" in exchange_raw:
+            segment = cfg.BFO
+        else:
+            segment = cfg.NFO
+        return ws_raw_quote_key(segment, token)
+    return None
+
+
 def ingest_tick(raw: Any) -> None:
-    """Called from SDK on_ticks — notify raw listeners, then enqueue for normalized pipeline."""
+    """Called from SDK on_ticks — notify raw listeners, then enqueue for raw cache pipeline."""
     global _dropped_ticks
     payload = _raw_tick_payload(raw)
     for listener in list(_raw_listeners):
@@ -112,19 +141,17 @@ def _drain_loop() -> None:
                 raw = _ingest_queue.get(timeout=0.01)
             except queue.Empty:
                 continue
-            parsed = normalize_icici_tick(raw)
-            if parsed is None:
+            if not isinstance(raw, dict):
                 continue
-            p, _cell = parsed
-            key = _tick_coalesce_key(
-                p.exchange_code, p.stock_code, p.expiry_display, p.strike, p.right
-            )
+            storage_key = raw_tick_storage_key(raw)
+            if storage_key is None:
+                continue
             with _coalesce_lock:
-                _coalesce[key] = dict(p.raw)
-        batch: list[dict[str, Any]] = []
+                _coalesce[storage_key] = dict(raw)
+        batch: list[tuple[str, dict[str, Any]]] = []
         with _coalesce_lock:
             if _coalesce:
-                batch = list(_coalesce.values())
+                batch = list(_coalesce.items())
                 _coalesce = {}
         if batch:
             try:
@@ -135,30 +162,27 @@ def _drain_loop() -> None:
 
 def _cache_loop() -> None:
     assert _process_queue is not None
+    ttl = int(getattr(cfg, "WS_RAW_QUOTE_TTL_SECONDS", 300) or 300)
     while not _stop.is_set():
         try:
             batch = _process_queue.get(timeout=0.1)
         except queue.Empty:
             continue
-        for raw in batch:
-            result = normalize_icici_tick(raw)
-            if result is None:
-                continue
-            parsed, cell = result
-            key = ws_quote_key(
-                parsed.exchange_code,
-                parsed.stock_code,
-                parsed.expiry_display,
-                parsed.strike,
-                parsed.right,
-            )
-            cache_set_json(key, cell, ex=cfg.WEBSOCKET_QUOTE_TTL_SECONDS)
-            payload = {"raw": dict(raw), "normalized": cell}
+        dirty_keys: list[str] = []
+        for storage_key, raw in batch:
+            payload = {
+                "received_at": time.time(),
+                "raw": raw,
+            }
+            cache_set_json(storage_key, payload, ex=ttl)
+            dirty_keys.append(storage_key)
             for listener in list(_listeners):
                 try:
-                    listener(payload)
+                    listener({"storage_key": storage_key, "raw": raw})
                 except Exception:
                     pass
+        for storage_key in dirty_keys:
+            cache_publish(WS_TICK_DIRTY_CHANNEL, storage_key)
         _process_queue.task_done()
 
 

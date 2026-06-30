@@ -10,9 +10,13 @@ from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
     sdk_args_from_user_params,
 )
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_for_broker, strike_key
+from icici_breeze_backend.app.core.strike import Strike, strike_for_broker, strike_key
 from icici_breeze_backend.app.db.redis_client import cache_get_json
-from icici_breeze_backend.app.services.reference_data.keys import ws_quote_key
+from icici_breeze_backend.app.services.reference_data.active_chains import (
+    register_holder_chain,
+    release_holder_chains,
+)
+from icici_breeze_backend.app.services.reference_data.keys import canonical_chain_key
 from icici_breeze_backend.app.services.ws_tick_pipeline import (
     ingest_tick,
     register_raw_tick_listener,
@@ -245,6 +249,7 @@ def release_holder(holder_id: str) -> dict[str, Any]:
         keys = list(_holders.pop(hid, set()))
     for key in keys:
         _detach_holder_from_key(hid, key)
+    release_holder_chains(hid)
     return {"released": len(keys), "holder_id": hid}
 
 
@@ -350,6 +355,7 @@ def sync_holder_chain_subscriptions(
                 right,
                 holder_id=hid,
             )
+    register_holder_chain(hid, exchange_code, stock_code, expiry_display)
 
 
 def ensure_chain_subscriptions(
@@ -370,55 +376,21 @@ def ensure_chain_subscriptions(
         proc, user_id, _effective_holder(holder_id), stock_code, exchange_code, expiry_display, strikes
     )
 
-    calls: list[dict[str, Any]] = []
-    puts: list[dict[str, Any]] = []
-    spot_price = None
-    for strike in strikes:
-        for right, bucket in (("call", calls), ("put", puts)):
-            key = ws_quote_key(exchange_code, stock_code, expiry_display, strike, right)
-            cell = cache_get_json(key)
-            if not cell:
-                continue
-            if lot_size:
-                cell["lot_size"] = lot_size
-            bucket.append(cell)
-            sp = cell.get("spot_price")
-            if spot_price is None and sp:
-                try:
-                    spot_price = float(sp)
-                except (TypeError, ValueError):
-                    pass
-
-    if not calls and not puts:
+    payload = cache_get_json(
+        canonical_chain_key(exchange_code, stock_code, expiry_display)
+    )
+    if not isinstance(payload, dict):
         return None
-
-    call_by = {parse_strike(r["strike_price"]): r for r in calls if parse_strike(r.get("strike_price")) is not None}
-    put_by = {parse_strike(r["strike_price"]): r for r in puts if parse_strike(r.get("strike_price")) is not None}
-    chain_strikes = sorted(set(strikes) | set(call_by) | set(put_by))
-    chain_rows = [
-        {"strike_price": k, "call": call_by.get(k), "put": put_by.get(k)}
-        for k in chain_strikes
-    ]
-    max_call_oi = max((r.get("open_interest", 0) for r in calls), default=0)
-    max_put_oi = max((r.get("open_interest", 0) for r in puts), default=0)
-    atm_strike = None
-    if spot_price is not None and chain_strikes:
-        atm_strike = min(chain_strikes, key=lambda s: abs(s - spot_price))
-
-    return {
-        "chain_rows": chain_rows,
-        "max_call_oi": max_call_oi,
-        "max_put_oi": max_put_oi,
-        "expiry_display": expiry_display,
-        "stock_code": stock_code,
-        "exchange_code": exchange_code,
-        "spot_price": spot_price,
-        "atm_strike": atm_strike,
-        "lot_size": lot_size or None,
-        "freeze_quantity": freeze_quantity,
-        "quote_source": "websocket",
-        "bhavcopy_date": None,
-    }
+    if not payload.get("chain_rows"):
+        return None
+    out = dict(payload)
+    if lot_size and not out.get("lot_size"):
+        out["lot_size"] = lot_size
+    if freeze_quantity is not None and out.get("freeze_quantity") is None:
+        out["freeze_quantity"] = freeze_quantity
+    out["quote_source"] = "websocket"
+    out["bhavcopy_date"] = None
+    return out
 
 
 def _playground_response(

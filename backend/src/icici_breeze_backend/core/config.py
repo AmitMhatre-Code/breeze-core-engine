@@ -208,6 +208,18 @@ try:
     WS_TICK_COALESCE_MS = int(os.environ.get("WS_TICK_COALESCE_MS", "50") or "50")
 except ValueError:
     WS_TICK_COALESCE_MS = 50
+try:
+    WS_RAW_QUOTE_TTL_SECONDS = int(os.environ.get("WS_RAW_QUOTE_TTL_SECONDS", "300") or "300")
+except ValueError:
+    WS_RAW_QUOTE_TTL_SECONDS = 300
+try:
+    CANONICAL_CHAIN_TTL_SECONDS = int(os.environ.get("CANONICAL_CHAIN_TTL_SECONDS", "5") or "5")
+except ValueError:
+    CANONICAL_CHAIN_TTL_SECONDS = 5
+try:
+    CHAIN_BUILDER_POLL_MS = int(os.environ.get("CHAIN_BUILDER_POLL_MS", "250") or "250")
+except ValueError:
+    CHAIN_BUILDER_POLL_MS = 250
 
 
 def redis_connection_url() -> str:

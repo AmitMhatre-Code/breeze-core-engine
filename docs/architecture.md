@@ -28,12 +28,17 @@ flowchart LR
 
 ### A. Local development (`./dev.sh`)
 
-Two processes:
+Three processes:
 
 | Process | Port | Role |
 |---------|------|------|
-| **uvicorn** | 8000 | FastAPI application |
+| **uvicorn** | 8000 | FastAPI application (WS subscribe, API) |
+| **chain-builder** | — | OS worker: raw tick cache → canonical option chains in Redis |
 | **next dev** | 3000 | Next.js dev server |
+
+Redis (`REDIS_URL`) is required for cross-process quote caches: the API process writes **raw** WS ticks; **chain-builder** normalizes them and publishes canonical `quotes:chain:*` payloads that `/strategy-builder/chain` reads during market hours.
+
+Tradeable strikes are filtered from ICICI scrip master using `MarginPercentage > 0`.
 
 `frontend/next.config.js` **rewrites** browser paths such as `/auth/*`, `/api/*`, `/home/data`, `/book/*`, and `/strategy-builder/*` to `BACKEND_UPSTREAM_URL` (default `http://localhost:8000`). The user should open **only** the Next origin (3000) so cookies and redirects stay consistent.
 
@@ -55,6 +60,7 @@ One container runs **supervisord** with:
 
 - **nginx** on **3000** (public listen)
 - **uvicorn** on **8000** (loopback)
+- **chain-builder** worker (`python -m icici_breeze_backend.workers.chain_builder`)
 - **Next standalone** `server.js` on **3001** (loopback)
 
 `deploy/nginx.all-in-one.conf` mirrors the same path-based split as compose’s nginx, but upstreams point to `127.0.0.1`. The AWS workflow maps host **80 → container 3000**.

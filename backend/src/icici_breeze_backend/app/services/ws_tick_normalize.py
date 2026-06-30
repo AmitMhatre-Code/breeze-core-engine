@@ -50,10 +50,7 @@ def _resolve_right_key(right_raw: Any) -> str:
     return "call" if str(right_raw or "").lower().startswith("c") else "put"
 
 
-def parse_icici_tick(ticks: Any) -> ParsedTick | None:
-    """Extract contract identity from a raw ICICI tick dict, or None if unusable."""
-    if not isinstance(ticks, dict):
-        return None
+def _parse_tick_from_fields(ticks: dict[str, Any]) -> ParsedTick | None:
     stock = _resolve_stock_short(ticks)
     expiry = _normalize_expiry_display(str(ticks.get("expiry_date") or "").strip())
     strike = parse_strike(ticks.get("strike_price"))
@@ -68,6 +65,41 @@ def parse_icici_tick(ticks: Any) -> ParsedTick | None:
         right=_resolve_right_key(right_raw),
         raw=ticks,
     )
+
+
+def _parse_tick_from_symbol(ticks: dict[str, Any]) -> ParsedTick | None:
+    from icici_breeze_backend.app.services.reference_data.ws_token_index import (
+        lookup_contract_by_ws_symbol,
+        option_type_to_right,
+    )
+
+    contract = lookup_contract_by_ws_symbol(str(ticks.get("symbol") or ""))
+    if contract is None:
+        return None
+    strike = parse_strike(contract.strike_price)
+    if strike is None:
+        return None
+    expiry = _normalize_expiry_display(contract.expiry_display)
+    if not expiry:
+        return None
+    return ParsedTick(
+        exchange_code=contract.exchange_code,
+        stock_code=contract.stock_code,
+        expiry_display=expiry,
+        strike=strike,
+        right=option_type_to_right(contract.option_type),
+        raw=ticks,
+    )
+
+
+def parse_icici_tick(ticks: Any) -> ParsedTick | None:
+    """Extract contract identity from a raw ICICI tick dict, or None if unusable."""
+    if not isinstance(ticks, dict):
+        return None
+    parsed = _parse_tick_from_fields(ticks)
+    if parsed is not None:
+        return parsed
+    return _parse_tick_from_symbol(ticks)
 
 
 def normalize_tick_cell(

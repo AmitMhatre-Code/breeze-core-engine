@@ -15,6 +15,7 @@ _logger = logging.getLogger(__name__)
 _redis: Any = None
 _use_memory = False
 _memory: dict[str, tuple[str, float | None]] = {}
+_memory_sets: dict[str, set[str]] = {}
 _memory_lock = threading.RLock()
 
 
@@ -92,9 +93,51 @@ class _MemoryStore:
     def pipeline(self) -> _MemoryPipeline:
         return _MemoryPipeline(self)
 
+    def sadd(self, key: str, *values: str) -> int:
+        with _memory_lock:
+            bucket = _memory_sets.setdefault(key, set())
+            added = 0
+            for value in values:
+                if value not in bucket:
+                    bucket.add(value)
+                    added += 1
+            return added
+
+    def srem(self, key: str, *values: str) -> int:
+        with _memory_lock:
+            bucket = _memory_sets.get(key)
+            if not bucket:
+                return 0
+            removed = 0
+            for value in values:
+                if value in bucket:
+                    bucket.remove(value)
+                    removed += 1
+            if not bucket:
+                _memory_sets.pop(key, None)
+            return removed
+
+    def smembers(self, key: str) -> set[str]:
+        with _memory_lock:
+            return set(_memory_sets.get(key, set()))
+
+    def publish(self, channel: str, message: str) -> int:
+        return 0
+
+    def pubsub(self, **kwargs: Any) -> Any:
+        class _NoopPubSub:
+            def subscribe(self, *_a: Any, **_k: Any) -> None:
+                pass
+
+            def get_message(self, **_k: Any) -> None:
+                return None
+
+        return _NoopPubSub()
+
     def close(self) -> None:
         with _memory_lock:
             _memory.clear()
+            _memory_sets.clear()
 
 
 def _init_redis_client() -> Any:
@@ -178,3 +221,13 @@ def cache_delete_pattern(pattern: str) -> int:
         if keys:
             removed = int(r.delete(*keys))
     return removed
+
+
+def cache_publish(channel: str, message: str) -> None:
+    """Publish to Redis pub/sub; no-op when using in-memory fallback."""
+    if redis_using_memory_fallback():
+        return
+    try:
+        get_redis().publish(channel, message)
+    except Exception:
+        _logger.debug("cache_publish failed channel=%s", channel, exc_info=True)

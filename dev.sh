@@ -51,12 +51,15 @@ export NEXT_PUBLIC_BACKEND_URL="http://${APP_HOST}:${FRONTEND_PORT}"
 export BACKEND_UPSTREAM_URL="http://${APP_HOST}:${BACKEND_PORT}"
 
 BACK_PID=""
+CHAIN_PID=""
 FRONT_PID=""
 
 cleanup() {
   [[ -n "${BACK_PID:-}" ]] && kill "$BACK_PID" 2>/dev/null || true
+  [[ -n "${CHAIN_PID:-}" ]] && kill "$CHAIN_PID" 2>/dev/null || true
   [[ -n "${FRONT_PID:-}" ]] && kill "$FRONT_PID" 2>/dev/null || true
   wait "$BACK_PID" 2>/dev/null || true
+  wait "$CHAIN_PID" 2>/dev/null || true
   wait "$FRONT_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -93,6 +96,13 @@ if [[ "$ready" -ne 1 ]]; then
 fi
 echo "Backend is ready."
 
+echo "Starting chain-builder worker ..."
+(
+  cd "$ROOT"
+  exec "$VENV/bin/python" -m icici_breeze_backend.workers.chain_builder
+) &
+CHAIN_PID=$!
+
 echo "Starting frontend on http://${APP_HOST}:${FRONTEND_PORT} ..."
 (
   cd "$ROOT/frontend"
@@ -102,6 +112,7 @@ FRONT_PID=$!
 
 echo ""
 echo "  Backend:  http://${APP_HOST}:${BACKEND_PORT}"
+echo "  Chain worker: running (pid ${CHAIN_PID})"
 echo "  Frontend: http://${APP_HOST}:${FRONTEND_PORT}"
 echo "  Open the app on the frontend URL (Ctrl+C stops both)."
 echo ""
@@ -112,6 +123,11 @@ code=0
 while true; do
   if ! kill -0 "$BACK_PID" 2>/dev/null; then
     wait "$BACK_PID"
+    code=$?
+    break
+  fi
+  if ! kill -0 "$CHAIN_PID" 2>/dev/null; then
+    wait "$CHAIN_PID"
     code=$?
     break
   fi

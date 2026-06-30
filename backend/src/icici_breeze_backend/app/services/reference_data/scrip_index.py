@@ -82,7 +82,9 @@ def publish_scrip_index_from_db(version: int | None = None) -> int:
                     """
                     SELECT DISTINCT ShortName, CompanyName, ExpiryDate, ExchangeCode, StrikePrice
                     FROM scrip_master
-                    WHERE SegmentCode = ? OR SegmentCode IS NULL
+                    WHERE (SegmentCode = ? OR SegmentCode IS NULL)
+                      AND MarginPercentage > 0
+                      AND StrikePrice IS NOT NULL AND StrikePrice > 0
                     """,
                     (exchange_code,),
                 ).fetchall()
@@ -92,6 +94,8 @@ def publish_scrip_index_from_db(version: int | None = None) -> int:
                     SELECT DISTINCT ShortName, CompanyName, ExpiryDate, ExchangeCode, StrikePrice
                     FROM scrip_master
                     WHERE SegmentCode = ?
+                      AND MarginPercentage > 0
+                      AND StrikePrice IS NOT NULL AND StrikePrice > 0
                     """,
                     (exchange_code,),
                 ).fetchall()

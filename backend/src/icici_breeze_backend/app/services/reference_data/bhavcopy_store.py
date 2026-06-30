@@ -531,12 +531,20 @@ def build_chain_from_bhavcopy(
     strike_list = strikes if strikes else get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
     if not strike_list:
         return None
+    from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
+        is_tradeable_contract,
+    )
+
     lot_val = int(lot_size or 0)
     calls: list[dict[str, Any]] = []
     puts: list[dict[str, Any]] = []
     spot_price: float | None = None
     for strike in strike_list:
         for right in (cfg.CALL, cfg.PUT):
+            if not is_tradeable_contract(
+                stock_code, expiry_display, strike, right, exchange_code=exchange_code
+            ):
+                continue
             row = _lookup_bhav_row(stock_code, expiry_display, right, strike, exchange_code)
             if not row:
                 continue
