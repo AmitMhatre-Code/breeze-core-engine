@@ -131,8 +131,12 @@ export default function BasketOrderPage() {
   }, [chainSuccess, expiryDate]);
 
   const section1Complete = Boolean(stockCode.trim() && expiryDate.trim());
+  const chainInitiallyLoaded = !chainQ.isPending && chainQ.data != null;
   const section2Ready =
-    section1Complete && spot != null && !chainQ.isFetching && chainRows.length > 0;
+    section1Complete &&
+    spot != null &&
+    chainInitiallyLoaded &&
+    chainRows.length > 0;
 
   const onStrikeChange = useCallback(
     (legId: string, strike: number) => {

@@ -270,3 +270,75 @@ def test_fetch_chain_payload_routed_bhavcopy_with_sqlite_strikes(
     by_strike = {r["strike_price"]: r for r in payload["chain_rows"]}
     assert by_strike[23900]["call"]["ltp"] == 117.90
     proc._get_full_option_chain_icici_rest.assert_not_called()
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="websocket")
+@patch("icici_breeze_backend.app.services.breeze_websocket_manager.ensure_chain_subscriptions")
+@patch("icici_breeze_backend.app.services.quote_source_router._resolve_chain_metadata")
+def test_fetch_chain_payload_routed_websocket_enriches_missing_spot(
+    mock_meta,
+    mock_ws,
+    _mock_source,
+):
+    mock_meta.return_value = (65, None, [24000, 24100])
+    mock_ws.return_value = {
+        "chain_rows": [
+            {
+                "strike_price": 24000,
+                "call": {"strike_price": 24000, "ltp": 10.0, "updated_at": 1_700_000_000.0},
+                "put": None,
+            }
+        ],
+        "spot_price": None,
+        "quote_source": "websocket",
+        "exchange_code": cfg.NFO,
+        "stock_code": "NIFTY",
+        "expiry_display": "30-Jun-2026",
+    }
+    proc = MagicMock()
+    with patch(
+        "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
+        return_value=23946.25,
+    ) as mock_spot:
+        payload = fetch_chain_payload_routed(proc, "u1", "NIFTY", cfg.NFO, "30-Jun-2026")
+    assert payload is not None
+    assert payload["quote_source"] == "websocket"
+    assert payload["spot_price"] == 23946.25
+    assert payload["atm_strike"] == 24000
+    mock_spot.assert_called_once()
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="websocket")
+@patch("icici_breeze_backend.app.services.breeze_websocket_manager.ensure_chain_subscriptions")
+@patch("icici_breeze_backend.app.services.quote_source_router._resolve_chain_metadata")
+def test_fetch_chain_payload_routed_websocket_enriches_missing_spot(
+    mock_meta,
+    mock_ws,
+    _mock_source,
+):
+    mock_meta.return_value = (65, None, [24000, 24100])
+    mock_ws.return_value = {
+        "chain_rows": [
+            {
+                "strike_price": 24000,
+                "call": {"strike_price": 24000, "ltp": 10.0, "updated_at": 1_700_000_000.0},
+                "put": None,
+            }
+        ],
+        "spot_price": None,
+        "quote_source": "websocket",
+        "exchange_code": cfg.NFO,
+        "stock_code": "NIFTY",
+        "expiry_display": "30-Jun-2026",
+    }
+    proc = MagicMock()
+    with patch(
+        "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
+        return_value=23946.25,
+    ) as mock_spot:
+        payload = fetch_chain_payload_routed(proc, "u1", "NIFTY", cfg.NFO, "30-Jun-2026")
+    assert payload is not None
+    assert payload["quote_source"] == "websocket"
+    assert payload["spot_price"] == 23946.25
+    assert payload["atm_strike"] == 24000
+    mock_spot.assert_called_once()

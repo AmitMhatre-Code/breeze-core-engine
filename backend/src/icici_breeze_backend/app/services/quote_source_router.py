@@ -10,7 +10,7 @@ import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_for_broker, strike_key
 from icici_breeze_backend.app.core.market_hours import is_india_market_open
 from icici_breeze_backend.app.core.timezone import IST, now_ist
-from icici_breeze_backend.app.db.redis_client import cache_get_json
+from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.app.services.reference_data.bhavcopy_store import (
     _lookup_bhav_row,
     _row_to_chain_cell,
@@ -102,6 +102,146 @@ def _enrich_quote_metadata(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _rest_fallback_allowed(exchange_code: str) -> bool:
     return resolve_quote_source(exchange_code) != "bhavcopy"
+
+
+def _spot_cache_key(exchange_code: str, stock_code: str) -> str:
+    return f"quotes:spot:{exchange_code.upper()}:{stock_code.upper()}"
+
+
+def _spot_cache_ttl_seconds() -> int:
+    try:
+        return max(30, int(getattr(cfg, "CHAIN_SPOT_CACHE_TTL_SECONDS", 60) or 60))
+    except (TypeError, ValueError):
+        return 60
+
+
+def _parse_positive_spot(raw: Any) -> float | None:
+    if raw is None:
+        return None
+    try:
+        spot = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return spot if spot > 0 else None
+
+
+def _remember_chain_spot(exchange_code: str, stock_code: str, spot: float | None) -> float | None:
+    parsed = _parse_positive_spot(spot)
+    if parsed is None:
+        return None
+    cache_set_json(
+        _spot_cache_key(exchange_code, stock_code),
+        {"spot_price": parsed},
+        ex=_spot_cache_ttl_seconds(),
+    )
+    return parsed
+
+
+def _cached_chain_spot(exchange_code: str, stock_code: str) -> float | None:
+    cached = cache_get_json(_spot_cache_key(exchange_code, stock_code))
+    if not isinstance(cached, dict):
+        return None
+    return _parse_positive_spot(cached.get("spot_price"))
+
+
+def _spot_from_bhavcopy(
+    stock_code: str,
+    expiry_display: str,
+    exchange_code: str,
+    strikes: list[Strike],
+) -> float | None:
+    for strike in strikes[:8]:
+        for right in (cfg.CALL, cfg.PUT):
+            row = _lookup_bhav_row(stock_code, expiry_display, right, strike, exchange_code)
+            if not row:
+                continue
+            spot = _parse_positive_spot(row.get("spot_price"))
+            if spot is not None:
+                return spot
+    return None
+
+
+def _spot_from_icici_rest(
+    proc: "Processor",
+    user_id: str,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    strikes: list[Strike],
+) -> float | None:
+    if not strikes or not _rest_fallback_allowed(exchange_code):
+        return None
+    mid = strikes[len(strikes) // 2]
+    quote = _fetch_quote_icici_rest(
+        proc,
+        user_id,
+        stock_code,
+        exchange_code,
+        expiry_display,
+        cfg.CALL,
+        strike_for_broker(mid),
+    )
+    if quote.get("Status") != 200:
+        return None
+    rows = quote.get("Success") or []
+    if not rows:
+        return None
+    return _parse_positive_spot(rows[0].get("spot_price"))
+
+
+def _resolve_chain_spot(
+    proc: "Processor",
+    user_id: str,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    strikes: list[Strike],
+) -> float | None:
+    spot = _cached_chain_spot(exchange_code, stock_code)
+    if spot is not None:
+        return spot
+    spot = _spot_from_bhavcopy(stock_code, expiry_display, exchange_code, strikes)
+    if spot is not None:
+        return _remember_chain_spot(exchange_code, stock_code, spot)
+    spot = _spot_from_icici_rest(
+        proc, user_id, stock_code, exchange_code, expiry_display, strikes
+    )
+    if spot is not None:
+        return _remember_chain_spot(exchange_code, stock_code, spot)
+    return None
+
+
+def _apply_chain_spot(
+    payload: dict[str, Any],
+    *,
+    proc: "Processor",
+    user_id: str,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    strikes: list[Strike],
+) -> dict[str, Any]:
+    spot = _parse_positive_spot(payload.get("spot_price"))
+    if spot is None:
+        spot = _resolve_chain_spot(
+            proc, user_id, stock_code, exchange_code, expiry_display, strikes
+        )
+    else:
+        spot = _remember_chain_spot(exchange_code, stock_code, spot)
+    if spot is None:
+        return payload
+    payload["spot_price"] = spot
+    chain_rows = payload.get("chain_rows") or []
+    chain_strikes = sorted(
+        {
+            parse_strike(row.get("strike_price"))
+            for row in chain_rows
+            if isinstance(row, dict) and parse_strike(row.get("strike_price")) is not None
+        }
+    )
+    if chain_strikes:
+        payload["atm_strike"] = min(chain_strikes, key=lambda s: abs(s - spot))
+    return payload
 
 
 def _bhavcopy_miss_response() -> dict[str, Any]:
@@ -295,7 +435,17 @@ def fetch_chain_payload_routed(
             holder_id=holder_id,
         )
         if ws_payload is not None:
-            return _enrich_quote_metadata(ws_payload)
+            return _enrich_quote_metadata(
+                _apply_chain_spot(
+                    ws_payload,
+                    proc=proc,
+                    user_id=user_id,
+                    stock_code=stock_code,
+                    exchange_code=exchange_code,
+                    expiry_display=expiry_display,
+                    strikes=strikes,
+                )
+            )
 
         _logger.warning("WebSocket chain empty for %s %s; falling back", stock_code, expiry_display)
         if bhavcopy_is_fresh(exchange_code):
@@ -317,7 +467,17 @@ def fetch_chain_payload_routed(
                 payload["chain_rows"] = [
                     {"strike_price": s, "call": None, "put": None} for s in strikes
                 ]
-            return _enrich_quote_metadata(payload)
+            return _enrich_quote_metadata(
+                _apply_chain_spot(
+                    payload,
+                    proc=proc,
+                    user_id=user_id,
+                    stock_code=stock_code,
+                    exchange_code=exchange_code,
+                    expiry_display=expiry_display,
+                    strikes=strikes,
+                )
+            )
         _logger.warning("Bhavcopy chain missing for %s %s; falling back to REST", stock_code, expiry_display)
         source = "icici_api"
 
@@ -329,7 +489,17 @@ def fetch_chain_payload_routed(
             payload = dict(result["Success"])
             payload["quote_source"] = "icici_api"
             payload["bhavcopy_date"] = None
-            return _enrich_quote_metadata(payload)
+            return _enrich_quote_metadata(
+                _apply_chain_spot(
+                    payload,
+                    proc=proc,
+                    user_id=user_id,
+                    stock_code=stock_code,
+                    exchange_code=exchange_code,
+                    expiry_display=expiry_display,
+                    strikes=strikes,
+                )
+            )
     return None
 
 

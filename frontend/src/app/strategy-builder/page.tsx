@@ -249,8 +249,9 @@ export default function StrategyBuilderPage() {
   const atmIv = proposedData?.atm_iv ?? byoAtmIv ?? null;
 
   const section1Complete = Boolean(stockCode.trim() && expiryDate.trim());
+  const chainInitiallyLoaded = !chainQ.isPending && chainQ.data != null;
   const section2Ready =
-    section1Complete && chainSpot != null && !chainQ.isFetching;
+    section1Complete && chainSpot != null && chainInitiallyLoaded;
   const trades: ProposedTrade[] = proposedData?.trades ?? [];
   const relaxedTrades: ProposedTrade[] = proposedData?.relaxed_trades ?? [];
   const section3EngineReady =
