@@ -465,7 +465,7 @@ _CATALOG: tuple[BreezeApiCatalogEntry, ...] = (
             _s("interval", placeholder="1minute"),
             _s("get_order_notification", placeholder="true"),
         ),
-        notes="ICICI subscribe_feeds fields only; pass what you need. WebSocket tab mirrors the same shape.",
+        notes="Use one subscription pattern at a time (token, contract quotes, contract OHLCV, or order notifications). WebSocket tab uses a mode selector.",
     ),
 )
 

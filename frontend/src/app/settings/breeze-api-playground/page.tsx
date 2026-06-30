@@ -27,30 +27,20 @@ import {
   type BreezeApiWsStatus,
 } from "@/lib/breeze-api-tester";
 import { copyTextToClipboard } from "@/lib/copy-to-clipboard";
+import {
+  buildWsSubscribeParams,
+  WS_FIELD_PLACEHOLDERS,
+  WS_FORM_INITIAL,
+  WS_SUBSCRIBE_MODE_OPTIONS,
+  WS_SUBSCRIBE_MODES,
+  type WsSubscribeMode,
+} from "@/lib/breeze-api-playground-ws-subscribe";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 
 const inputCls =
   "mt-1 w-full rounded-md border border-zinc-300/80 bg-white/95 px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition-all hover:border-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus:border-blue-400 dark:focus:ring-blue-400/20";
 
 const RISK_ORDER: BreezeApiCatalogEntry["risk_level"][] = ["read", "funds", "trade", "gtt"];
-
-const WS_SUBSCRIBE_FIELDS = [
-  { key: "stock_token", placeholder: "4.1!2885" },
-  { key: "exchange_code", placeholder: "NFO / BFO" },
-  { key: "stock_code", placeholder: "NIFTY / BSESEN" },
-  { key: "product_type", placeholder: "options / cash / futures" },
-  { key: "expiry_date", placeholder: "30-Jun-2026" },
-  { key: "strike_price", placeholder: "25000" },
-  { key: "right", placeholder: "call" },
-  { key: "get_market_depth", placeholder: "true / false" },
-  { key: "get_exchange_quotes", placeholder: "true / false" },
-  { key: "interval", placeholder: "1minute" },
-  { key: "get_order_notification", placeholder: "true" },
-] as const;
-
-const WS_FORM_INITIAL: Record<string, string> = Object.fromEntries(
-  WS_SUBSCRIBE_FIELDS.map((f) => [f.key, ""]),
-);
 
 const WS_LOG_LIMIT = 50;
 
@@ -134,17 +124,6 @@ function formatTickForDisplay(rawJson: string): string {
   }
 }
 
-function buildWsSubscribeParams(
-  form: Record<string, string>,
-  holderId: string,
-): Record<string, string> {
-  const out: Record<string, string> = { holder_id: holderId };
-  for (const [key, value] of Object.entries(form)) {
-    if (value.trim()) out[key] = value.trim();
-  }
-  return out;
-}
-
 export default function BreezeApiPlaygroundPage() {
   const subscriptionHolder = useWsSubscriptionHolder();
   const qc = useQueryClient();
@@ -163,6 +142,7 @@ export default function BreezeApiPlaygroundPage() {
   const wsStreamRef = useRef<EventSource | null>(null);
   const tickLogSeqRef = useRef(0);
   const [wsForm, setWsForm] = useState<Record<string, string>>({ ...WS_FORM_INITIAL });
+  const [wsSubscribeMode, setWsSubscribeMode] = useState<WsSubscribeMode>("fno_quotes");
   const [responseCopyState, setResponseCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [wsResponseCopyState, setWsResponseCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
@@ -383,7 +363,8 @@ export default function BreezeApiPlaygroundPage() {
     },
   });
   const wsSubscribeM = useMutation({
-    mutationFn: () => wsSubscribePlayground(buildWsSubscribeParams(wsForm, subscriptionHolder)),
+    mutationFn: () =>
+      wsSubscribePlayground(buildWsSubscribeParams(wsForm, subscriptionHolder, wsSubscribeMode)),
     onSuccess: (data) => {
       setWsLastResponse(data);
       appendWsLog(statusToLogEntry(data, "subscribe_feeds"));
@@ -709,17 +690,33 @@ export default function BreezeApiPlaygroundPage() {
           to tear down the WebSocket entirely.
         </p>
         <p className="text-xs app-text-muted">
-          expiry_date format: <span className="font-mono">26-Jun-2026</span>. WebSocket ticks only arrive
-          during NSE/BSE market hours.
+          WebSocket ticks only arrive during NSE/BSE market hours.
+        </p>
+        <label className="block text-xs">
+          <span className="font-medium text-zinc-700 dark:text-zinc-300">Subscribe mode</span>
+          <select
+            className={inputCls}
+            value={wsSubscribeMode}
+            onChange={(e) => setWsSubscribeMode(e.target.value as WsSubscribeMode)}
+          >
+            {WS_SUBSCRIBE_MODE_OPTIONS.map(({ value, label }) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="text-xs app-text-muted">
+          Fields depend on subscription type per ICICI docs. Only filled fields are sent.
         </p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {WS_SUBSCRIBE_FIELDS.map(({ key, placeholder }) => (
+          {WS_SUBSCRIBE_MODES[wsSubscribeMode].map((key) => (
             <label key={key} className="block text-xs">
               <span className="font-medium">{key}</span>
               <input
                 className={inputCls}
                 value={wsForm[key] ?? ""}
-                placeholder={placeholder}
+                placeholder={WS_FIELD_PLACEHOLDERS[key] ?? ""}
                 onChange={(e) => setWsForm((p) => ({ ...p, [key]: e.target.value }))}
               />
             </label>
