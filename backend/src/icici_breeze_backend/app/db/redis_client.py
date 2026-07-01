@@ -180,6 +180,40 @@ def redis_using_memory_fallback() -> bool:
     return _use_memory
 
 
+def require_redis_connected() -> None:
+    """Fail fast when production Redis is required but unreachable."""
+    if not getattr(cfg, "REDIS_REQUIRE_CONNECTED", False):
+        return
+    _init_redis_client()
+    if redis_using_memory_fallback():
+        url = cfg.redis_connection_url()
+        raise RuntimeError(
+            "Redis is required but unavailable; refusing to start with in-memory cache fallback. "
+            f"Ensure breeze-redis is running and REDIS_URL is reachable (configured: {url!r})."
+        )
+
+
+def redis_runtime_stats() -> dict[str, Any]:
+    """Best-effort Redis memory/key stats for monitoring."""
+    out: dict[str, Any] = {
+        "redis_connected": redis_available(),
+        "redis_memory_fallback": redis_using_memory_fallback(),
+    }
+    if not redis_available():
+        return out
+    try:
+        client = get_redis()
+        info = client.info("memory")
+        out["used_memory"] = int(info.get("used_memory") or 0)
+        out["used_memory_human"] = str(info.get("used_memory_human") or "")
+        out["maxmemory"] = int(info.get("maxmemory") or 0)
+        out["maxmemory_human"] = str(info.get("maxmemory_human") or "")
+        out["dbsize"] = int(client.dbsize())
+    except Exception as exc:
+        out["error"] = str(exc)
+    return out
+
+
 def close_redis() -> None:
     global _redis, _use_memory
     if _redis is not None:

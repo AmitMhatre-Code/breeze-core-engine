@@ -155,7 +155,9 @@ The GitHub Actions deploy decodes a **base64-encoded full `.env`** into `/opt/br
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `REDIS_URL` | *(empty)* | Redis connection URL for scrip index, bhavcopy cache, and WebSocket quote cache. Falls back to in-process memory when unset or unreachable. **CloudFormation bootstraps and fleet upgrades** auto-set `redis://breeze-redis:6379/0` and start a co-located `breeze-redis` sidecar (`redis:7-alpine`) on Docker network `breeze-core-net`. Redis is ephemeral (no volume); reference data reloads on schedule or manual load. |
+| `REDIS_URL` | *(empty)* | Redis connection URL for scrip index, bhavcopy cache, and WebSocket quote cache. Falls back to in-process memory when unset or unreachable. **CloudFormation bootstraps and fleet upgrades** auto-set `redis://breeze-redis:6379/0` and start a co-located `breeze-redis` sidecar (`redis:7-alpine`) on Docker network `breeze-core-net`. The sidecar runs with **`--maxmemory 384mb --maxmemory-policy allkeys-lru`** (existing fleets are recreated on upgrade/bootstrap when maxmemory was unset). Redis is ephemeral (no volume); reference data reloads on schedule, from SQLite at boot, or manual load. |
+| `REDIS_REQUIRE_CONNECTED` | `true` when `REDIS_URL` is set, else `false` | When true, the API **refuses to start** if Redis is unreachable (no in-memory fallback). Set `false` only for local dev without Redis. |
+| `REDIS_MAXMEMORY_MB` | `384` | Documented cap for the Redis sidecar (used by upgrade/bootstrap scripts and `/health` reporting). Override on the host when starting `breeze-redis`. |
 | `REDIS_HOST` | `127.0.0.1` | Used when `REDIS_URL` is empty. |
 | `REDIS_PORT` | `6379` | Used when `REDIS_URL` is empty. |
 | `REFERENCE_DATA_REFRESH_HOUR_IST` | `18` | Daily scheduled reference data load hour (IST). |
@@ -163,7 +165,16 @@ The GitHub Actions deploy decodes a **base64-encoded full `.env`** into `/opt/br
 | `REFERENCE_DATA_LOOKBACK_DAYS` | `10` | Trading-day lookback when downloading NSE/BSE FO bhavcopy. |
 | `NSE_FO_BHAVCOPY_URL_TEMPLATE` | NSE archives FO zip URL | `{yyyymmdd}` placeholder. |
 | `BSE_FO_BHAVCOPY_URL_TEMPLATE` | BSE derivative CSV URL | `{yyyymmdd}` placeholder. |
-| `WEBSOCKET_QUOTE_TTL_SECONDS` | `300` | Redis TTL for WebSocket quote cells. |
+| `WEBSOCKET_QUOTE_TTL_SECONDS` | `120` | Redis TTL for normalized WebSocket quote cells. |
+| `WS_RAW_QUOTE_TTL_SECONDS` | `120` | Redis TTL for raw WebSocket tick payloads. |
+| `WS_TICK_INGEST_QUEUE_SIZE` | `2000` | Max in-process WS tick ingest queue depth before coalescing drops oldest. |
+| `WS_TICK_COALESCE_MS` | `100` | Coalesce window (ms) before writing latest tick per token to Redis. |
+| `CHAIN_BUILDER_POLL_MS` | `500` | chain-builder worker poll interval when rebuilding active chains. |
+| `CANONICAL_CHAIN_TTL_SECONDS` | `5` | Redis TTL for assembled canonical option chains. |
+
+**Monitoring:** `GET /health` reports Redis connectivity (`status`: `ok` or `degraded`). `GET /metrics/runtime` reports Redis memory, WS tick pipeline queues, and active chain registry stats.
+
+**EC2 (t4g.small):** CloudFormation bootstrap and legacy deploy user-data configure a **2 GiB swap file** on the root volume as an OOM safety margin. Persistent app data remains on the attached data EBS volume.
 
 ---
 

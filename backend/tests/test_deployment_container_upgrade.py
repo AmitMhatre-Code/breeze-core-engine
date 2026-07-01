@@ -21,6 +21,14 @@ def _mock_docker_errors():
     sys.modules.pop("docker.errors", None)
 
 
+def test_redis_server_command_includes_maxmemory():
+    cmd = dcu.redis_server_command()
+    assert cmd[0] == "redis-server"
+    assert "--maxmemory" in cmd
+    assert f"{dcu.redis_maxmemory_mb()}mb" in cmd
+    assert dcu.REDIS_MAXMEMORY_POLICY in cmd
+
+
 def test_ensure_redis_url_in_env_adds_default():
     env = dcu.ensure_redis_url_in_env({})
     assert env["REDIS_URL"] == dcu.DEFAULT_REDIS_URL
@@ -107,6 +115,8 @@ def test_upgrade_shell_script_uses_env_file():
     assert "breeze-core-net" in script
     assert "breeze-redis" in script
     assert "redis:7-alpine" in script
+    assert "maxmemory" in script
+    assert "allkeys-lru" in script
     assert dcu.DEFAULT_REDIS_URL in script
 
 

@@ -5,7 +5,6 @@ import logging
 import threading
 
 from icici_breeze_backend.app.core.timezone import now_ist
-from icici_breeze_backend.app.services.reference_data.orchestrator import run_reference_data_load
 from icici_breeze_backend.app.services.reference_data.state import load_schedule, save_schedule
 
 _logger = logging.getLogger(__name__)
@@ -47,6 +46,10 @@ def _scheduler_loop() -> None:
             ):
                 _last_run_date = today
                 _logger.info("Scheduled reference data load at %s IST", now.isoformat(timespec="seconds"))
+                from icici_breeze_backend.app.services.reference_data.orchestrator import (
+                    run_reference_data_load,
+                )
+
                 run_reference_data_load(force=True, trigger_mode="scheduled")
         _stop.wait(30)
 
@@ -79,11 +82,15 @@ def bootstrap_reference_data_on_startup() -> None:
     """Load all reference data sources during application startup."""
     from icici_breeze_backend.app.services.reference_data.cache_bootstrap import (
         ensure_all_reference_data_cached,
+        is_reference_data_complete,
     )
     from icici_breeze_backend.app.services.reference_data.orchestrator import run_reference_data_load
 
     bootstrap_reference_data_schedule()
     ensure_all_reference_data_cached()
+    if is_reference_data_complete():
+        _logger.info("Reference data already complete in Redis; skipping startup network load")
+        return
     try:
         run_reference_data_load(force=True, trigger_mode="startup")
     except Exception:

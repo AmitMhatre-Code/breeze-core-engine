@@ -304,7 +304,13 @@ def start_application():
         from icici_breeze_backend.app.services.reference_data.scheduler import (
             bootstrap_reference_data_on_startup,
         )
+        from icici_breeze_backend.app.db.redis_client import require_redis_connected
+        from icici_breeze_backend.app.services.reference_data.active_chains import (
+            reset_active_chains_registry,
+        )
 
+        require_redis_connected()
+        reset_active_chains_registry()
         bootstrap_reference_data_on_startup()
         yield
         if task is not None:

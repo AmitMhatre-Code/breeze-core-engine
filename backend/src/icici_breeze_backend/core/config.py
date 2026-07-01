@@ -162,6 +162,15 @@ try:
     REDIS_PORT = int(os.environ.get("REDIS_PORT") or "6379")
 except ValueError:
     REDIS_PORT = 6379
+try:
+    REDIS_MAXMEMORY_MB = max(64, int(os.environ.get("REDIS_MAXMEMORY_MB", "384") or "384"))
+except ValueError:
+    REDIS_MAXMEMORY_MB = 384
+_redis_require_raw = os.environ.get("REDIS_REQUIRE_CONNECTED")
+if _redis_require_raw is not None:
+    REDIS_REQUIRE_CONNECTED = _redis_require_raw.strip().lower() in ("1", "true", "yes")
+else:
+    REDIS_REQUIRE_CONNECTED = bool(REDIS_URL)
 
 # Reference data loads (bhavcopy, scrip master, SPAN baseline)
 NSE_FO_BHAVCOPY_URL_TEMPLATE = (
@@ -197,29 +206,29 @@ try:
 except ValueError:
     REFERENCE_DATA_CONNECT_TIMEOUT_SECONDS = 15.0
 try:
-    WEBSOCKET_QUOTE_TTL_SECONDS = int(os.environ.get("WEBSOCKET_QUOTE_TTL_SECONDS", "300") or "300")
+    WEBSOCKET_QUOTE_TTL_SECONDS = int(os.environ.get("WEBSOCKET_QUOTE_TTL_SECONDS", "120") or "120")
 except ValueError:
-    WEBSOCKET_QUOTE_TTL_SECONDS = 300
+    WEBSOCKET_QUOTE_TTL_SECONDS = 120
 try:
-    WS_TICK_INGEST_QUEUE_SIZE = int(os.environ.get("WS_TICK_INGEST_QUEUE_SIZE", "10000") or "10000")
+    WS_TICK_INGEST_QUEUE_SIZE = int(os.environ.get("WS_TICK_INGEST_QUEUE_SIZE", "2000") or "2000")
 except ValueError:
-    WS_TICK_INGEST_QUEUE_SIZE = 10000
+    WS_TICK_INGEST_QUEUE_SIZE = 2000
 try:
-    WS_TICK_COALESCE_MS = int(os.environ.get("WS_TICK_COALESCE_MS", "50") or "50")
+    WS_TICK_COALESCE_MS = int(os.environ.get("WS_TICK_COALESCE_MS", "100") or "100")
 except ValueError:
-    WS_TICK_COALESCE_MS = 50
+    WS_TICK_COALESCE_MS = 100
 try:
-    WS_RAW_QUOTE_TTL_SECONDS = int(os.environ.get("WS_RAW_QUOTE_TTL_SECONDS", "300") or "300")
+    WS_RAW_QUOTE_TTL_SECONDS = int(os.environ.get("WS_RAW_QUOTE_TTL_SECONDS", "120") or "120")
 except ValueError:
-    WS_RAW_QUOTE_TTL_SECONDS = 300
+    WS_RAW_QUOTE_TTL_SECONDS = 120
 try:
     CANONICAL_CHAIN_TTL_SECONDS = int(os.environ.get("CANONICAL_CHAIN_TTL_SECONDS", "5") or "5")
 except ValueError:
     CANONICAL_CHAIN_TTL_SECONDS = 5
 try:
-    CHAIN_BUILDER_POLL_MS = int(os.environ.get("CHAIN_BUILDER_POLL_MS", "250") or "250")
+    CHAIN_BUILDER_POLL_MS = int(os.environ.get("CHAIN_BUILDER_POLL_MS", "500") or "500")
 except ValueError:
-    CHAIN_BUILDER_POLL_MS = 250
+    CHAIN_BUILDER_POLL_MS = 500
 try:
     BWS_SUBSCRIBE_BATCH_SIZE = int(os.environ.get("BWS_SUBSCRIBE_BATCH_SIZE", "50") or "50")
 except ValueError:

@@ -102,3 +102,14 @@ def active_chain_stats() -> dict[str, Any]:
     with _lock:
         local = dict(_chain_refcount)
     return {"active_chains": list_active_chains(), "local_refcounts": local}
+
+
+def reset_active_chains_registry() -> None:
+    """Clear Redis chain:active and in-process holder refcounts (API startup)."""
+    with _lock:
+        _chain_refcount.clear()
+        _holder_chains.clear()
+    try:
+        get_redis().delete(CHAIN_ACTIVE_SET)
+    except Exception:
+        _logger.debug("reset_active_chains_registry failed", exc_info=True)

@@ -8,8 +8,23 @@ from pydantic import BaseModel, ConfigDict, Field
 # ---- Health & Metrics ----
 class HealthResponse(BaseModel):
     """Health check response."""
-    status: str = "ok"
+    status: Literal["ok", "degraded"] = "ok"
     timestamp: str = Field(..., description="ISO 8601 timestamp")
+    redis_connected: bool = True
+    redis_memory_fallback: bool = False
+    redis_used_memory_human: Optional[str] = Field(
+        None,
+        description="Redis used_memory_human when connected",
+    )
+
+
+class RuntimeMetricsResponse(BaseModel):
+    """Process and cache runtime metrics for small-instance monitoring."""
+
+    model_config = ConfigDict(extra="allow")
+    redis: Dict[str, Any] = Field(default_factory=dict)
+    ws_tick_pipeline: Dict[str, Any] = Field(default_factory=dict)
+    active_chains: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ICICIMetricsResponse(BaseModel):

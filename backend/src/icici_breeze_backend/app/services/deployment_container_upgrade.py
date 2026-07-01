@@ -27,6 +27,81 @@ REDIS_NETWORK_NAME = "breeze-core-net"
 REDIS_CONTAINER_NAME = "breeze-redis"
 REDIS_IMAGE = "redis:7-alpine"
 DEFAULT_REDIS_URL = "redis://breeze-redis:6379/0"
+REDIS_MAXMEMORY_POLICY = "allkeys-lru"
+
+
+def redis_maxmemory_mb() -> int:
+    """Sidecar Redis maxmemory cap (MB); overridable via REDIS_MAXMEMORY_MB env."""
+    raw = os.environ.get("REDIS_MAXMEMORY_MB", "384")
+    try:
+        return max(64, int(raw or "384"))
+    except (TypeError, ValueError):
+        return 384
+
+
+def redis_server_command() -> list[str]:
+    mb = redis_maxmemory_mb()
+    return [
+        "redis-server",
+        f"--maxmemory",
+        f"{mb}mb",
+        "--maxmemory-policy",
+        REDIS_MAXMEMORY_POLICY,
+    ]
+
+
+def redis_needs_recreate(client: Any) -> bool:
+    """True when breeze-redis is missing, not running, or has no maxmemory cap."""
+    from docker.errors import NotFound
+
+    try:
+        container = client.containers.get(REDIS_CONTAINER_NAME)
+    except NotFound:
+        return True
+    if container.status != "running":
+        return True
+    try:
+        exit_code, output = container.exec_run(
+            ["redis-cli", "CONFIG", "GET", "maxmemory"],
+            demux=False,
+        )
+        if exit_code != 0:
+            return True
+        text = (output or b"").decode("utf-8", errors="replace").strip()
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        maxmem = lines[-1] if lines else "0"
+        return maxmem in ("", "0")
+    except Exception:
+        return True
+
+
+def _start_redis_sidecar_sdk(client: Any) -> None:
+    from docker.errors import APIError, DockerException
+
+    try:
+        client.images.pull(REDIS_IMAGE)
+    except (APIError, DockerException) as exc:
+        logger.warning("deployment upgrade: redis image pull failed: %s", exc)
+        raise
+    try:
+        old = client.containers.get(REDIS_CONTAINER_NAME)
+        old.remove(force=True)
+    except Exception:
+        pass
+    client.containers.run(
+        REDIS_IMAGE,
+        name=REDIS_CONTAINER_NAME,
+        detach=True,
+        restart_policy={"Name": "unless-stopped"},
+        network=REDIS_NETWORK_NAME,
+        command=redis_server_command(),
+    )
+    logger.info(
+        "deployment upgrade: started %s on %s (maxmemory=%smb)",
+        REDIS_CONTAINER_NAME,
+        REDIS_NETWORK_NAME,
+        redis_maxmemory_mb(),
+    )
 
 
 def ensure_redis_url_in_env(env: dict[str, str]) -> dict[str, str]:
@@ -38,14 +113,25 @@ def ensure_redis_url_in_env(env: dict[str, str]) -> dict[str, str]:
 
 def _redis_sidecar_shell_lines() -> list[str]:
     """Idempotent bash to create network and start breeze-redis before app recreate."""
+    mb = redis_maxmemory_mb()
+    policy = REDIS_MAXMEMORY_POLICY
+    redis_run_cmd = (
+        f"docker run -d --name {REDIS_CONTAINER_NAME} --network {REDIS_NETWORK_NAME} "
+        f"--restart unless-stopped {REDIS_IMAGE} redis-server --maxmemory {mb}mb "
+        f"--maxmemory-policy {policy}"
+    )
     return [
         'echo "=== ensuring redis sidecar ==="',
         f"docker network create {REDIS_NETWORK_NAME} 2>/dev/null || true",
-        f'if ! docker ps --format \'{{{{.Names}}}}\' | grep -Fxq {REDIS_CONTAINER_NAME}; then',
+        "NEED_REDIS_RECREATE=1",
+        f'if docker ps --format \'{{{{.Names}}}}\' | grep -Fxq {REDIS_CONTAINER_NAME}; then',
+        f"  REDIS_MM=$(docker exec {REDIS_CONTAINER_NAME} redis-cli CONFIG GET maxmemory 2>/dev/null | tail -1 || true)",
+        '  if [ -n "$REDIS_MM" ] && [ "$REDIS_MM" != "0" ]; then NEED_REDIS_RECREATE=0; fi',
+        "fi",
+        'if [ "$NEED_REDIS_RECREATE" = "1" ]; then',
         f"  docker pull {REDIS_IMAGE}",
         f"  docker rm -f {REDIS_CONTAINER_NAME} 2>/dev/null || true",
-        f"  docker run -d --name {REDIS_CONTAINER_NAME} --network {REDIS_NETWORK_NAME} "
-        f"--restart unless-stopped {REDIS_IMAGE}",
+        f"  {redis_run_cmd}",
         "fi",
         f"for _i in $(seq 1 30); do",
         f"  if docker exec {REDIS_CONTAINER_NAME} redis-cli ping 2>/dev/null | grep -q PONG; then break; fi",
@@ -68,25 +154,8 @@ def ensure_redis_sidecar_sdk(client: Any) -> None:
             if "already exists" not in str(exc).lower():
                 raise
 
-    try:
-        redis_container = client.containers.get(REDIS_CONTAINER_NAME)
-        if redis_container.status != "running":
-            redis_container.remove(force=True)
-            raise NotFound("redis not running")
-    except NotFound:
-        try:
-            client.images.pull(REDIS_IMAGE)
-        except (APIError, DockerException) as exc:
-            logger.warning("deployment upgrade: redis image pull failed: %s", exc)
-            raise
-        client.containers.run(
-            REDIS_IMAGE,
-            name=REDIS_CONTAINER_NAME,
-            detach=True,
-            restart_policy={"Name": "unless-stopped"},
-            network=REDIS_NETWORK_NAME,
-        )
-        logger.info("deployment upgrade: started %s on %s", REDIS_CONTAINER_NAME, REDIS_NETWORK_NAME)
+    if redis_needs_recreate(client):
+        _start_redis_sidecar_sdk(client)
 
 
 def deployment_env_file_path() -> str:

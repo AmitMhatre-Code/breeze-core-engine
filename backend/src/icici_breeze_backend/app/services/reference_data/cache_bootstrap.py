@@ -35,6 +35,17 @@ def is_span_cached(exchange_code: str) -> bool:
     return span_baseline_store.is_span_baseline_cached(exchange_code)
 
 
+def is_reference_data_complete() -> bool:
+    """True when scrip, bhavcopy (NFO/BFO), and SPAN baselines are present in Redis."""
+    return (
+        is_scrip_cached()
+        and is_bhavcopy_cached("nfo")
+        and is_bhavcopy_cached("bfo")
+        and is_span_cached(cfg.NFO)
+        and is_span_cached(cfg.BFO)
+    )
+
+
 def load_all_local_mirrors() -> None:
     from icici_breeze_backend.app.services.reference_data import scrip_index
     from icici_breeze_backend.app.services.reference_data.ws_token_index import load_token_map_from_redis
