@@ -61,6 +61,6 @@ export function chainQueryOptions({
     enabled: enabled && ready,
     staleTime: CHAIN_STALE_MS,
     refetchInterval: chainRefetchInterval,
-    placeholderData: (prev) => prev,
+    placeholderData: (prev: ChainApiResponse) => prev,
   };
 }
