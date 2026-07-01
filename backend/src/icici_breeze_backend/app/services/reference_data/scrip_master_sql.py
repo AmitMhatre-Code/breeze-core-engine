@@ -36,3 +36,20 @@ def scrip_master_expiry_sql_values(expiry: str) -> tuple[str, ...]:
     except ValueError:
         pass
     return tuple(keys)
+
+
+def normalize_expiry_display(expiry: str) -> str:
+    """Canonical DD-Mon-YYYY display form for chain keys and tick matching."""
+    values = scrip_master_expiry_sql_values(expiry)
+    if values:
+        return values[0]
+    return str(expiry or "").strip()
+
+
+def expiry_display_equivalent(a: str, b: str) -> bool:
+    """True when two expiry strings refer to the same contract date."""
+    va = set(scrip_master_expiry_sql_values(a))
+    vb = set(scrip_master_expiry_sql_values(b))
+    if not va or not vb:
+        return str(a or "").strip() == str(b or "").strip()
+    return bool(va & vb)

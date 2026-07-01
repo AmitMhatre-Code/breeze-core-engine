@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
     build_invoke_args_permissive,
     is_breeze_invoke_response_ok,
+    parse_playground_literal,
     sdk_args_from_user_params,
 )
 from icici_breeze_backend.app.services.breeze_websocket_manager import (
@@ -75,6 +76,54 @@ def test_sdk_args_from_user_params_coerces_bools():
         "get_market_depth": False,
     }
     assert "holder_id" not in args
+
+
+def test_parse_playground_literal_stock_token_list():
+    assert parse_playground_literal("['4.1!44684','4.1!44734']") == [
+        "4.1!44684",
+        "4.1!44734",
+    ]
+    assert parse_playground_literal('["4.1!44684","4.1!44734"]') == [
+        "4.1!44684",
+        "4.1!44734",
+    ]
+
+
+def test_parse_playground_literal_plain_token():
+    assert parse_playground_literal("4.1!2885") == "4.1!2885"
+    assert parse_playground_literal("NIFTY") == "NIFTY"
+
+
+def test_sdk_args_from_user_params_stock_token_list():
+    args = sdk_args_from_user_params({"stock_token": "['4.1!44684','4.1!44734']"})
+    assert args == {"stock_token": ["4.1!44684", "4.1!44734"]}
+
+
+def test_playground_subscribe_stock_token_list(monkeypatch):
+    sdk = MagicMock()
+    sdk.subscribe_feeds.return_value = {
+        "message": "Stock ['4.1!44684', '4.1!44734'] subscribed successfully"
+    }
+    proc = MagicMock()
+    proc.get_session_breeze.return_value = sdk
+    _reset_bwm(monkeypatch)
+    import icici_breeze_backend.app.services.breeze_websocket_manager as bwm
+
+    monkeypatch.setattr(bwm, "_sdk", sdk)
+    monkeypatch.setattr(bwm, "_connected", True)
+    monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
+    monkeypatch.setattr(bwm, "start_tick_pipeline", lambda: None)
+
+    out = playground_subscribe(
+        proc,
+        "u1",
+        {"stock_token": "['4.1!44684','4.1!44734']", "holder_id": "pg1"},
+    )
+
+    assert out["ok"] is True
+    sdk.subscribe_feeds.assert_called_once_with(
+        stock_token=["4.1!44684", "4.1!44734"],
+    )
 
 
 def test_build_invoke_args_permissive_invalid_json_passes_raw_string():

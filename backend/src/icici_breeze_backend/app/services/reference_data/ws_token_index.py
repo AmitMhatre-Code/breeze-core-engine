@@ -10,6 +10,11 @@ from functools import lru_cache
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import parse_strike
+from icici_breeze_backend.app.services.reference_data.scrip_master_sql import (
+    normalize_expiry_display,
+    scrip_master_expiry_sql_values,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -38,13 +43,17 @@ def _scrip_master_connection() -> sqlite3.Connection:
 def _expiry_to_display(raw: Any) -> str:
     if isinstance(raw, dt.date):
         return raw.strftime("%d-%b-%Y")
-    s = str(raw or "").strip()
-    if len(s) == 10 and s[4] == "-":
-        try:
-            return dt.datetime.strptime(s, "%Y-%m-%d").strftime("%d-%b-%Y")
-        except ValueError:
-            return s
-    return s
+    return normalize_expiry_display(str(raw or ""))
+
+
+def canonical_option_type(option_type: str) -> str:
+    """Map scrip master / tick option type to CE or PE."""
+    opt = str(option_type or "").strip().upper()
+    if opt in {"CE", "C", "CALL"}:
+        return "CE"
+    if opt in {"PE", "P", "PUT"}:
+        return "PE"
+    return opt
 
 
 def parse_ws_symbol(symbol: str) -> tuple[str, int] | None:
@@ -63,10 +72,7 @@ def exchange_from_ws_prefix(prefix: str) -> str | None:
 
 
 def option_type_to_right(option_type: str) -> str:
-    opt = str(option_type or "").strip().upper()
-    if opt in {"CE", "C", "CALL"}:
-        return "call"
-    return "put"
+    return "call" if canonical_option_type(option_type) == "CE" else "put"
 
 
 def _lookup_token_row(token: int, segment_code: str | None) -> tuple[Any, ...] | None:
@@ -108,16 +114,15 @@ def lookup_contract_by_token(token: int, segment_code: str | None = None) -> WsT
     stock = str(short or "").strip().upper()
     if not stock:
         return None
-    try:
-        strike_f = float(strike)
-    except (TypeError, ValueError):
+    strike_parsed = parse_strike(strike)
+    if strike_parsed is None:
         return None
     return WsTokenContract(
         exchange_code=exchange_code,
         stock_code=stock,
         expiry_display=_expiry_to_display(expiry),
-        strike_price=strike_f,
-        option_type=str(option_type or "").strip().upper(),
+        strike_price=strike_parsed,
+        option_type=canonical_option_type(option_type),
     )
 
 
@@ -150,26 +155,13 @@ def lookup_token_for_contract(
     option_type: str,
 ) -> int | None:
     """Resolve ICICI WS token for a specific option contract."""
-    opt = str(option_type or "").strip().upper()
-    if opt in {"CALL", "C"}:
-        opt = "CE"
-    elif opt in {"PUT", "P"}:
-        opt = "PE"
-    expiry_values = [expiry_display]
-    if len(expiry_display) == 10 and expiry_display[4] == "-":
-        try:
-            expiry_values.append(
-                dt.datetime.strptime(expiry_display, "%Y-%m-%d").strftime("%d-%b-%Y")
-            )
-        except ValueError:
-            pass
-    elif "-" in expiry_display and len(expiry_display) == 11:
-        try:
-            expiry_values.append(
-                dt.datetime.strptime(expiry_display, "%d-%b-%Y").date().isoformat()
-            )
-        except ValueError:
-            pass
+    opt = canonical_option_type(option_type)
+    strike = parse_strike(strike_price)
+    if strike is None:
+        return None
+    expiry_values = scrip_master_expiry_sql_values(expiry_display)
+    if not expiry_values:
+        return None
     placeholders = ",".join("?" * len(expiry_values))
     sql = f"""
         SELECT Token FROM ws_token_index
@@ -182,7 +174,7 @@ def lookup_token_for_contract(
         segment_code.upper(),
         stock_code.upper(),
         *expiry_values,
-        float(strike_price),
+        strike,
         opt,
     )
     try:
@@ -207,7 +199,7 @@ def populate_ws_token_index_from_raw(cursor: sqlite3.Cursor, exchange_code: str)
             Token INTEGER PRIMARY KEY,
             SegmentCode TEXT,
             ShortName TEXT,
-            ExpiryDate DATE,
+            ExpiryDate TEXT,
             StrikePrice REAL,
             OptionType TEXT
         )
@@ -216,10 +208,29 @@ def populate_ws_token_index_from_raw(cursor: sqlite3.Cursor, exchange_code: str)
     cursor.execute("DELETE FROM ws_token_index WHERE SegmentCode = ?", (exchange_code,))
     cursor.execute(
         """
-        INSERT INTO ws_token_index (Token, SegmentCode, ShortName, ExpiryDate, StrikePrice, OptionType)
-        SELECT Token, ?, ShortName, ExpiryDate, StrikePrice, OptionType
+        SELECT Token, ShortName, ExpiryDate, StrikePrice, OptionType
         FROM raw_scrip_data
         WHERE Series = "OPTION"
-        """,
-        (exchange_code,),
+        """
     )
+    rows = cursor.fetchall()
+    if rows:
+        normalized = [
+            (
+                int(token),
+                exchange_code,
+                str(short or "").strip(),
+                normalize_expiry_display(str(expiry or "")),
+                parse_strike(strike),
+                canonical_option_type(str(opt or "")),
+            )
+            for token, short, expiry, strike, opt in rows
+            if parse_strike(strike) is not None and canonical_option_type(str(opt or "")) in {"CE", "PE"}
+        ]
+        cursor.executemany(
+            """
+            INSERT INTO ws_token_index (Token, SegmentCode, ShortName, ExpiryDate, StrikePrice, OptionType)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            normalized,
+        )

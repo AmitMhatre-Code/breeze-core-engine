@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
@@ -453,7 +454,7 @@ _CATALOG: tuple[BreezeApiCatalogEntry, ...] = (
         title="Subscribe Feeds (WebSocket)",
         risk_level="read",
         params=(
-            _s("stock_token", placeholder="4.1!2885"),
+            _s("stock_token", placeholder="4.1!2885 or ['4.1!3499','4.1!2885']"),
             _s("exchange_code", placeholder="NFO"),
             _s("stock_code", placeholder="NIFTY"),
             _s("product_type", placeholder="options"),
@@ -501,6 +502,44 @@ def _parse_json_field(name: str, raw: str) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON for {name}: {exc}") from exc
+
+
+def _looks_like_playground_literal(stripped: str) -> bool:
+    if not stripped:
+        return False
+    if stripped[0] in "[{('\"'":
+        return True
+    if stripped in ("True", "False", "None"):
+        return True
+    return stripped.lower() in ("true", "false", "null")
+
+
+def _try_parse_literal(stripped: str) -> Any | None:
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+    try:
+        return ast.literal_eval(stripped)
+    except (ValueError, SyntaxError):
+        return None
+
+
+def parse_playground_literal(raw: str) -> Any:
+    """Parse user text as JSON/Python literal when possible; otherwise return stripped string."""
+    stripped = raw.strip()
+    if not stripped:
+        return ""
+    if not _looks_like_playground_literal(stripped):
+        return stripped
+    parsed = _try_parse_literal(stripped)
+    if parsed is None:
+        return stripped
+    if isinstance(parsed, str) and parsed != stripped:
+        inner = _try_parse_literal(parsed.strip())
+        if inner is not None:
+            return inner
+    return parsed
 
 
 def build_invoke_args(method: str, params: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]]:
@@ -561,7 +600,9 @@ def _coerce_param_value_permissive(pdef: Any, raw: Any) -> Any:
             return raw
     if raw is None:
         return ""
-    return str(raw).strip() if isinstance(raw, str) else str(raw)
+    if isinstance(raw, str):
+        return parse_playground_literal(raw)
+    return str(raw)
 
 
 PLAYGROUND_INTERNAL_PARAM_NAMES = frozenset({"holder_id"})
@@ -604,7 +645,7 @@ def sdk_args_from_user_params(
         if pdef is not None:
             val = _coerce_param_value_permissive(pdef, raw)
         elif isinstance(raw, str):
-            val = raw.strip()
+            val = parse_playground_literal(raw)
         else:
             val = raw
         if pname in BOOL_PARAM_NAMES:

@@ -42,7 +42,7 @@ export const WS_SUBSCRIBE_MODES: Record<WsSubscribeMode, readonly string[]> = {
 };
 
 export const WS_FIELD_PLACEHOLDERS: Record<string, string> = {
-  stock_token: "4.1!2885",
+  stock_token: "4.1!2885 or ['4.1!3499','4.1!2885']",
   exchange_code: "NFO / BFO",
   stock_code: "NIFTY / BSESEN",
   product_type: "options / cash / futures",

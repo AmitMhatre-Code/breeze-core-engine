@@ -9,6 +9,7 @@ from icici_breeze_backend.app.services.reference_data.ws_token_index import (
     exchange_from_ws_prefix,
     lookup_contract_by_token,
     lookup_contract_by_ws_symbol,
+    lookup_token_for_contract,
     option_type_to_right,
     parse_ws_symbol,
 )
@@ -79,6 +80,44 @@ def test_lookup_contract_by_token_segment_filter(monkeypatch, tmp_path):
     _init_ws_token_db(tmp_path, monkeypatch)
     assert lookup_contract_by_token(820390, cfg.BFO) is not None
     assert lookup_contract_by_token(820390, cfg.NFO) is None
+
+
+def test_populate_ws_token_index_canonicalizes_call_and_expiry(monkeypatch, tmp_path):
+    from icici_breeze_backend.app.services.reference_data.ws_token_index import (
+        lookup_token_for_contract,
+        populate_ws_token_index_from_raw,
+    )
+
+    monkeypatch.setattr(cfg, "DATA_PATH", str(tmp_path) + "/")
+    monkeypatch.setattr(cfg, "SCRIP_DB", "scrips.sqlite3")
+    db_path = cfg.DATA_PATH + cfg.SCRIP_DB
+    with sqlite3.connect(db_path, timeout=30) as conn:
+        conn.execute(
+            """
+            CREATE TABLE raw_scrip_data (
+                Token INTEGER PRIMARY KEY,
+                ShortName TEXT,
+                Series TEXT,
+                ExpiryDate TEXT,
+                StrikePrice REAL,
+                OptionType TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO raw_scrip_data (Token, ShortName, Series, ExpiryDate, StrikePrice, OptionType)
+            VALUES (820390, 'BSESEN', 'OPTION', '2026-07-02', 77000, 'Call')
+            """
+        )
+        populate_ws_token_index_from_raw(conn.cursor(), cfg.BFO)
+        row = conn.execute(
+            "SELECT ExpiryDate, OptionType FROM ws_token_index WHERE Token = 820390"
+        ).fetchone()
+        conn.commit()
+    assert row == ("02-Jul-2026", "CE")
+    clear_token_lookup_cache()
+    assert lookup_token_for_contract(cfg.BFO, "BSESEN", "02-Jul-2026", 77000.0, "Call") == 820390
 
 
 def test_populate_ws_token_index_from_raw(monkeypatch, tmp_path):

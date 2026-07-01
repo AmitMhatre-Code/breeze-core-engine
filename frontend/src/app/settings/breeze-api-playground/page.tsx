@@ -532,6 +532,25 @@ export default function BreezeApiPlaygroundPage() {
 
                 <div className="app-card-muted space-y-3 p-4">
                   <h4 className="app-text-heading">Parameters</h4>
+                  <p className="rounded-md border border-amber-200 bg-amber-50/80 px-2 py-1.5 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                    Values are interpreted as Python/JSON literals where possible (lists,
+                    booleans, numbers). Be careful with quotes — for multiple stock tokens use{" "}
+                    <code className="font-mono">[&apos;4.1!44684&apos;,&apos;4.1!44734&apos;]</code>{" "}
+                    or{" "}
+                    <code className="font-mono">
+                      [&quot;4.1!44684&quot;,&quot;4.1!44734&quot;]
+                    </code>
+                    ; do not wrap the whole expression in extra quotes. See the{" "}
+                    <a
+                      href="https://pypi.org/project/breeze-connect/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline"
+                    >
+                      breeze-connect documentation
+                    </a>{" "}
+                    for API parameter formats.
+                  </p>
                   {selected.params.length === 0 ? (
                     <p className="app-text-muted">No parameters required.</p>
                   ) : (
@@ -680,6 +699,22 @@ export default function BreezeApiPlaygroundPage() {
           WebSocket ticks only arrive during NSE/BSE market hours.
         </p>
         <WsSubscribeModePicker value={wsSubscribeMode} onChange={setWsSubscribeMode} />
+        <p className="rounded-md border border-amber-200 bg-amber-50/80 px-2 py-1.5 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          Values are interpreted as Python/JSON literals where possible (lists, booleans,
+          numbers). Be careful with quotes — for multiple stock tokens use{" "}
+          <code className="font-mono">[&apos;4.1!44684&apos;,&apos;4.1!44734&apos;]</code> or{" "}
+          <code className="font-mono">[&quot;4.1!44684&quot;,&quot;4.1!44734&quot;]</code>; do not
+          wrap the whole expression in extra quotes. See the{" "}
+          <a
+            href="https://pypi.org/project/breeze-connect/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            breeze-connect documentation
+          </a>{" "}
+          for API parameter formats.
+        </p>
         <p className="app-text-muted">
           Fields depend on subscription type per ICICI docs. Only filled fields are sent.
         </p>

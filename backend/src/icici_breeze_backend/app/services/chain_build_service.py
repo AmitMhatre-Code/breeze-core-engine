@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.core.strike import Strike
+from icici_breeze_backend.app.core.strike import Strike, strikes_equal
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.app.services.options_chain_assembler import assemble_chain_payload
 from icici_breeze_backend.app.services.reference_data.keys import (
@@ -13,6 +13,10 @@ from icici_breeze_backend.app.services.reference_data.keys import (
     ws_quote_key,
 )
 from icici_breeze_backend.app.services.reference_data.scrip_index import get_strikes
+from icici_breeze_backend.app.services.reference_data.scrip_master_sql import (
+    expiry_display_equivalent,
+    normalize_expiry_display,
+)
 from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
     is_tradeable_contract,
     list_tradeable_strikes,
@@ -39,6 +43,23 @@ def _read_raw_tick(segment_code: str, token: int) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
+def _parsed_matches_contract(
+    parsed: Any,
+    *,
+    stock_code: str,
+    expiry_display: str,
+    strike: Strike,
+    right: str,
+) -> bool:
+    if parsed.stock_code.upper() != stock_code.upper():
+        return False
+    if not expiry_display_equivalent(parsed.expiry_display, expiry_display):
+        return False
+    if not strikes_equal(parsed.strike, strike):
+        return False
+    return parsed.right == str(right).lower()
+
+
 def _normalize_and_cache_cell(
     *,
     exchange_code: str,
@@ -47,6 +68,7 @@ def _normalize_and_cache_cell(
     strike: Strike,
     right: str,
     lot_size: int,
+    stats: dict[str, int] | None = None,
 ) -> dict[str, Any] | None:
     token = lookup_token_for_contract(
         exchange_code,
@@ -56,28 +78,29 @@ def _normalize_and_cache_cell(
         _option_type_for_right(right),
     )
     if token is None:
+        if stats is not None:
+            stats["token_miss"] = stats.get("token_miss", 0) + 1
         return None
     raw = _read_raw_tick(exchange_code, token)
     if raw is None:
+        if stats is not None:
+            stats["raw_miss"] = stats.get("raw_miss", 0) + 1
         return None
     result = normalize_icici_tick(raw)
     if result is None:
+        if stats is not None:
+            stats["normalize_miss"] = stats.get("normalize_miss", 0) + 1
         return None
     parsed, cell = result
-    if (
-        parsed.stock_code.upper() != stock_code.upper()
-        or parsed.expiry_display != expiry_display
-        or parsed.strike != strike
-        or parsed.right != str(right).lower()
+    if not _parsed_matches_contract(
+        parsed,
+        stock_code=stock_code,
+        expiry_display=expiry_display,
+        strike=strike,
+        right=right,
     ):
-        return None
-    if not is_tradeable_contract(
-        stock_code,
-        expiry_display,
-        strike,
-        _option_type_for_right(right),
-        exchange_code=exchange_code,
-    ):
+        if stats is not None:
+            stats["identity_miss"] = stats.get("identity_miss", 0) + 1
         return None
     if lot_size:
         cell = dict(cell)
@@ -99,6 +122,7 @@ def build_canonical_chain(
     lot_size: int = 0,
     freeze_quantity: int | None = None,
 ) -> dict[str, Any] | None:
+    expiry_display = normalize_expiry_display(expiry_display)
     strike_list = strikes if strikes else get_strikes(
         stock_code, expiry_display, exchange_code=exchange_code
     )
@@ -109,6 +133,7 @@ def build_canonical_chain(
     if not strike_list:
         return None
 
+    stats: dict[str, int] = {}
     call_by: dict[Strike, dict[str, Any]] = {}
     put_by: dict[Strike, dict[str, Any]] = {}
     for strike in strike_list:
@@ -128,9 +153,19 @@ def build_canonical_chain(
                 strike=strike,
                 right=right,
                 lot_size=lot_size,
+                stats=stats,
             )
             if cell is not None:
                 bucket[strike] = cell
+
+    if not call_by and not put_by and stats:
+        _logger.debug(
+            "canonical chain empty for %s %s %s: %s",
+            exchange_code,
+            stock_code,
+            expiry_display,
+            stats,
+        )
 
     payload = assemble_chain_payload(
         stock_code=stock_code,
