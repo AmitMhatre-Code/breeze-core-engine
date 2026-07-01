@@ -14,6 +14,8 @@ from icici_breeze_backend.app.services.reference_data.keys import (
     ws_raw_quote_key,
 )
 from icici_breeze_backend.app.db.redis_client import cache_set_json
+from icici_breeze_backend.app.services.reference_data.scrip_index import publish_scrip_index_from_db
+from icici_breeze_backend.app.services.reference_data.ws_token_index import publish_ws_token_map_from_db
 
 
 def _raw_nifty_call_25000() -> dict:
@@ -70,9 +72,11 @@ def _seed_db(tmp_path, monkeypatch) -> None:
             VALUES (71474, 'NFO', 'NIFTY', '30-Jun-2026', 25000, 'CE')
             """
         )
+    ver = publish_scrip_index_from_db()
+    publish_ws_token_map_from_db(ver)
 
 
-@patch("icici_breeze_backend.app.services.reference_data.scrip_index.get_strikes", return_value=[25000.0])
+@patch("icici_breeze_backend.app.services.chain_build_service.list_tradeable_strikes", return_value=[25000.0])
 def test_build_canonical_chain_from_raw_tick(mock_strikes, monkeypatch, tmp_path):
     close_redis()
     _seed_db(tmp_path, monkeypatch)
@@ -137,9 +141,11 @@ def _seed_bfo_db(tmp_path, monkeypatch) -> None:
             VALUES (820390, 'BFO', 'BSESEN', '02-Jul-2026', 77000, 'CE')
             """
         )
+    ver = publish_scrip_index_from_db()
+    publish_ws_token_map_from_db(ver)
 
 
-@patch("icici_breeze_backend.app.services.reference_data.scrip_index.get_strikes", return_value=[77000.0])
+@patch("icici_breeze_backend.app.services.chain_build_service.list_tradeable_strikes", return_value=[77000.0])
 def test_build_canonical_chain_bfo_symbol_only_tick(mock_strikes, monkeypatch, tmp_path):
     close_redis()
     _seed_bfo_db(tmp_path, monkeypatch)

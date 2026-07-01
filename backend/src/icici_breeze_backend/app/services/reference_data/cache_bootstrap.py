@@ -36,6 +36,11 @@ def is_span_cached(exchange_code: str) -> bool:
 
 
 def load_all_local_mirrors() -> None:
+    from icici_breeze_backend.app.services.reference_data import scrip_index
+    from icici_breeze_backend.app.services.reference_data.ws_token_index import load_token_map_from_redis
+
+    scrip_index.load_local_from_redis()
+    load_token_map_from_redis()
     bhavcopy_store.load_local_from_redis()
     span_baseline_store.load_local_from_redis()
 

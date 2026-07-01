@@ -40,8 +40,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     StrategyResult,
     TradeLeg,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.icici_async_fetch import fetch_strike_pairs_async
-from icici_breeze_backend.app.services.options_strategy_engine.strike_planner import plan_targeted_fetches
 from icici_breeze_backend.app.services.options_strategy_engine.universe import (
     build_bulk_chain_cache,
     finalize_liquidity_cache,
@@ -290,24 +288,52 @@ async def run_propose_trades(
     if not lot_size or lot_size <= 0:
         return _fail(400, "Could not resolve lot size from scrip master.")
 
-    strikes = proc.list_option_strikes(stock_code, expiry_display, exchange_code=exchange_code)
+    ctx = EngineContext(
+        processor=proc,
+        user_id=user_id,
+        stock_code=stock_code.strip(),
+        exchange_code=exchange_code,
+        expiry_display=expiry_display,
+        margin_rupees=margin_lacs * 100_000,
+        max_loss_rupees=max_loss_rupees,
+        allow_infinite_loss=allow_infinite_loss,
+        min_pop_pct=min_pop_pct,
+        min_ann_return_pct=min_ann_return_pct,
+        provision_elm=provision_elm,
+        strategy_category=strategy_category,
+        risk_reward_profile=risk_reward_profile or "moderate",
+        lot_size=int(lot_size),
+        strikes=[],
+        strike_step=50,
+        search_interval=50,
+        spot=0.0,
+        atm_strike=0.0,
+        range_lower=0.0,
+        range_upper=0.0,
+        audit=audit,
+        progress=progress,
+    )
+
+    build_bulk_chain_cache(ctx)
+    if ctx.halted:
+        return _fail(400, ctx.halt_reason or "Insufficient market depth.")
+
+    strikes = ctx.strikes
     if audit:
         audit.record(
             "scrip_master",
-            "list_option_strikes",
+            "chain_strikes",
             {
                 "strike_count": len(strikes) if strikes else 0,
                 "strike_min": strikes[0] if strikes else None,
                 "strike_max": strikes[-1] if strikes else None,
             },
-            rationale="Available strikes bound all strategy construction.",
+            rationale="Strikes derived from built option chain only.",
         )
-    if not strikes:
-        return _fail(400, "No strikes in scrip master for this expiry.")
 
-    step = proc.strike_interval(strikes)
-    mid = float(strikes[len(strikes) // 2])
-    search_step = proc.search_interval(strikes, mid)
+    step = ctx.strike_step
+    mid = float(strikes[len(strikes) // 2]) if strikes else 0.0
+    search_step = ctx.search_interval
     if audit:
         audit.record_calculation(
             "Engine parameters",
@@ -326,55 +352,11 @@ async def run_propose_trades(
                 "allow_infinite_loss": allow_infinite_loss,
                 "lot_size": int(lot_size),
             },
-            rationale="Delta-anchored template parameters (no user strike range).",
+            rationale="Delta-anchored template parameters from chain strikes.",
         )
-
-    atm_strike = min(strikes, key=lambda s: abs(s - mid))
-    range_pad = 3 * step
-    ctx = EngineContext(
-        processor=proc,
-        user_id=user_id,
-        stock_code=stock_code.strip(),
-        exchange_code=exchange_code,
-        expiry_display=expiry_display,
-        margin_rupees=margin_lacs * 100_000,
-        max_loss_rupees=max_loss_rupees,
-        allow_infinite_loss=allow_infinite_loss,
-        min_pop_pct=min_pop_pct,
-        min_ann_return_pct=min_ann_return_pct,
-        provision_elm=provision_elm,
-        strategy_category=strategy_category,
-        risk_reward_profile=risk_reward_profile or "moderate",
-        lot_size=int(lot_size),
-        strikes=strikes,
-        strike_step=step,
-        search_interval=search_step,
-        spot=mid,
-        atm_strike=atm_strike,
-        range_lower=float(atm_strike) - range_pad,
-        range_upper=float(atm_strike) + range_pad,
-        audit=audit,
-        progress=progress,
-    )
-
-    build_bulk_chain_cache(ctx)
-    if ctx.halted:
-        return _fail(400, ctx.halt_reason or "Insufficient market depth.")
 
     ctx.atm_iv = compute_atm_iv(ctx)
     enrich_greeks(ctx)
-
-    to_fetch = plan_targeted_fetches(ctx)
-    if to_fetch:
-        if progress is not None:
-            progress.add_units(
-                len(to_fetch),
-                phase="fetch_quotes",
-                message=f"Fetching targeted quotes (0/{len(to_fetch)})…",
-            )
-        ctx.cache.update(await fetch_strike_pairs_async(ctx, to_fetch))
-        ctx.atm_iv = compute_atm_iv(ctx) or ctx.atm_iv
-        enrich_greeks(ctx)
 
     finalize_liquidity_cache(ctx)
     if ctx.halted:

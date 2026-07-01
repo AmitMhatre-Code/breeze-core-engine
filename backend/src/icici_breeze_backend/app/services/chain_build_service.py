@@ -12,7 +12,6 @@ from icici_breeze_backend.app.services.reference_data.keys import (
     canonical_chain_key,
     ws_quote_key,
 )
-from icici_breeze_backend.app.services.reference_data.scrip_index import get_strikes
 from icici_breeze_backend.app.services.reference_data.scrip_master_sql import (
     expiry_display_equivalent,
     normalize_expiry_display,
@@ -123,13 +122,9 @@ def build_canonical_chain(
     freeze_quantity: int | None = None,
 ) -> dict[str, Any] | None:
     expiry_display = normalize_expiry_display(expiry_display)
-    strike_list = strikes if strikes else get_strikes(
+    strike_list = strikes if strikes else list_tradeable_strikes(
         stock_code, expiry_display, exchange_code=exchange_code
     )
-    if not strike_list:
-        strike_list = list_tradeable_strikes(
-            stock_code, expiry_display, exchange_code=exchange_code
-        )
     if not strike_list:
         return None
 

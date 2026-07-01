@@ -18,7 +18,13 @@ from icici_breeze_backend.app.services.reference_data.bhavcopy_store import (
     get_bhavcopy_source_date,
 )
 from icici_breeze_backend.app.services.reference_data.keys import ws_quote_key
-from icici_breeze_backend.app.services.reference_data.scrip_index import get_strikes
+from icici_breeze_backend.app.services.reference_data.scrip_index import (
+    ensure_scrip_memory_ready,
+    list_tradeable_strikes_memory,
+)
+from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
+    list_tradeable_strikes,
+)
 
 if TYPE_CHECKING:
     from icici_breeze_backend.audit.strategy_builder_audit import StrategyBuilderAuditSession
@@ -197,15 +203,11 @@ def _resolve_chain_spot(
     expiry_display: str,
     strikes: list[Strike],
 ) -> float | None:
+    del proc, user_id
     spot = _cached_chain_spot(exchange_code, stock_code)
     if spot is not None:
         return spot
     spot = _spot_from_bhavcopy(stock_code, expiry_display, exchange_code, strikes)
-    if spot is not None:
-        return _remember_chain_spot(exchange_code, stock_code, spot)
-    spot = _spot_from_icici_rest(
-        proc, user_id, stock_code, exchange_code, expiry_display, strikes
-    )
     if spot is not None:
         return _remember_chain_spot(exchange_code, stock_code, spot)
     return None
@@ -385,7 +387,8 @@ def _resolve_chain_metadata(
     stock_code: str,
     exchange_code: str,
     expiry_display: str,
-) -> tuple[int | None, int | None, list[int]]:
+) -> tuple[int | None, int | None, list[Strike]]:
+    ensure_scrip_memory_ready()
     lot_size = proc.fetch_lot_size(stock_code, expiry_display, exchange_code=exchange_code)
     freeze_quantity = None
     try:
@@ -398,9 +401,7 @@ def _resolve_chain_metadata(
     except (TypeError, ValueError):
         freeze_quantity = None
 
-    strikes = get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
-    if not strikes:
-        strikes = proc.list_option_strikes(stock_code, expiry_display, exchange_code=exchange_code)
+    strikes = list_tradeable_strikes(stock_code, expiry_display, exchange_code=exchange_code)
     return lot_size, freeze_quantity, strikes or []
 
 
@@ -413,12 +414,16 @@ def fetch_chain_payload_routed(
     *,
     holder_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Build inner Success payload using websocket / bhavcopy / REST per routing rules."""
+    """Build inner Success payload using websocket or bhavcopy only."""
+    from icici_breeze_backend.app.services.chain_readiness import is_chain_complete
+
     expiry_display = _normalize_expiry_display(expiry_display)
     source = resolve_quote_source(exchange_code)
     lot_size, freeze_quantity, strikes = _resolve_chain_metadata(
         proc, stock_code, exchange_code, expiry_display
     )
+    if not strikes:
+        return None
 
     if source == "websocket":
         from icici_breeze_backend.app.services.breeze_websocket_manager import ensure_chain_subscriptions
@@ -435,23 +440,28 @@ def fetch_chain_payload_routed(
             holder_id=holder_id,
         )
         if ws_payload is not None:
-            return _enrich_quote_metadata(
-                _apply_chain_spot(
-                    ws_payload,
-                    proc=proc,
-                    user_id=user_id,
-                    stock_code=stock_code,
-                    exchange_code=exchange_code,
-                    expiry_display=expiry_display,
-                    strikes=strikes,
-                )
+            ws_payload = _apply_chain_spot(
+                ws_payload,
+                proc=proc,
+                user_id=user_id,
+                stock_code=stock_code,
+                exchange_code=exchange_code,
+                expiry_display=expiry_display,
+                strikes=strikes,
             )
+        if ws_payload is not None and is_chain_complete(
+            ws_payload,
+            stock_code=stock_code,
+            exchange_code=exchange_code,
+            expiry_display=expiry_display,
+        ):
+            return _enrich_quote_metadata(ws_payload)
 
-        _logger.warning("WebSocket chain empty for %s %s; falling back", stock_code, expiry_display)
+        _logger.warning("WebSocket chain incomplete for %s %s; trying bhavcopy", stock_code, expiry_display)
         if bhavcopy_is_fresh(exchange_code):
             source = "bhavcopy"
         else:
-            source = "icici_api"
+            return None
 
     if source == "bhavcopy":
         payload = build_chain_from_bhavcopy(
@@ -462,11 +472,12 @@ def fetch_chain_payload_routed(
             freeze_quantity=freeze_quantity,
             strikes=strikes,
         )
-        if payload:
-            if not payload.get("chain_rows") and strikes:
-                payload["chain_rows"] = [
-                    {"strike_price": s, "call": None, "put": None} for s in strikes
-                ]
+        if payload and is_chain_complete(
+            payload,
+            stock_code=stock_code,
+            exchange_code=exchange_code,
+            expiry_display=expiry_display,
+        ):
             return _enrich_quote_metadata(
                 _apply_chain_spot(
                     payload,
@@ -478,29 +489,40 @@ def fetch_chain_payload_routed(
                     strikes=strikes,
                 )
             )
-        _logger.warning("Bhavcopy chain missing for %s %s; falling back to REST", stock_code, expiry_display)
-        source = "icici_api"
-
-    if source == "icici_api":
-        result = proc._get_full_option_chain_icici_rest(
-            user_id, stock_code, exchange_code, expiry_display
-        )
-        if result.get("Status") == 200 and isinstance(result.get("Success"), dict):
-            payload = dict(result["Success"])
-            payload["quote_source"] = "icici_api"
-            payload["bhavcopy_date"] = None
-            return _enrich_quote_metadata(
-                _apply_chain_spot(
-                    payload,
-                    proc=proc,
-                    user_id=user_id,
-                    stock_code=stock_code,
-                    exchange_code=exchange_code,
-                    expiry_display=expiry_display,
-                    strikes=strikes,
-                )
-            )
+        _logger.warning("Bhavcopy chain incomplete for %s %s", stock_code, expiry_display)
     return None
+
+
+def chain_fetch_error_response(
+    exchange_code: str,
+    stock_code: str,
+    expiry_display: str,
+) -> dict[str, Any]:
+    """Map chain build failure to HTTP-shaped API response."""
+    expiry_display = _normalize_expiry_display(expiry_display)
+    if not list_tradeable_strikes_memory(stock_code, expiry_display, exchange_code=exchange_code):
+        return {
+            "Status": 400,
+            "Error": "No tradeable contracts for this expiry.",
+            "Success": None,
+        }
+    if is_india_market_open():
+        return {
+            "Status": 400,
+            "Error": "Live option chain not ready; try again in a moment.",
+            "Success": None,
+        }
+    if not bhavcopy_is_fresh(exchange_code):
+        return {
+            "Status": 503,
+            "Error": "Bhavcopy not loaded — refresh reference data in Settings.",
+            "Success": None,
+        }
+    return {
+        "Status": 400,
+        "Error": "Unable to build option chain from Bhavcopy.",
+        "Success": None,
+    }
 
 
 def assemble_chain_with_router(
@@ -512,18 +534,14 @@ def assemble_chain_with_router(
     *,
     holder_id: str | None = None,
 ) -> dict[str, Any]:
-    """Build option chain using websocket / bhavcopy / REST per routing rules."""
+    """Build option chain using websocket or bhavcopy only."""
     expiry_display = _normalize_expiry_display(expiry_display)
     payload = fetch_chain_payload_routed(
         proc, user_id, stock_code, exchange_code, expiry_display, holder_id=holder_id
     )
     if payload:
         return {"Status": 200, "Error": None, "Success": payload}
-    return {
-        "Status": 400,
-        "Error": "Unable to fetch option chain from cache or REST",
-        "Success": None,
-    }
+    return chain_fetch_error_response(exchange_code, stock_code, expiry_display)
 
 
 def _fetch_quote_icici_rest(
@@ -635,18 +653,7 @@ def fetch_chain_side_icici_response(
     if not _rest_fallback_allowed(exchange_code):
         return _bhavcopy_miss_response()
 
-    from icici_breeze_backend.app.services.processor import _expiry_display_to_api
-
-    try:
-        expiry_api = _expiry_display_to_api(expiry_display)
-    except ValueError:
-        expiry_api = expiry_raw
-    result = proc._fetch_icici_chain_side_raw(
-        user_id, stock_code, exchange_code, expiry_api, right
-    )
-    if result.get("Status") == 200:
-        result["quote_source"] = "icici_api"
-    return result
+    return _bhavcopy_miss_response()
 
 
 def fetch_quote_icici_response(
@@ -683,17 +690,7 @@ def fetch_quote_icici_response(
                 }
         if not _rest_fallback_allowed(exchange_code):
             return _bhavcopy_miss_response()
-        return _fetch_quote_icici_rest(
-            proc,
-            user_id,
-            stock_code,
-            exchange_code,
-            expiry_raw,
-            right,
-            strike_price,
-            audit=audit,
-            audit_rationale=audit_rationale,
-        )
+        return _bhavcopy_miss_response()
 
     strike = parse_strike(strike_price)
     if strike is None:
@@ -723,15 +720,4 @@ def fetch_quote_icici_response(
     if not _rest_fallback_allowed(exchange_code):
         return _bhavcopy_miss_response()
 
-    quote = _fetch_quote_icici_rest(
-        proc,
-        user_id,
-        stock_code,
-        exchange_code,
-        expiry_raw,
-        right,
-        strike_for_broker(strike),
-        audit=audit,
-        audit_rationale=audit_rationale,
-    )
-    return quote
+    return _bhavcopy_miss_response()

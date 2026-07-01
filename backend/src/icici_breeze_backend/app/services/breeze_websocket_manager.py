@@ -11,18 +11,12 @@ from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
 )
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, strike_for_broker, strike_key
-from icici_breeze_backend.app.db.redis_client import cache_get_json
 from icici_breeze_backend.app.services.reference_data.active_chains import (
     register_holder_chain,
     release_holder_chains,
 )
-from icici_breeze_backend.app.services.reference_data.keys import canonical_chain_key
-from icici_breeze_backend.app.services.ws_tick_pipeline import (
-    ingest_tick,
-    register_raw_tick_listener,
-    start_tick_pipeline,
-    stop_tick_pipeline,
-    unregister_raw_tick_listener,
+from icici_breeze_backend.app.services.reference_data.ws_token_index import (
+    list_ws_stock_tokens_for_liquid_contracts,
 )
 
 if TYPE_CHECKING:
@@ -31,11 +25,11 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 
-# holder_id -> set of subscription keys
+# holder_id -> set of stock_token symbols (e.g. 4.1!44684)
 _holders: dict[str, set[str]] = {}
-# subscription_key -> set of holder_ids
+# stock_token -> set of holder_ids
 _sub_holders: dict[str, set[str]] = {}
-# subscription_key -> ICICI unsubscribe_feeds kwargs
+# stock_token -> ICICI unsubscribe kwargs
 _sub_meta: dict[str, dict[str, Any]] = {}
 
 _sdk: Any = None
@@ -47,6 +41,13 @@ _PLAYGROUND_EVENT_LIMIT = 50
 _playground_events: list[dict[str, Any]] = []
 _playground_event_seq = 0
 _UNTRACKED_HOLDER = "__untracked__"
+
+
+def _subscribe_batch_size() -> int:
+    try:
+        return max(1, int(getattr(cfg, "BWS_SUBSCRIBE_BATCH_SIZE", 50) or 50))
+    except (TypeError, ValueError):
+        return 50
 
 
 def _note_error(message: str, *args: Any) -> str:
@@ -169,11 +170,19 @@ def _subscribe_feeds_sdk_args(
     }
 
 
+def _stock_token_sdk_args(tokens: list[str]) -> dict[str, Any]:
+    return {"stock_token": list(tokens)}
+
+
 def _on_ticks(ticks: Any) -> None:
+    from icici_breeze_backend.app.services.ws_tick_pipeline import ingest_tick
+
     ingest_tick(ticks)
 
 
 def _attach_sdk_ticks_handler(sdk: Any) -> None:
+    from icici_breeze_backend.app.services.ws_tick_pipeline import start_tick_pipeline
+
     sdk.on_ticks = _on_ticks
     start_tick_pipeline()
 
@@ -202,7 +211,7 @@ def _ensure_ws(proc: "Processor", user_id: str) -> Any | None:
             return None
 
 
-def _icici_unsubscribe(key: str, meta: dict[str, Any]) -> bool:
+def _icici_unsubscribe_stock_token(stock_token: str, meta: dict[str, Any]) -> bool:
     sdk = _sdk
     if sdk is None:
         return False
@@ -210,34 +219,42 @@ def _icici_unsubscribe(key: str, meta: dict[str, Any]) -> bool:
         if hasattr(sdk, "unsubscribe_feeds"):
             sdk.unsubscribe_feeds(**meta)
         else:
-            _logger.warning("SDK missing unsubscribe_feeds; skipping %s", key)
-        _logger.info("unsubscribe_feeds ok key=%s", key)
+            _logger.warning("SDK missing unsubscribe_feeds; skipping %s", stock_token)
+        _logger.info("unsubscribe_feeds ok token=%s", stock_token)
         return True
     except Exception as exc:
-        _note_error("unsubscribe_feeds failed %s: %s", key, exc)
+        _note_error("unsubscribe_feeds failed %s: %s", stock_token, exc)
         return False
 
 
-def _detach_holder_from_key(holder_id: str, key: str) -> None:
+def _icici_unsubscribe(key: str, meta: dict[str, Any]) -> bool:
+    return _icici_unsubscribe_stock_token(key, meta)
+
+
+def _detach_holder_from_token(holder_id: str, stock_token: str) -> None:
     meta: dict[str, Any] | None = None
     should_unsub = False
     with _lock:
-        holder_keys = _holders.get(holder_id)
-        if holder_keys is not None:
-            holder_keys.discard(key)
-            if not holder_keys:
+        holder_tokens = _holders.get(holder_id)
+        if holder_tokens is not None:
+            holder_tokens.discard(stock_token)
+            if not holder_tokens:
                 _holders.pop(holder_id, None)
-        holders = _sub_holders.get(key)
+        holders = _sub_holders.get(stock_token)
         if holders is None:
             return
         holders.discard(holder_id)
         if holders:
             return
         should_unsub = True
-        meta = _sub_meta.pop(key, None)
-        _sub_holders.pop(key, None)
+        meta = _sub_meta.pop(stock_token, None)
+        _sub_holders.pop(stock_token, None)
     if should_unsub and meta:
-        _icici_unsubscribe(key, meta)
+        _icici_unsubscribe_stock_token(stock_token, meta)
+
+
+def _detach_holder_from_key(holder_id: str, key: str) -> None:
+    _detach_holder_from_token(holder_id, key)
 
 
 def release_holder(holder_id: str) -> dict[str, Any]:
@@ -246,11 +263,93 @@ def release_holder(holder_id: str) -> dict[str, Any]:
     if not hid or hid == _UNTRACKED_HOLDER:
         return {"released": 0, "holder_id": hid}
     with _lock:
-        keys = list(_holders.pop(hid, set()))
-    for key in keys:
-        _detach_holder_from_key(hid, key)
+        tokens = list(_holders.pop(hid, set()))
+    for token in tokens:
+        _detach_holder_from_token(hid, token)
     release_holder_chains(hid)
-    return {"released": len(keys), "holder_id": hid}
+    return {"released": len(tokens), "holder_id": hid}
+
+
+def _subscribe_stock_token_batch(
+    proc: "Processor",
+    user_id: str,
+    tokens: list[str],
+    *,
+    holder_id: str,
+) -> bool:
+    if not tokens:
+        return True
+    hid = _effective_holder(holder_id)
+    to_subscribe: list[str] = []
+    with _lock:
+        for token in tokens:
+            if token in _holders.get(hid, set()):
+                continue
+            is_new = token not in _sub_holders or len(_sub_holders[token]) == 0
+            if not is_new:
+                _holders.setdefault(hid, set()).add(token)
+                _sub_holders.setdefault(token, set()).add(hid)
+            else:
+                to_subscribe.append(token)
+
+    if not to_subscribe:
+        return True
+
+    sdk = _ensure_ws(proc, user_id)
+    if sdk is None:
+        return False
+
+    batch_size = _subscribe_batch_size()
+    ok_all = True
+    for i in range(0, len(to_subscribe), batch_size):
+        chunk = to_subscribe[i : i + batch_size]
+        sdk_args = _stock_token_sdk_args(chunk)
+        try:
+            result = sdk.subscribe_feeds(**sdk_args)
+            if isinstance(result, dict):
+                st = result.get("Status") or result.get("status")
+                if st not in (200, None):
+                    err = (
+                        result.get("Error")
+                        or result.get("error")
+                        or result.get("message")
+                        or str(result)
+                    )
+                    _note_error("subscribe_feeds ICICI error batch %s: %s", chunk[:3], err)
+                    ok_all = False
+                    continue
+            with _lock:
+                for token in chunk:
+                    _holders.setdefault(hid, set()).add(token)
+                    _sub_holders.setdefault(token, set()).add(hid)
+                    _sub_meta[token] = {"stock_token": [token]}
+            _logger.info(
+                "subscribe_feeds batch ok user_id=%s holder=%s count=%s",
+                user_id,
+                hid,
+                len(chunk),
+            )
+        except Exception as exc:
+            _note_error("subscribe_feeds batch failed: %s", exc)
+            ok_all = False
+    return ok_all
+
+
+def _unsubscribe_stock_token_batch(tokens: list[str]) -> None:
+    if not tokens:
+        return
+    batch_size = _subscribe_batch_size()
+    for i in range(0, len(tokens), batch_size):
+        chunk = tokens[i : i + batch_size]
+        meta = _stock_token_sdk_args(chunk)
+        sdk = _sdk
+        if sdk is None:
+            continue
+        try:
+            if hasattr(sdk, "unsubscribe_feeds"):
+                sdk.unsubscribe_feeds(**meta)
+        except Exception as exc:
+            _note_error("unsubscribe_feeds batch failed: %s", exc)
 
 
 def subscribe_option(
@@ -264,65 +363,22 @@ def subscribe_option(
     *,
     holder_id: str | None = None,
 ) -> bool:
-    hid = _effective_holder(holder_id)
-    key = sub_key(exchange_code, stock_code, expiry_display, strike, right)
-    with _lock:
-        if key in _holders.get(hid, set()):
-            return True
-        is_new_icici_sub = key not in _sub_holders or len(_sub_holders[key]) == 0
-    if not is_new_icici_sub:
-        with _lock:
-            _holders.setdefault(hid, set()).add(key)
-            _sub_holders.setdefault(key, set()).add(hid)
-        return True
-    sdk = _ensure_ws(proc, user_id)
-    if sdk is None:
-        return False
-    r = str(right or "").strip().lower()
-    if r == cfg.CALL.lower():
-        r = "call"
-    else:
-        r = "put"
-    sdk_args = _subscribe_feeds_sdk_args(
-        exchange_code,
-        stock_code,
-        expiry_display,
-        strike_for_broker(strike),
-        r,
+    """Subscribe a single contract via stock_token lookup (batch API with one token)."""
+    from icici_breeze_backend.app.services.reference_data.ws_token_index import (
+        lookup_token_for_contract,
+        format_ws_stock_token,
     )
-    try:
-        result = sdk.subscribe_feeds(**sdk_args)
-        time.sleep(0.02)
-        if isinstance(result, dict):
-            st = result.get("Status") or result.get("status")
-            if st not in (200, None):
-                err = (
-                    result.get("Error")
-                    or result.get("error")
-                    or result.get("message")
-                    or str(result)
-                )
-                _note_error("subscribe_feeds ICICI error %s: %s", key, err)
-                return False
-        with _lock:
-            _holders.setdefault(hid, set()).add(key)
-            _sub_holders.setdefault(key, set()).add(hid)
-            _sub_meta[key] = dict(sdk_args)
-        _logger.info(
-            "subscribe_feeds ok user_id=%s holder=%s key=%s exchange=%s stock=%s expiry=%s strike=%s right=%s",
-            user_id,
-            hid,
-            key,
-            exchange_code,
-            stock_code,
-            expiry_display,
-            strike,
-            r,
-        )
-        return True
-    except Exception as exc:
-        _note_error("subscribe_feeds failed %s: %s", key, exc)
+
+    opt = cfg.CALL if str(right).lower().startswith("c") else cfg.PUT
+    token = lookup_token_for_contract(
+        exchange_code, stock_code, expiry_display, float(strike), opt
+    )
+    if token is None:
         return False
+    ws_symbol = format_ws_stock_token(exchange_code, token)
+    return _subscribe_stock_token_batch(
+        proc, user_id, [ws_symbol], holder_id=_effective_holder(holder_id)
+    )
 
 
 def sync_holder_chain_subscriptions(
@@ -332,29 +388,20 @@ def sync_holder_chain_subscriptions(
     stock_code: str,
     exchange_code: str,
     expiry_display: str,
-    strikes: list[Strike],
+    strikes: list[Strike] | None = None,
 ) -> None:
+    del strikes  # liquid tokens resolved from scrip master
     hid = _effective_holder(holder_id)
-    desired: set[str] = set()
-    for strike in strikes:
-        for right in ("call", "put"):
-            desired.add(sub_key(exchange_code, stock_code, expiry_display, strike, right))
+    desired = set(
+        list_ws_stock_tokens_for_liquid_contracts(exchange_code, stock_code, expiry_display)
+    )
     with _lock:
         current = set(_holders.get(hid, set()))
-    for key in current - desired:
-        _detach_holder_from_key(hid, key)
-    for strike in strikes:
-        for right in ("call", "put"):
-            subscribe_option(
-                proc,
-                user_id,
-                exchange_code,
-                stock_code,
-                expiry_display,
-                strike,
-                right,
-                holder_id=hid,
-            )
+    for token in current - desired:
+        _detach_holder_from_token(hid, token)
+    new_tokens = sorted(desired - current)
+    if new_tokens:
+        _subscribe_stock_token_batch(proc, user_id, new_tokens, holder_id=hid)
     register_holder_chain(hid, exchange_code, stock_code, expiry_display)
 
 
@@ -364,30 +411,27 @@ def ensure_chain_subscriptions(
     stock_code: str,
     exchange_code: str,
     expiry_display: str,
-    strikes: list[Strike],
+    strikes: list[Strike] | None = None,
     *,
     lot_size: int = 0,
     freeze_quantity: int | None = None,
     holder_id: str | None = None,
 ) -> dict[str, Any] | None:
-    if not strikes:
-        return None
+    from icici_breeze_backend.app.services.chain_readiness import wait_for_canonical_chain
+
     sync_holder_chain_subscriptions(
         proc, user_id, _effective_holder(holder_id), stock_code, exchange_code, expiry_display, strikes
     )
-
-    payload = cache_get_json(
-        canonical_chain_key(exchange_code, stock_code, expiry_display)
+    payload = wait_for_canonical_chain(
+        exchange_code,
+        stock_code,
+        expiry_display,
+        lot_size=lot_size,
+        freeze_quantity=freeze_quantity,
     )
-    if not isinstance(payload, dict):
-        return None
-    if not payload.get("chain_rows"):
+    if payload is None:
         return None
     out = dict(payload)
-    if lot_size and not out.get("lot_size"):
-        out["lot_size"] = lot_size
-    if freeze_quantity is not None and out.get("freeze_quantity") is None:
-        out["freeze_quantity"] = freeze_quantity
     out["quote_source"] = "websocket"
     out["bhavcopy_date"] = None
     return out
@@ -462,16 +506,18 @@ def ws_connect_playground(proc: "Processor", user_id: str) -> dict[str, Any]:
 
 def _unsubscribe_all_feeds() -> None:
     with _lock:
-        keys_meta = list(_sub_meta.items())
+        tokens_meta = list(_sub_meta.items())
         _holders.clear()
         _sub_holders.clear()
         _sub_meta.clear()
-    for key, meta in keys_meta:
-        _icici_unsubscribe(key, meta)
+    for token, meta in tokens_meta:
+        _icici_unsubscribe_stock_token(token, meta)
 
 
 def ws_disconnect_playground() -> dict[str, Any]:
     global _sdk, _sdk_user_id, _connected
+    from icici_breeze_backend.app.services.ws_tick_pipeline import stop_tick_pipeline
+
     cmd = _icici_command("ws_disconnect", {})
     err: str | None = None
     _unsubscribe_all_feeds()
@@ -507,6 +553,11 @@ def ws_release_playground(holder_id: str | None = None) -> dict[str, Any]:
 
 
 def _playground_sub_key(sdk_args: dict[str, Any]) -> str:
+    stock_token = sdk_args.get("stock_token")
+    if isinstance(stock_token, list) and stock_token:
+        return "|".join(sorted(str(t) for t in stock_token))
+    if isinstance(stock_token, str) and stock_token.strip():
+        return stock_token.strip()
     r = str(sdk_args.get("right") or "").strip().lower()
     if r in {cfg.CALL.lower(), "call"}:
         r = "call"
@@ -527,6 +578,19 @@ def _track_playground_sub(holder_id: str | None, sdk_args: dict[str, Any]) -> No
     hid = _effective_holder(holder_id)
     if hid == _UNTRACKED_HOLDER:
         return
+    stock_token = sdk_args.get("stock_token")
+    tokens: list[str] = []
+    if isinstance(stock_token, list):
+        tokens = [str(t) for t in stock_token]
+    elif isinstance(stock_token, str) and stock_token.strip():
+        tokens = [stock_token.strip()]
+    if tokens:
+        with _lock:
+            for token in tokens:
+                _holders.setdefault(hid, set()).add(token)
+                _sub_holders.setdefault(token, set()).add(hid)
+                _sub_meta[token] = {"stock_token": [token]}
+        return
     key = _playground_sub_key(sdk_args)
     with _lock:
         _holders.setdefault(hid, set()).add(key)
@@ -535,11 +599,19 @@ def _track_playground_sub(holder_id: str | None, sdk_args: dict[str, Any]) -> No
 
 
 def add_playground_listener(cb: Any) -> None:
+    from icici_breeze_backend.app.services.ws_tick_pipeline import (
+        register_raw_tick_listener,
+    )
+
     _playground_listeners.append(cb)
     register_raw_tick_listener(cb)
 
 
 def remove_playground_listener(cb: Any) -> None:
+    from icici_breeze_backend.app.services.ws_tick_pipeline import (
+        unregister_raw_tick_listener,
+    )
+
     try:
         _playground_listeners.remove(cb)
     except ValueError:
@@ -564,7 +636,6 @@ def playground_subscribe(proc: "Processor", user_id: str, params: dict[str, Any]
         if sdk is None:
             raise RuntimeError(_last_error or "WebSocket connect failed")
         result = sdk.subscribe_feeds(**sdk_args)
-        time.sleep(0.02)
         _track_playground_sub(holder_id, sdk_args)
         _clear_error()
         entry = _record_playground_event("subscribe_feeds", "subscribe_feeds", sdk_args, result, True)

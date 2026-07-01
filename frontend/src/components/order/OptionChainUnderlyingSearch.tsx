@@ -17,6 +17,8 @@ type Props = {
   variant?: "field" | "ticker";
   /** Spot / index level (e.g. from option chain after fetch). */
   spot?: number | null;
+  /** When true, show a loading placeholder instead of spot. */
+  loading?: boolean;
   /** Day change % when available (optional). */
   changePct?: number | null;
   /** Quote provenance for loaded chain (WebSocket / Bhavcopy / API). */
@@ -80,6 +82,7 @@ export function OptionChainUnderlyingSearch({
   disabled,
   variant = "field",
   spot = null,
+  loading = false,
   changePct = null,
   quoteMeta = null,
   chainBar = false,
@@ -347,7 +350,17 @@ export function OptionChainUnderlyingSearch({
             }
           />
         </label>
-        {spot != null && Number.isFinite(spot) ? (
+        {loading ? (
+          <span
+            className={
+              chainBar
+                ? "shrink-0 text-sm tabular-nums text-zinc-500 animate-pulse dark:text-zinc-400"
+                : "shrink-0 text-sm text-zinc-400 animate-pulse dark:text-zinc-500"
+            }
+          >
+            …
+          </span>
+        ) : spot != null && Number.isFinite(spot) ? (
           <span
             className={
               chainBar

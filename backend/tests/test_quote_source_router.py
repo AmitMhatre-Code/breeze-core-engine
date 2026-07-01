@@ -177,14 +177,13 @@ def test_fetch_quote_returns_cached_cell(mock_cache):
 @patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="icici_api")
 @patch("icici_breeze_backend.app.services.quote_source_router._fetch_quote_icici_rest")
 @patch("icici_breeze_backend.app.services.quote_source_router._fetch_cell_from_cache", return_value=(None, None))
-def test_fetch_quote_rest_fallback(mock_cell, mock_rest, _mock_source):
+def test_fetch_quote_no_rest_fallback(mock_cell, mock_rest, _mock_source):
     proc = MagicMock()
-    mock_rest.return_value = {"Status": 200, "Success": [{"strike_price": 23500}], "quote_source": "icici_api"}
     out = fetch_quote_icici_response(
         proc, "u1", "NIFTY", "NFO", "09-Jun-2025", "Call", "23500"
     )
-    assert out["Status"] == 200
-    mock_rest.assert_called_once()
+    assert out["Status"] == 404
+    mock_rest.assert_not_called()
 
 
 @patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="bhavcopy")
@@ -233,19 +232,19 @@ def _nifty_bhav_row(strike: int, right: str, ltp: str) -> dict[str, str]:
 
 
 @patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="bhavcopy")
-@patch("icici_breeze_backend.app.services.reference_data.scrip_index.get_strikes", return_value=None)
 def test_fetch_chain_payload_routed_bhavcopy_with_sqlite_strikes(
-    _mock_get_strikes,
     _mock_source,
     monkeypatch,
     tmp_path,
 ):
-    """Router passes scrip-master strikes into Bhavcopy build when Redis index is empty."""
+    """Router builds a complete Bhavcopy chain from in-memory scrip + bhavcopy mirrors."""
     monkeypatch.setattr(cfg, "DATA_PATH", str(tmp_path) + "/")
     monkeypatch.setattr(cfg, "SCRIP_DB", "scrips.sqlite3")
     get_redis()
 
     import sqlite3
+
+    from icici_breeze_backend.app.services.reference_data.scrip_index import publish_scrip_index_from_db
 
     db_path = cfg.DATA_PATH + cfg.SCRIP_DB
     with sqlite3.connect(db_path) as conn:
@@ -272,6 +271,7 @@ def test_fetch_chain_payload_routed_bhavcopy_with_sqlite_strikes(
                     """,
                     (strike, opt),
                 )
+    publish_scrip_index_from_db()
 
     day = dt.date(2026, 6, 29)
     publish_bhavcopy_rows(
@@ -303,43 +303,9 @@ def test_fetch_chain_payload_routed_bhavcopy_with_sqlite_strikes(
 @patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="websocket")
 @patch("icici_breeze_backend.app.services.breeze_websocket_manager.ensure_chain_subscriptions")
 @patch("icici_breeze_backend.app.services.quote_source_router._resolve_chain_metadata")
+@patch("icici_breeze_backend.app.services.chain_readiness.is_chain_complete", return_value=True)
 def test_fetch_chain_payload_routed_websocket_enriches_missing_spot(
-    mock_meta,
-    mock_ws,
-    _mock_source,
-):
-    mock_meta.return_value = (65, None, [24000, 24100])
-    mock_ws.return_value = {
-        "chain_rows": [
-            {
-                "strike_price": 24000,
-                "call": {"strike_price": 24000, "ltp": 10.0, "updated_at": 1_700_000_000.0},
-                "put": None,
-            }
-        ],
-        "spot_price": None,
-        "quote_source": "websocket",
-        "exchange_code": cfg.NFO,
-        "stock_code": "NIFTY",
-        "expiry_display": "30-Jun-2026",
-    }
-    proc = MagicMock()
-    with patch(
-        "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
-        return_value=23946.25,
-    ) as mock_spot:
-        payload = fetch_chain_payload_routed(proc, "u1", "NIFTY", cfg.NFO, "30-Jun-2026")
-    assert payload is not None
-    assert payload["quote_source"] == "websocket"
-    assert payload["spot_price"] == 23946.25
-    assert payload["atm_strike"] == 24000
-    mock_spot.assert_called_once()
-
-
-@patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="websocket")
-@patch("icici_breeze_backend.app.services.breeze_websocket_manager.ensure_chain_subscriptions")
-@patch("icici_breeze_backend.app.services.quote_source_router._resolve_chain_metadata")
-def test_fetch_chain_payload_routed_websocket_enriches_missing_spot(
+    _mock_complete,
     mock_meta,
     mock_ws,
     _mock_source,

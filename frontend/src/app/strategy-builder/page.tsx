@@ -30,7 +30,14 @@ import {
   startProposeTradesJob,
 } from "@/lib/strategy-builder/api";
 import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import {
+  chainIsLoading,
+} from "@/lib/strategy-builder/chain-loading";
 import { quoteMetaFromChain } from "@/lib/quote-source";
+import {
+  ChainBuildStatus,
+  inferChainBuildPhase,
+} from "@/components/market-data/ChainBuildStatus";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 import {
   appendLegFromChainRow,
@@ -224,6 +231,12 @@ export default function StrategyBuilderPage() {
     () => quoteMetaFromChain(chainSuccess),
     [chainSuccess],
   );
+
+  const chainLoading = chainIsLoading(stockCode, expiryDate, chainQ);
+  const chainBuildPhase = inferChainBuildPhase({
+    quoteMeta: chainQuoteMeta,
+    isInitialLoad: chainLoading,
+  });
 
   const expiryOptions = useMemo(() => {
     const entry = uq.data?.underlyings?.find((u) => u.stock_code === stockCode);
@@ -807,6 +820,7 @@ export default function StrategyBuilderPage() {
                   value={stockCode}
                   disabled={uq.isLoading}
                   spot={spot}
+                  loading={chainLoading}
                   quoteMeta={chainQuoteMeta}
                   onChange={(code) => {
                     setStockCode(code);
@@ -832,7 +846,11 @@ export default function StrategyBuilderPage() {
             </div>
           </section>
 
-          <SectionGate locked={!section2Ready}>
+          {section1Complete ? (
+            <ChainBuildStatus visible={chainLoading} phase={chainBuildPhase} />
+          ) : null}
+
+          <SectionGate locked={!section2Ready} dimWhenLocked={section1Complete}>
             <section
               id="strategy-builder-parameters"
               className={`${sb.section} space-y-4`}

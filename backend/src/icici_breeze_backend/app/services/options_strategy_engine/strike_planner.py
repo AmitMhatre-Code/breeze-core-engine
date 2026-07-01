@@ -50,34 +50,6 @@ def _filter_to_bhavcopy_backed(
 
 
 def plan_targeted_fetches(ctx: EngineContext) -> set[tuple[Strike, Right]]:
-    """Return strike/right pairs that require individual API calls."""
-    required = plan_required_strike_pairs(ctx)
-    missing = pairs_missing_from_cache(ctx, required)
-    skipped_not_in_bhavcopy: set[tuple[Strike, Right]] = set()
-
-    if resolve_quote_source(ctx.exchange_code) == "bhavcopy":
-        missing, skipped_not_in_bhavcopy = _filter_to_bhavcopy_backed(ctx, missing)
-
-    to_fetch = missing
-    cache_hits = required - pairs_missing_from_cache(ctx, required)
-
-    if ctx.audit:
-        audit_data: dict = {
-            "strategy_category": ctx.strategy_category,
-            "required_count": len(required),
-            "cache_hit_count": len(cache_hits),
-            "fetch_count": len(to_fetch),
-            "cache_hits": [{"strike": s, "right": r} for s, r in sorted(cache_hits)],
-            "to_fetch": [{"strike": s, "right": r} for s, r in sorted(to_fetch)],
-            "skipped_not_in_bhavcopy_count": len(skipped_not_in_bhavcopy),
-            "skipped_not_in_bhavcopy": [
-                {"strike": s, "right": r} for s, r in sorted(skipped_not_in_bhavcopy)
-            ],
-        }
-        ctx.audit.record(
-            "strike_planner",
-            "Planned targeted strike fetches",
-            audit_data,
-            rationale="Union per-strategy prefetch hooks for the active category.",
-        )
-    return to_fetch
+    """Chain-only mode: all quotes must come from bulk chain ingest."""
+    del ctx
+    return set()

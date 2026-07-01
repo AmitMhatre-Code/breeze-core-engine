@@ -1,5 +1,5 @@
 """Tests for strike planner targeted fetch filtering."""
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from icici_breeze_backend.app.services.options_strategy_engine.strike_planner import (
     plan_targeted_fetches,
@@ -29,26 +29,5 @@ def _ctx() -> EngineContext:
     )
 
 
-@patch("icici_breeze_backend.app.services.options_strategy_engine.strike_planner.prefetch_for_category")
-@patch("icici_breeze_backend.app.services.options_strategy_engine.strike_planner.resolve_quote_source", return_value="bhavcopy")
-@patch("icici_breeze_backend.app.services.reference_data.bhavcopy_store.has_bhavcopy_quote")
-def test_plan_targeted_fetches_filters_non_bhavcopy_pairs(mock_has_bhav, _mock_source, mock_prefetch):
-    mock_prefetch.return_value = [lambda ctx: {(24000, "Call"), (11800, "Put")}]
-    mock_has_bhav.side_effect = lambda stock, expiry, right, strike, exchange: strike == 24000
-
-    to_fetch = plan_targeted_fetches(_ctx())
-
-    assert to_fetch == {(24000, "Call")}
-    assert mock_has_bhav.call_count == 2
-
-
-@patch("icici_breeze_backend.app.services.options_strategy_engine.strike_planner.prefetch_for_category")
-@patch("icici_breeze_backend.app.services.options_strategy_engine.strike_planner.resolve_quote_source", return_value="icici_api")
-@patch("icici_breeze_backend.app.services.reference_data.bhavcopy_store.has_bhavcopy_quote")
-def test_plan_targeted_fetches_keeps_all_missing_when_icici_api(mock_has_bhav, _mock_source, mock_prefetch):
-    mock_prefetch.return_value = [lambda ctx: {(24000, "Call"), (11800, "Put")}]
-
-    to_fetch = plan_targeted_fetches(_ctx())
-
-    assert to_fetch == {(24000, "Call"), (11800, "Put")}
-    mock_has_bhav.assert_not_called()
+def test_plan_targeted_fetches_chain_only_returns_empty():
+    assert plan_targeted_fetches(_ctx()) == set()

@@ -220,22 +220,8 @@ def fetch_pairs_for_strikes(
 
 
 def ensure_quote(ctx: EngineContext, strike: Strike, right: Right, *, fetch_reason: str) -> QuoteRow | None:
-    key = (strike, right)
-    if key not in ctx.cache:
-        ctx.cache.update(
-            fetch_quotes(
-                ctx.processor,
-                ctx.user_id,
-                ctx.stock_code,
-                ctx.exchange_code,
-                ctx.expiry_display,
-                {key},
-                ctx.audit,
-                fetch_reason=fetch_reason,
-                backoff=ctx.chain_backoff,
-            )
-        )
-    return ctx.cache.get(key)
+    del fetch_reason
+    return ctx.cache.get((strike, right))
 
 
 def expand_chain_to_liquidity_boundary(ctx: EngineContext) -> None:
@@ -290,26 +276,29 @@ def _resolve_spot_and_atm(ctx: EngineContext, all_strikes: list[Strike], mid: fl
     )
 
 
+def strikes_from_chain_payload(success: dict[str, Any]) -> list[Strike]:
+    """Strike prices present in a built option chain with at least one quoted side."""
+    out: list[Strike] = []
+    for row in success.get("chain_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        strike = parse_strike(row.get("strike_price"))
+        if strike is None:
+            continue
+        call = row.get("call")
+        put = row.get("put")
+        if call or put:
+            out.append(strike)
+    return sorted(set(out))
+
+
 def build_bulk_chain_cache(ctx: EngineContext) -> None:
-    """Primary core fetch: routed full chain (websocket / bhavcopy / REST fallback)."""
-    all_strikes = ctx.strikes
-    if not all_strikes:
-        ctx.halted = True
-        ctx.halt_reason = "No strikes found in scrip master for this expiry."
-        if ctx.audit:
-            ctx.audit.record("halt", ctx.halt_reason, {"phase": "liquidity_cache"})
-        return
-
-    mid = float(all_strikes[len(all_strikes) // 2])
-    ctx.chain_backoff = OptionChainBackoff(
-        pause_seconds=get_icici_rate_limit_pause_seconds(ctx.user_id),
-    )
-
+    """Primary fetch: routed full chain (websocket / bhavcopy only)."""
     if ctx.audit:
         ctx.audit.record(
             "liquidity_protocol",
             "Fetch full CE and PE option chains",
-            {"strike_count_master": len(all_strikes), "initial_spot_guess": mid},
+            {"initial_spot_guess": ctx.spot},
             rationale="Cache-first routed chain populates the bulk strike cache.",
         )
 
@@ -336,7 +325,7 @@ def build_bulk_chain_cache(ctx: EngineContext) -> None:
                 "quote_source": quote_source,
                 "chain_row_count": len(success.get("chain_rows") or []),
             },
-            rationale="Bulk cache from websocket, bhavcopy, or REST fallback.",
+            rationale="Bulk cache from websocket or bhavcopy.",
         )
 
     call_rows: list[Any] = []
@@ -357,6 +346,19 @@ def build_bulk_chain_cache(ctx: EngineContext) -> None:
     if ctx.progress is not None:
         ctx.progress.tick(phase="fetch_chain", message="Fetching option chain…")
 
+    chain_strikes = strikes_from_chain_payload(success)
+    if not chain_strikes:
+        ctx.halted = True
+        ctx.halt_reason = "No strikes available in the built option chain."
+        if ctx.audit:
+            ctx.audit.record("halt", ctx.halt_reason, {"phase": "liquidity_cache"})
+        return
+
+    ctx.strikes = chain_strikes
+    ctx.strike_step = ctx.processor.strike_interval(chain_strikes)
+    mid = float(chain_strikes[len(chain_strikes) // 2])
+    ctx.search_interval = ctx.processor.search_interval(chain_strikes, mid)
+
     if success.get("spot_price") is not None:
         try:
             ctx.spot = float(success["spot_price"])
@@ -367,7 +369,10 @@ def build_bulk_chain_cache(ctx: EngineContext) -> None:
             ctx.atm_strike = parse_strike(success["atm_strike"]) or ctx.atm_strike
         except (TypeError, ValueError):
             pass
-    _resolve_spot_and_atm(ctx, all_strikes, mid)
+    _resolve_spot_and_atm(ctx, chain_strikes, mid)
+    range_pad = 3 * ctx.search_interval
+    ctx.range_lower = float(ctx.atm_strike) - range_pad
+    ctx.range_upper = float(ctx.atm_strike) + range_pad
 
 
 def finalize_liquidity_cache(ctx: EngineContext) -> None:

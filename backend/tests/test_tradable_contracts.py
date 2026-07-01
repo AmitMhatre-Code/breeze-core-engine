@@ -4,6 +4,7 @@ from __future__ import annotations
 import sqlite3
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services.reference_data.scrip_index import publish_scrip_index_from_db
 from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
     is_tradeable,
     is_tradeable_contract,
@@ -45,6 +46,7 @@ def _init_db(tmp_path, monkeypatch) -> None:
             """,
             rows,
         )
+    publish_scrip_index_from_db()
 
 
 def test_is_tradeable():

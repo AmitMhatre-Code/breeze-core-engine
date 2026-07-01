@@ -5,6 +5,7 @@ import datetime as dt
 import logging
 import sqlite3
 import threading
+from collections import defaultdict
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
@@ -25,8 +26,8 @@ _lock = threading.RLock()
 
 # Process-local cache mirroring Redis index for fast reads
 _local: dict[str, Any] = {
-    "nfo": {"meta": {}, "by_strike": {}},
-    "bfo": {"meta": {}, "by_strike": {}},
+    "nfo": {"meta": {}, "by_strike": {}, "by_chain": {}},
+    "bfo": {"meta": {}, "by_strike": {}, "by_chain": {}},
 }
 
 _BHAVCOPY_DB_COLUMNS = (
@@ -333,6 +334,7 @@ def _lookup_bhav_row_from_db(
 
 def _rebuild_indexes(rows: list[dict[str, str]], segment: str) -> dict[str, Any]:
     by_strike: dict[str, dict[str, str]] = {}
+    by_chain: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in rows or []:
         stock = str(row.get("stock_code") or "").strip().upper()
         disp = str(row.get("expiry_display") or "").strip()
@@ -342,7 +344,8 @@ def _rebuild_indexes(rows: list[dict[str, str]], segment: str) -> dict[str, Any]
             continue
         key = f"{stock}|{disp}|{right}|{strike_key(strike)}"
         by_strike[key] = row
-    return {"by_strike": by_strike}
+        by_chain[f"{stock}|{disp}"].append(row)
+    return {"by_strike": by_strike, "by_chain": dict(by_chain)}
 
 
 def _publish_bhavcopy_to_redis(
@@ -364,7 +367,11 @@ def _publish_bhavcopy_to_redis(
     cache_set_json(bhav_meta_key(version, seg), meta)
     cache_set_json(bhav_index_key(version, seg), index)
     with _lock:
-        _local[seg] = {"meta": meta, "by_strike": index["by_strike"]}
+        _local[seg] = {
+            "meta": meta,
+            "by_strike": index["by_strike"],
+            "by_chain": index.get("by_chain") or {},
+        }
     bump_refdata_version(version)
     _logger.info(
         "Published bhavcopy %s version %s rows=%s date=%s",
@@ -431,7 +438,27 @@ def load_local_from_redis() -> None:
             _local[seg] = {
                 "meta": meta if isinstance(meta, dict) else {},
                 "by_strike": (index.get("by_strike") if isinstance(index, dict) else {}) or {},
+                "by_chain": (index.get("by_chain") if isinstance(index, dict) else {}) or {},
             }
+
+
+def ensure_bhavcopy_memory_ready(exchange_code: str) -> bool:
+    seg = _segment_key(exchange_code)
+    with _lock:
+        ready = bool((_local.get(seg) or {}).get("by_strike"))
+    if ready:
+        return True
+    load_local_from_redis()
+    with _lock:
+        if (_local.get(seg) or {}).get("by_strike"):
+            return True
+    if bhavcopy_row_count(seg) > 0:
+        try:
+            publish_bhavcopy_from_db(seg)
+            return True
+        except Exception:
+            _logger.warning("ensure_bhavcopy_memory_ready publish failed", exc_info=True)
+    return bool((_local.get(seg) or {}).get("by_strike"))
 
 
 def get_bhavcopy_source_date(exchange_code: str) -> dt.date | None:
@@ -444,8 +471,7 @@ def get_bhavcopy_source_date(exchange_code: str) -> dt.date | None:
             meta = _local.get(seg, {}).get("meta") or {}
     raw = str(meta.get("source_date") or "").strip()
     if not raw:
-        db_date, _ = _load_bhavcopy_meta_from_db(seg)
-        return db_date
+        return None
     try:
         return dt.date.fromisoformat(raw[:10])
     except ValueError:
@@ -459,21 +485,18 @@ def _lookup_bhav_row(
     strike: Strike,
     exchange_code: str,
 ) -> dict[str, str] | None:
+    ensure_bhavcopy_memory_ready(exchange_code)
     seg = _segment_key(exchange_code)
     ticker = get_exchange_ticker(stock_code)
     aliases = set(underlying_aliases(stock_code)) | {ticker}
     with _lock:
         by_strike = _local.get(seg, {}).get("by_strike") or {}
-    if not by_strike:
-        load_local_from_redis()
-        with _lock:
-            by_strike = _local.get(seg, {}).get("by_strike") or {}
     for alias in aliases:
         key = f"{alias.upper()}|{expiry_display}|{right}|{strike_key(strike)}"
         row = by_strike.get(key)
         if row:
             return row
-    return _lookup_bhav_row_from_db(seg, aliases, expiry_display, right, strike)
+    return None
 
 
 def has_bhavcopy_quote(
@@ -528,12 +551,18 @@ def build_chain_from_bhavcopy(
     freeze_quantity: int | None = None,
     strikes: list[Strike] | None = None,
 ) -> dict[str, Any] | None:
-    strike_list = strikes if strikes else get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
-    if not strike_list:
+    if not ensure_bhavcopy_memory_ready(exchange_code):
         return None
     from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
         is_tradeable_contract,
+        list_tradeable_strikes,
     )
+
+    strike_list = strikes if strikes else list_tradeable_strikes(
+        stock_code, expiry_display, exchange_code=exchange_code
+    )
+    if not strike_list:
+        return None
 
     lot_val = int(lot_size or 0)
     calls: list[dict[str, Any]] = []

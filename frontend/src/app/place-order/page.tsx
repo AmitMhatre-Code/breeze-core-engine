@@ -28,7 +28,14 @@ import {
 } from "@/lib/place-order-clone";
 import { fetchStrategyBuilderChain } from "@/lib/strategy-builder/api";
 import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import {
+  chainIsLoading,
+} from "@/lib/strategy-builder/chain-loading";
 import { quoteMetaFromChain } from "@/lib/quote-source";
+import {
+  ChainBuildStatus,
+  inferChainBuildPhase,
+} from "@/components/market-data/ChainBuildStatus";
 import { sb } from "@/lib/strategy-builder/ui";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 import type {
@@ -488,6 +495,12 @@ function PlaceOrderPageInner() {
     [chainSuccess],
   );
 
+  const chainLoading = chainIsLoading(stockCode, expiryDate, chainQ);
+  const chainBuildPhase = inferChainBuildPhase({
+    quoteMeta: chainQuoteMeta,
+    isInitialLoad: chainLoading,
+  });
+
   const expiryInvalid =
     expiryFieldMode === "manual" &&
     expiryDate.trim().length > 0 &&
@@ -582,6 +595,7 @@ function PlaceOrderPageInner() {
                 value={stockCode}
                 disabled={uq.isLoading || contractFieldsLocked}
                 spot={spot}
+                loading={chainLoading}
                 quoteMeta={chainQuoteMeta}
                 onChange={(code) => {
                   setStockCode(code);
@@ -652,6 +666,8 @@ function PlaceOrderPageInner() {
                 </p>
               ) : null}
             </div>
+
+            <ChainBuildStatus visible={chainLoading} phase={chainBuildPhase} />
 
             <div className="w-full min-w-0">
               <span className={sb.fieldLabel}>Strike</span>

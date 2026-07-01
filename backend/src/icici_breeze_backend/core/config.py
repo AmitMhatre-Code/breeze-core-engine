@@ -220,6 +220,22 @@ try:
     CHAIN_BUILDER_POLL_MS = int(os.environ.get("CHAIN_BUILDER_POLL_MS", "250") or "250")
 except ValueError:
     CHAIN_BUILDER_POLL_MS = 250
+try:
+    BWS_SUBSCRIBE_BATCH_SIZE = int(os.environ.get("BWS_SUBSCRIBE_BATCH_SIZE", "50") or "50")
+except ValueError:
+    BWS_SUBSCRIBE_BATCH_SIZE = 50
+try:
+    CHAIN_WS_WAIT_TIMEOUT_MS = int(os.environ.get("CHAIN_WS_WAIT_TIMEOUT_MS", "8000") or "8000")
+except ValueError:
+    CHAIN_WS_WAIT_TIMEOUT_MS = 8000
+try:
+    CHAIN_WS_WAIT_POLL_MS = int(os.environ.get("CHAIN_WS_WAIT_POLL_MS", "100") or "100")
+except ValueError:
+    CHAIN_WS_WAIT_POLL_MS = 100
+try:
+    CHAIN_SPOT_CACHE_TTL_SECONDS = int(os.environ.get("CHAIN_SPOT_CACHE_TTL_SECONDS", "60") or "60")
+except ValueError:
+    CHAIN_SPOT_CACHE_TTL_SECONDS = 60
 
 
 def redis_connection_url() -> str:

@@ -15,7 +15,14 @@ import { SectionGate } from "@/components/strategy-builder/SectionGate";
 import { StrategyPayoffPanel } from "@/components/strategy-builder/StrategyPayoffPanel";
 import { apiClient } from "@/lib/api-client";
 import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import {
+  chainIsLoading,
+} from "@/lib/strategy-builder/chain-loading";
 import { quoteMetaFromChain } from "@/lib/quote-source";
+import {
+  ChainBuildStatus,
+  inferChainBuildPhase,
+} from "@/components/market-data/ChainBuildStatus";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 import {
   appendLegFromChainRow,
@@ -106,6 +113,12 @@ export default function BasketOrderPage() {
     () => quoteMetaFromChain(chainSuccess),
     [chainSuccess],
   );
+
+  const chainLoading = chainIsLoading(stockCode, expiryDate, chainQ);
+  const chainBuildPhase = inferChainBuildPhase({
+    quoteMeta: chainQuoteMeta,
+    isInitialLoad: chainLoading,
+  });
 
   const expiryOptions = useMemo(() => {
     const entry = uq.data?.underlyings?.find((u) => u.stock_code === stockCode);
@@ -479,6 +492,7 @@ export default function BasketOrderPage() {
                     value={stockCode}
                     disabled={uq.isLoading}
                     spot={spot}
+                    loading={chainLoading}
                     quoteMeta={chainQuoteMeta}
                     onChange={(code) => {
                       setStockCode(code);
@@ -503,6 +517,8 @@ export default function BasketOrderPage() {
               </div>
             </div>
           </section>
+
+          <ChainBuildStatus visible={chainLoading} phase={chainBuildPhase} />
 
           {showOptionChain && section2Ready ? (
             <section

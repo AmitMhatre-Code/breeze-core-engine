@@ -2917,57 +2917,18 @@ class processor():
     def list_option_strikes(
         self, stock_code: str, expiry_date: str, exchange_code: str = cfg.NFO
     ) -> list[Strike]:
-        """Distinct strike prices for an underlying + expiry from scrip master."""
+        """Distinct tradeable strike prices from in-memory scrip index."""
         expiry_sql_values = _scrip_master_expiry_sql_values(expiry_date)
         if not expiry_sql_values:
             return []
         expiry_display = expiry_sql_values[0]
-        from icici_breeze_backend.app.services.reference_data.scrip_index import get_strikes
-        from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
-            list_tradeable_strikes,
+        from icici_breeze_backend.app.services.reference_data.scrip_index import (
+            list_tradeable_strikes_memory,
         )
 
-        cached = get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
-        if cached:
-            return cached
-        tradeable = list_tradeable_strikes(
+        return list_tradeable_strikes_memory(
             stock_code, expiry_display, exchange_code=exchange_code
         )
-        if tradeable:
-            return tradeable
-        expiry_placeholders = ",".join("?" * len(expiry_sql_values))
-        with _scrip_master_connection() as conn:
-            if exchange_code == cfg.NFO:
-                cursor = conn.execute(
-                    f"""
-                    SELECT DISTINCT StrikePrice FROM scrip_master
-                    WHERE ShortName = ? AND ExpiryDate IN ({expiry_placeholders})
-                      AND (SegmentCode = ? OR SegmentCode IS NULL)
-                      AND StrikePrice IS NOT NULL AND StrikePrice > 0
-                      AND MarginPercentage > 0
-                    ORDER BY StrikePrice
-                    """,
-                    (stock_code, *expiry_sql_values, exchange_code),
-                )
-            else:
-                cursor = conn.execute(
-                    f"""
-                    SELECT DISTINCT StrikePrice FROM scrip_master
-                    WHERE ShortName = ? AND ExpiryDate IN ({expiry_placeholders})
-                      AND SegmentCode = ?
-                      AND StrikePrice IS NOT NULL AND StrikePrice > 0
-                      AND MarginPercentage > 0
-                    ORDER BY StrikePrice
-                    """,
-                    (stock_code, *expiry_sql_values, exchange_code),
-                )
-            rows = cursor.fetchall()
-        out: list[Strike] = []
-        for row in rows:
-            strike_f = parse_strike(row[0])
-            if strike_f is not None:
-                out.append(strike_f)
-        return strikes_sorted(out)
 
     @staticmethod
     def strike_interval(strikes: list[Strike]) -> float:
@@ -2994,24 +2955,24 @@ class processor():
         return Counter(gaps).most_common(1)[0][0]
 
     def fetch_lot_size(self, stock_code, expiry_date, exchange_code: str = cfg.NFO):
-        # Fetches the lot size for the provided stock_code from the scrip_master table.
+        from icici_breeze_backend.app.services.reference_data.scrip_index import (
+            get_lot_size_memory,
+            list_tradeable_strikes_memory,
+        )
+        from icici_breeze_backend.app.services.reference_data.scrip_master_sql import (
+            scrip_master_expiry_sql_values,
+        )
+
         expiry_sql_values = _scrip_master_expiry_sql_values(expiry_date)
         if not expiry_sql_values:
             return None
-        expiry_placeholders = ",".join("?" * len(expiry_sql_values))
-        with _scrip_master_connection() as conn:
-            if exchange_code == cfg.NFO:
-                cursor = conn.execute(
-                    f"SELECT LotSize FROM scrip_master WHERE ShortName = ? AND ExpiryDate IN ({expiry_placeholders}) AND (SegmentCode = ? OR SegmentCode IS NULL) LIMIT 1",
-                    (stock_code, *expiry_sql_values, exchange_code),
-                )
-            else:
-                cursor = conn.execute(
-                    f"SELECT LotSize FROM scrip_master WHERE ShortName = ? AND ExpiryDate IN ({expiry_placeholders}) AND SegmentCode = ? LIMIT 1",
-                    (stock_code, *expiry_sql_values, exchange_code),
-                )
-            row = cursor.fetchone()
-        return row[0] if row else None
+        expiry_display = expiry_sql_values[0]
+        lot = get_lot_size_memory(stock_code, expiry_display, exchange_code=exchange_code)
+        if lot:
+            return lot
+        if not list_tradeable_strikes_memory(stock_code, expiry_display, exchange_code=exchange_code):
+            return None
+        return None
 
     def fetch_stock_codes(self, exchange_code: str = cfg.NFO):
         from icici_breeze_backend.app.services.reference_data.scrip_index import get_underlyings

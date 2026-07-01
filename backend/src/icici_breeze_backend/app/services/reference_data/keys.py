@@ -25,6 +25,14 @@ def exchange_code_map_key(version: int) -> str:
     return f"{version_prefix(version)}:exchange_code_map"
 
 
+def scrip_contracts_key(version: int) -> str:
+    return f"{version_prefix(version)}:scrip:contracts"
+
+
+def scrip_token_map_key(version: int) -> str:
+    return f"{version_prefix(version)}:scrip:ws_tokens"
+
+
 def bhav_meta_key(version: int, exchange_segment: str) -> str:
     return f"{version_prefix(version)}:bhav:{exchange_segment.lower()}:meta"
 
