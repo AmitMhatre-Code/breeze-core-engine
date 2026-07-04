@@ -115,6 +115,7 @@ class StrategyResult:
     structure_modified: bool = False
     net_premium: float | None = None
     max_loss: float | None = None
+    max_profit: float | None = None
     annualized_return_pct: float | None = None
     risk_reward_ratio: str | None = None
     pop_pct: float | None = None

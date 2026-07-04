@@ -2,7 +2,7 @@ export function NewFeatureBadge() {
   return (
     <span
       aria-hidden
-      className="inline-flex shrink-0 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-900 dark:bg-sky-950/70 dark:text-sky-200"
+      className="inline-flex shrink-0 items-center rounded-[4px] bg-accent px-[5px] py-[1.5px] text-[12px] font-bold uppercase tracking-[0.06em] text-accent-ink"
     >
       New
     </span>

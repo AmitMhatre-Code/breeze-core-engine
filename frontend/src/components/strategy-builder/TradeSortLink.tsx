@@ -57,7 +57,7 @@ export function TradeSortLink({
       <button
         ref={triggerRef}
         type="button"
-        className="text-[11px] font-normal text-sky-600 underline underline-offset-2 hover:text-sky-500 dark:text-sky-400 dark:hover:text-sky-300"
+        className="text-[13px] font-normal text-accent-strong underline underline-offset-2 hover:text-accent"
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-controls={listId}
@@ -70,7 +70,7 @@ export function TradeSortLink({
         <div
           ref={listRef}
           id={listId}
-          className="absolute right-0 top-full z-50 mt-1 min-w-[12rem] overflow-hidden rounded-lg border border-zinc-200/90 bg-white py-1 shadow-lg ring-1 ring-zinc-950/5 dark:border-zinc-700 dark:bg-zinc-900 dark:ring-white/10"
+          className="absolute right-0 top-full z-50 mt-1 min-w-[12rem] overflow-hidden rounded-lg border border-border bg-elevated py-1 shadow-pop"
           role="listbox"
         >
           {SORT_OPTIONS.map((opt, index) => {
@@ -84,12 +84,12 @@ export function TradeSortLink({
                 tabIndex={-1}
                 data-menu-index={index}
                 aria-selected={active}
-                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition hover:bg-zinc-50 dark:hover:bg-zinc-800/80 ${
+                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition hover:bg-panel2 ${
                   highlighted
-                    ? "bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-200"
+                    ? "bg-accent-tint font-semibold text-accent-strong"
                     : active
-                      ? "bg-sky-50/80 text-sky-800 dark:bg-sky-950/30 dark:text-sky-200"
-                      : "text-zinc-700 dark:text-zinc-200"
+                      ? "bg-panel2 text-foreground"
+                      : "text-foreground"
                 }`}
                 onClick={() => {
                   onChange(opt.key);

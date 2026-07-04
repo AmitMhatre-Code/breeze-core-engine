@@ -56,11 +56,11 @@ export function OutlookIcon({
         className={svgClass}
         aria-hidden
       >
-        <g fill="#1565C0">
+        <g fill="var(--accent-strong)">
           <polygon points="43.4,13 35,20 35,6" />
           <rect x={4} y={11} width={34} height={4} />
         </g>
-        <g fill="#2196F3">
+        <g fill="var(--accent)">
           <rect x={40} y={23} width={4} height={19} />
           <rect x={34} y={23} width={4} height={19} />
           <rect x={28} y={23} width={4} height={19} />

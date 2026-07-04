@@ -42,11 +42,16 @@ Paths below are relative to the site root (e.g. `http://localhost:3000` in devel
 | `/settings/quantity-limits` | Quantity limit configuration. |
 | `/settings/margin-source` | Breeze vs exchange margin baseline source. |
 | `/settings/scrip-master` | Scrip master refresh. |
+| `/settings/reference-data-loads` | Reference-data pipeline status/schedule: NSE/BSE bhavcopy, scrip, and SPAN load progress and history; edit the daily IST refresh time or trigger an immediate load. |
+| `/settings/exchange-calendar` | Per-user trading-day holidays and session hours; can sync from Breeze Console when `PORTAL_API_BASE_URL` is configured. |
 | `/settings/api-usage` | API usage statistics. |
-| `/settings/ai-provider` | AI provider keys for outlook features. |
+| `/settings/breeze-api-playground` | Interactively call raw ICICI Breeze API methods (including WS subscribe) against the signed-in session — for diagnosing broker-side issues. |
+| `/settings/strategy-audit-logs` | Browse recorded strategy-builder evaluation/audit entries. |
 | `/settings/delete-account` | Account deletion entry. |
 
 The UI uses **React Query** for server state and **Chart.js** where charts are shown.
+
+**License / read-only mode**: when this instance's license (issued and tracked by breeze-saas-portal) is not `active`, a status banner appears and trading-mutation actions (order placement, strategy execution, hedge/spread actions) are blocked with a "Read-only mode" message, both client-side (`components/license/RevokedTradingPageGuard.tsx`) and server-side (HTTP 403). This is expected behavior when a license lapses or is revoked, not a bug — see [Architecture — Portal integration](./architecture.md#portal-integration-license-heartbeat-and-upgrades).
 
 ---
 
@@ -84,11 +89,19 @@ The UI uses **React Query** for server state and **Chart.js** where charts are s
 
 ### Settings API
 
-- **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline upload/refresh), scrip master refresh, AI provider keys, outlook configuration, API usage aggregates.
+- **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline upload/refresh), scrip master refresh, API usage aggregates, exchange-calendar preferences, and the reference-data pipeline (`/reference-data-loads/status`, `/schedule`, `/load-now` — see [Architecture — Reference data pipeline](./architecture.md#reference-data-pipeline)).
 
 ### Outlook (market narrative)
 
-- Not Microsoft Outlook: a **market outlook** feature that can combine **RSS headlines** with **configurable AI** (e.g. Google Gemini) using user-stored API keys. Exposed via outlook routes and settings.
+- Not Microsoft Outlook: a **market outlook** feature combining RSS headlines with AI-generated commentary. Generation is centralized on breeze-saas-portal (one admin-configured API key + prompt produces a single global outlook on a schedule); this app's `GET /api/outlook/market` is a thin pass-through that polls the portal's cached result and preserves the last-known-good outlook if the portal is briefly unreachable. There is no per-user API key or configuration on this instance anymore.
+
+### Breeze API Playground
+
+- Backend catalog (`app/domain/breeze_api_tester_catalog.py`) exposed for the `/settings/breeze-api-playground` UI: lets a signed-in user invoke raw ICICI Breeze API methods, including WS subscribe, against their own session — useful for diagnosing broker-side issues without leaving the app.
+
+### Portal integration (license, heartbeat, deployment)
+
+- **`/deployment/license-status`**: Cached license status for this instance (JWT-protected), also embedded in `/home/data`. Trading-mutation routes (order, book, hedge, strategy-builder) return HTTP 403 in read-only license states. See [Architecture — Portal integration](./architecture.md#portal-integration-license-heartbeat-and-upgrades) for the full heartbeat/activation/upgrade mechanism — the portal side is authoritatively documented in breeze-saas-portal's `docs/license-management.md`.
 
 ### Performance and admin
 
@@ -97,12 +110,13 @@ The UI uses **React Query** for server state and **Chart.js** where charts are s
 
 ### Audit
 
-- Internal audit logging is active; an operator-facing `route_audit` module exists but is not currently mounted in the v1 router.
+- Internal audit logging is active; an operator-facing `route_audit` module exists but is not currently mounted in the v1 router. Recorded strategy-builder evaluation/audit entries are separately browsable at `/settings/strategy-audit-logs`.
 
 ### Health
 
-- **`/health`**: Liveness for orchestration and load checks.
+- **`/health`**: Liveness for orchestration and load checks, including Redis connectivity/fallback status.
 - **`/metrics`**: ICICI client metrics payload for monitoring.
+- **`/metrics/runtime`**: WS tick pipeline, active-chains registry, and Redis stats.
 
 ---
 

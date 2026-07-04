@@ -16,6 +16,10 @@ export type StrategyLeg = {
   premiumPerUnit?: number;
   /** When true, broker derives limit price from LTP (no user price). */
   aggressiveLimit?: boolean;
+  /** Order-book buy:sell ratio at the time this leg was proposed/added, if known. */
+  buySellRatio?: number | string | null;
+  /** Live LTP at the time this leg was proposed/added, if known. */
+  ltp?: number | null;
 };
 
 export type ChainRow = {
@@ -169,6 +173,7 @@ export type ProposedTrade = {
   structure_modified?: boolean;
   net_premium?: number | null;
   max_loss?: number | null;
+  max_profit?: number | null;
   annualized_return_pct?: number | null;
   risk_reward_ratio?: string | null;
   span_margin?: number | null;

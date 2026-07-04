@@ -1,28 +1,23 @@
-"""GenAI market outlook routes."""
+"""Market outlook route -- thin pass-through to the portal's admin-managed global outlook.
+
+Generation now happens centrally on breeze-saas-portal (one admin-configured
+API key + prompt, one global result for the whole fleet); this deployment
+just polls the portal's cached result (portal_market_outlook.py) and serves
+it under the same path/shape the dashboard already expects.
+"""
 from __future__ import annotations
 
-import logging
-
-import asyncio
-import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Query
 
-import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.auth.ai_provider_keys import AiProviderKeyManager
-from icici_breeze_backend.app.auth.outlook_ai_provider_pref import get_outlook_ai_provider
-from icici_breeze_backend.app.auth.outlook_preferences import OutlookPreferencesManager
-from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
-from icici_breeze_backend.app.domain.outlook_api import OUTLOOK_DISCLAIMER
-from icici_breeze_backend.app.services.outlook_service import OutlookError, OutlookService
+from icici_breeze_backend.app.services import portal_market_outlook
 
 router = APIRouter(prefix="/api/outlook", tags=["outlook"])
-key_manager = AiProviderKeyManager(encryption_key=(cfg.JWT_SECRET or "").strip())
-outlook_preferences_manager = OutlookPreferencesManager()
-service = OutlookService()
-logger = logging.getLogger(__name__)
+
+_DISCLAIMER = (
+    "AI-generated outlook. Informational only. Not investment advice. Verify with primary sources."
+)
 
 
 def _no_cached_outlook_payload(message: str) -> dict:
@@ -31,7 +26,7 @@ def _no_cached_outlook_payload(message: str) -> dict:
         "outlook_type": "market",
         "as_of": datetime.now(timezone.utc).isoformat(),
         "english_only": True,
-        "disclaimer": OUTLOOK_DISCLAIMER,
+        "disclaimer": _DISCLAIMER,
         "summary": [],
         "inference": {
             "volatility_view": "",
@@ -49,135 +44,29 @@ def _no_cached_outlook_payload(message: str) -> dict:
     }
 
 
-def _status_for_outlook_error(exc: OutlookError) -> int:
-    if exc.code == "invalid_api_key":
-        return 401
-    if exc.code == "network_error":
-        return 503
-    if exc.code in ("quota_exceeded", "rate_limit_exceeded"):
-        return 429
-    if exc.code == "provider_error":
-        if exc.status_code and 500 <= exc.status_code <= 599:
-            return exc.status_code
-        return 502
-    return 400
-
-
-def _row_ok(cfg_row):
-    return (
-        cfg_row is not None
-        and cfg_row.enabled
-        and bool((cfg_row.api_key or "").strip())
-    )
-
-
-def _get_enabled_ai_provider(user_id: str):
-    pref = get_outlook_ai_provider(user_id)
-    gem = key_manager.get(user_id, "gemini")
-    oai = key_manager.get(user_id, "openai")
-    if pref == "gemini" and _row_ok(gem):
-        return gem
-    if pref == "openai" and _row_ok(oai):
-        return oai
-    if _row_ok(gem):
-        return gem
-    if _row_ok(oai):
-        return oai
-    raise HTTPException(
-        status_code=400,
-        detail={
-            "error_code": "no_llm_api_key_configured",
-            "message": "No API key set for any LLMs.",
-        },
-    )
-
-
 @router.get("/market")
-async def market_outlook(
-    force_refresh: bool = Query(default=False),
-    max_age_minutes: int = Query(default=120, ge=5, le=720),
-    ctx: RequestContext = Depends(get_request_context),
-):
-    ai_cfg = _get_enabled_ai_provider(ctx.user_id)
-    prefs = outlook_preferences_manager.get(ctx.user_id)
-    try:
-        return service.get_market_outlook(
-            ai_cfg=ai_cfg,
-            force_refresh=force_refresh,
-            max_age_minutes=max_age_minutes,
-            feeds=[(f.name, f.url) for f in prefs.feeds],
-            prompt_template=prefs.prompt_template,
-            system_prompt=prefs.system_prompt,
-        )
-    except OutlookError as exc:
-        cached = service.get_cached()
-        if cached:
-            return {
-                **cached,
-                "warning": {
-                    "error_code": exc.code,
-                    "message": exc.message,
-                    "stale_response_served": True,
-                    "upstream_status": exc.status_code,
-                },
-            }
-        if exc.code == "no_cached_outlook":
-            return _no_cached_outlook_payload(exc.message)
-        raise HTTPException(
-            status_code=_status_for_outlook_error(exc),
-            detail={"message": exc.message, "error_code": exc.code},
-        ) from exc
+async def market_outlook(force_refresh: bool = Query(default=False)):
+    if force_refresh:
+        # Re-poll the portal's (Redis-backed, cheap) cache immediately -- this no
+        # longer triggers a fresh LLM generation, since generation is centralized.
+        await portal_market_outlook.refresh_once()
 
+    cached = portal_market_outlook.get_cached_market_outlook()
+    if cached is None:
+        await portal_market_outlook.refresh_once()
+        cached = portal_market_outlook.get_cached_market_outlook()
+    if cached is None:
+        return _no_cached_outlook_payload("Market outlook is not yet available. Try again shortly.")
 
-@router.get("/market/stream")
-async def market_outlook_stream(
-    max_age_minutes: int = Query(default=120, ge=5, le=720),
-    interval_seconds: int = Query(default=30, ge=10, le=300),
-    ctx: RequestContext = Depends(get_request_context),
-):
-    ai_cfg = _get_enabled_ai_provider(ctx.user_id)
-    prefs = outlook_preferences_manager.get(ctx.user_id)
-
-    async def event_generator():
-        # Send periodic updates so the dashboard can stay fresh without polling.
-        while True:
-            try:
-                payload = service.get_market_outlook(
-                    ai_cfg=ai_cfg,
-                    force_refresh=False,
-                    max_age_minutes=max_age_minutes,
-                    feeds=[(f.name, f.url) for f in prefs.feeds],
-                    prompt_template=prefs.prompt_template,
-                    system_prompt=prefs.system_prompt,
-                )
-                yield f"event: outlook\ndata: {json.dumps(payload)}\n\n"
-            except OutlookError as exc:
-                cached = service.get_cached()
-                if cached:
-                    payload = {
-                        **cached,
-                        "warning": {
-                            "error_code": exc.code,
-                            "message": exc.message,
-                            "stale_response_served": True,
-                            "upstream_status": exc.status_code,
-                        },
-                    }
-                    yield f"event: outlook\ndata: {json.dumps(payload)}\n\n"
-                elif exc.code == "no_cached_outlook":
-                    payload = _no_cached_outlook_payload(exc.message)
-                    yield f"event: outlook\ndata: {json.dumps(payload)}\n\n"
-                else:
-                    err = {
-                        "message": exc.message,
-                        "error_code": exc.code,
-                        "status_code": _status_for_outlook_error(exc),
-                    }
-                    # Named `outlook_error` — browser EventSource reserves `error` for transport failures
-                    # and does not reliably surface `event: error` … as a MessageEvent with `.data`.
-                    yield f"event: outlook_error\ndata: {json.dumps(err)}\n\n"
-            yield "event: ping\ndata: {}\n\n"
-            await asyncio.sleep(interval_seconds)
-
-    headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
-    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+    payload, age_sec = cached
+    stale_after = 2 * portal_market_outlook.refresh_interval_sec()
+    if age_sec > stale_after:
+        return {
+            **payload,
+            "warning": {
+                "error_code": "stale_portal_fetch",
+                "message": f"Showing last-known outlook ({int(age_sec)}s old); portal refresh may be failing.",
+                "stale_response_served": True,
+            },
+        }
+    return payload

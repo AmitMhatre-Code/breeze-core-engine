@@ -1484,7 +1484,7 @@ class processor():
 
                 positions = {
                     "Status": 200,
-                    "Success": [dict(r) for r in _fx.MOCK_PORTFOLIO_POSITION_ROWS],
+                    "Success": _fx.mock_portfolio_position_rows(),
                     "Error": None,
                 }
             else:
@@ -2719,15 +2719,21 @@ class processor():
                     _logger.warning("Could not remove %s: %s", path, e)
 
     def load_qty_limits(self, limits_specs: list[tuple[str, str]]):
-        """(Re)load quantity limits into raw_limits_data for both NSE and BSE.
+        """One-time seed of raw_limits_data from the static NSE/BSE freeze-limit files
+        checked into backend/data/ (NSEFreezeLimits.txt, BSEFreezeLimits.txt) -- these
+        are not part of ICICI's downloaded SecurityMaster.zip, they're maintained
+        locally. After this initial load, users edit quantities via the Settings page
+        (`POST /quantity-limits`, route_settings.py) -- so once raw_limits_data already
+        has rows, this must never touch it again, or the next scheduled/startup
+        reference-data refresh would silently wipe out those edits.
+
         limits_specs: list of (file_path, segment_code) e.g. (path_to_NSEFreezeLimits.txt, NFO).
         """
         conn = _scrip_master_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("DROP TABLE IF EXISTS raw_limits_data")
             cursor.execute('''
-            CREATE TABLE raw_limits_data (
+            CREATE TABLE IF NOT EXISTS raw_limits_data (
                 InstrumentName TEXT,
                 ShortName TEXT,
                 ExchangeCode TEXT,
@@ -2737,11 +2743,19 @@ class processor():
             )
             ''')
 
+            already_seeded = cursor.execute("SELECT COUNT(*) FROM raw_limits_data").fetchone()[0]
+            if already_seeded:
+                _logger.debug(
+                    "raw_limits_data already seeded (%d rows); skipping reload to preserve Settings edits",
+                    already_seeded,
+                )
+                return
+
             rows = []
             for limits_path, segment_code in limits_specs:
                 if not limits_path or not os.path.isfile(limits_path):
                     raise FileNotFoundError(
-                        f"Quantity limits file missing (master load aborted): {limits_path}"
+                        f"Quantity limits seed file missing (master load aborted): {limits_path}"
                     )
                 with open(limits_path, newline='') as limitsfile:
                     reader = csv.DictReader(limitsfile)
@@ -2756,7 +2770,7 @@ class processor():
 
             if not rows:
                 raise ValueError(
-                    "No quantity limits rows loaded from NSE/BSE freeze limits (files empty or invalid)."
+                    "No quantity limits rows loaded from NSE/BSE freeze limits seed files (files empty or invalid)."
                 )
 
             cursor.executemany(
@@ -2764,7 +2778,7 @@ class processor():
                 rows,
             )
             conn.commit()
-            _logger.info("Loaded quantity limits rows into raw_limits_data (%d rows)", len(rows))
+            _logger.info("Seeded raw_limits_data from static freeze-limit files (%d rows, one-time)", len(rows))
         finally:
             conn.close()
 
@@ -3170,14 +3184,14 @@ class processor():
             cursor.execute(
                 """
             INSERT INTO scrip_master (ShortName, ExpiryDate, StrikePrice, OptionType, LotSize, QuantityLimit, CompanyName, ExchangeCode, SegmentCode, MarginPercentage)
-            SELECT 
-                scrips.ShortName, 
-                scrips.ExpiryDate, 
-                scrips.StrikePrice, 
-                scrips.OptionType, 
-                scrips.LotSize, 
-                limits.QtyLimit AS QuantityLimit, 
-                scrips.CompanyName, 
+            SELECT
+                scrips.ShortName,
+                scrips.ExpiryDate,
+                scrips.StrikePrice,
+                scrips.OptionType,
+                scrips.LotSize,
+                limits.QtyLimit AS QuantityLimit,
+                scrips.CompanyName,
                 scrips.ExchangeCode,
                 limits.SegmentCode,
                 scrips.MarginPercentage

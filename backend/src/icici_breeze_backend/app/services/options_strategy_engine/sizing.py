@@ -143,5 +143,7 @@ def rescale_result_to_lots(result: StrategyResult, *, lot_size: int, lots: int) 
         leg.quantity = max(L, (leg_qty // L) * L) if leg_qty > 0 else 0
     if result.max_loss is not None:
         result.max_loss = round(result.max_loss * scale, 2)
+    if result.max_profit is not None:
+        result.max_profit = round(result.max_profit * scale, 2)
     result.net_premium = net_premium(result.legs)
     _update_risk_reward_after_scale(result, scale)

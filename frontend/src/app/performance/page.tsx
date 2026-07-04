@@ -174,7 +174,7 @@ function PerformancePageInner() {
   }, [data, urlFy, years]);
 
   return (
-    <AppShell contentWidth="wide">
+    <AppShell>
       {q.isPending ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2].map((i) => (
@@ -191,29 +191,37 @@ function PerformancePageInner() {
         <div className="app-alert-error">No data returned.</div>
       ) : (
         <div className="grid min-w-0 gap-4">
-          <header className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h1 className="app-text-title">Performance</h1>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              <h1 className="app-text-title text-[21px]">Performance</h1>
+              <p className="text-xs text-muted">
                 Bank balance, margins, and options P&amp;L
               </p>
             </div>
+            {years.length > 0 ? (
+              <FinancialYearDropdown
+                labelId={fyLabelId}
+                years={years}
+                selectedYear={selectedFy}
+                onSelect={selectFiscalYear}
+              />
+            ) : null}
           </header>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <section className="app-card flex flex-col p-4">
-              <h2 className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <h2 className="text-[13px] font-bold uppercase tracking-[.07em] text-faint">
                 Bank balance
               </h2>
               {funds ? (
                 <>
-                  <p className="mt-2 text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+                  <p className="mt-2 text-[25px] font-semibold tabular-nums text-foreground">
                     {formatIndianMoneyCompact(
                       num(funds.total_bank_balance),
                     )}
                   </p>
-                  <hr className="my-3 border-zinc-200 dark:border-zinc-800" />
-                  <dl className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                  <hr className="my-3 border-border-soft" />
+                  <dl className="space-y-1.5 text-xs text-muted">
                     <div className="flex justify-between gap-2">
                       <dt>Equity</dt>
                       <dd
@@ -285,23 +293,23 @@ function PerformancePageInner() {
                   </dl>
                 </>
               ) : (
-                <p className="mt-2 text-sm text-amber-800 dark:text-amber-200/90">
+                <p className="mt-2 text-sm text-amber-accent">
                   Funds could not be loaded (broker response not OK).
                 </p>
               )}
             </section>
 
             <section className="app-card flex flex-col p-4">
-              <h2 className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <h2 className="text-[13px] font-bold uppercase tracking-[.07em] text-faint">
                 Margins
               </h2>
               {margin ? (
                 <>
-                  <p className="mt-2 text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+                  <p className="mt-2 text-[25px] font-semibold tabular-nums text-foreground">
                     {formatIndianMoneyCompact(num(margin.cash_limit))}
                   </p>
-                  <hr className="my-3 border-zinc-200 dark:border-zinc-800" />
-                  <dl className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                  <hr className="my-3 border-border-soft" />
+                  <dl className="space-y-1.5 text-xs text-muted">
                     <div className="flex justify-between gap-2">
                       <dt>Utilised</dt>
                       <dd
@@ -327,12 +335,12 @@ function PerformancePageInner() {
                       </dd>
                     </div>
                   </dl>
-                  <p className="mt-3 text-[11px] italic text-zinc-500 dark:text-zinc-500">
+                  <p className="mt-3 text-[13px] italic text-faint">
                     *Margin may be under-calculated (ICICI API does not return upstreamed amount)
                   </p>
                 </>
               ) : (
-                <p className="mt-2 text-sm text-amber-800 dark:text-amber-200/90">
+                <p className="mt-2 text-sm text-amber-accent">
                   Margin could not be loaded. Realised P&amp;L for the year is
                   unavailable until margin loads.
                 </p>
@@ -340,7 +348,7 @@ function PerformancePageInner() {
             </section>
 
             <section className="app-card flex flex-col p-4 md:col-span-2 xl:col-span-1">
-              <h2 className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <h2 className="text-[13px] font-bold uppercase tracking-[.07em] text-faint">
                 FY {data.fy || selectedFy || "—"}{" "}P&amp;L statement
               </h2>
               {performance ? (
@@ -349,14 +357,14 @@ function PerformancePageInner() {
                     className={[
                       "mt-2 text-2xl font-semibold tabular-nums",
                       num(performance.net_pnl) >= 0
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-red-600 dark:text-red-400",
+                        ? "text-up"
+                        : "text-down",
                     ].join(" ")}
                   >
                     {formatIndianMoneyCompact(num(performance.net_pnl))}
                   </p>
-                  <hr className="my-3 border-zinc-200 dark:border-zinc-800" />
-                  <dl className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                  <hr className="my-3 border-border-soft" />
+                  <dl className="space-y-1.5 text-xs text-muted">
                     <div className="flex justify-between gap-2">
                       <dt>Premium earned</dt>
                       <dd
@@ -410,8 +418,8 @@ function PerformancePageInner() {
                         className={[
                           "tabular-nums font-medium",
                           num(performance.annualised_roi) >= 0
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-red-600 dark:text-red-400",
+                            ? "text-up"
+                            : "text-down",
                         ].join(" ")}
                       >
                         {(num(performance.annualised_roi) * 100).toLocaleString(
@@ -427,7 +435,7 @@ function PerformancePageInner() {
                   </dl>
                 </>
               ) : (
-                <p className="mt-2 text-sm text-amber-800 dark:text-amber-200/90">
+                <p className="mt-2 text-sm text-amber-accent">
                   {perfStatus != null && perfStatus !== 200
                     ? `Performance unavailable (${perfStatus}${perfError ? `: ${perfError}` : ""}).`
                     : "Performance data not available."}
@@ -437,18 +445,8 @@ function PerformancePageInner() {
           </div>
 
           <section className="app-card min-w-0 p-4">
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mb-4 flex flex-col gap-3 border-b border-border-soft pb-3 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="app-text-heading">Monthly financial overview</h2>
-              {years.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 sm:justify-end">
-                  <FinancialYearDropdown
-                    labelId={fyLabelId}
-                    years={years}
-                    selectedYear={selectedFy}
-                    onSelect={selectFiscalYear}
-                  />
-                </div>
-              ) : null}
             </div>
             <PerformanceMonthlyChart monthly={monthly} />
           </section>
@@ -462,7 +460,7 @@ export default function PerformancePage() {
   return (
     <Suspense
       fallback={
-        <AppShell contentWidth="wide">
+        <AppShell>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {[0, 1, 2].map((i) => (
               <div key={i} className="app-card min-h-[180px] p-4">

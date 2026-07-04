@@ -54,20 +54,17 @@ export function ChainBuildStatus({
 
   return (
     <div
-      className={`${sb.section} space-y-2 border-sky-500/20 bg-sky-500/5 py-3`}
+      className={`${sb.section} space-y-2 border-accent/20 bg-accent-tint py-3`}
       role="status"
       aria-live="polite"
       aria-busy="true"
     >
-      <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+      <p className="text-sm font-medium text-foreground">
         {message}
         {slowHint}
       </p>
-      <div
-        className="h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
-        aria-hidden
-      >
-        <div className="h-full w-1/3 animate-pulse rounded-full bg-sky-600 dark:bg-sky-500" />
+      <div className="h-1.5 overflow-hidden rounded-full bg-track" aria-hidden>
+        <div className="h-full w-1/3 animate-pulse rounded-full bg-accent-strong" />
       </div>
     </div>
   );

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, strikes_equal
@@ -120,7 +120,13 @@ def build_canonical_chain(
     strikes: list[Strike] | None = None,
     lot_size: int = 0,
     freeze_quantity: int | None = None,
+    should_continue: Callable[[], bool] | None = None,
 ) -> dict[str, Any] | None:
+    """`should_continue`, if given, is polled once per strike so a caller doing
+    a bounded batch of these (the chain_builder worker) can abort a slow
+    in-progress build promptly on shutdown, instead of only checking between
+    whole chains. Only the worker passes this; the on-demand single-chain
+    caller (`chain_readiness.wait_for_canonical_chain`) doesn't need it."""
     expiry_display = normalize_expiry_display(expiry_display)
     strike_list = strikes if strikes else list_tradeable_strikes(
         stock_code, expiry_display, exchange_code=exchange_code
@@ -132,6 +138,8 @@ def build_canonical_chain(
     call_by: dict[Strike, dict[str, Any]] = {}
     put_by: dict[Strike, dict[str, Any]] = {}
     for strike in strike_list:
+        if should_continue is not None and not should_continue():
+            return None
         for right, bucket in (("call", call_by), ("put", put_by)):
             if not is_tradeable_contract(
                 stock_code,
@@ -189,10 +197,19 @@ def refresh_active_chains(
     *,
     resolve_lot_size: Any | None = None,
     resolve_freeze_quantity: Any | None = None,
+    should_continue: Callable[[], bool] | None = None,
 ) -> int:
-    """Build canonical chains for all active registry keys. Returns count written."""
+    """Build canonical chains for all active registry keys. Returns count written.
+
+    `should_continue`, if given, is checked between chains (and passed through
+    to `build_canonical_chain` to also be checked between strikes within one
+    chain) so a large active-chain set doesn't block a graceful shutdown for
+    however long the whole batch takes to build.
+    """
     written = 0
     for chain_key in active_chain_keys:
+        if should_continue is not None and not should_continue():
+            break
         from icici_breeze_backend.app.services.reference_data.active_chains import (
             parse_chain_registry_key,
         )
@@ -222,6 +239,7 @@ def refresh_active_chains(
             expiry_display,
             lot_size=lot_size,
             freeze_quantity=freeze_quantity,
+            should_continue=should_continue,
         ):
             written += 1
     return written

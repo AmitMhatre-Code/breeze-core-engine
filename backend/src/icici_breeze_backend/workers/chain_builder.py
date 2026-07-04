@@ -14,6 +14,9 @@ from icici_breeze_backend.app.services.reference_data.keys import WS_TICK_DIRTY_
 
 _logger = logging.getLogger(__name__)
 _stop = threading.Event()
+# Safety cap while draining a burst of dirty-tick notifications (see _pubsub_loop) --
+# not expected to ever bind in practice, just prevents an unbounded drain loop.
+_PUBSUB_DRAIN_LIMIT = 10_000
 
 
 def _poll_ms() -> int:
@@ -63,6 +66,10 @@ def _resolve_freeze_quantity(
         return None
 
 
+def _not_stopped() -> bool:
+    return not _stop.is_set()
+
+
 def _refresh_loop() -> None:
     interval = max(0.05, _poll_ms() / 1000.0)
     while not _stop.is_set():
@@ -74,6 +81,7 @@ def _refresh_loop() -> None:
                     chains,
                     resolve_lot_size=_resolve_lot_size,
                     resolve_freeze_quantity=_resolve_freeze_quantity,
+                    should_continue=_not_stopped,
                 )
         except Exception:
             _logger.exception("chain-builder refresh failed")
@@ -92,10 +100,22 @@ def _pubsub_loop() -> None:
         pubsub.subscribe(WS_TICK_DIRTY_CHANNEL)
         while not _stop.is_set():
             message = pubsub.get_message(timeout=0.5)
-            if message is None:
+            if message is None or message.get("type") != "message":
                 continue
-            if message.get("type") != "message":
-                continue
+            # One dirty-notification is published per changed tick, which under a
+            # live tick feed can mean hundreds of messages per second -- but they
+            # all just mean "some active chain changed," so a burst only ever
+            # needs one refresh, not one per message. Drain whatever's already
+            # queued (non-blocking) before refreshing, or a fast tick feed makes
+            # this loop fall permanently behind, redoing the same refresh over
+            # and over long after the ticks that triggered it are stale (this is
+            # also what made shutdown slow: a large backlog of queued, already
+            # long-superseded refreshes to work through before noticing _stop).
+            drained = 0
+            while drained < _PUBSUB_DRAIN_LIMIT:
+                if pubsub.get_message(timeout=0) is None:
+                    break
+                drained += 1
             chains = list_active_chains()
             if not chains:
                 continue
@@ -103,6 +123,7 @@ def _pubsub_loop() -> None:
                 chains,
                 resolve_lot_size=_resolve_lot_size,
                 resolve_freeze_quantity=_resolve_freeze_quantity,
+                should_continue=_not_stopped,
             )
     except Exception:
         _logger.debug("chain-builder pubsub unavailable; poll-only mode", exc_info=True)

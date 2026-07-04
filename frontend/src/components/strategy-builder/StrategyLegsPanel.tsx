@@ -18,6 +18,12 @@ import type {
   StrategyLeg,
 } from "@/lib/strategy-builder/types";
 
+function formatBuySellRatio(raw: number | string | null | undefined): string {
+  if (raw == null || raw === "NA") return "—";
+  const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+  return Number.isFinite(n) ? n.toFixed(4) : "—";
+}
+
 export function StrategyLegsPanel({
   sectionTitle = "4. Legs",
   lotSize,
@@ -58,7 +64,7 @@ export function StrategyLegsPanel({
     <section id="strategy-builder-legs" className={`${sb.section} space-y-4`}>
       <h2 className={sb.sectionTitle}>{sectionTitle}</h2>
       {legs.length === 0 ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="text-sm text-muted">
           Select a proposed trade to load legs here.
         </p>
       ) : (
@@ -77,6 +83,7 @@ export function StrategyLegsPanel({
                   <th className="px-2 py-1.5 font-medium">Position</th>
                   <LegQuantityHeader />
                   <th className="px-2 py-1.5 font-medium">Price</th>
+                  <th className="px-2 py-1.5 font-medium">B:S</th>
                   <th className="px-2 py-1.5 font-medium">Premium</th>
                   <th className="px-2 py-1.5 font-medium">
                     <span className="inline-flex items-center gap-1">
@@ -101,7 +108,7 @@ export function StrategyLegsPanel({
                   const legEntry = legMargins[l.id];
                   return (
                     <tr key={l.id} className="app-table-row">
-                      <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                      <td className="px-2 py-1.5 tabular-nums text-foreground">
                         {l.strike.toLocaleString("en-IN")}
                       </td>
                       <td className="px-2 py-1.5">
@@ -158,12 +165,15 @@ export function StrategyLegsPanel({
                           }
                         />
                       </td>
-                      <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                      <td className="px-2 py-1.5 tabular-nums text-muted">
+                        {formatBuySellRatio(l.buySellRatio)}
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums text-foreground">
                         {premTotal == null
                           ? "—"
                           : formatIndianMoneyCompact(premTotal)}
                       </td>
-                      <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                      <td className="px-2 py-1.5 tabular-nums text-foreground">
                         {formatLegMargin(l, legEntry, spanBaselineLoading)}
                       </td>
                       <td className="px-2 py-1.5">
@@ -182,49 +192,83 @@ export function StrategyLegsPanel({
                     </tr>
                   );
                 })}
-                <tr className="border-t border-zinc-200/80 bg-zinc-50/80 dark:border-zinc-700/80 dark:bg-zinc-900/40">
-                  <td
-                    className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300"
-                    colSpan={5}
-                  >
-                    Totals
-                  </td>
-                  <td
-                    className={`px-2 py-2 text-xs font-semibold tabular-nums ${
-                      totalsNetPremium < 0
-                        ? "text-red-700 dark:text-red-400"
-                        : "text-zinc-900 dark:text-zinc-100"
-                    }`}
-                  >
-                    {formatIndianMoneyCompact(totalsNetPremium)}
-                  </td>
-                  <td className="px-2 py-2 text-xs font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                    {!totalsMargin.hasPositiveLots
-                      ? "—"
-                      : totalsMargin.isFetching || spanBaselineLoading
-                        ? "…"
-                        : totalsMargin.netMargin != null &&
-                            Number.isFinite(totalsMargin.netMargin)
-                          ? formatIndianMoneyCompact(totalsMargin.netMargin)
-                          : "—"}
-                  </td>
-                  <td className="px-2 py-2" />
-                </tr>
               </tbody>
             </table>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className={`${sb.stickyBar} flex flex-wrap items-center justify-between gap-4`}>
+            <div className="flex flex-wrap items-center gap-5">
+              <TotalStat
+                label="Net premium"
+                value={formatIndianMoneyCompact(totalsNetPremium)}
+                tone={totalsNetPremium < 0 ? "down" : "foreground"}
+              />
+              <TotalStat
+                label="Net SPAN margin"
+                value={
+                  !totalsMargin.hasPositiveLots
+                    ? "—"
+                    : totalsMargin.isFetching || spanBaselineLoading
+                      ? "…"
+                      : totalsMargin.netMargin != null && Number.isFinite(totalsMargin.netMargin)
+                        ? formatIndianMoneyCompact(totalsMargin.netMargin)
+                        : "—"
+                }
+              />
+              <TotalStat
+                label="Margin benefit"
+                value={
+                  totalsMargin.marginBenefit != null &&
+                  Number.isFinite(totalsMargin.marginBenefit)
+                    ? formatIndianMoneyCompact(totalsMargin.marginBenefit)
+                    : "—"
+                }
+                tone="up"
+              />
+            </div>
             <button
               type="button"
               disabled={executeDisabled}
               onClick={onExecute}
-              className={sb.btnPrimary}
+              className={`${sb.btnPrimary} gap-2`}
             >
-              Execute Legs
+              <ExecuteIcon />
+              Execute strategy · {legs.filter((l) => l.lots > 0).length} leg
+              {legs.filter((l) => l.lots > 0).length === 1 ? "" : "s"}
             </button>
           </div>
         </>
       )}
     </section>
+  );
+}
+
+function TotalStat({
+  label,
+  value,
+  tone = "foreground",
+}: {
+  label: string;
+  value: string;
+  tone?: "foreground" | "up" | "down";
+}) {
+  const toneClass =
+    tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-foreground";
+  return (
+    <div>
+      <div className="text-[12px] font-semibold uppercase tracking-wide text-faint">
+        {label}
+      </div>
+      <div className={`mt-0.5 font-mono text-sm font-semibold tabular-nums ${toneClass}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ExecuteIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <polygon points="5 3 19 12 5 21 5 3" />
+    </svg>
   );
 }

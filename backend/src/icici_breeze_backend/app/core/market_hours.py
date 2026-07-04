@@ -1,4 +1,5 @@
 """India NSE/BSE market hours and trading calendar."""
+import os
 from datetime import date, datetime, timedelta
 
 from icici_breeze_backend.app.core.exchange_calendar import get_holiday_name, is_exchange_holiday
@@ -37,8 +38,30 @@ def is_india_trading_day(now: datetime | None = None) -> bool:
     return not is_exchange_holiday(dt.date())
 
 
+def _market_hours_override() -> bool | None:
+    """Dev-only forced open/closed state, for local testing without waiting for real market hours.
+
+    Only consulted by callers using the real wall clock (`now is None`) --
+    callers that pass an explicit `now` (unit tests, IV reference-time math
+    walking other days) are never affected, so this can't make those
+    deterministic call sites env-dependent.
+    """
+    raw = os.environ.get("MARKET_HOURS_OVERRIDE", "").strip().lower()
+    if raw in ("open", "live", "1", "true"):
+        return True
+    if raw in ("closed", "close", "off_market", "0", "false"):
+        return False
+    return None
+
+
 def market_closed_reason(now: datetime | None = None) -> str:
     """Human-readable reason the market is closed at the given IST instant."""
+    if now is None:
+        override = _market_hours_override()
+        if override is True:
+            return "market open"
+        if override is False:
+            return "after market close (simulated via MARKET_HOURS_OVERRIDE)"
     dt = (now or datetime.now(IST)).astimezone(IST)
     if dt.weekday() >= 5:
         return "weekend"
@@ -56,6 +79,10 @@ def is_india_market_open(now: datetime | None = None) -> bool:
     """
     Return True if India NSE/BSE market is open (9:15 AM - 3:30 PM IST on trading days).
     """
+    if now is None:
+        override = _market_hours_override()
+        if override is not None:
+            return override
     dt = (now or datetime.now(IST)).astimezone(IST)
     if not is_india_trading_day(dt):
         return False

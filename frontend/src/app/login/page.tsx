@@ -82,7 +82,7 @@ function LoginContent() {
         <button
           type="button"
           onClick={() => setChangelogOpen(true)}
-          className="inline-flex min-h-9 shrink-0 items-center justify-center truncate rounded-md px-1.5 text-xs font-medium text-sky-700 underline-offset-2 hover:underline dark:text-sky-400"
+          className="inline-flex min-h-9 shrink-0 items-center justify-center truncate rounded-md px-1.5 font-mono text-xs font-semibold text-accent-strong underline-offset-2 hover:underline"
           aria-haspopup="dialog"
           aria-label="Open changelog"
         >
@@ -94,23 +94,23 @@ function LoginContent() {
         open={changelogOpen}
         onClose={() => setChangelogOpen(false)}
       />
-      <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white/90 p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900/80 dark:shadow-xl dark:shadow-black/40">
+      <div className="w-full max-w-[400px] rounded-2xl border border-border bg-panel p-8">
         <div className="mb-6 flex gap-3">
-          <div className="flex h-16 w-16 shrink-0 items-center justify-center">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center">
             <Image
               src={breezeMark}
               alt="Breeze"
-              width={48}
-              height={48}
-              className="h-22 w-22 object-contain"
+              width={44}
+              height={44}
+              className="size-11 rounded-lg object-contain"
               priority
             />
           </div>
           <div className="min-w-0 space-y-2">
-            <h1 className="text-xl font-semibold tracking-tight text-sky-500 dark:text-sky-500">
+            <h1 className="text-xl font-bold tracking-tight text-accent-strong">
               Breeze Modern
             </h1>
-            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+            <p className="text-xs text-muted">
               Sign in with your ICICI user id and app password, then complete ICICI Direct login.
             </p>
           </div>
@@ -119,12 +119,9 @@ function LoginContent() {
           <div
             className={[
               "mb-4 rounded-lg border px-3 py-2 text-xs",
-              tone === "ok" &&
-                "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200",
-              tone === "warn" &&
-                "border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200",
-              tone === "err" &&
-                "border-red-200 bg-red-50 text-red-900 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200",
+              tone === "ok" && "border-up/30 bg-up-tint text-up",
+              tone === "warn" && "border-amber-accent/30 bg-amber-tint text-amber-accent",
+              tone === "err" && "border-down/30 bg-down-tint text-down",
             ]
               .filter(Boolean)
               .join(" ")}
@@ -133,19 +130,19 @@ function LoginContent() {
           </div>
         )}
         <div className="space-y-3">
-          <p className="text-center text-[11px] text-zinc-500">
+          <p className="text-center text-[13px] text-muted">
             New user?{" "}
             <a href="/register" className="app-link">
               Register
             </a>
           </p>
-          <p className="text-center text-[11px] text-zinc-500">
+          <p className="text-center text-[13px] text-muted">
             Wrong credentials?{" "}
             <a href="/register/correct" className="app-link">
               Update credentials
             </a>
           </p>
-          <p className="text-center text-[11px] text-zinc-500">
+          <p className="text-center text-[13px] text-muted">
             Forgot password?{" "}
             <a href="/register/forgot-password" className="app-link">
               Reset via ICICI
@@ -155,22 +152,22 @@ function LoginContent() {
 
         <div className="relative my-6">
           <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-zinc-200 dark:border-zinc-700" />
+            <span className="w-full border-t border-border" />
           </div>
-          <div className="relative flex justify-center text-[10px] uppercase tracking-wide text-zinc-500">
-            <span className="bg-white px-2 dark:bg-zinc-900/80">App password</span>
+          <div className="relative flex justify-center text-[12px] font-semibold uppercase tracking-wide text-faint">
+            <span className="bg-panel px-2">App password</span>
           </div>
         </div>
 
         {directErr && (
-          <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200">
+          <p className="mb-3 rounded-lg border border-down/30 bg-down-tint px-3 py-2 text-xs text-down">
             {directErr}
           </p>
         )}
         <form onSubmit={onDirectSubmit} className="space-y-3">
           <input
             required
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-950"
+            className="w-full rounded-[9px] border border-border bg-panel2 px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-faint focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25"
             placeholder="ICICI user id"
             value={directUserId}
             onChange={(e) => setDirectUserId(e.target.value)}
@@ -179,7 +176,7 @@ function LoginContent() {
           <input
             required
             type="password"
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-950"
+            className="w-full rounded-[9px] border border-border bg-panel2 px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-faint focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25"
             placeholder="App password"
             value={directPassword}
             onChange={(e) => setDirectPassword(e.target.value)}
@@ -189,7 +186,7 @@ function LoginContent() {
             type="submit"
             disabled={directBusy}
             aria-busy={directBusy}
-            className="app-btn-primary w-full py-2.5 text-sm"
+            className="app-btn-primary w-full rounded-[9px] py-2.5 text-sm"
           >
             <AsyncLabelSpan
               busy={directBusy}
@@ -208,7 +205,7 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center bg-background text-zinc-500 dark:text-zinc-400">
+        <div className="flex min-h-screen items-center justify-center bg-background text-muted">
           Loading…
         </div>
       }

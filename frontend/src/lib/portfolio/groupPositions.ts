@@ -71,3 +71,30 @@ export function buildPortfolioPositionGroups(
 
   return groups;
 }
+
+function groupMarginTotal(group: PortfolioPositionGroup): number {
+  let total = 0;
+  for (const row of group.rows) {
+    const span = parseFinite(row.span_margin_required) ?? 0;
+    const elm = parseFinite(row.elm_margin_required) ?? 0;
+    total += span + elm;
+  }
+  return total;
+}
+
+/** Largest position by blocked margin (Span + ELM) — the group auto-expanded on page load. */
+export function pickTopGroupKey(
+  groups: PortfolioPositionGroup[],
+): string | null {
+  if (!groups.length) return null;
+  let best = groups[0];
+  let bestMargin = groupMarginTotal(best);
+  for (let i = 1; i < groups.length; i++) {
+    const margin = groupMarginTotal(groups[i]);
+    if (margin > bestMargin) {
+      best = groups[i];
+      bestMargin = margin;
+    }
+  }
+  return best.key;
+}

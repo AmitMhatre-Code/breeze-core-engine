@@ -69,7 +69,7 @@ export function ChunkSizeOrderField({
         onChange={(e) => onChunkQtyChange(e.target.value)}
         disabled={disabled}
       />
-      <p className="mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+      <p className="mt-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">
         Default is the exchange freeze limit for this contract
         {maxQ != null ? ` (${maxQ.toLocaleString("en-IN")} units)` : ""}
         {lot != null ? `. Rounded to a multiple of lot ${lot.toLocaleString("en-IN")}.` : "."}

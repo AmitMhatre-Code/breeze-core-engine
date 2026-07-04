@@ -1,0 +1,1484 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  :root {
+    --bg:#0A0C10; --panel:#12151C; --panel2:#0F141C; --elevated:#161B24;
+    --border:#232A36; --border-soft:#1B222E;
+    --text:#E6EAF2; --muted:#8A93A6; --faint:#5C6577;
+    --accent:#22D3EE; --accent-strong:#22D3EE; --accent-ink:#06222A; --accent-tint:#0C2229; --accent-bar:#22D3EE;
+    --up:#34D399; --down:#F87171; --up-tint:#0F1F1B; --down-tint:#231518;
+    --up-btn:#0EA371; --down-btn:#E5484D;
+    --amber:#FBBF24; --amber-tint:#241D0E;
+    --gtt:#A78BFA; --gtt-tint:#221E33;
+    --shadow:0 18px 50px -20px rgba(0,0,0,.65);
+    --track:#1A2330;
+  }
+  .theme-light {
+    --bg:#EEF1F5; --panel:#FFFFFF; --panel2:#F5F7FA; --elevated:#FFFFFF;
+    --border:#DBE1E9; --border-soft:#E8ECF2;
+    --text:#0E1520; --muted:#5A6473; --faint:#93A0B0;
+    --accent:#0891B2; --accent-strong:#0E7490; --accent-ink:#FFFFFF; --accent-tint:#E1F4FA; --accent-bar:#0891B2;
+    --up:#0F9D6B; --down:#DC2F44; --up-tint:#E7F6F0; --down-tint:#FCECEE;
+    --up-btn:#0F9D6B; --down-btn:#DC2F44;
+    --amber:#B45309; --amber-tint:#FBF0DE;
+    --gtt:#7C3AED; --gtt-tint:#F1EAFE;
+    --shadow:0 10px 34px -16px rgba(15,25,40,.20);
+    --track:#E3E8EE;
+  }
+  body { background: var(--bg); }
+  .navlink:hover { background: var(--panel2); color: var(--text) !important; }
+  .setnav:hover { background: var(--panel2) !important; color: var(--text) !important; }
+  .setnav-danger:hover { background: var(--down-tint) !important; }
+  .iconbtn { transition: background .15s ease, color .15s ease; }
+  .iconbtn:hover { background: var(--border-soft); color: var(--text) !important; }
+  .iconbtn:hover .rot { transform: rotate(-25deg); }
+  .rot { transition: transform .2s ease; }
+  .tbtn-ghost:hover { background: var(--accent-tint); }
+  .tbtn-outline:hover { background: var(--border-soft); }
+  .rowicon:hover { background: var(--border-soft); color: var(--text); }
+  .grouprow:hover { background: var(--panel2); }
+  .execbtn:hover { filter: brightness(1.06); }
+  .segbtn:hover { background: var(--border-soft); }
+  .datarow:hover { background: var(--panel2); }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+</style>
+</helmet>
+
+<div class="breeze {{ themeClass }}" style="display:flex; min-height:100vh; background:var(--bg); color:var(--text); font-family:'IBM Plex Sans',system-ui,sans-serif; font-size:14px;">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside style="width:236px; flex:0 0 auto; border-right:1px solid var(--border); background:var(--panel); display:flex; flex-direction:column; padding:16px 12px;">
+    <div style="display:flex; align-items:center; gap:11px; padding:2px 6px 18px;">
+      <img src="assets/breeze-logo.png" alt="Breeze" style="width:34px; height:34px; border-radius:8px; flex:0 0 auto; display:block;">
+      <div style="line-height:1.15;">
+        <div style="font-size:16px; font-weight:700; letter-spacing:-.01em;">Breeze</div>
+        <div style="font-size:10px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--faint);">Terminal</div>
+      </div>
+    </div>
+
+    <nav style="display:flex; flex-direction:column; gap:2px;">
+      <a class="navlink" href="Breeze Dashboard - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="9" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span style="font-size:13.5px;">Dashboard</span>
+      </a>
+      <a class="navlink" href="Breeze Portfolio - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="13" width="16" height="8" rx="1"/><path d="M8 6H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-1"/><path d="M8 6V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1"/></svg>
+        <span style="font-size:13.5px;">Portfolio</span>
+      </a>
+      <a class="navlink" href="Breeze Performance - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 2 4-6"/></svg>
+        <span style="font-size:13.5px;">Performance</span>
+      </a>
+      <a class="navlink" href="Breeze Order Book - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+        <span style="font-size:13.5px;">Order Book</span>
+      </a>
+      <a class="navlink" href="Breeze Place Order - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+        <span style="font-size:13.5px;">Place Order</span>
+      </a>
+      <a class="navlink" href="Breeze Basket Order - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="18" rx="1.5"/><rect x="14" y="3" width="7" height="10" rx="1.5"/><rect x="14" y="16" width="7" height="5" rx="1.5"/></svg>
+        <span style="font-size:13.5px; display:flex; align-items:center; gap:6px;">Basket Order <span style="font-size:9px; font-weight:700; letter-spacing:.06em; color:var(--accent-ink); background:var(--accent); padding:1.5px 5px; border-radius:4px;">NEW</span></span>
+      </a>
+      <a class="navlink" href="Breeze Strategy Builder - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M8 8l4 8"/><path d="M16 8l-4 8"/></svg>
+        <span style="font-size:13.5px;">Strategy Builder</span>
+      </a>
+      <a class="navlink" href="#" onClick="{{ goIndex }}" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; position:relative; background:var(--accent-tint); color:var(--text); font-weight:600;">
+        <span style="position:absolute; left:0; top:9px; bottom:9px; width:2.5px; border-radius:999px; background:var(--accent-bar);"></span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span style="font-size:13.5px;">Settings</span>
+      </a>
+    </nav>
+
+    <div style="margin-top:auto; padding:12px 11px 4px; border-top:1px solid var(--border-soft);">
+      <div style="font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin-bottom:4px;">Session</div>
+      <div style="display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted);">
+        <span style="width:7px; height:7px; border-radius:999px; background:var(--up); box-shadow:0 0 8px var(--up);"></span>
+        ICICI Breeze · active
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN COLUMN ============ -->
+  <div style="flex:1 1 auto; min-width:0; display:flex; flex-direction:column;">
+
+    <!-- header -->
+    <header style="height:52px; flex:0 0 auto; border-bottom:1px solid var(--border); background:var(--panel); display:flex; align-items:center; justify-content:space-between; gap:16px; padding:0 20px;">
+      <div style="display:flex; align-items:center; gap:18px; min-width:0;">
+        <span style="font-size:10.5px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);">Trading</span>
+        <span style="font-size:14px; font-weight:600; color:var(--text);">Amit Mhatre</span>
+        <span style="display:flex; align-items:baseline; gap:7px;">
+          <span style="font-size:11.5px; color:var(--muted);">Free margin</span>
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:14px; font-weight:600; color:var(--up);">₹4.86L</span>
+        </span>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted);"><span style="color:var(--faint);">API</span> 1,284 / 5,000</span>
+        <span style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted);"><span style="width:7px; height:7px; border-radius:999px; background:var(--accent); box-shadow:0 0 8px var(--accent);"></span>ICICI</span>
+        <span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--accent-strong);">v4.2.0</span>
+        <button class="iconbtn" onClick="{{ toggleTheme }}" title="Toggle theme" style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:8px; border:none; background:transparent; color:var(--muted); cursor:pointer;">
+          <sc-if value="{{ showSun }}" hint-placeholder-val="{{ true }}">
+            <svg class="rot" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </sc-if>
+          <sc-if value="{{ showMoon }}" hint-placeholder-val="{{ false }}">
+            <svg class="rot" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          </sc-if>
+        </button>
+        <a class="iconbtn" href="#" title="Log out" style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:8px; border:none; background:transparent; color:var(--muted); text-decoration:none; cursor:pointer;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </a>
+      </div>
+    </header>
+
+    <!-- content -->
+    <main style="flex:1 1 auto; overflow:auto; padding:22px 24px 44px; background:var(--bg);">
+      <div style="max-width:1280px; margin:0 auto; display:flex; gap:28px; align-items:flex-start;">
+
+        <!-- ============ SETTINGS SUB-NAV (persistent) ============ -->
+        <aside style="width:252px; flex:0 0 auto; display:flex; flex-direction:column; gap:20px; position:sticky; top:0;">
+          <div>
+            <h1 style="margin:0; font-size:21px; font-weight:700; letter-spacing:-.015em;">Settings</h1>
+            <div style="margin-top:3px; font-size:12px; color:var(--muted);">Broker connection, limits &amp; preferences</div>
+          </div>
+
+          <nav style="display:flex; flex-direction:column; gap:14px;">
+            <div style="display:flex; flex-direction:column; gap:1px;">
+              <a class="setnav" href="#" onClick="{{ goCredentials }}" style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:7px; text-decoration:none; position:relative; background:{{ nav.credentials.bg }}; color:{{ nav.credentials.color }}; font-weight:{{ nav.credentials.weight }};">
+                <span style="position:absolute; left:0; top:8px; bottom:8px; width:2.5px; border-radius:999px; background:var(--accent-bar); display:{{ nav.credentials.bar }};"></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <span style="font-size:13px;">Broker Credentials</span>
+              </a>
+              <a class="setnav" href="#" onClick="{{ goLimits }}" style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:7px; text-decoration:none; position:relative; background:{{ nav.limits.bg }}; color:{{ nav.limits.color }}; font-weight:{{ nav.limits.weight }};">
+                <span style="position:absolute; left:0; top:8px; bottom:8px; width:2.5px; border-radius:999px; background:var(--accent-bar); display:{{ nav.limits.bar }};"></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>
+                <span style="font-size:13px;">Quantity Limits</span>
+              </a>
+              <a class="setnav" href="#" onClick="{{ goApiUsage }}" style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:7px; text-decoration:none; position:relative; background:{{ nav.apiUsage.bg }}; color:{{ nav.apiUsage.color }}; font-weight:{{ nav.apiUsage.weight }};">
+                <span style="position:absolute; left:0; top:8px; bottom:8px; width:2.5px; border-radius:999px; background:var(--accent-bar); display:{{ nav.apiUsage.bar }};"></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/><circle cx="12" cy="12" r="3.5"/></svg>
+                <span style="font-size:13px;">API Usage</span>
+              </a>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:1px;">
+              <div style="font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:2px 10px 6px;">Automation</div>
+              <a class="setnav" href="#" onClick="{{ goGenAi }}" style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:7px; text-decoration:none; position:relative; background:{{ nav.genAi.bg }}; color:{{ nav.genAi.color }}; font-weight:{{ nav.genAi.weight }};">
+                <span style="position:absolute; left:0; top:8px; bottom:8px; width:2.5px; border-radius:999px; background:var(--accent-bar); display:{{ nav.genAi.bar }};"></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
+                <span style="font-size:13px;">GenAI Settings</span>
+              </a>
+              <a class="setnav" href="#" onClick="{{ goRefData }}" style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:7px; text-decoration:none; position:relative; background:{{ nav.refData.bg }}; color:{{ nav.refData.color }}; font-weight:{{ nav.refData.weight }};">
+                <span style="position:absolute; left:0; top:8px; bottom:8px; width:2.5px; border-radius:999px; background:var(--accent-bar); display:{{ nav.refData.bar }};"></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
+                <span style="font-size:13px;">Reference Data Loads</span>
+              </a>
+              <a class="setnav" href="#" onClick="{{ goExchangeCalendar }}" style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:7px; text-decoration:none; position:relative; background:{{ nav.exchangeCalendar.bg }}; color:{{ nav.exchangeCalendar.color }}; font-weight:{{ nav.exchangeCalendar.weight }};">
+                <span style="position:absolute; left:0; top:8px; bottom:8px; width:2.5px; border-radius:999px; background:var(--accent-bar); display:{{ nav.exchangeCalendar.bar }};"></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                <span style="font-size:13px;">Exchange Calendar</span>
+              </a>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:1px;">
+              <div style="font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:2px 10px 6px;">Diagnostics</div>
+              <a class="setnav" href="#" onClick="{{ goAuditLogs }}" style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:7px; text-decoration:none; position:relative; background:{{ nav.auditLogs.bg }}; color:{{ nav.auditLogs.color }}; font-weight:{{ nav.auditLogs.weight }};">
+                <span style="position:absolute; left:0; top:8px; bottom:8px; width:2.5px; border-radius:999px; background:var(--accent-bar); display:{{ nav.auditLogs.bar }};"></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6M9 11h2"/></svg>
+                <span style="font-size:13px;">Audit Logs</span>
+              </a>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:1px;">
+              <div style="font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--down); padding:2px 10px 6px;">Danger zone</div>
+              <a class="setnav setnav-danger" href="#" onClick="{{ goPlayground }}" style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:7px; text-decoration:none; position:relative; background:{{ nav.playground.bg }}; color:{{ nav.playground.color }}; font-weight:{{ nav.playground.weight }};">
+                <span style="position:absolute; left:0; top:8px; bottom:8px; width:2.5px; border-radius:999px; background:var(--down); display:{{ nav.playground.bar }};"></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+                <span style="font-size:13px;">API Playground</span>
+              </a>
+              <a class="setnav setnav-danger" href="#" onClick="{{ goDelete }}" style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:7px; text-decoration:none; position:relative; background:{{ nav.delete.bg }}; color:{{ nav.delete.color }}; font-weight:{{ nav.delete.weight }};">
+                <span style="position:absolute; left:0; top:8px; bottom:8px; width:2.5px; border-radius:999px; background:var(--down); display:{{ nav.delete.bar }};"></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                <span style="font-size:13px;">Delete Account</span>
+              </a>
+            </div>
+          </nav>
+
+          <div style="padding-top:6px; border-top:1px solid var(--border-soft); font-size:11px; color:var(--faint); display:flex; align-items:center; gap:6px;">
+            <span style="width:6px; height:6px; border-radius:999px; background:var(--up);"></span>
+            ICICI Breeze · connected
+          </div>
+        </aside>
+
+        <!-- ============ RIGHT CONTENT PANE ============ -->
+        <div style="flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:14px; padding-bottom:24px;">
+
+        <!-- ============================================================ -->
+        <!-- SCREEN: BROKER CREDENTIALS                                    -->
+        <!-- ============================================================ -->
+        <sc-if value="{{ isCredentials }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span style="width:38px; height:38px; border-radius:10px; background:var(--accent-tint); display:flex; align-items:center; justify-content:center; flex:0 0 auto;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </span>
+            <div>
+              <div style="font-size:18px; font-weight:700;">Broker Credentials</div>
+              <div style="margin-top:2px; font-size:12px; color:var(--muted);">Update your ICICI API key and secret fragment.</div>
+            </div>
+          </div>
+          <section style="max-width:480px; background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:20px; display:flex; flex-direction:column; gap:14px;">
+            <div style="display:flex; flex-direction:column; gap:5px;">
+              <label style="font-size:10.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--faint);">ICICI User ID</label>
+              <input class="tinput" type="text" value="AM4821" disabled style="width:100%; font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:var(--faint); background:var(--panel2); border:1px dashed var(--border); border-radius:9px; padding:0 12px; height:40px; cursor:not-allowed;">
+            </div>
+            <div style="display:flex; flex-direction:column; gap:5px;">
+              <label style="font-size:10.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--faint);">API Key</label>
+              <input class="tinput" type="text" placeholder="a1B2c3D4e5F6g7H8" style="width:100%; font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:0 12px; height:40px;">
+            </div>
+            <div style="display:flex; flex-direction:column; gap:5px;">
+              <label style="font-size:10.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--faint);">Secret Fragment</label>
+              <input class="tinput" type="password" placeholder="••••••••••••" style="width:100%; font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:0 12px; height:40px;">
+            </div>
+            <button style="align-self:flex-start; font-size:13px; font-weight:700; color:var(--accent-ink); background:var(--accent-strong); border:none; border-radius:9px; padding:11px 20px; cursor:pointer;">Save</button>
+          </section>
+        </sc-if>
+
+        <!-- ============================================================ -->
+        <!-- SCREEN: QUANTITY LIMITS                                       -->
+        <!-- ============================================================ -->
+        <sc-if value="{{ isLimits }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <span style="width:38px; height:38px; border-radius:10px; background:var(--accent-tint); display:flex; align-items:center; justify-content:center; flex:0 0 auto;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>
+              </span>
+              <div>
+                <div style="font-size:18px; font-weight:700;">Quantity Limits</div>
+                <div style="margin-top:2px; font-size:12px; color:var(--muted);">Update the scrip wise freeze quantities / max order quantities.</div>
+              </div>
+            </div>
+            <button style="font-size:12px; font-weight:700; color:var(--accent-ink); background:var(--accent-strong); border:none; border-radius:8px; padding:8px 14px; cursor:pointer; white-space:nowrap;">Save all</button>
+          </div>
+          <section style="background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:20px; display:flex; flex-direction:column; gap:14px;">
+            <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.6; color:var(--muted);">
+              <p style="margin:0; font-weight:600; color:var(--text);">Original source of the Freeze Quantity Limits:</p>
+              <p style="margin:0;">For BSE: look for the file called Abridged_CO.ZIP (col MaxTradQty in file BSE_EQD_CONTRACT_abr_ddmmyyyy) <a href="#" style="color:var(--accent-strong); text-decoration:none;">here</a>.</p>
+              <p style="margin:0;">For NSE: look for the file called NSE_FO_contract_ddmmyyyy.csv.gz (col MaxTadQty) <a href="#" style="color:var(--accent-strong); text-decoration:none;">here</a>.</p>
+            </div>
+            <div style="border:1px solid var(--border); border-radius:10px; overflow:hidden;">
+              <div style="display:grid; grid-template-columns:1fr 80px 100px 120px; gap:8px; padding:9px 14px; background:var(--panel2); font-size:10px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--faint);">
+                <span>Symbol</span><span>Exch</span><span>Segment</span><span style="text-align:right;">Qty limit</span>
+              </div>
+              <div style="display:flex; flex-direction:column;">
+                <div class="datarow" style="display:grid; grid-template-columns:1fr 80px 100px 120px; gap:8px; align-items:center; padding:9px 14px; border-top:1px solid var(--border-soft);">
+                  <span style="font-size:12.5px; font-weight:600;">NIFTY</span>
+                  <span style="font-size:12px; color:var(--muted);">NFO</span>
+                  <span style="font-size:12px; color:var(--muted);">FUTIDX</span>
+                  <input class="tinput" type="text" value="1,800" style="width:100%; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 10px; height:32px;">
+                </div>
+                <div class="datarow" style="display:grid; grid-template-columns:1fr 80px 100px 120px; gap:8px; align-items:center; padding:9px 14px; border-top:1px solid var(--border-soft);">
+                  <span style="font-size:12.5px; font-weight:600;">BANKNIFTY</span>
+                  <span style="font-size:12px; color:var(--muted);">NFO</span>
+                  <span style="font-size:12px; color:var(--muted);">OPTIDX</span>
+                  <input class="tinput" type="text" value="900" style="width:100%; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 10px; height:32px;">
+                </div>
+                <div class="datarow" style="display:grid; grid-template-columns:1fr 80px 100px 120px; gap:8px; align-items:center; padding:9px 14px; border-top:1px solid var(--border-soft);">
+                  <span style="font-size:12.5px; font-weight:600;">FINNIFTY</span>
+                  <span style="font-size:12px; color:var(--muted);">NFO</span>
+                  <span style="font-size:12px; color:var(--muted);">OPTIDX</span>
+                  <input class="tinput" type="text" value="1,800" style="width:100%; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 10px; height:32px;">
+                </div>
+                <div class="datarow" style="display:grid; grid-template-columns:1fr 80px 100px 120px; gap:8px; align-items:center; padding:9px 14px; border-top:1px solid var(--border-soft);">
+                  <span style="font-size:12.5px; font-weight:600;">SENSEX</span>
+                  <span style="font-size:12px; color:var(--muted);">BFO</span>
+                  <span style="font-size:12px; color:var(--muted);">OPTIDX</span>
+                  <input class="tinput" type="text" value="1,000" style="width:100%; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 10px; height:32px;">
+                </div>
+              </div>
+            </div>
+          </section>
+        </sc-if>
+
+        <!-- ============================================================ -->
+        <!-- SCREEN: API USAGE                                             -->
+        <!-- ============================================================ -->
+        <sc-if value="{{ isApiUsage }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <span style="width:38px; height:38px; border-radius:10px; background:var(--accent-tint); display:flex; align-items:center; justify-content:center; flex:0 0 auto;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/><circle cx="12" cy="12" r="3.5"/></svg>
+              </span>
+              <div>
+                <div style="font-size:18px; font-weight:700;">API Usage</div>
+                <div style="margin-top:2px; font-size:12px; color:var(--muted);">Review API call volumes to stay within ICICI's daily usage limits.</div>
+              </div>
+            </div>
+            <label style="font-size:11.5px; color:var(--muted); display:flex; align-items:center; gap:8px;">
+              Days
+              <select style="font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:600; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:6px 10px;">
+                <option>7</option><option selected="">30</option><option>60</option><option>90</option>
+              </select>
+            </label>
+          </div>
+          <section style="background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:20px; display:flex; flex-direction:column; gap:16px;">
+            <div style="border:1px solid var(--border); border-radius:11px; padding:16px; background:var(--panel2);">
+              <div style="font-size:13.5px; font-weight:700;">Rate limit backoff</div>
+              <p style="margin:6px 0 0; font-size:11.5px; line-height:1.6; color:var(--muted); max-width:560px;">Minimum seconds between ICICI API calls (0.5–3 seconds). On HTTP 429 or 503 the app also applies exponential backoff (capped at 3 seconds) before retrying. Order place and cancel flows show a countdown on screen; all other ICICI traffic is paced globally on the server.</p>
+              <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
+                <input class="tinput" type="text" value="1.0" style="width:90px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:600; color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:0 10px; height:36px;">
+                <button style="font-size:12.5px; font-weight:700; color:var(--accent-ink); background:var(--accent-strong); border:none; border-radius:8px; padding:9px 16px; cursor:pointer;">Save</button>
+              </div>
+            </div>
+
+            <div style="display:inline-flex; padding:3px; gap:2px; background:var(--panel2); border:1px solid var(--border); border-radius:9px; width:fit-content;">
+              <button class="segbtn" style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; font-weight:600; color:var(--accent-ink); background:var(--accent-strong); border:none; border-radius:6px; padding:6px 14px; cursor:pointer;">API-wise</button>
+              <button class="segbtn" style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; font-weight:600; color:var(--muted); background:transparent; border:none; border-radius:6px; padding:6px 14px; cursor:pointer;">Route-wise</button>
+            </div>
+
+            <div style="border:1px solid var(--border); border-radius:11px; padding:14px 16px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; font-size:12.5px; margin-bottom:10px;">
+                <span style="font-weight:600;">01 Jul 2026</span>
+                <span style="color:var(--muted);">Total: 1,284</span>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:8px;">
+                <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Order placement</span><span style="font-family:'IBM Plex Mono',monospace;">412</span></div>
+                <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Market quotes</span><span style="font-family:'IBM Plex Mono',monospace;">640</span></div>
+                <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Portfolio / holdings</span><span style="font-family:'IBM Plex Mono',monospace;">232</span></div>
+              </div>
+            </div>
+          </section>
+        </sc-if>
+
+        <!-- ============================================================ -->
+        <!-- SCREEN: GENAI SETTINGS                                        -->
+        <!-- ============================================================ -->
+        <sc-if value="{{ isGenAi }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span style="width:38px; height:38px; border-radius:10px; background:var(--accent-tint); display:flex; align-items:center; justify-content:center; flex:0 0 auto;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
+            </span>
+            <div>
+              <div style="font-size:18px; font-weight:700;">GenAI Settings</div>
+              <div style="margin-top:2px; font-size:12px; color:var(--muted);">Configure your own Gemini or OpenAI API key for GenAI market outlooks.</div>
+            </div>
+          </div>
+          <section style="max-width:640px; background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:20px; display:flex; flex-direction:column; gap:18px;">
+            <p style="margin:0; font-size:11.5px; color:var(--faint);">English-only generation. AI-generated outlook is informational only and not investment advice.</p>
+
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              <div style="font-size:13.5px; font-weight:700;">AI Provider Keys (BYOK)</div>
+
+              <div style="border:1px solid var(--border); border-radius:10px;">
+                <div style="display:flex; align-items:center; gap:12px; padding:12px 14px;">
+                  <div style="flex:1; min-width:0;">
+                    <div style="font-size:13px; font-weight:700;">Google · Gemini API</div>
+                    <div style="display:flex; align-items:center; gap:8px; margin-top:5px;">
+                      <span style="font-size:10.5px; font-weight:600; color:var(--up); background:var(--up-tint); padding:2px 8px; border-radius:999px;">Configured</span>
+                      <span style="font-size:11px; color:var(--muted);">2 working · 0 not working</span>
+                    </div>
+                  </div>
+                  <button style="font-size:11.5px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:7px; padding:6px 12px; cursor:pointer;">Edit key</button>
+                </div>
+                <div style="border-top:1px solid var(--border-soft); padding:12px 14px; display:flex; flex-direction:column; gap:8px;">
+                  <div style="font-size:11px; color:var(--muted);">Primary model: <span style="font-family:'IBM Plex Mono',monospace; color:var(--text);">gemini-2.5-flash</span></div>
+                  <div style="display:flex; align-items:center; gap:10px; padding:7px 10px; border:1px solid var(--border-soft); border-radius:7px;">
+                    <span style="width:8px; height:8px; border-radius:999px; background:var(--up); flex:0 0 auto;"></span>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:12px; flex:1;">gemini-2.5-flash</span>
+                    <span style="font-size:10px; font-weight:700; color:var(--amber); background:var(--amber-tint); padding:2px 7px; border-radius:999px;">Primary</span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:10px; padding:7px 10px; border:1px solid var(--border-soft); border-radius:7px;">
+                    <span style="width:8px; height:8px; border-radius:999px; background:var(--up); flex:0 0 auto;"></span>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:12px; flex:1;">gemini-2.5-pro</span>
+                    <span style="font-size:10px; font-weight:600; color:var(--muted);">Fallback</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="border:1px solid var(--border); border-radius:10px;">
+                <div style="display:flex; align-items:center; gap:12px; padding:12px 14px;">
+                  <div style="flex:1; min-width:0;">
+                    <div style="font-size:13px; font-weight:700;">OpenAI · Chat Completions API</div>
+                    <div style="margin-top:5px;">
+                      <span style="font-size:10.5px; font-weight:600; color:var(--faint); background:var(--panel2); padding:2px 8px; border-radius:999px;">Not configured</span>
+                    </div>
+                  </div>
+                  <button style="font-size:11.5px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:7px; padding:6px 12px; cursor:pointer;">Add key</button>
+                </div>
+              </div>
+            </div>
+
+            <div style="height:1px; background:var(--border-soft);"></div>
+
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              <div style="font-size:13.5px; font-weight:700;">Market Outlook Sources &amp; Prompt</div>
+
+              <div style="border:1px solid var(--border); border-radius:10px; padding:12px 14px; display:flex; flex-direction:column; gap:8px;">
+                <div style="font-size:12.5px; font-weight:600;">Market Feeds</div>
+                <div style="font-size:11px; color:var(--muted);">RSS and news sources for outlook context</div>
+                <div style="display:flex; flex-direction:column; gap:6px; margin-top:4px;">
+                  <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid var(--border-soft);">
+                    <span style="font-size:11.5px; color:var(--accent-strong); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">https://www.moneycontrol.com/rss/marketreports.xml</span>
+                  </div>
+                  <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 0;">
+                    <span style="font-size:11.5px; color:var(--accent-strong); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">https://economictimes.indiatimes.com/rssfeedsdefault.cms</span>
+                  </div>
+                </div>
+                <div style="font-size:10.5px; color:var(--faint);">Using default feeds.</div>
+              </div>
+
+              <div style="border:1px solid var(--border); border-radius:10px; padding:12px 14px; display:flex; flex-direction:column; gap:10px;">
+                <div style="font-size:12.5px; font-weight:600;">Prompts</div>
+                <div>
+                  <label style="font-size:10.5px; color:var(--muted);">System prompt</label>
+                  <textarea rows="3" style="width:100%; margin-top:4px; font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; resize:vertical;">You are a macro-strategist. Analyze geopolitical, business, and economic news to identify transmission channels to the market.</textarea>
+                </div>
+                <div>
+                  <label style="font-size:10.5px; color:var(--muted);">Prompt template (supports {scope}, {symbol}, {sources_json}, {required_schema_json})</label>
+                  <textarea rows="3" style="width:100%; margin-top:4px; font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; resize:vertical;">Given the following sources for {symbol}, produce a structured outlook matching {required_schema_json}.</textarea>
+                </div>
+                <button style="align-self:flex-start; font-size:12.5px; font-weight:700; color:var(--accent-ink); background:var(--accent-strong); border:none; border-radius:8px; padding:9px 16px; cursor:pointer;">Save prompt</button>
+              </div>
+            </div>
+          </section>
+        </sc-if>
+
+        <!-- ============================================================ -->
+        <!-- SCREEN: REFERENCE DATA LOADS                                  -->
+        <!-- ============================================================ -->
+        <sc-if value="{{ isRefData }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span style="width:38px; height:38px; border-radius:10px; background:var(--accent-tint); display:flex; align-items:center; justify-content:center; flex:0 0 auto;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
+            </span>
+            <div>
+              <div style="font-size:18px; font-weight:700;">Reference Data Loads</div>
+              <div style="margin-top:2px; font-size:12px; color:var(--muted); max-width:640px;">Schedule daily loads for bhavcopy, scrip master, and SPAN baseline; choose SPAN vs Breeze API for Strategy Builder margins.</div>
+            </div>
+          </div>
+          <section style="max-width:760px; background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:20px; display:flex; flex-direction:column; gap:18px;">
+            <div style="border:1px solid var(--border); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:12px;">
+              <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;">
+                <div>
+                  <div style="font-size:13px; font-weight:600;">Daily schedule (IST)</div>
+                  <div style="font-size:11px; color:var(--muted); margin-top:2px;">{{ scheduleHelperText }}</div>
+                </div>
+                <button onClick="{{ toggleSchedule }}" style="width:44px; height:24px; border-radius:999px; border:none; cursor:pointer; position:relative; flex:0 0 auto; background:{{ scheduleToggleBg }};">
+                  <span style="position:absolute; top:2px; width:20px; height:20px; border-radius:999px; background:#fff; transition:left .15s ease; left:{{ scheduleToggleLeft }};"></span>
+                </button>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px; border-top:1px solid var(--border-soft); padding-top:12px;">
+                <label style="font-size:11px; color:var(--muted);">Schedule time (IST)</label>
+                <input class="tinput" type="text" value="18:00" style="width:90px; font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 10px; height:32px;">
+              </div>
+            </div>
+
+            <div style="border:1px solid var(--border); border-radius:10px; padding:14px 16px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+              <div>
+                <div style="font-size:13px; font-weight:600;">Use SPAN files for margin calculation</div>
+                <div style="font-size:11px; color:var(--muted); margin-top:2px; max-width:480px;">Off: Breeze API (default). On: Exchange Risk Baseline (SPAN) for Strategy Builder. ICICI margins may differ; contracts missing from the baseline fall back to Breeze API.</div>
+              </div>
+              <button onClick="{{ toggleMarginSource }}" style="width:44px; height:24px; border-radius:999px; border:none; cursor:pointer; position:relative; flex:0 0 auto; background:{{ marginToggleBg }};">
+                <span style="position:absolute; top:2px; width:20px; height:20px; border-radius:999px; background:#fff; transition:left .15s ease; left:{{ marginToggleLeft }};"></span>
+              </button>
+            </div>
+
+            <div style="display:flex; gap:10px;">
+              <button style="font-size:12px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:8px; padding:9px 14px; cursor:pointer;">Save schedule</button>
+              <button style="font-size:12px; font-weight:700; color:var(--accent-ink); background:var(--accent-strong); border:none; border-radius:8px; padding:9px 14px; cursor:pointer;">Load now</button>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <div style="font-size:13px; font-weight:700;">Source status</div>
+              <div style="display:flex; flex-direction:column;">
+                <div class="datarow" style="display:flex; justify-content:space-between; gap:10px; padding:9px 6px; border-bottom:1px solid var(--border-soft); font-size:12px; border-radius:6px;"><span>NSE FO BhavCopy</span><span style="color:var(--muted);">Data date: 01 Jul 2026</span></div>
+                <div class="datarow" style="display:flex; justify-content:space-between; gap:10px; padding:9px 6px; border-bottom:1px solid var(--border-soft); font-size:12px; border-radius:6px;"><span>BSE FO BhavCopy</span><span style="color:var(--muted);">Data date: 01 Jul 2026</span></div>
+                <div class="datarow" style="display:flex; justify-content:space-between; gap:10px; padding:9px 6px; border-bottom:1px solid var(--border-soft); font-size:12px; border-radius:6px;"><span>ICICI Scrip Master</span><span style="color:var(--muted);">Loaded 28 Jun 2026</span></div>
+                <div class="datarow" style="display:flex; justify-content:space-between; gap:10px; padding:9px 6px; border-bottom:1px solid var(--border-soft); font-size:12px; border-radius:6px;"><span>NSE SPAN Baseline</span><span style="color:var(--muted);">Refreshed 01 Jul 2026, 19:04 IST</span></div>
+                <div class="datarow" style="display:flex; justify-content:space-between; gap:10px; padding:9px 6px; font-size:12px; border-radius:6px;"><span>BSE SPAN Baseline</span><span style="color:var(--muted);">Data date: 28 Jun 2026</span></div>
+              </div>
+            </div>
+
+            <div style="border:1px solid var(--amber); background:var(--amber-tint); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:8px;">
+              <div style="font-size:13px; font-weight:700;">BSE SPAN Baseline</div>
+              <p style="margin:0; font-size:11.5px; line-height:1.6; color:var(--muted);">BSE does not publish a direct archive URL like NSE. Download the SPAN XML (or ZIP containing it) from the <a href="#" style="color:var(--accent-strong); text-decoration:none;">BSE Risk Parameter report</a> and upload it here. Only <strong style="color:var(--text);">BSXOPT</strong> and <strong style="color:var(--text);">BKXOPT</strong> portfolios (Sensex / BANKEX on BFO) are ingested.</p>
+              <p style="margin:0; font-size:11.5px; color:var(--muted);">Loaded: BSE_MARGIN_20260628.xml (1,140 rows) · 28 Jun 2026, 11:22 IST</p>
+              <input type="file" style="font-size:11.5px; color:var(--muted);">
+              <button style="align-self:flex-start; font-size:12px; font-weight:600; color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:8px 14px; cursor:pointer;">Upload BSE SPAN file</button>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <div style="display:flex; align-items:baseline; justify-content:space-between;">
+                <div style="font-size:13px; font-weight:700;">Ingest history</div>
+                <span style="font-size:11px; color:var(--accent-strong); cursor:pointer;">Show all history (18)</span>
+              </div>
+              <div style="overflow-x:auto; border:1px solid var(--border); border-radius:10px;">
+                <table style="min-width:640px; width:100%; border-collapse:collapse; font-size:11.5px;">
+                  <thead>
+                    <tr style="background:var(--panel2); text-align:left;">
+                      <th style="padding:9px 10px; font-weight:700; color:var(--faint);">Source</th>
+                      <th style="padding:9px 10px; font-weight:700; color:var(--faint);">File date</th>
+                      <th style="padding:9px 10px; font-weight:700; color:var(--faint); text-align:right;">Rows</th>
+                      <th style="padding:9px 10px; font-weight:700; color:var(--faint);">Status</th>
+                      <th style="padding:9px 10px; font-weight:700; color:var(--faint);">Ingested</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <sc-for list="{{ ingestRows }}" as="row" hint-placeholder-count="5">
+                      <tr class="datarow" style="border-top:1px solid var(--border-soft);">
+                        <td style="padding:8px 10px;">{{ row.source }}</td>
+                        <td style="padding:8px 10px;">{{ row.fileDate }}</td>
+                        <td style="padding:8px 10px; text-align:right; font-family:'IBM Plex Mono',monospace;">{{ row.rows }}</td>
+                        <td style="padding:8px 10px;"><span style="font-size:10.5px; font-weight:600; color:var(--up); background:var(--up-tint); padding:2px 8px; border-radius:999px;">OK</span></td>
+                        <td style="padding:8px 10px; font-family:'IBM Plex Mono',monospace; color:var(--muted);">{{ row.ingestedAt }}</td>
+                      </tr>
+                    </sc-for>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </sc-if>
+
+        <!-- ============================================================ -->
+        <!-- SCREEN: EXCHANGE CALENDAR                                     -->
+        <!-- ============================================================ -->
+        <sc-if value="{{ isExchangeCalendar }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span style="width:38px; height:38px; border-radius:10px; background:var(--accent-tint); display:flex; align-items:center; justify-content:center; flex:0 0 auto;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+            </span>
+            <div>
+              <div style="font-size:18px; font-weight:700;">Exchange Calendar</div>
+              <div style="margin-top:2px; font-size:12px; color:var(--muted);">Holidays and regular session hours used for after-hours order parking.</div>
+            </div>
+          </div>
+          <section style="max-width:640px; background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:20px; display:flex; flex-direction:column; gap:16px;">
+            <p style="margin:0; font-size:11px; color:var(--faint);">Weekends are always non-trading. Source: Local · not yet synced</p>
+
+            <div style="border:1px solid var(--border); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:10px;">
+              <div style="font-size:13px; font-weight:700;">Regular session (IST)</div>
+              <div style="display:flex; gap:20px; flex-wrap:wrap;">
+                <div>
+                  <label style="font-size:10.5px; color:var(--muted); display:block; margin-bottom:4px;">Market open</label>
+                  <div style="display:flex; align-items:center; gap:6px;">
+                    <input class="tinput" type="text" value="09" style="width:44px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 6px; height:32px;">
+                    <span>:</span>
+                    <input class="tinput" type="text" value="15" style="width:44px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 6px; height:32px;">
+                  </div>
+                </div>
+                <div>
+                  <label style="font-size:10.5px; color:var(--muted); display:block; margin-bottom:4px;">Market close</label>
+                  <div style="display:flex; align-items:center; gap:6px;">
+                    <input class="tinput" type="text" value="15" style="width:44px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 6px; height:32px;">
+                    <span>:</span>
+                    <input class="tinput" type="text" value="30" style="width:44px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 6px; height:32px;">
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="border:1px solid var(--border); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:10px;">
+              <div style="display:flex; align-items:baseline; justify-content:space-between;">
+                <div style="font-size:13px; font-weight:700;">Exchange holidays</div>
+                <span style="font-size:11px; color:var(--muted);">{{ holidayCount }} configured</span>
+              </div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <input class="tinput" type="text" placeholder="dd-mm-yyyy" style="flex:1; min-width:120px; font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 10px; height:34px;">
+                <input class="tinput" type="text" placeholder="Holiday name" style="flex:2; min-width:160px; font-size:12px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 10px; height:34px;">
+                <button style="font-size:12px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:7px; padding:0 14px; height:34px; cursor:pointer;">Add</button>
+              </div>
+              <div style="display:flex; flex-direction:column;">
+                <sc-for list="{{ holidayRows }}" as="h" hint-placeholder-count="5">
+                  <div class="datarow" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 6px; border-top:1px solid var(--border-soft); font-size:12px; border-radius:6px;">
+                    <span><span style="font-family:'IBM Plex Mono',monospace; color:var(--text);">{{ h.date }}</span> <span style="color:var(--faint); margin:0 6px;">—</span> <span style="color:var(--muted);">{{ h.name }}</span></span>
+                    <button onClick="{{ h.remove }}" style="font-size:11px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:6px; padding:4px 10px; cursor:pointer;">Remove</button>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="display:flex; gap:10px;">
+              <button style="font-size:12.5px; font-weight:700; color:var(--accent-ink); background:var(--accent-strong); border:none; border-radius:8px; padding:9px 16px; cursor:pointer;">Save local calendar</button>
+            </div>
+
+            <div style="border:1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:8px;">
+              <div style="font-size:13px; font-weight:700;">Breeze Console Admin Settings</div>
+              <p style="margin:0; font-size:11.5px; color:var(--muted);">Replace your local calendar with the operator-maintained calendar from breeze-ui.com Console.</p>
+              <button style="align-self:flex-start; font-size:12px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:8px; padding:9px 14px; cursor:pointer;">Sync from Breeze Console</button>
+            </div>
+          </section>
+        </sc-if>
+
+        <!-- ============================================================ -->
+        <!-- SCREEN: STRATEGY BUILDER AUDIT LOGS                           -->
+        <!-- ============================================================ -->
+        <sc-if value="{{ isAuditLogs }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <span style="width:38px; height:38px; border-radius:10px; background:var(--accent-tint); display:flex; align-items:center; justify-content:center; flex:0 0 auto;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6M9 11h2"/></svg>
+              </span>
+              <div>
+                <div style="font-size:18px; font-weight:700;">Strategy Builder Audit Logs</div>
+                <div style="margin-top:2px; font-size:12px; color:var(--muted); max-width:480px;">Up to 10 recent propose-trades audit logs are stored on your server. Levels 1–3 provide user-friendly explainability; Level 4 is the full technical audit JSON download.</div>
+              </div>
+            </div>
+            <button style="font-size:12.5px; font-weight:700; color:var(--accent-ink); background:var(--accent-strong); border:none; border-radius:8px; padding:9px 16px; cursor:pointer; white-space:nowrap;">Download all as ZIP</button>
+          </div>
+          <section style="background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:20px; display:flex; flex-direction:column; gap:14px;">
+            <div style="overflow-x:auto; border:1px solid var(--border); border-radius:10px;">
+              <table style="min-width:760px; width:100%; border-collapse:collapse; font-size:11.5px;">
+                <thead>
+                  <tr style="background:var(--panel2); text-align:left;">
+                    <th style="padding:9px 10px; font-weight:700; color:var(--faint);">Finished</th>
+                    <th style="padding:9px 10px; font-weight:700; color:var(--faint);">Scrip</th>
+                    <th style="padding:9px 10px; font-weight:700; color:var(--faint);">Strategy</th>
+                    <th style="padding:9px 10px; font-weight:700; color:var(--faint);">PoP</th>
+                    <th style="padding:9px 10px; font-weight:700; color:var(--faint);">Margin</th>
+                    <th style="padding:9px 10px; font-weight:700; color:var(--faint);">Loss</th>
+                    <th style="padding:9px 10px; font-weight:700; color:var(--faint);">Session</th>
+                    <th style="padding:9px 10px; font-weight:700; color:var(--faint);">Transparency</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <sc-for list="{{ auditLogRows }}" as="log" hint-placeholder-count="5">
+                    <tr class="datarow" style="border-top:1px solid var(--border-soft);">
+                      <td style="padding:8px 10px; font-family:'IBM Plex Mono',monospace;">{{ log.timestamp }}</td>
+                      <td style="padding:8px 10px;">{{ log.scrip }}</td>
+                      <td style="padding:8px 10px;">{{ log.strategy }}</td>
+                      <td style="padding:8px 10px; font-family:'IBM Plex Mono',monospace;">{{ log.pop }}</td>
+                      <td style="padding:8px 10px; font-family:'IBM Plex Mono',monospace;">{{ log.margin }}</td>
+                      <td style="padding:8px 10px; font-family:'IBM Plex Mono',monospace;">{{ log.loss }}</td>
+                      <td style="padding:8px 10px; font-family:'IBM Plex Mono',monospace; color:var(--muted);">{{ log.session }}</td>
+                      <td style="padding:8px 10px;">
+                        <div style="display:flex; gap:4px;">
+                          <span style="font-size:10.5px; font-weight:600; color:var(--accent-strong); border:1px solid var(--border); border-radius:5px; padding:2px 6px;">L1</span>
+                          <span style="font-size:10.5px; font-weight:600; color:var(--accent-strong); border:1px solid var(--border); border-radius:5px; padding:2px 6px;">L2</span>
+                          <span style="font-size:10.5px; font-weight:600; color:var(--accent-strong); border:1px solid var(--border); border-radius:5px; padding:2px 6px;">L3</span>
+                          <span style="font-size:10.5px; font-weight:600; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:2px 6px;">L4</span>
+                        </div>
+                      </td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </sc-if>
+
+        <!-- ============================================================ -->
+        <!-- SCREEN: BREEZE API PLAYGROUND                                 -->
+        <!-- ============================================================ -->
+        <sc-if value="{{ isPlayground }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span style="width:38px; height:38px; border-radius:10px; background:var(--down-tint); display:flex; align-items:center; justify-content:center; flex:0 0 auto;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--down)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+            </span>
+            <div>
+              <div style="font-size:18px; font-weight:700; color:var(--down);">Breeze API Playground</div>
+              <div style="margin-top:2px; font-size:12px; color:var(--muted); max-width:600px;">Invoke ICICI Breeze REST APIs from the official breeze-connect client. Responses are live from your broker session.</div>
+            </div>
+          </div>
+          <section style="background:var(--panel); border:1px solid color-mix(in srgb, var(--down) 35%, var(--border)); border-radius:13px; padding:20px; display:flex; flex-direction:column; gap:14px;">
+            <div style="font-size:11.5px; font-weight:600; color:var(--down); background:var(--down-tint); border:1px solid color-mix(in srgb, var(--down) 40%, transparent); border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; gap:5px;">
+              <div>Danger: this playground calls live Breeze REST APIs using your broker session. Mistakes can have real consequences:</div>
+              <ul style="margin:2px 0 0; padding-left:16px; font-weight:500;">
+                <li>Place, modify, cancel, or square off orders unintentionally</li>
+                <li>Move or allocate funds between segments via set_funds</li>
+                <li>Trigger GTT orders that execute when conditions are met</li>
+                <li>Consume your daily ICICI API quota (5,000 calls/day)</li>
+              </ul>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; min-width:0;">
+              <div style="display:flex; flex-direction:column; gap:10px; min-width:0;">
+                <label style="font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--faint);">API</label>
+                <div style="position:relative;">
+                  <button type="button" onClick="{{ toggleMethodOpen }}" style="width:100%; display:flex; flex-direction:column; align-items:flex-start; gap:8px; text-align:left; background:var(--panel2); border:1px solid {{ methodTriggerBorder }}; border-radius:10px; padding:10px 12px; cursor:pointer; box-shadow:{{ methodTriggerRing }};">
+                    <span style="display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%;">
+                      <span style="font-size:14.5px; font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;">{{ selectedTitle }}</span>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto; transform:{{ methodChevronRotate }}; transition:transform .15s ease;"><polyline points="6 9 12 15 18 9"/></svg>
+                    </span>
+                    <span style="display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%;">
+                      <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;">{{ selectedMethod }}</span>
+                      <span style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:{{ selectedRiskColor }}; background:{{ selectedRiskTint }}; padding:3px 10px; border-radius:999px; white-space:nowrap; flex:0 0 auto;">{{ selectedRiskLabel }}</span>
+                    </span>
+                  </button>
+
+                  <sc-if value="{{ methodOpen }}" hint-placeholder-val="{{ false }}">
+                    <div onClick="{{ closeMethodDropdown }}" style="position:fixed; inset:0; z-index:40;"></div>
+                    <div style="position:absolute; top:calc(100% + 8px); left:0; right:0; z-index:50; background:var(--elevated); border:1px solid var(--border); border-radius:11px; box-shadow:var(--shadow); display:flex; flex-direction:column; overflow:hidden;">
+                      <div style="padding:10px; border-bottom:1px solid var(--border-soft);">
+                        <input type="text" value="{{ methodSearch }}" onChange="{{ onMethodSearchChange }}" placeholder="Search APIs..." style="width:100%; font-family:'IBM Plex Sans',sans-serif; font-size:13px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:8px 10px;">
+                      </div>
+                      <div style="max-height:340px; overflow-y:auto; padding:6px;">
+                        <sc-for list="{{ filteredApiOptionRows }}" as="opt" hint-placeholder-count="6">
+                          <sc-if value="{{ opt.isHeader }}">
+                            <div style="font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:10px 8px 6px;">{{ opt.label }}</div>
+                          </sc-if>
+                          <sc-if value="{{ opt.isItem }}">
+                            <div class="grouprow" onClick="{{ opt.onSelect }}" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 8px; border-radius:8px; cursor:pointer;">
+                              <span style="display:flex; flex-direction:column; gap:1px; min-width:0;">
+                                <span style="font-size:13px; font-weight:600; color:var(--text);">{{ opt.title }}</span>
+                                <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--faint);">{{ opt.method }}</span>
+                              </span>
+                              <span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:{{ opt.badgeColor }}; background:{{ opt.badgeTint }}; padding:3px 9px; border-radius:999px; flex:0 0 auto;">{{ opt.badgeShort }}</span>
+                            </div>
+                          </sc-if>
+                        </sc-for>
+                        <sc-if value="{{ noMethodResults }}">
+                          <div style="padding:16px 8px; font-size:12px; color:var(--faint); text-align:center;">No APIs match "{{ methodSearch }}"</div>
+                        </sc-if>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+                <sc-if value="{{ selectedDescription }}">
+                  <p style="margin:0; font-size:11.5px; color:var(--muted);">{{ selectedDescription }}</p>
+                </sc-if>
+                <sc-if value="{{ selectedNotes }}">
+                  <p style="margin:0; font-size:11px; line-height:1.6; color:var(--amber); background:var(--amber-tint); border:1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius:8px; padding:8px 10px;">{{ selectedNotes }}</p>
+                </sc-if>
+                <sc-if value="{{ selectedIsRisky }}">
+                  <p style="margin:0; font-size:11px; font-weight:600; color:var(--down); background:var(--down-tint); border:1px solid color-mix(in srgb, var(--down) 40%, transparent); border-radius:8px; padding:8px 10px;">This API can modify live orders, funds, or GTT triggers. Double-check every parameter before firing.</p>
+                </sc-if>
+
+                <div style="border:1px solid var(--border); border-radius:9px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+                  <div style="font-size:12.5px; font-weight:700;">Parameters</div>
+                  <p style="margin:0; font-size:10.5px; line-height:1.6; color:var(--amber); background:var(--amber-tint); border:1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius:7px; padding:7px 9px;">Values are interpreted as Python/JSON literals where possible (lists, booleans, numbers). For multiple stock tokens use ['4.1!44684','4.1!44734'] — don't wrap the whole expression in extra quotes.</p>
+                  <sc-if value="{{ selectedHasNoParams }}">
+                    <p style="margin:0; font-size:11.5px; color:var(--faint);">No parameters required.</p>
+                  </sc-if>
+                  <sc-for list="{{ selectedParams }}" as="p" hint-placeholder-count="3">
+                    <label style="font-size:11px; color:var(--muted); display:block;">
+                      {{ p.label }}<sc-if value="{{ p.required }}"> *</sc-if>
+                      <sc-if value="{{ p.isJson }}">
+                        <textarea rows="2" placeholder="{{ p.placeholder }}" value="{{ p.value }}" onChange="{{ p.onChange }}" style="display:block; width:100%; margin-top:3px; font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:6px 10px; resize:vertical;"></textarea>
+                      </sc-if>
+                      <sc-if value="{{ p.isText }}">
+                        <input class="tinput" type="text" placeholder="{{ p.placeholder }}" value="{{ p.value }}" onChange="{{ p.onChange }}" style="display:block; width:100%; margin-top:3px; font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:7px; padding:0 10px; height:32px;">
+                      </sc-if>
+                      <sc-if value="{{ p.help }}">
+                        <span style="display:block; margin-top:3px; font-size:10.5px; color:var(--faint);">{{ p.help }}</span>
+                      </sc-if>
+                    </label>
+                  </sc-for>
+                </div>
+                <button style="align-self:flex-start; font-size:12.5px; font-weight:700; color:#fff; background:var(--down-btn); border:none; border-radius:8px; padding:9px 18px; cursor:pointer;">Fire API</button>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:6px; min-width:0;">
+                <div style="display:flex; align-items:center; justify-content:space-between;">
+                  <div style="font-size:12.5px; font-weight:700;">Response</div>
+                  <button style="font-size:11px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:6px; padding:4px 10px; cursor:pointer;">Copy</button>
+                </div>
+                <pre style="flex:1; min-height:200px; margin:0; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:12px; overflow:auto; white-space:pre-wrap; word-break:break-word;">Response will appear here after you fire an API.</pre>
+              </div>
+            </div>
+          </section>
+
+          <section style="background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:20px; display:flex; flex-direction:column; gap:14px;">
+            <div>
+              <h3 style="margin:0; font-size:15.5px; font-weight:700;">WebSocket (market hours)</h3>
+              <p style="margin:6px 0 0; font-size:12px; color:var(--muted); max-width:600px;">Connect to Breeze exchange-quote stream for NFO/BFO options. Subscribe to a contract, then watch ticks below.</p>
+            </div>
+            <p style="margin:0; font-size:11.5px; color:{{ wsStatusColor }}; background:{{ wsStatusBg }}; border:1px solid {{ wsStatusBorder }}; border-radius:8px; padding:9px 12px;">{{ wsStatusHint }}</p>
+            <div style="display:flex; flex-wrap:wrap; gap:10px;">
+              <button onClick="{{ wsConnect }}" style="font-size:12px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:8px; padding:8px 14px; cursor:pointer;">Connect</button>
+              <button onClick="{{ wsRelease }}" style="font-size:12px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:8px; padding:8px 14px; cursor:pointer;">Release subscriptions</button>
+              <button onClick="{{ wsDisconnect }}" style="font-size:12px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:8px; padding:8px 14px; cursor:pointer;">Disconnect socket</button>
+              <button onClick="{{ wsStartStream }}" style="font-size:12px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:8px; padding:8px 14px; cursor:pointer;">Start tick stream</button>
+            </div>
+            <p style="margin:0; font-size:11px; color:var(--amber);">Frequent connect/disconnect cycles may be treated as connection thrashing by ICICI. Prefer <strong>Release subscriptions</strong> when you only want to stop ticks; use <strong>Disconnect socket</strong> only when you need to tear down the WebSocket entirely.</p>
+            <p style="margin:0; font-size:11px; color:var(--faint);">WebSocket ticks only arrive during NSE/BSE market hours.</p>
+
+            <div style="display:flex; flex-direction:column; gap:6px; width:100%; max-width:320px;">
+              <label style="font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--faint);">Subscribe mode</label>
+              <div style="position:relative;">
+                <button type="button" onClick="{{ toggleWsModeOpen }}" style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px; text-align:left; background:var(--panel2); border:1px solid {{ wsModeTriggerBorder }}; border-radius:9px; padding:9px 11px; cursor:pointer; box-shadow:{{ wsModeTriggerRing }};">
+                  <span style="font-size:12.5px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ wsModeLabel }}</span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto; transform:{{ wsModeChevronRotate }}; transition:transform .15s ease;"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <sc-if value="{{ wsModeOpen }}" hint-placeholder-val="{{ false }}">
+                  <div onClick="{{ closeWsModeDropdown }}" style="position:fixed; inset:0; z-index:40;"></div>
+                  <div style="position:absolute; top:calc(100% + 6px); left:0; right:0; z-index:50; background:var(--elevated); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); padding:5px; display:flex; flex-direction:column; gap:1px;">
+                    <sc-for list="{{ wsModeOptionRows }}" as="m" hint-placeholder-count="6">
+                      <div class="grouprow" onClick="{{ m.onSelect }}" style="display:flex; align-items:center; gap:9px; padding:8px 9px; border-radius:7px; cursor:pointer; background:{{ m.rowBg }};">
+                        <span style="width:16px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; color:var(--accent-strong);">
+                          <sc-if value="{{ m.selected }}">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                          </sc-if>
+                        </span>
+                        <span style="font-size:12.5px; font-weight:{{ m.weight }}; color:var(--text);">{{ m.label }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+
+            <p style="margin:0; font-size:11px; line-height:1.6; color:var(--amber); background:var(--amber-tint); border:1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius:8px; padding:8px 10px;">Values are interpreted as Python/JSON literals where possible (lists, booleans, numbers). Be careful with quotes — for multiple stock tokens use ['4.1!44684','4.1!44734']; do not wrap the whole expression in extra quotes.</p>
+            <p style="margin:0; font-size:11px; color:var(--faint);">Fields depend on subscription type per ICICI docs. Only filled fields are sent.</p>
+
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; background:var(--panel2); border:1px solid var(--border); border-radius:10px; padding:14px;">
+              <sc-for list="{{ wsFieldRows }}" as="f" hint-placeholder-count="4">
+                <label style="font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em;">{{ f.key }}
+                  <input class="tinput" type="text" placeholder="{{ f.placeholder }}" value="{{ f.value }}" onChange="{{ f.onChange }}" style="display:block; width:100%; margin-top:4px; font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:7px; padding:0 10px; height:32px;">
+                </label>
+              </sc-for>
+            </div>
+            <button onClick="{{ wsSubscribe }}" style="align-self:flex-start; font-size:12.5px; font-weight:700; color:var(--accent-ink); background:var(--accent-strong); border:none; border-radius:8px; padding:9px 18px; cursor:pointer;">Subscribe</button>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; min-width:0;">
+              <div style="display:flex; flex-direction:column; gap:6px; min-width:0;">
+                <div style="font-size:12.5px; font-weight:700;">ICICI command log</div>
+                <pre style="min-height:140px; max-height:220px; margin:0; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--muted); background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:12px; overflow:auto; white-space:pre-wrap; word-break:break-word;">{{ wsLogText }}</pre>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:6px; min-width:0;">
+                <div style="font-size:12.5px; font-weight:700;">Latest operation</div>
+                <pre style="min-height:140px; max-height:220px; margin:0; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--muted); background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:12px; overflow:auto; white-space:pre-wrap; word-break:break-word;">{{ wsLatestOpText }}</pre>
+              </div>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:6px; min-width:0;">
+              <div style="font-size:12.5px; font-weight:700;">Ticks</div>
+              <pre style="min-height:100px; max-height:180px; margin:0; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--muted); background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:12px; overflow:auto; white-space:pre-wrap; word-break:break-word;">{{ wsTicksText }}</pre>
+            </div>
+          </section>
+        </sc-if>
+
+        <!-- ============================================================ -->
+        <!-- SCREEN: DELETE ACCOUNT                                        -->
+        <!-- ============================================================ -->
+        <sc-if value="{{ isDelete }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span style="width:38px; height:38px; border-radius:10px; background:var(--down-tint); display:flex; align-items:center; justify-content:center; flex:0 0 auto;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--down)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+            </span>
+            <div>
+              <div style="font-size:18px; font-weight:700; color:var(--down);">Delete Account</div>
+              <div style="margin-top:2px; font-size:12px; color:var(--muted);">Permanently remove your account and stored broker credentials.</div>
+            </div>
+          </div>
+          <section style="max-width:480px; background:var(--panel); border:1px solid color-mix(in srgb, var(--down) 35%, var(--border)); border-radius:13px; padding:20px; display:flex; flex-direction:column; gap:14px;">
+            <p style="margin:0; font-size:12px; line-height:1.6; color:var(--muted);">Remove your Breeze Modern account and stored broker API credentials. This removes your account from Breeze Modern only — it does not affect your ICICI account or release AWS resources. This cannot be undone.</p>
+            <div style="display:flex; flex-direction:column; gap:5px;">
+              <label style="font-size:10.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--faint);">ICICI User ID</label>
+              <input class="tinput" type="text" value="AM4821" style="width:100%; font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:0 12px; height:40px;">
+            </div>
+            <div style="display:flex; flex-direction:column; gap:5px;">
+              <label style="font-size:10.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--faint);">Confirm with app password</label>
+              <input class="tinput" type="password" placeholder="App password" style="width:100%; font-size:13.5px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:0 12px; height:40px;">
+            </div>
+            <button style="align-self:flex-start; font-size:13px; font-weight:700; color:#fff; background:var(--down-btn); border:none; border-radius:9px; padding:11px 20px; cursor:pointer;">Delete account</button>
+          </section>
+        </sc-if>
+
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    theme: "dark",
+    screen: "credentials",
+    marginSourceOn: false,
+    scheduleOn: true,
+    holidays: [
+      { date: "15-08-2026", name: "Independence Day" },
+      { date: "27-08-2026", name: "Ganesh Chaturthi" },
+      { date: "02-10-2026", name: "Gandhi Jayanti" },
+      { date: "09-11-2026", name: "Diwali (Laxmi Pujan)" },
+      { date: "25-12-2026", name: "Christmas" },
+    ],
+    wsStatusHint: "Not connected. Click Connect, fill contract fields, Subscribe, then Start tick stream.",
+    wsStatusKind: "idle",
+    wsLogText: "Commands and ICICI responses appear here after Connect, Subscribe, Disconnect, or Start tick stream.",
+    wsLatestOpText: "ICICI response will appear here after Connect, Subscribe, or Disconnect.",
+    wsTicksText: "Ticks appear after connect, subscribe, and start stream (during market hours).",
+
+    selectedMethod: "get_customer_details",
+    paramValues: {},
+    wsMode: "fno_quotes",
+    wsForm: {},
+    methodOpen: false,
+    methodSearch: "",
+    wsModeOpen: false,
+  };
+
+  componentDidMount() {
+    try {
+      const saved = localStorage.getItem("breeze-tp-theme");
+      if (saved === "light" || saved === "dark") {
+        this.setState({ theme: saved });
+      }
+    } catch (e) {}
+  }
+
+  toggleTheme = () => {
+    this.setState((s) => {
+      const next = s.theme === "light" ? "dark" : "light";
+      try { localStorage.setItem("breeze-tp-theme", next); } catch (e) {}
+      return { theme: next };
+    });
+  };
+
+  goTo = (screen) => (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    this.setState({ screen });
+    if (typeof window !== "undefined") window.scrollTo(0, 0);
+  };
+
+  toggleMarginSource = () => this.setState((s) => ({ marginSourceOn: !s.marginSourceOn }));
+  toggleSchedule = () => this.setState((s) => ({ scheduleOn: !s.scheduleOn }));
+
+  removeHoliday = (date) => () => {
+    this.setState((s) => ({ holidays: s.holidays.filter((h) => h.date !== date) }));
+  };
+
+  wsConnect = () => this.setState({
+    wsStatusHint: "ICICI socket connected.",
+    wsStatusKind: "ok",
+    wsLogText: "[12:04:31] ws_connect · ok=true\ncommand: { sdk_method: \"ws_connect\", sdk_args: {} }\nresponse: { connected: true }",
+    wsLatestOpText: JSON.stringify({ connected: true, ok: true }, null, 2),
+  });
+  wsRelease = () => this.setState({
+    wsStatusHint: "Subscriptions released. ICICI socket remains connected.",
+    wsStatusKind: "idle",
+    wsLatestOpText: JSON.stringify({ connected: true, ok: true, active_subscriptions: 0 }, null, 2),
+  });
+  wsDisconnect = () => this.setState({
+    wsStatusHint: "Socket disconnected and subscriptions cleared.",
+    wsStatusKind: "idle",
+    wsLatestOpText: JSON.stringify({ connected: false, ok: true }, null, 2),
+  });
+  wsSubscribe = () => this.setState({
+    wsStatusHint: "Subscribed · 1 active subscription on ICICI socket.",
+    wsStatusKind: "ok",
+    wsLogText: "[12:05:02] subscribe_feeds · ok=true\ncommand: { sdk_method: \"subscribe_feeds\", sdk_args: { stock_token: \"4.1!44684\" } }\nresponse: { active_subscriptions: 1 }",
+    wsLatestOpText: JSON.stringify({ ok: true, active_subscriptions: 1 }, null, 2),
+  });
+  wsStartStream = () => this.setState({
+    wsStatusHint: "Tick stream open · ICICI socket connected.",
+    wsStatusKind: "ok",
+    wsTicksText: JSON.stringify({ stock_token: "4.1!44684", ltp: 24512.35, ltq: 75, ts: "12:05:41" }, null, 2),
+  });
+
+  toLabel = (name) => name.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+
+  apiCatalog = [
+    { method: "get_customer_details", title: "Get Customer Details", risk: "read", description: "Customer profile and exchange status using your logged-in broker session.", params: [] },
+    { method: "get_demat_holdings", title: "Get Demat Holdings", risk: "read", description: "Demat holding details.", params: [] },
+    { method: "get_funds", title: "Get Funds", risk: "read", description: "Fund allocation and balances.", params: [] },
+    { method: "set_funds", title: "Set Funds", risk: "funds", notes: "Moves funds between segments. Use with extreme care.", params: [
+      { name: "transaction_type", required: true, placeholder: "debit", help: 'Use "credit" to add funds.' },
+      { name: "amount", required: true, placeholder: "200" },
+      { name: "segment", required: true, placeholder: "Equity", help: "Equity, FNO, or Commodity" },
+    ] },
+    { method: "get_historical_data", title: "Get Historical Data", risk: "read", notes: "Interval: 1minute, 5minute, 30minute, or 1day.", params: [
+      { name: "interval", required: true, placeholder: "1minute" },
+      { name: "from_date", required: true, placeholder: "2025-02-03T09:21:00.000Z" },
+      { name: "to_date", required: true, placeholder: "2025-02-03T09:22:00.000Z" },
+      { name: "stock_code", required: true, placeholder: "NIFTY" },
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "product_type", placeholder: "futures" },
+      { name: "expiry_date", placeholder: "2025-02-27T07:00:00.000Z" },
+      { name: "right", placeholder: "others" },
+      { name: "strike_price", placeholder: "0" },
+    ] },
+    { method: "get_historical_data_v2", title: "Get Historical Data V2", risk: "read", notes: "Interval: 1minute, 5minute, 30minute, or 1day.", params: [
+      { name: "interval", required: true, placeholder: "1minute" },
+      { name: "from_date", required: true, placeholder: "2025-02-03T09:21:00.000Z" },
+      { name: "to_date", required: true, placeholder: "2025-02-03T09:22:00.000Z" },
+      { name: "stock_code", required: true, placeholder: "NIFTY" },
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "product_type", placeholder: "futures" },
+      { name: "expiry_date", placeholder: "2025-02-27T07:00:00.000Z" },
+      { name: "right", placeholder: "others" },
+      { name: "strike_price", placeholder: "0" },
+    ] },
+    { method: "get_margin", title: "Get Margin", risk: "read", params: [
+      { name: "exchange_code", required: true, placeholder: "NSE" },
+    ] },
+    { method: "place_order", title: "Place Order", risk: "trade", notes: "Market orders are converted to aggressive limit orders per ICICI policy.", params: [
+      { name: "stock_code", required: true },
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "product", required: true, placeholder: "futures" },
+      { name: "action", required: true, placeholder: "buy" },
+      { name: "order_type", required: true, placeholder: "limit" },
+      { name: "stoploss", placeholder: "0" },
+      { name: "quantity", required: true, placeholder: "75" },
+      { name: "price", required: true, placeholder: "23700" },
+      { name: "validity", placeholder: "day" },
+      { name: "validity_date", placeholder: "2025-02-05T06:00:00.000Z" },
+      { name: "disclosed_quantity", placeholder: "0" },
+      { name: "expiry_date", placeholder: "2025-02-27T06:00:00.000Z" },
+      { name: "right", placeholder: "call" },
+      { name: "strike_price", placeholder: "24800" },
+      { name: "user_remark", placeholder: "" },
+    ] },
+    { method: "get_order_detail", title: "Get Order Detail", risk: "read", params: [
+      { name: "exchange_code", required: true, placeholder: "NSE" },
+      { name: "order_id", required: true },
+    ] },
+    { method: "get_order_list", title: "Get Order List", risk: "read", params: [
+      { name: "exchange_code", required: true, placeholder: "NSE" },
+      { name: "from_date", required: true, placeholder: "2025-02-05T10:00:00.000Z" },
+      { name: "to_date", required: true, placeholder: "2025-02-05T10:00:00.000Z" },
+    ] },
+    { method: "cancel_order", title: "Cancel Order", risk: "trade", params: [
+      { name: "exchange_code", required: true, placeholder: "NSE" },
+      { name: "order_id", required: true },
+    ] },
+    { method: "modify_order", title: "Modify Order", risk: "trade", params: [
+      { name: "order_id", required: true },
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "order_type", placeholder: "limit" },
+      { name: "stoploss", placeholder: "0" },
+      { name: "quantity", required: true, placeholder: "75" },
+      { name: "price", required: true, placeholder: "0.30" },
+      { name: "validity", placeholder: "day" },
+      { name: "disclosed_quantity", placeholder: "0" },
+      { name: "validity_date", placeholder: "2025-02-05T06:00:00.000Z" },
+    ] },
+    { method: "get_portfolio_holdings", title: "Get Portfolio Holdings", risk: "read", params: [
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "from_date", placeholder: "2024-08-01T06:00:00.000Z" },
+      { name: "to_date", placeholder: "2024-09-19T06:00:00.000Z" },
+      { name: "stock_code", placeholder: "" },
+      { name: "portfolio_type", placeholder: "" },
+    ] },
+    { method: "get_portfolio_positions", title: "Get Portfolio Positions", risk: "read", params: [] },
+    { method: "get_quotes", title: "Get Quotes", risk: "read", params: [
+      { name: "stock_code", required: true, placeholder: "NIFTY" },
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "expiry_date", placeholder: "2025-02-27T06:00:00.000Z" },
+      { name: "product_type", placeholder: "futures" },
+      { name: "right", placeholder: "others" },
+      { name: "strike_price", placeholder: "0" },
+    ] },
+    { method: "get_option_chain_quotes", title: "Get Option Chain Quotes", risk: "read", params: [
+      { name: "stock_code", required: true, placeholder: "NIFTY" },
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "product_type", placeholder: "options" },
+      { name: "right", placeholder: "call" },
+      { name: "expiry_date", placeholder: "2025-08-28T06:00:00.000Z" },
+      { name: "strike_price", help: "Optional; omit for full chain when combined with expiry/right." },
+    ] },
+    { method: "square_off", title: "Square Off", risk: "trade", notes: "Squares off an open position. Can place real orders.", params: [
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "product", required: true, placeholder: "options" },
+      { name: "stock_code", required: true, placeholder: "NIFTY" },
+      { name: "expiry_date", placeholder: "2025-02-27T06:00:00.000Z" },
+      { name: "right", placeholder: "Call" },
+      { name: "strike_price", placeholder: "24000" },
+      { name: "action", required: true, placeholder: "sell" },
+      { name: "order_type", placeholder: "limit" },
+      { name: "validity", placeholder: "day" },
+      { name: "stoploss", placeholder: "0" },
+      { name: "quantity", required: true, placeholder: "75" },
+      { name: "price", placeholder: "0" },
+      { name: "validity_date", placeholder: "2025-02-05T06:00:00.000Z" },
+      { name: "trade_password", placeholder: "" },
+      { name: "disclosed_quantity", placeholder: "0" },
+    ] },
+    { method: "get_trade_list", title: "Get Trade List", risk: "read", params: [
+      { name: "from_date", required: true, placeholder: "2025-02-05T06:00:00.000Z" },
+      { name: "to_date", required: true, placeholder: "2025-02-05T06:00:00.000Z" },
+      { name: "exchange_code", required: true, placeholder: "NSE" },
+      { name: "product_type", placeholder: "" },
+      { name: "action", placeholder: "" },
+      { name: "stock_code", placeholder: "" },
+    ] },
+    { method: "get_trade_detail", title: "Get Trade Detail", risk: "read", params: [
+      { name: "exchange_code", required: true, placeholder: "NSE" },
+      { name: "order_id", required: true },
+    ] },
+    { method: "get_names", title: "Get Names", risk: "read", description: "ICICI stock codes and tokens for a symbol.", params: [
+      { name: "exchange_code", required: true, placeholder: "NSE" },
+      { name: "stock_code", required: true, placeholder: "TATASTEEL" },
+    ] },
+    { method: "preview_order", title: "Preview Order", risk: "read", params: [
+      { name: "stock_code", required: true, placeholder: "ITC" },
+      { name: "exchange_code", required: true, placeholder: "NSE" },
+      { name: "product", required: true, placeholder: "margin" },
+      { name: "order_type", required: true, placeholder: "limit" },
+      { name: "price", required: true, placeholder: "440" },
+      { name: "action", required: true, placeholder: "buy" },
+      { name: "quantity", required: true, placeholder: "1" },
+      { name: "specialflag", placeholder: "N" },
+    ] },
+    { method: "limit_calculator", title: "Limit Calculator", risk: "read", params: [
+      { name: "strike_price", required: true, placeholder: "24000" },
+      { name: "product_type", required: true, placeholder: "options" },
+      { name: "expiry_date", required: true, placeholder: "06-Feb-2025" },
+      { name: "underlying", required: true, placeholder: "NIFTY" },
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "order_flow", required: true, placeholder: "Buy" },
+      { name: "stop_loss_trigger", placeholder: "8" },
+      { name: "option_type", placeholder: "Call" },
+      { name: "source_flag", placeholder: "P" },
+      { name: "limit_rate", placeholder: "7.5" },
+      { name: "order_reference", placeholder: "" },
+      { name: "available_quantity", placeholder: "" },
+      { name: "market_type", placeholder: "limit" },
+      { name: "fresh_order_limit", placeholder: "10.95" },
+    ] },
+    { method: "margin_calculator", title: "Margin Calculator", risk: "read", params: [
+      { name: "margin_list", type: "json", required: true, label: "Margin list (JSON array)", placeholder: '[{"stock_code":"NIFTY","quantity":"75","product":"futures","action":"buy","price":"23400","expiry_date":"27-Feb-2025","right":"others","strike_price":"0"}]', help: "Array of leg objects per breeze-connect docs." },
+      { name: "exchange_code", placeholder: "NFO" },
+    ] },
+    { method: "gtt_three_leg_place_order", title: "GTT Three Leg Place Order", risk: "gtt", params: [
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "stock_code", required: true, placeholder: "NIFTY" },
+      { name: "product", required: true, placeholder: "options" },
+      { name: "quantity", required: true, placeholder: "75" },
+      { name: "expiry_date", required: true },
+      { name: "right", required: true, placeholder: "call" },
+      { name: "strike_price", required: true, placeholder: "24000" },
+      { name: "gtt_type", required: true, placeholder: "cover_oco" },
+      { name: "fresh_order_action", placeholder: "buy" },
+      { name: "fresh_order_price", placeholder: "8" },
+      { name: "fresh_order_type", placeholder: "limit" },
+      { name: "index_or_stock", placeholder: "index" },
+      { name: "trade_date", placeholder: "2025-02-05T06:00:00.00Z" },
+      { name: "order_details", type: "json", required: true, label: "Order details (JSON array)" },
+    ] },
+    { method: "gtt_three_leg_modify_order", title: "GTT Three Leg Modify Order", risk: "gtt", params: [
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "gtt_order_id", required: true },
+      { name: "gtt_type", required: true, placeholder: "oco" },
+      { name: "order_details", type: "json", required: true, label: "Order details (JSON array)" },
+    ] },
+    { method: "gtt_three_leg_cancel_order", title: "GTT Three Leg Cancel Order", risk: "gtt", params: [
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "gtt_order_id", required: true },
+    ] },
+    { method: "gtt_single_leg_place_order", title: "GTT Single Leg Place Order", risk: "gtt", params: [
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "stock_code", required: true, placeholder: "NIFTY" },
+      { name: "product", required: true, placeholder: "options" },
+      { name: "quantity", required: true, placeholder: "75" },
+      { name: "expiry_date", required: true },
+      { name: "right", required: true, placeholder: "call" },
+      { name: "strike_price", required: true, placeholder: "24000" },
+      { name: "gtt_type", required: true, placeholder: "single" },
+      { name: "index_or_stock", placeholder: "index" },
+      { name: "trade_date", placeholder: "2025-02-05T06:00:00.00Z" },
+      { name: "order_details", type: "json", required: true, label: "Order details (JSON array)" },
+    ] },
+    { method: "gtt_single_leg_modify_order", title: "GTT Single Leg Modify Order", risk: "gtt", params: [
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "gtt_order_id", required: true },
+      { name: "gtt_type", required: true, placeholder: "single" },
+      { name: "order_details", type: "json", required: true, label: "Order details (JSON array)" },
+    ] },
+    { method: "gtt_single_leg_cancel_order", title: "GTT Single Leg Cancel Order", risk: "gtt", params: [
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "gtt_order_id", required: true },
+    ] },
+    { method: "gtt_order_book", title: "GTT Order Book", risk: "read", params: [
+      { name: "exchange_code", required: true, placeholder: "NFO" },
+      { name: "from_date", required: true, placeholder: "2025-02-05T06:00:00.00Z" },
+      { name: "to_date", required: true, placeholder: "2025-02-05T06:00:00.00Z" },
+    ] },
+    { method: "ws_connect", title: "WebSocket Connect", risk: "read", description: "Open Breeze tick-by-tick WebSocket (market hours).", notes: "Use the WebSocket section below for a live SSE stream after connect.", params: [] },
+    { method: "ws_disconnect", title: "WebSocket Disconnect", risk: "read", params: [] },
+    { method: "subscribe_feeds", title: "Subscribe Feeds (WebSocket)", risk: "read", notes: "Use one subscription pattern at a time (token, contract quotes, contract OHLCV, or order notifications). The WebSocket section below uses a mode selector.", params: [
+      { name: "stock_token", placeholder: "4.1!2885 or ['4.1!3499','4.1!2885']" },
+      { name: "exchange_code", placeholder: "NFO" },
+      { name: "stock_code", placeholder: "NIFTY" },
+      { name: "product_type", placeholder: "options" },
+      { name: "expiry_date", placeholder: "27-Feb-2025" },
+      { name: "strike_price", placeholder: "24000" },
+      { name: "right", placeholder: "call" },
+      { name: "get_market_depth", placeholder: "true" },
+      { name: "get_exchange_quotes", placeholder: "true" },
+      { name: "interval", placeholder: "1minute" },
+      { name: "get_order_notification", placeholder: "true" },
+    ] },
+  ];
+
+  riskGroupLabel = { read: "Read-only", funds: "Funds", trade: "Trade (orders)", gtt: "GTT" };
+  riskGroupOrder = ["read", "funds", "trade", "gtt"];
+  riskColors = {
+    read: { color: "var(--up)", tint: "var(--up-tint)" },
+    funds: { color: "var(--amber)", tint: "var(--amber-tint)" },
+    trade: { color: "var(--down)", tint: "var(--down-tint)" },
+    gtt: { color: "var(--gtt)", tint: "var(--gtt-tint)" },
+  };
+  riskBadgeShort = { read: "READ", funds: "FUNDS", trade: "TRADE", gtt: "GTT" };
+
+  wsModeOptionsList = [
+    { value: "fno_quotes", label: "F&O exchange quotes" },
+    { value: "fno_ohlcv", label: "F&O OHLCV (interval)" },
+    { value: "cash_quotes", label: "Cash / index exchange quotes" },
+    { value: "token_quotes", label: "Stock token exchange quotes" },
+    { value: "token_ohlcv", label: "Stock token OHLCV" },
+    { value: "order_notifications", label: "Order notifications" },
+  ];
+
+  wsFieldsByMode = {
+    fno_quotes: ["exchange_code", "stock_code", "expiry_date", "strike_price", "right", "product_type", "get_market_depth", "get_exchange_quotes"],
+    fno_ohlcv: ["exchange_code", "stock_code", "expiry_date", "strike_price", "right", "product_type", "get_market_depth", "get_exchange_quotes", "interval"],
+    cash_quotes: ["exchange_code", "stock_code", "product_type", "get_market_depth", "get_exchange_quotes"],
+    token_quotes: ["stock_token"],
+    token_ohlcv: ["stock_token", "interval"],
+    order_notifications: ["get_order_notification"],
+  };
+
+  wsFieldPlaceholders = {
+    stock_token: "4.1!2885 or ['4.1!3499','4.1!2885']",
+    exchange_code: "NFO / BFO",
+    stock_code: "NIFTY / BSESEN",
+    product_type: "options / cash / futures",
+    expiry_date: "13-Feb-2025",
+    strike_price: "23550",
+    right: "call",
+    get_market_depth: "true / false",
+    get_exchange_quotes: "true / false",
+    interval: "1minute",
+    get_order_notification: "true",
+  };
+
+  setParamValue = (name, value) => {
+    this.setState((s) => ({ paramValues: { ...s.paramValues, [name]: value } }));
+  };
+  onMethodChange = (e) => this.setState({ selectedMethod: e.target.value, paramValues: {} });
+  onWsModeChange = (e) => this.setState({ wsMode: e.target.value, wsForm: {} });
+  toggleMethodOpen = () => this.setState((s) => ({ methodOpen: !s.methodOpen, methodSearch: "" }));
+  closeMethodDropdown = () => this.setState({ methodOpen: false });
+  onMethodSearchChange = (e) => this.setState({ methodSearch: e.target.value });
+  selectMethod = (method) => () => this.setState({ selectedMethod: method, paramValues: {}, methodOpen: false, methodSearch: "" });
+  toggleWsModeOpen = () => this.setState((s) => ({ wsModeOpen: !s.wsModeOpen }));
+  closeWsModeDropdown = () => this.setState({ wsModeOpen: false });
+  selectWsMode = (value) => () => this.setState({ wsMode: value, wsForm: {}, wsModeOpen: false });
+  setWsField = (key, value) => {
+    this.setState((s) => ({ wsForm: { ...s.wsForm, [key]: value } }));
+  };
+
+  auditLogs = [
+    { timestamp: "01-Jul-2026, 12:44:09", scrip: "NIFTY", strategy: "Income", pop: "68%", margin: "1.8 L", loss: "0.6 L", session: "a1f92c3e…" },
+    { timestamp: "30-Jun-2026, 15:20:41", scrip: "BANKNIFTY", strategy: "Bearish", pop: "54%", margin: "2.4 L", loss: "1.1 L", session: "77bd410a…" },
+    { timestamp: "29-Jun-2026, 09:58:02", scrip: "NIFTY", strategy: "Income", pop: "71%", margin: "1.6 L", loss: "0.5 L", session: "c209ee61…" },
+    { timestamp: "26-Jun-2026, 11:12:37", scrip: "FINNIFTY", strategy: "Bullish", pop: "62%", margin: "1.9 L", loss: "0.8 L", session: "9e13a02f…" },
+    { timestamp: "24-Jun-2026, 14:03:55", scrip: "NIFTY", strategy: "Income", pop: "66%", margin: "1.7 L", loss: "0.6 L", session: "3fa8807c…" },
+  ];
+
+  navStyleFor(key, danger) {
+    const active = this.state.screen === key;
+    if (danger) {
+      return active
+        ? { bg: "var(--down-tint)", color: "var(--down)", weight: "700", bar: "block" }
+        : { bg: "transparent", color: "var(--down)", weight: "500", bar: "none" };
+    }
+    return active
+      ? { bg: "var(--accent-tint)", color: "var(--text)", weight: "600", bar: "block" }
+      : { bg: "transparent", color: "var(--muted)", weight: "500", bar: "none" };
+  }
+
+  buildApiOptionRows() {
+    const rows = [];
+    for (const level of this.riskGroupOrder) {
+      const items = this.apiCatalog
+        .filter((e) => e.risk === level)
+        .slice()
+        .sort((a, b) => a.title.localeCompare(b.title));
+      if (!items.length) continue;
+      rows.push({ isHeader: true, isItem: false, label: this.riskGroupLabel[level] });
+      for (const it of items) {
+        rows.push({ isHeader: false, isItem: true, method: it.method, title: it.title });
+      }
+    }
+    return rows;
+  }
+
+  buildFilteredApiOptionRows(search) {
+    const q = (search || "").trim().toLowerCase();
+    const rows = [];
+    for (const level of this.riskGroupOrder) {
+      const items = this.apiCatalog
+        .filter((e) => e.risk === level)
+        .filter((e) => !q || e.title.toLowerCase().includes(q) || e.method.toLowerCase().includes(q))
+        .slice()
+        .sort((a, b) => a.title.localeCompare(b.title));
+      if (!items.length) continue;
+      rows.push({ isHeader: true, isItem: false, label: this.riskGroupLabel[level] });
+      for (const it of items) {
+        rows.push({
+          isHeader: false,
+          isItem: true,
+          method: it.method,
+          title: it.title,
+          badgeShort: this.riskBadgeShort[it.risk],
+          badgeColor: this.riskColors[it.risk].color,
+          badgeTint: this.riskColors[it.risk].tint,
+          onSelect: this.selectMethod(it.method),
+        });
+      }
+    }
+    return rows;
+  }
+
+  renderVals() {
+    const isLight = this.state.theme === "light";
+    const s = this.state.screen;
+    const selectedEntry = this.apiCatalog.find((e) => e.method === this.state.selectedMethod) || this.apiCatalog[0];
+    return {
+      themeClass: isLight ? "theme-light" : "",
+      showSun: !isLight,
+      showMoon: isLight,
+      toggleTheme: this.toggleTheme,
+
+      isCredentials: s === "credentials",
+      isLimits: s === "limits",
+      isApiUsage: s === "apiUsage",
+      isGenAi: s === "genAi",
+      isRefData: s === "refData",
+      isExchangeCalendar: s === "exchangeCalendar",
+      isAuditLogs: s === "auditLogs",
+      isPlayground: s === "playground",
+      isDelete: s === "delete",
+
+      goIndex: this.goTo("credentials"),
+      goCredentials: this.goTo("credentials"),
+      goLimits: this.goTo("limits"),
+      goApiUsage: this.goTo("apiUsage"),
+      goGenAi: this.goTo("genAi"),
+      goRefData: this.goTo("refData"),
+      goExchangeCalendar: this.goTo("exchangeCalendar"),
+      goAuditLogs: this.goTo("auditLogs"),
+      goPlayground: this.goTo("playground"),
+      goDelete: this.goTo("delete"),
+
+      nav: {
+        credentials: this.navStyleFor("credentials"),
+        limits: this.navStyleFor("limits"),
+        apiUsage: this.navStyleFor("apiUsage"),
+        genAi: this.navStyleFor("genAi"),
+        refData: this.navStyleFor("refData"),
+        exchangeCalendar: this.navStyleFor("exchangeCalendar"),
+        auditLogs: this.navStyleFor("auditLogs"),
+        playground: this.navStyleFor("playground", true),
+        delete: this.navStyleFor("delete", true),
+      },
+
+      toggleMarginSource: this.toggleMarginSource,
+      marginToggleBg: this.state.marginSourceOn ? "var(--accent-strong)" : "var(--border)",
+      marginToggleLeft: this.state.marginSourceOn ? "22px" : "2px",
+
+      toggleSchedule: this.toggleSchedule,
+      scheduleToggleBg: this.state.scheduleOn ? "var(--accent-strong)" : "var(--border)",
+      scheduleToggleLeft: this.state.scheduleOn ? "22px" : "2px",
+      scheduleHelperText: this.state.scheduleOn
+        ? "Runs daily at 06:00 PM IST after market close."
+        : "Daily schedule is off. Use Load now to refresh data manually.",
+
+      ingestRows: [
+        { source: "NSE FO BhavCopy", fileDate: "01 Jul 2026", rows: "1,84,220", ingestedAt: "01-Jul 18:02" },
+        { source: "BSE FO BhavCopy", fileDate: "01 Jul 2026", rows: "22,410", ingestedAt: "01-Jul 18:03" },
+        { source: "ICICI Scrip Master", fileDate: "28 Jun 2026", rows: "96,880", ingestedAt: "28-Jun 07:00" },
+        { source: "NSE SPAN Baseline", fileDate: "01 Jul 2026", rows: "48,220", ingestedAt: "01-Jul 19:04" },
+        { source: "BSE SPAN Baseline", fileDate: "28 Jun 2026", rows: "1,140", ingestedAt: "28-Jun 11:22" },
+      ],
+
+      holidayCount: this.state.holidays.length,
+      holidayRows: this.state.holidays.map((h) => ({ ...h, remove: this.removeHoliday(h.date) })),
+
+      wsConnect: this.wsConnect,
+      wsRelease: this.wsRelease,
+      wsDisconnect: this.wsDisconnect,
+      wsStartStream: this.wsStartStream,
+      wsSubscribe: this.wsSubscribe,
+      wsStatusHint: this.state.wsStatusHint,
+      wsStatusColor: this.state.wsStatusKind === "ok" ? "var(--up)" : "var(--muted)",
+      wsStatusBg: this.state.wsStatusKind === "ok" ? "var(--up-tint)" : "var(--panel2)",
+      wsStatusBorder: this.state.wsStatusKind === "ok" ? "color-mix(in srgb, var(--up) 40%, transparent)" : "var(--border)",
+      wsLogText: this.state.wsLogText,
+      wsLatestOpText: this.state.wsLatestOpText,
+      wsTicksText: this.state.wsTicksText,
+
+      onMethodChange: this.onMethodChange,
+      selectedMethod: this.state.selectedMethod,
+      selectedTitle: selectedEntry.title,
+      apiOptionRows: this.buildApiOptionRows(),
+      methodOpen: this.state.methodOpen,
+      methodSearch: this.state.methodSearch,
+      toggleMethodOpen: this.toggleMethodOpen,
+      closeMethodDropdown: this.closeMethodDropdown,
+      onMethodSearchChange: this.onMethodSearchChange,
+      filteredApiOptionRows: this.buildFilteredApiOptionRows(this.state.methodSearch),
+      noMethodResults: this.buildFilteredApiOptionRows(this.state.methodSearch).length === 0,
+      methodChevronRotate: this.state.methodOpen ? "rotate(180deg)" : "rotate(0deg)",
+      methodTriggerBorder: this.state.methodOpen ? "var(--accent)" : "var(--border)",
+      methodTriggerRing: this.state.methodOpen ? "0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent)" : "none",
+      selectedRiskLabel: this.riskGroupLabel[selectedEntry.risk],
+      selectedRiskColor: this.riskColors[selectedEntry.risk].color,
+      selectedRiskTint: this.riskColors[selectedEntry.risk].tint,
+      selectedDescription: selectedEntry.description || "",
+      selectedNotes: selectedEntry.notes || "",
+      selectedIsRisky: selectedEntry.risk === "trade" || selectedEntry.risk === "funds" || selectedEntry.risk === "gtt",
+      selectedHasNoParams: selectedEntry.params.length === 0,
+      selectedParams: selectedEntry.params.map((p) => ({
+        name: p.name,
+        label: p.label || this.toLabel(p.name),
+        required: Boolean(p.required),
+        placeholder: p.placeholder || "",
+        help: p.help || "",
+        isJson: p.type === "json",
+        isText: p.type !== "json",
+        value: this.state.paramValues[p.name] || "",
+        onChange: (e) => this.setParamValue(p.name, e.target.value),
+      })),
+
+      wsMode: this.state.wsMode,
+      wsModeOptions: this.wsModeOptionsList,
+      onWsModeChange: this.onWsModeChange,
+      wsModeOpen: this.state.wsModeOpen,
+      toggleWsModeOpen: this.toggleWsModeOpen,
+      closeWsModeDropdown: this.closeWsModeDropdown,
+      wsModeLabel: (this.wsModeOptionsList.find((m) => m.value === this.state.wsMode) || {}).label || "",
+      wsModeChevronRotate: this.state.wsModeOpen ? "rotate(180deg)" : "rotate(0deg)",
+      wsModeTriggerBorder: this.state.wsModeOpen ? "var(--accent)" : "var(--border)",
+      wsModeTriggerRing: this.state.wsModeOpen ? "0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent)" : "none",
+      wsModeOptionRows: this.wsModeOptionsList.map((m) => ({
+        value: m.value,
+        label: m.label,
+        selected: m.value === this.state.wsMode,
+        weight: m.value === this.state.wsMode ? "700" : "500",
+        rowBg: m.value === this.state.wsMode ? "var(--accent-tint)" : "transparent",
+        onSelect: this.selectWsMode(m.value),
+      })),
+      wsFieldRows: (this.wsFieldsByMode[this.state.wsMode] || []).map((key) => ({
+        key,
+        placeholder: this.wsFieldPlaceholders[key] || "",
+        value: this.state.wsForm[key] || "",
+        onChange: (e) => this.setWsField(key, e.target.value),
+      })),
+
+      auditLogRows: this.auditLogs,
+    };
+  }
+}
+
+</script>
+</body>
+</html>

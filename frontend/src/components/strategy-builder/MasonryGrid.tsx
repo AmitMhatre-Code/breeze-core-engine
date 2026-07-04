@@ -3,9 +3,10 @@
 import type { ReactNode } from "react";
 import Masonry from "react-masonry-css";
 
-/** Max 2 columns — tiles share column width (widest content sets column size). */
+/** Max 3 columns — tiles share column width (widest content sets column size). */
 const BREAKPOINT_COLS = {
-  default: 2,
+  default: 3,
+  1024: 2,
   640: 1,
 };
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import {
@@ -44,6 +44,16 @@ function riskProfileLabel(profile: string): string {
   }
 }
 
+/** Same theme-swapping accent tokens as OpenPositionsTable's pill buttons. */
+const ACCENT_OUTLINE_STYLE: CSSProperties = {
+  borderColor: "var(--accent-strong)",
+  color: "var(--accent-strong)",
+};
+const ACCENT_SOLID_STYLE: CSSProperties = {
+  backgroundColor: "var(--accent-strong)",
+  color: "var(--accent-ink)",
+};
+
 type PortfolioHedgePanelProps = {
   group: PortfolioPositionGroup;
   selectedCandidate: StrategyHedgeCandidate | null;
@@ -52,6 +62,7 @@ type PortfolioHedgePanelProps = {
   onLotSizeChange?: (lotSize: number) => void;
 };
 
+/** Auto-fetches candidates for the group's default (span-based) risk budget as soon as it's rendered — no manual entry step, matching the Terminal design. */
 export function PortfolioHedgePanel({
   group,
   selectedCandidate,
@@ -59,11 +70,7 @@ export function PortfolioHedgePanel({
   onExecute,
   onLotSizeChange,
 }: PortfolioHedgePanelProps) {
-  const [maxLossInput, setMaxLossInput] = useState(() =>
-    String(defaultMaxLossForGroup(group)),
-  );
-  const [submittedMaxLoss, setSubmittedMaxLoss] = useState<number | null>(null);
-  const [inputError, setInputError] = useState<string | null>(null);
+  const maxLoss = defaultMaxLossForGroup(group);
 
   const hedgeQ = useQuery({
     queryKey: [
@@ -72,16 +79,15 @@ export function PortfolioHedgePanel({
       group.stockCode,
       group.exchangeCode,
       group.expiryDate,
-      submittedMaxLoss,
+      maxLoss,
     ],
     queryFn: () =>
       postStrategyHedges({
         stock_code: group.stockCode,
         expiry_date: group.expiryDate,
-        user_max_loss_preference: submittedMaxLoss!,
+        user_max_loss_preference: maxLoss,
         exchange_code: group.exchangeCode,
       }),
-    enabled: submittedMaxLoss != null && submittedMaxLoss > 0,
     staleTime: 15_000,
   });
 
@@ -102,138 +108,121 @@ export function PortfolioHedgePanel({
         ? hedgeQ.error.message
         : null;
 
-  const handleFindOptions = () => {
-    const parsed = Number(maxLossInput.replace(/,/g, "").trim());
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      setInputError("Enter a maximum loss amount greater than zero.");
-      return;
-    }
-    setInputError(null);
-    onSelectCandidate(null);
-    setSubmittedMaxLoss(parsed);
-  };
-
   const selectedKey = selectedCandidate
     ? hedgeCandidateKey(selectedCandidate)
     : null;
 
   return (
-    <div className="border-t border-zinc-200/80 bg-white/60 px-3 py-4 dark:border-zinc-700/80 dark:bg-zinc-950/30 sm:px-4">
+    <div className="min-w-0 p-3">
       <div className="mb-3 space-y-1">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-200">
-          Hedge strategy
-        </h4>
+        <h3 className="text-[13px] font-semibold uppercase tracking-wide text-faint">
+          Hedge candidates
+        </h3>
         {summary ? (
-          <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
+          <p className="text-[13px] text-muted">
             {riskProfileLabel(summary.risk_profile)} · Δ{" "}
             {summary.strategy_delta.toFixed(2)} · Γ{" "}
-            {summary.strategy_gamma.toFixed(4)}
+            {summary.strategy_gamma.toFixed(4)} · Max loss budget{" "}
+            {formatIndianMoneyCompact(maxLoss)}
           </p>
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-        <label className="min-w-0 flex-1 space-y-1">
-          <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-            Maximum loss you are willing to take (₹)
-          </span>
-          <input
-            type="text"
-            inputMode="numeric"
-            value={maxLossInput}
-            onChange={(e) => setMaxLossInput(e.target.value)}
-            className="app-input w-full tabular-nums"
-            placeholder="e.g. 50000"
-            aria-invalid={inputError != null}
-          />
-        </label>
-        <button
-          type="button"
-          className="app-btn-secondary shrink-0 px-4 py-2 text-sm font-medium"
-          onClick={handleFindOptions}
-        >
-          Find options
-        </button>
-      </div>
-      {inputError ? (
-        <p className="mt-2 text-xs text-red-600 dark:text-red-400">{inputError}</p>
-      ) : null}
-
-      <div className="mt-4 space-y-2">
-        {submittedMaxLoss == null ? (
-          <p className="text-xs app-text-muted">
-            Enter your max loss budget and click Find options to see protective
-            wings.
-          </p>
-        ) : hedgeQ.isFetching && !candidates.length ? (
-          <div className="space-y-2">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="h-10 w-full app-skeleton rounded-sm border-0" />
-            ))}
-          </div>
+      <div className="space-y-2" role="radiogroup" aria-label="Hedge options">
+        {hedgeQ.isFetching && !candidates.length ? (
+          [0, 1].map((i) => (
+            <div key={i} className="h-16 w-full app-skeleton rounded-md border-0" />
+          ))
         ) : apiError ? (
-          <p className="text-xs text-red-600 dark:text-red-400">{apiError}</p>
+          <p className="text-xs text-down">{apiError}</p>
         ) : candidates.length === 0 ? (
           <p className="text-xs app-text-muted">
-            No hedge candidates within your risk budget for this strategy.
+            No hedge candidates within the default risk budget for this
+            strategy.
           </p>
         ) : (
-          <div className="space-y-2" role="radiogroup" aria-label="Hedge options">
-            {candidates.map((c) => {
-              const key = hedgeCandidateKey(c);
-              const checked = selectedKey === key;
-              return (
-                <label
-                  key={key}
-                  className={`flex cursor-pointer flex-col gap-2 rounded-md border p-3 text-xs transition sm:flex-row sm:items-center sm:justify-between ${
-                    checked
-                      ? "border-sky-400 bg-sky-50/80 ring-1 ring-sky-500/30 dark:border-sky-600 dark:bg-sky-950/40"
-                      : "border-zinc-200/90 bg-white/80 hover:border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900/40"
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
-                    <input
-                      type="radio"
-                      name={`hedge-${group.key}`}
-                      checked={checked}
-                      onChange={() => onSelectCandidate(c)}
-                      className="mt-0.5"
-                    />
-                    <div>
-                      <div className="font-medium text-zinc-900 dark:text-zinc-100">
-                        Buy {c.right} {c.strike_price}
-                        <span className="ml-2 font-normal text-zinc-500 dark:text-zinc-400">
-                          (covers short {c.short_strike})
-                        </span>
-                      </div>
-                      <div className="mt-1 tabular-nums text-zinc-600 dark:text-zinc-400">
-                        LTP {formatIndianMoneyCompact(c.ltp)} · Premium{" "}
-                        {formatIndianMoneyCompact(c.net_premium_cost)} · Max
-                        loss {formatIndianMoneyCompact(c.max_loss_estimate)} ·
-                        Margin relief{" "}
-                        <span className="text-emerald-700 dark:text-emerald-400">
-                          {formatIndianMoneyCompact(c.estimated_margin_relief)}
-                        </span>
-                      </div>
-                    </div>
+          candidates.map((c) => {
+            const key = hedgeCandidateKey(c);
+            const checked = selectedKey === key;
+            return (
+              <div
+                key={key}
+                role="radio"
+                aria-checked={checked}
+                tabIndex={0}
+                onClick={() => onSelectCandidate(checked ? null : c)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelectCandidate(checked ? null : c);
+                  }
+                }}
+                className="flex cursor-pointer flex-col gap-2 rounded-lg border p-3 text-xs transition sm:flex-row sm:items-center sm:justify-between"
+                style={
+                  checked
+                    ? {
+                        borderColor: "var(--accent)",
+                        backgroundColor: "var(--accent-tint)",
+                      }
+                    : { borderColor: "var(--border-soft)" }
+                }
+              >
+                <div>
+                  <div className="font-semibold text-foreground">
+                    Buy {c.strike_price.toLocaleString("en-IN")}{" "}
+                    {c.right === "Call" ? "CE" : "PE"}
                   </div>
-                </label>
-              );
-            })}
-          </div>
+                  <div className="mt-0.5 tabular-nums text-muted">
+                    {c.right === "Call" ? "Caps upside" : "Caps downside"}{" "}
+                    · +
+                    {formatIndianMoneyCompact(c.estimated_margin_relief, {
+                      shortSuffix: true,
+                      skipK: true,
+                    })}{" "}
+                    margin relief
+                  </div>
+                </div>
+                {checked ? (
+                  <button
+                    type="button"
+                    title="Click to unselect"
+                    className="inline-flex shrink-0 items-center justify-center self-start rounded-lg px-3 py-1 text-[13px] font-bold uppercase tracking-wide transition hover:brightness-95 sm:self-center"
+                    style={ACCENT_SOLID_STYLE}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectCandidate(null);
+                    }}
+                  >
+                    Selected
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="inline-flex shrink-0 items-center justify-center self-start rounded-lg border px-3 py-1 text-xs font-semibold transition hover:bg-[var(--accent-tint)] sm:self-center"
+                    style={ACCENT_OUTLINE_STYLE}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectCandidate(c);
+                    }}
+                  >
+                    Select
+                  </button>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
 
-      <div className="mt-4 flex justify-end">
-        <button
-          type="button"
-          className="app-btn-primary px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!selectedCandidate}
-          onClick={onExecute}
-        >
-          Execute hedge
-        </button>
-      </div>
+      <button
+        type="button"
+        className="mt-4 inline-flex w-full items-center justify-center rounded-lg px-4 py-2.5 text-sm font-bold transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+        style={ACCENT_SOLID_STYLE}
+        disabled={!selectedCandidate}
+        onClick={onExecute}
+      >
+        Execute hedge
+      </button>
     </div>
   );
 }

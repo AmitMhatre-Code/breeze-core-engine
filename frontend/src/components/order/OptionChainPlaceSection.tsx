@@ -308,7 +308,7 @@ export function OptionChainPlaceSection() {
   return (
     <section className="space-y-4" aria-label="Option chain">
       <div
-        className="flex min-h-[2.75rem] flex-col overflow-visible rounded-md border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] dark:shadow-none sm:flex-row sm:items-center"
+        className="flex min-h-[2.75rem] flex-col overflow-visible rounded-md border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[var(--elevated)] dark:shadow-none sm:flex-row sm:items-center"
         role="toolbar"
         aria-label="Underlying, expiry, and fetch"
       >
@@ -365,7 +365,6 @@ export function OptionChainPlaceSection() {
         <div className="relative z-20 flex shrink-0 items-center overflow-visible border-b border-zinc-200 dark:border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-2.5">
           <ExpirySelectPill
             layout="toolbar"
-            tone="darkToolbar"
             dates={expiryOptions}
             value={expiryDate}
             disabled={!stockCode}
@@ -436,10 +435,10 @@ export function OptionChainPlaceSection() {
                   )}
                 </h2>
                 <p className="mt-1.5 leading-snug">
-                  <span className="text-sm text-zinc-400 dark:text-zinc-600">
+                  <span className="text-sm text-zinc-600 dark:text-zinc-400">
                     Lot:
                   </span>{" "}
-                  <span className="text-sm tabular-nums text-zinc-400 dark:text-zinc-600">
+                  <span className="text-sm tabular-nums text-zinc-600 dark:text-zinc-400">
                     {formatChainMetaInt(chainSuccess.lot_size)}
                   </span>
                   <span
@@ -448,23 +447,23 @@ export function OptionChainPlaceSection() {
                   >
                     ·
                   </span>
-                  {/* <span className="text-sm text-zinc-400 dark:text-zinc-600">
+                  {/* <span className="text-sm text-zinc-600 dark:text-zinc-400">
                     Max Qty / Order:
                   </span>{" "}
-                  <span className="text-sm tabular-nums text-zinc-400 dark:text-zinc-600">
+                  <span className="text-sm tabular-nums text-zinc-600 dark:text-zinc-400">
                     {formatChainMetaInt(chainSuccess.freeze_quantity)}
                   </span> */}
-                  <span className="text-sm text-zinc-400 dark:text-zinc-600">
+                  <span className="text-sm text-zinc-600 dark:text-zinc-400">
                     Margin / Lot:
                   </span>{" "}
-                  <span className="text-sm tabular-nums text-zinc-400 dark:text-zinc-600">
+                  <span className="text-sm tabular-nums text-zinc-600 dark:text-zinc-400">
                     {marginPerLotDisplay}
                   </span>                  
                 </p>
               </div>
               <button
                 type="button"
-                className="-m-0.5 shrink-0 rounded-full p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                className="-m-0.5 shrink-0 rounded-full p-1.5 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                 onClick={closeSheet}
                 aria-label="Close"
               >
@@ -487,7 +486,7 @@ export function OptionChainPlaceSection() {
                   className={`min-w-0 flex-1 rounded-full px-2.5 py-1.5 text-xs font-semibold tracking-wide transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:ring-0 dark:disabled:text-zinc-600 ${
                     sheetRight === "Call"
                       ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/90 dark:bg-zinc-800 dark:text-zinc-50 dark:ring-zinc-600/90"
-                      : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200"
+                      : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
                   }`}
                 >
                   Call
@@ -499,7 +498,7 @@ export function OptionChainPlaceSection() {
                   className={`min-w-0 flex-1 rounded-full px-2.5 py-1.5 text-xs font-semibold tracking-wide transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:ring-0 dark:disabled:text-zinc-600 ${
                     sheetRight === "Put"
                       ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/90 dark:bg-zinc-800 dark:text-zinc-50 dark:ring-zinc-600/90"
-                      : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200"
+                      : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
                   }`}
                 >
                   Put
@@ -511,7 +510,7 @@ export function OptionChainPlaceSection() {
               <div className="w-full min-w-0">
                 <label
                   htmlFor="chain-sheet-qty"
-                  className="block text-[0.625rem] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500"
+                  className="block text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
                 >
                   Quantity
                 </label>
@@ -528,7 +527,7 @@ export function OptionChainPlaceSection() {
               <div className="w-full min-w-0">
                 <label
                   htmlFor="chain-sheet-price"
-                  className="block text-[0.625rem] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500"
+                  className="block text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
                 >
                   Price (₹)
                 </label>

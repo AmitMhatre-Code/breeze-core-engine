@@ -181,12 +181,9 @@ export function DatePicker({
         aria-expanded={open}
         aria-controls={popoverId}
         className={[
-          "flex h-10 w-full items-center gap-2.5 rounded-md border px-3 text-left text-sm transition",
-          "border-zinc-200 bg-white text-zinc-900 shadow-sm",
-          "hover:border-zinc-300 focus:outline-none focus-visible:border-sky-500 focus-visible:ring-2 focus-visible:ring-sky-500/25",
+          "flex h-10 w-full items-center gap-2.5 rounded-[9px] border border-border bg-panel2 px-3 text-left text-sm text-foreground transition",
+          "hover:border-accent/60 focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/25",
           "disabled:pointer-events-none disabled:opacity-45",
-          "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100",
-          "dark:hover:border-zinc-600 dark:focus-visible:border-sky-400 dark:focus-visible:ring-sky-400/25",
         ].join(" ")}
         onClick={() => {
           if (disabled) return;
@@ -197,13 +194,13 @@ export function DatePicker({
           }
         }}
       >
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-[6px] bg-panel text-muted">
           <CalendarIcon />
         </span>
         {displayText ? (
           <span className="font-medium tabular-nums">{displayText}</span>
         ) : (
-          <span className="text-zinc-400 dark:text-zinc-500">{placeholder}</span>
+          <span className="text-faint">{placeholder}</span>
         )}
       </button>
 
@@ -212,12 +209,12 @@ export function DatePicker({
           id={popoverId}
           role="dialog"
           aria-label="Choose date"
-          className="absolute left-0 top-[calc(100%+0.35rem)] z-50 w-[min(100%,18.5rem)] rounded-md border border-zinc-200/90 bg-white/98 p-3 shadow-xl ring-1 ring-zinc-950/5 backdrop-blur-md dark:border-zinc-700 dark:bg-zinc-900/95 dark:ring-white/6 dark:shadow-[0_24px_80px_rgb(0_0_0/0.45)]"
+          className="absolute left-0 top-[calc(100%+0.35rem)] z-50 w-[min(100%,18.5rem)] rounded-[10px] border border-border bg-elevated p-3 shadow-pop"
         >
           <div className="mb-2 flex items-center justify-between gap-1">
             <button
               type="button"
-              className="inline-flex size-8 items-center justify-center rounded-md text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              className="inline-flex size-8 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground"
               aria-label="Previous month"
               onClick={() =>
                 setView((v) => (v.m <= 1 ? { y: v.y - 1, m: 12 } : { ...v, m: v.m - 1 }))
@@ -227,12 +224,12 @@ export function DatePicker({
                 <path d="m15 18-6-6 6-6" />
               </svg>
             </button>
-            <span className="min-w-0 flex-1 text-center text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <span className="min-w-0 flex-1 text-center text-sm font-semibold text-foreground">
               {MONTH_LABELS[view.m - 1]} {view.y}
             </span>
             <button
               type="button"
-              className="inline-flex size-8 items-center justify-center rounded-md text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              className="inline-flex size-8 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground"
               aria-label="Next month"
               onClick={() =>
                 setView((v) => (v.m >= 12 ? { y: v.y + 1, m: 1 } : { ...v, m: v.m + 1 }))
@@ -248,7 +245,7 @@ export function DatePicker({
             {WEEKDAY_LABELS.map((w) => (
               <div
                 key={w}
-                className="py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500"
+                className="py-1 text-[12px] font-semibold uppercase tracking-wide text-faint"
               >
                 {w}
               </div>
@@ -271,13 +268,11 @@ export function DatePicker({
                   {...getDayButtonProps(i, day)}
                   aria-label={formatIsoDateDdMmmYyyy(iso)}
                   className={[
-                    "aspect-square rounded-md text-sm font-medium tabular-nums transition",
+                    "aspect-square rounded-lg text-sm font-medium tabular-nums transition",
                     isSelected
-                      ? "bg-sky-600 text-white shadow-[0_0_12px_rgb(14_165_233/0.35)] dark:bg-sky-500"
-                      : "text-zinc-800 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800",
-                    isToday && !isSelected
-                      ? "ring-1 ring-inset ring-sky-500/45 dark:ring-sky-400/35"
-                      : "",
+                      ? "bg-accent-strong text-accent-ink"
+                      : "text-foreground hover:bg-panel2",
+                    isToday && !isSelected ? "ring-1 ring-inset ring-accent/50" : "",
                   ].join(" ")}
                   onClick={() => selectDay(day)}
                 >
@@ -287,10 +282,10 @@ export function DatePicker({
             })}
           </div>
 
-          <div className="mt-3 border-t border-zinc-200/80 pt-2 dark:border-zinc-700/80">
+          <div className="mt-3 border-t border-border-soft pt-2">
             <button
               type="button"
-              className="w-full rounded-md py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-950/40"
+              className="w-full rounded-lg py-1.5 text-xs font-medium text-accent-strong transition hover:bg-accent-tint"
               onClick={goToday}
             >
               Today

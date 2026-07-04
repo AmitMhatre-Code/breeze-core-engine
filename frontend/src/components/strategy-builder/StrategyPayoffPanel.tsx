@@ -106,8 +106,8 @@ export function StrategyPayoffPanel({
     return portfolioGreeks(spot, legs, lotSize, T, sigma);
   }, [spot, T, sigma, legs, lotSize]);
 
-  const profitClass = "text-emerald-700 dark:text-emerald-400";
-  const lossClass = "text-red-700 dark:text-red-400";
+  const profitClass = "text-up";
+  const lossClass = "text-down";
   const payoffTitleId = useId();
   const payoffDescId = useId();
 
@@ -136,7 +136,7 @@ export function StrategyPayoffPanel({
           className={`${sb.stickyBar} flex flex-wrap gap-x-6 gap-y-3 text-xs`}
         >
           <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <div className="text-[13px] font-semibold uppercase tracking-[.06em] text-faint">
               Max profit
             </div>
             <div className={`font-semibold tabular-nums ${profitClass}`}>
@@ -152,7 +152,7 @@ export function StrategyPayoffPanel({
             </div>
           </div>
           <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <div className="text-[13px] font-semibold uppercase tracking-[.06em] text-faint">
               Max loss
             </div>
             <div className={`font-semibold tabular-nums ${lossClass}`}>
@@ -168,28 +168,28 @@ export function StrategyPayoffPanel({
             </div>
           </div>
           <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <div className="text-[13px] font-semibold uppercase tracking-[.06em] text-faint">
               Breakevens
             </div>
-            <div className="font-medium text-zinc-800 dark:text-zinc-200">
+            <div className="font-medium text-foreground">
               {hasStrategyLegs && summary.breakevens.length
                 ? summary.breakevens.map((b) => b.toFixed(0)).join(", ")
                 : "—"}
             </div>
           </div>
           <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <div className="text-[13px] font-semibold uppercase tracking-[.06em] text-faint">
               POP (model)
             </div>
-            <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+            <div className="font-medium tabular-nums text-foreground">
               {legs.length ? `${pop.toFixed(1)}%` : "—"}
             </div>
           </div>
           <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <div className="text-[13px] font-semibold uppercase tracking-[.06em] text-faint">
               Margin (SPAN)
             </div>
-            <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+            <div className="font-medium tabular-nums text-foreground">
               {marginFetching ? (
                 "…"
               ) : marginQtyStale ? (
@@ -204,16 +204,16 @@ export function StrategyPayoffPanel({
               )}
             </div>
             {marginWarnings && marginWarnings.length > 0 ? (
-              <div className="mt-1 app-alert-error text-[11px]">
+              <div className="mt-1 app-alert-error text-[13px]">
                 {marginWarnings[0]}
               </div>
             ) : null}
           </div>
           <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <div className="text-[13px] font-semibold uppercase tracking-[.06em] text-faint">
               Spot / IV
             </div>
-            <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+            <div className="font-medium tabular-nums text-foreground">
               {spot != null ? (
                 <>
                   {spot.toFixed(2)} · {(sigma * 100).toFixed(1)}%
@@ -226,22 +226,22 @@ export function StrategyPayoffPanel({
         </div>
       </div>
 
-      <div className="space-y-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+      <div className="space-y-4 border-t border-border-soft pt-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3
             id={payoffTitleId}
-            className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
+            className="text-xs font-semibold uppercase tracking-wide text-faint"
           >
             Payoff chart
           </h3>
-          <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+          <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-muted">
             <input
               type="checkbox"
               className="peer sr-only"
               checked={showToday}
               onChange={(e) => onShowTodayChange(e.target.checked)}
             />
-            <span className="relative h-5 w-9 rounded-full bg-zinc-300 transition-colors duration-200 after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform after:duration-200 peer-checked:bg-sky-600 peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-sky-500 dark:bg-zinc-700 dark:peer-checked:bg-sky-500" />
+            <span className="relative h-6 w-11 rounded-full bg-border transition-colors duration-200 after:absolute after:left-0.5 after:top-0.5 after:size-5 after:rounded-full after:bg-white after:shadow after:transition-transform after:duration-200 peer-checked:bg-accent-strong peer-checked:after:translate-x-[22px] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent" />
             <span>Show today (model)</span>
           </label>
         </div>
@@ -264,15 +264,15 @@ export function StrategyPayoffPanel({
         />
       </div>
 
-      <div className="space-y-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+      <div className="space-y-4 border-t border-border-soft pt-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-faint">
               Greeks &amp; IV shock
             </h3>
           </div>
           <div
-            className={`${sb.checkboxRow} shrink-0 self-start gap-2 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
+            className={`${sb.checkboxRow} shrink-0 self-start gap-2 text-xs font-medium leading-snug text-muted`}
           >
             <button
               type="button"
@@ -280,13 +280,13 @@ export function StrategyPayoffPanel({
               aria-checked={showGreeks}
               aria-label="Toggle Show Greeks"
               onClick={() => onShowGreeksChange(!showGreeks)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${
-                showGreeks ? "bg-sky-600" : "bg-zinc-300 dark:bg-zinc-700"
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+                showGreeks ? "bg-accent-strong" : "bg-border"
               }`}
             >
               <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
-                  showGreeks ? "translate-x-4" : "translate-x-0.5"
+                className={`inline-block size-5 transform rounded-full bg-white shadow transition ${
+                  showGreeks ? "translate-x-[22px]" : "translate-x-0.5"
                 }`}
               />
             </button>
@@ -310,12 +310,12 @@ export function StrategyPayoffPanel({
             ).map((g) => (
               <div
                 key={g.key}
-                className="rounded-md border border-zinc-200/90 bg-gradient-to-b from-white to-zinc-50/90 px-3 py-2.5 shadow-sm ring-1 ring-zinc-950/[0.03] dark:border-zinc-800 dark:from-zinc-900/90 dark:to-zinc-950/70 dark:ring-white/[0.04]"
+                className="rounded-[9px] border border-border bg-panel2 px-3 py-2.5"
               >
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                <div className="text-[12px] font-semibold uppercase tracking-wide text-faint">
                   {g.label}
                 </div>
-                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
+                <div className="mt-1 font-mono text-sm font-medium tabular-nums tracking-tight text-foreground">
                   {g.fmt}
                 </div>
               </div>

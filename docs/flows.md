@@ -252,16 +252,22 @@ Strategy builder reuses covered-shorts scan logic where applicable.
 
 ---
 
-## 12. Market outlook (RSS + optional AI)
+## 12. Market outlook (portal-generated, fetched by this app)
+
+Generation (RSS + AI) now happens centrally on breeze-saas-portal, on an admin-configured schedule, producing one global result for the whole fleet. This app just polls the portal's cached result:
 
 ```mermaid
 flowchart TB
-  CFG[User: /api/settings/ai-provider\noutlook-config] --> DB[(users DB)]
-  REQ[GET outlook market] --> SVC[outlook_service]
-  SVC --> RSS[feedparser: RSS URLs]
-  SVC --> AI[httpx: Gemini / provider]
-  SVC --> CACHE[In-memory cache\nhour bucket key]
-  SVC --> RES[JSON narrative + disclaimer]
+  ADMIN[Portal admin: API key + prompt\n+ refresh interval] --> PCFG[(portal: market_outlook_config)]
+  WORKER[portal: market_outlook_worker] --> PCFG
+  WORKER --> RSS[feedparser: RSS URLs]
+  WORKER --> AI[httpx: Gemini / OpenAI]
+  WORKER --> PRESULT[(portal: market_outlook_result)]
+  WORKER --> PCACHE[(portal: Redis cache)]
+  REQ[GET /api/outlook/market] --> FETCH[portal_market_outlook.py]
+  FETCH -->|GET /api/public/market-outlook/current| PCACHE
+  FETCH --> INMEM[In-memory cache\nthis process]
+  INMEM --> RES[JSON narrative + disclaimer\n+ staleness warning if portal fetch is failing]
 ```
 
 ---
@@ -298,15 +304,21 @@ Used for integration checks; see `route_admin.py` for exact behaviour and guards
 
 ```mermaid
 flowchart TB
-  PUSH[Push to main] --> GHA[ghcr-publish workflow]
-  GHA --> BDX[docker buildx]
+  PUSHM[Push to main] --> GHAM[ghcr-publish-main.yml]
+  PUSHT[Push to testing] --> GHAT[ghcr-publish-testing.yml]
+  GHAM --> BDX[docker buildx]
+  GHAT --> BDX
   BDX --> IM[Image linux/arm64]
-  IM --> GHCR[ghcr.io/owner/repo:tag]
+  IM --> GHCR[ghcr.io/owner/repo:latest + sha]
 ```
+
+Both workflows are identical (same DRM key baking, same build) and push to the **same** `ghcr.io/owner/repo:latest` tag — a push to `testing` overwrites the same image tag a push to `main` would. There is no separate staging tag namespace.
 
 ---
 
-## 16. CD: manual AWS deploy (summary)
+## 16. CD: legacy manual AWS deploy (dormant path, `icici-breeze-modern` only)
+
+This is the **legacy**, `workflow_dispatch`-only path for the older `icici-breeze-modern` image — it does not deploy the current `breeze-core-engine` app. Current-app deployment goes through breeze-saas-portal's CloudFormation stack (flow 19 below).
 
 ```mermaid
 flowchart TB
@@ -316,7 +328,7 @@ flowchart TB
   RUN --> VOL{EBS volume?}
   VOL -->|yes| MNT[Mount /opt/breeze-core-engine/data]
   VOL -->|no| LOCAL[Ephemeral data dir]
-  MNT --> PULL[docker pull GHCR]
+  MNT --> PULL[docker pull GHCR icici-breeze-modern]
   LOCAL --> PULL
   PULL --> CONT[docker run -p 80:3000\n--env-file /opt/breeze-core-engine/.env]
   CONT --> EIP[Associate Elastic IP]
@@ -348,3 +360,84 @@ If users open **`http://localhost:8000`** only:
 - Register **`http://localhost:8000/auth/google/callback`** in Google Cloud.
 - ICICI redirect becomes **`http://localhost:8000/icici-return`**.
 - This mode is **not** the recommended daily driver when using the modern Next UI.
+
+---
+
+## 19. CD: current deploy path — breeze-saas-portal CloudFormation
+
+This is what actually deploys `breeze-core-engine` in production; this repo's own CI (`ghcr-publish-main.yml`) only builds and publishes the image. Full detail is authoritative in breeze-saas-portal's docs (`docs/aws-deployment.md`, `docs/license-management.md`); this is a summary from this repo's side.
+
+```mermaid
+sequenceDiagram
+  participant Console as breeze-saas-portal Console
+  participant CFN as CloudFormation stack
+  participant EC2 as New EC2 instance (Amazon Linux 2023)
+  participant App as breeze-core-engine container
+
+  Console->>CFN: Quick-create link (LicenseKey, UserEmail locked)
+  CFN->>EC2: Provision instance, EIP, security group, EBS
+  EC2->>EC2: Write /opt/breeze-core-engine/.env (JWT_SECRET, PORTAL_API_BASE_URL, DEPLOYMENT_LICENSE_KEY, PUBLIC_FRONTEND_ORIGIN)
+  EC2->>EC2: Start breeze-redis sidecar
+  EC2->>App: docker pull + run breeze-core-engine image
+  CFN->>Console: POST /api/public/register-deployment (static IP)
+  App->>Console: startup heartbeat
+```
+
+## 20. Portal heartbeat, license status, and self-upgrade
+
+```mermaid
+sequenceDiagram
+  participant App as This instance
+  participant Portal as breeze-saas-portal
+
+  App->>Portal: POST /api/public/heartbeat {public_ip, version, license_key}
+  Portal-->>App: policy_token (ES256 JWT, ~600s TTL)
+  App->>App: Verify signature, issuer/audience, public_ip claim
+  App->>App: Cache deployment_license_status; degrade to unlicensed if stale > 2x interval
+  loop every heartbeat_interval_sec (300-3600s)
+    App->>Portal: POST /api/public/heartbeat
+    Portal-->>App: policy_token (optional trigger_upgrade + target_tag)
+    alt trigger_upgrade and upgrade window open
+      App->>App: docker pull target image
+      App->>App: hand off stop+recreate to sibling docker:cli helper
+    end
+  end
+```
+
+Trading-mutation routes consult the cached status via `require_trading_not_revoked`; a `revoked`/`unlicensed`/`pending_activation`/`trial_denied` status returns HTTP 403 with a read-only message rather than executing the request.
+
+## 21. License activation on ICICI login
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant App as This instance
+  participant Portal as breeze-saas-portal
+
+  B->>App: Completes ICICI Direct login
+  App->>Portal: POST /api/public/activate-license {license_key, public_ip, icici_user_id}
+  alt verified 403 or trial_denied
+    Portal-->>App: rejection
+    App-->>B: Login blocked
+  else success or network error
+    Portal-->>App: policy_token (or timeout)
+    App-->>B: Login proceeds (fail-open on network errors only)
+  end
+```
+
+## 22. Reference data bootstrap and daily refresh
+
+```mermaid
+flowchart TB
+  START[App startup] --> BOOT[bootstrap_reference_data_on_startup]
+  BOOT --> SCHED[Start daily IST scheduler thread]
+  BOOT --> WARM[Warm Redis/memory cache from SQLite]
+  WARM --> COMPLETE{Cache already complete?}
+  COMPLETE -->|yes| SKIP[Skip network load]
+  COMPLETE -->|no| LOAD[run_reference_data_load trigger_mode=startup]
+  SCHED -->|daily at configured IST hour:minute| LOAD2[run_reference_data_load trigger_mode=scheduled]
+  LOAD --> ORCH[orchestrator: NSE/BSE bhavcopy + scrip master + SPAN baseline]
+  LOAD2 --> ORCH
+  ORCH --> VER[Build new refdata:v_N_ keys]
+  VER --> FLIP[Flip refdata:current_version pointer]
+```

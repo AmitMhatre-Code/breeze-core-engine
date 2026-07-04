@@ -24,7 +24,6 @@ type Props = {
   value: string;
   onChange: (expiryDisplay: string) => void;
   disabled?: boolean;
-  tone?: "default" | "darkToolbar";
   layout?: "default" | "toolbar";
   rootClassName?: string;
   hideLabel?: boolean;
@@ -35,7 +34,6 @@ export function ExpirySelectPill({
   value,
   onChange,
   disabled,
-  tone = "default",
   layout = "default",
   rootClassName,
   hideLabel,
@@ -118,7 +116,6 @@ export function ExpirySelectPill({
     return () => cancelAnimationFrame(id);
   }, [open]);
 
-  const darkToolbar = tone === "darkToolbar";
   const toolbarLayout = layout === "toolbar";
   const expiryChip = value ? formatExpiryChipShort(value) : null;
   const closedDisplay = toolbarLayout
@@ -140,50 +137,25 @@ export function ExpirySelectPill({
   };
 
   const buttonClass = (() => {
-    if (toolbarLayout && darkToolbar) {
-      return "flex min-w-[8.5rem] shrink-0 items-center gap-1 rounded border-0 bg-transparent py-1 pl-0 pr-0.5 text-left text-sm font-semibold text-zinc-900 outline-none transition hover:bg-zinc-200/60 dark:text-white dark:hover:bg-white/5 focus-within:ring-2 focus-within:ring-sky-500/40 disabled:cursor-not-allowed disabled:text-zinc-400 dark:disabled:text-zinc-500";
-    }
     if (toolbarLayout) {
-      return "flex min-w-[11rem] shrink-0 items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus-within:border-sky-500 focus-within:ring-4 focus-within:ring-sky-500/15 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus-within:border-sky-400 dark:focus-within:ring-sky-400/20";
+      return "flex min-w-[11rem] shrink-0 items-center justify-between gap-2 rounded-[9px] border border-border bg-panel2 px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent/60 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50";
     }
-    if (darkToolbar) {
-      return [
-        "flex w-full min-w-0 items-center justify-between gap-2 border border-zinc-300 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-400 focus-within:border-sky-500 focus-within:ring-2 focus-within:ring-sky-500/35 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-600 dark:disabled:bg-zinc-900 dark:disabled:text-zinc-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:border-zinc-500",
-        open ? "rounded-t-md rounded-b-none border-b-0" : "rounded-md",
-      ].join(" ");
-    }
-    return "flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3.5 py-2.5 text-left text-sm text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus-within:border-sky-500 focus-within:ring-4 focus-within:ring-sky-500/15 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:focus-within:border-sky-400 dark:focus-within:ring-sky-400/20";
+    return [
+      "flex w-full min-w-0 items-center justify-between gap-2 border border-border bg-panel2 px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent/60 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50",
+      open ? "rounded-t-[9px] rounded-b-none border-b-0" : "rounded-[9px]",
+    ].join(" ");
   })();
 
-  const inputClass = (() => {
-    if (toolbarLayout && darkToolbar) {
-      return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm font-semibold text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed dark:text-white dark:placeholder:text-zinc-500";
-    }
-    if (toolbarLayout) {
-      return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm font-semibold text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-400 focus:ring-0 disabled:cursor-not-allowed dark:text-zinc-100 dark:placeholder:text-zinc-500";
-    }
-    if (darkToolbar) {
-      return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm font-semibold text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed dark:text-zinc-100 dark:placeholder:text-zinc-500";
-    }
-    return "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm text-zinc-900 outline-none ring-0 placeholder:font-normal placeholder:text-zinc-400 focus:ring-0 disabled:cursor-not-allowed dark:text-zinc-100 dark:placeholder:text-zinc-500";
-  })();
+  const inputClass =
+    "min-w-0 flex-1 truncate border-0 bg-transparent p-0 font-mono text-sm font-semibold text-foreground outline-none ring-0 placeholder:font-normal placeholder:text-faint focus:ring-0 disabled:cursor-not-allowed";
 
   const optionClass = (d: string, highlighted: boolean) => {
-    if (darkToolbar) {
-      return `flex w-full rounded-lg px-3 py-2 text-left text-sm transition ${
-        highlighted
-          ? "bg-sky-200 text-sky-950 dark:bg-sky-900/60 dark:text-sky-300"
-          : d === value
-            ? "bg-sky-100 text-sky-900 dark:bg-sky-950/55 dark:text-sky-400"
-            : "text-zinc-900 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700/50"
-      }`;
-    }
-    return `flex w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-zinc-100 dark:hover:bg-zinc-800/80 ${
+    return `flex w-full rounded-lg px-3 py-2 text-left font-mono text-sm transition ${
       highlighted
-        ? "bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-200"
+        ? "bg-panel2 text-foreground"
         : d === value
-          ? "bg-sky-50 text-sky-900 dark:bg-sky-950/40 dark:text-sky-100"
-          : "text-zinc-900 dark:text-zinc-100"
+          ? "bg-accent-tint font-semibold text-accent-strong"
+          : "text-foreground hover:bg-panel2"
     }`;
   };
 
@@ -202,11 +174,7 @@ export function ExpirySelectPill({
             role="option"
             tabIndex={-1}
             aria-selected={false}
-            className={
-              darkToolbar
-                ? "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700/50"
-                : "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/80"
-            }
+            className="flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-muted transition hover:bg-panel2"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => handleSelect("")}
           >
@@ -215,13 +183,7 @@ export function ExpirySelectPill({
         </li>
       ) : null}
       {options.length === 0 ? (
-        <li
-          className={
-            darkToolbar
-              ? "px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500"
-              : "px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400"
-          }
-        >
+        <li className="px-3 py-6 text-center text-sm text-muted">
           {dates.length === 0
             ? "No expiries for this underlying"
             : "No matches"}
@@ -247,27 +209,17 @@ export function ExpirySelectPill({
     </ul>
   );
 
-  const mobilePanelClass =
-    darkToolbar && toolbarLayout
-      ? "absolute inset-0 z-[1] flex flex-col bg-white dark:bg-zinc-900"
-      : toolbarLayout
-        ? "absolute inset-0 z-[1] flex flex-col bg-zinc-50 dark:bg-zinc-950"
-        : darkToolbar
-          ? "absolute inset-0 z-[1] flex flex-col bg-white dark:bg-zinc-900"
-          : "absolute inset-0 z-[1] flex flex-col bg-zinc-50 dark:bg-zinc-950";
+  const mobilePanelClass = "absolute inset-0 z-[1] flex flex-col bg-panel";
 
-  const desktopListboxClass =
-    darkToolbar && toolbarLayout
-      ? "absolute left-0 top-full z-[300] mt-1 hidden max-h-[min(22rem,70vh)] w-52 min-w-[12rem] rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-600 dark:bg-zinc-800 lg:flex lg:flex-col"
-      : toolbarLayout
-        ? "absolute left-0 top-full z-[300] mt-1 hidden max-h-[min(22rem,70vh)] w-52 min-w-[12rem] rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900 lg:flex lg:flex-col"
-        : darkToolbar
-          ? "absolute left-0 top-full z-[300] mt-0 hidden max-h-[min(22rem,70vh)] w-full min-w-[18rem] max-w-lg rounded-b-lg rounded-t-none border border-t-0 border-zinc-200 bg-white shadow-xl dark:border-zinc-600 dark:bg-zinc-800 lg:flex lg:flex-col"
-          : "absolute left-0 top-full z-[300] mt-1.5 hidden max-h-[min(22rem,70vh)] w-full min-w-[18rem] max-w-lg rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900 lg:flex lg:flex-col";
+  const desktopListboxClass = toolbarLayout
+    ? "absolute left-0 top-full z-[300] mt-1 hidden max-h-[min(22rem,70vh)] w-52 min-w-[12rem] rounded-lg border border-border bg-elevated shadow-pop lg:flex lg:flex-col"
+    : [
+        "absolute left-0 top-full z-[300] mt-0 hidden max-h-[min(22rem,70vh)] w-full min-w-[18rem] max-w-lg border border-t-0 border-border bg-elevated shadow-pop lg:flex lg:flex-col",
+        open ? "rounded-b-lg rounded-t-none" : "rounded-lg",
+      ].join(" ");
 
-  const mobileSearchClass = darkToolbar
-    ? "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-    : "w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
+  const mobileSearchClass =
+    "w-full rounded-lg border border-border bg-panel2 px-3 py-2 font-mono text-sm text-foreground outline-none placeholder:text-faint focus:border-accent focus:ring-1 focus:ring-accent/30";
 
   const mobileLayer =
     portalReady && open ? (
@@ -283,29 +235,13 @@ export function ExpirySelectPill({
           role="listbox"
           aria-label="Expiry dates"
         >
-          <div
-            className={
-              darkToolbar
-                ? "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-700"
-                : "flex shrink-0 items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800"
-            }
-          >
-            <span
-              className={
-                darkToolbar
-                  ? "text-sm font-semibold text-zinc-900 dark:text-zinc-100"
-                  : "text-sm font-semibold text-zinc-900 dark:text-zinc-50"
-              }
-            >
+          <div className="flex shrink-0 items-center justify-between border-b border-border-soft px-3 py-2.5">
+            <span className="text-sm font-semibold text-foreground">
               Choose expiry
             </span>
             <button
               type="button"
-              className={
-                darkToolbar
-                  ? "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:text-zinc-400 dark:hover:bg-zinc-700/80"
-                  : "rounded-lg p-2 text-zinc-500 hover:bg-zinc-200/80 dark:hover:bg-zinc-800"
-              }
+              className="rounded-lg p-2 text-muted hover:bg-panel2"
               aria-label="Close"
               onClick={closeDropdown}
             >
@@ -314,7 +250,7 @@ export function ExpirySelectPill({
               </span>
             </button>
           </div>
-          <div className="shrink-0 border-b border-zinc-200 px-3 py-2 dark:border-zinc-700">
+          <div className="shrink-0 border-b border-border-soft px-3 py-2">
             <label className="sr-only" htmlFor="expiry-select-mobile-filter">
               Filter expiry dates
             </label>
@@ -347,24 +283,12 @@ export function ExpirySelectPill({
     >
       {toolbarLayout ? (
         hideLabel ? null : (
-          <span
-            className={
-              darkToolbar
-                ? "whitespace-nowrap text-sm font-medium text-zinc-600 dark:text-zinc-500"
-                : "whitespace-nowrap text-xs font-medium text-zinc-600 dark:text-zinc-400"
-            }
-          >
+          <span className="whitespace-nowrap text-sm font-medium text-muted">
             Expiry
           </span>
         )
       ) : hideLabel ? null : (
-        <span
-          className={
-            darkToolbar
-              ? "mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-500"
-              : "mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
-          }
-        >
+        <span className="mb-1.5 block text-xs font-medium text-muted">
           Expiry (earliest first)
         </span>
       )}
@@ -385,18 +309,7 @@ export function ExpirySelectPill({
           placeholder="Select expiry…"
           className={inputClass}
         />
-        <span
-          className={
-            toolbarLayout && darkToolbar
-              ? "shrink-0 text-zinc-500 dark:text-zinc-400"
-              : toolbarLayout
-                ? "shrink-0 text-zinc-400 dark:text-zinc-500"
-                : darkToolbar
-                  ? "shrink-0 text-zinc-500 dark:text-zinc-500"
-                  : "shrink-0 text-zinc-400"
-          }
-          aria-hidden
-        >
+        <span className="shrink-0 text-faint" aria-hidden>
           ▾
         </span>
       </div>

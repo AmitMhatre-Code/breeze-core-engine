@@ -37,45 +37,45 @@ export function outlookPillLabel(o: Outlook): string {
 export function outlookIconFillClass(o: Outlook): string {
   switch (o) {
     case "bullish":
-      return "text-emerald-500";
+      return "text-up";
     case "bearish":
-      return "text-rose-500";
+      return "text-down";
     case "neutral":
-      return "text-sky-500";
+      return "text-accent-strong";
     case "volatile":
-      return "text-violet-500";
+      return "text-gtt";
   }
 }
 
 export function outlookPillClassName(o: Outlook): string {
   switch (o) {
     case "bullish":
-      return "bg-emerald-500/15 text-emerald-800 ring-1 ring-emerald-600/25 dark:text-emerald-200 dark:ring-emerald-400/20";
+      return "bg-up-tint text-up";
     case "bearish":
-      return "bg-rose-500/15 text-rose-800 ring-1 ring-rose-600/25 dark:text-rose-200 dark:ring-rose-400/20";
+      return "bg-down-tint text-down";
     case "neutral":
-      return "bg-zinc-500/15 text-zinc-800 ring-1 ring-zinc-600/25 dark:text-zinc-200 dark:ring-zinc-400/20";
+      return "bg-accent-tint text-accent-strong";
     case "volatile":
-      return "bg-violet-500/15 text-violet-800 ring-1 ring-violet-600/25 dark:text-violet-200 dark:ring-violet-400/20";
+      return "bg-gtt-tint text-gtt";
   }
 }
 
 /** Bordered icon toggle for outlook filters (fixed 40×40px). */
 export function outlookFilterBtnClassName(o: Outlook, on: boolean): string {
   const base =
-    "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40";
+    "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
   if (!on) {
-    return `${base} border-zinc-200 bg-white/40 opacity-50 shadow-sm hover:border-zinc-300 hover:bg-zinc-50 hover:opacity-75 dark:border-zinc-700 dark:bg-zinc-900/40 dark:hover:border-zinc-600 dark:hover:bg-zinc-800/60`;
+    return `${base} border-border bg-panel opacity-50 hover:border-accent/40 hover:bg-panel2 hover:opacity-75`;
   }
   switch (o) {
     case "bullish":
-      return `${base} border-emerald-500 bg-emerald-500/15 opacity-100 shadow-sm ring-1 ring-emerald-500/25 dark:border-emerald-400 dark:bg-emerald-500/20 dark:ring-emerald-400/20`;
+      return `${base} border-up bg-up-tint opacity-100`;
     case "bearish":
-      return `${base} border-rose-500 bg-rose-500/15 opacity-100 shadow-sm ring-1 ring-rose-500/25 dark:border-rose-400 dark:bg-rose-500/20 dark:ring-rose-400/20`;
+      return `${base} border-down bg-down-tint opacity-100`;
     case "neutral":
-      return `${base} border-sky-500 bg-sky-500/15 opacity-100 shadow-sm ring-1 ring-sky-500/25 dark:border-sky-400 dark:bg-sky-500/20 dark:ring-sky-400/20`;
+      return `${base} border-accent bg-accent-tint opacity-100`;
     case "volatile":
-      return `${base} border-violet-500 bg-violet-500/15 opacity-100 shadow-sm ring-1 ring-violet-500/25 dark:border-violet-400 dark:bg-violet-500/20 dark:ring-violet-400/20`;
+      return `${base} border-gtt bg-gtt-tint opacity-100`;
   }
 }
 

@@ -46,7 +46,7 @@ function KindBadge({ kind }: { kind: ReleaseKind }) {
   return (
     <span
       className={[
-        "inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        "inline-flex shrink-0 rounded-full px-2 py-0.5 text-[12px] font-semibold uppercase tracking-wide",
         badge.className,
       ].join(" ")}
     >
@@ -279,7 +279,7 @@ function HistorySection({ releases }: { releases: ChangelogRelease[] }) {
                   <KindBadge kind={release.releaseKind} />
                 </span>
                 <span
-                  className="shrink-0 text-zinc-400 transition group-open:rotate-180 dark:text-zinc-500"
+                  className="shrink-0 text-zinc-500 transition group-open:rotate-180 dark:text-zinc-400"
                   aria-hidden
                 >
                   <svg

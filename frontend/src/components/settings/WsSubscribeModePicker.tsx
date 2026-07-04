@@ -20,7 +20,7 @@ function ChevronDown({ open }: { open: boolean }) {
       fill="none"
       aria-hidden
       className={[
-        "shrink-0 text-zinc-500 transition-transform duration-200 dark:text-zinc-400",
+        "shrink-0 text-muted transition-transform duration-200",
         open ? "-rotate-180" : "",
       ].join(" ")}
     >
@@ -85,9 +85,7 @@ export function WsSubscribeModePicker({
         type="button"
         className={[
           "app-input mt-1.5 flex items-center justify-between gap-3 py-2.5 text-left",
-          open
-            ? "border-sky-500/60 ring-2 ring-sky-500/30 dark:border-sky-400/45 dark:ring-sky-400/25"
-            : "",
+          open ? "border-accent ring-2 ring-accent/30" : "",
         ].join(" ")}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -96,7 +94,7 @@ export function WsSubscribeModePicker({
         onClick={() => setOpen((v) => !v)}
         onKeyDown={handleTriggerKeyDown}
       >
-        <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+        <span className="truncate text-sm font-medium text-foreground">
           {selected.label}
         </span>
         <ChevronDown open={open} />
@@ -108,10 +106,7 @@ export function WsSubscribeModePicker({
           id={listId}
           role="listbox"
           aria-labelledby={labelId}
-          className={[
-            "absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-hidden rounded-md border py-1 shadow-lg",
-            "border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900",
-          ].join(" ")}
+          className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-hidden rounded-[10px] border border-border bg-elevated py-1 shadow-pop"
         >
           {options.map((opt, index) => {
             const isSelected = opt.value === value;
@@ -127,10 +122,10 @@ export function WsSubscribeModePicker({
                   className={[
                     "flex w-full items-center px-3 py-2.5 text-left text-sm transition-colors",
                     highlighted
-                      ? "bg-sky-50 text-sky-900 dark:bg-sky-950/50 dark:text-sky-100"
+                      ? "bg-accent-tint text-accent-strong"
                       : isSelected
-                        ? "bg-zinc-100 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-50"
-                        : "text-zinc-800 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800/80",
+                        ? "bg-panel2 font-medium text-foreground"
+                        : "text-foreground hover:bg-panel2",
                   ].join(" ")}
                   onClick={() => {
                     onChange(opt.value);

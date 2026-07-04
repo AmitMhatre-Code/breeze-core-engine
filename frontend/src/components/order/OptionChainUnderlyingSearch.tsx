@@ -188,11 +188,10 @@ export function OptionChainUnderlyingSearch({
       <ul ref={listRef} className={ulClass}>
         {options.length === 0 ? (
           <li
-            className={
-              variant === "chainBar"
-                ? "px-4 py-10 text-center text-sm text-zinc-500"
-                : "px-4 py-8 text-center text-sm text-zinc-500"
-            }
+            className={[
+              "text-center text-sm text-muted",
+              variant === "chainBar" ? "px-4 py-10" : "px-4 py-8",
+            ].join(" ")}
           >
             No matches
           </li>
@@ -212,17 +211,11 @@ export function OptionChainUnderlyingSearch({
                   className={[
                     "flex w-full items-center justify-between gap-3 text-left text-sm transition",
                     chainBar ? "px-4 py-3" : "px-4 py-2.5",
-                    chainBar
-                      ? highlighted
-                        ? "bg-sky-100 dark:bg-zinc-600/50"
-                        : selected
-                          ? "bg-sky-100 dark:bg-zinc-600/35"
-                          : "text-zinc-900 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-600/25"
+                    selected
+                      ? "bg-accent-tint"
                       : highlighted
-                        ? "bg-zinc-600/60 text-zinc-100"
-                        : selected
-                          ? "bg-sky-950/55 text-sky-400"
-                          : "text-zinc-100 hover:bg-zinc-700/50",
+                        ? "bg-panel2"
+                        : "text-foreground hover:bg-panel2",
                   ].join(" ")}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => select(u.stock_code)}
@@ -231,14 +224,12 @@ export function OptionChainUnderlyingSearch({
                     <span
                       className={[
                         "block truncate font-semibold tracking-tight",
-                        chainBar
-                          ? "text-sm uppercase tracking-wide"
-                          : "",
+                        chainBar ? "text-sm uppercase tracking-wide" : "",
                         chainBar
                           ? selected || highlighted
-                            ? "text-sky-800 dark:text-sky-400"
-                            : "text-zinc-900 hover:text-sky-700 dark:text-zinc-100 dark:hover:text-sky-300"
-                          : "",
+                            ? "text-accent-strong"
+                            : "text-foreground hover:text-accent-strong"
+                          : "text-foreground",
                       ].join(" ")}
                     >
                       {u.stock_code}
@@ -246,12 +237,8 @@ export function OptionChainUnderlyingSearch({
                     {u.long_name ? (
                       <span
                         className={[
-                          "mt-0.5 block truncate text-xs font-normal leading-snug",
-                          chainBar
-                            ? "text-[11px] normal-case text-zinc-500"
-                            : selected
-                              ? "text-zinc-400"
-                              : "text-zinc-500",
+                          "mt-0.5 block truncate text-xs font-normal leading-snug text-faint",
+                          chainBar ? "text-[13px] normal-case" : "",
                         ].join(" ")}
                       >
                         {u.long_name}
@@ -262,8 +249,8 @@ export function OptionChainUnderlyingSearch({
                     <CheckIcon
                       className={
                         chainBar
-                          ? "size-[1.125rem] shrink-0 text-sky-600 dark:text-sky-400"
-                          : "shrink-0 text-sky-400"
+                          ? "size-[1.125rem] shrink-0 text-accent-strong"
+                          : "shrink-0 text-accent-strong"
                       }
                     />
                   ) : (
@@ -279,12 +266,12 @@ export function OptionChainUnderlyingSearch({
   };
 
   const filterInputDefault = (
-    <div className="border-b border-zinc-700 p-2">
+    <div className="border-b border-border-soft p-2">
       <label className="sr-only" htmlFor="option-chain-underlying-filter">
         Filter symbols
       </label>
       <div className="relative flex items-center">
-        <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
+        <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-faint" />
         <input
           id="option-chain-underlying-filter"
           ref={inputRef}
@@ -297,7 +284,7 @@ export function OptionChainUnderlyingSearch({
           onKeyDown={handleKeyDown}
           onBlur={handleInputBlur}
           placeholder="Type stock name: SBIN, TCS etc."
-          className="w-full rounded-md border border-zinc-600/80 bg-zinc-900/80 py-2 pl-9 pr-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-sky-500/50 focus:ring-1 focus:ring-sky-500/30"
+          className="w-full rounded-[9px] border border-border bg-panel2 py-2 pl-9 pr-2 font-mono text-sm text-foreground outline-none placeholder:text-faint focus:border-accent focus:ring-1 focus:ring-accent/30"
         />
       </div>
     </div>
@@ -311,7 +298,7 @@ export function OptionChainUnderlyingSearch({
   if (variant === "ticker") {
     const rowClass = chainBar
       ? "flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 sm:gap-x-3"
-      : "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-zinc-200 bg-white px-3 py-2 shadow-sm sm:gap-x-3 dark:border-zinc-700 dark:bg-zinc-950/80";
+      : "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-[9px] border border-border bg-panel2 px-3 py-2 sm:gap-x-3";
 
     const tickerRow = (
       <div className={rowClass}>
@@ -323,13 +310,7 @@ export function OptionChainUnderlyingSearch({
           }
         >
           <span className="sr-only">Search underlying</span>
-          <SearchIcon
-            className={
-              chainBar
-                ? "pointer-events-none size-[1.125rem] shrink-0 text-zinc-500 dark:text-zinc-500"
-                : "pointer-events-none size-[1.125rem] shrink-0 text-zinc-500 dark:text-zinc-400"
-            }
-          />
+          <SearchIcon className="pointer-events-none size-[1.125rem] shrink-0 text-faint" />
           <input
             id="option-chain-underlying-ticker"
             ref={inputRef}
@@ -343,46 +324,27 @@ export function OptionChainUnderlyingSearch({
             onKeyDown={handleKeyDown}
             onBlur={handleInputBlur}
             placeholder="Select underlying"
-            className={
-              chainBar
-                ? "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm outline-none ring-0 placeholder:font-normal placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-400 dark:placeholder:text-zinc-500 dark:disabled:text-zinc-500 font-semibold tracking-tight text-zinc-900 dark:text-white placeholder:tracking-normal"
-                : "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm outline-none ring-0 placeholder:font-normal placeholder:text-zinc-400 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-400 dark:placeholder:text-zinc-500 dark:disabled:text-zinc-500 font-semibold tracking-tight text-zinc-900 dark:text-zinc-100"
-            }
+            className="min-w-0 flex-1 truncate border-0 bg-transparent p-0 font-mono text-sm font-semibold tracking-tight text-foreground outline-none ring-0 placeholder:font-normal placeholder:tracking-normal placeholder:text-faint focus:ring-0 disabled:cursor-not-allowed disabled:text-faint"
           />
         </label>
         {loading ? (
-          <span
-            className={
-              chainBar
-                ? "shrink-0 text-sm tabular-nums text-zinc-500 animate-pulse dark:text-zinc-400"
-                : "shrink-0 text-sm text-zinc-400 animate-pulse dark:text-zinc-500"
-            }
-          >
+          <span className="shrink-0 animate-pulse font-mono text-sm tabular-nums text-faint">
             …
           </span>
         ) : spot != null && Number.isFinite(spot) ? (
-          <span
-            className={
-              chainBar
-                ? "shrink-0 tabular-nums text-sm font-semibold text-zinc-900 dark:text-white"
-                : "shrink-0 tabular-nums text-sm font-semibold text-zinc-800 dark:text-zinc-100"
-            }
-          >
+          <span className="shrink-0 font-mono text-sm font-semibold tabular-nums text-foreground">
             {formatSpot(spot)}
           </span>
         ) : chainBar ? null : (
-          <span className="shrink-0 text-sm font-medium text-zinc-400 dark:text-zinc-500">
-            —
-          </span>
+          <span className="shrink-0 text-sm font-medium text-faint">—</span>
         )}
         {chainBar ? (
           changeStr ? (
             <span
-              className={
-                (changePct ?? 0) < 0
-                  ? "shrink-0 text-sm font-semibold tabular-nums text-orange-700 dark:text-orange-400"
-                  : "shrink-0 text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400"
-              }
+              className={[
+                "shrink-0 font-mono text-sm font-semibold tabular-nums",
+                (changePct ?? 0) < 0 ? "text-down" : "text-up",
+              ].join(" ")}
             >
               {changeStr}
             </span>
@@ -424,8 +386,8 @@ export function OptionChainUnderlyingSearch({
             <div
               className={
                 chainBar
-                  ? "fixed inset-x-0 bottom-0 z-[300] flex max-h-[min(70vh,24rem)] flex-col overflow-hidden rounded-t-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-500/35 dark:bg-[#2c2d32] lg:absolute lg:inset-x-auto lg:bottom-auto lg:left-0 lg:right-auto lg:top-full lg:mt-1.5 lg:max-h-[min(22rem,72vh)] lg:w-[min(calc(100vw-1.5rem),20rem)] lg:rounded-lg lg:border-zinc-200 lg:dark:border-zinc-500/30 lg:shadow-xl"
-                  : "fixed inset-x-0 bottom-0 z-[300] flex max-h-[min(70vh,24rem)] flex-col overflow-hidden rounded-t-2xl border border-zinc-600 bg-zinc-800 shadow-2xl lg:absolute lg:inset-x-auto lg:bottom-auto lg:left-0 lg:right-auto lg:top-full lg:mt-1 lg:w-[min(calc(100vw-2rem),22rem)] lg:max-h-[min(22rem,70vh)] lg:rounded-lg"
+                  ? "fixed inset-x-0 bottom-0 z-[300] flex max-h-[min(70vh,24rem)] flex-col overflow-hidden rounded-t-2xl border border-border bg-elevated shadow-pop lg:absolute lg:inset-x-auto lg:bottom-auto lg:left-0 lg:right-auto lg:top-full lg:mt-1.5 lg:max-h-[min(22rem,72vh)] lg:w-[min(calc(100vw-1.5rem),20rem)] lg:rounded-lg"
+                  : "fixed inset-x-0 bottom-0 z-[300] flex max-h-[min(70vh,24rem)] flex-col overflow-hidden rounded-t-2xl border border-border bg-elevated shadow-pop lg:absolute lg:inset-x-auto lg:bottom-auto lg:left-0 lg:right-auto lg:top-full lg:mt-1 lg:w-[min(calc(100vw-2rem),22rem)] lg:max-h-[min(22rem,70vh)] lg:rounded-lg"
               }
               role="listbox"
               aria-label="Underlying symbols"
@@ -434,13 +396,13 @@ export function OptionChainUnderlyingSearch({
                 renderUnderlyingList("chainBar", filtered)
               ) : (
                 <>
-                  <div className="flex items-center justify-between border-b border-zinc-700 px-3 py-2 lg:hidden">
-                    <span className="text-sm font-medium text-zinc-200">
+                  <div className="flex items-center justify-between border-b border-border-soft px-3 py-2 lg:hidden">
+                    <span className="text-sm font-medium text-foreground">
                       Select underlying
                     </span>
                     <button
                       type="button"
-                      className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-700/80"
+                      className="rounded-lg p-2 text-muted hover:bg-panel2"
                       aria-label="Close"
                       onClick={closeDropdown}
                     >
@@ -467,7 +429,7 @@ export function OptionChainUnderlyingSearch({
     >
       <div
         className={[
-          "overflow-hidden border border-zinc-600/90 bg-zinc-800 shadow-sm transition-colors",
+          "overflow-hidden border border-border bg-panel2 transition-colors",
           open ? "rounded-t-lg rounded-b-none" : "rounded-lg",
         ].join(" ")}
       >
@@ -475,7 +437,7 @@ export function OptionChainUnderlyingSearch({
           Search underlying
         </label>
         <div className="relative flex items-center">
-          <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-[1.125rem] -translate-y-1/2 text-zinc-500" />
+          <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-[1.125rem] -translate-y-1/2 text-faint" />
           <input
             id="option-chain-underlying-search"
             ref={inputRef}
@@ -489,7 +451,7 @@ export function OptionChainUnderlyingSearch({
             onKeyDown={handleKeyDown}
             onBlur={handleInputBlur}
             placeholder="Type stock name: SBIN, TCS etc."
-            className="w-full border-0 bg-transparent py-2.5 pl-10 pr-3 text-sm text-zinc-100 outline-none ring-0 placeholder:text-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:text-zinc-500"
+            className="w-full border-0 bg-transparent py-2.5 pl-10 pr-3 font-mono text-sm text-foreground outline-none ring-0 placeholder:text-faint focus:ring-0 disabled:cursor-not-allowed disabled:text-faint"
           />
         </div>
       </div>
@@ -503,17 +465,17 @@ export function OptionChainUnderlyingSearch({
             onClick={closeDropdown}
           />
           <div
-            className="fixed inset-x-0 bottom-0 z-[300] max-h-[min(70vh,24rem)] overflow-hidden rounded-t-2xl border border-zinc-600 bg-zinc-800 shadow-2xl lg:absolute lg:inset-x-auto lg:bottom-auto lg:left-0 lg:right-0 lg:top-full lg:max-h-[min(22rem,70vh)] lg:rounded-b-lg lg:rounded-t-none lg:border-t-0"
+            className="fixed inset-x-0 bottom-0 z-[300] max-h-[min(70vh,24rem)] overflow-hidden rounded-t-2xl border border-border bg-elevated shadow-pop lg:absolute lg:inset-x-auto lg:bottom-auto lg:left-0 lg:right-0 lg:top-full lg:max-h-[min(22rem,70vh)] lg:rounded-b-lg lg:rounded-t-none lg:border-t-0"
             role="listbox"
             aria-label="Underlying symbols"
           >
-            <div className="flex items-center justify-between border-b border-zinc-700 px-3 py-2 lg:hidden">
-              <span className="text-sm font-medium text-zinc-200">
+            <div className="flex items-center justify-between border-b border-border-soft px-3 py-2 lg:hidden">
+              <span className="text-sm font-medium text-foreground">
                 Select underlying
               </span>
               <button
                 type="button"
-                className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-700/80"
+                className="rounded-lg p-2 text-muted hover:bg-panel2"
                 aria-label="Close"
                 onClick={closeDropdown}
               >

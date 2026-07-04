@@ -4,11 +4,9 @@ import { useEffect, useState } from "react";
 import { HelpLink } from "@/components/help/HelpLink";
 import { apiClient } from "@/lib/api-client";
 import {
-  breezeUserHandoffUrlForCurrentDeployment,
   buildBreezeUserHandoffGuideUrl,
   buildIciciStaticIpHandoffGuideUrl,
   deploymentPublicIpFromWindow,
-  iciciStaticIpHandoffUrlForCurrentDeployment,
 } from "@/lib/icici-handoff-url";
 
 type RegisterSession = {
@@ -16,18 +14,20 @@ type RegisterSession = {
 };
 
 export function IciciHandoffHelpLinks() {
-  const [staticIpUrl, setStaticIpUrl] = useState<string | null>(() =>
-    iciciStaticIpHandoffUrlForCurrentDeployment(),
-  );
-  const [userRegUrl, setUserRegUrl] = useState<string | null>(() =>
-    breezeUserHandoffUrlForCurrentDeployment(),
-  );
+  // Not computed in useState's initializer: deploymentPublicIpFromWindow() reads
+  // window.location, which only exists on the client. Doing that eagerly here would
+  // make the very first client render differ from the server's (which always sees
+  // no window and renders nothing) -- a hydration mismatch. The effect below runs
+  // client-only, after hydration has already committed a matching empty render.
+  const [staticIpUrl, setStaticIpUrl] = useState<string | null>(null);
+  const [userRegUrl, setUserRegUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (staticIpUrl && userRegUrl) return;
 
     const ip = deploymentPublicIpFromWindow();
     if (ip) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- post-hydration read of window.location, see comment above
       setStaticIpUrl((current) => current ?? buildIciciStaticIpHandoffGuideUrl(ip));
       setUserRegUrl((current) => current ?? buildBreezeUserHandoffGuideUrl(ip));
       return;
@@ -48,14 +48,14 @@ export function IciciHandoffHelpLinks() {
 
   return (
     <div className="space-y-1 pt-2">
-      <p className="text-center text-[11px] text-zinc-500">
+      <p className="text-center text-[13px] text-muted">
         New to Breeze Modern?{" "}
-        <HelpLink topicId="login-flow" className="text-[11px]">
+        <HelpLink topicId="login-flow" className="text-[13px]">
           Login &amp; registration help
         </HelpLink>
       </p>
       {staticIpUrl ? (
-        <p className="text-center text-[11px] text-zinc-500">
+        <p className="text-center text-[13px] text-muted">
           Need help in registering Static IP with ICICI Direct? Read instructions{" "}
           <a href={staticIpUrl} target="_blank" rel="noopener noreferrer" className="app-link">
             here
@@ -64,7 +64,7 @@ export function IciciHandoffHelpLinks() {
         </p>
       ) : null}
       {userRegUrl ? (
-        <p className="text-center text-[11px] text-zinc-500">
+        <p className="text-center text-[13px] text-muted">
           Need help in registering user on this app? Read instructions{" "}
           <a href={userRegUrl} target="_blank" rel="noopener noreferrer" className="app-link">
             here

@@ -64,6 +64,7 @@ def calc_short_straddle(ctx: EngineContext) -> StrategyResult:
             name,
             legs,
             max_loss=None,
+            max_profit=max_profit,
             rr=f"Unlimited : {max_profit:.0f}",
             modified=ctx.structure_modified,
             net_premium_val=max_profit,
@@ -86,6 +87,7 @@ def calc_short_straddle(ctx: EngineContext) -> StrategyResult:
     return ok_with_pop(
         ctx, sid, name, legs,
         max_loss=None,
+        max_profit=max_profit,
         rr=f"Unlimited : {max_profit:.0f}",
         modified=ctx.structure_modified,
         net_premium_val=max_profit,

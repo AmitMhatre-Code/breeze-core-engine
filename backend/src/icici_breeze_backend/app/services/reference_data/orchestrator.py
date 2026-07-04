@@ -129,46 +129,49 @@ def run_reference_data_load(*, force: bool = False, trigger_mode: str = "manual"
             _set_source("bse_fo", in_progress=False, progress_pct=100, message="No BSE FO BhavCopy found")
             _record_ingest("bse_fo", ok=False, source_date=None, row_count=0, url=None, notes="not_found")
 
-        # Scrip master
+        # Scrip master -- ICICI_MASTERFILE_URL is an unauthenticated public download (no
+        # BreezeConnect session, API key, or static IP required; see update_ICICImaster()),
+        # so this always runs regardless of ICICI_BROKER_MODE. Mock mode only affects
+        # genuinely authenticated ICICI calls (trading, portfolio, WS ticks) elsewhere.
         _set_source("scrip", in_progress=True, progress_pct=10, message="Downloading ICICI scrip master")
-        if getattr(cfg, "ICICI_BROKER_MODE", "live") != "mock":
-            try:
-                processor().update_ICICImaster(publish_scrip_index=False)
-                _set_source("scrip", progress_pct=80, message="Publishing scrip index to cache")
-                scrip_index.publish_scrip_index_from_db(version=batch_version)
-                scrip_rows = scrip_index.scrip_master_row_count()
-                _set_source(
-                    "scrip",
-                    in_progress=False,
-                    progress_pct=100,
-                    message=f"Scrip master loaded ({scrip_rows} rows)",
-                )
-                _record_ingest(
-                    "scrip",
-                    ok=True,
-                    source_date=now_ist().date().isoformat(),
-                    row_count=scrip_rows,
-                    url=cfg.ICICI_MASTERFILE_URL,
-                )
-            except Exception as exc:
-                ok_all = False
-                _set_source("scrip", in_progress=False, progress_pct=100, message=f"Scrip master failed: {exc}")
-                _record_ingest("scrip", ok=False, source_date=None, row_count=0, url=cfg.ICICI_MASTERFILE_URL, notes=str(exc))
-        else:
+        try:
+            processor().update_ICICImaster(publish_scrip_index=False)
+            _set_source("scrip", progress_pct=80, message="Publishing scrip index to cache")
             scrip_index.publish_scrip_index_from_db(version=batch_version)
             scrip_rows = scrip_index.scrip_master_row_count()
             _set_source(
                 "scrip",
                 in_progress=False,
                 progress_pct=100,
-                message=f"Scrip index published (mock mode, {scrip_rows} rows)",
+                message=f"Scrip master loaded ({scrip_rows} rows)",
             )
             _record_ingest(
                 "scrip",
                 ok=True,
                 source_date=now_ist().date().isoformat(),
                 row_count=scrip_rows,
-                url=None,
+                url=cfg.ICICI_MASTERFILE_URL,
+            )
+        except Exception as exc:
+            # No network (offline dev, airgapped CI): fall back to whatever's already
+            # loaded locally rather than leaving the scrip index unpublished.
+            ok_all = False
+            _logger.warning("ICICI scrip master download failed, republishing existing local data: %s", exc)
+            scrip_index.publish_scrip_index_from_db(version=batch_version)
+            scrip_rows = scrip_index.scrip_master_row_count()
+            _set_source(
+                "scrip",
+                in_progress=False,
+                progress_pct=100,
+                message=f"Scrip master download failed, republished existing local data ({scrip_rows} rows): {exc}",
+            )
+            _record_ingest(
+                "scrip",
+                ok=False,
+                source_date=None,
+                row_count=scrip_rows,
+                url=cfg.ICICI_MASTERFILE_URL,
+                notes=str(exc),
             )
 
         # SPAN baseline

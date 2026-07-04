@@ -1,6 +1,14 @@
 "use client";
 
-import { Fragment, useCallback, useMemo, useState, type MouseEvent } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+} from "react";
 import Link from "next/link";
 import {
   OrderExecutionConfirmDialog,
@@ -15,6 +23,10 @@ import {
 } from "@/lib/hedge/legs";
 import { buildPortfolioPositionGroups } from "@/lib/portfolio/groupPositions";
 import type { PortfolioPositionGroup } from "@/lib/portfolio/groupPositions";
+import { formatSignedRupees } from "@/lib/portfolio/totals";
+import { formatIndianMoneyCompact } from "@/lib/format-money-in";
+import { useGroupLiveOverlay } from "@/lib/portfolio/useGroupLiveOverlay";
+import { useGroupSubscriptionHolders } from "@/lib/portfolio/useGroupSubscriptionHolders";
 import { ltpAsOrderPrice, squareOffToOrderPayload } from "@/lib/order-confirm";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
@@ -41,38 +53,38 @@ function coerceNum(v: unknown): number | null {
   return null;
 }
 
-const mutedNumClass = "text-zinc-600 dark:text-zinc-400";
+const mutedNumClass = "text-muted";
 
-/** MTM / Carry: gain = green ₹x, loss = red (₹x), flat = muted. */
+/** MTM / Carry: gain = green +₹x, loss = red −₹x, flat = muted. */
 function formatMtmCarry(raw: unknown): { text: string; className: string } {
-  const n = coerceNum(raw);
-  if (n == null) {
-    return { text: "—", className: "app-text-muted" };
-  }
-  const v = Math.round(n);
-  const abs = Math.abs(v).toLocaleString("en-IN");
-  if (v < 0) {
-    return {
-      text: `(₹${abs})`,
-      className: "font-medium text-red-600 dark:text-red-400",
-    };
-  }
-  if (v > 0) {
-    return {
-      text: `₹${abs}`,
-      className: "font-medium text-emerald-600 dark:text-emerald-400",
-    };
-  }
-  return { text: "₹0", className: mutedNumClass };
+  return formatSignedRupees(coerceNum(raw));
 }
 
-/** Legacy Span / ELM: ₹{value/100000}L (integer lakhs). */
-function formatSpanElmLakhs(raw: unknown): string {
+/** Span / ELM: plain grouped rupees under ₹1L, ₹X.XXL/Cr at or above. */
+function formatSpanElm(raw: unknown): string {
   const n = coerceNum(raw);
-  if (n == null) return "-";
-  const lakhs = n / 100_000;
-  const rounded = Math.round(lakhs);
-  return `₹${rounded.toLocaleString("en-IN")}L`;
+  if (n == null) return "—";
+  return formatIndianMoneyCompact(n, { shortSuffix: true, skipK: true });
+}
+
+/** "03-Jul-2026" (broker expiry_date format) -> "03JUL26" (compact symbol format). */
+function formatExpiryCompact(raw: unknown): string {
+  const s = String(raw ?? "").trim();
+  const m = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+  if (!m) return s.replace(/-/g, "").toUpperCase();
+  const [, dd, mon, yyyy] = m;
+  return `${dd.padStart(2, "0")}${mon.toUpperCase()}${yyyy.slice(-2)}`;
+}
+
+/** Compact broker-style symbol e.g. "NIFTY 03JUL26 23700" (Type column already shows PE/CE). */
+function formatOptionSymbol(row: PortfolioPositionRecord): string {
+  const stock = String(row.stock_code ?? "").trim();
+  const expiry = formatExpiryCompact(row.expiry_date);
+  const strike = coerceNum(row.strike_price);
+  if (!stock || !expiry || strike == null) {
+    return String(row.option ?? "—");
+  }
+  return `${stock} ${expiry} ${strike}`;
 }
 
 function carryMarginRoiTitle(row: PortfolioPositionRecord): string | undefined {
@@ -131,22 +143,22 @@ function formatCarryRet(raw: unknown): { text: string; className: string } {
   }
   const fmt = (x: number) =>
     Math.abs(x).toLocaleString("en-IN", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
     });
   if (n < 0) {
     return {
       text: `(${fmt(n)}%)`,
-      className: "font-medium text-red-600 dark:text-red-400",
+      className: "font-medium text-down",
     };
   }
   if (n > 0) {
     return {
       text: `${fmt(n)}%`,
-      className: "font-medium text-emerald-600 dark:text-emerald-400",
+      className: "font-medium text-up",
     };
   }
-  return { text: "0.00%", className: mutedNumClass };
+  return { text: "0.0%", className: mutedNumClass };
 }
 
 /** Avg / LTP: ₹ with decimals (legacy prints raw; we normalize). */
@@ -164,7 +176,7 @@ function formatSpot(raw: unknown): { text: string; className: string } {
   if (s === "Err" || s.toLowerCase() === "err") {
     return {
       text: "Err",
-      className: "font-medium text-red-600 dark:text-red-400",
+      className: "font-medium text-down",
     };
   }
   return { text: formatPriceCell(raw), className: "tabular-nums" };
@@ -187,14 +199,31 @@ export function squareOffHref(row: PortfolioPositionRecord): string {
   return `/place-order?${params.toString()}`;
 }
 
-const btnPrimaryTable =
-  "app-btn-primary shrink-0 px-2.5 py-1.5 text-xs font-medium 2xl:px-3 2xl:py-2 2xl:text-sm";
-const btnPrimaryCard =
-  "app-btn-primary px-3 py-2.5 text-sm font-medium";
-const btnHedgeTable =
-  "app-btn-secondary shrink-0 px-2.5 py-1.5 text-xs font-medium 2xl:px-3 2xl:py-2 2xl:text-sm";
-const btnHedgeCard =
-  "app-btn-secondary shrink-0 px-3 py-2 text-sm font-medium";
+/**
+ * Accent pill buttons/badges: `--accent-strong`/`--accent`/`--accent-ink` already flip per
+ * theme (see globals.css), so one inline style works in both light and dark — no dark:
+ * variants needed, matching the InterpretationBadge convention.
+ */
+const ACCENT_OUTLINE_STYLE: CSSProperties = {
+  borderColor: "var(--accent-strong)",
+  color: "var(--accent-strong)",
+};
+const ACCENT_SOLID_STYLE: CSSProperties = {
+  backgroundColor: "var(--accent-strong)",
+  color: "var(--accent-ink)",
+};
+
+const pillOutlineTable =
+  "inline-flex shrink-0 items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition hover:bg-[var(--accent-tint)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] 2xl:px-3.5 2xl:py-2 2xl:text-sm";
+const pillOutlineCard =
+  "inline-flex items-center justify-center rounded-lg border px-3 py-2.5 text-sm font-semibold transition hover:bg-[var(--accent-tint)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]";
+const pillSolidTable =
+  "inline-flex shrink-0 items-center justify-center rounded-lg px-3 py-1.5 text-xs font-semibold transition hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background 2xl:px-3.5 2xl:py-2 2xl:text-sm";
+const pillSolidCard =
+  "inline-flex shrink-0 items-center justify-center rounded-lg px-3 py-2 text-sm font-semibold transition hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]";
+
+const btnPrimaryTable = pillOutlineTable;
+const btnPrimaryCard = pillOutlineCard;
 
 function childRowKey(groupKey: string, localIdx: number): string {
   return `${groupKey}-${localIdx}`;
@@ -221,12 +250,13 @@ function PositionActionsTable({ row }: { row: PortfolioPositionRecord }) {
   return (
     <div className="flex flex-nowrap items-center justify-end gap-1.5 2xl:gap-2">
       {squareOk ? (
-        <Link href={squareOffHref(row)} className={btnPrimaryTable}>
+        <Link href={squareOffHref(row)} className={btnPrimaryTable} style={ACCENT_OUTLINE_STYLE}>
           Square Off
         </Link>
       ) : (
         <span
           className={`${btnPrimaryTable} pointer-events-none cursor-not-allowed opacity-50`}
+          style={ACCENT_OUTLINE_STYLE}
           aria-disabled
         >
           Square Off
@@ -244,12 +274,14 @@ function PositionActionsCard({ row }: { row: PortfolioPositionRecord }) {
         <Link
           href={squareOffHref(row)}
           className={`${btnPrimaryCard} w-full min-h-11 sm:min-h-0 sm:flex-1`}
+          style={ACCENT_OUTLINE_STYLE}
         >
           Square Off
         </Link>
       ) : (
         <span
           className={`${btnPrimaryCard} w-full min-h-11 cursor-not-allowed opacity-50 sm:min-h-0 sm:flex-1`}
+          style={ACCENT_OUTLINE_STYLE}
           aria-disabled
         >
           Square Off
@@ -260,30 +292,97 @@ function PositionActionsCard({ row }: { row: PortfolioPositionRecord }) {
 }
 
 const thBase =
-  "whitespace-nowrap px-2 py-2 text-xs font-semibold text-zinc-700 2xl:px-3 2xl:py-2.5 2xl:text-sm dark:text-zinc-300";
+  "whitespace-nowrap px-2 py-2 text-[13px] font-semibold uppercase tracking-wide text-faint 2xl:px-3 2xl:py-2.5";
 const tdShell =
   "whitespace-nowrap px-2 py-2 align-middle text-xs 2xl:px-3 2xl:py-2.5 2xl:text-sm";
-const tdInk = "text-zinc-800 dark:text-zinc-200";
+const tdInk = "text-foreground";
 const tdBase = `${tdShell} ${tdInk}`;
+
+/** PE/CE — outline only (no fill), red for puts / green for calls. */
+function optionTypeAbbrev(raw: unknown): "PE" | "CE" | null {
+  const t = String(raw ?? "").trim().toLowerCase();
+  if (t === "put" || t === "p" || t === "pe") return "PE";
+  if (t === "call" || t === "c" || t === "ce") return "CE";
+  return null;
+}
+
+function OptionTypePill({ raw }: { raw: unknown }) {
+  const abbr = optionTypeAbbrev(raw);
+  if (!abbr) return <span className="app-text-muted">—</span>;
+  const isPut = abbr === "PE";
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 font-mono text-[13px] font-bold"
+      style={{
+        borderColor: isPut ? "var(--down)" : "var(--up)",
+        color: isPut ? "var(--down)" : "var(--up)",
+      }}
+    >
+      {abbr}
+    </span>
+  );
+}
+
+/** BUY/SELL — filled soft-tint pill, same convention InterpretationBadge uses. */
+function PositionPill({ raw }: { raw: unknown }) {
+  const t = String(raw ?? "").trim().toUpperCase();
+  if (t !== "BUY" && t !== "SELL") {
+    return <span className="app-text-muted">{t || "—"}</span>;
+  }
+  const isSell = t === "SELL";
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[13px] font-bold"
+      style={{
+        backgroundColor: isSell ? "var(--up-tint)" : "var(--down-tint)",
+        color: isSell ? "var(--up)" : "var(--down)",
+      }}
+    >
+      {t}
+    </span>
+  );
+}
+
+/** Small pulsing dot — same convention as AppShell's session indicator. */
+function LiveDot({ title }: { title: string }) {
+  return (
+    <span className="relative inline-flex size-2 shrink-0" title={title} aria-label={title}>
+      <span className="absolute inline-flex size-full animate-ping rounded-full bg-up opacity-75" />
+      <span className="relative inline-flex size-2 rounded-full bg-up" />
+    </span>
+  );
+}
 
 type OpenPositionsTableProps = {
   positions: PortfolioPositionRecord[];
   emptyMessage?: string;
+  /** Group key expanded by default (e.g. the largest position by margin) so it's live immediately. */
+  defaultExpandedGroupKey?: string | null;
+  /** Fires whenever the number of currently-live (expanded, WS-fed) groups changes. */
+  onLiveGroupCountChange?: (count: number) => void;
 };
 
 function GroupHedgeButton({
-  className,
+  variant,
   active,
   onClick,
 }: {
-  className: string;
+  variant: "table" | "card";
   active: boolean;
   onClick: (e: MouseEvent) => void;
 }) {
+  const className = active
+    ? variant === "table"
+      ? pillSolidTable
+      : pillSolidCard
+    : variant === "table"
+      ? pillOutlineTable
+      : pillOutlineCard;
   return (
     <button
       type="button"
       className={className}
+      style={active ? ACCENT_SOLID_STYLE : ACCENT_OUTLINE_STYLE}
       aria-pressed={active}
       onClick={onClick}
     >
@@ -294,6 +393,7 @@ function GroupHedgeButton({
 
 function GroupExpandedExtras({
   g,
+  holderId,
   hedgeActive,
   proposedLeg,
   selectedCandidate,
@@ -302,6 +402,7 @@ function GroupExpandedExtras({
   onExecuteHedge,
 }: {
   g: PortfolioPositionGroup;
+  holderId: string;
   hedgeActive: boolean;
   proposedLeg: StrategyLeg | null;
   selectedCandidate: StrategyHedgeCandidate | null;
@@ -310,37 +411,385 @@ function GroupExpandedExtras({
   onExecuteHedge: () => void;
 }) {
   return (
-    <>
-      <PortfolioGroupPayoffPanel
-        stockCode={g.stockCode}
-        exchangeCode={g.exchangeCode}
-        expiryDisplay={g.expiryDate}
-        rows={g.rows}
-        proposedLeg={proposedLeg}
-      />
-      {hedgeActive ? (
-        <PortfolioHedgePanel
-          group={g}
-          selectedCandidate={selectedCandidate}
-          onSelectCandidate={onSelectCandidate}
-          onExecute={onExecuteHedge}
-          onLotSizeChange={onLotSizeChange}
+    <div className="border-t border-border-soft bg-panel2">
+      <div
+        className={
+          hedgeActive
+            ? "grid min-w-0 divide-y divide-border-soft md:grid-cols-[3fr_2fr] md:divide-x md:divide-y-0"
+            : "min-w-0"
+        }
+      >
+        <PortfolioGroupPayoffPanel
+          stockCode={g.stockCode}
+          exchangeCode={g.exchangeCode}
+          expiryDisplay={g.expiryDate}
+          rows={g.rows}
+          proposedLeg={proposedLeg}
+          holderId={holderId}
         />
+        {hedgeActive ? (
+          <PortfolioHedgePanel
+            group={g}
+            selectedCandidate={selectedCandidate}
+            onSelectCandidate={onSelectCandidate}
+            onExecute={onExecuteHedge}
+            onLotSizeChange={onLotSizeChange}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+type GroupBlockProps = {
+  g: PortfolioPositionGroup;
+  isOpen: boolean;
+  onToggle: () => void;
+  holderId: string;
+  hedgeActive: boolean;
+  onHedgeButtonClick: (e: MouseEvent) => void;
+  proposedLeg: StrategyLeg | null;
+  selectedCandidate: StrategyHedgeCandidate | null;
+  onSelectCandidate: (c: StrategyHedgeCandidate | null) => void;
+  onLotSizeChange: (lotSize: number) => void;
+  onExecuteHedge: () => void;
+  startNumber: number;
+  onLiveChange: (groupKey: string, live: boolean) => void;
+};
+
+/**
+ * One group's rows (desktop table). Owns the live-chain overlay hook so it's only
+ * fetched/subscribed while `isOpen` — collapsed groups render straight from the
+ * polled `/portfolio/data` snapshot passed in via `g.rows`.
+ */
+function PortfolioGroupTableBlock({
+  g,
+  isOpen,
+  onToggle,
+  holderId,
+  hedgeActive,
+  onHedgeButtonClick,
+  proposedLeg,
+  selectedCandidate,
+  onSelectCandidate,
+  onLotSizeChange,
+  onExecuteHedge,
+  startNumber,
+  onLiveChange,
+}: GroupBlockProps) {
+  const { rows: liveRows, isLive } = useGroupLiveOverlay(g, holderId, isOpen);
+  useEffect(() => {
+    onLiveChange(g.key, isLive);
+  }, [g.key, isLive, onLiveChange]);
+  const spotAgg = formatSpot(liveRows[0]?.spot_price);
+  const mtmSum = sumNumericField(liveRows, "current_profit");
+  const carrySum = sumNumericField(liveRows, "carry_profit");
+  const spanSum = sumNumericField(liveRows, "span_margin_required");
+  const elmSum = sumNumericField(liveRows, "elm_margin_required");
+  const gMtm = formatMtmCarry(mtmSum);
+  const gCarry = formatMtmCarry(carrySum);
+  const groupTitle = `${g.stockCode} · ${g.expiryDate} · ${g.rows.length} leg${g.rows.length === 1 ? "" : "s"}`;
+
+  return (
+    <Fragment>
+      <tr
+        role="button"
+        tabIndex={0}
+        aria-expanded={isOpen}
+        title={isOpen ? "Collapse group" : "Expand group"}
+        className="app-table-row cursor-pointer select-none hover:bg-panel2"
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+      >
+        <td className={`${tdBase} text-center tabular-nums text-muted`}>
+          {isOpen ? "▼" : "▶"}
+        </td>
+        <td className={`${tdBase} font-medium`}>
+          <span className="inline-flex items-center gap-1.5">
+            {groupTitle}
+            {isLive ? <LiveDot title="Live · WebSocket" /> : null}
+          </span>
+        </td>
+        <td className={tdBase}>—</td>
+        <td className={tdBase}>—</td>
+        <td className={`${tdBase} text-right`}>—</td>
+        <td className={`${tdBase} text-right`}>—</td>
+        <td className={`${tdBase} text-right`}>—</td>
+        <td className={`${tdBase} text-right tabular-nums ${spotAgg.className}`}>
+          {spotAgg.text}
+        </td>
+        <td className={`${tdShell} text-right tabular-nums font-medium ${gMtm.className}`}>
+          {gMtm.text}
+        </td>
+        <td className={`${tdShell} text-right tabular-nums font-medium ${gCarry.className}`}>
+          {gCarry.text}
+        </td>
+        <td className={`${tdBase} text-right tabular-nums`}>
+          {formatSpanElm(spanSum)}
+        </td>
+        <td className={`${tdBase} text-right tabular-nums`}>
+          {formatSpanElm(elmSum)}
+        </td>
+        <td className={`${tdShell} text-right tabular-nums app-text-muted`}>—</td>
+        <td className={`${tdBase} text-right align-middle`}>
+          <GroupHedgeButton variant="table" active={hedgeActive} onClick={onHedgeButtonClick} />
+        </td>
+      </tr>
+      {isOpen
+        ? liveRows.map((row, localIdx) => {
+            const rowKey = childRowKey(g.key, localIdx);
+            const mtm = formatMtmCarry(row.current_profit);
+            const carry = formatMtmCarry(row.carry_profit);
+            const cr = formatCarryRet(row.carry_margin_returns);
+            const carryRoiTitle = carryMarginRoiTitle(row);
+            const spot = formatSpot(row.spot_price);
+            const qty = coerceNum(row.quantity);
+            const num = startNumber + localIdx + 1;
+            return (
+              <tr key={rowKey} className="app-table-row bg-panel2">
+                <td className={`${tdBase} text-center tabular-nums`}>{num}</td>
+                <td className={tdBase}>{formatOptionSymbol(row)}</td>
+                <td className={tdBase}>
+                  <OptionTypePill raw={row.right} />
+                </td>
+                <td className={tdBase}>
+                  <PositionPill raw={row.action} />
+                </td>
+                <td className={`${tdBase} text-right tabular-nums`}>
+                  {qty != null
+                    ? qty.toLocaleString("en-IN", {
+                        maximumFractionDigits: Number.isInteger(qty) ? 0 : 4,
+                      })
+                    : "—"}
+                </td>
+                <td className={`${tdBase} text-right tabular-nums`}>
+                  {formatPriceCell(row.average_price)}
+                </td>
+                <td className={`${tdBase} text-right tabular-nums`}>
+                  {formatPriceCell(row.ltp)}
+                </td>
+                <td className={`${tdBase} text-right tabular-nums ${spot.className}`}>
+                  {spot.text}
+                </td>
+                <td className={`${tdShell} text-right tabular-nums font-medium ${mtm.className}`}>
+                  {mtm.text}
+                </td>
+                <td className={`${tdShell} text-right tabular-nums font-medium ${carry.className}`}>
+                  {carry.text}
+                </td>
+                <td className={`${tdBase} text-right tabular-nums`}>
+                  {formatSpanElm(row.span_margin_required)}
+                </td>
+                <td className={`${tdBase} text-right tabular-nums`}>
+                  {formatSpanElm(row.elm_margin_required)}
+                </td>
+                <td
+                  className={`${tdShell} text-right tabular-nums ${cr.className}`}
+                  title={carryRoiTitle}
+                >
+                  {cr.text}
+                </td>
+                <td className={`${tdBase} text-right align-middle`}>
+                  <PositionActionsTable row={row} />
+                </td>
+              </tr>
+            );
+          })
+        : null}
+      {isOpen ? (
+        <tr className="app-table-row">
+          <td className="p-0 align-top" colSpan={14}>
+            <GroupExpandedExtras
+              g={g}
+              holderId={holderId}
+              hedgeActive={hedgeActive}
+              proposedLeg={hedgeActive ? proposedLeg : null}
+              selectedCandidate={hedgeActive ? selectedCandidate : null}
+              onSelectCandidate={onSelectCandidate}
+              onLotSizeChange={onLotSizeChange}
+              onExecuteHedge={onExecuteHedge}
+            />
+          </td>
+        </tr>
       ) : null}
-    </>
+    </Fragment>
+  );
+}
+
+/** One group's card (mobile) — same live-overlay hook as the desktop block. */
+function PortfolioGroupCardBlock({
+  g,
+  isOpen,
+  onToggle,
+  holderId,
+  hedgeActive,
+  onHedgeButtonClick,
+  proposedLeg,
+  selectedCandidate,
+  onSelectCandidate,
+  onLotSizeChange,
+  onExecuteHedge,
+  onLiveChange,
+}: GroupBlockProps) {
+  const { rows: liveRows, isLive } = useGroupLiveOverlay(g, holderId, isOpen);
+  useEffect(() => {
+    onLiveChange(g.key, isLive);
+  }, [g.key, isLive, onLiveChange]);
+  const spotAgg = formatSpot(liveRows[0]?.spot_price);
+  const mtmSum = sumNumericField(liveRows, "current_profit");
+  const carrySum = sumNumericField(liveRows, "carry_profit");
+  const spanSum = sumNumericField(liveRows, "span_margin_required");
+  const elmSum = sumNumericField(liveRows, "elm_margin_required");
+  const gMtm = formatMtmCarry(mtmSum);
+  const gCarry = formatMtmCarry(carrySum);
+  const groupTitle = `${g.stockCode} · ${g.expiryDate} · ${g.rows.length} leg${g.rows.length === 1 ? "" : "s"}`;
+
+  return (
+    <div className="app-card-muted overflow-hidden text-sm">
+      <div className="flex items-start gap-3 p-4 sm:p-5">
+        <button
+          type="button"
+          aria-expanded={isOpen}
+          className="mt-0.5 shrink-0 tabular-nums text-muted"
+          onClick={onToggle}
+        >
+          {isOpen ? "▼" : "▶"}
+        </button>
+        <button
+          type="button"
+          className="min-w-0 flex-1 space-y-2 text-left"
+          onClick={onToggle}
+        >
+          <h3 className="flex items-center gap-1.5 text-base font-semibold leading-snug text-foreground">
+            {groupTitle}
+            {isLive ? <LiveDot title="Live · WebSocket" /> : null}
+          </h3>
+          <p>
+            <span className="app-text-muted">Spot:</span>{" "}
+            <span className={spotAgg.className}>{spotAgg.text}</span>
+          </p>
+          <p>
+            <span className="app-text-muted">MTM (sum):</span>{" "}
+            <span className={`font-medium ${gMtm.className}`}>{gMtm.text}</span>
+          </p>
+          <p>
+            <span className="app-text-muted">Carry (sum):</span>{" "}
+            <span className={`font-medium ${gCarry.className}`}>{gCarry.text}</span>
+          </p>
+          <p>
+            <span className="app-text-muted">Span Margin (sum):</span>{" "}
+            {formatSpanElm(spanSum)}
+          </p>
+          <p>
+            <span className="app-text-muted">ELM (sum):</span>{" "}
+            {formatSpanElm(elmSum)}
+          </p>
+        </button>
+        <GroupHedgeButton variant="card" active={hedgeActive} onClick={onHedgeButtonClick} />
+      </div>
+      {isOpen ? (
+        <div className="border-t border-border-soft">
+          <div className="space-y-3 p-4 sm:space-y-4 sm:p-5">
+            {liveRows.map((row, localIdx) => {
+              const rowKey = childRowKey(g.key, localIdx);
+              const mtm = formatMtmCarry(row.current_profit);
+              const carryTitle = formatMtmCarry(row.carry_profit);
+              const cr = formatCarryRet(row.carry_margin_returns);
+              const carryRoiTitle = carryMarginRoiTitle(row);
+              const spot = formatSpot(row.spot_price);
+              const qty = coerceNum(row.quantity);
+              return (
+                <div
+                  key={`card-${rowKey}`}
+                  className="space-y-2.5 rounded-md border border-border bg-panel2 p-4"
+                >
+                  <h4 className="text-sm font-semibold leading-snug text-foreground">
+                    {formatOptionSymbol(row)}
+                  </h4>
+                  <p className="flex items-center gap-2">
+                    <OptionTypePill raw={row.right} />
+                    <PositionPill raw={row.action} />
+                  </p>
+                  <p>
+                    <span className="app-text-muted">Qty:</span>{" "}
+                    {qty != null
+                      ? qty.toLocaleString("en-IN", {
+                          maximumFractionDigits: Number.isInteger(qty) ? 0 : 4,
+                        })
+                      : "—"}
+                  </p>
+                  <p>
+                    <span className="app-text-muted">Avg Price:</span>{" "}
+                    {formatPriceCell(row.average_price)}
+                  </p>
+                  <p>
+                    <span className="app-text-muted">LTP:</span>{" "}
+                    {formatPriceCell(row.ltp)}
+                  </p>
+                  <p>
+                    <span className="app-text-muted">Spot:</span>{" "}
+                    <span className={spot.className}>{spot.text}</span>
+                  </p>
+                  <p>
+                    <span className="app-text-muted">MTM:</span>{" "}
+                    <span className={`font-medium ${mtm.className}`}>{mtm.text}</span>
+                  </p>
+                  <p>
+                    <span className="app-text-muted">Carry:</span>{" "}
+                    <span className={`font-medium ${carryTitle.className}`}>
+                      {carryTitle.text}
+                    </span>
+                  </p>
+                  <p>
+                    <span className="app-text-muted">Span Margin:</span>{" "}
+                    {formatSpanElm(row.span_margin_required)}
+                  </p>
+                  <p>
+                    <span className="app-text-muted">ELM @2%:</span>{" "}
+                    {formatSpanElm(row.elm_margin_required)}
+                  </p>
+                  <p title={carryRoiTitle}>
+                    <span className="app-text-muted">Carry Returns:</span>{" "}
+                    <span className={cr.className}>{cr.text}</span>
+                  </p>
+                  <PositionActionsCard row={row} />
+                </div>
+              );
+            })}
+          </div>
+          <GroupExpandedExtras
+            g={g}
+            holderId={holderId}
+            hedgeActive={hedgeActive}
+            proposedLeg={hedgeActive ? proposedLeg : null}
+            selectedCandidate={hedgeActive ? selectedCandidate : null}
+            onSelectCandidate={onSelectCandidate}
+            onLotSizeChange={onLotSizeChange}
+            onExecuteHedge={onExecuteHedge}
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
 export function OpenPositionsTable({
   positions,
   emptyMessage = "No positions to display",
+  defaultExpandedGroupKey = null,
+  onLiveGroupCountChange,
 }: OpenPositionsTableProps) {
   const groups = useMemo(
     () => buildPortfolioPositionGroups(positions),
     [positions],
   );
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    () => new Set(),
+    () => new Set(defaultExpandedGroupKey ? [defaultExpandedGroupKey] : []),
   );
   const [hedgeActiveGroupKey, setHedgeActiveGroupKey] = useState<string | null>(
     null,
@@ -349,6 +798,24 @@ export function OpenPositionsTable({
     useState<StrategyHedgeCandidate | null>(null);
   const [hedgeLotSize, setHedgeLotSize] = useState(1);
   const [executeOpen, setExecuteOpen] = useState(false);
+  const { getHolderId, releaseGroup } = useGroupSubscriptionHolders();
+  const [liveGroupKeys, setLiveGroupKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  const handleLiveChange = useCallback((groupKey: string, live: boolean) => {
+    setLiveGroupKeys((prev) => {
+      if (prev.has(groupKey) === live) return prev;
+      const next = new Set(prev);
+      if (live) next.add(groupKey);
+      else next.delete(groupKey);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    onLiveGroupCountChange?.(liveGroupKeys.size);
+  }, [liveGroupKeys, onLiveGroupCountChange]);
 
   const hedgeActiveGroup = useMemo(
     () => groups.find((g) => g.key === hedgeActiveGroupKey) ?? null,
@@ -385,6 +852,7 @@ export function OpenPositionsTable({
         const next = new Set(prev);
         if (next.has(key)) {
           next.delete(key);
+          releaseGroup(key);
           if (hedgeActiveGroupKey === key) {
             setHedgeActiveGroupKey(null);
             setSelectedCandidate(null);
@@ -397,7 +865,7 @@ export function OpenPositionsTable({
         return next;
       });
     },
-    [hedgeActiveGroupKey],
+    [hedgeActiveGroupKey, releaseGroup],
   );
 
   const openHedgeForGroup = useCallback((key: string) => {
@@ -433,38 +901,39 @@ export function OpenPositionsTable({
     setExecuteOpen(false);
   }, []);
 
-  const childRowNumber = useMemo(() => {
-    const m = new Map<string, number>();
+  const groupStartNumbers = useMemo(() => {
+    const starts: number[] = [];
     let n = 0;
     for (const g of groups) {
-      for (let i = 0; i < g.rows.length; i++) {
-        n += 1;
-        m.set(childRowKey(g.key, i), n);
-      }
+      starts.push(n);
+      n += g.rows.length;
     }
-    return m;
+    return starts;
   }, [groups]);
 
   return (
     <>
       <div className="hidden min-w-0 max-w-full xl:block">
-        <div className="app-table-wrap w-full min-w-0 max-w-full">
+        <div className="app-table-wrap w-full min-w-0 max-w-full rounded-none border-0 bg-transparent dark:bg-transparent">
           <table className="w-full min-w-max table-auto border-collapse text-left">
-            <thead className="app-table-head">
-              <tr>
-                <th className={`${thBase} w-10 text-center`}>#</th>
+            <thead>
+              <tr className="border-b border-border bg-panel2">
+                <th className={`${thBase} w-10 text-center`}>
+                  <span className="sr-only">Row</span>
+                </th>
                 <th className={`${thBase} min-w-[11rem] text-left 2xl:min-w-[14rem]`}>
                   Option
                 </th>
+                <th className={`${thBase} text-left`}>Type</th>
                 <th className={`${thBase} text-left`}>Position</th>
                 <th className={`${thBase} text-right`}>Qty</th>
-                <th className={`${thBase} text-right`}>Avg. Price</th>
+                <th className={`${thBase} text-right`}>Avg</th>
                 <th className={`${thBase} text-right`}>LTP</th>
                 <th className={`${thBase} text-right`}>Spot</th>
                 <th className={`${thBase} text-right`}>MTM</th>
                 <th className={`${thBase} text-right`}>Carry</th>
                 <th className={`${thBase} text-right`} title="Span Margin">
-                  Span Marg.
+                  Span
                 </th>
                 <th className={`${thBase} text-right`} title="ELM at 2%">
                   ELM
@@ -488,191 +957,31 @@ export function OpenPositionsTable({
               {positions.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={13}
+                    colSpan={14}
                     className="px-3 py-8 text-center text-sm app-text-muted"
                   >
                     {emptyMessage}
                   </td>
                 </tr>
               ) : (
-                groups.map((g) => {
-                  const isOpen = expandedGroups.has(g.key);
-                  const spotAgg = formatSpot(g.rows[0]?.spot_price);
-                  const mtmSum = sumNumericField(g.rows, "current_profit");
-                  const carrySum = sumNumericField(g.rows, "carry_profit");
-                  const spanSum = sumNumericField(
-                    g.rows,
-                    "span_margin_required",
-                  );
-                  const elmSum = sumNumericField(g.rows, "elm_margin_required");
-                  const gMtm = formatMtmCarry(mtmSum);
-                  const gCarry = formatMtmCarry(carrySum);
-                  const groupTitle = `${g.stockCode} · ${g.expiryDate} · ${g.rows.length} leg${g.rows.length === 1 ? "" : "s"}`;
-                  return (
-                    <Fragment key={g.key}>
-                      <tr
-                        role="button"
-                        tabIndex={0}
-                        aria-expanded={isOpen}
-                        title={isOpen ? "Collapse group" : "Expand group"}
-                        className="app-table-row cursor-pointer select-none hover:bg-zinc-100/80 dark:hover:bg-zinc-900/50"
-                        onClick={() => toggleGroup(g.key)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            toggleGroup(g.key);
-                          }
-                        }}
-                      >
-                        <td
-                          className={`${tdBase} text-center tabular-nums text-zinc-500 dark:text-zinc-400`}
-                        >
-                          {isOpen ? "▼" : "▶"}
-                        </td>
-                        <td className={`${tdBase} font-medium`}>
-                          {groupTitle}
-                        </td>
-                        <td className={tdBase}>—</td>
-                        <td className={`${tdBase} text-right`}>—</td>
-                        <td className={`${tdBase} text-right`}>—</td>
-                        <td className={`${tdBase} text-right`}>—</td>
-                        <td
-                          className={`${tdBase} text-right tabular-nums ${spotAgg.className}`}
-                        >
-                          {spotAgg.text}
-                        </td>
-                        <td
-                          className={`${tdShell} text-right tabular-nums ${gMtm.className}`}
-                        >
-                          {gMtm.text}
-                        </td>
-                        <td
-                          className={`${tdShell} text-right tabular-nums ${gCarry.className}`}
-                        >
-                          {gCarry.text}
-                        </td>
-                        <td className={`${tdBase} text-right tabular-nums`}>
-                          {spanSum != null
-                            ? formatSpanElmLakhs(spanSum)
-                            : "—"}
-                        </td>
-                        <td className={`${tdBase} text-right tabular-nums`}>
-                          {elmSum != null ? formatSpanElmLakhs(elmSum) : "—"}
-                        </td>
-                        <td
-                          className={`${tdShell} text-right tabular-nums app-text-muted`}
-                        >
-                          —
-                        </td>
-                        <td className={`${tdBase} text-right align-middle`}>
-                          <GroupHedgeButton
-                            className={btnHedgeTable}
-                            active={hedgeActiveGroupKey === g.key}
-                            onClick={(e) => handleHedgeButtonClick(e, g.key)}
-                          />
-                        </td>
-                      </tr>
-                      {isOpen
-                        ? g.rows.map((row, localIdx) => {
-                            const rowKey = childRowKey(g.key, localIdx);
-                            const mtm = formatMtmCarry(row.current_profit);
-                            const carry = formatMtmCarry(row.carry_profit);
-                            const cr = formatCarryRet(row.carry_margin_returns);
-                            const carryRoiTitle = carryMarginRoiTitle(row);
-                            const spot = formatSpot(row.spot_price);
-                            const qty = coerceNum(row.quantity);
-                            const num =
-                              childRowNumber.get(rowKey) ?? localIdx + 1;
-                            return (
-                              <tr
-                                key={rowKey}
-                                className="app-table-row bg-zinc-50/40 dark:bg-zinc-950/25"
-                              >
-                                <td
-                                  className={`${tdBase} text-center tabular-nums`}
-                                >
-                                  {num}
-                                </td>
-                                <td className={tdBase}>
-                                  {String(row.option ?? "—")}
-                                </td>
-                                <td className={tdBase}>
-                                  {String(row.action ?? "—")}
-                                </td>
-                                <td className={`${tdBase} text-right tabular-nums`}>
-                                  {qty != null
-                                    ? qty.toLocaleString("en-IN", {
-                                        maximumFractionDigits:
-                                          Number.isInteger(qty) ? 0 : 4,
-                                      })
-                                    : "—"}
-                                </td>
-                                <td className={`${tdBase} text-right tabular-nums`}>
-                                  {formatPriceCell(row.average_price)}
-                                </td>
-                                <td className={`${tdBase} text-right tabular-nums`}>
-                                  {formatPriceCell(row.ltp)}
-                                </td>
-                                <td
-                                  className={`${tdBase} text-right tabular-nums ${spot.className}`}
-                                >
-                                  {spot.text}
-                                </td>
-                                <td
-                                  className={`${tdShell} text-right tabular-nums ${mtm.className}`}
-                                >
-                                  {mtm.text}
-                                </td>
-                                <td
-                                  className={`${tdShell} text-right tabular-nums ${carry.className}`}
-                                >
-                                  {carry.text}
-                                </td>
-                                <td className={`${tdBase} text-right tabular-nums`}>
-                                  {formatSpanElmLakhs(row.span_margin_required)}
-                                </td>
-                                <td className={`${tdBase} text-right tabular-nums`}>
-                                  {formatSpanElmLakhs(row.elm_margin_required)}
-                                </td>
-                                <td
-                                  className={`${tdShell} text-right tabular-nums ${cr.className}`}
-                                  title={carryRoiTitle}
-                                >
-                                  {cr.text}
-                                </td>
-                                <td className={`${tdBase} text-right align-middle`}>
-                                  <PositionActionsTable row={row} />
-                                </td>
-                              </tr>
-                            );
-                          })
-                        : null}
-                      {isOpen ? (
-                        <tr className="app-table-row">
-                          <td className="p-0 align-top" colSpan={13}>
-                            <GroupExpandedExtras
-                              g={g}
-                              hedgeActive={hedgeActiveGroupKey === g.key}
-                              proposedLeg={
-                                hedgeActiveGroupKey === g.key
-                                  ? proposedLegForActive
-                                  : null
-                              }
-                              selectedCandidate={
-                                hedgeActiveGroupKey === g.key
-                                  ? selectedCandidate
-                                  : null
-                              }
-                              onSelectCandidate={setSelectedCandidate}
-                              onLotSizeChange={setHedgeLotSize}
-                              onExecuteHedge={handleExecuteHedge}
-                            />
-                          </td>
-                        </tr>
-                      ) : null}
-                    </Fragment>
-                  );
-                })
+                groups.map((g, gi) => (
+                  <PortfolioGroupTableBlock
+                    key={g.key}
+                    g={g}
+                    isOpen={expandedGroups.has(g.key)}
+                    onToggle={() => toggleGroup(g.key)}
+                    holderId={getHolderId(g.key)}
+                    hedgeActive={hedgeActiveGroupKey === g.key}
+                    onHedgeButtonClick={(e) => handleHedgeButtonClick(e, g.key)}
+                    proposedLeg={proposedLegForActive}
+                    selectedCandidate={selectedCandidate}
+                    onSelectCandidate={setSelectedCandidate}
+                    onLotSizeChange={setHedgeLotSize}
+                    onExecuteHedge={handleExecuteHedge}
+                    startNumber={groupStartNumbers[gi]}
+                    onLiveChange={handleLiveChange}
+                  />
+                ))
               )}
             </tbody>
           </table>
@@ -685,161 +994,24 @@ export function OpenPositionsTable({
             {emptyMessage}
           </p>
         ) : (
-          groups.map((g) => {
-            const isOpen = expandedGroups.has(g.key);
-            const spotAgg = formatSpot(g.rows[0]?.spot_price);
-            const mtmSum = sumNumericField(g.rows, "current_profit");
-            const carrySum = sumNumericField(g.rows, "carry_profit");
-            const spanSum = sumNumericField(g.rows, "span_margin_required");
-            const elmSum = sumNumericField(g.rows, "elm_margin_required");
-            const gMtm = formatMtmCarry(mtmSum);
-            const gCarry = formatMtmCarry(carrySum);
-            const groupTitle = `${g.stockCode} · ${g.expiryDate} · ${g.rows.length} leg${g.rows.length === 1 ? "" : "s"}`;
-            return (
-              <div
-                key={`card-group-${g.key}`}
-                className="app-card-muted overflow-hidden text-sm"
-              >
-                <div className="flex items-start gap-3 p-4 sm:p-5">
-                  <button
-                    type="button"
-                    aria-expanded={isOpen}
-                    className="mt-0.5 shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400"
-                    onClick={() => toggleGroup(g.key)}
-                  >
-                    {isOpen ? "▼" : "▶"}
-                  </button>
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 space-y-2 text-left"
-                    onClick={() => toggleGroup(g.key)}
-                  >
-                    <h3 className="text-base font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
-                      {groupTitle}
-                    </h3>
-                    <p>
-                      <span className="app-text-muted">Spot:</span>{" "}
-                      <span className={spotAgg.className}>{spotAgg.text}</span>
-                    </p>
-                    <p>
-                      <span className="app-text-muted">MTM (sum):</span>{" "}
-                      <span className={gMtm.className}>{gMtm.text}</span>
-                    </p>
-                    <p>
-                      <span className="app-text-muted">Carry (sum):</span>{" "}
-                      <span className={gCarry.className}>{gCarry.text}</span>
-                    </p>
-                    <p>
-                      <span className="app-text-muted">Span Margin (sum):</span>{" "}
-                      {spanSum != null
-                        ? formatSpanElmLakhs(spanSum)
-                        : "—"}
-                    </p>
-                    <p>
-                      <span className="app-text-muted">ELM (sum):</span>{" "}
-                      {elmSum != null ? formatSpanElmLakhs(elmSum) : "—"}
-                    </p>
-                  </button>
-                  <GroupHedgeButton
-                    className={btnHedgeCard}
-                    active={hedgeActiveGroupKey === g.key}
-                    onClick={(e) => handleHedgeButtonClick(e, g.key)}
-                  />
-                </div>
-                {isOpen ? (
-                  <div className="border-t border-zinc-200/80 dark:border-zinc-700/80">
-                    <div className="space-y-3 p-4 sm:space-y-4 sm:p-5">
-                      {g.rows.map((row, localIdx) => {
-                        const rowKey = childRowKey(g.key, localIdx);
-                        const mtm = formatMtmCarry(row.current_profit);
-                        const carryTitle = formatMtmCarry(row.carry_profit);
-                        const cr = formatCarryRet(row.carry_margin_returns);
-                        const carryRoiTitle = carryMarginRoiTitle(row);
-                        const spot = formatSpot(row.spot_price);
-                        const qty = coerceNum(row.quantity);
-                        return (
-                          <div
-                            key={`card-${rowKey}`}
-                            className="space-y-2.5 rounded-md border border-zinc-200/90 bg-white/80 p-4 dark:border-zinc-700 dark:bg-zinc-950/40"
-                          >
-                            <h4 className="text-sm font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
-                              {String(row.option ?? "—")}
-                            </h4>
-                            <p>
-                              <span className="app-text-muted">Position:</span>{" "}
-                              {String(row.action ?? "—")}
-                            </p>
-                            <p>
-                              <span className="app-text-muted">Qty:</span>{" "}
-                              {qty != null
-                                ? qty.toLocaleString("en-IN", {
-                                    maximumFractionDigits: Number.isInteger(qty)
-                                      ? 0
-                                      : 4,
-                                  })
-                                : "—"}
-                            </p>
-                            <p>
-                              <span className="app-text-muted">Avg Price:</span>{" "}
-                              {formatPriceCell(row.average_price)}
-                            </p>
-                            <p>
-                              <span className="app-text-muted">LTP:</span>{" "}
-                              {formatPriceCell(row.ltp)}
-                            </p>
-                            <p>
-                              <span className="app-text-muted">Spot:</span>{" "}
-                              <span className={spot.className}>{spot.text}</span>
-                            </p>
-                            <p>
-                              <span className="app-text-muted">MTM:</span>{" "}
-                              <span className={mtm.className}>{mtm.text}</span>
-                            </p>
-                            <p>
-                              <span className="app-text-muted">Carry:</span>{" "}
-                              <span className={carryTitle.className}>
-                                {carryTitle.text}
-                              </span>
-                            </p>
-                            <p>
-                              <span className="app-text-muted">Span Margin:</span>{" "}
-                              {formatSpanElmLakhs(row.span_margin_required)}
-                            </p>
-                            <p>
-                              <span className="app-text-muted">ELM @2%:</span>{" "}
-                              {formatSpanElmLakhs(row.elm_margin_required)}
-                            </p>
-                            <p title={carryRoiTitle}>
-                              <span className="app-text-muted">
-                                Carry Returns:
-                              </span>{" "}
-                              <span className={cr.className}>{cr.text}</span>
-                            </p>
-                            <PositionActionsCard row={row} />
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <GroupExpandedExtras
-                      g={g}
-                      hedgeActive={hedgeActiveGroupKey === g.key}
-                      proposedLeg={
-                        hedgeActiveGroupKey === g.key
-                          ? proposedLegForActive
-                          : null
-                      }
-                      selectedCandidate={
-                        hedgeActiveGroupKey === g.key ? selectedCandidate : null
-                      }
-                      onSelectCandidate={setSelectedCandidate}
-                      onLotSizeChange={setHedgeLotSize}
-                      onExecuteHedge={handleExecuteHedge}
-                    />
-                  </div>
-                ) : null}
-              </div>
-            );
-          })
+          groups.map((g) => (
+            <PortfolioGroupCardBlock
+              key={`card-group-${g.key}`}
+              g={g}
+              isOpen={expandedGroups.has(g.key)}
+              onToggle={() => toggleGroup(g.key)}
+              holderId={getHolderId(g.key)}
+              hedgeActive={hedgeActiveGroupKey === g.key}
+              onHedgeButtonClick={(e) => handleHedgeButtonClick(e, g.key)}
+              proposedLeg={proposedLegForActive}
+              selectedCandidate={selectedCandidate}
+              onSelectCandidate={setSelectedCandidate}
+              onLotSizeChange={setHedgeLotSize}
+              onExecuteHedge={handleExecuteHedge}
+              startNumber={0}
+              onLiveChange={handleLiveChange}
+            />
+          ))
         )}
       </div>
 

@@ -55,11 +55,18 @@ class ApiUsageByRouteItem(BaseModel):
     call_count: int
 
 
+class ApiUsageByCategoryItem(BaseModel):
+    usage_date: str
+    category: str
+    call_count: int
+
+
 class ApiUsageStateResponse(BaseModel):
     user_id: str = ""
     days: int = 30
     by_api: list[ApiUsageByApiItem] = Field(default_factory=list)
     by_route: list[ApiUsageByRouteItem] = Field(default_factory=list)
+    by_category: list[ApiUsageByCategoryItem] = Field(default_factory=list)
     rate_limit_pause_seconds: float = 0
 
 
@@ -126,6 +133,10 @@ class ReferenceDataLoadsStateResponse(BaseModel):
     span_refresh_in_progress: bool = False
     span_progress_pct: int = 0
     span_message: Optional[str] = None
+    nse_span_source_file: Optional[str] = None
+    nse_span_source_date: Optional[str] = None
+    nse_span_refreshed_at: Optional[str] = None
+    nse_span_row_count: Optional[int] = None
     bse_span_source_file: Optional[str] = None
     bse_span_source_date: Optional[str] = None
     bse_span_refreshed_at: Optional[str] = None
@@ -158,144 +169,6 @@ class BreezeApiTesterWsSubscribeBody(BaseModel):
 
 class WsReleaseRequest(BaseModel):
     holder_id: str = Field(..., min_length=1, max_length=128)
-
-
-class AiProviderHealthEntry(BaseModel):
-    ok: bool = False
-    message: Optional[str] = None
-    checked_at: Optional[str] = None
-
-
-class AiProviderSideState(BaseModel):
-    """One LLM provider row for the settings UI."""
-
-    provider: str
-    configured: bool = False
-    enabled: bool = False
-    model: Optional[str] = None
-    fallback_models: list[str] = Field(default_factory=list)
-    """Gemini-only. When null/omitted, UI lists all models from the global catalog."""
-    tracked_models: Optional[list[str]] = None
-    masked_api_key: Optional[str] = None
-    models_working: int = 0
-    models_failing: int = 0
-    last_model_health_at: Optional[str] = None
-    model_health: dict[str, AiProviderHealthEntry] = Field(default_factory=dict)
-
-
-def _default_gemini_side() -> AiProviderSideState:
-    return AiProviderSideState(provider="gemini")
-
-
-def _default_openai_side() -> AiProviderSideState:
-    return AiProviderSideState(provider="openai")
-
-
-class AiProviderStateResponse(BaseModel):
-    user_id: str = ""
-    gemini: AiProviderSideState = Field(default_factory=_default_gemini_side)
-    openai: AiProviderSideState = Field(default_factory=_default_openai_side)
-    outlook_ai_provider: Optional[str] = None
-    english_only: bool = True
-    disclaimer: str = (
-        "AI-generated outlook. Informational only. Not investment advice. Verify with primary sources."
-    )
-    message: Optional[str] = None
-
-
-class AiProviderUpdateBody(BaseModel):
-    provider: str
-    api_key: str
-    model: Optional[str] = None
-    fallback_models: list[str] = Field(default_factory=list)
-    enabled: bool = True
-
-
-class AiProviderPatchBody(BaseModel):
-    provider: str
-    model: Optional[str] = None
-    fallback_models: Optional[list[str]] = None
-    """Gemini only. Omit to leave unchanged; empty list clears tracking (show full catalog)."""
-    tracked_models: Optional[list[str]] = None
-
-
-class AiProviderOutlookPickBody(BaseModel):
-    provider: str
-
-
-class AiProviderTestModelBody(BaseModel):
-    provider: str
-    model: str
-
-
-class AiProviderTestBody(BaseModel):
-    provider: str
-    api_key: str
-    model: Optional[str] = None
-    fallback_models: list[str] = Field(default_factory=list)
-
-
-class AiProviderModelTestResult(BaseModel):
-    model: str
-    ok: bool
-    status_code: Optional[int] = None
-    message: Optional[str] = None
-
-
-class AiProviderTestResponse(BaseModel):
-    ok: bool
-    message: str
-    results: list[AiProviderModelTestResult] = Field(default_factory=list)
-
-
-class GeminiCatalogModelItem(BaseModel):
-    model: str
-    status: str = "healthy"
-    message: Optional[str] = None
-    display_name: Optional[str] = None
-
-
-class GeminiCatalogPickerEntry(BaseModel):
-    model: str
-    display_name: Optional[str] = None
-
-
-class GeminiCatalogResponse(BaseModel):
-    provider: str = "gemini"
-    available_models: list[GeminiCatalogModelItem] = Field(default_factory=list)
-    stale_models: list[GeminiCatalogModelItem] = Field(default_factory=list)
-    """Full generateContent-capable list from the cached Google catalog (for the picker modal)."""
-    full_catalog: list[GeminiCatalogPickerEntry] = Field(default_factory=list)
-    last_refreshed_at: Optional[str] = None
-    last_health_check_at: Optional[str] = None
-
-
-class OutlookFeedInput(BaseModel):
-    name: str
-    url: str
-
-
-class OutlookConfigStateResponse(BaseModel):
-    user_id: str = ""
-    feeds: list[OutlookFeedInput] = Field(default_factory=list)
-    prompt_template: str = ""
-    system_prompt: str = ""
-    using_default_feeds: bool = True
-    using_default_prompt: bool = True
-    using_default_system_prompt: bool = True
-    message: Optional[str] = None
-
-
-class OutlookConfigUpdateBody(BaseModel):
-    feeds: list[OutlookFeedInput] = Field(default_factory=list)
-    prompt_template: str = ""
-    system_prompt: str = ""
-
-
-class OutlookConfigResetBody(BaseModel):
-    reset_feeds: bool = True
-    reset_prompt: bool = True
-    reset_system_prompt: bool = False
 
 
 class BreezeApiTesterParamDef(BaseModel):

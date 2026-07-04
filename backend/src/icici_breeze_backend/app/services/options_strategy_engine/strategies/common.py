@@ -126,6 +126,7 @@ def ok_with_pop(
     modified: bool = False,
     net_premium_val: float | None = None,
     require_pop: bool | None = None,
+    max_profit: float | None = None,
 ) -> StrategyResult:
     pop = pop_for_legs(ctx, legs)
     gate = require_pop if require_pop is not None else requires_pop_gate(ctx)
@@ -144,6 +145,7 @@ def ok_with_pop(
         legs=legs,
         net_premium=prem,
         max_loss=max_loss,
+        max_profit=max_profit,
         risk_reward_ratio=rr,
         pop_pct=round(pop, 2),
         structure_modified=modified,
@@ -169,6 +171,7 @@ def make_result(
     hero_metric: Any | None = None,
     secondary_metrics: list[Any] | None = None,
     badges: list[str] | None = None,
+    max_profit: float | None = None,
 ) -> StrategyResult:
     return StrategyResult(
         sid,
@@ -177,6 +180,7 @@ def make_result(
         legs=legs,
         net_premium=net_premium_val if net_premium_val is not None else net_premium(legs),
         max_loss=max_loss,
+        max_profit=max_profit,
         risk_reward_ratio=rr,
         pop_pct=round(pop, 2),
         structure_modified=ctx.structure_modified,

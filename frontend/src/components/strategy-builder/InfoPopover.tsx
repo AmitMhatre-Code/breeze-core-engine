@@ -45,7 +45,7 @@ export function InfoPopover({ title, children, ariaLabel, learnMoreTopicId }: Pr
       <button
         ref={triggerRef}
         type="button"
-        className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full text-[10px] font-bold leading-none text-zinc-400 ring-1 ring-zinc-300/80 transition hover:text-zinc-600 hover:ring-zinc-400 dark:text-zinc-500 dark:ring-zinc-600 dark:hover:text-zinc-300 dark:hover:ring-zinc-500"
+        className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full text-[12px] font-bold leading-none text-faint ring-1 ring-border transition hover:text-muted hover:ring-accent/40"
         aria-expanded={open}
         aria-controls={panelId}
         aria-label={triggerLabel}
@@ -58,17 +58,17 @@ export function InfoPopover({ title, children, ariaLabel, learnMoreTopicId }: Pr
           id={panelId}
           role="dialog"
           aria-label={title ?? triggerLabel}
-          className="absolute left-1/2 top-full z-50 mt-1.5 w-max max-w-[16rem] -translate-x-1/2 rounded-lg border border-zinc-200/90 bg-white px-3 py-2.5 text-left text-[11px] leading-snug text-zinc-700 shadow-lg ring-1 ring-zinc-950/5 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-white/10"
+          className="absolute left-1/2 top-full z-50 mt-1.5 w-max max-w-[16rem] -translate-x-1/2 rounded-lg border border-border bg-elevated px-3 py-2.5 text-left text-[13px] leading-snug text-muted shadow-pop"
         >
           {title ? (
-            <p className="mb-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+            <p className="mb-1.5 text-xs font-semibold text-foreground">
               {title}
             </p>
           ) : null}
           {children}
           {learnMoreTopicId ? (
-            <p className="mt-2 border-t border-zinc-100 pt-2 dark:border-zinc-700">
-              <HelpLink topicId={learnMoreTopicId} className="text-[11px]">
+            <p className="mt-2 border-t border-border-soft pt-2">
+              <HelpLink topicId={learnMoreTopicId} className="text-[13px]">
                 Learn more
               </HelpLink>
             </p>

@@ -13,15 +13,14 @@ import {
   useState,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import breezeMark from "@/app/android-chrome-192x192.png";
 import { ApiUsageWarningDialog } from "@/components/api-usage/ApiUsageWarningDialog";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
-import { useHelp } from "@/lib/help/help-context";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
 import { Modal } from "@/components/ui/Modal";
+import breezeMark from "@/app/android-chrome-192x192.png";
 import { apiClient } from "@/lib/api-client";
 import { formatAppVersionLabel } from "@/lib/app-version";
 import { getLatestRelease } from "@/lib/changelog";
@@ -79,7 +78,6 @@ export function AppShell({
 
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
 
-  const { openHelp } = useHelp();
   const { licenseStatus, contactSalesMailto } = useLicenseRestrictions();
 
   const homeQ = useQuery({
@@ -141,47 +139,32 @@ export function AppShell({
 
   const apiCounterClass =
     apiUsageBand === "red"
-      ? "text-red-600 dark:text-red-400"
+      ? "text-down"
       : apiUsageBand === "amber"
-        ? "text-amber-700 dark:text-amber-300"
-        : "text-zinc-500 dark:text-zinc-400";
+        ? "text-amber-accent"
+        : "text-faint";
 
   const freeMarginDisplay = useMemo(() => {
     if (freeMargin == null || !Number.isFinite(freeMargin)) return null;
     return {
-      text: formatIndianMoneyCompact(freeMargin),
+      text: formatIndianMoneyCompact(freeMargin, { shortSuffix: true }),
       className: moneyToneClass(freeMargin),
     };
   }, [freeMargin]);
   const latestVersionLabel = formatAppVersionLabel(getLatestRelease()?.version);
 
   return (
-    <div className="flex min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
+    <div className="flex min-h-screen bg-background text-foreground">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[300] focus:rounded-md focus:border focus:border-zinc-200 focus:bg-white focus:px-4 focus:py-2.5 focus:text-sm focus:font-medium focus:text-sky-700 focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-sky-500/45 dark:focus:border-zinc-700 dark:focus:bg-zinc-900 dark:focus:text-sky-300"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[300] focus:rounded-md focus:border focus:border-border focus:bg-panel focus:px-4 focus:py-2.5 focus:text-sm focus:font-medium focus:text-accent-strong focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent/45"
       >
         Skip to main content
       </a>
-      <aside className="hidden w-60 border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 md:flex md:flex-col">
-        <div className="mb-4 flex items-stretch gap-3 px-3 pt-1">
-          <div className="flex w-11 shrink-0 flex-col items-center justify-center">
-            <Image
-              src={breezeMark}
-              alt="Breeze"
-              width={192}
-              height={192}
-              className="max-h-full w-full object-contain object-left"
-            />
-          </div>
-          <div className="min-w-0 flex flex-col justify-center py-0.5">
-            <div className="text-base font-semibold tracking-tight text-sky-600 dark:text-sky-500">
-              Breeze Modern
-            </div>
-            <div className="app-text-muted mt-0.5">
-              Enabled by Breeze API
-            </div>
-          </div>
+      <aside className="hidden w-[236px] flex-col border-r border-border bg-panel md:flex">
+        <div className="mb-4 flex items-center gap-2.5 px-3 pt-1">
+          <BrandMark />
+          <BrandWordmark />
         </div>
         <nav className="space-y-0.5 px-2 text-sm" aria-label="Primary">
           {navItems.map((item) => {
@@ -195,12 +178,18 @@ export function AppShell({
                   item.showNewBadge ? "Strategy Builder, new" : undefined
                 }
                 className={[
-                  "flex items-center gap-2 rounded-sm px-2.5 py-2 transition",
+                  "relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] transition",
                   active
-                    ? "bg-sky-100 text-sky-950 dark:bg-sky-950/50 dark:text-sky-50"
-                    : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100",
+                    ? "bg-accent-tint font-semibold text-foreground [&_svg]:text-accent-strong"
+                    : "text-muted hover:bg-panel2 hover:text-foreground",
                 ].join(" ")}
               >
+                {active ? (
+                  <span
+                    aria-hidden
+                    className="absolute inset-y-[9px] left-0 w-[2.5px] rounded-full bg-accent-bar"
+                  />
+                ) : null}
                 <Icon />
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate">{item.label}</span>
@@ -210,13 +199,27 @@ export function AppShell({
             );
           })}
         </nav>
+        <div className="mt-auto space-y-1.5 border-t border-border-soft px-4 py-3">
+          <div className="text-[12px] font-semibold uppercase tracking-[0.2em] text-faint">
+            Session
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="relative flex size-2 shrink-0">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-up opacity-75" />
+              <span className="relative inline-flex size-2 rounded-full bg-up" />
+            </span>
+            <span className="truncate text-xs text-muted">
+              ICICI Breeze · active
+            </span>
+          </div>
+        </div>
       </aside>
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="flex min-h-12 items-center justify-between gap-2 border-b border-zinc-200 bg-white px-[max(0.75rem,env(safe-area-inset-left))] py-1 pe-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.25rem,env(safe-area-inset-top))] dark:border-zinc-800 dark:bg-zinc-950 sm:gap-3 sm:px-4">
+        <header className="flex min-h-[52px] items-center justify-between gap-2 border-b border-border bg-panel px-[max(0.75rem,env(safe-area-inset-left))] py-1 pe-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.25rem,env(safe-area-inset-top))] sm:gap-3 sm:px-4">
           <button
             type="button"
             ref={menuButtonRef}
-            className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-700 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 md:hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 md:hidden"
             aria-label="Open menu"
             aria-expanded={mobileNavOpen}
             aria-controls="mobile-app-nav"
@@ -225,19 +228,19 @@ export function AppShell({
             <MenuIcon />
           </button>
           <div className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-4">
-            <span className="hidden truncate text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 md:inline">
+            <span className="hidden truncate text-xs font-medium uppercase tracking-wide text-faint md:inline">
               Trading
             </span>
             {homeQ.isLoading || (homeQ.isFetching && !homeQ.data) ? (
-              <span className="text-xs text-zinc-500">Loading account…</span>
+              <span className="text-xs text-muted">Loading account…</span>
             ) : homeQ.isError ? (
-              <span className="truncate text-xs text-amber-700 dark:text-amber-200/90">
+              <span className="truncate text-xs text-amber-accent">
                 Account info unavailable
               </span>
             ) : (
               <>
                 <span
-                  className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100"
+                  className="truncate text-sm font-semibold text-foreground"
                   title={displayName ?? undefined}
                 >
                   {displayName ?? "—"}
@@ -246,14 +249,13 @@ export function AppShell({
                   className="flex min-w-0 shrink-0 items-baseline gap-1.5"
                   title="Available margin (cash + limits from ICICI margin API)"
                 >
-                  <span className="hidden truncate text-xs text-zinc-500 dark:text-zinc-400 md:inline">
+                  <span className="hidden truncate text-xs text-muted md:inline">
                     Free margin
                   </span>
                   <span
                     className={[
-                      "truncate text-sm font-semibold tabular-nums",
-                      freeMarginDisplay?.className ??
-                        "text-zinc-900 dark:text-zinc-100",
+                      "truncate font-mono text-sm font-semibold tabular-nums",
+                      freeMarginDisplay?.className ?? "text-foreground",
                     ].join(" ")}
                   >
                     {freeMarginDisplay?.text ?? "—"}
@@ -266,7 +268,7 @@ export function AppShell({
             {homeDataReady && (
               <span
                 className={[
-                  "min-w-0 max-w-[6.25rem] shrink-0 truncate whitespace-nowrap text-[11px] tabular-nums sm:max-w-none sm:text-xs",
+                  "min-w-0 max-w-[6.25rem] shrink-0 truncate whitespace-nowrap font-mono text-[13px] tabular-nums sm:max-w-none sm:text-xs",
                   apiCounterClass,
                 ].join(" ")}
                 title="Breeze REST calls from this app today (IST calendar day, ICICI daily cap 5,000)"
@@ -278,28 +280,16 @@ export function AppShell({
                 </span>
               </span>
             )}
-            <span className="hidden text-xs text-zinc-400 dark:text-zinc-500 lg:inline">
-              ICICI
-            </span>
+            <span className="hidden text-xs text-faint lg:inline">ICICI</span>
             <span
-              className="hidden h-2 w-2 rounded-full bg-sky-500 sm:inline"
+              className="hidden h-2 w-2 rounded-full bg-up sm:inline"
               title="Session active"
               aria-hidden
             />
             <button
               type="button"
-              onClick={() => openHelp()}
-              className="inline-flex min-h-11 min-w-9 shrink-0 items-center justify-center rounded-md px-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 sm:min-h-9 sm:min-w-0 sm:px-2 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-              aria-haspopup="dialog"
-              aria-label="Open help"
-              title="Help (?)"
-            >
-              Help
-            </button>
-            <button
-              type="button"
               onClick={() => setChangelogOpen(true)}
-              className="inline-flex min-h-11 min-w-9 shrink-0 items-center justify-center truncate rounded-md px-1.5 text-xs font-medium text-sky-700 underline-offset-2 hover:underline sm:min-h-9 sm:min-w-0 sm:px-2 dark:text-sky-400"
+              className="inline-flex min-h-11 min-w-9 shrink-0 items-center justify-center truncate rounded-md px-1.5 font-mono text-xs font-semibold text-accent-strong underline-offset-2 hover:underline sm:min-h-9 sm:min-w-0 sm:px-2"
               aria-haspopup="dialog"
               aria-label="Open changelog"
             >
@@ -310,7 +300,7 @@ export function AppShell({
               href="/logout"
               title="Log out"
               aria-label="Log out"
-              className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-600 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              className="inline-flex size-[34px] shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
             >
               <LogOutIcon />
             </Link>
@@ -323,26 +313,29 @@ export function AppShell({
           titleId={mobileNavTitleId}
           initialFocusRef={drawerCloseRef}
           className="md:hidden"
-          panelClassName="flex w-[min(18rem,85vw)] max-w-[calc(100vw-env(safe-area-inset-left)-0.5rem)] flex-col border-r border-zinc-200 bg-white pt-[env(safe-area-inset-top)] ps-[max(0.5rem,env(safe-area-inset-left))] shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+          panelClassName="flex w-[min(18rem,85vw)] max-w-[calc(100vw-env(safe-area-inset-left)-0.5rem)] flex-col border-r border-border bg-panel pt-[env(safe-area-inset-top)] ps-[max(0.5rem,env(safe-area-inset-left))] shadow-xl"
         >
             <div
               id="mobile-app-nav"
               className="flex min-h-0 flex-1 flex-col"
             >
-              <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2.5 pe-2 dark:border-zinc-800">
+              <div className="flex items-center justify-between gap-2 border-b border-border-soft px-3 py-2.5 pe-2">
                 <div className="min-w-0">
                   <div
                     id={mobileNavTitleId}
-                    className="truncate text-sm font-semibold text-sky-600 dark:text-sky-500"
+                    className="flex items-center gap-1.5 truncate text-sm font-semibold text-foreground"
                   >
-                    Breeze Modern
+                    Breeze
+                    <span className="text-[12px] font-semibold uppercase tracking-[0.2em] text-faint">
+                      Terminal
+                    </span>
                   </div>
                   <div className="app-text-muted">Menu</div>
                 </div>
                 <button
                   type="button"
                   ref={drawerCloseRef}
-                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-600 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
                   aria-label="Close menu"
                   onClick={() => {
                     closeMobileNav();
@@ -367,16 +360,22 @@ export function AppShell({
                         item.showNewBadge ? "Strategy Builder, new" : undefined
                       }
                       className={[
-                        "flex min-h-11 items-center gap-3 rounded-md px-3 py-2 transition",
+                        "relative flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 transition",
                         active
-                          ? "bg-sky-100 text-sky-950 dark:bg-sky-950/50 dark:text-sky-50"
-                          : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100",
+                          ? "bg-accent-tint font-semibold text-foreground [&_svg]:text-accent-strong"
+                          : "text-muted hover:bg-panel2 hover:text-foreground",
                       ].join(" ")}
                       onClick={() => {
                         closeMobileNav();
                         menuButtonRef.current?.focus();
                       }}
                     >
+                      {active ? (
+                        <span
+                          aria-hidden
+                          className="absolute inset-y-[9px] left-0 w-[2.5px] rounded-full bg-accent-bar"
+                        />
+                      ) : null}
                       <Icon />
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className="truncate">{item.label}</span>
@@ -404,19 +403,44 @@ export function AppShell({
         <main
           id="main-content"
           tabIndex={-1}
-          className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-50 py-4 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-zinc-950 md:py-5 md:ps-5 md:pe-5"
+          className="flex min-h-0 min-w-0 flex-1 flex-col bg-background py-[22px] ps-[max(1.5rem,env(safe-area-inset-left))] pe-[max(1.5rem,env(safe-area-inset-right))] pb-[max(2.75rem,env(safe-area-inset-bottom))]"
         >
           <div
             className={[
               "mx-auto w-full min-w-0",
-              contentWidth === "wide"
-                ? "max-w-[min(100%,100rem)]"
-                : "max-w-6xl",
+              contentWidth === "wide" ? "max-w-[min(100%,100rem)]" : "max-w-[1280px]",
             ].join(" ")}
           >
             {children}
           </div>
         </main>
+      </div>
+    </div>
+  );
+}
+
+function BrandMark() {
+  return (
+    <Image
+      src={breezeMark}
+      alt=""
+      aria-hidden
+      width={34}
+      height={34}
+      className="size-[34px] shrink-0 rounded-lg object-contain"
+      priority
+    />
+  );
+}
+
+function BrandWordmark() {
+  return (
+    <div className="min-w-0 flex flex-col justify-center leading-tight">
+      <div className="text-base font-semibold tracking-tight text-foreground">
+        Breeze
+      </div>
+      <div className="text-[12px] font-semibold uppercase tracking-[0.2em] text-faint">
+        Terminal
       </div>
     </div>
   );

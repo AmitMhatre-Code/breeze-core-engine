@@ -108,12 +108,12 @@ export function Modal({
   const panelVariantClass =
     variant === "bottomSheet"
       ? [
-          "relative z-[1] flex max-h-[min(32rem,88dvh)] w-full min-w-0 flex-col overflow-hidden border-x border-t border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950",
+          "relative z-[1] flex max-h-[min(32rem,88dvh)] w-full min-w-0 flex-col overflow-hidden border-x border-t border-border bg-elevated shadow-pop",
           "rounded-t-2xl sm:mx-auto sm:mb-0 sm:max-h-[min(32rem,85vh)] sm:w-full sm:max-w-lg sm:rounded-lg sm:border",
           "mb-[max(0px,env(safe-area-inset-bottom))]",
         ].join(" ")
       : variant === "drawer"
-        ? "absolute inset-y-0 left-0 z-[1] flex w-[min(100%,18rem)] flex-col border-r border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+        ? "absolute inset-y-0 left-0 z-[1] flex w-[min(100%,18rem)] flex-col border-r border-border bg-elevated shadow-pop"
         : "relative z-[1] w-full max-w-lg";
 
   const backdrop = canDismiss ? (

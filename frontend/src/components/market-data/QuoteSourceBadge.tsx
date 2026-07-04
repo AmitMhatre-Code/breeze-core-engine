@@ -21,26 +21,26 @@ function variantClasses(variant: QuoteSourceBadgeProps["variant"], live: boolean
   const base =
     "inline-flex max-w-full items-center gap-1.5 rounded-full border font-medium leading-tight";
   if (variant === "compact") {
-    return `${base} border-zinc-300/80 bg-zinc-100/90 px-2 py-0.5 text-[10px] text-zinc-700 dark:border-zinc-600/70 dark:bg-zinc-800/80 dark:text-zinc-200`;
+    return `${base} border-border bg-panel2 px-2 py-0.5 text-[12px] text-muted`;
   }
   if (variant === "footnote") {
-    return `${base} border-transparent bg-transparent px-0 py-0 text-[11px] text-zinc-500 dark:text-zinc-400`;
+    return `${base} border-transparent bg-transparent px-0 py-0 text-[13px] text-muted`;
   }
   if (live) {
-    return `${base} border-emerald-500/35 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-100`;
+    return `${base} border-up/35 bg-up-tint px-2.5 py-1 text-xs text-up`;
   }
-  return `${base} border-zinc-300/80 bg-zinc-50 px-2.5 py-1 text-xs text-zinc-700 dark:border-zinc-600/70 dark:bg-zinc-900/50 dark:text-zinc-200`;
+  return `${base} border-border bg-panel2 px-2.5 py-1 text-xs text-muted`;
 }
 
 function LiveDot({ pulse }: { pulse: boolean }) {
   return (
     <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden>
       <span
-        className={`absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75 ${
+        className={`absolute inline-flex h-full w-full rounded-full bg-up opacity-75 ${
           pulse ? "animate-ping" : ""
         }`}
       />
-      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400" />
+      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-up" />
     </span>
   );
 }
@@ -77,14 +77,14 @@ export function QuoteSourceBadge({
   if (variant === "footnote") {
     return (
       <span className={`inline-flex flex-wrap items-center gap-1.5 ${className}`.trim()}>
-        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">Leg prices from</span>
+        <span className="text-[13px] text-muted">Leg prices from</span>
         {pill}
         <InfoPopover
           title="Quote source"
           ariaLabel="Quote source details"
           learnMoreTopicId="quote-sources"
         >
-          <p className="text-sm leading-relaxed text-zinc-700 dark:text-zinc-200">{detail}</p>
+          <p className="text-sm leading-relaxed text-muted">{detail}</p>
         </InfoPopover>
       </span>
     );
@@ -98,7 +98,7 @@ export function QuoteSourceBadge({
         ariaLabel="Quote source details"
         learnMoreTopicId="quote-sources"
       >
-        <p className="text-sm leading-relaxed text-zinc-700 dark:text-zinc-200">{detail}</p>
+        <p className="text-sm leading-relaxed text-muted">{detail}</p>
       </InfoPopover>
     </span>
   );

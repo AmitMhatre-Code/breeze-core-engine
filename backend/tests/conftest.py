@@ -1,6 +1,13 @@
 """Shared pytest fixtures for breeze-core-engine backend tests."""
 from __future__ import annotations
 
+# Must run before anything else imports `breeze_connect` (directly, or via
+# icici_breeze_backend.app.services.processor/core.icici_client): breeze_connect
+# downloads ICICI's SecurityMaster.zip with a bare urlopen() at import time,
+# which crashes the whole test session without internet access to icicidirect.com.
+# See tests/breeze_mock_env.py for details.
+import tests.breeze_mock_env  # noqa: E402,F401
+
 import pytest
 
 from tests.fixtures.portal_heartbeat_drm_keys import TEST_PUBLIC_KEY_PEM

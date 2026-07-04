@@ -372,15 +372,14 @@ export const helpTopics: HelpTopic[] = [
     relatedTopicIds: ["rate-limit-429"],
   },
   {
-    id: "genai-byok",
+    id: "genai-market-outlook",
     category: "settings",
-    title: "GenAI market outlook (BYOK)",
-    summary:
-      "Bring your own Gemini or OpenAI API key for dashboard outlook.",
+    title: "AI market outlook",
+    summary: "A shared market outlook generated centrally, shown on the dashboard.",
     body: [
-      "Settings → GenAI Settings stores your API key for market outlook features.",
-      "Configure model fallbacks if the primary model fails.",
-      "Outlook combines RSS headlines with your chosen LLM; failures show an error message on the dashboard.",
+      "The dashboard's AI market outlook is generated centrally and shared across all deployments — no API key or setup is needed on this instance.",
+      "It refreshes on a schedule; use the dashboard's refresh control to check for a newer version.",
+      "If it's temporarily unavailable, the dashboard shows the last-known outlook with an age indicator instead of leaving the card blank.",
     ],
     keywords: ["gemini", "openai", "ai", "outlook"],
   },

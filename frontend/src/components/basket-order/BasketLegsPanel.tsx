@@ -66,6 +66,7 @@ export function BasketLegsPanel({
     hasPositiveLots: boolean;
     isFetching: boolean;
     netMargin: number | null;
+    marginBenefit?: number | null;
   };
   onExecute: () => void;
   executeDisabled: boolean;
@@ -99,7 +100,7 @@ export function BasketLegsPanel({
             type="button"
             disabled={addLegDisabled}
             onClick={onAddLeg}
-            className={sb.btnSecondary}
+            className="inline-flex items-center justify-center rounded-lg border border-accent/40 bg-transparent px-3.5 py-2 text-xs font-semibold text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
           >
             Add leg
           </button>
@@ -107,16 +108,15 @@ export function BasketLegsPanel({
       </div>
 
       {!chainReady ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="text-sm text-muted">
           {chainBusy ? "Loading contract details…" : "Waiting for option chain data…"}
         </p>
       ) : null}
 
       {legs.length === 0 ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Click{" "}
-          <span className="font-medium text-zinc-700 dark:text-zinc-300">Add leg</span>{" "}
-          to build your basket manually, or{" "}
+        <p className="text-sm text-muted">
+          Click <span className="font-medium text-foreground">Add leg</span> to
+          build your basket manually, or{" "}
           {showOptionChain ? (
             "pick Buy/Sell from the option chain above."
           ) : (
@@ -125,7 +125,7 @@ export function BasketLegsPanel({
                 type="button"
                 disabled={!chainReady}
                 onClick={onShowOptionChain}
-                className="font-medium text-sky-700 underline underline-offset-2 hover:text-sky-800 disabled:cursor-not-allowed disabled:no-underline disabled:opacity-50 dark:text-sky-400 dark:hover:text-sky-300"
+                className="font-medium text-accent-strong underline underline-offset-2 hover:text-accent disabled:cursor-not-allowed disabled:no-underline disabled:opacity-50"
               >
                 pick from the option chain
               </button>
@@ -239,12 +239,12 @@ export function BasketLegsPanel({
                         }
                       />
                     </td>
-                    <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                    <td className="px-2 py-1.5 font-mono tabular-nums text-foreground">
                       {premTotal == null
                         ? "—"
                         : formatIndianMoneyCompact(premTotal)}
                     </td>
-                    <td className="px-2 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                    <td className="px-2 py-1.5 font-mono tabular-nums text-foreground">
                       {formatLegMargin(l, legEntry, spanBaselineLoading)}
                     </td>
                     <td className="px-2 py-1.5">
@@ -263,50 +263,89 @@ export function BasketLegsPanel({
                   </tr>
                 );
               })}
-              <tr className="border-t border-zinc-200/80 bg-zinc-50/80 dark:border-zinc-700/80 dark:bg-zinc-900/40">
-                <td
-                  className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300"
-                  colSpan={5}
-                >
-                  Totals
-                </td>
-                <td
-                  className={`px-2 py-2 text-xs font-semibold tabular-nums ${
-                    totalsNetPremium < 0
-                      ? "text-red-700 dark:text-red-400"
-                      : "text-zinc-900 dark:text-zinc-100"
-                  }`}
-                >
-                  {formatIndianMoneyCompact(totalsNetPremium)}
-                </td>
-                <td className="px-2 py-2 text-xs font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                  {!totalsMargin.hasPositiveLots
-                    ? "—"
-                    : totalsMargin.isFetching || spanBaselineLoading
-                      ? "…"
-                      : totalsMargin.netMargin != null &&
-                          Number.isFinite(totalsMargin.netMargin)
-                        ? formatIndianMoneyCompact(totalsMargin.netMargin)
-                        : "—"}
-                </td>
-                <td className="px-2 py-2" />
-              </tr>
             </tbody>
           </table>
         </div>
         </>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className={`${sb.stickyBar} flex flex-wrap items-center justify-between gap-4`}>
+        <div className="flex flex-wrap items-center gap-5">
+          <TotalStat
+            label="Net premium"
+            value={formatIndianMoneyCompact(totalsNetPremium)}
+            tone={totalsNetPremium < 0 ? "down" : "foreground"}
+          />
+          <TotalStat
+            label="Net SPAN margin"
+            value={
+              !totalsMargin.hasPositiveLots
+                ? "—"
+                : totalsMargin.isFetching || spanBaselineLoading
+                  ? "…"
+                  : totalsMargin.netMargin != null && Number.isFinite(totalsMargin.netMargin)
+                    ? formatIndianMoneyCompact(totalsMargin.netMargin)
+                    : "—"
+            }
+          />
+          <TotalStat
+            label="Margin benefit"
+            value={
+              totalsMargin.marginBenefit != null && Number.isFinite(totalsMargin.marginBenefit)
+                ? formatIndianMoneyCompact(totalsMargin.marginBenefit)
+                : "—"
+            }
+            tone="up"
+          />
+        </div>
         <button
           type="button"
           disabled={executeDisabled}
           onClick={onExecute}
-          className={sb.btnPrimary}
+          className={`${sb.btnPrimary} gap-2`}
         >
-          Execute
+          <ExecuteIcon />
+          Execute basket · {legs.filter((l) => l.lots > 0).length} leg
+          {legs.filter((l) => l.lots > 0).length === 1 ? "" : "s"}
         </button>
       </div>
     </section>
+  );
+}
+
+function TotalStat({
+  label,
+  value,
+  tone = "foreground",
+}: {
+  label: string;
+  value: string;
+  tone?: "foreground" | "up" | "down";
+}) {
+  const toneClass =
+    tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-foreground";
+  return (
+    <div>
+      <div className="text-[12px] font-semibold uppercase tracking-wide text-faint">
+        {label}
+      </div>
+      <div className={`mt-0.5 font-mono text-sm font-semibold tabular-nums ${toneClass}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ExecuteIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden
+    >
+      <polygon points="5 3 19 12 5 21 5 3" />
+    </svg>
   );
 }

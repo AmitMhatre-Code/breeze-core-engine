@@ -3,23 +3,28 @@
 const LAC = 100_000;
 const CRORE = 10_000_000;
 
-export function formatIndianMoneyCompact(amount: number): string {
+export function formatIndianMoneyCompact(
+  amount: number,
+  opts?: { shortSuffix?: boolean; skipK?: boolean },
+): string {
   if (!Number.isFinite(amount)) return "—";
   const abs = Math.abs(amount);
   const wrapNegative = (s: string) => (amount < 0 ? `(${s})` : s);
+  const short = opts?.shortSuffix ?? false;
+  const sep = short ? "" : " ";
   if (abs >= CRORE) {
     return wrapNegative(
-      `₹${(abs / CRORE).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Cr`,
+      `₹${(abs / CRORE).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${sep}Cr`,
     );
   }
   if (abs >= LAC) {
     return wrapNegative(
-      `₹${(abs / LAC).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Lac`,
+      `₹${(abs / LAC).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${sep}${short ? "L" : "Lac"}`,
     );
   }
-  if (abs >= 1000) {
+  if (!opts?.skipK && abs >= 1000) {
     return wrapNegative(
-      `₹${(abs / 1000).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} K`,
+      `₹${(abs / 1000).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${sep}K`,
     );
   }
   return wrapNegative(

@@ -105,7 +105,7 @@ function FieldHint({ text }: { text: string }) {
     <span
       title={text}
       aria-label={text}
-      className="inline-flex size-4 shrink-0 cursor-help items-center justify-center rounded-full text-[10px] font-bold leading-none text-zinc-400 ring-1 ring-zinc-300/80 dark:text-zinc-500 dark:ring-zinc-600"
+      className="inline-flex size-4 shrink-0 cursor-help items-center justify-center rounded-full text-[12px] font-bold leading-none text-faint ring-1 ring-border"
     >
       i
     </span>
@@ -775,10 +775,10 @@ export default function StrategyBuilderPage() {
       <RevokedTradingPageGuard>
         <div className="space-y-5">
           <header>
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">
               Strategy Builder
             </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
               Parameter-driven strategy proposals with batched market data
             </p>
           </header>
@@ -786,28 +786,27 @@ export default function StrategyBuilderPage() {
           <section className={`${sb.section} relative z-20 space-y-5`}>
             <h2 className={sb.sectionTitle}>1. Underlying &amp; Expiry</h2>
             <div
-              className="flex min-h-[2.75rem] flex-col overflow-visible rounded-md border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] sm:flex-row sm:items-center"
+              className="flex min-h-[2.75rem] flex-col overflow-visible rounded-[9px] border border-border bg-panel2 sm:flex-row sm:items-center"
               role="toolbar"
             >
-              <div className="flex shrink-0 items-center border-b border-zinc-200 px-2 py-2 dark:border-zinc-700/70 sm:border-b-0 sm:border-r sm:py-0 sm:ps-2.5 sm:pe-2">
-                <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
+              <div className="flex shrink-0 items-center border-b border-border-soft px-2 py-2 sm:border-b-0 sm:border-r sm:py-0 sm:ps-2.5 sm:pe-2">
+                <div className={sb.segmentGroup}>
                   {(["NFO", "BFO"] as const).map((ex) => (
                     <button
                       key={ex}
                       type="button"
                       onClick={() => onSegmentChange(ex)}
-                      className={`rounded-md px-3 py-1.5 text-xs font-semibold sm:text-sm ${
-                        segmentExchange === ex
-                          ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
-                          : "text-zinc-600 dark:text-zinc-400"
-                      }`}
+                      className={[
+                        sb.segmentBtn,
+                        segmentExchange === ex ? sb.segmentBtnActive : sb.segmentBtnInactive,
+                      ].join(" ")}
                     >
                       {ex === "NFO" ? "NSE" : "BSE"}
                     </button>
                   ))}
                 </div>
               </div>
-              <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center px-3 py-2 sm:border-r sm:dark:border-zinc-700/70">
+              <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center px-3 py-2 sm:border-r sm:border-border-soft">
                 {uq.isLoading ? (
                   <span className="text-xs app-text-muted animate-pulse">
                     Loading underlyings…
@@ -833,7 +832,6 @@ export default function StrategyBuilderPage() {
               <div className="flex shrink-0 items-center px-3 py-2 sm:pe-3.5">
                 <ExpirySelectPill
                   layout="toolbar"
-                  tone="darkToolbar"
                   dates={expiryOptions}
                   value={expiryDate}
                   disabled={!stockCode}
@@ -857,7 +855,7 @@ export default function StrategyBuilderPage() {
             >
               <h2 className={sb.sectionTitle}>2. Parameters</h2>
               {showBuilderTip ? (
-                <div className="flex items-start justify-between gap-3 rounded-md border border-sky-200/80 bg-sky-50/50 px-3 py-2.5 text-sm text-zinc-700 dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-zinc-300">
+                <div className="flex items-start justify-between gap-3 rounded-md border border-accent/25 bg-accent-tint px-3 py-2.5 text-sm text-foreground">
                   <p>
                     Set margin, PoP, and max loss to discover strategies.{" "}
                     <HelpLink topicId="strategy-builder-overview" className="text-sm">
@@ -867,7 +865,7 @@ export default function StrategyBuilderPage() {
                   <button
                     type="button"
                     onClick={dismissBuilderTip}
-                    className="shrink-0 text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                    className="shrink-0 text-xs font-medium text-muted hover:text-foreground"
                   >
                     Dismiss
                   </button>
@@ -907,7 +905,7 @@ export default function StrategyBuilderPage() {
                   </label>
                   <div className={sb.fieldRow}>
                     <div
-                      className={`${sb.checkboxRow} gap-2 text-xs font-medium leading-snug text-zinc-600 dark:text-zinc-400`}
+                      className={`${sb.checkboxRow} gap-2 text-xs font-medium leading-snug text-muted`}
                     >
                       <button
                         type="button"
@@ -915,15 +913,13 @@ export default function StrategyBuilderPage() {
                         aria-checked={provisionElm}
                         aria-label="Toggle Provision for ELM"
                         onClick={() => setProvisionElm(!provisionElm)}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${
-                          provisionElm
-                            ? "bg-sky-600"
-                            : "bg-zinc-300 dark:bg-zinc-700"
+                        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+                          provisionElm ? "bg-accent-strong" : "bg-border"
                         }`}
                       >
                         <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
-                            provisionElm ? "translate-x-4" : "translate-x-0.5"
+                          className={`inline-block size-5 transform rounded-full bg-white shadow transition ${
+                            provisionElm ? "translate-x-[22px]" : "translate-x-0.5"
                           }`}
                         />
                       </button>
@@ -955,7 +951,7 @@ export default function StrategyBuilderPage() {
                           />
                         </label>
                         {minPopPctNum == null && minPopPct.trim() !== "" ? (
-                          <p className="text-sm text-red-600 dark:text-red-400">
+                          <p className="text-sm text-down">
                             Minimum probability of profit must be between 1 and 99.
                           </p>
                         ) : null}
@@ -980,7 +976,7 @@ export default function StrategyBuilderPage() {
                         </label>
                         {minAnnReturnPctNum == null &&
                         minAnnReturnPct.trim() !== "" ? (
-                          <p className="text-sm text-red-600 dark:text-red-400">
+                          <p className="text-sm text-down">
                             Minimum annualized return must be between 0 and 100.
                           </p>
                         ) : null}
@@ -1000,9 +996,9 @@ export default function StrategyBuilderPage() {
 
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Directional strategies</h3>
-                    <div className="flex-1 space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
+                    <div className="flex-1 space-y-2 text-sm text-muted">
                       <p>{DIRECTIONAL_HINT}</p>
-                      <p className="inline-flex flex-wrap items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      <p className="inline-flex flex-wrap items-center gap-1 text-xs text-muted">
                         <span>Est. probability of profit is shown on each trade for reference.</span>
                         <PopHelpTrigger />
                       </p>
@@ -1026,7 +1022,7 @@ export default function StrategyBuilderPage() {
 
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Build your own</h3>
-                    <p className="flex-1 text-sm text-zinc-600 dark:text-zinc-400">
+                    <p className="flex-1 text-sm text-muted">
                       {BYO_HINT}
                     </p>
                     <button
@@ -1041,7 +1037,7 @@ export default function StrategyBuilderPage() {
                 </div>
               </div>
               {generateError ? (
-                <p className="mt-4 text-sm text-red-600 dark:text-red-400">
+                <p className="mt-4 text-sm text-down">
                   {generateError}
                 </p>
               ) : null}
@@ -1098,20 +1094,20 @@ export default function StrategyBuilderPage() {
                   {builderMode === "income" ||
                   builderMode === "bullish" ||
                   builderMode === "bearish" ? (
-                    <span className="ml-2 text-sm font-normal text-zinc-500 dark:text-zinc-400">
+                    <span className="ml-2 text-sm font-normal text-muted">
                       — {CATEGORY_LABELS[builderMode]}
                     </span>
                   ) : null}
                 </h2>
                 {trades.some((t) => t.status === "ok") ||
                 relaxedTrades.length > 0 ? (
-                  <div className="flex shrink-0 flex-wrap items-center gap-3 text-[11px]">
+                  <div className="flex shrink-0 flex-wrap items-center gap-3 text-[13px]">
                     <OutlookFilterButtons
                       selected={outlookFilter}
                       onChange={setOutlookFilter}
                     />
                     <span
-                      className="text-zinc-400 dark:text-zinc-500"
+                      className="text-faint"
                       aria-hidden
                     >
                       ·
@@ -1128,13 +1124,13 @@ export default function StrategyBuilderPage() {
               ) : null}
               {!trades.some((t) => t.status === "ok") &&
               !relaxedTrades.length ? (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                <p className="text-sm text-muted">
                   Fill parameters and choose a strategy category to see
                   proposals.
                 </p>
               ) : displayedTrades.length === 0 &&
                 displayedRelaxedTrades.length === 0 ? (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                <p className="text-sm text-muted">
                   No strategies match the selected outlook filters.{" "}
                   <HelpLink topicId="strategy-builder-constraints" className="text-sm">
                     Troubleshooting
@@ -1165,17 +1161,17 @@ export default function StrategyBuilderPage() {
                   {displayedRelaxedTrades.length > 0 ? (
                     <div className="space-y-3 pt-2">
                       <div>
-                        <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                        <h3 className="text-sm font-semibold text-foreground">
                           Near-threshold alternatives
                           {builderMode === "income" ||
                           builderMode === "bullish" ||
                           builderMode === "bearish" ? (
-                            <span className="ml-1.5 font-normal text-zinc-500 dark:text-zinc-400">
+                            <span className="ml-1.5 font-normal text-muted">
                               — {CATEGORY_LABELS[builderMode]} strategies
                             </span>
                           ) : null}
                         </h3>
-                        <p className="mt-1 max-w-3xl text-sm text-zinc-600 dark:text-zinc-400">
+                        <p className="mt-1 max-w-3xl text-sm text-muted">
                           The strategies below did not meet your PoP and/or
                           annualized return thresholds, or are unlimited-loss
                           structures excluded while a max-loss limit is set.
@@ -1295,11 +1291,11 @@ export default function StrategyBuilderPage() {
         >
           <h3
             id="unlimited-risk-title"
-            className="text-base font-semibold text-red-700 dark:text-red-400"
+            className="text-base font-semibold text-down"
           >
             Risk warning — unlimited loss
           </h3>
-          <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+          <p className="text-sm leading-relaxed text-muted">
             {unlimitedRiskTrade?.strategy_name} can have large or unlimited
             loss if the market moves against you. Confirm you understand the
             exposure before selecting this strategy.

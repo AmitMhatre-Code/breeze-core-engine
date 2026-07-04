@@ -164,16 +164,12 @@ def _ensure_app_database() -> None:
     if os.path.isfile(db_path):
         try:
             from icici_breeze_backend.app.db.user_account_migrate import migrate_user_account_if_needed
-            from icici_breeze_backend.app.db.ai_provider_migrate import ensure_ai_provider_table
-            from icici_breeze_backend.app.db.outlook_preferences_migrate import ensure_outlook_preferences_table
             from icici_breeze_backend.app.db.parked_orders_migrate import ensure_parked_orders_table
             from icici_breeze_backend.app.db.user_exchange_calendar_migrate import (
                 ensure_user_exchange_calendar_table,
             )
 
             migrate_user_account_if_needed(db_path)
-            ensure_ai_provider_table(db_path)
-            ensure_outlook_preferences_table(db_path)
             ensure_parked_orders_table(db_path)
             ensure_user_exchange_calendar_table(db_path)
             from icici_breeze_backend.app.services.user_rate_limit_prefs import (
@@ -294,6 +290,7 @@ def start_application():
         run_heartbeat_loop,
         send_startup_heartbeat,
     )
+    from icici_breeze_backend.app.services import portal_market_outlook
 
     @asynccontextmanager
     async def _portal_heartbeat_lifespan(_app: FastAPI):
@@ -301,6 +298,12 @@ def start_application():
         if heartbeat_loop_enabled():
             await send_startup_heartbeat()
             task = asyncio.create_task(run_heartbeat_loop())
+
+        outlook_task: asyncio.Task | None = None
+        if portal_market_outlook.market_outlook_loop_enabled():
+            await portal_market_outlook.refresh_once()
+            outlook_task = asyncio.create_task(portal_market_outlook.run_market_outlook_refresh_loop())
+
         from icici_breeze_backend.app.services.reference_data.scheduler import (
             bootstrap_reference_data_on_startup,
         )
@@ -317,6 +320,12 @@ def start_application():
             task.cancel()
             try:
                 await task
+            except asyncio.CancelledError:
+                pass
+        if outlook_task is not None:
+            outlook_task.cancel()
+            try:
+                await outlook_task
             except asyncio.CancelledError:
                 pass
         from icici_breeze_backend.app.services.breeze_websocket_manager import shutdown_websocket

@@ -399,6 +399,7 @@ def _candidate_to_result(
         name,
         cand.legs,
         max_loss=max_loss,
+        max_profit=cand.net_collected,
         rr=f"{max_loss:.0f} : {cand.net_collected:.0f}",
         pop=cand.pop,
         net_premium_val=cand.net_collected,

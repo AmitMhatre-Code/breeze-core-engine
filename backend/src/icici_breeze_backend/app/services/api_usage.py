@@ -391,6 +391,80 @@ def get_daily_usage_by_api(user_id: str, days: int = 30) -> list[dict]:
         return []
 
 
+_ORDER_PLACEMENT_METHODS = frozenset(
+    {
+        "place_order",
+        "modify_order",
+        "cancel_order",
+        "square_off",
+        "preview_order",
+        "set_funds",
+        "gtt_three_leg_place_order",
+        "gtt_three_leg_modify_order",
+        "gtt_three_leg_cancel_order",
+        "gtt_single_leg_place_order",
+        "gtt_single_leg_modify_order",
+        "gtt_single_leg_cancel_order",
+        "gtt_order_book",
+    }
+)
+_MARKET_QUOTES_METHODS = frozenset(
+    {
+        "get_quotes",
+        "get_option_chain_quotes",
+        "get_historical_data",
+        "get_historical_data_v2",
+        "get_names",
+        "ws_connect",
+        "ws_disconnect",
+        "subscribe_feeds",
+    }
+)
+_PORTFOLIO_METHODS = frozenset(
+    {
+        "get_customer_details",
+        "get_demat_holdings",
+        "get_funds",
+        "get_margin",
+        "get_order_detail",
+        "get_order_list",
+        "get_portfolio_holdings",
+        "get_portfolio_positions",
+        "get_trade_list",
+        "get_trade_detail",
+        "limit_calculator",
+        "margin_calculator",
+    }
+)
+
+
+def _category_for_api_name(api_name: str) -> str:
+    if api_name in _ORDER_PLACEMENT_METHODS:
+        return "order_placement"
+    if api_name in _MARKET_QUOTES_METHODS:
+        return "market_quotes"
+    if api_name in _PORTFOLIO_METHODS:
+        return "portfolio"
+    return "other"
+
+
+def get_daily_usage_by_category(user_id: str, days: int = 30) -> list[dict]:
+    """Roll up the per-method breakdown into the three semantic buckets the
+    Settings > API Usage screen displays: order placement / market quotes / portfolio.
+    """
+    by_api = get_daily_usage_by_api(user_id, days)
+    totals: dict[tuple[str, str], int] = {}
+    for row in by_api:
+        cat = _category_for_api_name(str(row["api_name"]))
+        key = (str(row["usage_date"]), cat)
+        totals[key] = totals.get(key, 0) + int(row["call_count"] or 0)
+    out = [
+        {"usage_date": d, "category": c, "call_count": n} for (d, c), n in totals.items()
+    ]
+    out.sort(key=lambda r: (r["usage_date"], r["category"]), reverse=True)
+    return out
+
+
 def get_daily_usage_by_route(user_id: str, days: int = 30) -> list[dict]:
     uid = (user_id or "").strip()
     if not uid:

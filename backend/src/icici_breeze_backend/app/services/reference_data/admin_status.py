@@ -11,7 +11,7 @@ from icici_breeze_backend.app.services.reference_data.state import fetch_ingest_
 import icici_breeze_backend.app.core.config as cfg
 
 
-def _bfo_baseline_meta() -> dict[str, Any]:
+def _span_baseline_meta(exchange_code: str, prefix: str) -> dict[str, Any]:
     ensure_exchange_margin_baseline_table()
     with sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB) as conn:
         row = conn.execute(
@@ -23,20 +23,20 @@ def _bfo_baseline_meta() -> dict[str, Any]:
             ORDER BY source_date DESC, source_version DESC
             LIMIT 1
             """,
-            (cfg.BFO,),
+            (exchange_code,),
         ).fetchone()
     if not row:
         return {
-            "bse_span_source_file": None,
-            "bse_span_source_date": None,
-            "bse_span_refreshed_at": None,
-            "bse_span_row_count": None,
+            f"{prefix}_source_file": None,
+            f"{prefix}_source_date": None,
+            f"{prefix}_refreshed_at": None,
+            f"{prefix}_row_count": None,
         }
     return {
-        "bse_span_source_file": row[0],
-        "bse_span_source_date": row[1],
-        "bse_span_refreshed_at": row[2],
-        "bse_span_row_count": int(row[3]),
+        f"{prefix}_source_file": row[0],
+        f"{prefix}_source_date": row[1],
+        f"{prefix}_refreshed_at": row[2],
+        f"{prefix}_row_count": int(row[3]),
     }
 
 
@@ -67,5 +67,6 @@ def get_reference_data_admin_status() -> dict[str, Any]:
         "span_progress_pct": int(prog.get("span_progress_pct") or 0),
         "span_message": prog.get("span_message"),
         "ingest_history": fetch_ingest_history(),
-        **_bfo_baseline_meta(),
+        **_span_baseline_meta(cfg.NFO, "nse_span"),
+        **_span_baseline_meta(cfg.BFO, "bse_span"),
     }

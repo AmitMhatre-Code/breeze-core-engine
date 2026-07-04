@@ -182,6 +182,7 @@ def _result_to_trade_dict(r: StrategyResult, ctx: EngineContext) -> dict[str, An
         "structure_modified": r.structure_modified or ctx.structure_modified,
         "net_premium": r.net_premium,
         "max_loss": r.max_loss,
+        "max_profit": r.max_profit,
         "annualized_return_pct": r.annualized_return_pct,
         "risk_reward_ratio": r.risk_reward_ratio,
         "span_margin": getattr(r, "span_margin", None),

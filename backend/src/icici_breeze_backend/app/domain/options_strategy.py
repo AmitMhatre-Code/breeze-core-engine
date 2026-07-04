@@ -57,6 +57,7 @@ class ProposedTradeOut(BaseModel):
     structure_modified: bool = False
     net_premium: Optional[float] = None
     max_loss: Optional[float] = None
+    max_profit: Optional[float] = None
     annualized_return_pct: Optional[float] = None
     risk_reward_ratio: Optional[str] = None
     span_margin: Optional[float] = None

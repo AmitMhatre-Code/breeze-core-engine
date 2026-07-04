@@ -86,7 +86,7 @@ export function LoginDisclosureDialog({
       panelClassName="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl border border-zinc-700 bg-zinc-950 shadow-2xl"
     >
       <header className="shrink-0 border-b border-zinc-800 px-5 py-4">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-blue-400">
+        <p className="text-[12px] font-semibold uppercase tracking-[0.2em] text-blue-400">
           Required
         </p>
         <h2
@@ -96,7 +96,7 @@ export function LoginDisclosureDialog({
           SEBI Risk Disclosure
         </h2>
         {version != null ? (
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-zinc-400">
             Version {version}
             {effectiveDate ? ` · Effective ${effectiveDate}` : null}
           </p>
@@ -117,7 +117,7 @@ export function LoginDisclosureDialog({
       <footer className="shrink-0 border-t border-zinc-800 px-5 py-4">
         <p
           id="login-disclosure-scroll-hint"
-          className="mb-3 text-xs leading-relaxed text-zinc-500"
+          className="mb-3 text-xs leading-relaxed text-zinc-400"
         >
           You must read and acknowledge the risk disclosure before using Breeze Modern.{" "}
           <HelpLink topicId="risk-disclosure-login" className="text-zinc-400">
@@ -134,7 +134,7 @@ export function LoginDisclosureDialog({
             {pending ? "Saving…" : "Proceed"}
           </button>
           {!hasReachedBottom ? (
-            <p className="max-w-xs text-right text-xs leading-relaxed text-zinc-500">
+            <p className="max-w-xs text-right text-xs leading-relaxed text-zinc-400">
               Scroll to the bottom of the message to enable Proceed.
             </p>
           ) : null}

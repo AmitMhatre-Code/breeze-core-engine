@@ -3,9 +3,9 @@
 import type { OptionRight, OrderSide } from "@/lib/strategy-builder/types";
 
 const GREEN_TOGGLE =
-  "rounded px-2.5 py-1 text-[11px] font-semibold bg-emerald-100 text-emerald-900 transition hover:bg-emerald-200/80 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-950/70";
+  "rounded px-2.5 py-1 text-[13px] font-bold uppercase tracking-[.05em] bg-up-tint text-up transition hover:brightness-[1.08]";
 const RED_TOGGLE =
-  "rounded px-2.5 py-1 text-[11px] font-semibold bg-red-100 text-red-900 transition hover:bg-red-200/80 dark:bg-red-950/50 dark:text-red-300 dark:hover:bg-red-950/70";
+  "rounded px-2.5 py-1 text-[13px] font-bold uppercase tracking-[.05em] bg-down-tint text-down transition hover:brightness-[1.08]";
 
 export function LegRightToggle({
   value,

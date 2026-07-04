@@ -1,14 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { InterpretationBadge } from "@/components/dashboard/InterpretationBadge";
-import {
-  DashboardMetricSkeleton,
-  DashboardSectionStatus,
-  DashboardTrendSkeleton,
-} from "@/components/dashboard/DashboardLoading";
+import { DashboardMetricSkeleton } from "@/components/dashboard/DashboardLoading";
 import { Vix30dChart } from "@/components/dashboard/Vix30dChart";
 import {
   interpretAtmIvPercent,
@@ -25,7 +28,7 @@ import {
   type DashboardVixOptions,
   type PortfolioApiResponse,
 } from "@/lib/dashboard-bootstrap";
-import { formatIndianMoneyCompact } from "@/lib/format-money-in";
+import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import { ApiHttpError, apiClient } from "@/lib/api-client";
 import {
   getMarketOutlook,
@@ -88,27 +91,70 @@ function formatNiftyIndexInt(v: number | null | undefined): string {
   return Math.round(v).toLocaleString("en-IN");
 }
 
-/** Span from min to max of highest call-OI and highest put-OI strikes (same expiry). */
-function formatHighestOiStrikeRange(
-  callStrike: number | null | undefined,
-  putStrike: number | null | undefined,
-): string {
-  const c =
-    typeof callStrike === "number" && Number.isFinite(callStrike)
-      ? Math.round(callStrike)
-      : null;
-  const p =
-    typeof putStrike === "number" && Number.isFinite(putStrike)
-      ? Math.round(putStrike)
-      : null;
-  if (c != null && p != null) {
-    const lo = Math.min(c, p);
-    const hi = Math.max(c, p);
-    return `${lo.toLocaleString("en-IN")} - ${hi.toLocaleString("en-IN")}`;
-  }
-  if (c != null) return c.toLocaleString("en-IN");
-  if (p != null) return p.toLocaleString("en-IN");
-  return "—";
+/** NIFTY spot headline value (2 decimals), distinct from the whole-point range formatting above. */
+function formatNiftySpotDecimal(v: number | null | undefined): string {
+  if (typeof v !== "number" || !Number.isFinite(v)) return "—";
+  return v.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/** Exact absolute change from a percent-trend field: prev = current/(1+pct/100). */
+function absoluteChangeFromPct(
+  current: number | null | undefined,
+  pct: number | null | undefined,
+): number | null {
+  if (typeof current !== "number" || !Number.isFinite(current)) return null;
+  if (typeof pct !== "number" || !Number.isFinite(pct)) return null;
+  const denom = 1 + pct / 100;
+  if (denom === 0) return null;
+  const prev = current / denom;
+  return current - prev;
+}
+
+/** 2σ range from the existing 1σ (lognormal) range: doubling the exponent squares the ratio to spot. */
+function twoSigmaRange(
+  expectedRange: [number, number] | null | undefined,
+  spot: number | null | undefined,
+): [number, number] | null {
+  if (!Array.isArray(expectedRange) || expectedRange.length !== 2) return null;
+  if (typeof spot !== "number" || !Number.isFinite(spot) || spot <= 0) return null;
+  const [lower1, upper1] = expectedRange;
+  if (typeof lower1 !== "number" || typeof upper1 !== "number") return null;
+  return [(lower1 * lower1) / spot, (upper1 * upper1) / spot];
+}
+
+/** "DD-Mon-YYYY" -> "DD Mon" (drop year, dash -> space). */
+function formatExpiryShort(expiry: string | null | undefined): string | null {
+  if (!expiry) return null;
+  const parts = expiry.split("-");
+  if (parts.length < 2) return expiry;
+  return `${parts[0]} ${parts[1]}`;
+}
+
+/** Compact ₹ with a "+" prefix for positive P&L tiles (short "L"/"Cr" suffix, matching the Terminal design). */
+function formatSignedMoneyShort(amount: number): string {
+  const formatted = formatIndianMoneyCompact(amount, { shortSuffix: true });
+  return amount > 0 ? `+${formatted}` : formatted;
+}
+
+function formatDashboardTimestamp(ms: number | undefined): string {
+  if (!ms) return "—";
+  const d = new Date(ms);
+  const datePart = d.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  });
+  const timePart = d.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Kolkata",
+  });
+  return `${datePart}, ${timePart} IST`;
 }
 
 function sumOpenPositionsPnl(data: PortfolioApiResponse | undefined): number | null {
@@ -157,11 +203,6 @@ function useLazySection(rootMargin = "200px"): [boolean, (node: Element | null) 
 
 export default function DashboardPage() {
   const queryClient = useQueryClient();
-  const accountSectionRef = useRef<HTMLElement | null>(null);
-  const niftySectionRef = useRef<HTMLElement | null>(null);
-  const [marketCardHeightPx, setMarketCardHeightPx] = useState<number | undefined>(
-    undefined,
-  );
   const [marketEnabled, marketTriggerRef] = useLazySection("300px");
   const [chartEnabled, chartTriggerRef] = useLazySection("0px");
 
@@ -313,7 +354,10 @@ export default function DashboardPage() {
     portfolioBootstrapFailed && (portQ.isPending || portQ.isFetching);
   const coreBase = bootstrapQ.data?.vix ?? coreQ.data;
   const opts = optsQ.data;
-  const vixSeries = historyQ.data?.vix_30d ?? coreBase?.vix_30d ?? [];
+  const vixSeries = useMemo(
+    () => historyQ.data?.vix_30d ?? coreBase?.vix_30d ?? [],
+    [historyQ.data?.vix_30d, coreBase?.vix_30d],
+  );
   const core = coreBase
     ? { ...coreBase, vix_30d: vixSeries }
     : undefined;
@@ -398,7 +442,7 @@ export default function DashboardPage() {
 
   const volatilityFetching =
     bootstrapQ.isFetching || optsQ.isFetching || historyQ.isFetching;
-  const refreshVolatility = useCallback(() => {
+  const refreshDashboard = useCallback(() => {
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard", "vix-options"] }),
@@ -406,424 +450,512 @@ export default function DashboardPage() {
     ]);
   }, [queryClient]);
 
-  useEffect(() => {
-    const mdMq = window.matchMedia("(min-width: 768px)");
-
-    const recompute = () => {
-      if (!mdMq.matches) {
-        setMarketCardHeightPx(undefined);
-        return;
-      }
-      const a = accountSectionRef.current;
-      const n = niftySectionRef.current;
-      if (!a || !n) return;
-      const accountRect = a.getBoundingClientRect();
-      const niftyRect = n.getBoundingClientRect();
-      const gapPx = Math.max(0, niftyRect.top - accountRect.bottom);
-      const h = a.offsetHeight + n.offsetHeight + gapPx;
-      setMarketCardHeightPx(h > 0 ? h : undefined);
-    };
-
-    recompute();
-    window.addEventListener("resize", recompute);
-    mdMq.addEventListener("change", recompute);
-
-    let ro: ResizeObserver | undefined;
-    if (typeof ResizeObserver !== "undefined") {
-      ro = new ResizeObserver(() => recompute());
-      if (accountSectionRef.current) ro.observe(accountSectionRef.current);
-      if (niftySectionRef.current) ro.observe(niftySectionRef.current);
-    }
-
-    return () => {
-      ro?.disconnect();
-      window.removeEventListener("resize", recompute);
-      mdMq.removeEventListener("change", recompute);
-    };
-  }, [bootstrapQ.isPending, core, optsLoading]);
+  const daysPnl = bootstrapQ.data?.days_pnl;
+  const marginUsedPct =
+    marginUsedDisplay != null && funds != null && marginUsedDisplay + funds > 0
+      ? Math.min(100, Math.max(0, (marginUsedDisplay / (marginUsedDisplay + funds)) * 100))
+      : null;
+  const niftyChangeAbs = absoluteChangeFromPct(niftySpot, core?.nifty_spot_trend_pct);
+  const vixChangeAbs = absoluteChangeFromPct(core?.current_vix, core?.vix_trend_pct);
+  const expectedRange2Sigma = twoSigmaRange(opts?.expected_range, niftySpot);
+  const expectedMove2SigmaPct =
+    typeof opts?.expected_move_pct === "number" ? opts.expected_move_pct * 2 : null;
+  const expectedMove2SigmaPts =
+    expectedRange2Sigma != null
+      ? Math.round((expectedRange2Sigma[1] - expectedRange2Sigma[0]) / 2)
+      : null;
+  const nextExpiryShort = formatExpiryShort(opts?.next_expiry);
+  const oiCallStrike =
+    typeof opts?.strike_highest_call_oi === "number"
+      ? Math.round(opts.strike_highest_call_oi)
+      : null;
+  const oiPutStrike =
+    typeof opts?.strike_highest_put_oi === "number"
+      ? Math.round(opts.strike_highest_put_oi)
+      : null;
+  const oiRangeLo =
+    oiCallStrike != null && oiPutStrike != null
+      ? Math.min(oiCallStrike, oiPutStrike)
+      : (oiCallStrike ?? oiPutStrike);
+  const oiRangeHi =
+    oiCallStrike != null && oiPutStrike != null
+      ? Math.max(oiCallStrike, oiPutStrike)
+      : null;
+  const oiRangeHalfWidthPts =
+    oiRangeLo != null && oiRangeHi != null ? (oiRangeHi - oiRangeLo) / 2 : null;
+  const oiRangeHalfWidthPct =
+    oiRangeHalfWidthPts != null &&
+    typeof niftySpot === "number" &&
+    Number.isFinite(niftySpot) &&
+    niftySpot > 0
+      ? (oiRangeHalfWidthPts / niftySpot) * 100
+      : null;
+  const vix30dSlice = useMemo(() => {
+    if (vixSeries.length === 0) return vixSeries;
+    const lastDate = new Date(vixSeries[vixSeries.length - 1].date);
+    const cutoff = new Date(lastDate);
+    cutoff.setDate(cutoff.getDate() - 29);
+    return vixSeries.filter((p) => new Date(p.date) >= cutoff);
+  }, [vixSeries]);
 
   return (
-    <AppShell contentWidth="wide">
-      <div className="grid min-w-0 gap-4 md:grid-cols-3">
-          <div ref={marketTriggerRef} aria-hidden className="h-px w-full md:col-start-3" />
-          <section
-            className="app-card min-w-0 p-4 md:col-start-3 md:col-span-1 md:row-start-1 md:row-span-2 md:flex md:h-full md:flex-col md:overflow-hidden"
-            style={
-              marketCardHeightPx && marketCardHeightPx > 0
-                ? { height: `${marketCardHeightPx}px` }
+    <AppShell>
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="app-text-title text-[21px]">Dashboard</h1>
+            <p className="mt-0.5 text-xs app-text-muted">
+              Snapshot ·{" "}
+              <span className="font-mono">
+                {formatDashboardTimestamp(bootstrapQ.dataUpdatedAt)}
+              </span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={refreshDashboard}
+            disabled={volatilityFetching}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-transparent px-3.5 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-strong transition hover:bg-border-soft disabled:pointer-events-none disabled:opacity-60 text-[10px]"
+          >
+            <VolatilityRefreshIcon spinning={volatilityFetching} />
+            Refresh
+          </button>
+        </div>
+
+        {dashboardWarnings.length > 0 ? (
+          <div
+            className="app-card border-amber-accent/40 bg-amber-tint p-3 text-sm text-amber-accent"
+            role="alert"
+          >
+            <strong className="font-medium">
+              Something went wrong loading some data.
+            </strong>{" "}
+            {dashboardWarnings.join(" ")} If this persists or you see invalid
+            customer or session messages, try{" "}
+            <a href="/logout" className="font-medium underline">
+              logging out
+            </a>{" "}
+            and logging back in.
+          </div>
+        ) : null}
+
+        {bootstrapQ.error ? (
+          <div className="app-alert-error text-sm">
+            Unable to load dashboard data:{" "}
+            {bootstrapQ.error instanceof Error
+              ? bootstrapQ.error.message
+              : "Unknown error"}
+          </div>
+        ) : null}
+
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+          <MetricTile
+            label="Open P&L"
+            loading={accountLoading}
+            value={
+              bootstrapQ.isError || openPnl == null
+                ? null
+                : formatSignedMoneyShort(openPnl)
+            }
+            toneClassName={openPnl != null ? moneyToneClass(openPnl) : undefined}
+            caption={
+              openPositionCount != null
+                ? `${openPositionCount} open ${openPositionCount === 1 ? "position" : "positions"}`
                 : undefined
             }
-          >
-            <header className="flex items-center justify-between gap-2">
-              <h2 className="app-text-heading">Market Outlook (AI)</h2>
-              <div className="flex items-center gap-2">
-                <MarketOutlookConnectionBadge phase={marketOutlookBadgePhase} />
-                <button
-                  type="button"
-                  title="Refresh market outlook"
-                  aria-label="Refresh outlook"
-                  disabled={refreshOutlookM.isPending}
-                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent sm:size-9 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
-                  onClick={() => refreshOutlookM.mutate()}
-                >
-                  <OutlookRefreshIcon spinning={refreshOutlookM.isPending} />
-                </button>
-              </div>
-            </header>
-            {marketOutlookHeaderAlert ? (
-              <div
-                className={[
-                  "py-1 text-xs",
-                  marketOutlookHeaderAlert.tone === "warning"
-                    ? "text-amber-800 dark:text-amber-200"
-                    : "text-red-700 dark:text-red-300",
-                ].join(" ")}
-                role="alert"
-              >
-                {marketOutlookHeaderAlert.text}
-              </div>
-            ) : null}
-            <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-              {!marketEnabled ? (
-                <div className="text-xs app-text-muted">Load when visible...</div>
-              ) : (
-                <OutlookBlock
-                  title="market outlook"
-                  data={marketOutlookQ.data}
-                  pendingInitial={
-                    !marketOutlookQ.data &&
-                    (marketOutlookQ.isPending || refreshOutlookM.isPending)
-                  }
-                  loadError={outlookQueryLoadError(
-                    marketOutlookQ.error,
-                    marketOutlookQ.isError,
-                  )}
-                  refreshError={refreshOutlookM.error as Error | null}
-                />
-              )}
-            </div>
-          </section>
-          {dashboardWarnings.length > 0 ? (
-            <div
-              className="app-card col-span-full border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/25 dark:text-amber-100"
-              role="alert"
-            >
-              <strong className="font-medium">
-                Something went wrong loading some data.
-              </strong>{" "}
-              {dashboardWarnings.join(" ")} If this persists or you see invalid
-              customer or session messages, try{" "}
-              <a
-                href="/logout"
-                className="font-medium text-amber-900 underline dark:text-amber-50"
-              >
-                logging out
-              </a>{" "}
-              and logging back in.
-            </div>
-          ) : null}
-          <section
-            ref={accountSectionRef}
-            className="app-card min-w-0 space-y-2 p-3 md:col-start-1 md:col-span-2 md:row-start-1"
-          >
-            <header className="flex items-center justify-between">
-              <h2 className="app-text-heading">Account Overview</h2>
-              <span className="app-text-muted uppercase tracking-wide">
-                Intraday
-              </span>
-            </header>
-            {accountLoading ? (
-              <DashboardSectionStatus>Fetching account data…</DashboardSectionStatus>
-            ) : null}
-            {bootstrapQ.error ? (
-              <div className="app-alert-error text-sm">
-                Unable to load account data:{" "}
-                {bootstrapQ.error instanceof Error ? bootstrapQ.error.message : "Unknown error"}
-              </div>
-            ) : (
-            <div className="grid gap-2 p-2 md:grid-cols-3">
-              <div className="app-card-muted p-2.5">
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500">
-                  Open positions P&amp;L
-                </div>
-                <div
-                  className={[
-                    "mt-1 text-lg font-semibold tabular-nums",
-                    accountLoading
-                      ? "text-zinc-400 dark:text-zinc-500"
-                      : bootstrapQ.isError || openPnl == null
-                        ? "text-zinc-900 dark:text-zinc-300"
-                        : openPnl > 0
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : openPnl < 0
-                            ? "text-red-600 dark:text-red-400"
-                            : "text-zinc-900 dark:text-zinc-200",
-                  ].join(" ")}
-                  title="Sum of MTM (current_profit) from open options positions; falls back to broker P&amp;L if needed"
-                >
-                  {accountLoading ? (
-                    <DashboardMetricSkeleton />
-                  ) : bootstrapQ.isError || openPnl == null ? (
-                    "—"
-                  ) : (
-                    formatIndianMoneyCompact(openPnl)
-                  )}
-                </div>
-                {openPositionCount != null ? (
-                  <div className="mt-0.5 text-[10px] app-text-muted">
-                    {openPositionCount}{" "}
-                    {openPositionCount === 1 ? "position" : "positions"}
-                  </div>
+          />
+          <MetricTile
+            label="Day's P&L"
+            loading={accountLoading}
+            value={
+              daysPnl?.total_day_pnl == null
+                ? null
+                : formatSignedMoneyShort(daysPnl.total_day_pnl)
+            }
+            toneClassName={
+              daysPnl?.total_day_pnl != null
+                ? moneyToneClass(daysPnl.total_day_pnl)
+                : undefined
+            }
+            caption="vs previous close"
+          />
+          <MetricTile
+            label="Margin used"
+            loading={accountLoading}
+            value={
+              marginUsedDisplay == null
+                ? null
+                : formatIndianMoneyCompact(marginUsedDisplay, { shortSuffix: true })
+            }
+            caption={
+              marginUsedPct != null ? <ProgressBar pct={marginUsedPct} /> : undefined
+            }
+          />
+          <MetricTile
+            label="Free margin"
+            loading={accountLoading}
+            value={
+              funds == null ? null : formatIndianMoneyCompact(funds, { shortSuffix: true })
+            }
+            caption="Cash + collateral"
+          />
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-5">
+          <section className="app-card min-w-0 overflow-hidden md:col-span-3">
+            <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border-soft p-3">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-2">
+                <h2 className="app-text-heading">NIFTY 50</h2>
+                {volatilityCoreLoading ? (
+                  <DashboardMetricSkeleton className="w-20" />
+                ) : (
+                  <span className="font-mono text-lg font-semibold tabular-nums text-foreground">
+                    {formatNiftySpotDecimal(niftySpot)}
+                  </span>
+                )}
+                {!volatilityCoreLoading && niftyChangeAbs != null ? (
+                  <span
+                    className={[
+                      "font-mono text-xs font-medium tabular-nums",
+                      moneyToneClass(niftyChangeAbs),
+                    ].join(" ")}
+                  >
+                    {niftyChangeAbs >= 0 ? "+" : ""}
+                    {niftyChangeAbs.toFixed(2)}
+                  </span>
+                ) : null}
+                {!volatilityCoreLoading &&
+                typeof core?.nifty_spot_trend_pct === "number" ? (
+                  <span className="app-text-muted text-xs">
+                    · {core.nifty_spot_trend_pct >= 0 ? "+" : ""}
+                    {core.nifty_spot_trend_pct.toFixed(2)}%
+                  </span>
                 ) : null}
               </div>
-              <div className="app-card-muted p-2.5">
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500">
-                  Margin used
-                </div>
-                <div
-                  className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums dark:text-zinc-100"
-                  title={
-                    marginUsedFromHome != null && marginUsedFromHome > 0
-                      ? "From ICICI margin situation (actual_margin_avl / cash / utilization)"
-                      : portData?.Status === 200
-                        ? "Sum of span_margin_required across open NFO/BFO options (ELM not included)"
-                        : undefined
-                  }
-                >
-                  {accountLoading ? (
-                    <DashboardMetricSkeleton />
-                  ) : marginUsedDisplay != null ? (
-                    formatIndianMoneyCompact(marginUsedDisplay)
-                  ) : (
-                    "—"
-                  )}
-                </div>
-              </div>
-              <div className="app-card-muted p-2.5">
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500">
-                  Funds available
-                </div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums dark:text-zinc-100">
-                  {accountLoading ? (
-                    <DashboardMetricSkeleton />
-                  ) : funds != null ? (
-                    formatIndianMoneyCompact(funds)
-                  ) : (
-                    "—"
-                  )}
-                </div>
-              </div>
-            </div>
-            )}
-          </section>
-          <section
-            ref={niftySectionRef}
-            className="app-card min-w-0 space-y-2 p-3 md:col-start-1 md:col-span-2 md:row-start-2"
-          >
-            <header className="flex items-center justify-between gap-2">
-              <h2 className="app-text-heading">NIFTY Volatility</h2>
-              <div className="flex min-w-0 shrink-0 items-center gap-2">
-                <span className="app-text-muted max-w-[9.5rem] truncate text-right sm:max-w-none">
-                  {optsLoading ? (
-                    <span className="app-skeleton inline-block h-3.5 w-14 rounded-sm border-0" />
-                  ) : opts?.next_expiry ? (
-                    `Exp ${opts.next_expiry}`
-                  ) : (
-                    "NIFTY"
-                  )}
-                </span>
-                <button
-                  type="button"
-                  onClick={refreshVolatility}
-                  disabled={volatilityFetching}
-                  title="Refresh VIX, IV, and range"
-                  aria-label="Refresh volatility data"
-                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent sm:size-9 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
-                >
-                  <VolatilityRefreshIcon spinning={volatilityFetching} />
-                </button>
-              </div>
+              <span className="app-text-muted shrink-0 rounded-full border border-border px-2 py-0.5 font-mono text-[13px]">
+                {optsLoading ? (
+                  <span className="app-skeleton inline-block h-3 w-14 rounded-sm border-0" />
+                ) : nextExpiryShort ? (
+                  `Exp ${nextExpiryShort}`
+                ) : (
+                  "—"
+                )}
+              </span>
             </header>
-            {volatilityCoreLoading ? (
-              <DashboardSectionStatus>Fetching VIX data…</DashboardSectionStatus>
-            ) : optsLoading ? (
-              <DashboardSectionStatus>Fetching options metrics…</DashboardSectionStatus>
-            ) : null}
             {bootstrapQ.error ? (
-              <div className="app-alert-error text-sm">
+              <div className="app-alert-error m-3 text-sm">
                 Unable to load volatility data:{" "}
-                {bootstrapQ.error instanceof Error ? bootstrapQ.error.message : "Unknown error"}
+                {bootstrapQ.error instanceof Error
+                  ? bootstrapQ.error.message
+                  : "Unknown error"}
               </div>
             ) : (
-            <div className="grid gap-2 p-2 text-sm md:grid-cols-3">
-              <div className="app-card-muted p-2.5">
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  VIX
-                </div>
-                <div className="mt-1 flex items-baseline justify-between gap-2">
-                  <div className="text-lg font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                    {volatilityCoreLoading ? (
-                      <DashboardMetricSkeleton />
-                    ) : typeof core?.current_vix === "number" ? (
-                      core.current_vix.toFixed(2)
-                    ) : (
-                      "—"
-                    )}
-                  </div>
-                  <div className="flex items-center justify-end gap-1">
-                    {!volatilityCoreLoading && vixInterp ? (
-                      <InterpretationBadge
-                        label={vixInterp.label}
-                        tooltip={vixInterp.tooltip}
-                        tone={vixInterp.tone}
-                      />
+              <div className="divide-y divide-border-soft text-sm">
+                <div className="grid divide-border-soft sm:grid-cols-2 sm:divide-x">
+                  <div className="p-3">
+                    <div className="text-[13px] uppercase tracking-wide text-faint">
+                      ATM IV
+                    </div>
+                    <div className="mt-1 font-mono text-lg font-semibold text-foreground">
+                      {optsLoading ? (
+                        <DashboardMetricSkeleton className="w-20" />
+                      ) : typeof opts?.atm_iv === "number" ? (
+                        `${opts.atm_iv.toFixed(1)}%`
+                      ) : (
+                        "—"
+                      )}
+                    </div>
+                    {!optsLoading && ivInterp ? (
+                      <div className="mt-1">
+                        <InterpretationBadge
+                          label={ivInterp.label}
+                          tooltip={ivInterp.tooltip}
+                          tone={ivInterp.tone}
+                        />
+                      </div>
                     ) : null}
-                    <TrendChip
-                      pct={core?.vix_trend_pct}
-                      loading={volatilityCoreLoading}
-                    />
+                  </div>
+
+                  <div className="p-3">
+                    <div className="text-[13px] uppercase tracking-wide text-faint">
+                      PCR (OI)
+                    </div>
+                    <div className="mt-1 font-mono text-lg font-semibold text-foreground">
+                      {optsLoading ? (
+                        <DashboardMetricSkeleton className="w-14" />
+                      ) : typeof opts?.put_call_ratio === "number" ? (
+                        opts.put_call_ratio.toFixed(2)
+                      ) : (
+                        "—"
+                      )}
+                    </div>
+                    {!optsLoading && pcrInterp ? (
+                      <div className="mt-1">
+                        <InterpretationBadge
+                          label={pcrInterp.label}
+                          tooltip={pcrInterp.tooltip}
+                          tone={pcrInterp.tone}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </div>
-              </div>
 
-              <div className="app-card-muted p-2.5">
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  NIFTY spot
-                </div>
-                <div className="mt-1 flex items-baseline justify-between gap-2">
-                  <div className="text-lg font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                    {volatilityCoreLoading ? (
-                      <DashboardMetricSkeleton className="w-20" />
-                    ) : (
-                      formatNiftyIndexInt(niftySpot)
-                    )}
+                <div className="p-3">
+                  <div className="text-[13px] uppercase tracking-wide text-faint">
+                    Expected range (based on 2σ)
                   </div>
-                  <TrendChip
-                    pct={core?.nifty_spot_trend_pct}
-                    loading={volatilityCoreLoading}
-                  />
-                </div>
-              </div>
-
-              <div className="app-card-muted p-2.5">
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  ATM IV
-                </div>
-                <div className="mt-1 flex items-baseline justify-between gap-2">
-                  <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                  <div className="font-mono text-lg font-semibold text-foreground">
                     {optsLoading ? (
-                      <DashboardMetricSkeleton className="w-20" />
-                    ) : typeof opts?.atm_iv === "number" ? (
-                      `${opts.atm_iv.toFixed(2)}%`
+                      <DashboardMetricSkeleton className="w-36" />
+                    ) : expectedRange2Sigma ? (
+                      <>
+                        {formatNiftyIndexInt(expectedRange2Sigma[0])} –{" "}
+                        {formatNiftyIndexInt(expectedRange2Sigma[1])}
+                        {expectedMove2SigmaPct != null ? (
+                          <span className="mt-0.5 block text-[12px] font-normal text-faint">
+                            ±{expectedMove2SigmaPct.toFixed(1)}%
+                            {expectedMove2SigmaPts != null
+                              ? ` · ±${expectedMove2SigmaPts.toLocaleString("en-IN")} pts`
+                              : null}
+                          </span>
+                        ) : null}
+                      </>
                     ) : (
                       "—"
                     )}
                   </div>
-                  {!optsLoading && ivInterp ? (
-                    <InterpretationBadge
-                      label={ivInterp.label}
-                      tooltip={ivInterp.tooltip}
-                      tone={ivInterp.tone}
-                    />
-                  ) : null}
                 </div>
-              </div>
 
-              <div className="app-card-muted p-2.5">
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  1σ range (ATM)
-                </div>
-                <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                  {optsLoading ? (
-                    <DashboardMetricSkeleton className="w-36" />
-                  ) : Array.isArray(opts?.expected_range) &&
-                    opts.expected_range.length === 2 ? (
-                    <>
-                      {formatNiftyIndexInt(opts.expected_range[0])} -{" "}
-                      {formatNiftyIndexInt(opts.expected_range[1])}
-                      {typeof opts.expected_move_pct === "number" ? (
-                        <span className="mt-0.5 block text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
-                          ±{opts.expected_move_pct.toFixed(2)}% to expiry
-                        </span>
-                      ) : null}
-                    </>
-                  ) : (
-                    "—"
-                  )}
-                </div>
-              </div>
-
-              <div className="app-card-muted p-2.5">
-                <div
-                  className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
-                  title="From lowest to highest of the strikes with max call OI and max put OI (nearest expiry)"
-                >
-                  Range based on highest OI
-                </div>
-                <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                  {optsLoading ? (
-                    <DashboardMetricSkeleton className="w-36" />
-                  ) : (
-                    formatHighestOiStrikeRange(
-                      opts?.strike_highest_call_oi,
-                      opts?.strike_highest_put_oi,
-                    )
-                  )}
-                </div>
-              </div>
-
-              <div className="app-card-muted p-2.5">
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                  Put:Call (OI)
-                </div>
-                <div className="mt-1 flex items-baseline justify-between gap-2">
-                  <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                <div className="p-3">
+                  <div
+                    className="text-[13px] uppercase tracking-wide text-faint"
+                    title="From lowest to highest of the strikes with max call OI and max put OI (nearest expiry)"
+                  >
+                    Expected range (based on highest OI)
+                  </div>
+                  <div className="font-mono text-lg font-semibold text-foreground">
                     {optsLoading ? (
-                      <DashboardMetricSkeleton className="w-14" />
-                    ) : typeof opts?.put_call_ratio === "number" ? (
-                      opts.put_call_ratio.toFixed(2)
+                      <DashboardMetricSkeleton className="w-36" />
+                    ) : oiRangeLo != null ? (
+                      <>
+                        {oiRangeLo.toLocaleString("en-IN")}
+                        {oiRangeHi != null
+                          ? ` – ${oiRangeHi.toLocaleString("en-IN")}`
+                          : null}
+                        {oiRangeHalfWidthPct != null ? (
+                          <span className="mt-0.5 block text-[12px] font-normal text-faint">
+                            ±{oiRangeHalfWidthPct.toFixed(1)}%
+                            {oiRangeHalfWidthPts != null
+                              ? ` · ±${Math.round(oiRangeHalfWidthPts).toLocaleString("en-IN")} pts`
+                              : null}
+                          </span>
+                        ) : null}
+                      </>
                     ) : (
                       "—"
                     )}
                   </div>
-                  {!optsLoading && pcrInterp ? (
-                    <InterpretationBadge
-                      label={pcrInterp.label}
-                      tooltip={pcrInterp.tooltip}
-                      tone={pcrInterp.tone}
-                    />
-                  ) : null}
                 </div>
               </div>
-            </div>
             )}
             {opts?.error ? (
-              <p className="text-[11px] text-amber-800 dark:text-amber-200/90">
+              <p className="px-3 pb-3 text-[13px] text-amber-accent">
                 IV / PCR: {opts.error}
               </p>
             ) : null}
+          </section>
+
+          <section className="app-card min-w-0 space-y-3 p-3 md:col-span-2">
+            <header className="flex items-center justify-between gap-2">
+              <h2 className="app-text-heading">India VIX</h2>
+              <span className="app-text-muted text-[13px]">
+                30-day
+              </span>
+            </header>
+            {bootstrapQ.error ? (
+              <div className="app-alert-error text-sm">
+                Unable to load volatility data:{" "}
+                {bootstrapQ.error instanceof Error
+                  ? bootstrapQ.error.message
+                  : "Unknown error"}
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-baseline gap-2">
+                  {volatilityCoreLoading ? (
+                    <DashboardMetricSkeleton className="w-16" />
+                  ) : (
+                    <span className="font-mono text-2xl font-semibold tabular-nums text-foreground">
+                      {typeof core?.current_vix === "number"
+                        ? core.current_vix.toFixed(2)
+                        : "—"}
+                    </span>
+                  )}
+                  {!volatilityCoreLoading && vixChangeAbs != null ? (
+                    <span
+                      className={[
+                        "font-mono text-sm font-medium tabular-nums",
+                        moneyToneClass(vixChangeAbs),
+                      ].join(" ")}
+                    >
+                      {vixChangeAbs >= 0 ? "+" : ""}
+                      {vixChangeAbs.toFixed(2)}
+                    </span>
+                  ) : null}
+                </div>
+                {!volatilityCoreLoading && vixInterp ? (
+                  <InterpretationBadge
+                    label={vixInterp.label}
+                    tooltip={vixInterp.tooltip}
+                    tone={vixInterp.tone}
+                  />
+                ) : null}
+                <div ref={chartTriggerRef} aria-hidden className="h-px w-full" />
+                {!chartEnabled ? (
+                  <div className="text-sm app-text-muted">
+                    Load chart when visible...
+                  </div>
+                ) : (
+                  <Vix30dChart series={vix30dSlice} loading={vixHistoryLoading} compact />
+                )}
+              </>
+            )}
             {core?.error ? (
-              <p className="text-[11px] text-amber-800 dark:text-amber-200/90">
+              <p className="text-[13px] text-amber-accent">
                 VIX: {core.error}
               </p>
             ) : null}
           </section>
-          <div ref={chartTriggerRef} aria-hidden className="h-px w-full col-span-full" />
-          <section className="app-card col-span-full min-w-0 p-4 md:row-start-3">
-            <header className="mb-3 flex items-center justify-between">
-              <h2 className="app-text-heading">India VIX — 3 months</h2>
-            </header>
-            {!chartEnabled ? (
-              <div className="text-sm app-text-muted">Load chart when visible...</div>
-            ) : (
-              <Vix30dChart
-                series={core?.vix_30d ?? []}
-                loading={vixHistoryLoading}
+        </div>
+
+        <div ref={marketTriggerRef} aria-hidden className="h-px w-full" />
+        <section className="app-card min-w-0 space-y-3 p-4">
+          <header className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-accent-tint">
+                <SparkleIcon />
+              </span>
+              <h2 className="app-text-heading">AI Market Outlook</h2>
+              <MarketOutlookConnectionBadge
+                phase={marketOutlookBadgePhase}
+                asOf={marketOutlookQ.data?.as_of}
               />
-            )}
-          </section>
+            </div>
+            <button
+              type="button"
+              disabled={refreshOutlookM.isPending}
+              className="app-btn-outline gap-1.5 uppercase tracking-wide text-[10px]"
+              onClick={() => refreshOutlookM.mutate()}
+            >
+              <OutlookRefreshIcon spinning={refreshOutlookM.isPending} />
+              Regenerate
+            </button>
+          </header>
+          {marketOutlookHeaderAlert ? (
+            <div
+              className={[
+                "text-xs",
+                marketOutlookHeaderAlert.tone === "warning"
+                  ? "text-amber-accent"
+                  : "text-down",
+              ].join(" ")}
+              role="alert"
+            >
+              {marketOutlookHeaderAlert.text}
+            </div>
+          ) : null}
+          {!marketEnabled ? (
+            <div className="text-xs app-text-muted">Load when visible...</div>
+          ) : (
+            <OutlookParagraph
+              data={marketOutlookQ.data}
+              pendingInitial={
+                !marketOutlookQ.data &&
+                (marketOutlookQ.isPending || refreshOutlookM.isPending)
+              }
+              loadError={outlookQueryLoadError(
+                marketOutlookQ.error,
+                marketOutlookQ.isError,
+              )}
+              refreshError={refreshOutlookM.error as Error | null}
+            />
+          )}
+        </section>
       </div>
     </AppShell>
+  );
+}
+
+function MetricTile({
+  label,
+  loading,
+  value,
+  toneClassName,
+  caption,
+}: {
+  label: string;
+  loading: boolean;
+  value: string | null;
+  toneClassName?: string;
+  caption?: ReactNode;
+}) {
+  return (
+    <div className="app-card p-[14px_15px]">
+      <div className="text-[13px] uppercase tracking-wide text-faint">
+        {label}
+      </div>
+      <div
+        className={[
+          "mt-1.5 font-mono text-[25px] font-semibold tabular-nums",
+          loading
+            ? "text-faint"
+            : (toneClassName ?? "text-foreground"),
+        ].join(" ")}
+      >
+        {loading ? <DashboardMetricSkeleton /> : (value ?? "—")}
+      </div>
+      {caption ? (
+        <div className="mt-1.5 text-[13px] app-text-muted">{caption}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProgressBar({ pct }: { pct: number }) {
+  const clamped = Math.min(100, Math.max(0, pct));
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-1.5 w-full min-w-[3rem] overflow-hidden rounded-full bg-track">
+        <div
+          className="h-full rounded-full bg-accent-strong"
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+      <span className="font-mono text-[13px] tabular-nums app-text-muted">
+        {clamped.toFixed(0)}%
+      </span>
+    </div>
+  );
+}
+
+function SparkleIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="text-accent-strong"
+    >
+      <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />
+      <path d="M6.3 6.3l2.1 2.1M15.6 15.6l2.1 2.1M17.7 6.3l-2.1 2.1M8.4 15.6l-2.1 2.1" />
+    </svg>
   );
 }
 
@@ -876,38 +1008,61 @@ function OutlookRefreshIcon({ spinning }: { spinning: boolean }) {
   );
 }
 
-function MarketOutlookConnectionBadge({ phase }: { phase: MarketOutlookBadgePhase }) {
+function formatTimeOnly(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Kolkata",
+  });
+}
+
+function MarketOutlookConnectionBadge({
+  phase,
+  asOf,
+}: {
+  phase: MarketOutlookBadgePhase;
+  asOf?: string | null;
+}) {
   if (phase === "idle") {
     return (
-      <span className="rounded-full border border-zinc-300 px-2 py-0.5 text-[10px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
+      <span className="rounded-full border border-border px-2 py-0.5 text-[12px] uppercase tracking-wide text-faint">
         idle
       </span>
     );
   }
 
+  const time = formatTimeOnly(asOf);
   const cfg =
     phase === "loading"
       ? {
           label: "loading",
-          cls: "border-zinc-400/40 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
+          cls: "border-border bg-panel2 text-faint",
         }
       : phase === "updated"
         ? {
-            label: "updated",
-            cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+            label: time ? `updated · ${time}` : "updated",
+            cls: "border-up/40 bg-up-tint text-up",
           }
         : phase === "cached"
           ? {
-              label: "cached",
-              cls: "border-sky-500/35 bg-sky-500/10 text-sky-800 dark:text-sky-200",
+              label: time ? `cached · ${time}` : "cached",
+              cls: "border-border bg-panel2 text-faint",
             }
           : {
               label: "not connected",
-              cls: "border-zinc-400/40 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
+              cls: "border-border bg-panel2 text-faint",
             };
 
   return (
-    <span className={`rounded-full border px-2 py-0.5 text-[10px] ${cfg.cls}`}>{cfg.label}</span>
+    <span
+      className={`rounded-full border px-2 py-0.5 text-[12px] uppercase tracking-wide ${cfg.cls}`}
+    >
+      {cfg.label}
+    </span>
   );
 }
 
@@ -980,14 +1135,36 @@ function buildMarketOutlookHeaderAlert(opts: {
   return null;
 }
 
-function OutlookBlock({
-  title,
+/** Single flowing paragraph composed from the existing structured outlook fields. */
+function composeOutlookParagraph(data: OutlookResponse): string {
+  const parts: string[] = [];
+  if (data.summary?.length) parts.push(data.summary.join(" "));
+  if (data.inference?.volatility_view) parts.push(data.inference.volatility_view);
+  return parts.join(" ");
+}
+
+const OUTLOOK_NUMBER_TOKEN =
+  /(\d{1,3}(?:,\d{2,3})*(?:\.\d+)?%?|\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))/g;
+
+/** Bold numeric/date tokens (prices, percentages, strikes, expiry dates) within the paragraph. */
+function renderOutlookParagraph(text: string): ReactNode[] {
+  return text.split(OUTLOOK_NUMBER_TOKEN).map((chunk, i) =>
+    i % 2 === 1 ? (
+      <strong key={i} className="font-semibold text-foreground">
+        {chunk}
+      </strong>
+    ) : (
+      <span key={i}>{chunk}</span>
+    ),
+  );
+}
+
+function OutlookParagraph({
   data,
   pendingInitial,
   loadError,
   refreshError,
 }: {
-  title: string;
   data?: OutlookResponse;
   pendingInitial: boolean;
   loadError?: Error | null;
@@ -1000,113 +1177,21 @@ function OutlookBlock({
       return null;
     }
     if (pendingInitial) {
-      return <div className="text-xs app-text-muted">Loading {title}...</div>;
+      return <div className="text-sm app-text-muted">Loading market outlook...</div>;
     }
-    return <div className="text-xs app-text-muted">No outlook available.</div>;
+    return <div className="text-sm app-text-muted">No outlook available.</div>;
   }
   if (data.warning?.error_code === "no_cached_outlook" && data.summary.length === 0) {
     return (
-      <div className="text-xs app-text-muted">
-        No outlook in this session yet. Use refresh above to generate one (calls your AI provider).
+      <div className="text-sm app-text-muted">
+        No outlook in this session yet. Use regenerate above to generate one (calls your AI
+        provider).
       </div>
     );
   }
   return (
-    <div className="space-y-2 text-xs">
-      <ul className="list-disc space-y-1 pl-4">
-        {data.summary.slice(0, 3).map((line) => (
-          <li key={line}>{line}</li>
-        ))}
-      </ul>
-      <div>
-        <span className="font-medium">Volatility:</span> {data.inference.volatility_view}
-      </div>
-      <div>
-        <span className="font-medium">Confidence:</span> {data.inference.confidence}
-      </div>
-      {data.strategy_ideas.length > 0 ? (
-        <div>
-          <div className="font-medium">Strategy ideas</div>
-          <ul className="list-disc space-y-1 pl-4">
-            {data.strategy_ideas.slice(0, 2).map((item) => (
-              <li key={`${item.tag}-${item.rationale}`}>
-                {item.tag}: {item.rationale}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      <div className="space-y-1">
-        <div className="font-medium">Sources</div>
-        <ul className="space-y-1">
-          {data.sources.slice(0, 3).map((src) => (
-            <li key={src.url} className="truncate">
-              <a
-                href={src.url}
-                target="_blank"
-                rel="noreferrer"
-                className="app-link text-[11px]"
-              >
-                {src.title}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </div>
-      <div className="app-text-muted text-[10px]">
-        As of {new Date(data.as_of).toLocaleString("en-IN")}
-      </div>
-    </div>
-  );
-}
-
-function TrendChip({
-  pct,
-  loading = false,
-}: {
-  pct: number | null | undefined;
-  loading?: boolean;
-}) {
-  if (loading) {
-    return <DashboardTrendSkeleton />;
-  }
-
-  if (typeof pct !== "number" || !Number.isFinite(pct)) {
-    return (
-      <span
-        className={[
-          "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-semibold tabular-nums text-xs leading-none ring-1",
-          "bg-zinc-500/[0.12] text-zinc-200 ring-zinc-500/20 dark:bg-zinc-500/[0.08] dark:text-zinc-200 dark:ring-zinc-500/20",
-        ].join(" ")}
-        title="Trend unavailable"
-      >
-        <span aria-hidden>→</span>
-        <span>—</span>
-      </span>
-    );
-  }
-
-  const isUp = pct > 0;
-  const isDown = pct < 0;
-  const arrow = isUp ? "↑" : isDown ? "↓" : "→";
-  const label = `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`;
-
-  const classes = isUp
-    ? "bg-emerald-500/[0.12] text-emerald-800 ring-emerald-600/15 dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-400/20"
-    : isDown
-      ? "bg-red-500/[0.12] text-red-800 ring-red-600/15 dark:bg-red-400/10 dark:text-red-300 dark:ring-red-400/20"
-      : "bg-zinc-500/[0.12] text-zinc-700 ring-zinc-500/15 dark:bg-zinc-500/[0.08] dark:text-zinc-200 dark:ring-zinc-500/20";
-
-  return (
-    <span
-      className={[
-        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-semibold tabular-nums text-sm leading-none ring-1",
-        classes,
-      ].join(" ")}
-      title={`Trend: ${label}`}
-    >
-      <span aria-hidden>{arrow}</span>
-      <span>{label}</span>
-    </span>
+    <p className="text-sm leading-relaxed text-foreground">
+      {renderOutlookParagraph(composeOutlookParagraph(data))}
+    </p>
   );
 }

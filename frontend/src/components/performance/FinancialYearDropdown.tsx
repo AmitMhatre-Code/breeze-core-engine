@@ -31,9 +31,26 @@ function ChevronDown({ open }: { open: boolean }) {
   );
 }
 
-const surface =
-  "rounded-lg border border-zinc-300/90 bg-zinc-100 text-zinc-900 shadow-sm " +
-  "dark:border-zinc-600/80 dark:bg-zinc-800 dark:text-zinc-50 dark:shadow-none";
+function CheckIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 12 12"
+      fill="none"
+      aria-hidden
+      className="shrink-0 text-accent-strong"
+    >
+      <path
+        d="M2.5 6.25L4.75 8.5L9.5 3.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 export function FinancialYearDropdown({
   years,
@@ -80,70 +97,75 @@ export function FinancialYearDropdown({
   const display = current?.year ?? selectedYear;
 
   return (
-    <div ref={rootRef} className="relative inline-block min-w-[8.5rem] text-left">
-      <button
-        ref={triggerRef}
-        type="button"
-        className={[
-          "flex w-full items-center justify-between gap-3 px-4 py-2.5 text-sm font-normal transition-colors",
-          "hover:bg-zinc-200/80 dark:hover:bg-zinc-700/80",
-          "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500",
-          surface,
-        ].join(" ")}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={listId}
-        aria-labelledby={labelId}
-        onClick={() => setOpen((v) => !v)}
-        onKeyDown={handleTriggerKeyDown}
+    <div className="flex items-center gap-2.5">
+      <span
+        id={labelId}
+        className="text-[10.5px] font-semibold uppercase tracking-[.06em] text-faint"
       >
-        <span className="truncate tabular-nums">{display}</span>
-        <ChevronDown open={open} />
-      </button>
-
-      {open ? (
-        <ul
-          ref={listRef}
-          id={listId}
-          role="listbox"
-          aria-labelledby={labelId}
+        Financial year
+      </span>
+      <div ref={rootRef} className="relative inline-block min-w-[8.5rem] text-left">
+        <button
+          ref={triggerRef}
+          type="button"
           className={[
-            "absolute right-0 top-[calc(100%+6px)] z-30 min-w-full overflow-hidden py-1",
-            surface,
+            "flex w-full items-center justify-between gap-3 rounded-[9px] border px-3.5 py-2 font-mono text-sm text-foreground transition",
+            open
+              ? "border-accent bg-panel2 ring-2 ring-accent/25"
+              : "border-border bg-panel2 hover:border-accent/60",
           ].join(" ")}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={listId}
+          aria-labelledby={labelId}
+          onClick={() => setOpen((v) => !v)}
+          onKeyDown={handleTriggerKeyDown}
         >
-          {years.map((y, index) => {
-            const selected = y.year === selectedYear;
-            const highlighted = index === highlightIndex;
-            return (
-              <li key={y.year} role="presentation">
-                <button
-                  type="button"
-                  role="option"
-                  tabIndex={-1}
-                  data-menu-index={index}
-                  aria-selected={selected}
-                  className={[
-                    "flex w-full items-center px-4 py-2.5 text-left text-sm font-normal transition-colors",
-                    "text-zinc-900 dark:text-zinc-50",
-                    highlighted
-                      ? "bg-sky-100 dark:bg-sky-900/50"
-                      : selected
-                        ? "bg-zinc-200/90 dark:bg-zinc-700/60"
-                        : "hover:bg-zinc-200/70 dark:hover:bg-zinc-700/50",
-                  ].join(" ")}
-                  onClick={() => {
-                    onSelect(y);
-                    close();
-                  }}
-                >
-                  <span className="tabular-nums">{y.year}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
+          <span className="truncate tabular-nums">{display}</span>
+          <ChevronDown open={open} />
+        </button>
+
+        {open ? (
+          <ul
+            ref={listRef}
+            id={listId}
+            role="listbox"
+            aria-labelledby={labelId}
+            className="absolute right-0 top-[calc(100%+6px)] z-30 min-w-full overflow-hidden rounded-[10px] border border-border bg-elevated py-1 shadow-pop"
+          >
+            {years.map((y, index) => {
+              const selected = y.year === selectedYear;
+              const highlighted = index === highlightIndex;
+              return (
+                <li key={y.year} role="presentation">
+                  <button
+                    type="button"
+                    role="option"
+                    tabIndex={-1}
+                    data-menu-index={index}
+                    aria-selected={selected}
+                    className={[
+                      "flex w-full items-center justify-between gap-2 px-3.5 py-2 text-left font-mono text-sm transition-colors",
+                      selected
+                        ? "bg-accent-tint font-semibold text-foreground"
+                        : highlighted
+                          ? "bg-panel2 text-foreground"
+                          : "text-muted hover:bg-panel2",
+                    ].join(" ")}
+                    onClick={() => {
+                      onSelect(y);
+                      close();
+                    }}
+                  >
+                    <span className="tabular-nums">{y.year}</span>
+                    {selected ? <CheckIcon /> : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+      </div>
     </div>
   );
 }

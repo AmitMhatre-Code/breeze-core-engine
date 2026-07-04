@@ -10,11 +10,14 @@ import re
 import sqlite3
 import urllib.error
 import urllib.request
+import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, parse_strike
+from icici_breeze_backend.app.core.timezone import now_ist
+from icici_breeze_backend.app.services.reference_data.state import append_ingest_history
 
 _logger = logging.getLogger(__name__)
 
@@ -468,6 +471,20 @@ def ingest_exchange_baseline_upload(
         }
 
     _publish_span_baseline_to_redis()
+
+    append_ingest_history(
+        {
+            "id": str(uuid.uuid4()),
+            "kind": "bse_span_baseline_upload" if market_l == "bse" else "nse_span_baseline_upload",
+            "display_name": "BSE SPAN Baseline" if market_l == "bse" else "NSE SPAN Baseline",
+            "source_file_date": source_date,
+            "row_count": inserted,
+            "ingested_at": now_ist().isoformat(timespec="seconds"),
+            "ok": True,
+            "notes": f"Manual upload: {source_file}" + (f" ({skipped} skipped)" if skipped else ""),
+            "source_url": None,
+        }
+    )
 
     return {
         "Status": 200,

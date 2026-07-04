@@ -73,7 +73,7 @@ export function LegRowActions({
     <div className="flex items-center gap-1">
       <button
         type="button"
-        className="rounded p-1 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        className="rounded p-1 text-muted transition hover:bg-panel2 hover:text-foreground"
         aria-label={legCloneLabel(leg)}
         onClick={onClone}
       >
@@ -81,7 +81,7 @@ export function LegRowActions({
       </button>
       <button
         type="button"
-        className="rounded p-1 text-red-600 transition hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+        className="rounded p-1 text-down transition hover:bg-down-tint"
         aria-label={legDeleteLabel(leg)}
         onClick={onDelete}
       >

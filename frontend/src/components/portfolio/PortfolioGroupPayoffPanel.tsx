@@ -4,15 +4,15 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
 import { InfinitySymbol } from "@/components/strategy-builder/InfinitySymbol";
-import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
+import { normRight, normSide } from "@/lib/portfolio/legNormalize";
 import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
+import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
   estimateProbabilityOfProfit,
   payoffChartSpotDomain,
-  scanMarkToModelCurve,
   scanPayoffCurve,
   summarizePayoffExact,
   type PayoffSummary,
@@ -21,13 +21,7 @@ import {
   isUnlimitedMaxLoss,
   isUnlimitedMaxProfit,
 } from "@/lib/strategy-builder/trade-metrics";
-import type {
-  ChainApiResponse,
-  ChainSuccess,
-  OptionRight,
-  OrderSide,
-  StrategyLeg,
-} from "@/lib/strategy-builder/types";
+import type { ChainSuccess, StrategyLeg } from "@/lib/strategy-builder/types";
 
 function parseNum(v: unknown): number | null {
   if (v == null || v === "") return null;
@@ -38,20 +32,6 @@ function parseNum(v: unknown): number | null {
     const n = Number(t);
     return Number.isFinite(n) ? n : null;
   }
-  return null;
-}
-
-function normSide(raw: string): OrderSide | null {
-  const t = raw.trim().toLowerCase();
-  if (t === "buy") return "Buy";
-  if (t === "sell") return "Sell";
-  return null;
-}
-
-function normRight(raw: string): OptionRight | null {
-  const t = raw.trim().toLowerCase();
-  if (t === "put" || t === "p" || t === "pe") return "Put";
-  if (t === "call" || t === "c" || t === "ce") return "Call";
   return null;
 }
 
@@ -102,41 +82,36 @@ type Props = {
   rows: PortfolioPositionRecord[];
   /** Proposed protective wing to overlay on payoff (hedge preview). */
   proposedLeg?: StrategyLeg | null;
+  /**
+   * Stable per-group WS feed subscription id (see `useGroupSubscriptionHolders`).
+   * Rendered only while the group is expanded, so this keeps the chain "hot"
+   * server-side and polls at `CHAIN_WS_REFETCH_MS` for as long as it stays open.
+   */
+  holderId: string;
 };
 
-const profitClass = "text-emerald-700 dark:text-emerald-400";
-const lossClass = "text-red-700 dark:text-red-400";
+const profitClass = "text-up";
+const lossClass = "text-down";
 const PAYOFF_STEPS = 401;
 
-/** Payoff + POP for one underlying/expiry bucket (chain fetch for lot size, spot, IV). */
+/** Payoff + POP for one underlying/expiry bucket (chain fetch for lot size, spot, IV, live LTP). */
 export function PortfolioGroupPayoffPanel({
   stockCode,
   exchangeCode,
   expiryDisplay,
   rows,
   proposedLeg = null,
+  holderId,
 }: Props) {
   const cq = useQuery({
-    queryKey: [
-      "portfolio",
-      "group-payoff-chain",
-      stockCode,
-      exchangeCode,
-      expiryDisplay,
-    ],
-    queryFn: ({ signal }) => {
-      const q = new URLSearchParams({
-        stock_code: stockCode,
-        exchange_code: exchangeCode,
-        expiry_date: expiryDisplay,
-      });
-      return apiClient.get<ChainApiResponse>(
-        `/strategy-builder/chain?${q.toString()}`,
-        signal,
-      );
-    },
+    ...chainQueryOptions({
+      queryKeyPrefix: ["portfolio", "group-payoff-chain"],
+      stock_code: stockCode,
+      expiry_date: expiryDisplay,
+      exchange_code: exchangeCode,
+      subscription_holder: holderId,
+    }),
     enabled: Boolean(stockCode && expiryDisplay && rows.length > 0),
-    staleTime: 60_000,
   });
 
   const chainSuccess = cq.data?.Status === 200 ? cq.data?.Success : null;
@@ -162,8 +137,8 @@ export function PortfolioGroupPayoffPanel({
     [chainSuccess],
   );
 
-  const T = expiryDisplayToYears(expiryDisplay || "01-Jan-2099");
   const spot = chainSuccess?.spot_price ?? null;
+  const T = expiryDisplayToYears(expiryDisplay || "01-Jan-2099");
   const sigma = chainSuccess ? atmSigmaFromChain(chainSuccess, T) : 0.22;
 
   const { minS, maxS } = useMemo(() => {
@@ -183,15 +158,13 @@ export function PortfolioGroupPayoffPanel({
     };
   }, [strikes, spot]);
 
-  const { xs, ys, summary, xsToday, ysToday, pop } = useMemo(() => {
+  const { xs, ys, summary, pop } = useMemo(() => {
     const steps = PAYOFF_STEPS;
     if (!legs.length) {
       return {
         xs: [] as number[],
         ys: [] as number[],
         summary: { maxProfit: 0, maxLoss: 0, breakevens: [] } as PayoffSummary,
-        xsToday: [] as number[],
-        ysToday: [] as number[],
         pop: 0,
       };
     }
@@ -203,46 +176,25 @@ export function PortfolioGroupPayoffPanel({
       lotSize,
     );
     const exactSummary = summarizePayoffExact(legs, lotSize, spot);
-    let xt: number[] = [];
-    let yt: number[] = [];
-    if (spot != null && T > 0) {
-      const r = scanMarkToModelCurve(
-        minS,
-        maxS,
-        steps,
-        legs,
-        lotSize,
-        T,
-        sigma,
-      );
-      xt = r.xs;
-      yt = r.ys;
-    }
     const popVal =
       spot != null ? estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize) : 0;
     return {
       xs: x1,
       ys: y1,
       summary: exactSummary,
-      xsToday: xt,
-      ysToday: yt,
       pop: popVal,
     };
-  }, [legs, minS, maxS, spot, sigma, T, lotSize]);
+  }, [legs, minS, maxS, spot, lotSize, T, sigma]);
 
   const hasLegs = legs.length > 0;
 
   if (cq.isLoading) {
-    return (
-      <div className="border-t border-zinc-200/80 bg-zinc-50/80 px-3 py-4 text-sm app-text-muted dark:border-zinc-700/80 dark:bg-zinc-900/50">
-        Loading payoff…
-      </div>
-    );
+    return <div className="p-3 text-sm app-text-muted">Loading payoff…</div>;
   }
 
   if (cq.isError) {
     return (
-      <div className="border-t border-zinc-200/80 bg-zinc-50/80 px-3 py-4 text-sm text-red-600 dark:border-zinc-700/80 dark:bg-zinc-900/50 dark:text-red-400">
+      <div className="p-3 text-sm text-down">
         {cq.error instanceof Error
           ? cq.error.message
           : "Unable to load chain for payoff."}
@@ -252,93 +204,79 @@ export function PortfolioGroupPayoffPanel({
 
   if (cq.data && cq.data.Status !== 200) {
     return (
-      <div className="border-t border-zinc-200/80 bg-zinc-50/80 px-3 py-4 text-sm text-red-600 dark:border-zinc-700/80 dark:bg-zinc-900/50 dark:text-red-400">
+      <div className="p-3 text-sm text-down">
         {String(cq.data.Error ?? "Chain request failed.")}
       </div>
     );
   }
 
   return (
-    <div className="border-t border-zinc-200/80 bg-zinc-50/80 dark:border-zinc-700/80 dark:bg-zinc-900/50">
-      <div className="flex w-full min-w-0 flex-col gap-4 p-3 sm:flex-row sm:items-stretch sm:gap-4">
-        <div className="flex w-full shrink-0 flex-row flex-wrap gap-x-6 gap-y-3 sm:w-48 sm:flex-col sm:flex-nowrap sm:gap-3">
-          <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Max profit
-            </div>
-            <div className={`font-semibold tabular-nums ${profitClass}`}>
-              {hasLegs ? (
-                isUnlimitedMaxProfit(summary.maxProfit) ? (
-                  <InfinitySymbol />
-                ) : (
-                  formatIndianMoneyCompact(summary.maxProfit)
-                )
+    <div className="min-w-0 p-3">
+      <h3 className="mb-2 text-[13px] font-semibold uppercase tracking-wide text-faint">
+        Group payoff
+      </h3>
+      <PayoffChart
+        key={`${stockCode}-${expiryDisplay}-${minS}-${maxS}-${proposedLeg?.id ?? "none"}`}
+        idle={!hasLegs}
+        xs={xs}
+        ys={ys}
+        spot={spot}
+        breakevens={summary.breakevens}
+        minS={minS}
+        maxS={maxS}
+        height={220}
+        compact
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+        <span className="text-muted">
+          Max profit{" "}
+          <span className={`font-semibold tabular-nums ${profitClass}`}>
+            {hasLegs ? (
+              isUnlimitedMaxProfit(summary.maxProfit) ? (
+                <InfinitySymbol />
               ) : (
-                "—"
-              )}
-            </div>
-          </div>
-          <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Max loss
-            </div>
-            <div className={`font-semibold tabular-nums ${lossClass}`}>
-              {hasLegs ? (
-                isUnlimitedMaxLoss(summary.maxLoss) ? (
-                  <InfinitySymbol />
-                ) : (
-                  formatIndianMoneyCompact(summary.maxLoss)
-                )
+                formatIndianMoneyCompact(summary.maxProfit)
+              )
+            ) : (
+              "—"
+            )}
+          </span>
+        </span>
+        <span className="text-muted">
+          Max loss{" "}
+          <span className={`font-semibold tabular-nums ${lossClass}`}>
+            {hasLegs ? (
+              isUnlimitedMaxLoss(summary.maxLoss) ? (
+                <InfinitySymbol />
               ) : (
-                "—"
-              )}
-            </div>
-          </div>
-          <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Breakevens
-            </div>
-            <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
-              {hasLegs && summary.breakevens.length
-                ? summary.breakevens.map((b) => b.toFixed(0)).join(", ")
-                : "—"}
-            </div>
-          </div>
-          <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              POP (model)
-            </div>
-            <div className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
-              {hasLegs ? `${pop.toFixed(1)}%` : "—"}
-            </div>
-          </div>
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="mb-2 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-            Solid green = P&amp;L at expiry; dotted violet = mark-to-model now.
-            Amber dashes = breakevens. Uses average entry and chain IV.
-            {hasProposedHedge ? (
-              <span className="mt-1 block font-medium text-sky-700 dark:text-sky-300">
-                Includes proposed hedge leg (Buy {proposedLeg!.right}{" "}
-                {proposedLeg!.strike}).
-              </span>
-            ) : null}
-          </p>
-          <PayoffChart
-            key={`${stockCode}-${expiryDisplay}-${minS}-${maxS}-${proposedLeg?.id ?? "none"}`}
-            idle={!hasLegs}
-            xs={xs}
-            ys={ys}
-            xsToday={xsToday.length ? xsToday : undefined}
-            ysToday={ysToday.length ? ysToday : undefined}
-            spot={spot}
-            breakevens={summary.breakevens}
-            minS={minS}
-            maxS={maxS}
-            height={220}
-          />
-        </div>
+                formatIndianMoneyCompact(summary.maxLoss)
+              )
+            ) : (
+              "—"
+            )}
+          </span>
+        </span>
+        <span className="text-muted">
+          Breakevens{" "}
+          <span className="font-semibold tabular-nums text-foreground">
+            {hasLegs && summary.breakevens.length
+              ? summary.breakevens.map((b) => b.toFixed(0)).join(" · ")
+              : "—"}
+          </span>
+        </span>
+        <span className="text-muted">
+          PoP{" "}
+          <span className="font-semibold tabular-nums text-foreground">
+            {hasLegs ? `${pop.toFixed(1)}%` : "—"}
+          </span>
+        </span>
       </div>
+      {hasProposedHedge ? (
+        <p className="mt-2 text-[13px] font-medium leading-relaxed text-accent-strong">
+          Includes proposed hedge leg (Buy {proposedLeg!.right}{" "}
+          {proposedLeg!.strike}).
+        </p>
+      ) : null}
     </div>
   );
 }

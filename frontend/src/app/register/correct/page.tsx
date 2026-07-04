@@ -99,7 +99,7 @@ export default function RegisterCorrectPage() {
             <AsyncLabelSpan busy={busy} idleLabel="Save" busyLabel="Saving…" />
           </button>
         </form>
-        <div className="mt-6 border-t border-zinc-200 pt-4 text-center text-[11px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+        <div className="mt-6 border-t border-zinc-200 pt-4 text-center text-[13px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
           <p>Forgot your app password?</p>
           <Link href="/register/forgot-password" className="app-link mt-2 inline-block">
             Reset via ICICI (user id only)

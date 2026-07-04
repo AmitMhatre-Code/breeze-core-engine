@@ -48,7 +48,7 @@ function DisclosureSection({
         <span className="flex-1 text-sm font-medium text-zinc-900 dark:text-zinc-100">
           {title}
         </span>
-        <span className="text-zinc-400 dark:text-zinc-500">{open ? "−" : "+"}</span>
+        <span className="text-zinc-500 dark:text-zinc-400">{open ? "−" : "+"}</span>
       </button>
       {open ? (
         <div className="border-t border-zinc-200/80 px-4 py-3 dark:border-zinc-700/80">
@@ -67,7 +67,7 @@ export function FunnelStepper({ funnel }: { funnel: FunnelStage[] }) {
           key={stage.stage}
           className="min-w-[7rem] flex-1 rounded-md border border-zinc-200/90 bg-white px-2.5 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900/80"
         >
-          <p className="text-[10px] leading-tight text-zinc-500 dark:text-zinc-400">
+          <p className="text-[12px] leading-tight text-zinc-500 dark:text-zinc-400">
             {displayPopLabel(stage.label)}
           </p>
           <p className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
@@ -98,14 +98,14 @@ function WhyThisTradeMetrics({
         {trade.badges?.map((badge) => (
           <span
             key={badge}
-            className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-700 ring-1 ring-sky-500/20 dark:text-sky-300"
+            className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[12px] font-medium text-sky-700 ring-1 ring-sky-500/20 dark:text-sky-300"
           >
             {badge}
           </span>
         ))}
       </div>
       {trade.badge_explanations?.length ? (
-        <ul className="mt-1.5 space-y-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+        <ul className="mt-1.5 space-y-0.5 text-[13px] text-zinc-500 dark:text-zinc-400">
           {trade.badge_explanations.map((b) => (
             <li key={b.badge}>
               <span className="font-medium text-zinc-600 dark:text-zinc-300">
@@ -116,7 +116,7 @@ function WhyThisTradeMetrics({
           ))}
         </ul>
       ) : null}
-      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] sm:grid-cols-4">
+      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-4">
         <div>
           <dt className="text-zinc-500 dark:text-zinc-400">
             <PopLabel variant="inline" showInfo={showPopInfo} />

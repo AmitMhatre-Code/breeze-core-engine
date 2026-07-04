@@ -53,7 +53,7 @@ export function BuildYourOwnChainSection({
 
   if (isFetching && !chainSuccess) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="text-sm text-muted">
         Loading option chain…
       </p>
     );
@@ -87,7 +87,7 @@ export function BuildYourOwnChainSection({
 
   if (!isFetching && stockCode.trim() && expiryDate.trim() && chainStatus === 200) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="text-sm text-muted">
         No option chain rows for this expiry.
       </p>
     );
@@ -95,7 +95,7 @@ export function BuildYourOwnChainSection({
 
   if (!stockCode.trim() || !expiryDate.trim()) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="text-sm text-muted">
         Set underlying and expiry in section 1 to load the chain.
       </p>
     );

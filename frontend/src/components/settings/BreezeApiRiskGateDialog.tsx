@@ -17,20 +17,20 @@ export function BreezeApiRiskGateDialog({ open, pending, onAccept }: Props) {
       pending={pending}
       titleId="breeze-api-risk-title"
       zIndexClass="z-[120]"
-      panelClassName="w-full max-w-lg rounded-xl border-2 border-red-700 bg-white p-5 shadow-2xl dark:border-red-600 dark:bg-zinc-950"
+      panelClassName="w-full max-w-lg rounded-xl border-2 border-down bg-panel p-5 shadow-pop"
     >
       <h2
         id="breeze-api-risk-title"
-        className="text-lg font-bold uppercase tracking-wide text-red-800 dark:text-red-300"
+        className="text-lg font-bold uppercase tracking-wide text-down"
       >
         Danger: raw ICICI Breeze APIs
       </h2>
-      <div className="mt-3 space-y-3 text-sm leading-relaxed text-zinc-800 dark:text-zinc-300">
+      <div className="mt-3 space-y-3 text-sm leading-relaxed text-foreground">
         <p>
           This playground calls the <strong>live Breeze REST APIs</strong> using your broker session.
           Mistakes can have real consequences:
         </p>
-        <ul className="list-disc space-y-1 pl-5 text-red-900 dark:text-red-200">
+        <ul className="list-disc space-y-1 pl-5 text-down">
           <li>
             <strong>Place, modify, cancel, or square off</strong> orders unintentionally
           </li>
@@ -44,7 +44,7 @@ export function BreezeApiRiskGateDialog({ open, pending, onAccept }: Props) {
             Consume your <strong>daily ICICI API quota</strong> (5,000 calls/day)
           </li>
         </ul>
-        <p className="text-zinc-600 dark:text-zinc-400">
+        <p className="text-muted">
           This tool is for debugging and exploration only. Use the app&apos;s order and portfolio
           screens for normal trading workflows.
         </p>
@@ -54,7 +54,7 @@ export function BreezeApiRiskGateDialog({ open, pending, onAccept }: Props) {
           type="button"
           disabled={pending}
           onClick={onAccept}
-          className="rounded-md border border-red-900 bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-60 dark:border-red-700 dark:bg-red-800 dark:hover:bg-red-900"
+          className="inline-flex items-center justify-center rounded-lg bg-down-btn px-4 py-2.5 text-sm font-bold text-white transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
         >
           {pending ? "Saving…" : "I accept the risk"}
         </button>

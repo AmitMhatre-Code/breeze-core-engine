@@ -442,11 +442,11 @@ export default function BasketOrderPage() {
       <RevokedTradingPageGuard>
         <div className="space-y-5">
           <header>
-            <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            <h1 className="flex items-center gap-2 text-[22px] font-bold tracking-tight text-foreground">
               Basket Order
               <NewFeatureBadge />
             </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
               Build a multi-leg option basket, simulate payoff, and execute all
               legs at once.{" "}
               <HelpLink topicId="basket-order" className="text-sm">
@@ -458,28 +458,27 @@ export default function BasketOrderPage() {
           <section className={`${sb.section} relative z-20 space-y-5`}>
             <h2 className={sb.sectionTitle}>1. Underlying &amp; Expiry</h2>
             <div
-              className="flex min-h-[2.75rem] flex-col overflow-visible rounded-md border border-zinc-200/90 bg-zinc-100 shadow-sm dark:border-transparent dark:bg-[#1b1c1f] sm:flex-row sm:items-center"
+              className="flex min-h-[2.75rem] flex-col overflow-visible rounded-[9px] border border-border bg-panel2 sm:flex-row sm:items-center"
               role="toolbar"
             >
-              <div className="flex shrink-0 items-center border-b border-zinc-200 px-2 py-2 dark:border-zinc-700/70 sm:border-b-0 sm:border-r sm:py-0 sm:ps-2.5 sm:pe-2">
-                <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
+              <div className="flex shrink-0 items-center border-b border-border-soft px-2 py-2 sm:border-b-0 sm:border-r sm:py-0 sm:ps-2.5 sm:pe-2">
+                <div className={sb.segmentGroup}>
                   {(["NFO", "BFO"] as const).map((ex) => (
                     <button
                       key={ex}
                       type="button"
                       onClick={() => onSegmentChange(ex)}
-                      className={`rounded-md px-3 py-1.5 text-xs font-semibold sm:text-sm ${
-                        segmentExchange === ex
-                          ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
-                          : "text-zinc-600 dark:text-zinc-400"
-                      }`}
+                      className={[
+                        sb.segmentBtn,
+                        segmentExchange === ex ? sb.segmentBtnActive : sb.segmentBtnInactive,
+                      ].join(" ")}
                     >
                       {ex === "NFO" ? "NSE" : "BSE"}
                     </button>
                   ))}
                 </div>
               </div>
-              <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center px-3 py-2 sm:border-r sm:dark:border-zinc-700/70">
+              <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center px-3 py-2 sm:border-r sm:border-border-soft">
                 {uq.isLoading ? (
                   <span className="text-xs app-text-muted animate-pulse">
                     Loading underlyings…
@@ -505,7 +504,6 @@ export default function BasketOrderPage() {
               <div className="flex shrink-0 items-center px-3 py-2 sm:pe-3.5">
                 <ExpirySelectPill
                   layout="toolbar"
-                  tone="darkToolbar"
                   dates={expiryOptions}
                   value={expiryDate}
                   disabled={!stockCode}

@@ -54,13 +54,15 @@ def is_chain_complete(
     exchange_code: str,
     expiry_display: str,
 ) -> bool:
+    """Completeness is judged by per-contract quotes (ltp / bid-ask / buy-sell qty via
+    `_cell_has_quote`), not `spot_price`. Real WS option ticks never carry a `spot_price`
+    field at all -- it's a passthrough that only bhavcopy-sourced cells populate -- so a
+    payload built purely from live WS ticks could never satisfy a `spot_price > 0` gate,
+    even once every tradeable strike has a genuine live quote. `spot_price` for the
+    response is filled in separately by `quote_source_router._apply_chain_spot()` (from
+    the same bhavcopy-fed cache) after this completeness check passes, not derived here.
+    """
     if not isinstance(payload, dict):
-        return False
-    try:
-        spot = float(payload.get("spot_price") or 0)
-    except (TypeError, ValueError):
-        spot = 0.0
-    if spot <= 0:
         return False
 
     chain_rows = payload.get("chain_rows") or []

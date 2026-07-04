@@ -21,11 +21,11 @@ const PAD_R = 0;
 const PAD_T = 8;
 const PAD_B = 28;
 
-const LINE_BLUE = "#3b82f6";
+const LINE_BLUE = "var(--accent)";
 const LINE_WIDTH = 1.25;
-/** Target on-screen px for axis text (matches ~`text-[10px]` / small widget copy; SVG viewBox scaling otherwise blows it up). */
-const AXIS_LABEL_SCREEN_PX = 10;
-const HOVER_LABEL_SCREEN_PX = 10;
+/** Target on-screen px for axis text (matches ~`text-[12px]` / small widget copy; SVG viewBox scaling otherwise blows it up). */
+const AXIS_LABEL_SCREEN_PX = 12;
+const HOVER_LABEL_SCREEN_PX = 12;
 const AREA_TOP_OPACITY = 0.38;
 const AREA_BOTTOM_OPACITY = 0.03;
 
@@ -149,12 +149,39 @@ function monthStartTickIndices(series: Point[]): { i: number; label: string }[] 
   return out;
 }
 
+/** First/middle/last point labels ("DD Mon") — used for short windows (e.g. a 30-day slice)
+ * where month-start boundaries rarely fall inside the range. */
+function evenTickIndices(
+  series: Point[],
+  count = 3,
+): { i: number; label: string }[] {
+  if (series.length === 0) return [];
+  const dedupedIndices = new Set<number>();
+  const last = series.length - 1;
+  for (let k = 0; k < count; k++) {
+    const i = count === 1 ? 0 : Math.round((k * last) / (count - 1));
+    dedupedIndices.add(i);
+  }
+  return [...dedupedIndices]
+    .sort((a, b) => a - b)
+    .map((i) => {
+      const d = series[i].date.slice(0, 10);
+      const [, m, day] = d.split("-");
+      const mi = parseInt(m, 10) - 1;
+      const mon = MONTHS[mi] ?? m;
+      return { i, label: `${day} ${mon}` };
+    });
+}
+
 export function Vix30dChart({
   series,
   loading = false,
+  compact = false,
 }: {
   series: Point[];
   loading?: boolean;
+  /** Minimal presentation: no Chart/Table toggle, no y-axis ticks, no caption line. */
+  compact?: boolean;
 }) {
   const [hoverI, setHoverI] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<"chart" | "table">("chart");
@@ -237,6 +264,7 @@ export function Vix30dChart({
   const pxPerViewUnit = Math.max(svgClientW, 1) / W;
   const axisFontUser = AXIS_LABEL_SCREEN_PX / pxPerViewUnit;
   const hoverFontUser = HOVER_LABEL_SCREEN_PX / pxPerViewUnit;
+  const padL = compact ? 4 : PAD_L;
 
   const layout = useMemo(() => {
     if (!series?.length) return null;
@@ -245,11 +273,11 @@ export function Vix30dChart({
     const maxV = Math.max(...vals);
     const spread = maxV - minV || 1;
     const n = series.length;
-    const innerW = W - PAD_L - PAD_R;
+    const innerW = W - padL - PAD_R;
     const innerH = H - PAD_T - PAD_B;
     const yBase = PAD_T + innerH;
     const pts = series.map((p, i) => {
-      const x = PAD_L + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
+      const x = padL + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
       const y = PAD_T + innerH - ((p.value - minV) / spread) * innerH;
       return [x, y] as const;
     });
@@ -269,7 +297,13 @@ export function Vix30dChart({
       cornerR,
     );
     const yTicks = [maxV, minV].map((v) => Math.round(v * 100) / 100);
-    const xTicks = monthStartTickIndices(series).map(({ i, label }) => ({
+    const monthTicks = monthStartTickIndices(series);
+    const tickIndices = compact
+      ? evenTickIndices(series, 3)
+      : monthTicks.length >= 2
+        ? monthTicks
+        : evenTickIndices(series, 3);
+    const xTicks = tickIndices.map(({ i, label }) => ({
       label,
       x: pts[i][0],
     }));
@@ -284,7 +318,7 @@ export function Vix30dChart({
       yTicks,
       xTicks,
     };
-  }, [series]);
+  }, [series, padL, compact]);
 
   const pickIndex = useCallback(
     (svgX: number, l: NonNullable<typeof layout>) => {
@@ -308,13 +342,13 @@ export function Vix30dChart({
       const rect = e.currentTarget.getBoundingClientRect();
       const svgX = ((e.clientX - rect.left) / rect.width) * W;
       const svgY = ((e.clientY - rect.top) / rect.height) * H;
-      if (svgX < PAD_L || svgX > W - PAD_R || svgY < PAD_T || svgY > H - PAD_B) {
+      if (svgX < padL || svgX > W - PAD_R || svgY < PAD_T || svgY > H - PAD_B) {
         setHoverI(null);
         return;
       }
       setHoverI(pickIndex(svgX, layout));
     },
-    [layout, pickIndex],
+    [layout, pickIndex, padL],
   );
 
   const onPointerLeave = useCallback(() => setHoverI(null), []);
@@ -373,7 +407,7 @@ export function Vix30dChart({
     const boxH = 36;
     let lx = px - boxW / 2;
     let ly = py - boxH - 6;
-    lx = Math.min(Math.max(lx, PAD_L + 2), W - PAD_R - boxW - 2);
+    lx = Math.min(Math.max(lx, padL + 2), W - PAD_R - boxW - 2);
     if (ly < PAD_T + 2) ly = py + 8;
     ly = Math.min(ly, H - PAD_B - boxH - 2);
     hoverLabel = { x: lx, y: ly, date, val };
@@ -386,34 +420,36 @@ export function Vix30dChart({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-end gap-1">
-        <button
-          type="button"
-          className={[
-            "rounded-md px-2.5 py-1 text-xs font-medium transition",
-            viewMode === "chart"
-              ? "bg-sky-100 text-sky-900 dark:bg-sky-950/60 dark:text-sky-100"
-              : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
-          ].join(" ")}
-          aria-pressed={viewMode === "chart"}
-          onClick={() => setViewMode("chart")}
-        >
-          Chart
-        </button>
-        <button
-          type="button"
-          className={[
-            "rounded-md px-2.5 py-1 text-xs font-medium transition",
-            viewMode === "table"
-              ? "bg-sky-100 text-sky-900 dark:bg-sky-950/60 dark:text-sky-100"
-              : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
-          ].join(" ")}
-          aria-pressed={viewMode === "table"}
-          onClick={() => setViewMode("table")}
-        >
-          Table
-        </button>
-      </div>
+      {!compact ? (
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            className={[
+              "rounded-md px-2.5 py-1 text-xs font-medium transition",
+              viewMode === "chart"
+                ? "bg-sky-100 text-sky-900 dark:bg-sky-950/60 dark:text-sky-100"
+                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
+            ].join(" ")}
+            aria-pressed={viewMode === "chart"}
+            onClick={() => setViewMode("chart")}
+          >
+            Chart
+          </button>
+          <button
+            type="button"
+            className={[
+              "rounded-md px-2.5 py-1 text-xs font-medium transition",
+              viewMode === "table"
+                ? "bg-sky-100 text-sky-900 dark:bg-sky-950/60 dark:text-sky-100"
+                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
+            ].join(" ")}
+            aria-pressed={viewMode === "table"}
+            onClick={() => setViewMode("table")}
+          >
+            Table
+          </button>
+        </div>
+      ) : null}
 
       {viewMode === "table" ? (
         <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
@@ -486,12 +522,13 @@ export function Vix30dChart({
               />
             </linearGradient>
           </defs>
-          {yTicks.map((tick) => {
+          {!compact
+            ? yTicks.map((tick) => {
             const y = PAD_T + innerH - ((tick - minV) / spread) * innerH;
             return (
               <g key={tick}>
                 <line
-                  x1={PAD_L}
+                  x1={padL}
                   y1={y}
                   x2={W - PAD_R}
                   y2={y}
@@ -499,18 +536,19 @@ export function Vix30dChart({
                   strokeWidth={0.45}
                 />
                 <text
-                  x={PAD_L - 5}
+                  x={padL - 5}
                   y={y}
                   textAnchor="end"
                   dominantBaseline="middle"
-                  className="fill-zinc-500 font-sans dark:fill-zinc-500"
+                  className="fill-zinc-600 font-sans dark:fill-zinc-400"
                   fontSize={axisFontUser}
                 >
                   {tick.toFixed(1)}
                 </text>
               </g>
             );
-          })}
+          })
+            : null}
           <path
             d={areaD}
             fill={`url(#vix-area-${gradId})`}
@@ -565,7 +603,7 @@ export function Vix30dChart({
                 textAnchor="middle"
                 dominantBaseline="middle"
                 fill="rgb(244 244 245)"
-                className="font-sans"
+                className="font-mono"
                 fontSize={hoverFontUser}
                 fontWeight={500}
               >
@@ -588,11 +626,11 @@ export function Vix30dChart({
           {xTicks.map(({ x, label }) => (
             <text
               key={label + x}
-              x={Math.min(Math.max(x, PAD_L + 14), W - 14)}
+              x={Math.min(Math.max(x, padL + 14), W - 14)}
               y={H - 6}
               textAnchor="middle"
               dominantBaseline="auto"
-              className="fill-zinc-600 font-sans dark:fill-zinc-500"
+              className="fill-zinc-600 font-mono dark:fill-zinc-400"
               fontSize={axisFontUser}
             >
               {label}
@@ -602,12 +640,14 @@ export function Vix30dChart({
       </div>
       )}
 
-      <p className="app-text-muted">
-        India VIX (INDVIX), daily close — last ~3 months
-        {viewMode === "chart"
-          ? " · use arrow keys on the chart or switch to Table view"
-          : null}
-      </p>
+      {!compact ? (
+        <p className="app-text-muted">
+          India VIX (INDVIX), daily close — last ~3 months
+          {viewMode === "chart"
+            ? " · use arrow keys on the chart or switch to Table view"
+            : null}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -16,17 +16,17 @@ export function IvShockSlider({
     <div className="app-card-muted min-w-0 p-4">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <div>
-          <div className="text-xs font-semibold text-zinc-800 dark:text-zinc-100">
+          <div className="text-xs font-semibold text-foreground">
             Implied volatility shock
           </div>
-          <p className="mt-0.5 max-w-xl text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+          <p className="mt-0.5 max-w-xl text-[13px] leading-relaxed text-muted">
             Adjust modeled IV for the chart and Greeks. Range −20% to +20%
             relative to chain IV.
           </p>
         </div>
         <button
           type="button"
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-zinc-200/90 bg-white text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500"
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border bg-panel text-muted transition hover:border-accent/40 hover:bg-panel2 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
           onClick={() => onChange(0)}
           disabled={value === 0}
           aria-label="Reset IV shock"
@@ -49,15 +49,15 @@ export function IvShockSlider({
       </div>
       <div className="relative pt-7">
         <div
-          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-sky-200/80 bg-sky-50 px-2.5 py-1 text-xs font-semibold tabular-nums text-sky-900 shadow-sm ring-1 ring-sky-500/10 dark:border-sky-800/80 dark:bg-sky-950/80 dark:text-sky-100 dark:ring-sky-400/15"
+          className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-accent/30 bg-accent-tint px-2.5 py-1 font-mono text-xs font-semibold tabular-nums text-accent-strong"
           style={{ left: `clamp(1.25rem, ${pct}%, calc(100% - 1.25rem))` }}
           aria-hidden
         >
           {badgeText}
         </div>
-        <div className="pointer-events-none absolute top-1/2 left-0 h-1.5 w-full -translate-y-1/2 rounded-full bg-zinc-200 dark:bg-zinc-700/85" />
+        <div className="pointer-events-none absolute top-1/2 left-0 h-1.5 w-full -translate-y-1/2 rounded-full bg-track" />
         <div
-          className="pointer-events-none absolute top-1/2 left-0 h-1.5 -translate-y-1/2 rounded-full bg-blue-600 dark:bg-blue-500"
+          className="pointer-events-none absolute top-1/2 left-0 h-1.5 -translate-y-1/2 rounded-full bg-accent-strong"
           style={{ width: `${pct}%` }}
           aria-hidden
         />
@@ -71,9 +71,9 @@ export function IvShockSlider({
           aria-label="IV shock percent"
           aria-valuetext={`${value >= 0 ? "+" : ""}${value} percent`}
         />
-        <div className="mt-2 flex justify-between text-[10px] font-medium tabular-nums text-zinc-400 dark:text-zinc-500">
+        <div className="mt-2 flex justify-between font-mono text-[12px] font-medium tabular-nums text-faint">
           <span>−20%</span>
-          <span className="text-zinc-500 dark:text-zinc-400">0</span>
+          <span className="text-muted">0</span>
           <span>+20%</span>
         </div>
       </div>

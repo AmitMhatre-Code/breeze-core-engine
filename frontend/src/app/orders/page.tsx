@@ -168,37 +168,34 @@ function parsePositiveInt(raw: string): number | null {
 }
 
 const ordersCancelBarClass =
-  "flex flex-wrap items-center justify-end gap-3 rounded-md border border-zinc-200/80 bg-zinc-50/90 px-4 py-3 shadow-sm backdrop-blur-sm dark:border-zinc-700/80 dark:bg-zinc-900/70";
+  "flex flex-wrap items-center justify-end gap-3 rounded-md border border-border bg-panel2 px-4 py-3";
 
 const cloneToPlaceBtnClass =
-  "inline-flex rounded-md p-1.5 text-zinc-500 transition hover:bg-sky-500/10 hover:text-sky-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 dark:text-zinc-400 dark:hover:bg-sky-950/40 dark:hover:text-sky-300";
+  "inline-flex rounded-md p-1.5 text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
 
 function sidePillClass(action: string | undefined): string {
   const a = String(action ?? "")
     .trim()
     .toLowerCase();
   if (a === "buy" || a.startsWith("buy"))
-    return "inline-flex rounded-full bg-emerald-500/[0.12] px-2.5 py-0.5 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-600/15 dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-400/20";
+    return "inline-flex rounded-full bg-up-tint px-2.5 py-0.5 text-[10.5px] font-bold uppercase tracking-[.05em] text-up";
   if (a === "sell" || a.startsWith("sell"))
-    return "inline-flex rounded-full bg-rose-500/[0.12] px-2.5 py-0.5 text-xs font-semibold text-rose-800 ring-1 ring-rose-600/15 dark:bg-rose-400/10 dark:text-rose-300 dark:ring-rose-400/20";
-  return "font-medium text-zinc-800 dark:text-zinc-200";
+    return "inline-flex rounded-full bg-down-tint px-2.5 py-0.5 text-[10.5px] font-bold uppercase tracking-[.05em] text-down";
+  return "font-medium text-foreground";
 }
 
 function statusChipClass(status: string | undefined): string {
   const s = String(status ?? "")
     .trim()
     .toLowerCase();
-  const base =
-    "inline-flex max-w-[11rem] truncate rounded-md px-2 py-0.5 text-xs font-medium ring-1 ";
-  if (s.includes("execut"))
-    return `${base} bg-emerald-500/10 text-emerald-900 ring-emerald-500/20 dark:text-emerald-200`;
-  if (s.includes("cancel"))
-    return `${base} bg-zinc-200/90 text-zinc-800 ring-zinc-300/80 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-600`;
+  const base = "inline-flex max-w-[11rem] truncate rounded-full px-2.5 py-0.5 text-[10.5px] font-bold uppercase tracking-[.05em] ";
+  if (s.includes("execut")) return `${base} bg-up-tint text-up`;
+  if (s.includes("reject")) return `${base} bg-down-tint text-down`;
+  if (s.includes("cancel")) return `${base} bg-panel2 text-faint`;
   if (s.includes("partial") || s.includes("open") || s.includes("request"))
-    return `${base} bg-sky-500/10 text-sky-900 ring-sky-500/20 dark:text-sky-200`;
-  if (s.includes("expir"))
-    return `${base} bg-amber-500/10 text-amber-950 ring-amber-500/25 dark:text-amber-200`;
-  return `${base} bg-zinc-100 text-zinc-800 ring-zinc-200 dark:bg-zinc-800/80 dark:text-zinc-300 dark:ring-zinc-600`;
+    return `${base} bg-accent-tint text-accent-strong`;
+  if (s.includes("expir")) return `${base} bg-amber-tint text-amber-accent`;
+  return `${base} bg-panel2 text-faint`;
 }
 
 function CloneOrderGlyph({ className }: { className?: string }) {
@@ -241,10 +238,10 @@ function ExecuteOrderGlyph({ className }: { className?: string }) {
 }
 
 const parkedCheckboxClass =
-  "h-[1.125rem] w-[1.125rem] cursor-pointer rounded border-zinc-300 text-sky-600 accent-sky-600 focus:ring-sky-500/30 dark:border-zinc-600 dark:bg-zinc-900 dark:accent-sky-500";
+  "h-[1.125rem] w-[1.125rem] cursor-pointer rounded border-border text-accent-strong accent-accent-strong focus:ring-accent/30";
 
 const executeParkedBtnClass =
-  "inline-flex rounded-md p-1.5 text-sky-600 transition hover:bg-sky-500/10 hover:text-sky-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 disabled:cursor-not-allowed disabled:opacity-40 dark:text-sky-400 dark:hover:bg-sky-950/40 dark:hover:text-sky-300";
+  "inline-flex rounded-md p-1.5 text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-40";
 
 function ChevronGlyph({
   expanded,
@@ -278,13 +275,11 @@ function ChevronGlyph({
 }
 
 function messageClass(type: string | undefined): string {
-  if (type === "alert-success")
-    return "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100";
-  if (type === "alert-danger")
-    return "border-red-200 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100";
+  if (type === "alert-success") return "border-up/30 bg-up-tint text-up";
+  if (type === "alert-danger") return "border-down/30 bg-down-tint text-down";
   if (type === "alert-warning")
-    return "border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100";
-  return "border-zinc-200 bg-zinc-50 text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-200";
+    return "border-amber-accent/30 bg-amber-tint text-amber-accent";
+  return "border-border bg-panel2 text-foreground";
 }
 
 /** Map derivatives segment codes to parent exchange labels for display only. */
@@ -335,7 +330,7 @@ function BookMessages({ messages }: { messages: BookMessage[] }) {
   if (!hasVisible) return null;
 
   const dismissBtnClass =
-    "shrink-0 rounded-md p-1 text-zinc-500 opacity-70 transition hover:bg-black/5 hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 dark:text-zinc-400 dark:hover:bg-white/10";
+    "shrink-0 rounded-md p-1 text-current opacity-70 transition hover:bg-black/5 hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 dark:hover:bg-white/10";
 
   return (
     <ul className="space-y-2">
@@ -680,14 +675,14 @@ function OrdersBody() {
       <section className="app-card min-w-0 space-y-3 p-4">
         <header className="space-y-1">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+            <h2 className="text-base font-semibold text-foreground">
               Parked Execution
             </h2>
             <span className="app-text-muted text-xs">
               Edit qty/price before execute
             </span>
           </div>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="text-sm text-muted">
             Orders placed when the market is closed are saved here until you
             execute them to ICICI.{" "}
             <HelpLink topicId="parked-orders" className="text-sm">
@@ -725,27 +720,27 @@ function OrdersBody() {
             <div className="hidden md:block">
               <div className="app-table-wrap">
                 <table className="min-w-full text-left text-sm">
-                  <thead className="bg-zinc-50 dark:bg-zinc-900/60">
+                  <thead className="bg-panel2">
                     <tr>
-                      <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      <th className="px-3 py-2 text-[13px] font-semibold uppercase tracking-wider text-faint">
                         #
                       </th>
-                      <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      <th className="px-3 py-2 text-[13px] font-semibold uppercase tracking-wider text-faint">
                         Contract
                       </th>
-                      <th className="px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      <th className="px-3 py-2 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                         Side
                       </th>
-                      <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      <th className="px-3 py-2 text-[13px] font-semibold uppercase tracking-wider text-faint">
                         Quantity
                       </th>
-                      <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      <th className="px-3 py-2 text-[13px] font-semibold uppercase tracking-wider text-faint">
                         Price
                       </th>
-                      <th className="px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      <th className="px-3 py-2 text-right text-[13px] font-semibold uppercase tracking-wider text-faint">
                         <span className="sr-only">Run or clone</span>
                       </th>
-                      <th className="px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      <th className="px-3 py-2 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                         {parkedRows.length ? (
                           <input
                             type="checkbox"
@@ -763,7 +758,7 @@ function OrdersBody() {
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                  <tbody className="divide-y divide-border-soft">
                     {parkedRows.map((row, idx) => {
                       const edit = parkedEdits[row.id] ?? {
                         quantity: row.quantity,
@@ -772,7 +767,7 @@ function OrdersBody() {
                       const qtyOk = parsePositiveInt(edit.quantity) != null;
                       return (
                         <tr key={row.id}>
-                          <td className="px-3 py-2 align-middle tabular-nums text-zinc-400 dark:text-zinc-500">
+                          <td className="px-3 py-2 align-middle tabular-nums text-faint">
                             {idx + 1}
                           </td>
                           <td className="px-3 py-2 align-middle">
@@ -788,7 +783,7 @@ function OrdersBody() {
                             <input
                               type="number"
                               min={1}
-                              className="w-24 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                              className="w-24 rounded-md border border-border bg-panel2 px-2 py-1 font-mono text-sm"
                               value={edit.quantity}
                               onChange={(e) =>
                                 setParkedEdits((prev) => ({
@@ -805,7 +800,7 @@ function OrdersBody() {
                             <input
                               type="number"
                               step={0.05}
-                              className="w-28 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                              className="w-28 rounded-md border border-border bg-panel2 px-2 py-1 font-mono text-sm"
                               value={edit.price}
                               onChange={(e) =>
                                 setParkedEdits((prev) => ({
@@ -860,11 +855,11 @@ function OrdersBody() {
 
             <div className="space-y-3 md:hidden">
               {parkedRows.length ? (
-                <div className="flex items-center justify-between gap-2 rounded-lg border border-zinc-200/80 bg-zinc-50/80 px-3 py-2.5 dark:border-zinc-700/80 dark:bg-zinc-900/50">
-                  <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-panel2 px-3 py-2.5">
+                  <span className="text-xs font-medium uppercase tracking-wide text-muted">
                     Bulk select
                   </span>
-                  <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                  <label className="flex items-center gap-2 text-sm text-muted">
                     <input
                       type="checkbox"
                       className={parkedCheckboxClass}
@@ -889,15 +884,15 @@ function OrdersBody() {
                 return (
                   <div
                     key={row.id}
-                    className="rounded-lg border border-zinc-200/80 bg-white/80 p-3 text-sm text-zinc-600 dark:border-zinc-700/80 dark:bg-zinc-950/40 dark:text-zinc-400"
+                    className="rounded-lg border border-border bg-panel2 p-3 text-sm text-muted"
                   >
                     <div className="space-y-3">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          <p className="tabular-nums text-xs text-zinc-400 dark:text-zinc-500">
+                          <p className="tabular-nums text-xs text-faint">
                             #{idx + 1}
                           </p>
-                          <p className="text-base font-medium text-zinc-900 dark:text-zinc-100">
+                          <p className="text-base font-medium text-foreground">
                             {row.stock_code} {row.expiry_date} {row.right}{" "}
                             {row.strike_price}
                           </p>
@@ -919,13 +914,13 @@ function OrdersBody() {
                       </div>
                       <div className="grid gap-3 sm:grid-cols-2">
                         <label className="block min-w-0 space-y-1">
-                          <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                          <span className="text-xs font-medium text-muted">
                             Quantity
                           </span>
                           <input
                             type="number"
                             min={1}
-                            className="w-full max-w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            className="w-full max-w-full rounded-md border border-border bg-panel2 px-2 py-1.5 font-mono text-sm"
                             value={edit.quantity}
                             onChange={(e) =>
                               setParkedEdits((prev) => ({
@@ -939,13 +934,13 @@ function OrdersBody() {
                           />
                         </label>
                         <label className="block min-w-0 space-y-1">
-                          <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                          <span className="text-xs font-medium text-muted">
                             Price
                           </span>
                           <input
                             type="number"
                             step={0.05}
-                            className="w-full max-w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            className="w-full max-w-full rounded-md border border-border bg-panel2 px-2 py-1.5 font-mono text-sm"
                             value={edit.price}
                             onChange={(e) =>
                               setParkedEdits((prev) => ({
@@ -959,7 +954,7 @@ function OrdersBody() {
                           />
                         </label>
                       </div>
-                      <div className="flex flex-wrap items-center justify-end gap-1 border-t border-zinc-200/80 pt-2 dark:border-zinc-700/80">
+                      <div className="flex flex-wrap items-center justify-end gap-1 border-t border-border-soft pt-2">
                         <button
                           type="button"
                           className={executeParkedBtnClass}
@@ -985,7 +980,7 @@ function OrdersBody() {
             </div>
             {parkedSelected.size > 0 || parkedDeleteManyMut.isPending ? (
               <div className={ordersCancelBarClass}>
-                <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                <span className="text-sm text-muted">
                   {formatQtyIndian(parkedSelected.size)} parked selected
                 </span>
                 <button
@@ -1041,7 +1036,7 @@ function OrdersBody() {
         <section className="app-card mt-6 min-w-0 space-y-3 p-4">
           <header className="space-y-1">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+              <h2 className="text-base font-semibold text-foreground">
                 Order Book
               </h2>
               <span className="app-text-muted hidden text-right uppercase tracking-wide sm:block sm:max-w-[14rem]">
@@ -1110,41 +1105,41 @@ function OrdersBody() {
                 });
               }}
             >
-              <div className="hidden min-w-0 overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-sm ring-1 ring-zinc-950/[0.04] dark:border-zinc-800 dark:bg-zinc-900/40 dark:shadow-none dark:ring-white/[0.06] md:block">
+              <div className="hidden min-w-0 overflow-hidden rounded-lg border border-border bg-panel md:block">
                 <div className="min-w-0 overflow-x-auto">
-                  <table className="min-w-full text-left text-sm text-zinc-800 dark:text-zinc-200">
-                    <thead className="sticky top-0 z-[1] border-b border-zinc-200/90 bg-zinc-50/95 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-900/95">
+                  <table className="min-w-full text-left text-sm text-foreground">
+                    <thead className="sticky top-0 z-[1] border-b border-border bg-panel2">
                       <tr>
-                        <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        <th className="px-4 py-3 text-[13px] font-semibold uppercase tracking-wider text-faint">
                           #
                         </th>
-                        <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        <th className="px-4 py-3 text-[13px] font-semibold uppercase tracking-wider text-faint">
                           Group
                         </th>
-                        <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                           Side
                         </th>
-                        <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                           Ordered
                         </th>
-                        <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                           Cancelled
                         </th>
-                        <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                           Expired
                         </th>
-                        <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-sky-600 dark:text-sky-400">
+                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-accent-strong">
                           Open
                         </th>
-                        <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-up">
                           Executed
                         </th>
-                        <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                        <th className="px-4 py-3 text-right text-[13px] font-semibold uppercase tracking-wider text-faint">
                           <span className="sr-only">Expand group</span>
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/90">
+                    <tbody className="divide-y divide-border-soft">
                       {groups.map((g, idx) => {
                         const isOpen = !!expanded[g.group];
                         const groupLabel = String(g.group_option ?? g.group ?? "Group");
@@ -1156,7 +1151,7 @@ function OrdersBody() {
                         return (
                           <Fragment key={g.group}>
                             <tr
-                              className="cursor-pointer transition-colors hover:bg-zinc-50/90 dark:hover:bg-zinc-800/35"
+                              className="cursor-pointer transition-colors hover:bg-panel2"
                               role="button"
                               tabIndex={0}
                               aria-expanded={isOpen}
@@ -1173,10 +1168,10 @@ function OrdersBody() {
                                 }
                               }}
                             >
-                              <td className="px-4 py-3.5 align-middle tabular-nums text-zinc-400 dark:text-zinc-500">
+                              <td className="px-4 py-3.5 align-middle tabular-nums text-faint">
                                 {idx + 1}
                               </td>
-                              <td className="px-4 py-3.5 align-middle font-medium text-zinc-900 dark:text-zinc-50">
+                              <td className="px-4 py-3.5 align-middle font-medium text-foreground">
                                 {g.group_option}
                               </td>
                               <td className="px-4 py-3.5 align-middle text-center">
@@ -1184,70 +1179,70 @@ function OrdersBody() {
                                   {g.group_action}
                                 </span>
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-center tabular-nums text-zinc-700 dark:text-zinc-300">
+                              <td className="px-4 py-3.5 align-middle text-center tabular-nums text-muted">
                                 {formatQtyIndian(g.group_ordered)}
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-center tabular-nums text-zinc-700 dark:text-zinc-300">
+                              <td className="px-4 py-3.5 align-middle text-center tabular-nums text-muted">
                                 {formatQtyIndian(g.group_cancelled)}
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-center tabular-nums text-zinc-700 dark:text-zinc-300">
+                              <td className="px-4 py-3.5 align-middle text-center tabular-nums text-muted">
                                 {formatQtyIndian(g.group_expired)}
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-center tabular-nums font-medium text-sky-700 dark:text-sky-300">
+                              <td className="px-4 py-3.5 align-middle text-center tabular-nums font-medium text-accent-strong">
                                 {formatQtyIndian(g.group_open)}
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-center tabular-nums font-medium text-emerald-700 dark:text-emerald-300">
+                              <td className="px-4 py-3.5 align-middle text-center tabular-nums font-medium text-up">
                                 {formatQtyIndian(g.group_executed)}
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-right text-zinc-500 dark:text-zinc-400">
+                              <td className="px-4 py-3.5 align-middle text-right text-muted">
                                 <ChevronGlyph expanded={isOpen} />
                               </td>
                             </tr>
                             {isOpen ? (
-                              <tr className="bg-zinc-50/50 dark:bg-zinc-950/40">
+                              <tr className="bg-panel2">
                                 <td colSpan={9} className="p-0">
-                                  <div className="border-t border-zinc-200/80 p-3 dark:border-zinc-800/80">
-                                    <div className="overflow-hidden rounded-md border border-zinc-200/90 bg-white shadow-inner dark:border-zinc-700/90 dark:bg-zinc-950/60">
+                                  <div className="border-t border-border-soft p-3">
+                                    <div className="overflow-hidden rounded-md border border-border bg-panel2">
                                       <table className="min-w-full text-left text-sm">
                                         <thead>
-                                          <tr className="border-b border-zinc-100 bg-zinc-50/90 dark:border-zinc-800 dark:bg-zinc-900/80">
-                                            <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                          <tr className="border-b border-border-soft bg-panel2">
+                                            <th className="px-4 py-2.5 text-[13px] font-semibold uppercase tracking-wider text-faint">
                                               #
                                             </th>
-                                            <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                            <th className="px-4 py-2.5 text-[13px] font-semibold uppercase tracking-wider text-faint">
                                               Option
                                             </th>
-                                            <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                                               Exch.
                                             </th>
-                                            <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                                               Side
                                             </th>
-                                            <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                                               Qty
                                             </th>
-                                            <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                                               Open
                                             </th>
-                                            <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                                               LTP
                                             </th>
-                                            <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                                               Price
                                             </th>
-                                            <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                            <th className="px-4 py-2.5 text-[13px] font-semibold uppercase tracking-wider text-faint">
                                               Status
                                             </th>
-                                            <th className="w-10 px-1 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                            <th className="w-10 px-1 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                                               <span className="sr-only">
                                                 Clone to Place Order
                                               </span>
                                             </th>
-                                            <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
                                               {(g.group_open ?? 0) > 0 ? (
                                                 <input
                                                   type="checkbox"
-                                                  className="h-[1.125rem] w-[1.125rem] cursor-pointer rounded border-zinc-300 text-sky-600 accent-sky-600 focus:ring-sky-500/30 dark:border-zinc-600 dark:bg-zinc-900 dark:accent-sky-500"
+                                                  className="h-[1.125rem] w-[1.125rem] cursor-pointer rounded border-border text-accent-strong accent-accent-strong focus:ring-accent/30"
                                                   checked={groupAllSelected(g)}
                                                   ref={(el) => {
                                                     if (!el) return;
@@ -1267,21 +1262,21 @@ function OrdersBody() {
                                             </th>
                                           </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/80">
+                                        <tbody className="divide-y divide-border-soft">
                                           {(g.group_orders ?? []).map((o, j) => {
                                             const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
                                             return (
                                               <tr
                                                 key={key || j}
-                                                className="transition-colors hover:bg-sky-50/40 dark:hover:bg-sky-950/20"
+                                                className="transition-colors hover:bg-accent-tint"
                                               >
-                                                <td className="px-4 py-2.5 align-middle tabular-nums text-zinc-400 dark:text-zinc-500">
+                                                <td className="px-4 py-2.5 align-middle tabular-nums text-faint">
                                                   {j + 1}
                                                 </td>
-                                                <td className="px-4 py-2.5 align-middle font-medium text-zinc-900 dark:text-zinc-100">
+                                                <td className="px-4 py-2.5 align-middle font-medium text-foreground">
                                                   {o.option}
                                                 </td>
-                                                <td className="px-4 py-2.5 align-middle text-center text-xs text-zinc-600 dark:text-zinc-400">
+                                                <td className="px-4 py-2.5 align-middle text-center text-xs text-muted">
                                                   {formatExchangeDisplay(
                                                     o.exchange_code,
                                                   )}
@@ -1301,7 +1296,7 @@ function OrdersBody() {
                                                 <td className="px-4 py-2.5 align-middle text-center tabular-nums">
                                                   {formatQtyIndian(o.open_quantity)}
                                                 </td>
-                                                <td className="px-4 py-2.5 align-middle text-center tabular-nums text-zinc-600 dark:text-zinc-400">
+                                                <td className="px-4 py-2.5 align-middle text-center tabular-nums text-muted">
                                                   <GroupLtpValue
                                                     groupId={g.group}
                                                     fallback={g.group_ltp}
@@ -1309,7 +1304,7 @@ function OrdersBody() {
                                                     loading={groupLtpLoading}
                                                   />
                                                 </td>
-                                                <td className="px-4 py-2.5 align-middle text-center tabular-nums text-zinc-600 dark:text-zinc-400">
+                                                <td className="px-4 py-2.5 align-middle text-center tabular-nums text-muted">
                                                   {o.price != null
                                                     ? `₹${o.price}`
                                                     : "—"}
@@ -1339,7 +1334,7 @@ function OrdersBody() {
                                                   {o.cancelable && o.order_id ? (
                                                     <input
                                                       type="checkbox"
-                                                      className="h-[1.125rem] w-[1.125rem] cursor-pointer rounded border-zinc-300 text-sky-600 accent-sky-600 focus:ring-sky-500/30 dark:border-zinc-600 dark:bg-zinc-900 dark:accent-sky-500"
+                                                      className="h-[1.125rem] w-[1.125rem] cursor-pointer rounded border-border text-accent-strong accent-accent-strong focus:ring-accent/30"
                                                       checked={selected.has(
                                                         key,
                                                       )}
@@ -1375,7 +1370,7 @@ function OrdersBody() {
                 selected.size > 0) ||
               cancelMut.isPending ? (
                 <div className={ordersCancelBarClass}>
-                  <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                  <span className="text-sm text-muted">
                     {formatQtyIndian(selected.size)} order(s) selected
                   </span>
                   <button
@@ -1402,19 +1397,19 @@ function OrdersBody() {
                 {groups.map((g) => (
                   <div key={g.group} className="app-card-muted overflow-hidden">
                     <details>
-                      <summary className="cursor-pointer list-none px-3 py-2.5 text-base font-medium text-zinc-900 dark:text-zinc-100">
+                      <summary className="cursor-pointer list-none px-3 py-2.5 text-base font-medium text-foreground">
                         <span className="block">{g.group_option}</span>
-                        <span className="text-sm font-normal text-zinc-500 dark:text-zinc-400">
+                        <span className="text-sm font-normal text-muted">
                           {g.group_action} · Open {formatQtyIndian(g.group_open)}{" "}
                           · Exec {formatQtyIndian(g.group_executed)}
                         </span>
                       </summary>
-                      <div className="space-y-2 border-t border-zinc-200/80 px-3 py-2.5 text-sm text-zinc-600 dark:border-zinc-700/80 dark:text-zinc-400">
+                      <div className="space-y-2 border-t border-border-soft px-3 py-2.5 text-sm text-muted">
                         {(g.group_open ?? 0) > 0 ? (
                           <label className="flex items-center gap-2 font-medium">
                             <input
                               type="checkbox"
-                              className="h-[1.125rem] w-[1.125rem] rounded border-zinc-400"
+                              className="h-[1.125rem] w-[1.125rem] rounded border-border"
                               checked={groupAllSelected(g)}
                               ref={(el) => {
                                 if (!el) return;
@@ -1435,10 +1430,10 @@ function OrdersBody() {
                           return (
                             <div
                               key={key || j}
-                              className="rounded-lg border border-zinc-200/80 bg-white/80 p-3 text-sm dark:border-zinc-700/80 dark:bg-zinc-950/40"
+                              className="rounded-lg border border-border bg-panel2 p-3 text-sm"
                             >
                               <div className="flex items-start justify-between gap-2">
-                                <p className="min-w-0 flex-1 text-base font-medium text-zinc-900 dark:text-zinc-100">
+                                <p className="min-w-0 flex-1 text-base font-medium text-foreground">
                                   {o.option}
                                 </p>
                                 <button
@@ -1472,7 +1467,7 @@ function OrdersBody() {
                                 <label className="mt-1 flex items-center gap-2">
                                   <input
                                     type="checkbox"
-                                    className="h-[1.125rem] w-[1.125rem] rounded border-zinc-400"
+                                    className="h-[1.125rem] w-[1.125rem] rounded border-border"
                                     checked={selected.has(key)}
                                     onChange={(e) =>
                                       toggleOne(key, e.target.checked)

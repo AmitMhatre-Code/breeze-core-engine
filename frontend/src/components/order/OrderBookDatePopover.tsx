@@ -192,7 +192,7 @@ export function OrderBookDatePopover({
       <label htmlFor={id} className="sr-only">
         {label}
       </label>
-      <CalendarGlyph className="pointer-events-none absolute left-3 top-1/2 z-[2] size-4 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
+      <CalendarGlyph className="pointer-events-none absolute left-3 top-1/2 z-[2] size-4 -translate-y-1/2 text-faint" />
       <button
         ref={triggerRef}
         type="button"
@@ -201,9 +201,8 @@ export function OrderBookDatePopover({
         aria-expanded={open}
         aria-controls={listboxId}
         className={[
-          "flex h-11 w-full min-w-[11rem] items-center rounded-md border border-zinc-200 bg-white py-0 pl-10 pr-3 text-left text-sm tabular-nums text-zinc-900 shadow-sm transition",
-          "hover:border-zinc-300 focus:outline-none focus-visible:border-sky-500 focus-visible:ring-2 focus-visible:ring-sky-500/25",
-          "dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:border-zinc-500 dark:focus-visible:border-sky-400 dark:focus-visible:ring-sky-400/25",
+          "flex h-[34px] w-full min-w-[11rem] items-center rounded-[9px] border border-border bg-panel2 py-0 pl-10 pr-3 text-left font-mono text-sm tabular-nums text-foreground transition",
+          "hover:border-accent/60 focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/25",
         ].join(" ")}
         onClick={() => {
           if (open) setOpen(false);
@@ -216,7 +215,7 @@ export function OrderBookDatePopover({
         {displayText ? (
           <span>{displayText}</span>
         ) : (
-          <span className="text-zinc-400 dark:text-zinc-500">{placeholder}</span>
+          <span className="text-faint">{placeholder}</span>
         )}
       </button>
 
@@ -225,12 +224,12 @@ export function OrderBookDatePopover({
           id={listboxId}
           role="dialog"
           aria-label="Choose date"
-          className="absolute left-0 top-[calc(100%+0.25rem)] z-50 w-[min(100%,18rem)] rounded-md border border-zinc-200/90 bg-white p-3 shadow-lg ring-1 ring-zinc-950/[0.04] dark:border-zinc-700 dark:bg-zinc-900 dark:ring-white/[0.06]"
+          className="absolute left-0 top-[calc(100%+0.25rem)] z-50 w-[min(100%,18rem)] rounded-[10px] border border-border bg-elevated p-3 shadow-pop"
         >
           <div className="mb-2 flex items-center justify-between gap-1">
             <button
               type="button"
-              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground"
               aria-label="Previous month"
               onClick={goPrevMonth}
             >
@@ -238,12 +237,12 @@ export function OrderBookDatePopover({
                 <path d="m15 18-6-6 6-6" />
               </svg>
             </button>
-            <span className="min-w-0 flex-1 text-center text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <span className="min-w-0 flex-1 text-center text-sm font-semibold text-foreground">
               {MONTH_LABELS[viewM - 1]} {viewY}
             </span>
             <button
               type="button"
-              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground"
               aria-label="Next month"
               onClick={goNextMonth}
             >
@@ -257,7 +256,7 @@ export function OrderBookDatePopover({
             {WEEKDAY_LABELS.map((w) => (
               <div
                 key={w}
-                className="py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500"
+                className="py-1 text-[12px] font-semibold uppercase tracking-wide text-faint"
               >
                 {w}
               </div>
@@ -281,10 +280,10 @@ export function OrderBookDatePopover({
                   className={[
                     "aspect-square rounded-lg text-sm font-medium tabular-nums transition",
                     isSelected
-                      ? "bg-sky-600 text-white shadow-sm dark:bg-sky-500"
-                      : "text-zinc-800 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800",
+                      ? "bg-accent-strong text-accent-ink"
+                      : "text-foreground hover:bg-panel2",
                     isToday && !isSelected
-                      ? "ring-1 ring-inset ring-sky-500/50 dark:ring-sky-400/40"
+                      ? "ring-1 ring-inset ring-accent/50"
                       : "",
                   ].join(" ")}
                   onClick={() => selectDay(day)}
@@ -295,10 +294,10 @@ export function OrderBookDatePopover({
             })}
           </div>
 
-          <div className="mt-3 border-t border-zinc-200/80 pt-2 dark:border-zinc-700/80">
+          <div className="mt-3 border-t border-border-soft pt-2">
             <button
               type="button"
-              className="w-full rounded-lg py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-950/50"
+              className="w-full rounded-lg py-1.5 text-xs font-medium text-accent-strong transition hover:bg-accent-tint"
               onClick={goToday}
             >
               Today

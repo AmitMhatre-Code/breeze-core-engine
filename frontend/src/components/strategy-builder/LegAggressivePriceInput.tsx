@@ -61,10 +61,10 @@ export function LegAggressivePriceInput({
           aria-label={`${ariaLabel}. Toggle aggressive limit from LTP.`}
           title="Aggressive limit"
           onClick={() => onAggressiveChange(!aggressive)}
-          className={`rounded p-1 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 ${
+          className={`rounded p-1 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
             aggressive
-              ? "border border-amber-400 bg-amber-100 text-amber-900 dark:border-amber-600 dark:bg-amber-950/60 dark:text-amber-300"
-              : `${sb.tableToggle} border text-zinc-600 dark:text-zinc-300`
+              ? "border border-amber-accent bg-amber-tint text-amber-accent"
+              : `${sb.tableToggle} border text-muted`
           }`}
         >
           <LightningBoltIcon />

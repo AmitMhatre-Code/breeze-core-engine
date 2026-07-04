@@ -170,6 +170,7 @@ def refresh_directional_tile_metrics(result: StrategyResult) -> None:
         span = result.span_margin or 0.0
         elm = result.elm_requirement or 0.0
         capital_total = premium + span + elm
+        result.max_profit = max_gain
         result.hero_metric = TileMetric(
             label="Reward : Risk",
             value=f"1 : {max_gain / max(max_loss, 1):.2f}",

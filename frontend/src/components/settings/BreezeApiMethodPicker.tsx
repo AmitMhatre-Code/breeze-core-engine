@@ -18,10 +18,10 @@ type ApiGroup = {
 };
 
 const RISK_BADGE: Record<BreezeApiCatalogEntry["risk_level"], string> = {
-  read: "bg-emerald-500/15 text-emerald-700 ring-emerald-500/25 dark:bg-emerald-500/20 dark:text-emerald-300",
-  funds: "bg-amber-500/15 text-amber-800 ring-amber-500/25 dark:bg-amber-500/20 dark:text-amber-200",
-  trade: "bg-red-500/15 text-red-800 ring-red-500/25 dark:bg-red-500/20 dark:text-red-200",
-  gtt: "bg-violet-500/15 text-violet-800 ring-violet-500/25 dark:bg-violet-500/20 dark:text-violet-200",
+  read: "bg-up-tint text-up ring-up/25",
+  funds: "bg-amber-tint text-amber-accent ring-amber-accent/25",
+  trade: "bg-down-tint text-down ring-down/25",
+  gtt: "bg-gtt-tint text-gtt ring-gtt/25",
 };
 
 const RISK_BADGE_SHORT: Record<BreezeApiCatalogEntry["risk_level"], string> = {
@@ -40,7 +40,7 @@ function ChevronDown({ open }: { open: boolean }) {
       fill="none"
       aria-hidden
       className={[
-        "shrink-0 text-zinc-500 transition-transform duration-200 dark:text-zinc-400",
+        "shrink-0 text-muted transition-transform duration-200",
         open ? "-rotate-180" : "",
       ].join(" ")}
     >
@@ -154,9 +154,7 @@ export function BreezeApiMethodPicker({
         type="button"
         className={[
           "app-input mt-1.5 flex items-center gap-3 py-2.5 text-left",
-          open
-            ? "border-sky-500/60 ring-2 ring-sky-500/30 dark:border-sky-400/45 dark:ring-sky-400/25"
-            : "",
+          open ? "border-accent ring-2 ring-accent/30" : "",
         ].join(" ")}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -168,21 +166,21 @@ export function BreezeApiMethodPicker({
         <span className="min-w-0 flex-1">
           {selected ? (
             <>
-              <span className="block truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+              <span className="block truncate text-sm font-medium text-foreground">
                 {selected.title}
               </span>
-              <span className="mt-0.5 block truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
+              <span className="mt-0.5 block truncate font-mono text-xs text-muted">
                 {selected.method}
               </span>
             </>
           ) : (
-            <span className="text-sm text-zinc-500 dark:text-zinc-400">Select an API…</span>
+            <span className="text-sm text-muted">Select an API…</span>
           )}
         </span>
         {selected ? (
           <span
             className={[
-              "hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset sm:inline",
+              "hidden shrink-0 rounded-full px-2 py-0.5 text-[12px] font-semibold uppercase tracking-wide ring-1 ring-inset sm:inline",
               RISK_BADGE[selected.risk_level],
             ].join(" ")}
           >
@@ -193,13 +191,8 @@ export function BreezeApiMethodPicker({
       </button>
 
       {open ? (
-        <div
-          className={[
-            "absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-hidden rounded-md border shadow-lg",
-            "border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900",
-          ].join(" ")}
-        >
-          <div className="border-b border-zinc-200/80 p-2 dark:border-zinc-800">
+        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-hidden rounded-[10px] border border-border bg-elevated shadow-pop">
+          <div className="border-b border-border-soft p-2">
             <input
               ref={searchRef}
               type="search"
@@ -219,14 +212,14 @@ export function BreezeApiMethodPicker({
             className="max-h-[min(22rem,55vh)] overflow-y-auto overscroll-contain p-1.5"
           >
             {filteredGroups.length === 0 ? (
-              <li className="px-3 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
+              <li className="px-3 py-6 text-center text-sm text-muted">
                 No APIs match your search.
               </li>
             ) : (
               filteredGroups.map((g) => (
                 <li key={g.level} role="presentation" className="mb-2 last:mb-0">
                   <div
-                    className="sticky top-0 z-[1] px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500"
+                    className="sticky top-0 z-[1] bg-elevated px-2 py-1.5 text-[13px] font-semibold uppercase tracking-wider text-faint"
                     aria-hidden
                   >
                     {g.label}
@@ -245,10 +238,10 @@ export function BreezeApiMethodPicker({
                             data-menu-index={menuIndex}
                             tabIndex={-1}
                             className={[
-                              "flex w-full items-start gap-2 rounded-sm px-2.5 py-2 text-left transition-colors",
+                              "flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors",
                               isSelected || highlighted
-                                ? "bg-sky-50 ring-1 ring-inset ring-sky-500/25 dark:bg-sky-950/40 dark:ring-sky-400/30"
-                                : "hover:bg-zinc-100 dark:hover:bg-zinc-800/80",
+                                ? "bg-accent-tint ring-1 ring-inset ring-accent/25"
+                                : "hover:bg-panel2",
                             ].join(" ")}
                             onClick={() => {
                               onSelect(item.method);
@@ -257,16 +250,16 @@ export function BreezeApiMethodPicker({
                             }}
                           >
                             <span className="min-w-0 flex-1">
-                              <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                              <span className="block text-sm font-medium text-foreground">
                                 {item.title}
                               </span>
-                              <span className="mt-0.5 block truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                              <span className="mt-0.5 block truncate font-mono text-[13px] text-muted">
                                 {item.method}
                               </span>
                             </span>
                             <span
                               className={[
-                                "mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ring-1 ring-inset",
+                                "mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[12px] font-semibold uppercase tracking-wide ring-1 ring-inset",
                                 RISK_BADGE[item.risk_level],
                               ].join(" ")}
                             >

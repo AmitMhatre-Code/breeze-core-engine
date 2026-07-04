@@ -21,13 +21,14 @@ type Props = {
    * Zoom out reaches 1 (full range). Default 0.5: when the domain is spot ±40%, the initial view is spot ±20%.
    */
   defaultSpanFraction?: number;
+  /**
+   * Minimal presentation for space-constrained contexts (Portfolio group payoff): no zoom
+   * controls, no axis tick labels/gridlines, no mark-to-model overlay, no breakeven lines.
+   * The expiry P&L line switches from a single green stroke to green-above/red-below zero,
+   * and the spot indicator becomes a plain dotted line with a dot marker on the curve.
+   */
+  compact?: boolean;
 };
-
-/** Left padding: room for y-axis tick labels. */
-const PAD_L = 40;
-const PAD_R = 16;
-const PAD_T = 12;
-const PAD_B = 22;
 
 const X_AXIS_TICKS = 10;
 
@@ -87,6 +88,64 @@ function buildPayoffFillPaths(
   }
 
   return { aboveD, belowD };
+}
+
+/** Compact mode: the line itself (not just the fill) switches green/red at each zero-crossing. */
+function buildTwoTonePayoffLinePaths(
+  xs: number[],
+  ys: number[],
+  xScale: (s: number) => number,
+  yScale: (y: number) => number,
+): { aboveD: string; belowD: string } {
+  if (xs.length < 2 || ys.length !== xs.length) {
+    return { aboveD: "", belowD: "" };
+  }
+  let aboveD = "";
+  let belowD = "";
+  let sign = ys[0] >= 0 ? 1 : -1;
+  let run = `M ${xScale(xs[0])} ${yScale(ys[0])} `;
+
+  const flush = (s: number, d: string) => {
+    if (s >= 0) aboveD += d;
+    else belowD += d;
+  };
+
+  for (let i = 1; i < xs.length; i++) {
+    const nextSign = ys[i] >= 0 ? 1 : -1;
+    if (nextSign === sign) {
+      run += `L ${xScale(xs[i])} ${yScale(ys[i])} `;
+      continue;
+    }
+    const x0 = xs[i - 1];
+    const x1 = xs[i];
+    const y0 = ys[i - 1];
+    const y1 = ys[i];
+    const xc = x0 + ((x1 - x0) * -y0) / (y1 - y0);
+    const sxc = xScale(xc);
+    const syc = yScale(0);
+    run += `L ${sxc} ${syc} `;
+    flush(sign, run);
+    sign = nextSign;
+    run = `M ${sxc} ${syc} L ${xScale(xs[i])} ${yScale(ys[i])} `;
+  }
+  flush(sign, run);
+
+  return { aboveD, belowD };
+}
+
+/** Linear-interpolated curve value at an arbitrary x — used to place the compact-mode spot dot. */
+function interpolateY(xs: number[], ys: number[], x: number): number | null {
+  if (xs.length < 2 || ys.length !== xs.length) return null;
+  if (x <= xs[0]) return ys[0];
+  if (x >= xs[xs.length - 1]) return ys[xs.length - 1];
+  for (let i = 0; i < xs.length - 1; i++) {
+    if (x >= xs[i] && x <= xs[i + 1]) {
+      const span = xs[i + 1] - xs[i] || 1;
+      const t = (x - xs[i]) / span;
+      return ys[i] + (ys[i + 1] - ys[i]) * t;
+    }
+  }
+  return null;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -177,11 +236,18 @@ export function PayoffChart({
   defaultSpanFraction = 0.5,
   labelledBy,
   describedBy,
+  compact = false,
 }: Props) {
   const clipId = useId().replace(/:/g, "");
   const [spanFrac, setSpanFrac] = useState(() =>
     clamp(defaultSpanFraction, MIN_SPAN_FRAC, 1),
   );
+
+  // Full mode reserves room for axis tick labels; compact mode has none to reserve for.
+  const PAD_L = compact ? 8 : 40;
+  const PAD_R = compact ? 8 : 16;
+  const PAD_T = compact ? 8 : 12;
+  const PAD_B = compact ? 8 : 22;
 
   const W = 640;
   const H = height;
@@ -198,8 +264,20 @@ export function PayoffChart({
   const canZoomIn = spanFrac > MIN_SPAN_FRAC * 1.001;
   const canZoomOut = spanFrac < 1 - 1e-9;
 
-  const { minY, maxY, pathD, pathTodayD, spotX, breakevenXs, xAxisTicks, aboveFillD, belowFillD } =
-    useMemo(() => {
+  const {
+    minY,
+    maxY,
+    pathD,
+    pathAboveD,
+    pathBelowD,
+    pathTodayD,
+    spotX,
+    spotY,
+    breakevenXs,
+    xAxisTicks,
+    aboveFillD,
+    belowFillD,
+  } = useMemo(() => {
       const span = viewMax - viewMin || 1;
       const xScale = (s: number) => PAD_L + ((s - viewMin) / span) * innerW;
 
@@ -222,8 +300,11 @@ export function PayoffChart({
           minY,
           maxY,
           pathD: "",
+          pathAboveD: "",
+          pathBelowD: "",
           pathTodayD: "",
           spotX: spotX0,
+          spotY: null as number | null,
           breakevenXs: [] as number[],
           xAxisTicks: xAxisTicksInner,
           aboveFillD: "",
@@ -256,6 +337,9 @@ export function PayoffChart({
         PAD_T + innerH - ((y - minY) / (maxY - minY || 1)) * innerH;
 
       const { aboveD, belowD } = buildPayoffFillPaths(xs, ys, xScale, yScale);
+      const { aboveD: pathAboveD, belowD: pathBelowD } = compact
+        ? buildTwoTonePayoffLinePaths(xs, ys, xScale, yScale)
+        : { aboveD: "", belowD: "" };
 
       const pts = xs.map((s, i) => `${xScale(s).toFixed(1)},${yScale(ys[i]).toFixed(1)}`);
       const pathD = pts.length ? `M ${pts.join(" L ")}` : "";
@@ -276,6 +360,14 @@ export function PayoffChart({
           ? xScale(spot)
           : null;
 
+      const spotY =
+        compact && spot != null && Number.isFinite(spot)
+          ? (() => {
+              const interp = interpolateY(xs, ys, spot);
+              return interp != null ? yScale(interp) : null;
+            })()
+          : null;
+
       const breakevenXs = breakevens
         .filter((b) => b >= viewMin && b <= viewMax)
         .map((b) => xScale(b));
@@ -284,8 +376,11 @@ export function PayoffChart({
         minY,
         maxY,
         pathD,
+        pathAboveD,
+        pathBelowD,
         pathTodayD,
         spotX,
+        spotY,
         breakevenXs,
         xAxisTicks: xAxisTicksInner,
         aboveFillD: aboveD,
@@ -303,6 +398,9 @@ export function PayoffChart({
       viewMax,
       innerW,
       innerH,
+      compact,
+      PAD_L,
+      PAD_T,
     ]);
 
   const yGridTicks = useMemo(() => {
@@ -337,31 +435,39 @@ export function PayoffChart({
 
   return (
     <div className="relative w-full max-w-full">
-      <div className="pointer-events-auto absolute right-1 top-1 z-10 flex gap-0.5 rounded-md border border-zinc-200/90 bg-white/95 p-0.5 shadow-sm ring-1 ring-zinc-950/5 dark:border-zinc-600 dark:bg-zinc-900/95 dark:ring-white/10">
-        <button
-          type="button"
-          onClick={zoomIn}
-          disabled={!canZoomIn}
-          title="Zoom in (narrower price range)"
-          aria-label="Zoom in on price axis"
-          className="inline-flex size-7 items-center justify-center rounded text-zinc-600 transition-colors hover:bg-zinc-100 disabled:pointer-events-none disabled:text-zinc-300 disabled:hover:bg-transparent dark:text-zinc-300 dark:hover:bg-zinc-800 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
-        >
-          <ZoomInIcon className="block" />
-        </button>
-        <button
-          type="button"
-          onClick={zoomOut}
-          disabled={!canZoomOut}
-          title="Zoom out (wider price range)"
-          aria-label="Zoom out on price axis"
-          className="inline-flex size-7 items-center justify-center rounded text-zinc-600 transition-colors hover:bg-zinc-100 disabled:pointer-events-none disabled:text-zinc-300 disabled:hover:bg-transparent dark:text-zinc-300 dark:hover:bg-zinc-800 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
-        >
-          <ZoomOutIcon className="block" />
-        </button>
-      </div>
+      {!compact ? (
+        <div className="pointer-events-auto absolute right-1 top-1 z-10 flex gap-0.5 rounded-md border border-border bg-panel p-0.5">
+          <button
+            type="button"
+            onClick={zoomIn}
+            disabled={!canZoomIn}
+            title="Zoom in (narrower price range)"
+            aria-label="Zoom in on price axis"
+            className="inline-flex size-7 items-center justify-center rounded text-muted transition-colors hover:bg-panel2 disabled:pointer-events-none disabled:text-faint disabled:hover:bg-transparent"
+          >
+            <ZoomInIcon className="block" />
+          </button>
+          <button
+            type="button"
+            onClick={zoomOut}
+            disabled={!canZoomOut}
+            title="Zoom out (wider price range)"
+            aria-label="Zoom out on price axis"
+            className="inline-flex size-7 items-center justify-center rounded text-muted transition-colors hover:bg-panel2 disabled:pointer-events-none disabled:text-faint disabled:hover:bg-transparent"
+          >
+            <ZoomOutIcon className="block" />
+          </button>
+        </div>
+      ) : null}
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        className="pointer-events-none h-auto w-full max-w-full text-zinc-500 dark:text-zinc-400"
+        preserveAspectRatio={compact ? "none" : undefined}
+        className={
+          compact
+            ? "pointer-events-none w-full max-w-full text-muted"
+            : "pointer-events-none h-auto w-full max-w-full text-muted"
+        }
+        style={compact ? { height: H } : undefined}
         role="img"
         aria-labelledby={labelledBy}
         aria-describedby={describedBy}
@@ -377,6 +483,32 @@ export function PayoffChart({
               rx={6}
             />
           </clipPath>
+          {compact ? (
+            <>
+              <linearGradient
+                id={`${clipId}-up-fade`}
+                x1="0"
+                y1={yScaleFn(0)}
+                x2="0"
+                y2={PAD_T}
+                gradientUnits="userSpaceOnUse"
+              >
+                <stop offset="0%" style={{ stopColor: "var(--up)", stopOpacity: 0.32 }} />
+                <stop offset="100%" style={{ stopColor: "var(--up)", stopOpacity: 0 }} />
+              </linearGradient>
+              <linearGradient
+                id={`${clipId}-down-fade`}
+                x1="0"
+                y1={yScaleFn(0)}
+                x2="0"
+                y2={PAD_T + innerH}
+                gradientUnits="userSpaceOnUse"
+              >
+                <stop offset="0%" style={{ stopColor: "var(--down)", stopOpacity: 0.32 }} />
+                <stop offset="100%" style={{ stopColor: "var(--down)", stopOpacity: 0 }} />
+              </linearGradient>
+            </>
+          ) : null}
         </defs>
         <g clipPath={`url(#${clipId})`}>
           <rect
@@ -387,8 +519,8 @@ export function PayoffChart({
             rx={6}
             className={
               idle
-                ? "fill-zinc-100/50 dark:fill-zinc-950/40"
-                : "fill-zinc-100/80 dark:fill-zinc-950/50"
+                ? "fill-panel2/50"
+                : "fill-panel2/80"
             }
           />
           <line
@@ -398,59 +530,86 @@ export function PayoffChart({
             y2={yScaleFn(0)}
             className={
               idle
-                ? "stroke-zinc-200/70 dark:stroke-zinc-700/50"
-                : "stroke-zinc-300 dark:stroke-zinc-600"
+                ? "stroke-border-soft"
+                : "stroke-border"
             }
             strokeDasharray="4 4"
             strokeWidth={idle ? 0.6 : 0.75}
           />
-          {yGridTicks.map((t, i) => {
-            const span = maxY - minY || 1;
-            const onZero =
-              Math.abs(t) <= Math.max(span * 0.015, 1e-9) && zeroInYRange;
-            if (onZero) return null;
-            return (
-              <line
-                key={`y-grid-${i}`}
-                x1={PAD_L}
-                x2={PAD_L + innerW}
-                y1={yScaleFn(t)}
-                y2={yScaleFn(t)}
-                className={
-                  idle
-                    ? "stroke-zinc-200/45 dark:stroke-zinc-800/40"
-                    : "stroke-zinc-200/80 dark:stroke-zinc-800/80"
-                }
-                strokeWidth={idle ? 0.4 : 0.55}
-              />
-            );
-          })}
+          {!compact &&
+            yGridTicks.map((t, i) => {
+              const span = maxY - minY || 1;
+              const onZero =
+                Math.abs(t) <= Math.max(span * 0.015, 1e-9) && zeroInYRange;
+              if (onZero) return null;
+              return (
+                <line
+                  key={`y-grid-${i}`}
+                  x1={PAD_L}
+                  x2={PAD_L + innerW}
+                  y1={yScaleFn(t)}
+                  y2={yScaleFn(t)}
+                  className={
+                    idle
+                      ? "stroke-border-soft/60"
+                      : "stroke-border-soft"
+                  }
+                  strokeWidth={idle ? 0.4 : 0.55}
+                />
+              );
+            })}
           {!idle && belowFillD ? (
             <path
               d={belowFillD}
-              className="fill-rose-500/22 dark:fill-rose-400/18"
+              className={compact ? undefined : "fill-down/20"}
+              fill={compact ? `url(#${clipId}-down-fade)` : undefined}
             />
           ) : null}
           {!idle && aboveFillD ? (
             <path
               d={aboveFillD}
-              className="fill-emerald-500/24 dark:fill-emerald-400/18"
+              className={compact ? undefined : "fill-up/20"}
+              fill={compact ? `url(#${clipId}-up-fade)` : undefined}
             />
           ) : null}
-          {!idle && pathTodayD ? (
+          {!idle && !compact && pathTodayD ? (
             <path
               d={pathTodayD}
               fill="none"
-              className="stroke-violet-500/85 dark:stroke-violet-400/80"
+              className="stroke-accent/85"
               strokeWidth={1}
               strokeDasharray="4 3"
             />
           ) : null}
-          {!idle && pathD ? (
+          {!idle && compact ? (
+            <>
+              {pathBelowD ? (
+                <path
+                  d={pathBelowD}
+                  fill="none"
+                  className="stroke-down"
+                  strokeWidth={1.15}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              ) : null}
+              {pathAboveD ? (
+                <path
+                  d={pathAboveD}
+                  fill="none"
+                  className="stroke-up"
+                  strokeWidth={1.15}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              ) : null}
+            </>
+          ) : null}
+          {!idle && !compact && pathD ? (
             <path
               d={pathD}
               fill="none"
-              className="stroke-emerald-600/92 dark:stroke-emerald-400/88"
+              className="stroke-up"
               strokeWidth={1.15}
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -463,14 +622,25 @@ export function PayoffChart({
               y1={PAD_T}
               y2={PAD_T + innerH}
               className={
-                idle
-                  ? "stroke-sky-500/25 dark:stroke-sky-400/20"
-                  : "stroke-sky-500/75 dark:stroke-sky-400/70"
+                compact
+                  ? "stroke-faint"
+                  : idle
+                    ? "stroke-faint/40"
+                    : "stroke-faint"
               }
+              strokeDasharray={compact ? "2 2" : undefined}
               strokeWidth={idle ? 0.75 : 1}
             />
           ) : null}
-          {!idle &&
+          {!idle && compact && spotX != null && spotY != null ? (
+            <circle
+              cx={spotX}
+              cy={spotY}
+              r={3}
+              className="fill-faint"
+            />
+          ) : null}
+          {!idle && !compact &&
             breakevenXs.map((bx, i) => (
               <line
                 key={`be-${i}`}
@@ -478,35 +648,36 @@ export function PayoffChart({
                 x2={bx}
                 y1={PAD_T}
                 y2={PAD_T + innerH}
-                className="stroke-amber-500/38 dark:stroke-amber-400/32"
+                className="stroke-amber-accent/45"
                 strokeWidth={0.65}
                 strokeDasharray="4 4"
               />
             ))}
-          {xAxisTicks.map(({ x }, i) => (
-            <line
-              key={`x-grid-${i}`}
-              x1={x}
-              x2={x}
-              y1={PAD_T}
-              y2={PAD_T + innerH}
-              className="stroke-zinc-400/50 dark:stroke-zinc-500/40"
-              strokeWidth={0.65}
-            />
-          ))}
+          {!compact &&
+            xAxisTicks.map(({ x }, i) => (
+              <line
+                key={`x-grid-${i}`}
+                x1={x}
+                x2={x}
+                y1={PAD_T}
+                y2={PAD_T + innerH}
+                className="stroke-border-soft"
+                strokeWidth={0.65}
+              />
+            ))}
           {idle ? (
             <text
               x={PAD_L + innerW / 2}
               y={PAD_T + innerH / 2}
               textAnchor="middle"
               dominantBaseline="middle"
-              className="fill-zinc-400 text-[10px] dark:fill-zinc-500"
+              className="fill-faint text-[12px]"
             >
               Pick a readymade strategy or add legs to see payoff
             </text>
           ) : null}
         </g>
-        {zeroInYRange ? (
+        {!compact && zeroInYRange ? (
           <line
             x1={PAD_L - 6}
             x2={PAD_L}
@@ -514,43 +685,45 @@ export function PayoffChart({
             y2={yScaleFn(0)}
             className={
               idle
-                ? "stroke-zinc-500/80 dark:stroke-zinc-500/60"
-                : "stroke-zinc-600 dark:stroke-zinc-400"
+                ? "stroke-muted/70"
+                : "stroke-muted"
             }
             strokeWidth={0.9}
           />
         ) : null}
-        {yLabelTicks.map((t, i) => (
-          <text
-            key={`y-lab-${i}`}
-            x={PAD_L - 4}
-            y={yScaleFn(t)}
-            textAnchor="end"
-            dominantBaseline="middle"
-            className={
-              idle
-                ? "fill-zinc-400 font-normal tabular-nums dark:fill-zinc-600"
-                : Math.abs(t) <= Math.max((maxY - minY || 1) * 0.015, 1e-9)
-                  ? "fill-zinc-700 font-semibold tabular-nums dark:fill-zinc-200"
-                  : "fill-zinc-500 font-normal tabular-nums dark:fill-zinc-500"
-            }
-            fontSize={5.5}
-          >
-            {t >= 1e5 || t <= -1e5 ? `${(t / 1e5).toFixed(1)}L` : t.toFixed(0)}
-          </text>
-        ))}
-        {xAxisTicks.map(({ price, x }, i) => (
-          <text
-            key={`x-lab-${i}`}
-            x={x}
-            y={H - 5}
-            textAnchor="middle"
-            className="fill-zinc-600 font-normal tabular-nums dark:fill-zinc-400"
-            fontSize={5.5}
-          >
-            {formatXAxisPrice(price)}
-          </text>
-        ))}
+        {!compact &&
+          yLabelTicks.map((t, i) => (
+            <text
+              key={`y-lab-${i}`}
+              x={PAD_L - 4}
+              y={yScaleFn(t)}
+              textAnchor="end"
+              dominantBaseline="middle"
+              className={
+                idle
+                  ? "fill-faint font-normal tabular-nums"
+                  : Math.abs(t) <= Math.max((maxY - minY || 1) * 0.015, 1e-9)
+                    ? "fill-foreground font-semibold tabular-nums"
+                    : "fill-muted font-normal tabular-nums"
+              }
+              fontSize={5.5}
+            >
+              {t >= 1e5 || t <= -1e5 ? `${(t / 1e5).toFixed(1)}L` : t.toFixed(0)}
+            </text>
+          ))}
+        {!compact &&
+          xAxisTicks.map(({ price, x }, i) => (
+            <text
+              key={`x-lab-${i}`}
+              x={x}
+              y={H - 5}
+              textAnchor="middle"
+              className="fill-muted font-normal tabular-nums"
+              fontSize={5.5}
+            >
+              {formatXAxisPrice(price)}
+            </text>
+          ))}
       </svg>
     </div>
   );

@@ -13,6 +13,7 @@ import {
   formatConstraintViolation,
   formatRiskRewardRatio,
   isUnlimitedMaxLoss,
+  isUnlimitedMaxProfit,
 } from "@/lib/strategy-builder/trade-metrics";
 import type { ProposedTrade } from "@/lib/strategy-builder/types";
 
@@ -42,12 +43,12 @@ function fmtPx(n: number | null | undefined): string {
 
 function premiumCapsuleClass(premium: number | null | undefined): string {
   if (premium == null || !Number.isFinite(premium)) {
-    return "bg-zinc-500/10 text-zinc-700 ring-zinc-500/20 dark:text-zinc-300 dark:ring-zinc-400/25";
+    return "bg-panel2 text-muted";
   }
   if (premium < 0) {
-    return "bg-rose-500/14 text-rose-800 ring-rose-600/20 dark:bg-rose-500/12 dark:text-rose-300 dark:ring-rose-400/30";
+    return "bg-down-tint text-down";
   }
-  return "bg-emerald-500/14 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-500/12 dark:text-emerald-300 dark:ring-emerald-400/30";
+  return "bg-up-tint text-up";
 }
 
 export function ProposedStrategyTradeCard({
@@ -100,28 +101,28 @@ export function ProposedStrategyTradeCard({
 
   const vBar = (
     <span
-      className="mx-1.5 h-4 w-px shrink-0 self-center bg-zinc-200 dark:bg-zinc-600"
+      className="mx-1.5 h-4 w-px shrink-0 self-center bg-border-soft"
       aria-hidden
     />
   );
 
   return (
     <div
-      className={`group relative w-full min-w-0 rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
+      className={`group relative w-full min-w-0 rounded-[13px] border p-2.5 transition ${
         skipped
-          ? "border-zinc-200/60 bg-zinc-100/50 opacity-70 dark:border-zinc-700/60 dark:bg-zinc-900/40"
+          ? "border-border-soft bg-panel2 opacity-70"
           : relaxed
             ? selected
-              ? "border-amber-500 ring-2 ring-amber-500/40 bg-amber-50/80 dark:bg-amber-950/20"
-              : "border-amber-300/80 bg-amber-50/60 ring-1 ring-amber-500/15 dark:border-amber-700/60 dark:bg-amber-950/15 dark:ring-amber-400/10"
+              ? "border-amber-accent bg-amber-tint ring-1 ring-amber-accent/30"
+              : "border-amber-accent/40 bg-amber-tint/60 hover:border-amber-accent/70"
           : selected
-            ? "border-sky-500 ring-2 ring-sky-500/40 bg-white/95 dark:bg-zinc-950/70"
-            : "border-zinc-200/80 bg-white/90 ring-1 ring-zinc-950/[0.03] hover:border-zinc-300 dark:border-zinc-700/80 dark:bg-zinc-950/60 dark:ring-white/[0.04] dark:hover:border-zinc-600"
+            ? "border-accent bg-accent-tint"
+            : "border-border bg-panel hover:border-accent/40"
       }`}
     >
       <div className="space-y-2">
         <div className="flex items-start justify-between gap-2">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold tracking-tight text-foreground">
             {outlook ? (
               <span className="shrink-0">
                 <OutlookIcon outlook={outlook} />
@@ -129,14 +130,14 @@ export function ProposedStrategyTradeCard({
             ) : null}
             <span className="shrink-0 leading-snug">{trade.strategy_name}</span>
             {convictionLabel ? (
-              <span className="shrink-0 rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-medium text-violet-800 dark:text-violet-200">
+              <span className="shrink-0 rounded-full bg-gtt-tint px-2 py-0.5 text-[12px] font-medium text-gtt">
                 {convictionLabel}
               </span>
             ) : null}
             {(trade.badges ?? []).map((badge) => (
               <span
                 key={badge}
-                className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:text-emerald-200"
+                className="shrink-0 rounded-full bg-up-tint px-2 py-0.5 text-[12px] font-medium text-up"
               >
                 {badge}
               </span>
@@ -145,26 +146,26 @@ export function ProposedStrategyTradeCard({
             (trade.badges ?? []).length === 0 &&
             trade.variant_rank != null &&
             trade.variant_rank > 0 ? (
-              <span className="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-200">
+              <span className="shrink-0 rounded-full bg-accent-tint px-2 py-0.5 text-[12px] font-medium text-accent-strong">
                 #{trade.variant_rank}
               </span>
             ) : null}
             {trade.structure_modified ? (
-              <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
+              <span className="shrink-0 rounded-full bg-amber-tint px-2 py-0.5 text-[12px] font-medium text-amber-accent">
                 Modified
               </span>
             ) : null}
             {relaxed && (trade.constraint_violations?.length ?? 0) > 0 ? (
-              <span className="shrink-0 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-medium text-amber-900 dark:text-amber-100">
+              <span className="shrink-0 rounded-full bg-amber-tint px-2 py-0.5 text-[12px] font-semibold text-amber-accent">
                 Below your thresholds
               </span>
             ) : null}
           </div>
           {!skipped && (useHeroMetric || prem != null) ? (
             <span
-              className={`shrink-0 self-start rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ring-1 ${
+              className={`shrink-0 self-start rounded-full px-2.5 py-1 font-mono text-xs font-semibold tabular-nums ${
                 useHeroMetric
-                  ? "bg-sky-500/14 text-sky-900 ring-sky-600/20 dark:bg-sky-500/12 dark:text-sky-200 dark:ring-sky-400/30"
+                  ? "bg-accent-tint text-accent-strong"
                   : premiumCapsuleClass(prem)
               }`}
               title={
@@ -196,18 +197,18 @@ export function ProposedStrategyTradeCard({
         </div>
 
         {skipped ? (
-          <p className="whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="whitespace-nowrap text-xs text-muted">
             {trade.skip_reason ?? "Not available"}
           </p>
         ) : (
           <>
             {trade.ranking_summary ? (
-              <p className="text-xs leading-snug text-zinc-500 dark:text-zinc-400">
+              <p className="text-xs leading-snug text-muted">
                 {trade.ranking_summary}
               </p>
             ) : null}
             {relaxed && (trade.constraint_violations?.length ?? 0) > 0 ? (
-              <p className="text-xs leading-snug text-amber-800 dark:text-amber-200">
+              <p className="text-xs leading-snug text-amber-accent">
                 {(trade.constraint_violations ?? [])
                   .map((v) =>
                     formatConstraintViolation(
@@ -222,7 +223,7 @@ export function ProposedStrategyTradeCard({
             ) : null}
             {useHeroMetric && secondaryFromApi.length > 0 ? (
               <div
-                className={`${rowClass} flex-wrap gap-x-3 gap-y-1 text-zinc-600 dark:text-zinc-300`}
+                className={`${rowClass} flex-wrap gap-x-3 gap-y-1 text-muted`}
               >
                 {secondaryFromApi.map((metric) => (
                   <span key={metric.label} className="inline-flex shrink-0 items-center gap-1">
@@ -233,10 +234,10 @@ export function ProposedStrategyTradeCard({
                     )}
                     :{" "}
                     <strong
-                      className={`tabular-nums ${
+                      className={`font-mono tabular-nums ${
                         isPopMetricLabel(metric.label)
-                          ? "font-normal text-zinc-500 dark:text-zinc-400"
-                          : "text-zinc-800 dark:text-zinc-200"
+                          ? "font-normal text-muted"
+                          : "text-foreground"
                       }`}
                     >
                       {metric.value}
@@ -247,11 +248,23 @@ export function ProposedStrategyTradeCard({
               </div>
             ) : (
             <div
-              className={`${rowClass} flex-wrap gap-x-3 gap-y-1 text-zinc-600 dark:text-zinc-300`}
+              className={`${rowClass} flex-wrap gap-x-3 gap-y-1 text-muted`}
             >
+              {trade.max_profit != null ? (
+                <span className="inline-flex shrink-0 items-center gap-1">
+                  Max profit:{" "}
+                  <strong className="inline-flex items-center font-mono tabular-nums text-up">
+                    {isUnlimitedMaxProfit(trade.max_profit) ? (
+                      <InfinitySymbol />
+                    ) : (
+                      formatIndianMoneyCompact(trade.max_profit!)
+                    )}
+                  </strong>
+                </span>
+              ) : null}
               <span className="inline-flex shrink-0 items-center gap-1">
                 Max loss:{" "}
-                <strong className="inline-flex items-center tabular-nums">
+                <strong className="inline-flex items-center font-mono tabular-nums text-down">
                   {isUnlimitedMaxLoss(trade.max_loss) ? (
                     <InfinitySymbol />
                   ) : (
@@ -261,7 +274,7 @@ export function ProposedStrategyTradeCard({
               </span>
               <span className="inline-flex shrink-0 items-center gap-1">
                 R:R{" "}
-                <strong className="inline-flex items-center tabular-nums">
+                <strong className="inline-flex items-center font-mono tabular-nums">
                   {rrLabel === "∞" ? <InfinitySymbol /> : rrLabel}
                 </strong>
               </span>
@@ -270,7 +283,7 @@ export function ProposedStrategyTradeCard({
                   <span className="inline-flex shrink-0 items-center gap-1">
                     <PopLabel variant="inline" showInfo={false} />
                     :{" "}
-                    <strong className="text-zinc-800 dark:text-zinc-200">
+                    <strong className="font-mono tabular-nums text-foreground">
                       {pop.toFixed(1)}%
                     </strong>
                   </span>
@@ -279,7 +292,7 @@ export function ProposedStrategyTradeCard({
               ) : null}
               <span className="inline-flex shrink-0 items-center gap-1">
                 SPAN:{" "}
-                <strong className="tabular-nums">
+                <strong className="font-mono tabular-nums">
                   {trade.span_margin != null
                     ? formatIndianMoneyCompact(trade.span_margin)
                     : "—"}
@@ -287,7 +300,7 @@ export function ProposedStrategyTradeCard({
               </span>
               <span className="inline-flex shrink-0 items-center gap-1">
                 ELM:{" "}
-                <strong className="tabular-nums">
+                <strong className="font-mono tabular-nums">
                   {trade.elm_requirement != null && trade.elm_requirement > 0
                     ? formatIndianMoneyCompact(trade.elm_requirement)
                     : "—"}
@@ -296,7 +309,7 @@ export function ProposedStrategyTradeCard({
             </div>
             )}
 
-            <div className="space-y-1.5 border-t border-zinc-100 pt-1.5 dark:border-zinc-800">
+            <div className="space-y-1.5 border-t border-border-soft pt-1.5">
               {trade.legs.map((leg, i) => {
                 const abbr = leg.right === "Put" ? "PE" : "CE";
                 const ratioStr =
@@ -308,29 +321,49 @@ export function ProposedStrategyTradeCard({
                 return (
                   <div
                     key={`${leg.strike}-${leg.right}-${leg.side}-${i}`}
-                    className="rounded border border-zinc-100 bg-zinc-50/80 px-2 py-1.5 text-[11px] dark:border-zinc-800 dark:bg-zinc-900/50"
+                    className="rounded border border-border-soft bg-panel2 px-2 py-1.5 text-[13px]"
                   >
                     <div
-                      className={`${rowClass} gap-x-2 font-medium text-zinc-800 dark:text-zinc-200`}
+                      className={`${rowClass} gap-x-2 font-medium text-foreground`}
                     >
                       <span className="shrink-0">
-                        {leg.side} {leg.strike.toLocaleString("en-IN")} {abbr}
+                        {leg.side}{" "}
+                        <span className="font-mono tabular-nums">
+                          {leg.strike.toLocaleString("en-IN")}
+                        </span>{" "}
+                        <span className="font-mono">{abbr}</span>
                       </span>
                       {vBar}
-                      <span className="shrink-0 tabular-nums">×{leg.quantity}</span>
+                      <span className="shrink-0 font-mono tabular-nums">×{leg.quantity}</span>
                     </div>
                     <div
-                      className={`${rowClass} mt-0.5 gap-x-2 text-zinc-500 dark:text-zinc-400`}
+                      className={`${rowClass} mt-0.5 gap-x-2 text-muted`}
                     >
-                      <span className="shrink-0">LTP {fmtPx(leg.ltp)}</span>
                       <span className="shrink-0">
-                        Bid {fmtPx(leg.best_bid_price)} / Offer{" "}
-                        {fmtPx(leg.best_offer_price)}
+                        LTP <span className="font-mono tabular-nums">{fmtPx(leg.ltp)}</span>
                       </span>
-                      <span className="shrink-0">B:S {ratioStr}</span>
                       <span className="shrink-0">
-                        Buy {formatBookQtyInL(leg.total_buy_qty ?? NaN)} / Sell{" "}
-                        {formatBookQtyInL(leg.total_sell_qty ?? NaN)}
+                        Bid{" "}
+                        <span className="font-mono tabular-nums">
+                          {fmtPx(leg.best_bid_price)}
+                        </span>{" "}
+                        / Offer{" "}
+                        <span className="font-mono tabular-nums">
+                          {fmtPx(leg.best_offer_price)}
+                        </span>
+                      </span>
+                      <span className="shrink-0">
+                        B:S <span className="font-mono tabular-nums">{ratioStr}</span>
+                      </span>
+                      <span className="shrink-0">
+                        Buy{" "}
+                        <span className="font-mono tabular-nums">
+                          {formatBookQtyInL(leg.total_buy_qty ?? NaN)}
+                        </span>{" "}
+                        / Sell{" "}
+                        <span className="font-mono tabular-nums">
+                          {formatBookQtyInL(leg.total_sell_qty ?? NaN)}
+                        </span>
                       </span>
                     </div>
                   </div>
@@ -347,8 +380,8 @@ export function ProposedStrategyTradeCard({
             type="button"
             className={
               selected
-                ? "w-full cursor-default rounded-lg border border-sky-600 bg-sky-600 py-2.5 text-sm font-semibold text-white"
-                : "w-full rounded-lg border border-sky-600 bg-transparent py-2.5 text-sm font-semibold text-sky-700 transition hover:bg-sky-600 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 dark:border-sky-500 dark:text-sky-300 dark:hover:bg-sky-600 dark:hover:text-white"
+                ? "w-full cursor-default rounded-lg bg-accent-strong py-2.5 text-sm font-bold text-accent-ink"
+                : "w-full rounded-lg border border-accent-strong bg-transparent py-2.5 text-sm font-bold text-accent-strong transition hover:bg-accent-strong hover:text-accent-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
             }
             onClick={onSelect}
             aria-pressed={selected}
