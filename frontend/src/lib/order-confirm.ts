@@ -1,3 +1,6 @@
+import type { ExecutionPreviewLeg } from "@/components/order/OrderExecutionConfirmDialog";
+import { normRight } from "@/lib/portfolio/legNormalize";
+
 /** Mirrors legacy `openOrderConfirmModal` / `OrderFormRequest` buy & sell fields. */
 export type OrderConfirmPayload = {
   product_type: string;
@@ -61,6 +64,25 @@ export function squareOffToOrderPayload(
     quantity: qty,
     price: ltpAsOrderPrice(row.ltp),
     action: closeAction,
+  };
+}
+
+/** Builds an `ExecutionPreviewLeg` for the multi-leg confirm dialog from a portfolio row, reusing `squareOffToOrderPayload`'s validation + side-reversal. Price/aggressive come from the caller (e.g. user edits in a Square Off modal), not from the row's LTP. */
+export function positionRowToExecutionLeg(
+  row: PortfolioLikeRow,
+  overrides: { premiumPerUnit: number; aggressiveLimit: boolean },
+): ExecutionPreviewLeg | null {
+  const payload = squareOffToOrderPayload(row);
+  if (!payload) return null;
+  const right = normRight(payload.right);
+  if (!right) return null;
+  return {
+    strike: Number(payload.strike_price),
+    right,
+    side: payload.action,
+    quantity: Number(payload.quantity),
+    premiumPerUnit: overrides.premiumPerUnit,
+    aggressiveLimit: overrides.aggressiveLimit,
   };
 }
 

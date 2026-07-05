@@ -606,4 +606,30 @@
   .sb-range-slim.sb-range-otm:focus-visible::-moz-range-thumb {
     box-shadow: none;
   }
+
+  /**
+   * Slender variant for space-constrained sliders (Portfolio what-if scenario
+   * controls): thinner rail + smaller thumb than the default sb-range-slim sizing.
+   * Margin-top keeps the same centering formula as the base class: -(thumb - track) / 2.
+   */
+  .sb-range-slim.sb-range-xs {
+    height: 1rem;
+  }
+  .sb-range-slim.sb-range-xs::-webkit-slider-runnable-track {
+    height: 4px;
+  }
+  .sb-range-slim.sb-range-xs::-webkit-slider-thumb {
+    width: 13px;
+    height: 13px;
+    margin-top: -4.5px;
+    border-width: 2px;
+  }
+  .sb-range-slim.sb-range-xs::-moz-range-track {
+    height: 4px;
+  }
+  .sb-range-slim.sb-range-xs::-moz-range-thumb {
+    width: 13px;
+    height: 13px;
+    border-width: 2px;
+  }
 }

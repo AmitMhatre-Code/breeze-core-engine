@@ -195,7 +195,12 @@ async def get_chain(
     if not stock_code.strip() or not expiry_date.strip():
         raise HTTPException(status_code=400, detail="stock_code and expiry_date required")
     holder = (subscription_holder or "").strip() or None
-    data = breeze.get_full_option_chain(
+    # get_full_option_chain blocks synchronously (WS subscribe + poll-wait for
+    # chain completeness, up to CHAIN_WS_WAIT_TIMEOUT_MS) — offload to a worker
+    # thread so a slow/cold chain doesn't stall the single-process event loop
+    # for every other in-flight request.
+    data = await asyncio.to_thread(
+        breeze.get_full_option_chain,
         ctx.user_id,
         stock_code.strip(),
         exchange_code,
@@ -203,6 +208,34 @@ async def get_chain(
         holder_id=holder,
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderChain")
+    return StrategyBuilderChainResponse(**data)
+
+
+@router.get("/payoff-quote", response_model=StrategyBuilderChainResponse)
+async def get_payoff_quote(
+    stock_code: str,
+    expiry_date: str,
+    exchange_code: str = cfg.NFO,
+    subscription_holder: str | None = None,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Same response shape as /chain (a chain_rows list + spot/atm_strike/lot_size),
+    but only ever contains the ATM strike's row — see fetch_payoff_quote_routed
+    for why the portfolio payoff panel doesn't need the rest of the chain."""
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    if not stock_code.strip() or not expiry_date.strip():
+        raise HTTPException(status_code=400, detail="stock_code and expiry_date required")
+    holder = (subscription_holder or "").strip() or None
+    data = await asyncio.to_thread(
+        breeze.get_payoff_quote,
+        ctx.user_id,
+        stock_code.strip(),
+        exchange_code,
+        expiry_date.strip(),
+        holder_id=holder,
+    )
+    AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderPayoffQuote")
     return StrategyBuilderChainResponse(**data)
 
 

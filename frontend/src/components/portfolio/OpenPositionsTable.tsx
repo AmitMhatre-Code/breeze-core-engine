@@ -9,13 +9,13 @@ import {
   type CSSProperties,
   type MouseEvent,
 } from "react";
-import Link from "next/link";
 import {
   OrderExecutionConfirmDialog,
   type ExecutionPreviewLeg,
 } from "@/components/order/OrderExecutionConfirmDialog";
 import { PortfolioGroupPayoffPanel } from "@/components/portfolio/PortfolioGroupPayoffPanel";
 import { PortfolioHedgePanel } from "@/components/portfolio/PortfolioHedgePanel";
+import { SquareOffLegsModal } from "@/components/portfolio/SquareOffLegsModal";
 import type { StrategyHedgeCandidate } from "@/lib/hedge/api";
 import {
   candidateToExecutionLeg,
@@ -27,7 +27,7 @@ import { formatSignedRupees } from "@/lib/portfolio/totals";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { useGroupLiveOverlay } from "@/lib/portfolio/useGroupLiveOverlay";
 import { useGroupSubscriptionHolders } from "@/lib/portfolio/useGroupSubscriptionHolders";
-import { ltpAsOrderPrice, squareOffToOrderPayload } from "@/lib/order-confirm";
+import { squareOffToOrderPayload } from "@/lib/order-confirm";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
 import type { StrategyLeg } from "@/lib/strategy-builder/types";
@@ -182,23 +182,6 @@ function formatSpot(raw: unknown): { text: string; className: string } {
   return { text: formatPriceCell(raw), className: "tabular-nums" };
 }
 
-export function squareOffHref(row: PortfolioPositionRecord): string {
-  const params = new URLSearchParams({
-    action: "SquareOff",
-    position: String(row.action ?? ""),
-    product_type: String(row.product_type ?? ""),
-    stock_code: String(row.stock_code ?? ""),
-    exchange_code: String(row.exchange_code ?? ""),
-    expiry_date: String(row.expiry_date ?? ""),
-    right: String(row.right ?? ""),
-    strike_price: String(row.strike_price ?? ""),
-    quantity: String(row.quantity ?? ""),
-  });
-  const ltpPrice = ltpAsOrderPrice(row.ltp);
-  if (ltpPrice !== "0") params.set("price", ltpPrice);
-  return `/place-order?${params.toString()}`;
-}
-
 /**
  * Accent pill buttons/badges: `--accent-strong`/`--accent`/`--accent-ink` already flip per
  * theme (see globals.css), so one inline style works in both light and dark — no dark:
@@ -208,19 +191,11 @@ const ACCENT_OUTLINE_STYLE: CSSProperties = {
   borderColor: "var(--accent-strong)",
   color: "var(--accent-strong)",
 };
-const ACCENT_SOLID_STYLE: CSSProperties = {
-  backgroundColor: "var(--accent-strong)",
-  color: "var(--accent-ink)",
-};
 
 const pillOutlineTable =
   "inline-flex shrink-0 items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition hover:bg-[var(--accent-tint)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] 2xl:px-3.5 2xl:py-2 2xl:text-sm";
 const pillOutlineCard =
   "inline-flex items-center justify-center rounded-lg border px-3 py-2.5 text-sm font-semibold transition hover:bg-[var(--accent-tint)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]";
-const pillSolidTable =
-  "inline-flex shrink-0 items-center justify-center rounded-lg px-3 py-1.5 text-xs font-semibold transition hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background 2xl:px-3.5 2xl:py-2 2xl:text-sm";
-const pillSolidCard =
-  "inline-flex shrink-0 items-center justify-center rounded-lg px-3 py-2 text-sm font-semibold transition hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]";
 
 const btnPrimaryTable = pillOutlineTable;
 const btnPrimaryCard = pillOutlineCard;
@@ -245,14 +220,25 @@ function sumNumericField(
   return any ? sum : null;
 }
 
-function PositionActionsTable({ row }: { row: PortfolioPositionRecord }) {
+function PositionActionsTable({
+  row,
+  onSquareOff,
+}: {
+  row: PortfolioPositionRecord;
+  onSquareOff: () => void;
+}) {
   const squareOk = squareOffToOrderPayload(row) != null;
   return (
     <div className="flex flex-nowrap items-center justify-end gap-1.5 2xl:gap-2">
       {squareOk ? (
-        <Link href={squareOffHref(row)} className={btnPrimaryTable} style={ACCENT_OUTLINE_STYLE}>
+        <button
+          type="button"
+          className={btnPrimaryTable}
+          style={ACCENT_OUTLINE_STYLE}
+          onClick={onSquareOff}
+        >
           Square Off
-        </Link>
+        </button>
       ) : (
         <span
           className={`${btnPrimaryTable} pointer-events-none cursor-not-allowed opacity-50`}
@@ -266,18 +252,25 @@ function PositionActionsTable({ row }: { row: PortfolioPositionRecord }) {
   );
 }
 
-function PositionActionsCard({ row }: { row: PortfolioPositionRecord }) {
+function PositionActionsCard({
+  row,
+  onSquareOff,
+}: {
+  row: PortfolioPositionRecord;
+  onSquareOff: () => void;
+}) {
   const squareOk = squareOffToOrderPayload(row) != null;
   return (
     <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap">
       {squareOk ? (
-        <Link
-          href={squareOffHref(row)}
+        <button
+          type="button"
           className={`${btnPrimaryCard} w-full min-h-11 sm:min-h-0 sm:flex-1`}
           style={ACCENT_OUTLINE_STYLE}
+          onClick={onSquareOff}
         >
           Square Off
-        </Link>
+        </button>
       ) : (
         <span
           className={`${btnPrimaryCard} w-full min-h-11 cursor-not-allowed opacity-50 sm:min-h-0 sm:flex-1`}
@@ -362,31 +355,20 @@ type OpenPositionsTableProps = {
   onLiveGroupCountChange?: (count: number) => void;
 };
 
-function GroupHedgeButton({
+/** One-shot pill trigger (group-level "Square Off All", in-panel "Hedge") — always the outline style, never a toggle. */
+function GroupPillButton({
   variant,
-  active,
+  label,
   onClick,
 }: {
   variant: "table" | "card";
-  active: boolean;
+  label: string;
   onClick: (e: MouseEvent) => void;
 }) {
-  const className = active
-    ? variant === "table"
-      ? pillSolidTable
-      : pillSolidCard
-    : variant === "table"
-      ? pillOutlineTable
-      : pillOutlineCard;
+  const className = variant === "table" ? pillOutlineTable : pillOutlineCard;
   return (
-    <button
-      type="button"
-      className={className}
-      style={active ? ACCENT_SOLID_STYLE : ACCENT_OUTLINE_STYLE}
-      aria-pressed={active}
-      onClick={onClick}
-    >
-      {active ? "Hedging…" : "Hedge"}
+    <button type="button" className={className} style={ACCENT_OUTLINE_STYLE} onClick={onClick}>
+      {label}
     </button>
   );
 }
@@ -400,6 +382,7 @@ function GroupExpandedExtras({
   onSelectCandidate,
   onLotSizeChange,
   onExecuteHedge,
+  onActivateHedge,
 }: {
   g: PortfolioPositionGroup;
   holderId: string;
@@ -409,16 +392,11 @@ function GroupExpandedExtras({
   onSelectCandidate: (c: StrategyHedgeCandidate | null) => void;
   onLotSizeChange: (lotSize: number) => void;
   onExecuteHedge: () => void;
+  onActivateHedge: () => void;
 }) {
   return (
     <div className="border-t border-border-soft bg-panel2">
-      <div
-        className={
-          hedgeActive
-            ? "grid min-w-0 divide-y divide-border-soft md:grid-cols-[3fr_2fr] md:divide-x md:divide-y-0"
-            : "min-w-0"
-        }
-      >
+      <div className="grid min-w-0 divide-y divide-border-soft md:grid-cols-[3fr_2fr] md:divide-x md:divide-y-0">
         <PortfolioGroupPayoffPanel
           stockCode={g.stockCode}
           exchangeCode={g.exchangeCode}
@@ -435,7 +413,18 @@ function GroupExpandedExtras({
             onExecute={onExecuteHedge}
             onLotSizeChange={onLotSizeChange}
           />
-        ) : null}
+        ) : (
+          <div className="flex min-w-0 items-center justify-center p-6">
+            <button
+              type="button"
+              className={pillOutlineTable}
+              style={ACCENT_OUTLINE_STYLE}
+              onClick={onActivateHedge}
+            >
+              Hedge
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -447,7 +436,9 @@ type GroupBlockProps = {
   onToggle: () => void;
   holderId: string;
   hedgeActive: boolean;
-  onHedgeButtonClick: (e: MouseEvent) => void;
+  onActivateHedge: () => void;
+  onSquareOffAllClick: (e: MouseEvent) => void;
+  onSquareOffRow: (row: PortfolioPositionRecord) => void;
   proposedLeg: StrategyLeg | null;
   selectedCandidate: StrategyHedgeCandidate | null;
   onSelectCandidate: (c: StrategyHedgeCandidate | null) => void;
@@ -468,7 +459,9 @@ function PortfolioGroupTableBlock({
   onToggle,
   holderId,
   hedgeActive,
-  onHedgeButtonClick,
+  onActivateHedge,
+  onSquareOffAllClick,
+  onSquareOffRow,
   proposedLeg,
   selectedCandidate,
   onSelectCandidate,
@@ -537,7 +530,13 @@ function PortfolioGroupTableBlock({
         </td>
         <td className={`${tdShell} text-right tabular-nums app-text-muted`}>—</td>
         <td className={`${tdBase} text-right align-middle`}>
-          <GroupHedgeButton variant="table" active={hedgeActive} onClick={onHedgeButtonClick} />
+          {g.rows.length > 1 ? (
+            <GroupPillButton
+              variant="table"
+              label="Square Off"
+              onClick={onSquareOffAllClick}
+            />
+          ) : null}
         </td>
       </tr>
       {isOpen
@@ -595,7 +594,10 @@ function PortfolioGroupTableBlock({
                   {cr.text}
                 </td>
                 <td className={`${tdBase} text-right align-middle`}>
-                  <PositionActionsTable row={row} />
+                  <PositionActionsTable
+                    row={row}
+                    onSquareOff={() => onSquareOffRow(row)}
+                  />
                 </td>
               </tr>
             );
@@ -603,7 +605,18 @@ function PortfolioGroupTableBlock({
         : null}
       {isOpen ? (
         <tr className="app-table-row">
-          <td className="p-0 align-top" colSpan={14}>
+          {/*
+            w-px + min-w-full: table-auto sizes columns from each cell's natural
+            content width, and the hedge-active grid's own natural width (payoff
+            chart + candidates panel side by side) is wider than the table's other
+            rows need — without this, that grid drags the whole table wider than
+            its wrapper, pushing the candidates panel off-screen behind horizontal
+            scroll. w-px tells the auto-layout pass "ignore my content, I only
+            need 1px" (so column widths are driven by the real data rows instead);
+            min-w-full then re-expands this cell to whatever width the table
+            actually settles on, once that circular sizing dependency is broken.
+          */}
+          <td className="w-px min-w-full p-0 align-top" colSpan={14}>
             <GroupExpandedExtras
               g={g}
               holderId={holderId}
@@ -613,6 +626,7 @@ function PortfolioGroupTableBlock({
               onSelectCandidate={onSelectCandidate}
               onLotSizeChange={onLotSizeChange}
               onExecuteHedge={onExecuteHedge}
+              onActivateHedge={onActivateHedge}
             />
           </td>
         </tr>
@@ -628,7 +642,9 @@ function PortfolioGroupCardBlock({
   onToggle,
   holderId,
   hedgeActive,
-  onHedgeButtonClick,
+  onActivateHedge,
+  onSquareOffAllClick,
+  onSquareOffRow,
   proposedLeg,
   selectedCandidate,
   onSelectCandidate,
@@ -690,7 +706,13 @@ function PortfolioGroupCardBlock({
             {formatSpanElm(elmSum)}
           </p>
         </button>
-        <GroupHedgeButton variant="card" active={hedgeActive} onClick={onHedgeButtonClick} />
+        {g.rows.length > 1 ? (
+          <GroupPillButton
+            variant="card"
+            label="Square Off"
+            onClick={onSquareOffAllClick}
+          />
+        ) : null}
       </div>
       {isOpen ? (
         <div className="border-t border-border-soft">
@@ -757,7 +779,10 @@ function PortfolioGroupCardBlock({
                     <span className="app-text-muted">Carry Returns:</span>{" "}
                     <span className={cr.className}>{cr.text}</span>
                   </p>
-                  <PositionActionsCard row={row} />
+                  <PositionActionsCard
+                    row={row}
+                    onSquareOff={() => onSquareOffRow(row)}
+                  />
                 </div>
               );
             })}
@@ -771,6 +796,7 @@ function PortfolioGroupCardBlock({
             onSelectCandidate={onSelectCandidate}
             onLotSizeChange={onLotSizeChange}
             onExecuteHedge={onExecuteHedge}
+            onActivateHedge={onActivateHedge}
           />
         </div>
       ) : null}
@@ -798,6 +824,9 @@ export function OpenPositionsTable({
     useState<StrategyHedgeCandidate | null>(null);
   const [hedgeLotSize, setHedgeLotSize] = useState(1);
   const [executeOpen, setExecuteOpen] = useState(false);
+  const [squareOffRows, setSquareOffRows] = useState<
+    PortfolioPositionRecord[] | null
+  >(null);
   const { getHolderId, releaseGroup } = useGroupSubscriptionHolders();
   const [liveGroupKeys, setLiveGroupKeys] = useState<Set<string>>(
     () => new Set(),
@@ -854,10 +883,7 @@ export function OpenPositionsTable({
           next.delete(key);
           releaseGroup(key);
           if (hedgeActiveGroupKey === key) {
-            setHedgeActiveGroupKey(null);
-            setSelectedCandidate(null);
-            setHedgeLotSize(1);
-            setExecuteOpen(false);
+            clearHedgeState();
           }
         } else {
           next.add(key);
@@ -865,32 +891,27 @@ export function OpenPositionsTable({
         return next;
       });
     },
-    [hedgeActiveGroupKey, releaseGroup],
+    [hedgeActiveGroupKey, releaseGroup, clearHedgeState],
   );
 
-  const openHedgeForGroup = useCallback((key: string) => {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      next.add(key);
-      return next;
-    });
+  const activateHedgeForGroup = useCallback((key: string) => {
     setHedgeActiveGroupKey(key);
     setSelectedCandidate(null);
     setHedgeLotSize(1);
     setExecuteOpen(false);
   }, []);
 
-  const handleHedgeButtonClick = useCallback(
-    (e: MouseEvent, groupKey: string) => {
+  const handleSquareOffAllClick = useCallback(
+    (e: MouseEvent, rows: PortfolioPositionRecord[]) => {
       e.stopPropagation();
-      if (hedgeActiveGroupKey === groupKey) {
-        clearHedgeState();
-        return;
-      }
-      openHedgeForGroup(groupKey);
+      setSquareOffRows(rows);
     },
-    [clearHedgeState, hedgeActiveGroupKey, openHedgeForGroup],
+    [],
   );
+
+  const handleSquareOffRow = useCallback((row: PortfolioPositionRecord) => {
+    setSquareOffRows([row]);
+  }, []);
 
   const handleExecuteHedge = useCallback(() => {
     if (!selectedCandidate || !hedgeActiveGroup) return;
@@ -972,7 +993,9 @@ export function OpenPositionsTable({
                     onToggle={() => toggleGroup(g.key)}
                     holderId={getHolderId(g.key)}
                     hedgeActive={hedgeActiveGroupKey === g.key}
-                    onHedgeButtonClick={(e) => handleHedgeButtonClick(e, g.key)}
+                    onActivateHedge={() => activateHedgeForGroup(g.key)}
+                    onSquareOffAllClick={(e) => handleSquareOffAllClick(e, g.rows)}
+                    onSquareOffRow={handleSquareOffRow}
                     proposedLeg={proposedLegForActive}
                     selectedCandidate={selectedCandidate}
                     onSelectCandidate={setSelectedCandidate}
@@ -1002,7 +1025,9 @@ export function OpenPositionsTable({
               onToggle={() => toggleGroup(g.key)}
               holderId={getHolderId(g.key)}
               hedgeActive={hedgeActiveGroupKey === g.key}
-              onHedgeButtonClick={(e) => handleHedgeButtonClick(e, g.key)}
+              onActivateHedge={() => activateHedgeForGroup(g.key)}
+              onSquareOffAllClick={(e) => handleSquareOffAllClick(e, g.rows)}
+              onSquareOffRow={handleSquareOffRow}
               proposedLeg={proposedLegForActive}
               selectedCandidate={selectedCandidate}
               onSelectCandidate={setSelectedCandidate}
@@ -1031,6 +1056,12 @@ export function OpenPositionsTable({
           }}
         />
       ) : null}
+
+      <SquareOffLegsModal
+        rows={squareOffRows ?? []}
+        open={squareOffRows != null}
+        onClose={() => setSquareOffRows(null)}
+      />
     </>
   );
 }

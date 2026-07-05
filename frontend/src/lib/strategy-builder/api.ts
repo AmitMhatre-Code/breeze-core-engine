@@ -33,6 +33,38 @@ export async function fetchStrategyBuilderChain(
   );
 }
 
+/**
+ * Same response shape as fetchStrategyBuilderChain (a chain_rows list plus
+ * spot_price/atm_strike/lot_size), but chain_rows only ever contains the ATM
+ * strike's row. Use this instead of the full chain for consumers — like the
+ * portfolio payoff panel — that only read chain_rows[0] and the ATM row and
+ * price every leg from position data rather than a live chain quote: it
+ * resolves without waiting for every other strike in the chain to tick.
+ */
+export async function fetchPortfolioPayoffQuote(
+  params: {
+    stock_code: string;
+    expiry_date: string;
+    exchange_code: string;
+    subscription_holder?: string;
+  },
+  signal?: AbortSignal,
+): Promise<ChainApiResponse> {
+  const q = new URLSearchParams({
+    stock_code: params.stock_code,
+    expiry_date: params.expiry_date,
+    exchange_code: params.exchange_code,
+  });
+  const holder = params.subscription_holder?.trim();
+  if (holder) {
+    q.set("subscription_holder", holder);
+  }
+  return apiClient.get<ChainApiResponse>(
+    `/strategy-builder/payoff-quote?${q.toString()}`,
+    signal,
+  );
+}
+
 export type ProposeTradesParams = {
   exchange_code: string;
   stock_code: string;

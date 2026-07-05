@@ -1,6 +1,8 @@
 "use client";
 
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { useId, useMemo, useState } from "react";
+import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 
 type Props = {
   /** No legs yet — muted chrome only, no payoff curves or breakevens. */
@@ -21,11 +23,14 @@ type Props = {
    * Zoom out reaches 1 (full range). Default 0.5: when the domain is spot ±40%, the initial view is spot ±20%.
    */
   defaultSpanFraction?: number;
+  /** Exact leg strikes to mark as labeled dashed verticals (compact mode only). */
+  strikes?: number[];
   /**
-   * Minimal presentation for space-constrained contexts (Portfolio group payoff): no zoom
-   * controls, no axis tick labels/gridlines, no mark-to-model overlay, no breakeven lines.
-   * The expiry P&L line switches from a single green stroke to green-above/red-below zero,
-   * and the spot indicator becomes a plain dotted line with a dot marker on the curve.
+   * Space-constrained presentation (Portfolio group payoff): no zoom controls; the expiry
+   * P&L line switches from a single green stroke to green-above/red-below zero. Unlike the
+   * old minimal preset, compact now renders the same grid/axes/breakevens/T+0 overlay as full
+   * mode (via an HTML overlay, since its viewBox is stretched non-uniformly to a fixed height)
+   * plus leg-strike markers and a hover crosshair with a rich tooltip.
    */
   compact?: boolean;
 };
@@ -38,6 +43,20 @@ function formatXAxisPrice(v: number): string {
   if (a >= 1000) return v.toFixed(0);
   if (a >= 100) return v.toFixed(1);
   return v.toFixed(2);
+}
+
+/** Compact ₹ axis tick, e.g. "+₹4.2k", "−₹1.1L", "₹0" — used by the compact HTML overlay. */
+function formatPnlAxisTick(v: number): string {
+  if (!Number.isFinite(v)) return "—";
+  const sign = v < 0 ? "−" : v > 0 ? "+" : "";
+  const a = Math.abs(v);
+  const body =
+    a >= 1e5
+      ? `${(a / 1e5).toFixed(1)}L`
+      : a >= 1000
+        ? `${(a / 1000).toFixed(a >= 10000 ? 0 : 1)}k`
+        : a.toFixed(0);
+  return `${sign}₹${body}`;
 }
 
 /** Fills between expiry P&amp;L polyline and y=0: green above zero, red below. */
@@ -234,6 +253,7 @@ export function PayoffChart({
   maxS,
   height = 220,
   defaultSpanFraction = 0.5,
+  strikes,
   labelledBy,
   describedBy,
   compact = false,
@@ -242,12 +262,15 @@ export function PayoffChart({
   const [spanFrac, setSpanFrac] = useState(() =>
     clamp(defaultSpanFraction, MIN_SPAN_FRAC, 1),
   );
+  /** Hovered underlying price from the crosshair (compact mode only); null when the pointer is off-chart. */
+  const [hoverPrice, setHoverPrice] = useState<number | null>(null);
 
-  // Full mode reserves room for axis tick labels; compact mode has none to reserve for.
-  const PAD_L = compact ? 8 : 40;
-  const PAD_R = compact ? 8 : 16;
-  const PAD_T = compact ? 8 : 12;
-  const PAD_B = compact ? 8 : 22;
+  // Full mode reserves room for SVG-text axis labels; compact reserves a slightly
+  // narrower gutter for the HTML-overlay axis labels (see the non-uniform-scale note below).
+  const PAD_L = compact ? 30 : 40;
+  const PAD_R = compact ? 10 : 16;
+  const PAD_T = compact ? 11 : 12;
+  const PAD_B = compact ? 16 : 22;
 
   const W = 640;
   const H = height;
@@ -424,14 +447,39 @@ export function PayoffChart({
   }, [yGridTicks, minY, maxY]);
 
   const zeroInYRange = minY <= 0 && maxY >= 0;
+  const yTickEps = Math.max((maxY - minY || 1) * 0.015, 1e-9);
 
   const yScaleFn = (y: number) =>
     PAD_T + innerH - ((y - minY) / (maxY - minY || 1)) * innerH;
+  const xScaleFn = (s: number) =>
+    PAD_L + ((s - viewMin) / (viewMax - viewMin || 1)) * innerW;
 
   const zoomIn = () =>
     setSpanFrac((f) => clamp(f / ZOOM_STEP, MIN_SPAN_FRAC, 1));
   const zoomOut = () =>
     setSpanFrac((f) => clamp(f * ZOOM_STEP, MIN_SPAN_FRAC, 1));
+
+  // Crosshair (compact only): the hit-rect below reports pointer position as a
+  // fraction of its own rendered box, which the browser already maps through the
+  // SVG's viewBox transform — no manual DOM-to-user-unit scale math needed.
+  const handleHoverMove = (e: ReactPointerEvent<SVGRectElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const frac = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+    setHoverPrice(viewMin + frac * (viewMax - viewMin));
+  };
+  const handleHoverLeave = () => setHoverPrice(null);
+
+  const hoverExpiryY =
+    hoverPrice != null ? interpolateY(xs, ys, hoverPrice) : null;
+  const hoverTodayY =
+    hoverPrice != null && xsToday?.length && ysToday?.length === xsToday.length
+      ? interpolateY(xsToday, ysToday, hoverPrice)
+      : null;
+  const hoverPctFromSpot =
+    hoverPrice != null && spot != null && spot > 0
+      ? ((hoverPrice - spot) / spot) * 100
+      : null;
 
   return (
     <div className="relative w-full max-w-full">
@@ -464,8 +512,8 @@ export function PayoffChart({
         preserveAspectRatio={compact ? "none" : undefined}
         className={
           compact
-            ? "pointer-events-none w-full max-w-full text-muted"
-            : "pointer-events-none h-auto w-full max-w-full text-muted"
+            ? "pointer-events-none block w-full max-w-full text-muted"
+            : "pointer-events-none block h-auto w-full max-w-full text-muted"
         }
         style={compact ? { height: H } : undefined}
         role="img"
@@ -536,28 +584,27 @@ export function PayoffChart({
             strokeDasharray="4 4"
             strokeWidth={idle ? 0.6 : 0.75}
           />
-          {!compact &&
-            yGridTicks.map((t, i) => {
-              const span = maxY - minY || 1;
-              const onZero =
-                Math.abs(t) <= Math.max(span * 0.015, 1e-9) && zeroInYRange;
-              if (onZero) return null;
-              return (
-                <line
-                  key={`y-grid-${i}`}
-                  x1={PAD_L}
-                  x2={PAD_L + innerW}
-                  y1={yScaleFn(t)}
-                  y2={yScaleFn(t)}
-                  className={
-                    idle
-                      ? "stroke-border-soft/60"
-                      : "stroke-border-soft"
-                  }
-                  strokeWidth={idle ? 0.4 : 0.55}
-                />
-              );
-            })}
+          {yGridTicks.map((t, i) => {
+            const span = maxY - minY || 1;
+            const onZero =
+              Math.abs(t) <= Math.max(span * 0.015, 1e-9) && zeroInYRange;
+            if (onZero) return null;
+            return (
+              <line
+                key={`y-grid-${i}`}
+                x1={PAD_L}
+                x2={PAD_L + innerW}
+                y1={yScaleFn(t)}
+                y2={yScaleFn(t)}
+                className={
+                  idle
+                    ? "stroke-border-soft/60"
+                    : "stroke-border-soft"
+                }
+                strokeWidth={idle ? 0.4 : 0.55}
+              />
+            );
+          })}
           {!idle && belowFillD ? (
             <path
               d={belowFillD}
@@ -572,7 +619,7 @@ export function PayoffChart({
               fill={compact ? `url(#${clipId}-up-fade)` : undefined}
             />
           ) : null}
-          {!idle && !compact && pathTodayD ? (
+          {!idle && pathTodayD ? (
             <path
               d={pathTodayD}
               fill="none"
@@ -640,7 +687,7 @@ export function PayoffChart({
               className="fill-faint"
             />
           ) : null}
-          {!idle && !compact &&
+          {!idle &&
             breakevenXs.map((bx, i) => (
               <line
                 key={`be-${i}`}
@@ -653,18 +700,79 @@ export function PayoffChart({
                 strokeDasharray="4 4"
               />
             ))}
-          {!compact &&
-            xAxisTicks.map(({ x }, i) => (
-              <line
-                key={`x-grid-${i}`}
-                x1={x}
-                x2={x}
-                y1={PAD_T}
-                y2={PAD_T + innerH}
-                className="stroke-border-soft"
-                strokeWidth={0.65}
+          {!idle && compact && zeroInYRange &&
+            breakevenXs.map((bx, i) => (
+              <circle
+                key={`be-mark-${i}`}
+                cx={bx}
+                cy={yScaleFn(0)}
+                r={3}
+                className="fill-amber-accent"
+                stroke="var(--panel)"
+                strokeWidth={1.1}
               />
             ))}
+          {!idle && compact &&
+            strikes?.map((k, i) => {
+              if (k < viewMin || k > viewMax) return null;
+              const x = xScaleFn(k);
+              return (
+                <line
+                  key={`strike-${i}`}
+                  x1={x}
+                  x2={x}
+                  y1={PAD_T}
+                  y2={PAD_T + innerH}
+                  className="stroke-gtt/55"
+                  strokeWidth={0.85}
+                  strokeDasharray="3 3"
+                />
+              );
+            })}
+          {xAxisTicks.map(({ x }, i) => (
+            <line
+              key={`x-grid-${i}`}
+              x1={x}
+              x2={x}
+              y1={PAD_T}
+              y2={PAD_T + innerH}
+              className="stroke-border-soft"
+              strokeWidth={0.65}
+            />
+          ))}
+          {!idle && compact && hoverPrice != null ? (
+            <>
+              <line
+                x1={xScaleFn(hoverPrice)}
+                x2={xScaleFn(hoverPrice)}
+                y1={PAD_T}
+                y2={PAD_T + innerH}
+                className="stroke-foreground/45"
+                strokeWidth={0.75}
+                strokeDasharray="2 2"
+              />
+              {hoverExpiryY != null ? (
+                <circle
+                  cx={xScaleFn(hoverPrice)}
+                  cy={yScaleFn(hoverExpiryY)}
+                  r={2.75}
+                  className={hoverExpiryY >= 0 ? "fill-up" : "fill-down"}
+                  stroke="var(--panel)"
+                  strokeWidth={1}
+                />
+              ) : null}
+              {hoverTodayY != null ? (
+                <circle
+                  cx={xScaleFn(hoverPrice)}
+                  cy={yScaleFn(hoverTodayY)}
+                  r={2.5}
+                  className="fill-accent"
+                  stroke="var(--panel)"
+                  strokeWidth={1}
+                />
+              ) : null}
+            </>
+          ) : null}
           {idle ? (
             <text
               x={PAD_L + innerW / 2}
@@ -675,6 +783,19 @@ export function PayoffChart({
             >
               Pick a readymade strategy or add legs to see payoff
             </text>
+          ) : null}
+          {compact && !idle && xs.length ? (
+            <rect
+              x={PAD_L}
+              y={PAD_T}
+              width={innerW}
+              height={innerH}
+              fill="transparent"
+              style={{ pointerEvents: "auto", cursor: "crosshair" }}
+              onPointerMove={handleHoverMove}
+              onPointerDown={handleHoverMove}
+              onPointerLeave={handleHoverLeave}
+            />
           ) : null}
         </g>
         {!compact && zeroInYRange ? (
@@ -725,6 +846,83 @@ export function PayoffChart({
             </text>
           ))}
       </svg>
+      {compact ? (
+        <div className="pointer-events-none absolute inset-0">
+          {yLabelTicks.map((t, i) => (
+            <span
+              key={`ov-yl-${i}`}
+              className={`absolute left-0.5 -translate-y-1/2 whitespace-nowrap font-mono text-[9px] tabular-nums ${
+                Math.abs(t) <= yTickEps ? "font-semibold text-foreground" : "text-faint"
+              }`}
+              style={{ top: yScaleFn(t) }}
+            >
+              {formatPnlAxisTick(t)}
+            </span>
+          ))}
+          {xAxisTicks.map(({ price, x }, i) => (
+            <span
+              key={`ov-xl-${i}`}
+              className="absolute -translate-x-1/2 whitespace-nowrap font-mono text-[9px] tabular-nums text-faint"
+              style={{ left: `${(x / W) * 100}%`, top: PAD_T + innerH + 3 }}
+            >
+              {formatXAxisPrice(price)}
+            </span>
+          ))}
+          {!idle &&
+            strikes?.map((k, i) => {
+              if (k < viewMin || k > viewMax) return null;
+              const x = xScaleFn(k);
+              return (
+                <span
+                  key={`ov-strike-${i}`}
+                  className="absolute -translate-x-1/2 whitespace-nowrap rounded-sm bg-panel/90 px-1 font-mono text-[9px] font-semibold tabular-nums text-gtt ring-1 ring-gtt/30"
+                  style={{ left: `${(x / W) * 100}%`, top: PAD_T + 1 }}
+                >
+                  {formatXAxisPrice(k)}
+                </span>
+              );
+            })}
+          {!idle && hoverPrice != null ? (
+            <div
+              className="absolute z-10 -translate-x-1/2 rounded-md border border-border bg-panel px-2.5 py-2 text-[11px] shadow-lg"
+              style={{
+                left: `clamp(4.25rem, ${(xScaleFn(hoverPrice) / W) * 100}%, calc(100% - 4.25rem))`,
+                top: PAD_T + 3,
+              }}
+            >
+              <div className="font-mono font-semibold tabular-nums text-foreground">
+                {Math.round(hoverPrice).toLocaleString("en-IN")}
+              </div>
+              {hoverPctFromSpot != null ? (
+                <div className="mt-0.5 font-mono tabular-nums text-faint">
+                  {hoverPctFromSpot >= 0 ? "+" : ""}
+                  {hoverPctFromSpot.toFixed(2)}% vs spot
+                </div>
+              ) : null}
+              {hoverExpiryY != null ? (
+                <div className="mt-1.5 flex items-center gap-1.5 whitespace-nowrap">
+                  <span className="text-muted">Expiry</span>
+                  <span
+                    className={`font-semibold tabular-nums ${hoverExpiryY >= 0 ? "text-up" : "text-down"}`}
+                  >
+                    {formatIndianMoneyCompact(hoverExpiryY)}
+                  </span>
+                </div>
+              ) : null}
+              {hoverTodayY != null ? (
+                <div className="mt-0.5 flex items-center gap-1.5 whitespace-nowrap">
+                  <span className="text-accent">T+0</span>
+                  <span
+                    className={`font-semibold tabular-nums ${hoverTodayY >= 0 ? "text-up" : "text-down"}`}
+                  >
+                    {formatIndianMoneyCompact(hoverTodayY)}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

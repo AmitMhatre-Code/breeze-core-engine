@@ -1,5 +1,8 @@
 import type { Query } from "@tanstack/react-query";
-import { fetchStrategyBuilderChain } from "@/lib/strategy-builder/api";
+import {
+  fetchPortfolioPayoffQuote,
+  fetchStrategyBuilderChain,
+} from "@/lib/strategy-builder/api";
 import type { ChainApiResponse } from "@/lib/strategy-builder/types";
 
 export const CHAIN_STALE_MS = 5_000;
@@ -58,6 +61,34 @@ export function chainQueryOptions({
     queryKey: chainQueryKey(queryKeyPrefix, params),
     queryFn: ({ signal }: { signal?: AbortSignal }) =>
       fetchStrategyBuilderChain(params, signal),
+    enabled: enabled && ready,
+    staleTime: CHAIN_STALE_MS,
+    refetchInterval: chainRefetchInterval,
+    placeholderData: (prev: any) => prev,
+  };
+}
+
+/** Same shape as chainQueryOptions but backed by the ATM-only payoff-quote
+ * endpoint — use where the full chain isn't needed (see PortfolioGroupPayoffPanel). */
+export function payoffQuoteQueryOptions({
+  queryKeyPrefix,
+  stock_code,
+  expiry_date,
+  exchange_code,
+  subscription_holder,
+  enabled = true,
+}: ChainQueryOptionsArgs) {
+  const params: ChainQueryParams = {
+    stock_code,
+    expiry_date,
+    exchange_code,
+    subscription_holder,
+  };
+  const ready = Boolean(stock_code.trim() && expiry_date.trim());
+  return {
+    queryKey: chainQueryKey(queryKeyPrefix, params),
+    queryFn: ({ signal }: { signal?: AbortSignal }) =>
+      fetchPortfolioPayoffQuote(params, signal),
     enabled: enabled && ready,
     staleTime: CHAIN_STALE_MS,
     refetchInterval: chainRefetchInterval,

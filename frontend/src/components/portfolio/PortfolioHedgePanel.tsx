@@ -179,7 +179,12 @@ export function PortfolioHedgePanel({
                       shortSuffix: true,
                       skipK: true,
                     })}{" "}
-                    margin relief
+                    margin relief ·{" "}
+                    {formatIndianMoneyCompact(c.net_premium_cost, {
+                      shortSuffix: true,
+                      skipK: true,
+                    })}{" "}
+                    premium
                   </div>
                 </div>
                 {checked ? (

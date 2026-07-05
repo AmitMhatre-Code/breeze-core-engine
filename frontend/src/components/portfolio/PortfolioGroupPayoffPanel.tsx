@@ -1,18 +1,21 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
 import { InfinitySymbol } from "@/components/strategy-builder/InfinitySymbol";
+import { PayoffScenarioControls } from "@/components/portfolio/PayoffScenarioControls";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { normRight, normSide } from "@/lib/portfolio/legNormalize";
 import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
-import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import { payoffQuoteQueryOptions } from "@/lib/strategy-builder/chain-query";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
   estimateProbabilityOfProfit,
+  PAYOFF_CHART_SPOT_HALFBAND,
   payoffChartSpotDomain,
+  scanMarkToModelCurve,
   scanPayoffCurve,
   summarizePayoffExact,
   type PayoffSummary,
@@ -22,6 +25,9 @@ import {
   isUnlimitedMaxProfit,
 } from "@/lib/strategy-builder/trade-metrics";
 import type { ChainSuccess, StrategyLeg } from "@/lib/strategy-builder/types";
+
+/** Default view shows at least ±10% around spot; widens to fit any strike further out. */
+const DEFAULT_VIEW_HALFBAND = 0.1;
 
 function parseNum(v: unknown): number | null {
   if (v == null || v === "") return null;
@@ -103,8 +109,12 @@ export function PortfolioGroupPayoffPanel({
   proposedLeg = null,
   holderId,
 }: Props) {
+  /** null = tracking the live/actual DTE for this expiry. */
+  const [dteOverrideDays, setDteOverrideDays] = useState<number | null>(null);
+  const [ivShockPct, setIvShockPct] = useState(0);
+
   const cq = useQuery({
-    ...chainQueryOptions({
+    ...payoffQuoteQueryOptions({
       queryKeyPrefix: ["portfolio", "group-payoff-chain"],
       stock_code: stockCode,
       expiry_date: expiryDisplay,
@@ -141,6 +151,23 @@ export function PortfolioGroupPayoffPanel({
   const T = expiryDisplayToYears(expiryDisplay || "01-Jan-2099");
   const sigma = chainSuccess ? atmSigmaFromChain(chainSuccess, T) : 0.22;
 
+  const liveDteDays = Math.max(0, Math.round(T * 365));
+  const dteDays = dteOverrideDays ?? liveDteDays;
+  const tEffective = dteDays / 365;
+  const sigmaEffective = sigma * (1 + ivShockPct / 100);
+
+  const legStrikes = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          legs
+            .map((l) => l.strike)
+            .filter((k): k is number => Number.isFinite(k)),
+        ),
+      ).sort((a, b) => a - b),
+    [legs],
+  );
+
   const { minS, maxS } = useMemo(() => {
     if (spot != null && Number.isFinite(spot) && spot > 0) {
       return payoffChartSpotDomain(spot);
@@ -158,7 +185,21 @@ export function PortfolioGroupPayoffPanel({
     };
   }, [strikes, spot]);
 
-  const { xs, ys, summary, pop } = useMemo(() => {
+  /** Widens past ±10% only far enough to keep every leg strike on-screen by default. */
+  const defaultSpanFraction = useMemo(() => {
+    if (spot == null || !Number.isFinite(spot) || spot <= 0) return 0.25;
+    const maxStrikeDistFrac = legStrikes.reduce(
+      (acc, k) => Math.max(acc, Math.abs(k - spot) / spot),
+      0,
+    );
+    const desiredHalfBand = Math.max(
+      DEFAULT_VIEW_HALFBAND,
+      maxStrikeDistFrac * 1.15,
+    );
+    return Math.min(1, Math.max(0.12, desiredHalfBand / PAYOFF_CHART_SPOT_HALFBAND));
+  }, [spot, legStrikes]);
+
+  const { xs, ys, summary, pop, xsToday, ysToday } = useMemo(() => {
     const steps = PAYOFF_STEPS;
     if (!legs.length) {
       return {
@@ -166,6 +207,8 @@ export function PortfolioGroupPayoffPanel({
         ys: [] as number[],
         summary: { maxProfit: 0, maxLoss: 0, breakevens: [] } as PayoffSummary,
         pop: 0,
+        xsToday: [] as number[],
+        ysToday: [] as number[],
       };
     }
     const { xs: x1, ys: y1 } = scanPayoffCurve(
@@ -175,6 +218,15 @@ export function PortfolioGroupPayoffPanel({
       legs,
       lotSize,
     );
+    const { xs: x2, ys: y2 } = scanMarkToModelCurve(
+      minS,
+      maxS,
+      steps,
+      legs,
+      lotSize,
+      tEffective,
+      sigmaEffective,
+    );
     const exactSummary = summarizePayoffExact(legs, lotSize, spot);
     const popVal =
       spot != null ? estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize) : 0;
@@ -183,8 +235,10 @@ export function PortfolioGroupPayoffPanel({
       ys: y1,
       summary: exactSummary,
       pop: popVal,
+      xsToday: x2,
+      ysToday: y2,
     };
-  }, [legs, minS, maxS, spot, lotSize, T, sigma]);
+  }, [legs, minS, maxS, spot, lotSize, T, sigma, tEffective, sigmaEffective]);
 
   const hasLegs = legs.length > 0;
 
@@ -220,13 +274,30 @@ export function PortfolioGroupPayoffPanel({
         idle={!hasLegs}
         xs={xs}
         ys={ys}
+        xsToday={xsToday}
+        ysToday={ysToday}
         spot={spot}
         breakevens={summary.breakevens}
+        strikes={legStrikes}
         minS={minS}
         maxS={maxS}
-        height={220}
+        height={240}
+        defaultSpanFraction={defaultSpanFraction}
         compact
       />
+      {hasLegs ? (
+        <PayoffScenarioControls
+          dteDays={dteDays}
+          liveDteDays={liveDteDays}
+          onDteChange={setDteOverrideDays}
+          ivShockPct={ivShockPct}
+          onIvShockChange={setIvShockPct}
+          onReset={() => {
+            setDteOverrideDays(null);
+            setIvShockPct(0);
+          }}
+        />
+      ) : null}
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
         <span className="text-muted">
           Max profit{" "}

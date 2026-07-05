@@ -1907,6 +1907,30 @@ class processor():
             self, user_id, stock_code, exchange_code, expiry_display, holder_id=holder_id
         )
 
+    def get_payoff_quote(
+        self,
+        user_id: str,
+        stock_code: str,
+        exchange_code: str,
+        expiry_date: str,
+        *,
+        holder_id: str | None = None,
+    ):
+        """Minimal spot + ATM-strike quote + lot size for the portfolio payoff
+        panel — see `quote_source_router.fetch_payoff_quote_routed` for why this
+        doesn't need to wait for the rest of the chain like get_full_option_chain does."""
+        expiry_display = expiry_date
+        if expiry_date and len(expiry_date) == 10 and expiry_date[4] == "-":  # YYYY-MM-DD
+            try:
+                expiry_display = datetime.datetime.strptime(expiry_date, "%Y-%m-%d").strftime("%d-%b-%Y")
+            except ValueError:
+                pass
+        from icici_breeze_backend.app.services.quote_source_router import assemble_payoff_quote_with_router
+
+        return assemble_payoff_quote_with_router(
+            self, user_id, stock_code, exchange_code, expiry_display, holder_id=holder_id
+        )
+
     def _get_full_option_chain_icici_rest(
         self,
         user_id: str,

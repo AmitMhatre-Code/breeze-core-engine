@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Callable
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, parse_strike
@@ -99,13 +99,48 @@ def is_chain_complete(
     return True
 
 
-def wait_for_canonical_chain(
+def is_strike_quoted(
+    payload: dict[str, Any] | None,
+    *,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    strike: Strike,
+) -> bool:
+    """Same per-cell quote check as `is_chain_complete`, narrowed to one strike.
+
+    Used by callers (the portfolio payoff panel) that only ever read the ATM row
+    out of the whole chain and price every other leg from its own position data,
+    not a live quote — so they shouldn't have to wait for every other strike to tick.
+    """
+    if not isinstance(payload, dict):
+        return False
+    row: dict[str, Any] | None = None
+    for r in payload.get("chain_rows") or []:
+        if isinstance(r, dict) and parse_strike(r.get("strike_price")) == strike:
+            row = r
+            break
+    if row is None:
+        return False
+    for opt, side in ((cfg.CALL, "call"), (cfg.PUT, "put")):
+        if not is_tradeable_contract(
+            stock_code, expiry_display, strike, opt, exchange_code=exchange_code
+        ):
+            continue
+        cell = row.get(side)
+        if not _cell_has_quote(cell, exchange_code=exchange_code):
+            return False
+    return True
+
+
+def _poll_canonical_chain(
     exchange_code: str,
     stock_code: str,
     expiry_display: str,
     *,
-    lot_size: int = 0,
-    freeze_quantity: int | None = None,
+    lot_size: int,
+    freeze_quantity: int | None,
+    is_ready: Callable[[dict[str, Any]], bool],
 ) -> dict[str, Any] | None:
     from icici_breeze_backend.app.services.chain_build_service import refresh_active_chains
     from icici_breeze_backend.app.services.reference_data.active_chains import chain_registry_key
@@ -128,12 +163,58 @@ def wait_for_canonical_chain(
             payload["lot_size"] = lot_size
         if freeze_quantity is not None and payload.get("freeze_quantity") is None:
             payload["freeze_quantity"] = freeze_quantity
-        if is_chain_complete(
+        if is_ready(payload):
+            return payload
+        time.sleep(poll_s)
+    return None
+
+
+def wait_for_canonical_chain(
+    exchange_code: str,
+    stock_code: str,
+    expiry_display: str,
+    *,
+    lot_size: int = 0,
+    freeze_quantity: int | None = None,
+) -> dict[str, Any] | None:
+    return _poll_canonical_chain(
+        exchange_code,
+        stock_code,
+        expiry_display,
+        lot_size=lot_size,
+        freeze_quantity=freeze_quantity,
+        is_ready=lambda payload: is_chain_complete(
             payload,
             stock_code=stock_code,
             exchange_code=exchange_code,
             expiry_display=expiry_display,
-        ):
-            return payload
-        time.sleep(poll_s)
-    return None
+        ),
+    )
+
+
+def wait_for_strike_quote(
+    exchange_code: str,
+    stock_code: str,
+    expiry_display: str,
+    strike: Strike,
+    *,
+    lot_size: int = 0,
+    freeze_quantity: int | None = None,
+) -> dict[str, Any] | None:
+    """Same wait/poll shape as `wait_for_canonical_chain`, gated on a single
+    strike's quote — the ATM strike ticks far more reliably than deep OTM
+    strikes, so this typically resolves well inside the worst-case timeout."""
+    return _poll_canonical_chain(
+        exchange_code,
+        stock_code,
+        expiry_display,
+        lot_size=lot_size,
+        freeze_quantity=freeze_quantity,
+        is_ready=lambda payload: is_strike_quoted(
+            payload,
+            stock_code=stock_code,
+            exchange_code=exchange_code,
+            expiry_display=expiry_display,
+            strike=strike,
+        ),
+    )

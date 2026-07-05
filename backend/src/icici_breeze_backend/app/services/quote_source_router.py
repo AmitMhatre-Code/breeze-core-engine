@@ -544,6 +544,107 @@ def assemble_chain_with_router(
     return chain_fetch_error_response(exchange_code, stock_code, expiry_display)
 
 
+def _find_chain_row(payload: dict[str, Any] | None, strike: Strike) -> dict[str, Any] | None:
+    if not payload:
+        return None
+    for row in payload.get("chain_rows") or []:
+        if isinstance(row, dict) and parse_strike(row.get("strike_price")) == strike:
+            return row
+    return None
+
+
+def fetch_payoff_quote_routed(
+    proc: "Processor",
+    user_id: str,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    *,
+    holder_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Minimal chain fetch for the portfolio payoff panel: spot + the ATM
+    strike's own quote + lot size. Unlike `fetch_chain_payload_routed`, this
+    never waits on strikes other than ATM — the payoff panel only ever reads
+    chain_rows[0] (for lot size) and the ATM row (for a flat IV estimate); each
+    leg is priced from the position's own average price/LTP, not a chain quote
+    at that strike, so the rest of the chain is never actually consulted."""
+    expiry_display = _normalize_expiry_display(expiry_display)
+    source = resolve_quote_source(exchange_code)
+    lot_size, freeze_quantity, strikes = _resolve_chain_metadata(
+        proc, stock_code, exchange_code, expiry_display
+    )
+    if not strikes:
+        return None
+
+    spot = _resolve_chain_spot(proc, user_id, stock_code, exchange_code, expiry_display, strikes)
+    if spot is None:
+        return None
+    atm_strike = min(strikes, key=lambda s: abs(s - spot))
+
+    if source == "websocket":
+        from icici_breeze_backend.app.services.breeze_websocket_manager import ensure_atm_quote_subscription
+
+        ws_payload = ensure_atm_quote_subscription(
+            proc,
+            user_id,
+            stock_code,
+            exchange_code,
+            expiry_display,
+            strikes,
+            atm_strike,
+            lot_size=int(lot_size) if lot_size else 0,
+            freeze_quantity=freeze_quantity,
+            holder_id=holder_id,
+        )
+        if ws_payload is not None and _find_chain_row(ws_payload, atm_strike) is not None:
+            ws_payload["spot_price"] = spot
+            ws_payload["atm_strike"] = atm_strike
+            return _enrich_quote_metadata(ws_payload)
+
+        _logger.warning(
+            "WebSocket ATM quote incomplete for %s %s; trying bhavcopy", stock_code, expiry_display
+        )
+        if bhavcopy_is_fresh(exchange_code):
+            source = "bhavcopy"
+        else:
+            return None
+
+    if source == "bhavcopy":
+        payload = build_chain_from_bhavcopy(
+            stock_code,
+            expiry_display,
+            exchange_code,
+            lot_size=int(lot_size) if lot_size else None,
+            freeze_quantity=freeze_quantity,
+            strikes=strikes,
+        )
+        if payload is not None and _find_chain_row(payload, atm_strike) is not None:
+            payload["spot_price"] = spot
+            payload["atm_strike"] = atm_strike
+            return _enrich_quote_metadata(payload)
+        _logger.warning("Bhavcopy ATM quote unavailable for %s %s", stock_code, expiry_display)
+    return None
+
+
+def assemble_payoff_quote_with_router(
+    proc: "Processor",
+    user_id: str,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    *,
+    holder_id: str | None = None,
+) -> dict[str, Any]:
+    """Build the minimal payoff-panel payload — see `fetch_payoff_quote_routed`."""
+    expiry_display = _normalize_expiry_display(expiry_display)
+    payload = fetch_payoff_quote_routed(
+        proc, user_id, stock_code, exchange_code, expiry_display, holder_id=holder_id
+    )
+    if payload:
+        return {"Status": 200, "Error": None, "Success": payload}
+    return chain_fetch_error_response(exchange_code, stock_code, expiry_display)
+
+
 def _fetch_quote_icici_rest(
     proc: "Processor",
     user_id: str,

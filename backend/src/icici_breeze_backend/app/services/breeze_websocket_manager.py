@@ -437,6 +437,43 @@ def ensure_chain_subscriptions(
     return out
 
 
+def ensure_atm_quote_subscription(
+    proc: "Processor",
+    user_id: str,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    strikes: list[Strike] | None,
+    atm_strike: Strike,
+    *,
+    lot_size: int = 0,
+    freeze_quantity: int | None = None,
+    holder_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Same subscription bookkeeping as `ensure_chain_subscriptions`, but the
+    wait is gated on the ATM strike's own quote only (see
+    `chain_readiness.wait_for_strike_quote`) instead of every strike in the chain."""
+    from icici_breeze_backend.app.services.chain_readiness import wait_for_strike_quote
+
+    sync_holder_chain_subscriptions(
+        proc, user_id, _effective_holder(holder_id), stock_code, exchange_code, expiry_display, strikes
+    )
+    payload = wait_for_strike_quote(
+        exchange_code,
+        stock_code,
+        expiry_display,
+        atm_strike,
+        lot_size=lot_size,
+        freeze_quantity=freeze_quantity,
+    )
+    if payload is None:
+        return None
+    out = dict(payload)
+    out["quote_source"] = "websocket"
+    out["bhavcopy_date"] = None
+    return out
+
+
 def _playground_response(
     response: Any,
     ok: bool | None = None,

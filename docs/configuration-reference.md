@@ -222,6 +222,7 @@ These drive the license/heartbeat/self-upgrade client described in [Architecture
 | `DEPLOYMENT_GHCR_IMAGE` | *(empty)* | Image reference (e.g. `ghcr.io/<org>/breeze-core-engine`) the in-place self-upgrade pulls from; the portal-supplied `target_tag` is appended. Upgrade is skipped if unset. |
 | `DEPLOYMENT_CONTAINER_NAME` | `breeze-core-engine` | Name of the running app container the upgrade helper stops and recreates. |
 | `DEPLOYMENT_ENV_FILE` | `/opt/breeze-core-engine/.env` | Host path to the `.env` file the recreated container is started with. |
+| `LICENSE_STATUS_OVERRIDE` | unset | Dev-only. Forces `deployment_license_status.get_license_status()`/`trading_mutations_allowed()`/`get_license_status_for_api()` to a fixed value, bypassing `PORTAL_API_BASE_URL`/`DEPLOYMENT_LICENSE_KEY`/heartbeat state entirely — lets you test read-only-mode enforcement without a real portal. One of `active`/`expired`/`revoked`/`unlicensed`/`pending_activation`/`trial_denied`; unrecognized or unset values fall through to normal portal-driven behavior. Never set in production. |
 
 ### Market outlook (portal-fetched, no per-instance config)
 

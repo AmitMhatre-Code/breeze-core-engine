@@ -144,6 +144,17 @@ try:
 except ValueError:
     PORTAL_HEARTBEAT_INTERVAL_SEC = 300
 
+# Dev-only: force a license status locally without a portal/heartbeat round trip, to test
+# read-only enforcement. One of active/expired/revoked/unlicensed/pending_activation/trial_denied;
+# unset or unrecognized -> normal portal-driven behavior. Never set this in production.
+_LICENSE_STATUS_OVERRIDE_RAW = (os.environ.get("LICENSE_STATUS_OVERRIDE") or "").strip().lower()
+LICENSE_STATUS_OVERRIDE = (
+    _LICENSE_STATUS_OVERRIDE_RAW
+    if _LICENSE_STATUS_OVERRIDE_RAW
+    in ("active", "expired", "revoked", "unlicensed", "pending_activation", "trial_denied")
+    else ""
+)
+
 EXPIRED = "Expired"
 CANCELLED = "Cancelled"
 EXECUTED = "Executed"

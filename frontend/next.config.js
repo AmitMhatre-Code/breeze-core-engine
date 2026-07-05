@@ -60,6 +60,10 @@ const nextConfig = {
         source: "/api/outlook/:path*",
         destination: `${backendUpstream}/api/outlook/:path*`,
       },
+      {
+        source: "/api/v1/hedge/strategy-options",
+        destination: `${backendUpstream}/api/v1/hedge/strategy-options`,
+      },
       { source: "/home/data", destination: `${backendUpstream}/home/data` },
       {
         source: "/deployment/license-status",
@@ -150,6 +154,10 @@ const nextConfig = {
       {
         source: "/strategy-builder/chain",
         destination: `${backendUpstream}/strategy-builder/chain`,
+      },
+      {
+        source: "/strategy-builder/payoff-quote",
+        destination: `${backendUpstream}/strategy-builder/payoff-quote`,
       },
       {
         source: "/market-data/:path*",
