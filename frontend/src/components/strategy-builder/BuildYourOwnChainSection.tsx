@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import {
   OptionChainTable,
   scrollOptionChainAtmIntoView,
-} from "@/components/order/OptionChainTable";
+} from "@/components/shared/order/OptionChainTable";
 import type {
   ChainRow,
   ChainSuccess,
@@ -42,14 +42,21 @@ export function BuildYourOwnChainSection({
   isStrategySlotAdded,
 }: BuildYourOwnChainSectionProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** Only auto-scroll once per distinct contract — `chainSuccess` gets a new
+   * reference on every live-quote poll, which would otherwise re-center the
+   * ATM row and fight the user's manual scrolling every refresh. */
+  const scrolledKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!chainSuccess?.chain_rows?.length) return;
+    const key = `${stockCode}|${expiryDate}`;
+    if (scrolledKeyRef.current === key) return;
+    scrolledKeyRef.current = key;
     const t = requestAnimationFrame(() => {
       scrollOptionChainAtmIntoView(scrollRef.current);
     });
     return () => cancelAnimationFrame(t);
-  }, [chainSuccess]);
+  }, [chainSuccess, stockCode, expiryDate]);
 
   if (isFetching && !chainSuccess) {
     return (

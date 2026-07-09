@@ -1182,6 +1182,7 @@ def _candidate_to_result(
         rr=f"{max_loss:.0f} : {cand.credit * cand.qty:.0f}",
         pop=cand.pop,
         net_premium_val=cand.net_collected,
+        max_profit=cand.net_collected,
         variant_rank=rank,
         engine_score=round(cand.final_score, 6),
         ranking_summary=ranking_summary,

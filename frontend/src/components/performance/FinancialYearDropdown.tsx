@@ -97,75 +97,73 @@ export function FinancialYearDropdown({
   const display = current?.year ?? selectedYear;
 
   return (
-    <div className="flex items-center gap-2.5">
-      <span
-        id={labelId}
-        className="text-[10.5px] font-semibold uppercase tracking-[.06em] text-faint"
+    <div ref={rootRef} className="relative inline-block text-left">
+      <button
+        ref={triggerRef}
+        type="button"
+        className={[
+          "flex h-9 w-full items-center gap-2 rounded-[9px] border px-3.5 font-mono text-sm text-foreground transition",
+          open
+            ? "border-accent bg-panel ring-2 ring-accent/25"
+            : "border-border bg-panel hover:border-accent/60",
+        ].join(" ")}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-labelledby={labelId}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={handleTriggerKeyDown}
       >
-        Financial year
-      </span>
-      <div ref={rootRef} className="relative inline-block min-w-[8.5rem] text-left">
-        <button
-          ref={triggerRef}
-          type="button"
-          className={[
-            "flex w-full items-center justify-between gap-3 rounded-[9px] border px-3.5 py-2 font-mono text-sm text-foreground transition",
-            open
-              ? "border-accent bg-panel2 ring-2 ring-accent/25"
-              : "border-border bg-panel2 hover:border-accent/60",
-          ].join(" ")}
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          aria-controls={listId}
-          aria-labelledby={labelId}
-          onClick={() => setOpen((v) => !v)}
-          onKeyDown={handleTriggerKeyDown}
+        <span
+          id={labelId}
+          className="whitespace-nowrap font-sans text-table font-normal text-muted"
         >
-          <span className="truncate tabular-nums">{display}</span>
-          <ChevronDown open={open} />
-        </button>
+          Financial year
+        </span>
+        <span className="truncate tabular-nums font-semibold">{display}</span>
+        <ChevronDown open={open} />
+      </button>
 
-        {open ? (
-          <ul
-            ref={listRef}
-            id={listId}
-            role="listbox"
-            aria-labelledby={labelId}
-            className="absolute right-0 top-[calc(100%+6px)] z-30 min-w-full overflow-hidden rounded-[10px] border border-border bg-elevated py-1 shadow-pop"
-          >
-            {years.map((y, index) => {
-              const selected = y.year === selectedYear;
-              const highlighted = index === highlightIndex;
-              return (
-                <li key={y.year} role="presentation">
-                  <button
-                    type="button"
-                    role="option"
-                    tabIndex={-1}
-                    data-menu-index={index}
-                    aria-selected={selected}
-                    className={[
-                      "flex w-full items-center justify-between gap-2 px-3.5 py-2 text-left font-mono text-sm transition-colors",
-                      selected
-                        ? "bg-accent-tint font-semibold text-foreground"
-                        : highlighted
-                          ? "bg-panel2 text-foreground"
-                          : "text-muted hover:bg-panel2",
-                    ].join(" ")}
-                    onClick={() => {
-                      onSelect(y);
-                      close();
-                    }}
-                  >
-                    <span className="tabular-nums">{y.year}</span>
-                    {selected ? <CheckIcon /> : null}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        ) : null}
-      </div>
+      {open ? (
+        <ul
+          ref={listRef}
+          id={listId}
+          role="listbox"
+          aria-labelledby={labelId}
+          className="absolute right-0 top-[calc(100%+6px)] z-30 min-w-full overflow-hidden rounded-[10px] border border-border bg-elevated py-1 shadow-pop"
+        >
+          {years.map((y, index) => {
+            const selected = y.year === selectedYear;
+            const highlighted = index === highlightIndex;
+            return (
+              <li key={y.year} role="presentation">
+                <button
+                  type="button"
+                  role="option"
+                  tabIndex={-1}
+                  data-menu-index={index}
+                  aria-selected={selected}
+                  className={[
+                    "flex w-full items-center justify-between gap-2 px-3.5 py-2 text-left font-mono text-sm transition-colors",
+                    selected
+                      ? "bg-accent-tint font-semibold text-foreground"
+                      : highlighted
+                        ? "bg-panel2 text-foreground"
+                        : "text-muted hover:bg-panel2",
+                  ].join(" ")}
+                  onClick={() => {
+                    onSelect(y);
+                    close();
+                  }}
+                >
+                  <span className="tabular-nums">{y.year}</span>
+                  {selected ? <CheckIcon /> : null}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
     </div>
   );
 }

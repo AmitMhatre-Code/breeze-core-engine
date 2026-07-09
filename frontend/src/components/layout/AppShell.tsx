@@ -178,7 +178,7 @@ export function AppShell({
                   item.showNewBadge ? "Strategy Builder, new" : undefined
                 }
                 className={[
-                  "relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] transition",
+                  "relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-heading transition",
                   active
                     ? "bg-accent-tint font-semibold text-foreground [&_svg]:text-accent-strong"
                     : "text-muted hover:bg-panel2 hover:text-foreground",
@@ -200,7 +200,7 @@ export function AppShell({
           })}
         </nav>
         <div className="mt-auto space-y-1.5 border-t border-border-soft px-4 py-3">
-          <div className="text-[12px] font-semibold uppercase tracking-[0.2em] text-faint">
+          <div className="text-body font-semibold uppercase tracking-[0.2em] text-faint">
             Session
           </div>
           <div className="flex items-center gap-2">
@@ -268,7 +268,7 @@ export function AppShell({
             {homeDataReady && (
               <span
                 className={[
-                  "min-w-0 max-w-[6.25rem] shrink-0 truncate whitespace-nowrap font-mono text-[13px] tabular-nums sm:max-w-none sm:text-xs",
+                  "min-w-0 max-w-[6.25rem] shrink-0 truncate whitespace-nowrap font-mono text-heading tabular-nums sm:max-w-none sm:text-xs",
                   apiCounterClass,
                 ].join(" ")}
                 title="Breeze REST calls from this app today (IST calendar day, ICICI daily cap 5,000)"
@@ -326,7 +326,7 @@ export function AppShell({
                     className="flex items-center gap-1.5 truncate text-sm font-semibold text-foreground"
                   >
                     Breeze
-                    <span className="text-[12px] font-semibold uppercase tracking-[0.2em] text-faint">
+                    <span className="text-body font-semibold uppercase tracking-[0.2em] text-faint">
                       Terminal
                     </span>
                   </div>
@@ -439,7 +439,7 @@ function BrandWordmark() {
       <div className="text-base font-semibold tracking-tight text-foreground">
         Breeze
       </div>
-      <div className="text-[12px] font-semibold uppercase tracking-[0.2em] text-faint">
+      <div className="text-body font-semibold uppercase tracking-[0.2em] text-faint">
         Terminal
       </div>
     </div>

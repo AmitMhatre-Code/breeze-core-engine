@@ -1,32 +1,36 @@
 "use client";
 
-import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
-import { InfoPopover } from "@/components/strategy-builder/InfoPopover";
-import { LegAggressivePriceInput } from "@/components/strategy-builder/LegAggressivePriceInput";
-import { LegQuantityInput } from "@/components/strategy-builder/LegQuantityInput";
-import { LegQuantityHeader } from "@/components/strategy-builder/LegQuantityHeader";
-import { cloneLeg, LegRowActions } from "@/components/strategy-builder/LegRowActions";
-import { LegRightToggle, LegSideToggle } from "@/components/strategy-builder/LegToggles";
-import { StrikeSelectPill } from "@/components/strategy-builder/StrikeSelectPill";
+import { InfoPopover } from "@/components/ui/InfoPopover";
+import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
+import { LegQuantityInput } from "@/components/shared/legs/LegQuantityInput";
+import { LegQuantityHeader } from "@/components/shared/legs/LegQuantityHeader";
+import { cloneLeg, LegRowActions } from "@/components/shared/legs/LegRowActions";
+import { LegRightToggle, LegSideToggle } from "@/components/shared/legs/LegToggles";
+import { StrikeSelectPill } from "@/components/shared/order/StrikeSelectPill";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
-import { formatLegMargin } from "@/lib/strategy-builder/leg-ui-helpers";
+import {
+  formatBuySellRatio,
+  formatLegMargin,
+  formatSignedLegPremium,
+} from "@/lib/strategy-builder/leg-ui-helpers";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   BasketLegMarginEntry,
   OptionRight,
   OrderSide,
-  QuoteMeta,
   StrategyLeg,
 } from "@/lib/strategy-builder/types";
 
+const thCls =
+  "px-2.5 py-2 text-left text-micro font-bold uppercase tracking-[.06em] text-faint";
+const thClsEnd = `${thCls} text-right`;
+
 export function BasketLegsPanel({
-  sectionNumber,
+  sectionLabel,
   strikes,
   chainBusy,
   chainReady,
-  showOptionChain,
-  onShowOptionChain,
-  onHideOptionChain,
+  onPickFromChain,
   lotSize,
   legs,
   onLegsChange,
@@ -35,22 +39,23 @@ export function BasketLegsPanel({
   onRightChange,
   onSideChange,
   onPriceChange,
+  onAggressiveChange,
   legMargins,
+  legBuySellRatios,
   spanBaselineLoading = false,
   totalsNetPremium,
   totalsMargin,
   onExecute,
   executeDisabled,
   addLegDisabled,
-  quoteMeta = null,
+  marginError = null,
+  marginWarnings = [],
 }: {
-  sectionNumber: number;
+  sectionLabel: string;
   strikes: number[];
   chainBusy: boolean;
   chainReady: boolean;
-  showOptionChain: boolean;
-  onShowOptionChain: () => void;
-  onHideOptionChain: () => void;
+  onPickFromChain: () => void;
   lotSize: number;
   legs: StrategyLeg[];
   onLegsChange: (updater: (prev: StrategyLeg[]) => StrategyLeg[]) => void;
@@ -59,7 +64,9 @@ export function BasketLegsPanel({
   onRightChange: (legId: string, right: OptionRight) => void;
   onSideChange: (legId: string, side: OrderSide) => void;
   onPriceChange: (legId: string, premiumPerUnit: number | undefined) => void;
+  onAggressiveChange: (legId: string, checked: boolean) => void;
   legMargins: Record<string, BasketLegMarginEntry>;
+  legBuySellRatios: Record<string, number | string | null>;
   spanBaselineLoading?: boolean;
   totalsNetPremium: number;
   totalsMargin: {
@@ -71,206 +78,182 @@ export function BasketLegsPanel({
   onExecute: () => void;
   executeDisabled: boolean;
   addLegDisabled: boolean;
-  quoteMeta?: QuoteMeta | null;
+  marginError?: string | null;
+  marginWarnings?: string[];
 }) {
+  const activeLegCount = legs.filter((l) => l.lots > 0).length;
+  const sortedLegs = [...legs].sort((a, b) => a.strike - b.strike);
+
   return (
-    <section id="basket-order-legs" className={`${sb.section} space-y-4`}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className={sb.sectionTitle}>{sectionNumber}. Legs</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          {showOptionChain ? (
-            <button
-              type="button"
-              onClick={onHideOptionChain}
-              className={sb.btnSecondary}
-            >
-              Hide option chain
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={!chainReady}
-              onClick={onShowOptionChain}
-              className={sb.btnSecondary}
-            >
-              Pick from option chain
-            </button>
-          )}
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-soft px-[18px] py-3.5">
+        <span className="text-hint font-bold uppercase tracking-[.07em] text-faint">
+          {sectionLabel}
+        </span>
+        <div className="flex flex-col items-end gap-1">
           <button
             type="button"
             disabled={addLegDisabled}
             onClick={onAddLeg}
-            className="inline-flex items-center justify-center rounded-lg border border-accent/40 bg-transparent px-3.5 py-2 text-xs font-semibold text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-[7px] border border-accent/40 bg-transparent px-3 py-[7px] text-xs font-semibold text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
           >
+            <PlusIcon />
             Add leg
           </button>
+          <span className="text-xs text-muted">or pick from{" "}
+            <button
+            type="button"
+            disabled={!chainReady}
+            onClick={onPickFromChain}
+            className="text-xs text-accent-strong underline underline-offset-2 hover:text-accent disabled:cursor-not-allowed disabled:no-underline disabled:opacity-50"
+            >
+            options chain
+            </button>
+          </span>
         </div>
       </div>
 
-      {!chainReady ? (
-        <p className="text-sm text-muted">
-          {chainBusy ? "Loading contract details…" : "Waiting for option chain data…"}
-        </p>
-      ) : null}
+      <div className="px-[18px] py-4">
+        {!chainReady ? (
+          <p className="text-sm text-muted">
+            {chainBusy ? "Loading contract details…" : "Waiting for option chain data…"}
+          </p>
+        ) : null}
 
-      {legs.length === 0 ? (
-        <p className="text-sm text-muted">
-          Click <span className="font-medium text-foreground">Add leg</span> to
-          build your basket manually, or{" "}
-          {showOptionChain ? (
-            "pick Buy/Sell from the option chain above."
-          ) : (
-            <>
-              <button
-                type="button"
-                disabled={!chainReady}
-                onClick={onShowOptionChain}
-                className="font-medium text-accent-strong underline underline-offset-2 hover:text-accent disabled:cursor-not-allowed disabled:no-underline disabled:opacity-50"
-              >
-                pick from the option chain
-              </button>
-              .
-            </>
-          )}
-        </p>
-      ) : (
-        <>
-          {quoteMeta ? (
-            <div className="mb-1">
-              <QuoteSourceBadge meta={quoteMeta} variant="footnote" />
-            </div>
-          ) : null}
-          <div className="app-table-wrap">
-          <table className="w-full min-w-[52rem] border-collapse text-left text-xs">
-            <thead className="app-table-head">
-              <tr>
-                <th className="px-2 py-1.5 font-medium">Strike</th>
-                <th className="px-2 py-1.5 font-medium">Type</th>
-                <th className="px-2 py-1.5 font-medium">Position</th>
-                <LegQuantityHeader />
-                <th className="px-2 py-1.5 font-medium">Price</th>
-                <th className="px-2 py-1.5 font-medium">Premium</th>
-                <th className="px-2 py-1.5 font-medium">
-                  <span className="inline-flex items-center gap-1">
-                    Margin
-                    <InfoPopover title="SPAN margin" ariaLabel="SPAN margin help">
-                      Approximate margin from the exchange SPAN file for the quantity
-                      entered.
-                    </InfoPopover>
-                  </span>
-                </th>
-                <th className="px-2 py-1.5 font-medium" />
-              </tr>
-            </thead>
-            <tbody>
-              {legs.map((l) => {
-                const qtyU = l.lots > 0 ? Math.round(l.lots * lotSize) : 0;
-                const aggressive = l.aggressiveLimit ?? false;
-                const premTotal = aggressive
-                  ? null
-                  : (l.premiumPerUnit ?? 0) * qtyU;
-                const legEntry = legMargins[l.id];
-                return (
-                  <tr
-                    key={l.id}
-                    className="app-table-row relative z-0 [&:has([aria-expanded=true])]:z-[300]"
-                  >
-                    <td className="max-w-[8rem] px-2 py-1.5">
-                      <StrikeSelectPill
-                        strikes={strikes}
-                        value={l.strike}
-                        onChange={(strike) => onStrikeChange(l.id, strike)}
-                        busy={chainBusy && strikes.length === 0}
-                        layout="table"
-                        hideLabel
-                      />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <LegRightToggle
-                        value={l.right}
-                        onChange={(right) => onRightChange(l.id, right)}
-                      />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <LegSideToggle
-                        value={l.side}
-                        onChange={(side) => onSideChange(l.id, side)}
-                      />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <LegQuantityInput
-                        legId={l.id}
-                        lots={l.lots}
-                        lotSize={lotSize}
-                        maxDigits={8}
-                        snapWhileTyping
-                        onLotsChange={(newLots) =>
-                          onLegsChange((prev) =>
-                            prev.map((x) =>
-                              x.id === l.id ? { ...x, lots: newLots } : x,
-                            ),
-                          )
-                        }
-                        className={`${sb.tableInput} w-[10ch] min-w-[7rem] max-w-[8rem] tabular-nums`}
-                      />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <LegAggressivePriceInput
-                        aggressive={aggressive}
-                        premiumPerUnit={l.premiumPerUnit}
-                        ariaLabel={`Aggressive limit for ${l.strike} ${l.right}`}
-                        onAggressiveChange={(checked) =>
-                          onLegsChange((prev) =>
-                            prev.map((x) =>
-                              x.id === l.id
-                                ? {
-                                    ...x,
-                                    aggressiveLimit: checked,
-                                    ...(checked
-                                      ? { premiumPerUnit: undefined }
-                                      : {}),
-                                  }
-                                : x,
-                            ),
-                          )
-                        }
-                        onPriceChange={(premiumPerUnit) =>
-                          onPriceChange(l.id, premiumPerUnit)
-                        }
-                      />
-                    </td>
-                    <td className="px-2 py-1.5 font-mono tabular-nums text-foreground">
-                      {premTotal == null
-                        ? "—"
-                        : formatIndianMoneyCompact(premTotal)}
-                    </td>
-                    <td className="px-2 py-1.5 font-mono tabular-nums text-foreground">
-                      {formatLegMargin(l, legEntry, spanBaselineLoading)}
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <LegRowActions
-                        leg={l}
-                        onClone={() =>
-                          onLegsChange((prev) => [...prev, cloneLeg(l)])
-                        }
-                        onDelete={() =>
-                          onLegsChange((prev) =>
-                            prev.filter((x) => x.id !== l.id),
-                          )
-                        }
-                      />
-                    </td>
+        {legs.length === 0 ? (
+          <p className="text-sm text-muted">No legs added yet</p>
+        ) : (
+          <>
+            <div className="-mx-[18px] overflow-x-auto">
+              <table className="w-full min-w-[58rem] border-collapse text-left text-xs">
+                <thead>
+                  <tr className="border-b border-border-soft">
+                    <th className="py-2 pl-[18px] pr-2.5 text-left text-micro font-bold uppercase tracking-[.06em] text-faint">
+                      Strike
+                    </th>
+                    <th className={thCls}>Type</th>
+                    <th className={thCls}>Position</th>
+                    <LegQuantityHeader />
+                    <th className={thCls}>Price ₹</th>
+                    <th className={thClsEnd}>B:S</th>
+                    <th className={thClsEnd}>Premium</th>
+                    <th className={thClsEnd}>
+                      <span className="inline-flex items-center justify-end gap-1">
+                        Margin
+                        <InfoPopover title="SPAN margin" ariaLabel="SPAN margin help">
+                          Approximate margin from the exchange SPAN file for the quantity
+                          entered.
+                        </InfoPopover>
+                      </span>
+                    </th>
+                    <th className="w-16" />
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        </>
-      )}
+                </thead>
+                <tbody>
+                  {sortedLegs.map((l) => {
+                    const qtyU = l.lots > 0 ? Math.round(l.lots * lotSize) : 0;
+                    const aggressive = l.aggressiveLimit ?? false;
+                    const premTotal = aggressive
+                      ? null
+                      : (l.premiumPerUnit ?? 0) * qtyU;
+                    const legEntry = legMargins[l.id];
+                    return (
+                      <tr
+                        key={l.id}
+                        className="relative z-0 border-b border-border-soft [&:has([aria-expanded=true])]:z-[300]"
+                      >
+                        <td className="max-w-[8rem] py-2 pl-[18px] pr-2.5">
+                          <StrikeSelectPill
+                            strikes={strikes}
+                            value={l.strike}
+                            onChange={(strike) => onStrikeChange(l.id, strike)}
+                            busy={chainBusy && strikes.length === 0}
+                            layout="table"
+                            hideLabel
+                          />
+                        </td>
+                        <td className="px-2.5 py-2">
+                          <LegRightToggle
+                            value={l.right}
+                            onChange={(right) => onRightChange(l.id, right)}
+                          />
+                        </td>
+                        <td className="px-2.5 py-2">
+                          <LegSideToggle
+                            value={l.side}
+                            onChange={(side) => onSideChange(l.id, side)}
+                          />
+                        </td>
+                        <td className="px-2.5 py-2">
+                          <LegQuantityInput
+                            legId={l.id}
+                            lots={l.lots}
+                            lotSize={lotSize}
+                            maxDigits={8}
+                            onLotsChange={(newLots) =>
+                              onLegsChange((prev) =>
+                                prev.map((x) =>
+                                  x.id === l.id ? { ...x, lots: newLots } : x,
+                                ),
+                              )
+                            }
+                            className={`${sb.tableInput} w-[10ch] min-w-[7rem] max-w-[8rem] tabular-nums`}
+                          />
+                        </td>
+                        <td className="px-2.5 py-2">
+                          <LegAggressivePriceInput
+                            aggressive={aggressive}
+                            premiumPerUnit={l.premiumPerUnit}
+                            ariaLabel={`Aggressive limit for ${l.strike} ${l.right}`}
+                            onAggressiveChange={(checked) =>
+                              onAggressiveChange(l.id, checked)
+                            }
+                            onPriceChange={(premiumPerUnit) =>
+                              onPriceChange(l.id, premiumPerUnit)
+                            }
+                          />
+                        </td>
+                        <td className="px-2.5 py-2 text-right font-mono tabular-nums text-muted">
+                          {formatBuySellRatio(legBuySellRatios[l.id])}
+                        </td>
+                        <td
+                          className={`px-2.5 py-2 text-right font-mono tabular-nums ${formatSignedLegPremium(premTotal, l.side).toneClass}`}
+                        >
+                          {formatSignedLegPremium(premTotal, l.side).text}
+                        </td>
+                        <td className="px-2.5 py-2 text-right font-mono tabular-nums text-muted">
+                          {formatLegMargin(l, legEntry, spanBaselineLoading)}
+                        </td>
+                        <td className="py-2 pl-2.5 pr-[18px] text-center">
+                          <LegRowActions
+                            leg={l}
+                            onClone={() =>
+                              onLegsChange((prev) => [...prev, cloneLeg(l)])
+                            }
+                            onDelete={() =>
+                              onLegsChange((prev) =>
+                                prev.filter((x) => x.id !== l.id),
+                              )
+                            }
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        {marginWarnings.length > 0 ? (
+          <p className="mt-3 app-alert-error text-heading">{marginWarnings[0]}</p>
+        ) : marginError ? (
+          <p className="mt-3 app-alert-error text-heading">{marginError}</p>
+        ) : null}
+      </div>
 
-      <div className={`${sb.stickyBar} flex flex-wrap items-center justify-between gap-4`}>
-        <div className="flex flex-wrap items-center gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border-soft bg-panel2 px-[18px] py-3.5">
+        <div className="flex flex-wrap items-center gap-6">
           <TotalStat
             label="Net premium"
             value={formatIndianMoneyCompact(totalsNetPremium)}
@@ -295,21 +278,20 @@ export function BasketLegsPanel({
                 ? formatIndianMoneyCompact(totalsMargin.marginBenefit)
                 : "—"
             }
-            tone="up"
+            tone="accent"
           />
         </div>
         <button
           type="button"
           disabled={executeDisabled}
           onClick={onExecute}
-          className={`${sb.btnPrimary} gap-2`}
+          className="inline-flex items-center gap-2 rounded-[10px] bg-accent-strong px-5 py-[11px] text-sm font-bold tracking-[.01em] text-accent-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
         >
           <ExecuteIcon />
-          Execute basket · {legs.filter((l) => l.lots > 0).length} leg
-          {legs.filter((l) => l.lots > 0).length === 1 ? "" : "s"}
+          Execute basket · {activeLegCount} leg{activeLegCount === 1 ? "" : "s"}
         </button>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -320,19 +302,43 @@ function TotalStat({
 }: {
   label: string;
   value: string;
-  tone?: "foreground" | "up" | "down";
+  tone?: "foreground" | "up" | "down" | "accent";
 }) {
   const toneClass =
-    tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-foreground";
+    tone === "up"
+      ? "text-up"
+      : tone === "down"
+        ? "text-down"
+        : tone === "accent"
+          ? "text-accent-strong"
+          : "text-foreground";
   return (
     <div>
-      <div className="text-[12px] font-semibold uppercase tracking-wide text-faint">
+      <div className="text-micro font-bold uppercase tracking-[.06em] text-faint">
         {label}
       </div>
-      <div className={`mt-0.5 font-mono text-sm font-semibold tabular-nums ${toneClass}`}>
+      <div className={`mt-0.5 font-mono text-[17px] font-bold tabular-nums ${toneClass}`}>
         {value}
       </div>
     </div>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 5v14M5 12h14" />
+    </svg>
   );
 }
 

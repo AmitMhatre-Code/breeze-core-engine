@@ -25,6 +25,7 @@ class RuntimeMetricsResponse(BaseModel):
     redis: Dict[str, Any] = Field(default_factory=dict)
     ws_tick_pipeline: Dict[str, Any] = Field(default_factory=dict)
     active_chains: Dict[str, Any] = Field(default_factory=dict)
+    pnl_engine: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ICICIMetricsResponse(BaseModel):

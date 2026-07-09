@@ -378,6 +378,7 @@ def _candidate_to_result(
         rr=f"Unlimited : {cand.net_collected:.0f}",
         pop=cand.pop,
         net_premium_val=cand.net_collected,
+        max_profit=cand.net_collected,
         variant_rank=rank,
         engine_score=round(cand.final_score, 6),
         ranking_summary=ranking_summary,

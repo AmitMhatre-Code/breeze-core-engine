@@ -94,7 +94,7 @@ function formatStrategyCategory(value: string | null | undefined): string {
 
 function levelLinkClass(active: boolean, disabled?: boolean, isDownload?: boolean): string {
   const base =
-    "rounded-[5px] border px-1.5 py-0.5 text-[10.5px] font-semibold tabular-nums transition";
+    "rounded-[5px] border px-1.5 py-0.5 text-micro font-semibold tabular-nums transition";
   if (disabled) {
     return `${base} cursor-not-allowed border-border-soft text-faint`;
   }
@@ -252,7 +252,7 @@ export function AuditLogsScreen() {
 
         {logs.length > 0 ? (
           <div className="app-table-wrap">
-            <table className="min-w-[760px] w-full text-left text-[11.5px]">
+            <table className="min-w-[760px] w-full text-left text-table">
               <thead className="app-table-head">
                 <tr>
                   <th className="px-2.5 py-2 font-semibold whitespace-nowrap">Finished</th>
@@ -291,7 +291,7 @@ export function AuditLogsScreen() {
                         <td className="px-2.5 py-2 font-mono tabular-nums whitespace-nowrap text-foreground">
                           {formatLacs(row.max_loss_lacs)}
                         </td>
-                        <td className="px-2.5 py-2 font-mono text-[13px] whitespace-nowrap text-muted">
+                        <td className="px-2.5 py-2 font-mono text-heading whitespace-nowrap text-muted">
                           {row.session_id ? `${row.session_id.slice(0, 8)}…` : "—"}
                         </td>
                         <td className="px-2.5 py-2 whitespace-nowrap">

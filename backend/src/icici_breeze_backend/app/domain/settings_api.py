@@ -150,6 +150,34 @@ class ReferenceDataScheduleUpdateBody(BaseModel):
     minute_ist: int = 0
 
 
+class PnlEnginePreferencesResponse(BaseModel):
+    """Advanced settings: WS quote flush + P&L recompute clock intervals.
+
+    Global (not per-user) — these are process-wide loop timers. Bounds are
+    included in the response so the frontend never has to hardcode/duplicate
+    the safe/recommended range used for its risk warnings. Numeric defaults
+    here mirror `app.services.pnl_engine_settings`'s bounds constants — kept
+    as plain literals (not imported) to match this file's existing
+    domain-model convention of not depending on the services layer.
+    """
+
+    quote_flush_interval_seconds: float = 2.0
+    pnl_recompute_interval_seconds: float = 2.0
+    quote_flush_min_seconds: float = 0.5
+    quote_flush_max_seconds: float = 10.0
+    quote_flush_recommended_min_seconds: float = 1.5
+    quote_flush_recommended_max_seconds: float = 2.0
+    pnl_recompute_min_seconds: float = 1.0
+    pnl_recompute_max_seconds: float = 30.0
+    pnl_recompute_recommended_min_seconds: float = 2.0
+    pnl_recompute_recommended_max_seconds: float = 5.0
+
+
+class PnlEnginePreferencesUpdateBody(BaseModel):
+    quote_flush_interval_seconds: float = Field(ge=0.5, le=10.0)
+    pnl_recompute_interval_seconds: float = Field(ge=1.0, le=30.0)
+
+
 class BreezeApiTesterWsSubscribeBody(BaseModel):
     model_config = ConfigDict(extra="allow")
 

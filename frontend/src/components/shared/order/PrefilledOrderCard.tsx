@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useMemo } from "react";
-import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
+import { useOrderConfirm } from "@/components/shared/order/OrderConfirmProvider";
 import { prefillFromOrdersSearchParams } from "@/lib/order-confirm";
 
 /**
@@ -19,17 +19,17 @@ export function PrefilledOrderCard() {
   const summary = `${payload.action} ${payload.quantity} × ${payload.stock_code} ${payload.expiry_date} ${payload.right} ${payload.strike_price}`;
 
   return (
-    <div className="app-card-muted mb-4 rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+    <div className="app-card-muted mb-4 p-4">
+      <h3 className="text-hint font-bold uppercase tracking-[.06em] text-faint">
         Order from link
       </h3>
-      <p className="mt-2 text-sm text-zinc-800 dark:text-zinc-200">{summary}</p>
+      <p className="mt-2 text-sm text-foreground">{summary}</p>
       <button
         type="button"
         className={
           payload.action === "Sell"
-            ? "mt-3 inline-flex w-full items-center justify-center rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 sm:w-auto dark:bg-red-600 dark:hover:bg-red-500"
-            : "app-btn-primary mt-3 w-full sm:w-auto"
+            ? "app-btn-danger mt-3 h-10 min-h-10 w-full sm:w-auto"
+            : "app-btn-primary mt-3 h-10 min-h-10 w-full sm:w-auto"
         }
         onClick={() => openOrderConfirm(payload)}
       >

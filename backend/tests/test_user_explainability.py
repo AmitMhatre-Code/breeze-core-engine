@@ -117,6 +117,42 @@ class TestUserExplainabilityReport(unittest.TestCase):
         self.assertTrue(any("Reducing your PoP threshold below" in i["message"] for i in what_if))
         self.assertTrue(any("short_straddle" in i["affected_strategies"] for i in what_if))
 
+    def test_max_loss_skip_with_infinite_loss_allowed_does_not_crash(self):
+        """Regression: max_loss_lacs is None when allow_infinite_loss=True, so a
+        strategy skipped for a max_loss/economic_prune reason must not try to
+        format it as a number (was crashing with TypeError)."""
+        ev = {
+            "strategy_summary": {"generated": 8, "returned": 0},
+            "pop_policy": {"used_for_filtering": False, "ignored": True},
+            "rejection_funnel": {"economic_prune": 8},
+            "near_misses": [],
+            "distributions": {},
+        }
+        trades = [
+            {
+                "strategy_id": "short_strangle",
+                "strategy_name": "Short Strangle",
+                "status": "skipped",
+                "skip_reason": "No Short Strangle survives economic pruning",
+            }
+        ]
+        report = build_user_explainability_report(
+            request=_base_request(allow_infinite_loss=True, max_loss_lacs=None),
+            strategy_evaluations={"short_strangle": ev},
+            trades=trades,
+            summary=_base_summary(
+                strategies_skipped=[
+                    {"strategy_id": "short_strangle", "skip_reason": trades[0]["skip_reason"]}
+                ]
+            ),
+        )
+        why_not = report["why_not"][0]
+        self.assertEqual(why_not["primary_reason"], "economic_prune")
+        self.assertIn("Short Strangle", why_not["explanation"])
+        self.assertFalse(
+            any(i["constraint"] == "max_loss_lacs" for i in report["what_if_insights"])
+        )
+
     def test_income_ok_with_badges_funnel_and_metrics(self):
         ev = {
             "strategy_summary": {

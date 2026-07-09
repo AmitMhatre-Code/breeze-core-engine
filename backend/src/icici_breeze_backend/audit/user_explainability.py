@@ -316,7 +316,7 @@ def _build_why_not(
     min_pop: float,
     min_roi: float,
     margin_lacs: float,
-    max_loss_lacs: float,
+    max_loss_lacs: float | None,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for trade in skipped_trades:
@@ -435,7 +435,7 @@ def _skip_one_liner(
     min_pop: float,
     min_roi: float,
     margin_lacs: float,
-    max_loss_lacs: float,
+    max_loss_lacs: float | None,
 ) -> str:
     return _skip_explanation(
         name=name,
@@ -458,7 +458,7 @@ def _skip_explanation(
     min_pop: float,
     min_roi: float,
     margin_lacs: float,
-    max_loss_lacs: float,
+    max_loss_lacs: float | None,
 ) -> str:
     if primary == "pop_floor":
         best = _best_pop_below_floor(ev, min_pop)
@@ -485,6 +485,8 @@ def _skip_explanation(
     if primary in ("capital", "budget"):
         return f"{name} candidates exceeded your ₹{margin_lacs:g}L capital budget."
     if primary in ("max_loss", "economic_prune"):
+        if max_loss_lacs is None:
+            return f"{name} structures were pruned by the engine's economic-viability check."
         return f"{name} structures exceeded your ₹{max_loss_lacs:g}L max-loss limit."
     if primary == "liquidity":
         return f"{name} was evaluated, but liquid strikes did not produce viable structures."
@@ -504,7 +506,7 @@ def _build_what_if_insights(
     min_pop: float,
     min_roi: float,
     margin_lacs: float,
-    max_loss_lacs: float,
+    max_loss_lacs: float | None,
 ) -> list[dict[str, Any]]:
     insights: list[dict[str, Any]] = []
     seen_messages: set[str] = set()
@@ -569,7 +571,7 @@ def _build_what_if_insights(
                 }
             )
 
-        if primary in ("max_loss", "economic_prune"):
+        if primary in ("max_loss", "economic_prune") and max_loss_lacs is not None:
             _add(
                 {
                     "constraint": "max_loss_lacs",

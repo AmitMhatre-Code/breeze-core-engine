@@ -1,5 +1,5 @@
 import type { StrategyHedgeCandidate } from "@/lib/hedge/api";
-import type { ExecutionPreviewLeg } from "@/components/order/OrderExecutionConfirmDialog";
+import type { ExecutionPreviewLeg } from "@/components/shared/order/OrderExecutionConfirmDialog";
 import type { StrategyLeg } from "@/lib/strategy-builder/types";
 
 export function candidateToStrategyLeg(

@@ -209,7 +209,7 @@ export function ApiUsageScreen() {
 
       <div className="space-y-4">
         <section className="app-card space-y-3 p-5">
-          <h3 className="text-[13.5px] font-bold text-foreground">Rate limit backoff</h3>
+          <h3 className="text-heading font-bold text-foreground">Rate limit backoff</h3>
           <p className="text-xs leading-relaxed text-muted">
             Minimum seconds between ICICI API calls (0–3 seconds). On HTTP 429 or 503 the app
             also applies exponential backoff (capped at 3 seconds) before retrying. Order place and
@@ -219,7 +219,7 @@ export function ApiUsageScreen() {
           <div>
             <label
               htmlFor="rate-limit-pause-seconds"
-              className="mb-1.5 block text-[10.5px] font-semibold uppercase tracking-[.06em] text-faint"
+              className="mb-1.5 block text-micro font-semibold uppercase tracking-[.06em] text-faint"
             >
               Seconds to wait
             </label>
@@ -231,7 +231,7 @@ export function ApiUsageScreen() {
                 max={3}
                 step={0.5}
                 inputMode="numeric"
-                className="h-10 w-28 rounded-[9px] border border-border bg-panel2 px-3 font-mono text-sm tabular-nums text-foreground outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-60 [-moz-appearance:textfield] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                className="h-10 w-28 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 font-mono text-sm tabular-nums text-foreground outline-none transition hover:border-accent focus:border-accent-strong focus:bg-panel disabled:cursor-not-allowed disabled:opacity-60 [-moz-appearance:textfield] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 value={pauseDraft}
                 onChange={(e) => setPauseDraft(e.target.value)}
                 disabled={prefQ.isLoading || savePause.isPending}
@@ -266,7 +266,7 @@ export function ApiUsageScreen() {
 
         {categoryByDay.length > 0 ? (
           <section className="app-card space-y-3 p-5">
-            <h3 className="text-[13.5px] font-bold text-foreground">Calls by category</h3>
+            <h3 className="text-heading font-bold text-foreground">Calls by category</h3>
             <div className="space-y-2.5">
               {categoryByDay.map(({ date, counts }) => (
                 <div key={date} className="flex flex-wrap items-center justify-between gap-3 border-t border-border-soft pt-2.5 first:border-t-0 first:pt-0">
@@ -293,7 +293,7 @@ export function ApiUsageScreen() {
               role="tab"
               aria-selected={mode === "api"}
               className={[
-                "rounded-[6px] px-3.5 py-1.5 font-mono text-[11.5px] font-semibold transition",
+                "rounded-[6px] px-3.5 py-1.5 font-mono text-table font-semibold transition",
                 mode === "api" ? "bg-accent-strong text-accent-ink" : "text-muted hover:text-foreground",
               ].join(" ")}
             >
@@ -305,7 +305,7 @@ export function ApiUsageScreen() {
               role="tab"
               aria-selected={mode === "route"}
               className={[
-                "rounded-[6px] px-3.5 py-1.5 font-mono text-[11.5px] font-semibold transition",
+                "rounded-[6px] px-3.5 py-1.5 font-mono text-table font-semibold transition",
                 mode === "route" ? "bg-accent-strong text-accent-ink" : "text-muted hover:text-foreground",
               ].join(" ")}
             >

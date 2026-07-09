@@ -138,16 +138,13 @@ export function ExpirySelectPill({
 
   const buttonClass = (() => {
     if (toolbarLayout) {
-      return "flex min-w-[11rem] shrink-0 items-center justify-between gap-2 rounded-[9px] border border-border bg-panel2 px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent/60 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50";
+      return "flex min-w-[11rem] shrink-0 items-center justify-between gap-2 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel disabled:cursor-not-allowed disabled:opacity-50";
     }
-    return [
-      "flex w-full min-w-0 items-center justify-between gap-2 border border-border bg-panel2 px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent/60 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50",
-      open ? "rounded-t-[9px] rounded-b-none border-b-0" : "rounded-[9px]",
-    ].join(" ");
+    return "flex w-full min-w-0 items-center justify-between gap-2 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel disabled:cursor-not-allowed disabled:opacity-50";
   })();
 
   const inputClass =
-    "min-w-0 flex-1 truncate border-0 bg-transparent p-0 font-mono text-sm font-semibold text-foreground outline-none ring-0 placeholder:font-normal placeholder:text-faint focus:ring-0 disabled:cursor-not-allowed";
+    "min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm font-semibold text-foreground outline-none ring-0 placeholder:font-normal placeholder:text-faint focus:ring-0 disabled:cursor-not-allowed";
 
   const optionClass = (d: string, highlighted: boolean) => {
     return `flex w-full rounded-lg px-3 py-2 text-left font-mono text-sm transition ${

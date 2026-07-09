@@ -49,6 +49,8 @@ from icici_breeze_backend.app.domain.settings_api import (
     ExchangeCalendarUpdateBody,
     ExchangeCalendarWorkingHours,
     MarketStatusResponse,
+    PnlEnginePreferencesResponse,
+    PnlEnginePreferencesUpdateBody,
     QuantityLimitsStateResponse,
     QuantityLimitsUpdateBody,
     ScripMasterStateResponse,
@@ -57,6 +59,7 @@ from icici_breeze_backend.app.domain.settings_api import (
     BreezeApiTesterWsSubscribeBody,
     WsReleaseRequest,
 )
+from icici_breeze_backend.app.services import pnl_engine_settings
 from icici_breeze_backend.app.services.breeze_api_tester_risk import (
     get_breeze_api_tester_risk_accepted_at,
     is_breeze_api_tester_risk_accepted,
@@ -508,6 +511,31 @@ async def settings_reference_data_load_now(ctx: RequestContext = Depends(get_req
 
     trigger_reference_data_load_now(force=True)
     return ReferenceDataLoadsStateResponse(**get_reference_data_admin_status())
+
+
+@router.get("/pnl-engine/preferences", response_model=PnlEnginePreferencesResponse)
+async def settings_pnl_engine_preferences_get(ctx: RequestContext = Depends(get_request_context)):
+    """Advanced settings: current WS quote flush + P&L recompute intervals,
+    plus the hard/recommended bounds the frontend uses for its risk copy."""
+    current = pnl_engine_settings.load_pnl_engine_settings()
+    return PnlEnginePreferencesResponse(**current, **pnl_engine_settings.bounds())
+
+
+@router.put("/pnl-engine/preferences", response_model=PnlEnginePreferencesResponse)
+async def settings_pnl_engine_preferences_put(
+    body: PnlEnginePreferencesUpdateBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Global (not per-user) — takes effect for the running process within
+    one flush/recompute cycle, no restart required."""
+    try:
+        updated = pnl_engine_settings.save_pnl_engine_settings(
+            quote_flush_interval_seconds=body.quote_flush_interval_seconds,
+            pnl_recompute_interval_seconds=body.pnl_recompute_interval_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return PnlEnginePreferencesResponse(**updated, **pnl_engine_settings.bounds())
 
 
 

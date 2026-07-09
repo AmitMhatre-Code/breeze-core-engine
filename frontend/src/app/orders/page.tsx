@@ -7,6 +7,7 @@ import {
   Suspense,
   useCallback,
   useMemo,
+  useRef,
   useState,
   type MouseEvent,
 } from "react";
@@ -14,12 +15,21 @@ import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { HelpLink } from "@/components/help/HelpLink";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
-import type { ExecutionPreviewLeg } from "@/components/order/OrderExecutionConfirmDialog";
+import type { ExecutionPreviewLeg } from "@/components/shared/order/OrderExecutionConfirmDialog";
 import { OrderBookDatePopover } from "@/components/order/OrderBookDatePopover";
-import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
-import { PrefilledOrderCard } from "@/components/order/PrefilledOrderCard";
+import { useOrderConfirm } from "@/components/shared/order/OrderConfirmProvider";
+import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
+import { OrderSideBadge } from "@/components/shared/badges/OrderSideBadge";
+import { PrefilledOrderCard } from "@/components/shared/order/PrefilledOrderCard";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Modal } from "@/components/ui/Modal";
 import { apiClient } from "@/lib/api-client";
+import { fetchBreakChunkDefaults } from "@/lib/break-chunk-defaults";
+import {
+  formatOptionSymbolLabel,
+  snapQuantityToLotMultiple,
+} from "@/lib/strategy-builder/leg-ui-helpers";
 import {
   fetchBookGroupLtps,
   type BookGroupLtpItem,
@@ -167,28 +177,53 @@ function parsePositiveInt(raw: string): number | null {
   return n;
 }
 
+/** Groups parked rows by contract so lot size is looked up once per (stock, exchange, expiry). */
+function parkedLotKey(
+  stockCode: string,
+  exchangeCode: string | undefined,
+  expiryDate: string,
+): string {
+  return `${stockCode}|${exchangeCode || "NFO"}|${expiryDate}`;
+}
+
 const ordersCancelBarClass =
-  "flex flex-wrap items-center justify-end gap-3 rounded-md border border-border bg-panel2 px-4 py-3";
+  "flex flex-wrap items-center justify-end gap-3 border-t border-border-soft bg-panel2 px-[18px] py-3";
+
+const cancelOutlineBtnClass =
+  "inline-flex h-[34px] items-center justify-center rounded-lg border border-down/40 bg-transparent px-3.5 py-1.5 text-xs font-semibold text-down transition hover:bg-down-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-down/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
+
+const fetchOrdersBtnClass =
+  "inline-flex items-center justify-center rounded-lg border border-accent/40 bg-transparent px-3.5 py-1.5 text-xs font-semibold text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
+
+const cancelOutlineBtnSmallClass =
+  "inline-flex items-center justify-center rounded-md border border-down/40 bg-transparent px-2.5 py-1 text-hint font-semibold text-down transition hover:bg-down-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-down/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
 
 const cloneToPlaceBtnClass =
-  "inline-flex rounded-md p-1.5 text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
+  "inline-flex rounded-md p-1.5 text-faint transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
 
-function sidePillClass(action: string | undefined): string {
-  const a = String(action ?? "")
-    .trim()
-    .toLowerCase();
-  if (a === "buy" || a.startsWith("buy"))
-    return "inline-flex rounded-full bg-up-tint px-2.5 py-0.5 text-[10.5px] font-bold uppercase tracking-[.05em] text-up";
-  if (a === "sell" || a.startsWith("sell"))
-    return "inline-flex rounded-full bg-down-tint px-2.5 py-0.5 text-[10.5px] font-bold uppercase tracking-[.05em] text-down";
-  return "font-medium text-foreground";
+/** Canonical leg label e.g. "BSESEN.09-Jul-2026.82000" (Type column already shows PE/CE). */
+function bookGroupLegLabel(g: BookGroup): string {
+  const first = g.group_orders?.[0];
+  const stock = String(first?.stock_code ?? "").trim();
+  const expiry = String(first?.expiry_date ?? "").trim();
+  const strike = Number(first?.strike_price);
+  if (!stock || !expiry || !Number.isFinite(strike)) {
+    return String(g.group_option ?? g.group ?? "Group");
+  }
+  return formatOptionSymbolLabel(stock, expiry, strike);
+}
+
+/** Leg label plus order count, mirroring Portfolio's "stock · expiry · N legs" group title. */
+function bookGroupTitle(g: BookGroup): string {
+  const count = g.group_orders?.length ?? 0;
+  return `${bookGroupLegLabel(g)} · ${count} order${count === 1 ? "" : "s"}`;
 }
 
 function statusChipClass(status: string | undefined): string {
   const s = String(status ?? "")
     .trim()
     .toLowerCase();
-  const base = "inline-flex max-w-[11rem] truncate rounded-full px-2.5 py-0.5 text-[10.5px] font-bold uppercase tracking-[.05em] ";
+  const base = "inline-flex max-w-[11rem] truncate rounded-full px-2.5 py-0.5 text-micro font-bold uppercase tracking-[.05em] ";
   if (s.includes("execut")) return `${base} bg-up-tint text-up`;
   if (s.includes("reject")) return `${base} bg-down-tint text-down`;
   if (s.includes("cancel")) return `${base} bg-panel2 text-faint`;
@@ -225,20 +260,14 @@ function ExecuteOrderGlyph({ className }: { className?: string }) {
       width="16"
       height="16"
       viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      fill="currentColor"
+      stroke="none"
       aria-hidden
     >
       <polygon points="5 3 19 12 5 21 5 3" />
     </svg>
   );
 }
-
-const parkedCheckboxClass =
-  "h-[1.125rem] w-[1.125rem] cursor-pointer rounded border-border text-accent-strong accent-accent-strong focus:ring-accent/30";
 
 const executeParkedBtnClass =
   "inline-flex rounded-md p-1.5 text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-40";
@@ -280,16 +309,6 @@ function messageClass(type: string | undefined): string {
   if (type === "alert-warning")
     return "border-amber-accent/30 bg-amber-tint text-amber-accent";
   return "border-border bg-panel2 text-foreground";
-}
-
-/** Map derivatives segment codes to parent exchange labels for display only. */
-function formatExchangeDisplay(code: string | undefined): string {
-  const raw = String(code ?? "").trim();
-  if (!raw) return "";
-  const u = raw.toUpperCase();
-  if (u === "NFO") return "NSE";
-  if (u === "BFO") return "BSE";
-  return raw;
 }
 
 /** Integer quantities with Indian-style grouping (e.g. 12,34,567). */
@@ -359,6 +378,98 @@ function BookMessages({ messages }: { messages: BookMessage[] }) {
   );
 }
 
+function CancelWarnGlyph() {
+  return (
+    <svg
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="var(--down)"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 9v4M12 17h.01" />
+      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+    </svg>
+  );
+}
+
+type CancelPrompt =
+  | { kind: "book-single"; key: string }
+  | { kind: "book-bulk" }
+  | { kind: "parked-bulk" };
+
+function CancelConfirmDialog({
+  prompt,
+  pending,
+  onClose,
+  onConfirm,
+}: {
+  prompt: CancelPrompt | null;
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const titleId = "cancel-confirm-title";
+  const title =
+    prompt?.kind === "book-single"
+      ? "Cancel this order?"
+      : prompt?.kind === "book-bulk"
+        ? "Cancel selected orders?"
+        : "Cancel selected parked orders?";
+  const body =
+    prompt?.kind === "parked-bulk"
+      ? "This removes the selected parked order(s). This cannot be undone."
+      : "This will cancel the open, unexecuted quantity. Filled quantity is unaffected. This cannot be undone.";
+
+  return (
+    <Modal
+      open={prompt != null}
+      onClose={onClose}
+      pending={pending}
+      titleId={titleId}
+      role="alertdialog"
+      panelClassName="w-full max-w-[380px] rounded-[14px] border border-border bg-panel p-[22px] shadow-pop"
+    >
+      <div className="mb-3 flex items-center gap-2.5">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-[9px] bg-down-tint">
+          <CancelWarnGlyph />
+        </span>
+        <span id={titleId} className="text-[15px] font-bold text-foreground">
+          {title}
+        </span>
+      </div>
+      <p className="mb-[18px] text-heading leading-relaxed text-muted">{body}</p>
+      <div className="flex gap-2.5">
+        <button
+          type="button"
+          className="app-btn-secondary h-10 min-h-10 flex-1"
+          disabled={pending}
+          onClick={onClose}
+        >
+          Keep order{prompt?.kind !== "book-single" ? "s" : ""}
+        </button>
+        <button
+          type="button"
+          className="app-btn-danger h-10 min-h-10 flex-1"
+          disabled={pending}
+          aria-busy={pending}
+          onClick={onConfirm}
+        >
+          <AsyncLabelSpan
+            busy={pending}
+            idleLabel="Cancel order"
+            busyLabel="Cancelling…"
+          />
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function OrdersBody() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -392,6 +503,7 @@ function OrdersBody() {
     Record<string, { quantity: string; price: string }>
   >({});
   const [parkedError, setParkedError] = useState<string | null>(null);
+  const [cancelPrompt, setCancelPrompt] = useState<CancelPrompt | null>(null);
 
   const queryString = useMemo(() => {
     if (!appliedRange) return "";
@@ -423,6 +535,44 @@ function OrdersBody() {
     () => parkedQuery.data ?? [],
     [parkedQuery.data],
   );
+
+  // Lazily fetched + cached per (stock, exchange, expiry) the first time a row's quantity
+  // is edited, so the fields below can snap to lot multiples the same way Place/Basket/
+  // Strategy do, without pre-fetching for every parked contract up front.
+  const parkedLotSizeCacheRef = useRef<Record<string, number>>({});
+
+  const snapParkedQuantity = useCallback(
+    async (row: ParkedOrderListItem, edit: { quantity: string; price: string }) => {
+      const key = parkedLotKey(row.stock_code, row.exchange_code, row.expiry_date);
+      let lotSize = parkedLotSizeCacheRef.current[key];
+      if (!lotSize) {
+        try {
+          const res = await fetchBreakChunkDefaults({
+            stock_code: row.stock_code,
+            exchange_code: row.exchange_code || "NFO",
+            expiry_date: row.expiry_date,
+          });
+          if (res.ok && res.lot_size && res.lot_size > 0) {
+            lotSize = res.lot_size;
+            parkedLotSizeCacheRef.current[key] = lotSize;
+          }
+        } catch {
+          return;
+        }
+      }
+      if (!lotSize) return;
+      const n = parsePositiveInt(edit.quantity);
+      if (n == null) return;
+      const snapped = String(snapQuantityToLotMultiple(n, lotSize));
+      if (snapped === edit.quantity) return;
+      setParkedEdits((prev) => ({
+        ...prev,
+        [row.id]: { ...edit, quantity: snapped },
+      }));
+    },
+    [],
+  );
+
   const inputStart = draftStart || data?.start || "";
   const inputEnd = draftEnd || data?.end || "";
 
@@ -438,16 +588,20 @@ function OrdersBody() {
       }),
     onSuccess: async () => {
       setSelected(new Set());
+      setCancelPrompt(null);
       invalidateTradingShellQueries(queryClient);
     },
   });
 
   const parkedDeleteManyMut = useMutation({
     mutationFn: (ids: string[]) => deleteParkedOrdersMany(ids),
-    onSuccess: () =>
+    onSuccess: () => {
+      setParkedSelected(new Set());
+      setCancelPrompt(null);
       queryClient.invalidateQueries({
         queryKey: ["parked-orders"],
-      }),
+      });
+    },
     onError: (e) =>
       setParkedError(
         e instanceof Error ? e.message : "Could not cancel selected parked orders",
@@ -534,6 +688,29 @@ function OrdersBody() {
     },
     [selected],
   );
+
+  const confirmCancel = useCallback(() => {
+    if (!cancelPrompt) return;
+    if (cancelPrompt.kind === "parked-bulk") {
+      parkedDeleteManyMut.mutate(Array.from(parkedSelected));
+      return;
+    }
+    if (!groups) return;
+    const ids =
+      cancelPrompt.kind === "book-single"
+        ? [cancelPrompt.key]
+        : Array.from(selected);
+    if (!ids.length) return;
+    cancelMut.mutate({
+      order_ids: ids,
+      cancel_details: ids.map((id) => cancelDetailForOrderKey(id, groups)),
+    });
+  }, [cancelPrompt, parkedDeleteManyMut, parkedSelected, groups, selected, cancelMut]);
+
+  const cancelPromptPending =
+    cancelPrompt?.kind === "parked-bulk"
+      ? parkedDeleteManyMut.isPending
+      : cancelMut.isPending;
 
   const applyDateRange = useCallback(() => {
     const s = (draftStart || data?.start || "").trim();
@@ -667,21 +844,28 @@ function OrdersBody() {
   ]);
 
   return (
-    <>
+    <div className="space-y-4">
+      <div>
+        <h1 className="app-text-title">Order Book</h1>
+        <p className="mt-0.5 text-sm app-text-muted">
+          Parked orders and today&apos;s order activity
+        </p>
+      </div>
+
       <Suspense fallback={null}>
         <PrefilledOrderCard />
       </Suspense>
 
-      <section className="app-card min-w-0 space-y-3 p-4">
-        <header className="space-y-1">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-foreground">
-              Parked Execution
-            </h2>
-            <span className="app-text-muted text-xs">
-              Edit qty/price before execute
-            </span>
-          </div>
+      <section className="app-card min-w-0 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-border-soft px-[18px] py-3.5">
+          <span className="text-hint font-bold uppercase tracking-[.07em] text-faint">
+            Parked execution
+          </span>
+          <span className="text-table text-muted">
+            Edit qty/price before execute
+          </span>
+        </div>
+        <div className="space-y-3 px-[18px] py-4">
           <p className="text-sm text-muted">
             Orders placed when the market is closed are saved here until you
             execute them to ICICI.{" "}
@@ -689,7 +873,6 @@ function OrdersBody() {
               How parking works
             </HelpLink>
           </p>
-        </header>
         {parkedQuery.isLoading ? (
           <div className="app-card-muted space-y-2 border-dashed p-4">
             <div className="h-4 w-40 app-skeleton rounded-sm border-0" />
@@ -717,49 +900,43 @@ function OrdersBody() {
             {parkedError ? (
               <div className="app-alert-error text-xs">{parkedError}</div>
             ) : null}
-            <div className="hidden md:block">
-              <div className="app-table-wrap">
+            <div className="hidden -mx-[18px] md:block">
+              <div className="overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
                   <thead className="bg-panel2">
                     <tr>
-                      <th className="px-3 py-2 text-[13px] font-semibold uppercase tracking-wider text-faint">
-                        #
-                      </th>
-                      <th className="px-3 py-2 text-[13px] font-semibold uppercase tracking-wider text-faint">
-                        Contract
-                      </th>
-                      <th className="px-3 py-2 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
-                        Side
-                      </th>
-                      <th className="px-3 py-2 text-[13px] font-semibold uppercase tracking-wider text-faint">
-                        Quantity
-                      </th>
-                      <th className="px-3 py-2 text-[13px] font-semibold uppercase tracking-wider text-faint">
-                        Price
-                      </th>
-                      <th className="px-3 py-2 text-right text-[13px] font-semibold uppercase tracking-wider text-faint">
-                        <span className="sr-only">Run or clone</span>
-                      </th>
-                      <th className="px-3 py-2 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
+                      <th className="py-2 pl-[18px] pr-3 text-center text-heading font-semibold uppercase tracking-wider text-faint">
                         {parkedRows.length ? (
-                          <input
-                            type="checkbox"
-                            className={parkedCheckboxClass}
+                          <Checkbox
                             checked={allParkedSelected}
-                            ref={(el) => {
-                              if (!el) return;
-                              el.indeterminate =
-                                someParkedSelected && !allParkedSelected;
-                            }}
-                            onChange={(e) => toggleParkedAll(e.target.checked)}
+                            indeterminate={someParkedSelected && !allParkedSelected}
+                            onChange={toggleParkedAll}
                             aria-label="Select all parked orders"
                           />
                         ) : null}
                       </th>
+                      <th className="px-3 py-2 text-heading font-semibold uppercase tracking-wider text-faint">
+                        Contract
+                      </th>
+                      <th className="px-3 py-2 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                        Type
+                      </th>
+                      <th className="px-3 py-2 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                        Side
+                      </th>
+                      <th className="px-3 py-2 text-heading font-semibold uppercase tracking-wider text-faint">
+                        Quantity
+                      </th>
+                      <th className="px-3 py-2 text-heading font-semibold uppercase tracking-wider text-faint">
+                        Price
+                      </th>
+                      <th className="py-2 pl-3 pr-[18px] text-right text-heading font-semibold uppercase tracking-wider text-faint">
+                        <span className="sr-only">Run or clone</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border-soft">
-                    {parkedRows.map((row, idx) => {
+                    {parkedRows.map((row) => {
                       const edit = parkedEdits[row.id] ?? {
                         quantity: row.quantity,
                         price: row.price,
@@ -767,23 +944,33 @@ function OrdersBody() {
                       const qtyOk = parsePositiveInt(edit.quantity) != null;
                       return (
                         <tr key={row.id}>
-                          <td className="px-3 py-2 align-middle tabular-nums text-faint">
-                            {idx + 1}
+                          <td className="py-2 pl-[18px] pr-3 text-center align-middle">
+                            <Checkbox
+                              checked={parkedSelected.has(row.id)}
+                              onChange={(checked) =>
+                                toggleParkedOne(row.id, checked)
+                              }
+                              aria-label={`Select parked order ${row.stock_code}`}
+                            />
                           </td>
                           <td className="px-3 py-2 align-middle">
-                            {row.stock_code} {row.expiry_date} {row.right}{" "}
-                            {row.strike_price}
+                            {formatOptionSymbolLabel(
+                              row.stock_code,
+                              row.expiry_date,
+                              Number(row.strike_price),
+                            )}
                           </td>
                           <td className="px-3 py-2 align-middle text-center">
-                            <span className={sidePillClass(row.action)}>
-                              {row.action}
-                            </span>
+                            <OptionTypeBadge right={row.right} />
+                          </td>
+                          <td className="px-3 py-2 align-middle text-center">
+                            <OrderSideBadge side={row.action} />
                           </td>
                           <td className="px-3 py-2 align-middle">
                             <input
                               type="number"
                               min={1}
-                              className="w-24 rounded-md border border-border bg-panel2 px-2 py-1 font-mono text-sm"
+                              className="w-24 rounded-t-[2px] border-0 border-b border-muted bg-background dark:bg-elevated px-2.5 py-1.5 font-mono text-sm font-semibold text-foreground transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none"
                               value={edit.quantity}
                               onChange={(e) =>
                                 setParkedEdits((prev) => ({
@@ -794,13 +981,14 @@ function OrdersBody() {
                                   },
                                 }))
                               }
+                              onBlur={() => snapParkedQuantity(row, edit)}
                             />
                           </td>
                           <td className="px-3 py-2 align-middle">
                             <input
                               type="number"
                               step={0.05}
-                              className="w-28 rounded-md border border-border bg-panel2 px-2 py-1 font-mono text-sm"
+                              className="w-28 rounded-t-[2px] border-0 border-b border-muted bg-background dark:bg-elevated px-2.5 py-1.5 font-mono text-sm font-semibold text-foreground transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none"
                               value={edit.price}
                               onChange={(e) =>
                                 setParkedEdits((prev) => ({
@@ -813,7 +1001,7 @@ function OrdersBody() {
                               }
                             />
                           </td>
-                          <td className="px-3 py-2 align-middle">
+                          <td className="py-2 pl-3 pr-[18px] align-middle">
                             <div className="flex flex-wrap justify-end gap-1">
                               <button
                                 type="button"
@@ -834,17 +1022,6 @@ function OrdersBody() {
                               </button>
                             </div>
                           </td>
-                          <td className="px-3 py-2 text-center align-middle">
-                            <input
-                              type="checkbox"
-                              className={parkedCheckboxClass}
-                              checked={parkedSelected.has(row.id)}
-                              onChange={(e) =>
-                                toggleParkedOne(row.id, e.target.checked)
-                              }
-                              aria-label={`Select parked order ${row.stock_code}`}
-                            />
-                          </td>
                         </tr>
                       );
                     })}
@@ -860,22 +1037,17 @@ function OrdersBody() {
                     Bulk select
                   </span>
                   <label className="flex items-center gap-2 text-sm text-muted">
-                    <input
-                      type="checkbox"
-                      className={parkedCheckboxClass}
+                    <Checkbox
                       checked={allParkedSelected}
-                      ref={(el) => {
-                        if (!el) return;
-                        el.indeterminate =
-                          someParkedSelected && !allParkedSelected;
-                      }}
-                      onChange={(e) => toggleParkedAll(e.target.checked)}
+                      indeterminate={someParkedSelected && !allParkedSelected}
+                      onChange={toggleParkedAll}
+                      aria-label="Select all parked orders"
                     />
                     All
                   </label>
                 </div>
               ) : null}
-              {parkedRows.map((row, idx) => {
+              {parkedRows.map((row) => {
                 const edit = parkedEdits[row.id] ?? {
                   quantity: row.quantity,
                   price: row.price,
@@ -889,25 +1061,22 @@ function OrdersBody() {
                     <div className="space-y-3">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          <p className="tabular-nums text-xs text-faint">
-                            #{idx + 1}
-                          </p>
                           <p className="text-base font-medium text-foreground">
-                            {row.stock_code} {row.expiry_date} {row.right}{" "}
-                            {row.strike_price}
+                            {formatOptionSymbolLabel(
+                              row.stock_code,
+                              row.expiry_date,
+                              Number(row.strike_price),
+                            )}
                           </p>
-                          <div className="mt-1">
-                            <span className={sidePillClass(row.action)}>
-                              {row.action}
-                            </span>
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <OptionTypeBadge right={row.right} />
+                            <OrderSideBadge side={row.action} />
                           </div>
                         </div>
-                        <input
-                          type="checkbox"
-                          className={parkedCheckboxClass}
+                        <Checkbox
                           checked={parkedSelected.has(row.id)}
-                          onChange={(e) =>
-                            toggleParkedOne(row.id, e.target.checked)
+                          onChange={(checked) =>
+                            toggleParkedOne(row.id, checked)
                           }
                           aria-label={`Select parked order ${row.stock_code}`}
                         />
@@ -920,7 +1089,7 @@ function OrdersBody() {
                           <input
                             type="number"
                             min={1}
-                            className="w-full max-w-full rounded-md border border-border bg-panel2 px-2 py-1.5 font-mono text-sm"
+                            className="w-full max-w-full rounded-t-[2px] border-0 border-b border-muted bg-background dark:bg-elevated px-2.5 py-1.5 font-mono text-sm transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none"
                             value={edit.quantity}
                             onChange={(e) =>
                               setParkedEdits((prev) => ({
@@ -931,6 +1100,7 @@ function OrdersBody() {
                                 },
                               }))
                             }
+                            onBlur={() => snapParkedQuantity(row, edit)}
                           />
                         </label>
                         <label className="block min-w-0 space-y-1">
@@ -940,7 +1110,7 @@ function OrdersBody() {
                           <input
                             type="number"
                             step={0.05}
-                            className="w-full max-w-full rounded-md border border-border bg-panel2 px-2 py-1.5 font-mono text-sm"
+                            className="w-full max-w-full rounded-t-[2px] border-0 border-b border-muted bg-background dark:bg-elevated px-2.5 py-1.5 font-mono text-sm transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none"
                             value={edit.price}
                             onChange={(e) =>
                               setParkedEdits((prev) => ({
@@ -985,101 +1155,92 @@ function OrdersBody() {
                 </span>
                 <button
                   type="button"
-                  className="app-btn-primary h-10 min-h-10 shrink-0 whitespace-nowrap"
-                  disabled={parkedSelected.size === 0}
-                  onClick={executeSelectedParked}
-                >
-                  Execute selected
-                </button>
-                <button
-                  type="button"
-                  className={[
-                    "app-btn-secondary h-10 min-h-10 shrink-0 whitespace-nowrap",
-                    parkedDeleteManyMut.isPending ? "cursor-wait" : "",
-                  ].join(" ")}
+                  className={cancelOutlineBtnClass}
                   disabled={
                     parkedSelected.size === 0 || parkedDeleteManyMut.isPending
                   }
                   aria-busy={parkedDeleteManyMut.isPending}
-                  onClick={() =>
-                    parkedDeleteManyMut.mutate(Array.from(parkedSelected))
-                  }
+                  onClick={() => setCancelPrompt({ kind: "parked-bulk" })}
                 >
                   <AsyncLabelSpan
                     busy={parkedDeleteManyMut.isPending}
                     idleLabel="Cancel selected"
                     busyLabel="Cancelling…"
-                    className="font-semibold"
                   />
+                </button>
+                <button
+                  type="button"
+                  className="app-btn-primary h-[34px] shrink-0 whitespace-nowrap"
+                  disabled={parkedSelected.size === 0}
+                  onClick={executeSelectedParked}
+                >
+                  Execute selected
                 </button>
               </div>
             ) : null}
           </div>
         )}
+        </div>
       </section>
 
       {bookQuery.isLoading ? (
-        <div className="app-card mt-6 space-y-3 p-4">
+        <div className="app-card space-y-3 p-4">
           <div className="h-5 w-28 app-skeleton rounded-sm border-0" />
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className="h-9 w-full app-skeleton rounded-sm border-0" />
           ))}
         </div>
       ) : bookQuery.error ? (
-        <div className="app-alert-error mt-6">
+        <div className="app-alert-error">
           Unable to load order book:{" "}
           {bookQuery.error instanceof Error
             ? bookQuery.error.message
             : "Unknown error"}
         </div>
       ) : (
-        <section className="app-card mt-6 min-w-0 space-y-3 p-4">
-          <header className="space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold text-foreground">
-                Order Book
-              </h2>
-              <span className="app-text-muted hidden text-right uppercase tracking-wide sm:block sm:max-w-[14rem]">
-                Broker messages
-              </span>
-            </div>
-          </header>
-
-          <BookMessages key={brokerMessagesKey} messages={messages} />
-
-          <div className="orders-date-surface overflow-visible">
-            <p className="orders-date-caption">Date range</p>
-            <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
-              <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-visible sm:flex-row sm:items-center sm:gap-3">
-                <OrderBookDatePopover
-                  id="order-book-start"
-                  label="Start date"
-                  value={inputStart}
-                  onChange={setDraftStart}
-                />
-                <span className="orders-date-sep sm:px-0.5" aria-hidden>
-                  to
-                </span>
-                <OrderBookDatePopover
-                  id="order-book-end"
-                  label="End date"
-                  value={inputEnd}
-                  onChange={setDraftEnd}
-                />
-              </div>
-              <button
-                type="button"
-                className="orders-fetch-btn"
-                onClick={applyDateRange}
-                disabled={!(inputStart && inputEnd)}
-              >
-                Fetch orders
-              </button>
-            </div>
+        <section className="app-card min-w-0 overflow-hidden">
+          <div className="border-b border-border-soft px-[18px] py-3.5">
+            <span className="text-hint font-bold uppercase tracking-[.07em] text-faint">
+              Order book
+            </span>
           </div>
 
+          <div className="px-[18px] py-3">
+            <BookMessages key={brokerMessagesKey} messages={messages} />
+          </div>
+
+          <div className="flex flex-col gap-3 border-b border-border-soft px-[18px] py-3.5 sm:flex-row sm:flex-wrap sm:items-center">
+            <span className="text-table text-muted">Date range</span>
+            <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-visible sm:flex-row sm:items-center sm:gap-3">
+              <OrderBookDatePopover
+                id="order-book-start"
+                label="Start date"
+                value={inputStart}
+                onChange={setDraftStart}
+              />
+              <span className="shrink-0 text-center text-xs text-faint" aria-hidden>
+                to
+              </span>
+              <OrderBookDatePopover
+                id="order-book-end"
+                label="End date"
+                value={inputEnd}
+                onChange={setDraftEnd}
+              />
+            </div>
+            <button
+              type="button"
+              className={`${fetchOrdersBtnClass} h-[34px] w-full sm:ml-auto sm:w-auto sm:self-center`}
+              onClick={applyDateRange}
+              disabled={!(inputStart && inputEnd)}
+            >
+              Fetch orders
+            </button>
+          </div>
+
+          <div className="px-[18px] py-4">
           {cancelMut.isError ? (
-            <div className="app-alert-error text-xs">
+            <div className="app-alert-error mb-3 text-xs">
               {cancelMut.error instanceof Error
                 ? cancelMut.error.message
                 : "Cancel failed"}
@@ -1091,58 +1252,48 @@ function OrdersBody() {
               No orders in this date range.
             </div>
           ) : (
-            <form
-              className="space-y-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const ids = Array.from(selected);
-                if (!ids.length || !groups) return;
-                cancelMut.mutate({
-                  order_ids: ids,
-                  cancel_details: ids.map((id) =>
-                    cancelDetailForOrderKey(id, groups),
-                  ),
-                });
-              }}
-            >
-              <div className="hidden min-w-0 overflow-hidden rounded-lg border border-border bg-panel md:block">
-                <div className="min-w-0 overflow-x-auto">
-                  <table className="min-w-full text-left text-sm text-foreground">
-                    <thead className="sticky top-0 z-[1] border-b border-border bg-panel2">
+            <div className="space-y-3">
+              <div className="hidden min-w-0 -mx-[18px] overflow-x-auto md:block">
+                <table className="min-w-full text-left text-sm text-foreground">
+                  <thead className="sticky top-0 z-[1] border-b border-border bg-panel2">
                       <tr>
-                        <th className="px-4 py-3 text-[13px] font-semibold uppercase tracking-wider text-faint">
-                          #
+                        <th className="py-3 pl-[18px] pr-4 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                          <span className="sr-only">Select group</span>
                         </th>
-                        <th className="px-4 py-3 text-[13px] font-semibold uppercase tracking-wider text-faint">
+                        <th className="px-4 py-3 text-heading font-semibold uppercase tracking-wider text-faint">
                           Group
                         </th>
-                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
+                        <th className="px-4 py-3 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                          Type
+                        </th>
+                        <th className="px-4 py-3 text-center text-heading font-semibold uppercase tracking-wider text-faint">
                           Side
                         </th>
-                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
+                        <th className="px-4 py-3 text-center text-heading font-semibold uppercase tracking-wider text-faint">
                           Ordered
                         </th>
-                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
+                        <th className="px-4 py-3 text-center text-heading font-semibold uppercase tracking-wider text-faint">
                           Cancelled
                         </th>
-                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
+                        <th className="px-4 py-3 text-center text-heading font-semibold uppercase tracking-wider text-faint">
                           Expired
                         </th>
-                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-accent-strong">
+                        <th className="px-4 py-3 text-center text-heading font-semibold uppercase tracking-wider text-accent-strong">
                           Open
                         </th>
-                        <th className="px-4 py-3 text-center text-[13px] font-semibold uppercase tracking-wider text-up">
+                        <th className="px-4 py-3 text-center text-heading font-semibold uppercase tracking-wider text-up">
                           Executed
                         </th>
-                        <th className="px-4 py-3 text-right text-[13px] font-semibold uppercase tracking-wider text-faint">
+                        <th className="py-3 pl-4 pr-[18px] text-right text-heading font-semibold uppercase tracking-wider text-faint">
                           <span className="sr-only">Expand group</span>
                         </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border-soft">
-                      {groups.map((g, idx) => {
+                      {groups.map((g) => {
                         const isOpen = !!expanded[g.group];
-                        const groupLabel = String(g.group_option ?? g.group ?? "Group");
+                        const groupLabel = bookGroupLegLabel(g);
+                        const groupTitle = bookGroupTitle(g);
                         const toggleGroupRow = () =>
                           setExpanded((prev) => ({
                             ...prev,
@@ -1168,193 +1319,177 @@ function OrdersBody() {
                                 }
                               }}
                             >
-                              <td className="px-4 py-3.5 align-middle tabular-nums text-faint">
-                                {idx + 1}
+                              <td
+                                className="py-3.5 pl-[18px] pr-4 text-center align-middle"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {(g.group_open ?? 0) > 0 ? (
+                                  <Checkbox
+                                    checked={groupAllSelected(g)}
+                                    indeterminate={
+                                      groupSomeSelected(g) && !groupAllSelected(g)
+                                    }
+                                    onChange={(checked) => toggleGroup(g, checked)}
+                                    aria-label={`Select all cancelable in ${groupLabel}`}
+                                  />
+                                ) : null}
                               </td>
                               <td className="px-4 py-3.5 align-middle font-medium text-foreground">
-                                {g.group_option}
+                                {groupTitle}
                               </td>
                               <td className="px-4 py-3.5 align-middle text-center">
-                                <span className={sidePillClass(g.group_action)}>
-                                  {g.group_action}
-                                </span>
+                                <OptionTypeBadge right={g.group_orders?.[0]?.right} />
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-center tabular-nums text-muted">
+                              <td className="px-4 py-3.5 align-middle text-center">
+                                <OrderSideBadge side={g.group_action} />
+                              </td>
+                              <td className="px-4 py-3.5 align-middle text-center font-mono tabular-nums text-muted">
                                 {formatQtyIndian(g.group_ordered)}
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-center tabular-nums text-muted">
+                              <td className="px-4 py-3.5 align-middle text-center font-mono tabular-nums text-muted">
                                 {formatQtyIndian(g.group_cancelled)}
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-center tabular-nums text-muted">
+                              <td className="px-4 py-3.5 align-middle text-center font-mono tabular-nums text-muted">
                                 {formatQtyIndian(g.group_expired)}
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-center tabular-nums font-medium text-accent-strong">
+                              <td className="px-4 py-3.5 align-middle text-center font-mono tabular-nums font-medium text-accent-strong">
                                 {formatQtyIndian(g.group_open)}
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-center tabular-nums font-medium text-up">
+                              <td className="px-4 py-3.5 align-middle text-center font-mono tabular-nums font-medium text-up">
                                 {formatQtyIndian(g.group_executed)}
                               </td>
-                              <td className="px-4 py-3.5 align-middle text-right text-muted">
+                              <td className="py-3.5 pl-4 pr-[18px] align-middle text-right text-faint">
                                 <ChevronGlyph expanded={isOpen} />
                               </td>
                             </tr>
                             {isOpen ? (
-                              <tr className="bg-panel2">
-                                <td colSpan={9} className="p-0">
-                                  <div className="border-t border-border-soft p-3">
-                                    <div className="overflow-hidden rounded-md border border-border bg-panel2">
-                                      <table className="min-w-full text-left text-sm">
-                                        <thead>
-                                          <tr className="border-b border-border-soft bg-panel2">
-                                            <th className="px-4 py-2.5 text-[13px] font-semibold uppercase tracking-wider text-faint">
-                                              #
-                                            </th>
-                                            <th className="px-4 py-2.5 text-[13px] font-semibold uppercase tracking-wider text-faint">
-                                              Option
-                                            </th>
-                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
-                                              Exch.
-                                            </th>
-                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
-                                              Side
-                                            </th>
-                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
-                                              Qty
-                                            </th>
-                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
-                                              Open
-                                            </th>
-                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
-                                              LTP
-                                            </th>
-                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
-                                              Price
-                                            </th>
-                                            <th className="px-4 py-2.5 text-[13px] font-semibold uppercase tracking-wider text-faint">
-                                              Status
-                                            </th>
-                                            <th className="w-10 px-1 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
-                                              <span className="sr-only">
-                                                Clone to Place Order
-                                              </span>
-                                            </th>
-                                            <th className="px-4 py-2.5 text-center text-[13px] font-semibold uppercase tracking-wider text-faint">
-                                              {(g.group_open ?? 0) > 0 ? (
-                                                <input
-                                                  type="checkbox"
-                                                  className="h-[1.125rem] w-[1.125rem] cursor-pointer rounded border-border text-accent-strong accent-accent-strong focus:ring-accent/30"
-                                                  checked={groupAllSelected(g)}
-                                                  ref={(el) => {
-                                                    if (!el) return;
-                                                    el.indeterminate =
-                                                      groupSomeSelected(g) &&
-                                                      !groupAllSelected(g);
-                                                  }}
-                                                  onChange={(e) =>
-                                                    toggleGroup(
-                                                      g,
-                                                      e.target.checked,
-                                                    )
+                              <tr className="border-b border-border-soft bg-panel2">
+                                <td colSpan={10} className="px-[18px]">
+                                  <table className="min-w-full text-left text-sm">
+                                    <thead>
+                                      <tr className="border-b border-border-soft">
+                                        <th className="w-10 px-4 py-2.5 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                                          <span className="sr-only">
+                                            Select order
+                                          </span>
+                                        </th>
+                                        <th className="py-2.5 pl-10 pr-4 text-heading font-semibold uppercase tracking-wider text-faint">
+                                          Order
+                                        </th>
+                                        <th className="px-4 py-2.5 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                                          Qty
+                                        </th>
+                                        <th className="px-4 py-2.5 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                                          Open
+                                        </th>
+                                        <th className="px-4 py-2.5 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                                          LTP
+                                        </th>
+                                        <th className="px-4 py-2.5 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                                          Price ₹
+                                        </th>
+                                        <th className="px-4 py-2.5 text-heading font-semibold uppercase tracking-wider text-faint">
+                                          Status
+                                        </th>
+                                        <th className="w-10 px-1 py-2.5 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                                          <span className="sr-only">
+                                            Clone to Place Order
+                                          </span>
+                                        </th>
+                                        <th className="w-20 px-2 py-2.5 text-right text-heading font-semibold uppercase tracking-wider text-faint">
+                                          <span className="sr-only">
+                                            Cancel
+                                          </span>
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-border-soft">
+                                      {(g.group_orders ?? []).map((o, j) => {
+                                        const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
+                                        const canCancel =
+                                          o.cancelable && !!o.order_id;
+                                        return (
+                                          <tr
+                                            key={key || j}
+                                            className="transition-colors hover:bg-accent-tint"
+                                          >
+                                            <td className="px-4 py-2.5 text-center align-middle">
+                                              {canCancel ? (
+                                                <Checkbox
+                                                  checked={selected.has(key)}
+                                                  onChange={(checked) =>
+                                                    toggleOne(key, checked)
                                                   }
-                                                  aria-label={`Select all cancelable in ${g.group_option}`}
+                                                  aria-label={`Select order ${o.order_id}`}
                                                 />
                                               ) : null}
-                                            </th>
-                                          </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-border-soft">
-                                          {(g.group_orders ?? []).map((o, j) => {
-                                            const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
-                                            return (
-                                              <tr
-                                                key={key || j}
-                                                className="transition-colors hover:bg-accent-tint"
+                                            </td>
+                                            <td className="py-2.5 pl-10 pr-4 align-middle font-mono text-muted">
+                                              #{o.order_id ?? "—"}
+                                            </td>
+                                            <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums">
+                                              {formatQtyIndian(o.quantity)}
+                                            </td>
+                                            <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums">
+                                              {formatQtyIndian(o.open_quantity)}
+                                            </td>
+                                            <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums text-muted">
+                                              <GroupLtpValue
+                                                groupId={g.group}
+                                                fallback={g.group_ltp}
+                                                ltps={groupLtps}
+                                                loading={groupLtpLoading}
+                                              />
+                                            </td>
+                                            <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums text-muted">
+                                              {o.price != null
+                                                ? `₹${o.price}`
+                                                : "—"}
+                                            </td>
+                                            <td className="px-4 py-2.5 align-middle">
+                                              <span
+                                                className={statusChipClass(
+                                                  o.status,
+                                                )}
                                               >
-                                                <td className="px-4 py-2.5 align-middle tabular-nums text-faint">
-                                                  {j + 1}
-                                                </td>
-                                                <td className="px-4 py-2.5 align-middle font-medium text-foreground">
-                                                  {o.option}
-                                                </td>
-                                                <td className="px-4 py-2.5 align-middle text-center text-xs text-muted">
-                                                  {formatExchangeDisplay(
-                                                    o.exchange_code,
-                                                  )}
-                                                </td>
-                                                <td className="px-4 py-2.5 align-middle text-center">
-                                                  <span
-                                                    className={sidePillClass(
-                                                      o.action,
-                                                    )}
-                                                  >
-                                                    {o.action}
-                                                  </span>
-                                                </td>
-                                                <td className="px-4 py-2.5 align-middle text-center tabular-nums">
-                                                  {formatQtyIndian(o.quantity)}
-                                                </td>
-                                                <td className="px-4 py-2.5 align-middle text-center tabular-nums">
-                                                  {formatQtyIndian(o.open_quantity)}
-                                                </td>
-                                                <td className="px-4 py-2.5 align-middle text-center tabular-nums text-muted">
-                                                  <GroupLtpValue
-                                                    groupId={g.group}
-                                                    fallback={g.group_ltp}
-                                                    ltps={groupLtps}
-                                                    loading={groupLtpLoading}
-                                                  />
-                                                </td>
-                                                <td className="px-4 py-2.5 align-middle text-center tabular-nums text-muted">
-                                                  {o.price != null
-                                                    ? `₹${o.price}`
-                                                    : "—"}
-                                                </td>
-                                                <td className="px-4 py-2.5 align-middle">
-                                                  <span
-                                                    className={statusChipClass(
-                                                      o.status,
-                                                    )}
-                                                  >
-                                                    {o.status}
-                                                  </span>
-                                                </td>
-                                                <td className="px-1 py-2.5 align-middle text-center">
-                                                  <button
-                                                    type="button"
-                                                    className={cloneToPlaceBtnClass}
-                                                    aria-label="Clone order to Place Order"
-                                                    onClick={(e) =>
-                                                      cloneOrderToPlace(o, e)
-                                                    }
-                                                  >
-                                                    <CloneOrderGlyph />
-                                                  </button>
-                                                </td>
-                                                <td className="px-4 py-2.5 align-middle text-center">
-                                                  {o.cancelable && o.order_id ? (
-                                                    <input
-                                                      type="checkbox"
-                                                      className="h-[1.125rem] w-[1.125rem] cursor-pointer rounded border-border text-accent-strong accent-accent-strong focus:ring-accent/30"
-                                                      checked={selected.has(
-                                                        key,
-                                                      )}
-                                                      onChange={(e) =>
-                                                        toggleOne(
-                                                          key,
-                                                          e.target.checked,
-                                                        )
-                                                      }
-                                                      aria-label={`Select order ${o.order_id}`}
-                                                    />
-                                                  ) : null}
-                                                </td>
-                                              </tr>
-                                            );
-                                          })}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  </div>
+                                                {o.status}
+                                              </span>
+                                            </td>
+                                            <td className="px-1 py-2.5 align-middle text-center">
+                                              <button
+                                                type="button"
+                                                className={cloneToPlaceBtnClass}
+                                                aria-label="Clone order to Place Order"
+                                                onClick={(e) =>
+                                                  cloneOrderToPlace(o, e)
+                                                }
+                                              >
+                                                <CloneOrderGlyph />
+                                              </button>
+                                            </td>
+                                            <td className="px-2 py-2.5 text-right align-middle">
+                                              {canCancel ? (
+                                                <button
+                                                  type="button"
+                                                  className={
+                                                    cancelOutlineBtnSmallClass
+                                                  }
+                                                  onClick={() =>
+                                                    setCancelPrompt({
+                                                      kind: "book-single",
+                                                      key,
+                                                    })
+                                                  }
+                                                >
+                                                  Cancel
+                                                </button>
+                                              ) : null}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
                                 </td>
                               </tr>
                             ) : null}
@@ -1363,7 +1498,6 @@ function OrdersBody() {
                       })}
                     </tbody>
                   </table>
-                </div>
               </div>
 
               {(groups.some((g) => (g.group_open ?? 0) > 0) &&
@@ -1374,19 +1508,16 @@ function OrdersBody() {
                     {formatQtyIndian(selected.size)} order(s) selected
                   </span>
                   <button
-                    type="submit"
+                    type="button"
                     disabled={cancelMut.isPending || selected.size === 0}
                     aria-busy={cancelMut.isPending}
-                    className={[
-                      "app-btn-primary h-10 min-h-10 shrink-0 whitespace-nowrap",
-                      cancelMut.isPending ? "cursor-wait" : "",
-                    ].join(" ")}
+                    className={cancelOutlineBtnClass}
+                    onClick={() => setCancelPrompt({ kind: "book-bulk" })}
                   >
                     <AsyncLabelSpan
                       busy={cancelMut.isPending}
                       idleLabel="Cancel selected"
                       busyLabel="Cancelling…"
-                      className="font-semibold"
                     />
                   </button>
                 </div>
@@ -1398,8 +1529,9 @@ function OrdersBody() {
                   <div key={g.group} className="app-card-muted overflow-hidden">
                     <details>
                       <summary className="cursor-pointer list-none px-3 py-2.5 text-base font-medium text-foreground">
-                        <span className="block">{g.group_option}</span>
-                        <span className="text-sm font-normal text-muted">
+                        <span className="block">{bookGroupTitle(g)}</span>
+                        <span className="mt-1 flex flex-wrap items-center gap-1.5 text-sm font-normal text-muted">
+                          <OptionTypeBadge right={g.group_orders?.[0]?.right} />
                           {g.group_action} · Open {formatQtyIndian(g.group_open)}{" "}
                           · Exec {formatQtyIndian(g.group_executed)}
                         </span>
@@ -1407,34 +1539,28 @@ function OrdersBody() {
                       <div className="space-y-2 border-t border-border-soft px-3 py-2.5 text-sm text-muted">
                         {(g.group_open ?? 0) > 0 ? (
                           <label className="flex items-center gap-2 font-medium">
-                            <input
-                              type="checkbox"
-                              className="h-[1.125rem] w-[1.125rem] rounded border-border"
+                            <Checkbox
                               checked={groupAllSelected(g)}
-                              ref={(el) => {
-                                if (!el) return;
-                                el.indeterminate =
-                                  groupSomeSelected(g) &&
-                                  !groupAllSelected(g);
-                              }}
-                              onChange={(e) =>
-                                toggleGroup(g, e.target.checked)
+                              indeterminate={
+                                groupSomeSelected(g) && !groupAllSelected(g)
                               }
+                              onChange={(checked) => toggleGroup(g, checked)}
+                              aria-label={`Select all cancelable in ${bookGroupLegLabel(g)}`}
                             />
                             Select all cancelable in group
                           </label>
                         ) : null}
                         {(g.group_orders ?? []).map((o, j) => {
                           const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
-                          const exch = formatExchangeDisplay(o.exchange_code);
+                          const canCancel = o.cancelable && !!o.order_id;
                           return (
                             <div
                               key={key || j}
                               className="rounded-lg border border-border bg-panel2 p-3 text-sm"
                             >
                               <div className="flex items-start justify-between gap-2">
-                                <p className="min-w-0 flex-1 text-base font-medium text-foreground">
-                                  {o.option}
+                                <p className="min-w-0 flex-1 font-mono text-base font-medium text-foreground">
+                                  #{o.order_id ?? "—"}
                                 </p>
                                 <button
                                   type="button"
@@ -1448,8 +1574,6 @@ function OrdersBody() {
                                   <CloneOrderGlyph />
                                 </button>
                               </div>
-                              {exch ? <p>Exchange: {exch}</p> : null}
-                              <p>Side: {o.action}</p>
                               <p>Qty: {formatQtyIndian(o.quantity)}</p>
                               <p>Open: {formatQtyIndian(o.open_quantity)}</p>
                               <p>
@@ -1463,18 +1587,31 @@ function OrdersBody() {
                                 />
                               </p>
                               <p>Status: {o.status}</p>
-                              {o.cancelable && o.order_id ? (
-                                <label className="mt-1 flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    className="h-[1.125rem] w-[1.125rem] rounded border-border"
-                                    checked={selected.has(key)}
-                                    onChange={(e) =>
-                                      toggleOne(key, e.target.checked)
+                              {canCancel ? (
+                                <div className="mt-1 flex items-center justify-between gap-2">
+                                  <label className="flex items-center gap-2">
+                                    <Checkbox
+                                      checked={selected.has(key)}
+                                      onChange={(checked) =>
+                                        toggleOne(key, checked)
+                                      }
+                                      aria-label={`Select order ${o.order_id}`}
+                                    />
+                                    Select to cancel
+                                  </label>
+                                  <button
+                                    type="button"
+                                    className={cancelOutlineBtnSmallClass}
+                                    onClick={() =>
+                                      setCancelPrompt({
+                                        kind: "book-single",
+                                        key,
+                                      })
                                     }
-                                  />
-                                  Select to cancel
-                                </label>
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
                               ) : null}
                             </div>
                           );
@@ -1484,17 +1621,25 @@ function OrdersBody() {
                   </div>
                 ))}
               </div>
-            </form>
+            </div>
           )}
+          </div>
         </section>
       )}
-    </>
+
+      <CancelConfirmDialog
+        prompt={cancelPrompt}
+        pending={cancelPromptPending}
+        onClose={() => setCancelPrompt(null)}
+        onConfirm={confirmCancel}
+      />
+    </div>
   );
 }
 
 export default function OrdersPage() {
   return (
-    <AppShell contentWidth="wide">
+    <AppShell>
       <RevokedTradingPageGuard>
         <OrdersBody />
       </RevokedTradingPageGuard>

@@ -182,6 +182,11 @@ def _ensure_app_database() -> None:
             from icici_breeze_backend.app.services.reference_data.state import ensure_reference_data_tables
 
             ensure_reference_data_tables(db_path)
+            from icici_breeze_backend.app.services.pnl_engine_settings import (
+                ensure_pnl_engine_settings_table,
+            )
+
+            ensure_pnl_engine_settings_table(db_path)
         except Exception:
             _logger.exception("user_account schema migration failed")
 
@@ -315,6 +320,19 @@ def start_application():
         require_redis_connected()
         reset_active_chains_registry()
         bootstrap_reference_data_on_startup()
+
+        from icici_breeze_backend.app.services.ws_tick_pipeline import run_pnl_quote_flush_loop
+        from icici_breeze_backend.app.services.portfolio_pnl_engine import (
+            pnl_engine_enabled,
+            run_pnl_loop,
+        )
+
+        pnl_flush_task: asyncio.Task | None = None
+        pnl_loop_task: asyncio.Task | None = None
+        if pnl_engine_enabled():
+            pnl_flush_task = asyncio.create_task(run_pnl_quote_flush_loop())
+            pnl_loop_task = asyncio.create_task(run_pnl_loop())
+
         yield
         if task is not None:
             task.cancel()
@@ -328,6 +346,13 @@ def start_application():
                 await outlook_task
             except asyncio.CancelledError:
                 pass
+        for pnl_task in (pnl_flush_task, pnl_loop_task):
+            if pnl_task is not None:
+                pnl_task.cancel()
+                try:
+                    await pnl_task
+                except asyncio.CancelledError:
+                    pass
         from icici_breeze_backend.app.services.breeze_websocket_manager import shutdown_websocket
 
         shutdown_websocket()

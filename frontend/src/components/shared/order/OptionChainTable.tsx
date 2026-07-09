@@ -2,7 +2,7 @@
 
 import type { RefObject } from "react";
 import { Fragment } from "react";
-import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
+import { QuoteSourceBadge } from "@/components/shared/market-data/QuoteSourceBadge";
 import { quoteMetaFromChain } from "@/lib/quote-source";
 import type { ChainRow, ChainSuccess, OrderSide, OptionRight } from "@/lib/strategy-builder/types";
 
@@ -74,7 +74,7 @@ function BuySellBookLines({ leg }: { leg: Record<string, unknown> }) {
   return (
     <div className="w-full min-w-0 space-y-0.5 py-0.5 text-center">
       <div className="font-mono tabular-nums text-muted">{ratio}</div>
-      <div className="text-[12px] leading-tight text-faint sm:text-[12px]">
+      <div className="text-body leading-tight text-faint sm:text-body">
         Buy <span className="font-mono">{buy}</span>
         <span className="text-faint" aria-hidden>
           {" · "}
@@ -86,7 +86,7 @@ function BuySellBookLines({ leg }: { leg: Record<string, unknown> }) {
 }
 
 const bsBtnClass =
-  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-panel text-[13px] font-bold text-foreground transition hover:bg-panel2 hover:border-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
+  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-panel text-heading font-bold text-foreground transition hover:bg-panel2 hover:border-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
 
 const bsTickClass =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-up/30 bg-up-tint text-sm font-semibold text-up";
@@ -286,7 +286,7 @@ export function OptionChainTable({
                   {strike.toLocaleString("en-IN")}
                 </span>
                 {isAtm ? (
-                  <span className="ms-1.5 text-[12px] font-medium uppercase tracking-wide text-accent-strong">
+                  <span className="ms-1.5 text-body font-medium uppercase tracking-wide text-accent-strong">
                     ATM
                   </span>
                 ) : null}
@@ -295,7 +295,7 @@ export function OptionChainTable({
                 <div
                   className={`min-w-0 space-y-1.5 rounded-md border border-up/25 bg-call-tint p-2 ${callItm ? itmLegCls : ""}`}
                 >
-                  <div className="text-center text-[12px] font-semibold uppercase tracking-wide text-up">
+                  <div className="text-center text-body font-semibold uppercase tracking-wide text-up">
                     Call
                   </div>
                   {c ? (
@@ -318,7 +318,7 @@ export function OptionChainTable({
                           <BuySellBookLines leg={c} />
                         )}
                       </div>
-                      <div className="flex items-center justify-between gap-2 text-[13px] text-muted">
+                      <div className="flex items-center justify-between gap-2 text-heading text-muted">
                         <span className="shrink-0 text-faint">
                           OI (L)
                         </span>
@@ -335,7 +335,7 @@ export function OptionChainTable({
                           style={{ right: 0, width: `${callOiPct}%` }}
                         />
                       </div>
-                      <div className="flex items-center justify-between gap-2 text-[13px]">
+                      <div className="flex items-center justify-between gap-2 text-heading">
                         <span className="text-faint">
                           LTP
                         </span>
@@ -345,7 +345,7 @@ export function OptionChainTable({
                       </div>
                     </Fragment>
                   ) : (
-                    <p className="py-2 text-center text-[13px] text-faint">
+                    <p className="py-2 text-center text-heading text-faint">
                       No contract
                     </p>
                   )}
@@ -353,12 +353,12 @@ export function OptionChainTable({
                 <div
                   className={`min-w-0 space-y-1.5 rounded-md border border-down/25 bg-put-tint p-2 ${putItm ? itmLegCls : ""}`}
                 >
-                  <div className="text-center text-[12px] font-semibold uppercase tracking-wide text-down">
+                  <div className="text-center text-body font-semibold uppercase tracking-wide text-down">
                     Put
                   </div>
                   {p ? (
                     <Fragment>
-                      <div className="flex items-center justify-between gap-2 text-[13px]">
+                      <div className="flex items-center justify-between gap-2 text-heading">
                         <span className="text-faint">
                           LTP
                         </span>
@@ -375,7 +375,7 @@ export function OptionChainTable({
                           style={{ left: 0, width: `${putOiPct}%` }}
                         />
                       </div>
-                      <div className="flex items-center justify-between gap-2 text-[13px] text-muted">
+                      <div className="flex items-center justify-between gap-2 text-heading text-muted">
                         <span className="shrink-0 text-faint">
                           OI (L)
                         </span>
@@ -403,7 +403,7 @@ export function OptionChainTable({
                       </div>
                     </Fragment>
                   ) : (
-                    <p className="py-2 text-center text-[13px] text-faint">
+                    <p className="py-2 text-center text-heading text-faint">
                       No contract
                     </p>
                   )}
@@ -416,14 +416,20 @@ export function OptionChainTable({
 
       <div
         className={[
-          "hidden min-w-0 md:block rounded-md border border-border bg-panel",
+          "hidden min-w-0 md:block",
           mode === "strategyBuilder"
-            ? "overflow-x-auto"
-            : "max-h-[min(70vh,42rem)] overflow-x-auto overflow-y-auto overscroll-x-contain overscroll-y-auto",
+            ? "-mx-5 overflow-x-auto"
+            : "max-h-[min(70vh,42rem)] overflow-x-auto overflow-y-auto overscroll-x-contain overscroll-y-auto rounded-md border border-border bg-panel",
         ].join(" ")}
       >
       <table className="w-full max-w-full border-collapse text-xs leading-snug tabular-nums text-muted sm:text-sm">
-        <thead className="sticky top-0 z-20 bg-white dark:bg-[var(--panel)]">
+        <thead
+          className={
+            mode === "strategyBuilder"
+              ? "sticky top-0 z-20 bg-panel"
+              : "sticky top-0 z-20 bg-white dark:bg-[var(--panel)]"
+          }
+        >
           <tr className="border-b border-border-soft">
             <th
               colSpan={4}
@@ -444,7 +450,7 @@ export function OptionChainTable({
               Puts
             </th>
           </tr>
-          <tr className="border-b border-border-soft text-[12px] font-semibold uppercase tracking-wide sm:text-xs">
+          <tr className="border-b border-border-soft text-body font-semibold uppercase tracking-wide sm:text-xs">
             <th className="min-w-[3.5rem] bg-call-tint px-0.5 py-1.5 text-center text-muted">
               {outerHeader}
             </th>
@@ -601,6 +607,11 @@ export function OptionChainTable({
                   className={`border-x border-border-soft bg-panel2 px-1 py-1 text-center font-mono text-xs font-normal tabular-nums whitespace-nowrap sm:text-sm ${strikeAtmCls}`}
                 >
                   {strike.toLocaleString("en-IN")}
+                  {isAtm ? (
+                    <span className="ms-1 rounded-[4px] bg-accent px-1 py-px align-middle text-micro font-bold tracking-[.04em] text-accent-ink">
+                      ATM
+                    </span>
+                  ) : null}
                 </td>
                 {p ? (
                   <>

@@ -16,11 +16,14 @@ _redis: Any = None
 _use_memory = False
 _memory: dict[str, tuple[str, float | None]] = {}
 _memory_sets: dict[str, set[str]] = {}
+_memory_hashes: dict[str, dict[str, str]] = {}
+_memory_hash_expires: dict[str, float] = {}
 _memory_lock = threading.RLock()
 
 
 class _MemoryPipeline:
-    def __init__(self, store: "_MemoryStore") -> None:
+    def __init__(self, store: "_MemoryStore", transaction: bool = True) -> None:
+        del transaction  # in-memory fallback has no atomicity distinction to make
         self._store = store
         self._ops: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 
@@ -32,6 +35,18 @@ class _MemoryPipeline:
         self._ops.append(("delete", keys, {}))
         return self
 
+    def hset(self, key: str, mapping: dict[str, Any] | None = None) -> "_MemoryPipeline":
+        self._ops.append(("hset", (key,), {"mapping": mapping or {}}))
+        return self
+
+    def hgetall(self, key: str) -> "_MemoryPipeline":
+        self._ops.append(("hgetall", (key,), {}))
+        return self
+
+    def expire(self, key: str, seconds: int) -> "_MemoryPipeline":
+        self._ops.append(("expire", (key, seconds), {}))
+        return self
+
     def execute(self) -> list[Any]:
         out: list[Any] = []
         for op, args, kw in self._ops:
@@ -39,6 +54,13 @@ class _MemoryPipeline:
                 out.append(self._store.set(args[0], args[1], ex=kw.get("ex")))
             elif op == "delete":
                 out.append(self._store.delete(*args))
+            elif op == "hset":
+                out.append(self._store.hset(args[0], mapping=kw.get("mapping")))
+            elif op == "hgetall":
+                out.append(self._store.hgetall(args[0]))
+            elif op == "expire":
+                out.append(self._store.expire(args[0], args[1]))
+        self._ops = []
         return out
 
 
@@ -90,8 +112,36 @@ class _MemoryStore:
     def ping(self) -> bool:
         return True
 
-    def pipeline(self) -> _MemoryPipeline:
-        return _MemoryPipeline(self)
+    def pipeline(self, transaction: bool = True) -> _MemoryPipeline:
+        return _MemoryPipeline(self, transaction=transaction)
+
+    def hset(self, key: str, mapping: dict[str, Any] | None = None) -> int:
+        entries = {str(k): str(v) for k, v in (mapping or {}).items()}
+        with _memory_lock:
+            bucket = _memory_hashes.setdefault(key, {})
+            added = sum(1 for k in entries if k not in bucket)
+            bucket.update(entries)
+        return added
+
+    def hgetall(self, key: str) -> dict[str, str]:
+        with _memory_lock:
+            expires = _memory_hash_expires.get(key)
+            if expires is not None and time.time() > expires:
+                _memory_hashes.pop(key, None)
+                _memory_hash_expires.pop(key, None)
+                return {}
+            return dict(_memory_hashes.get(key, {}))
+
+    def hmget(self, key: str, fields: list[str]) -> list[str | None]:
+        bucket = self.hgetall(key)
+        return [bucket.get(f) for f in fields]
+
+    def expire(self, key: str, seconds: int) -> bool:
+        with _memory_lock:
+            if key not in _memory_hashes and key not in _memory:
+                return False
+            _memory_hash_expires[key] = time.time() + seconds
+            return True
 
     def sadd(self, key: str, *values: str) -> int:
         with _memory_lock:
@@ -138,6 +188,8 @@ class _MemoryStore:
         with _memory_lock:
             _memory.clear()
             _memory_sets.clear()
+            _memory_hashes.clear()
+            _memory_hash_expires.clear()
 
 
 def _init_redis_client() -> Any:

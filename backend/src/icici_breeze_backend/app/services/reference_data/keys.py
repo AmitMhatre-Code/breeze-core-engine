@@ -85,4 +85,9 @@ def canonical_chain_key(exchange_code: str, stock_code: str, expiry_display: str
     )
 
 
+def pnl_quote_key(scrip_key: str) -> str:
+    """Conflated LTP/bid/ask hash for the portfolio P&L engine (contract-identity keyed)."""
+    return f"quotes:pnl:{scrip_key}"
+
+
 WS_TICK_DIRTY_CHANNEL = "ws:tick:dirty"

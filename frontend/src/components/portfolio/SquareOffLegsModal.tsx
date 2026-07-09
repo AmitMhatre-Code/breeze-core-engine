@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
-import { LegAggressivePriceInput } from "@/components/strategy-builder/LegAggressivePriceInput";
+import { useOrderConfirm } from "@/components/shared/order/OrderConfirmProvider";
+import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
+import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
 import { Modal } from "@/components/ui/Modal";
 import { ltpAsOrderPrice, positionRowToExecutionLeg } from "@/lib/order-confirm";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
+import { formatOptionSymbolLabel } from "@/lib/strategy-builder/leg-ui-helpers";
 import { sb } from "@/lib/strategy-builder/ui";
 
 type LegState = {
@@ -14,25 +16,15 @@ type LegState = {
   aggressiveLimit: boolean;
 };
 
-/** "03-Jul-2026" (broker expiry_date format) -> "03JUL26" (compact symbol format). */
-function formatExpiryCompact(raw: unknown): string {
-  const s = String(raw ?? "").trim();
-  const m = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
-  if (!m) return s.replace(/-/g, "").toUpperCase();
-  const [, dd, mon, yyyy] = m;
-  return `${dd.padStart(2, "0")}${mon.toUpperCase()}${yyyy.slice(-2)}`;
-}
-
+/** Canonical leg label e.g. "NIFTY.03-Jul-2026.23700" (Put/Call shown via a separate badge). */
 function legLabel(row: PortfolioPositionRecord): string {
   const stock = String(row.stock_code ?? "").trim();
-  const expiry = formatExpiryCompact(row.expiry_date);
-  const strike = row.strike_price;
-  const right = String(row.right ?? "").trim().toLowerCase();
-  const abbr = right.startsWith("p") ? "PE" : right.startsWith("c") ? "CE" : "";
-  if (!stock || !expiry || strike == null || strike === "") {
+  const expiry = String(row.expiry_date ?? "").trim();
+  const strike = Number(row.strike_price);
+  if (!stock || !expiry || !Number.isFinite(strike)) {
     return String(row.option ?? "—");
   }
-  return `${stock} ${expiry} ${strike} ${abbr}`.trim();
+  return formatOptionSymbolLabel(stock, expiry, strike);
 }
 
 function legQtyLabel(row: PortfolioPositionRecord): string {
@@ -160,7 +152,10 @@ export function SquareOffLegsModal({
                 />
               ) : null}
               <div className="min-w-0 flex-1 text-sm font-medium text-foreground">
-                {label}
+                <span className="inline-flex items-center gap-1.5">
+                  {label}
+                  <OptionTypeBadge right={row.right} />
+                </span>
                 <span className="ml-2 text-xs font-normal text-muted">
                   Qty {legQtyLabel(row)}
                 </span>
@@ -169,19 +164,23 @@ export function SquareOffLegsModal({
                 aggressive={state.aggressiveLimit}
                 premiumPerUnit={state.premiumPerUnit}
                 ariaLabel={`Price for ${label}`}
-                onAggressiveChange={(checked) =>
+                onAggressiveChange={(checked) => {
+                  const row = rows[idx];
+                  const ltp = row != null ? Number(ltpAsOrderPrice(row.ltp)) : NaN;
                   setLegStates((prev) =>
                     prev.map((s, i) =>
                       i === idx
                         ? {
                             ...s,
                             aggressiveLimit: checked,
-                            ...(checked ? { premiumPerUnit: undefined } : {}),
+                            premiumPerUnit: checked
+                              ? undefined
+                              : (Number.isFinite(ltp) && ltp > 0 ? ltp : s.premiumPerUnit),
                           }
                         : s,
                     ),
-                  )
-                }
+                  );
+                }}
                 onPriceChange={(premiumPerUnit) =>
                   setLegStates((prev) =>
                     prev.map((s, i) =>

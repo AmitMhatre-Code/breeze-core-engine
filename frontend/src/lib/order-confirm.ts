@@ -1,4 +1,4 @@
-import type { ExecutionPreviewLeg } from "@/components/order/OrderExecutionConfirmDialog";
+import type { ExecutionPreviewLeg } from "@/components/shared/order/OrderExecutionConfirmDialog";
 import { normRight } from "@/lib/portfolio/legNormalize";
 
 /** Mirrors legacy `openOrderConfirmModal` / `OrderFormRequest` buy & sell fields. */

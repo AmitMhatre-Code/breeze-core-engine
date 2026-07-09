@@ -2,6 +2,7 @@
 
 import { useState, type ComponentType, type ReactNode } from "react";
 
+import { AdvancedPnlEngineScreen } from "./screens/AdvancedPnlEngineScreen";
 import { ApiPlaygroundScreen } from "./screens/ApiPlaygroundScreen";
 import { ApiUsageScreen } from "./screens/ApiUsageScreen";
 import { AuditLogsScreen } from "./screens/AuditLogsScreen";
@@ -17,6 +18,7 @@ type ScreenKey =
   | "api-usage"
   | "reference-data-loads"
   | "exchange-calendar"
+  | "advanced-pnl-engine"
   | "audit-logs"
   | "api-playground"
   | "delete-account";
@@ -39,6 +41,7 @@ const SCREENS: Record<ScreenKey, ComponentType> = {
   "api-usage": ApiUsageScreen,
   "reference-data-loads": ReferenceDataLoadsScreen,
   "exchange-calendar": ExchangeCalendarScreen,
+  "advanced-pnl-engine": AdvancedPnlEngineScreen,
   "audit-logs": AuditLogsScreen,
   "api-playground": ApiPlaygroundScreen,
   "delete-account": DeleteAccountScreen,
@@ -61,6 +64,10 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: "Advanced",
+    items: [{ key: "advanced-pnl-engine", label: "Engine Settings", icon: WarningIcon }],
+  },
+  {
     label: "Diagnostics",
     items: [{ key: "audit-logs", label: "Audit Logs", icon: DocIcon }],
   },
@@ -80,7 +87,7 @@ const DANGER_KEYS = new Set<ScreenKey>(
 );
 
 function navItemClass(active: boolean, danger: boolean): string {
-  const base = "group relative flex w-full items-center gap-2.5 rounded-[7px] px-2.5 py-2 text-left text-[13px] transition";
+  const base = "group relative flex w-full items-center gap-2.5 rounded-[7px] px-2.5 py-2 text-left text-heading transition";
   if (active) {
     return danger
       ? `${base} bg-down-tint font-semibold text-foreground`
@@ -111,7 +118,7 @@ export function SettingsShell() {
   return (
     <div className="space-y-4">
       <header className="space-y-1">
-        <h1 className="app-text-title text-[21px]">Settings</h1>
+        <h1 className="app-text-title">Settings</h1>
         <p className="app-text-muted">Broker connection, limits & preferences.</p>
       </header>
 
@@ -145,7 +152,7 @@ export function SettingsShell() {
                 {group.label ? (
                   <div
                     className={[
-                      "px-2.5 pb-1 pt-2 text-[12px] font-bold uppercase tracking-[.08em]",
+                      "px-2.5 pb-1 pt-2 text-body font-bold uppercase tracking-[.08em]",
                       group.danger ? "text-down" : "text-faint",
                     ].join(" ")}
                   >
@@ -177,7 +184,7 @@ export function SettingsShell() {
             ))}
           </div>
           <div className="mt-auto space-y-1.5 border-t border-border-soft px-2.5 pt-3">
-            <div className="text-[12px] font-semibold uppercase tracking-[0.2em] text-faint">
+            <div className="text-body font-semibold uppercase tracking-[0.2em] text-faint">
               Session
             </div>
             <div className="flex items-center gap-2">

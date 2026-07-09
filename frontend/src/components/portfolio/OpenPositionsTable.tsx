@@ -12,8 +12,10 @@ import {
 import {
   OrderExecutionConfirmDialog,
   type ExecutionPreviewLeg,
-} from "@/components/order/OrderExecutionConfirmDialog";
-import { PortfolioGroupPayoffPanel } from "@/components/portfolio/PortfolioGroupPayoffPanel";
+} from "@/components/shared/order/OrderExecutionConfirmDialog";
+import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
+import { OrderSideBadge } from "@/components/shared/badges/OrderSideBadge";
+import { PortfolioGroupPayoffPanel } from "@/components/shared/payoff/PortfolioGroupPayoffPanel";
 import { PortfolioHedgePanel } from "@/components/portfolio/PortfolioHedgePanel";
 import { SquareOffLegsModal } from "@/components/portfolio/SquareOffLegsModal";
 import type { StrategyHedgeCandidate } from "@/lib/hedge/api";
@@ -30,6 +32,7 @@ import { useGroupSubscriptionHolders } from "@/lib/portfolio/useGroupSubscriptio
 import { squareOffToOrderPayload } from "@/lib/order-confirm";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
+import { formatOptionSymbolLabel } from "@/lib/strategy-builder/leg-ui-helpers";
 import type { StrategyLeg } from "@/lib/strategy-builder/types";
 
 /**
@@ -67,24 +70,15 @@ function formatSpanElm(raw: unknown): string {
   return formatIndianMoneyCompact(n, { shortSuffix: true, skipK: true });
 }
 
-/** "03-Jul-2026" (broker expiry_date format) -> "03JUL26" (compact symbol format). */
-function formatExpiryCompact(raw: unknown): string {
-  const s = String(raw ?? "").trim();
-  const m = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
-  if (!m) return s.replace(/-/g, "").toUpperCase();
-  const [, dd, mon, yyyy] = m;
-  return `${dd.padStart(2, "0")}${mon.toUpperCase()}${yyyy.slice(-2)}`;
-}
-
-/** Compact broker-style symbol e.g. "NIFTY 03JUL26 23700" (Type column already shows PE/CE). */
+/** Canonical leg label e.g. "NIFTY.03-Jul-2026.23700" (Type column already shows PE/CE). */
 function formatOptionSymbol(row: PortfolioPositionRecord): string {
   const stock = String(row.stock_code ?? "").trim();
-  const expiry = formatExpiryCompact(row.expiry_date);
+  const expiry = String(row.expiry_date ?? "").trim();
   const strike = coerceNum(row.strike_price);
   if (!stock || !expiry || strike == null) {
     return String(row.option ?? "—");
   }
-  return `${stock} ${expiry} ${strike}`;
+  return formatOptionSymbolLabel(stock, expiry, strike);
 }
 
 function carryMarginRoiTitle(row: PortfolioPositionRecord): string | undefined {
@@ -176,10 +170,10 @@ function formatSpot(raw: unknown): { text: string; className: string } {
   if (s === "Err" || s.toLowerCase() === "err") {
     return {
       text: "Err",
-      className: "font-medium text-down",
+      className: "font-mono font-medium text-down",
     };
   }
-  return { text: formatPriceCell(raw), className: "tabular-nums" };
+  return { text: formatPriceCell(raw), className: "font-mono tabular-nums" };
 }
 
 /**
@@ -285,56 +279,11 @@ function PositionActionsCard({
 }
 
 const thBase =
-  "whitespace-nowrap px-2 py-2 text-[13px] font-semibold uppercase tracking-wide text-faint 2xl:px-3 2xl:py-2.5";
+  "whitespace-nowrap px-2 py-2 text-heading font-semibold uppercase tracking-wide text-faint 2xl:px-3 2xl:py-2.5";
 const tdShell =
   "whitespace-nowrap px-2 py-2 align-middle text-xs 2xl:px-3 2xl:py-2.5 2xl:text-sm";
 const tdInk = "text-foreground";
 const tdBase = `${tdShell} ${tdInk}`;
-
-/** PE/CE — outline only (no fill), red for puts / green for calls. */
-function optionTypeAbbrev(raw: unknown): "PE" | "CE" | null {
-  const t = String(raw ?? "").trim().toLowerCase();
-  if (t === "put" || t === "p" || t === "pe") return "PE";
-  if (t === "call" || t === "c" || t === "ce") return "CE";
-  return null;
-}
-
-function OptionTypePill({ raw }: { raw: unknown }) {
-  const abbr = optionTypeAbbrev(raw);
-  if (!abbr) return <span className="app-text-muted">—</span>;
-  const isPut = abbr === "PE";
-  return (
-    <span
-      className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 font-mono text-[13px] font-bold"
-      style={{
-        borderColor: isPut ? "var(--down)" : "var(--up)",
-        color: isPut ? "var(--down)" : "var(--up)",
-      }}
-    >
-      {abbr}
-    </span>
-  );
-}
-
-/** BUY/SELL — filled soft-tint pill, same convention InterpretationBadge uses. */
-function PositionPill({ raw }: { raw: unknown }) {
-  const t = String(raw ?? "").trim().toUpperCase();
-  if (t !== "BUY" && t !== "SELL") {
-    return <span className="app-text-muted">{t || "—"}</span>;
-  }
-  const isSell = t === "SELL";
-  return (
-    <span
-      className="inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[13px] font-bold"
-      style={{
-        backgroundColor: isSell ? "var(--up-tint)" : "var(--down-tint)",
-        color: isSell ? "var(--up)" : "var(--down)",
-      }}
-    >
-      {t}
-    </span>
-  );
-}
 
 /** Small pulsing dot — same convention as AppShell's session indicator. */
 function LiveDot({ title }: { title: string }) {
@@ -513,22 +462,22 @@ function PortfolioGroupTableBlock({
         <td className={`${tdBase} text-right`}>—</td>
         <td className={`${tdBase} text-right`}>—</td>
         <td className={`${tdBase} text-right`}>—</td>
-        <td className={`${tdBase} text-right tabular-nums ${spotAgg.className}`}>
+        <td className={`${tdBase} text-right font-mono tabular-nums ${spotAgg.className}`}>
           {spotAgg.text}
         </td>
-        <td className={`${tdShell} text-right tabular-nums font-medium ${gMtm.className}`}>
+        <td className={`${tdShell} text-right font-mono tabular-nums font-medium ${gMtm.className}`}>
           {gMtm.text}
         </td>
-        <td className={`${tdShell} text-right tabular-nums font-medium ${gCarry.className}`}>
+        <td className={`${tdShell} text-right font-mono tabular-nums font-medium ${gCarry.className}`}>
           {gCarry.text}
         </td>
-        <td className={`${tdBase} text-right tabular-nums`}>
+        <td className={`${tdBase} text-right font-mono tabular-nums`}>
           {formatSpanElm(spanSum)}
         </td>
-        <td className={`${tdBase} text-right tabular-nums`}>
+        <td className={`${tdBase} text-right font-mono tabular-nums`}>
           {formatSpanElm(elmSum)}
         </td>
-        <td className={`${tdShell} text-right tabular-nums app-text-muted`}>—</td>
+        <td className={`${tdShell} text-right font-mono tabular-nums app-text-muted`}>—</td>
         <td className={`${tdBase} text-right align-middle`}>
           {g.rows.length > 1 ? (
             <GroupPillButton
@@ -551,44 +500,44 @@ function PortfolioGroupTableBlock({
             const num = startNumber + localIdx + 1;
             return (
               <tr key={rowKey} className="app-table-row bg-panel2">
-                <td className={`${tdBase} text-center tabular-nums`}>{num}</td>
+                <td className={`${tdBase} text-center font-mono tabular-nums`}>{num}</td>
                 <td className={tdBase}>{formatOptionSymbol(row)}</td>
                 <td className={tdBase}>
-                  <OptionTypePill raw={row.right} />
+                  <OptionTypeBadge right={row.right} />
                 </td>
                 <td className={tdBase}>
-                  <PositionPill raw={row.action} />
+                  <OrderSideBadge side={row.action} />
                 </td>
-                <td className={`${tdBase} text-right tabular-nums`}>
+                <td className={`${tdBase} text-right font-mono tabular-nums`}>
                   {qty != null
                     ? qty.toLocaleString("en-IN", {
                         maximumFractionDigits: Number.isInteger(qty) ? 0 : 4,
                       })
                     : "—"}
                 </td>
-                <td className={`${tdBase} text-right tabular-nums`}>
+                <td className={`${tdBase} text-right font-mono tabular-nums`}>
                   {formatPriceCell(row.average_price)}
                 </td>
-                <td className={`${tdBase} text-right tabular-nums`}>
+                <td className={`${tdBase} text-right font-mono tabular-nums`}>
                   {formatPriceCell(row.ltp)}
                 </td>
-                <td className={`${tdBase} text-right tabular-nums ${spot.className}`}>
+                <td className={`${tdBase} text-right font-mono tabular-nums ${spot.className}`}>
                   {spot.text}
                 </td>
-                <td className={`${tdShell} text-right tabular-nums font-medium ${mtm.className}`}>
+                <td className={`${tdShell} text-right font-mono tabular-nums font-medium ${mtm.className}`}>
                   {mtm.text}
                 </td>
-                <td className={`${tdShell} text-right tabular-nums font-medium ${carry.className}`}>
+                <td className={`${tdShell} text-right font-mono tabular-nums font-medium ${carry.className}`}>
                   {carry.text}
                 </td>
-                <td className={`${tdBase} text-right tabular-nums`}>
+                <td className={`${tdBase} text-right font-mono tabular-nums`}>
                   {formatSpanElm(row.span_margin_required)}
                 </td>
-                <td className={`${tdBase} text-right tabular-nums`}>
+                <td className={`${tdBase} text-right font-mono tabular-nums`}>
                   {formatSpanElm(row.elm_margin_required)}
                 </td>
                 <td
-                  className={`${tdShell} text-right tabular-nums ${cr.className}`}
+                  className={`${tdShell} text-right font-mono tabular-nums ${cr.className}`}
                   title={carryRoiTitle}
                 >
                   {cr.text}
@@ -691,19 +640,19 @@ function PortfolioGroupCardBlock({
           </p>
           <p>
             <span className="app-text-muted">MTM (sum):</span>{" "}
-            <span className={`font-medium ${gMtm.className}`}>{gMtm.text}</span>
+            <span className={`font-mono tabular-nums font-medium ${gMtm.className}`}>{gMtm.text}</span>
           </p>
           <p>
             <span className="app-text-muted">Carry (sum):</span>{" "}
-            <span className={`font-medium ${gCarry.className}`}>{gCarry.text}</span>
+            <span className={`font-mono tabular-nums font-medium ${gCarry.className}`}>{gCarry.text}</span>
           </p>
           <p>
             <span className="app-text-muted">Span Margin (sum):</span>{" "}
-            {formatSpanElm(spanSum)}
+            <span className="font-mono tabular-nums">{formatSpanElm(spanSum)}</span>
           </p>
           <p>
             <span className="app-text-muted">ELM (sum):</span>{" "}
-            {formatSpanElm(elmSum)}
+            <span className="font-mono tabular-nums">{formatSpanElm(elmSum)}</span>
           </p>
         </button>
         {g.rows.length > 1 ? (
@@ -734,24 +683,30 @@ function PortfolioGroupCardBlock({
                     {formatOptionSymbol(row)}
                   </h4>
                   <p className="flex items-center gap-2">
-                    <OptionTypePill raw={row.right} />
-                    <PositionPill raw={row.action} />
+                    <OptionTypeBadge right={row.right} />
+                    <OrderSideBadge side={row.action} />
                   </p>
                   <p>
                     <span className="app-text-muted">Qty:</span>{" "}
-                    {qty != null
-                      ? qty.toLocaleString("en-IN", {
-                          maximumFractionDigits: Number.isInteger(qty) ? 0 : 4,
-                        })
-                      : "—"}
+                    <span className="font-mono tabular-nums">
+                      {qty != null
+                        ? qty.toLocaleString("en-IN", {
+                            maximumFractionDigits: Number.isInteger(qty) ? 0 : 4,
+                          })
+                        : "—"}
+                    </span>
                   </p>
                   <p>
                     <span className="app-text-muted">Avg Price:</span>{" "}
-                    {formatPriceCell(row.average_price)}
+                    <span className="font-mono tabular-nums">
+                      {formatPriceCell(row.average_price)}
+                    </span>
                   </p>
                   <p>
                     <span className="app-text-muted">LTP:</span>{" "}
-                    {formatPriceCell(row.ltp)}
+                    <span className="font-mono tabular-nums">
+                      {formatPriceCell(row.ltp)}
+                    </span>
                   </p>
                   <p>
                     <span className="app-text-muted">Spot:</span>{" "}
@@ -759,25 +714,29 @@ function PortfolioGroupCardBlock({
                   </p>
                   <p>
                     <span className="app-text-muted">MTM:</span>{" "}
-                    <span className={`font-medium ${mtm.className}`}>{mtm.text}</span>
+                    <span className={`font-mono tabular-nums font-medium ${mtm.className}`}>{mtm.text}</span>
                   </p>
                   <p>
                     <span className="app-text-muted">Carry:</span>{" "}
-                    <span className={`font-medium ${carryTitle.className}`}>
+                    <span className={`font-mono tabular-nums font-medium ${carryTitle.className}`}>
                       {carryTitle.text}
                     </span>
                   </p>
                   <p>
                     <span className="app-text-muted">Span Margin:</span>{" "}
-                    {formatSpanElm(row.span_margin_required)}
+                    <span className="font-mono tabular-nums">
+                      {formatSpanElm(row.span_margin_required)}
+                    </span>
                   </p>
                   <p>
                     <span className="app-text-muted">ELM @2%:</span>{" "}
-                    {formatSpanElm(row.elm_margin_required)}
+                    <span className="font-mono tabular-nums">
+                      {formatSpanElm(row.elm_margin_required)}
+                    </span>
                   </p>
                   <p title={carryRoiTitle}>
                     <span className="app-text-muted">Carry Returns:</span>{" "}
-                    <span className={cr.className}>{cr.text}</span>
+                    <span className={`font-mono tabular-nums ${cr.className}`}>{cr.text}</span>
                   </p>
                   <PositionActionsCard
                     row={row}

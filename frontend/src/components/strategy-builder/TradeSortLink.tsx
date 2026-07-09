@@ -57,7 +57,7 @@ export function TradeSortLink({
       <button
         ref={triggerRef}
         type="button"
-        className="text-[13px] font-normal text-accent-strong underline underline-offset-2 hover:text-accent"
+        className="text-heading font-normal text-accent-strong underline underline-offset-2 hover:text-accent"
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-controls={listId}

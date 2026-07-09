@@ -42,7 +42,7 @@ function ScenarioSlider({
   const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
   return (
     <label className="block min-w-0">
-      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] font-medium text-muted">
+      <div className="mb-1 flex items-center justify-between gap-2 text-hint font-medium text-muted">
         <span>{label}</span>
         <span className="font-mono tabular-nums text-foreground">
           {valueLabel}
@@ -109,7 +109,7 @@ export function PayoffScenarioControls({
   return (
     <div className="mt-3 rounded-[9px] border border-border-soft bg-panel2/60 p-2.5">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">
+        <span className="text-hint font-semibold uppercase tracking-wide text-faint">
           What-if: T+0 scenario
         </span>
         <button
@@ -117,7 +117,7 @@ export function PayoffScenarioControls({
           onClick={onReset}
           disabled={disabled || isLive}
           title="Reset to live DTE and chain IV"
-          className="inline-flex items-center gap-1 text-[11px] font-medium text-muted transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+          className="inline-flex items-center gap-1 text-hint font-medium text-muted transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
         >
           <ResetIcon />
           Live

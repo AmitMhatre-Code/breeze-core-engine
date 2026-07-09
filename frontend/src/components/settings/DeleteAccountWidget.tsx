@@ -53,7 +53,7 @@ export function DeleteAccountWidget({ variant, initialDirectUserId }: DeleteAcco
   const inputCls = isStandalone
     ? "w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
     : "app-input h-10 w-full";
-  const labelCls = "block text-[10.5px] font-semibold tracking-wide text-faint uppercase";
+  const labelCls = "block text-micro font-semibold tracking-wide text-faint uppercase";
 
   const cancelHref = "/settings";
 

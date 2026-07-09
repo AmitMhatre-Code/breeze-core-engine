@@ -700,7 +700,7 @@ export function ApiPlaygroundScreen() {
           <div className="app-card-muted grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
             {WS_SUBSCRIBE_MODES[wsSubscribeMode].map((key) => (
               <label key={key} className="block space-y-1.5">
-                <span className="app-text-muted font-mono text-[13px] uppercase tracking-wide">{key}</span>
+                <span className="app-text-muted font-mono text-heading uppercase tracking-wide">{key}</span>
                 <input
                   className="app-input font-mono text-xs"
                   value={wsForm[key] ?? ""}

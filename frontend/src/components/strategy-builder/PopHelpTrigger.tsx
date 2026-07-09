@@ -1,6 +1,6 @@
 "use client";
 
-import { InfoPopover } from "@/components/strategy-builder/InfoPopover";
+import { InfoPopover } from "@/components/ui/InfoPopover";
 import {
   POP_HELP_DEFINITION,
   POP_HELP_DIRECTIONAL,

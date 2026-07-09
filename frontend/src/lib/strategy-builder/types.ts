@@ -156,7 +156,7 @@ export type ProposedTradeLeg = {
 
 export type StrategyCategory = "income" | "bullish" | "bearish";
 
-export type BuilderMode = StrategyCategory | "build_your_own" | null;
+export type BuilderMode = StrategyCategory | null;
 
 export type RiskRewardProfile = "conservative" | "moderate" | "aggressive";
 

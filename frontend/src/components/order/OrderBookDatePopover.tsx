@@ -188,11 +188,10 @@ export function OrderBookDatePopover({
   const displayText = parsed ? formatIsoDateDdMmmYyyy(value) : null;
 
   return (
-    <div ref={rootRef} className="relative min-w-0 flex-1">
+    <div ref={rootRef} className="relative inline-block min-w-0 self-start sm:self-auto">
       <label htmlFor={id} className="sr-only">
         {label}
       </label>
-      <CalendarGlyph className="pointer-events-none absolute left-3 top-1/2 z-[2] size-4 -translate-y-1/2 text-faint" />
       <button
         ref={triggerRef}
         type="button"
@@ -201,7 +200,7 @@ export function OrderBookDatePopover({
         aria-expanded={open}
         aria-controls={listboxId}
         className={[
-          "flex h-[34px] w-full min-w-[11rem] items-center rounded-[9px] border border-border bg-panel2 py-0 pl-10 pr-3 text-left font-mono text-sm tabular-nums text-foreground transition",
+          "flex h-[34px] items-center gap-2 rounded-[9px] border border-border bg-panel2 px-2.5 text-left font-mono text-heading tabular-nums text-foreground transition",
           "hover:border-accent/60 focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/25",
         ].join(" ")}
         onClick={() => {
@@ -212,6 +211,7 @@ export function OrderBookDatePopover({
           }
         }}
       >
+        <CalendarGlyph className="shrink-0 text-faint" />
         {displayText ? (
           <span>{displayText}</span>
         ) : (
@@ -224,7 +224,7 @@ export function OrderBookDatePopover({
           id={listboxId}
           role="dialog"
           aria-label="Choose date"
-          className="absolute left-0 top-[calc(100%+0.25rem)] z-50 w-[min(100%,18rem)] rounded-[10px] border border-border bg-elevated p-3 shadow-pop"
+          className="absolute left-0 top-[calc(100%+0.25rem)] z-50 w-72 rounded-[10px] border border-border bg-elevated p-3 shadow-pop"
         >
           <div className="mb-2 flex items-center justify-between gap-1">
             <button
@@ -256,7 +256,7 @@ export function OrderBookDatePopover({
             {WEEKDAY_LABELS.map((w) => (
               <div
                 key={w}
-                className="py-1 text-[12px] font-semibold uppercase tracking-wide text-faint"
+                className="py-1 text-body font-semibold uppercase tracking-wide text-faint"
               >
                 {w}
               </div>

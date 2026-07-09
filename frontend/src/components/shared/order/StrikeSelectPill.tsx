@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { filterStrikes } from "@/lib/strategy-builder/strike-filter";
 import { formatStrike } from "@/lib/strategy-builder/format-strike";
 import {
@@ -17,6 +18,8 @@ type Props = {
   layout?: "default" | "toolbar" | "table";
   rootClassName?: string;
   hideLabel?: boolean;
+  /** Shows a small "ATM" pill in the closed trigger next to the value. */
+  atmBadge?: boolean;
 };
 
 export function StrikeSelectPill({
@@ -28,12 +31,20 @@ export function StrikeSelectPill({
   layout = "default",
   rootClassName,
   hideLabel,
+  atmBadge,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const mobileInputRef = useRef<HTMLInputElement>(null);
+  const tablePortalRef = useRef<HTMLDivElement>(null);
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [anchorRect, setAnchorRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
 
   const closeDropdown = useCallback(() => {
     setOpen(false);
@@ -57,12 +68,20 @@ export function StrikeSelectPill({
     onClose: closeDropdown,
   });
 
-  const handleInputBlur = useComboboxBlurClose(rootRef, [], closeDropdown);
+  const handleInputBlur = useComboboxBlurClose(
+    rootRef,
+    [tablePortalRef],
+    closeDropdown,
+  );
+
+  const tableLayout = layout === "table";
 
   useEffect(() => {
     if (!open) return;
     const fn = (e: MouseEvent) => {
-      if (rootRef.current?.contains(e.target as Node)) return;
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t)) return;
+      if (tablePortalRef.current?.contains(t)) return;
       closeDropdown();
     };
     document.addEventListener("mousedown", fn);
@@ -90,8 +109,37 @@ export function StrikeSelectPill({
     return () => cancelAnimationFrame(id);
   }, [open]);
 
+  // Table layout sits inside a horizontally-scrolling wrapper
+  // (`overflow-x-auto`), which per the CSS overflow spec also clips the
+  // vertical axis — an `absolute` dropdown gets cut off. Portal it to
+  // `document.body` and position it with measured, viewport-fixed
+  // coordinates instead so it escapes that clipping on desktop.
+  useEffect(() => {
+    if (!tableLayout) return;
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const update = () => setIsDesktop(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, [tableLayout]);
+
+  useEffect(() => {
+    if (!open || !tableLayout || !isDesktop) return;
+    const updateRect = () => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setAnchorRect({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+    };
+    updateRect();
+    window.addEventListener("scroll", updateRect, true);
+    window.addEventListener("resize", updateRect);
+    return () => {
+      window.removeEventListener("scroll", updateRect, true);
+      window.removeEventListener("resize", updateRect);
+    };
+  }, [open, tableLayout, isDesktop]);
+
   const toolbarLayout = layout === "toolbar";
-  const tableLayout = layout === "table";
   const inlineLayout = toolbarLayout || tableLayout;
 
   const valueLabel =
@@ -128,15 +176,12 @@ export function StrikeSelectPill({
 
   const buttonClass = (() => {
     if (tableLayout) {
-      return "flex w-full min-w-0 max-w-full items-center justify-between gap-1 rounded-[7px] border border-border bg-panel2 px-2 py-1.5 text-left text-xs text-foreground outline-none transition hover:border-accent/60 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50";
+      return "flex w-full min-w-0 max-w-full items-center justify-between gap-1 rounded-t-[2px] border-0 border-b border-muted bg-background dark:bg-elevated px-2 py-1.5 text-left text-xs text-foreground outline-none transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel disabled:cursor-not-allowed disabled:opacity-50";
     }
     if (toolbarLayout) {
-      return "flex min-w-[11rem] shrink-0 items-center justify-between gap-2 rounded-[9px] border border-border bg-panel2 px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent/60 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50";
+      return "flex min-w-[11rem] shrink-0 items-center justify-between gap-2 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel disabled:cursor-not-allowed disabled:opacity-50";
     }
-    return [
-      "flex w-full min-w-0 items-center justify-between gap-2 border border-border bg-panel2 px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent/60 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50",
-      open ? "rounded-t-[9px] rounded-b-none border-b-0" : "rounded-[9px]",
-    ].join(" ");
+    return "flex w-full min-w-0 items-center justify-between gap-2 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel disabled:cursor-not-allowed disabled:opacity-50";
   })();
 
   const inputClass = tableLayout
@@ -191,6 +236,24 @@ export function StrikeSelectPill({
     </ul>
   );
 
+  const tableDesktopPanel =
+    tableLayout && isDesktop && open && anchorRect ? (
+      <div
+        ref={tablePortalRef}
+        role="listbox"
+        aria-label="Strike prices"
+        style={{
+          position: "fixed",
+          top: anchorRect.top,
+          left: anchorRect.left,
+          width: Math.max(anchorRect.width, 208),
+        }}
+        className="z-[300] flex max-h-[min(22rem,70vh)] min-w-[13rem] flex-col rounded-lg border border-border bg-elevated shadow-pop"
+      >
+        {renderStrikeUl(filteredStrikes, listRef)}
+      </div>
+    ) : null;
+
   return (
     <div
       ref={rootRef}
@@ -231,15 +294,22 @@ export function StrikeSelectPill({
           placeholder={placeholder}
           className={inputClass}
         />
+        {atmBadge && !open && valueLabel ? (
+          <span className="shrink-0 rounded-[4px] bg-accent-tint px-1.5 py-0.5 text-micro font-bold tracking-[.04em] text-accent-strong">
+            ATM
+          </span>
+        ) : null}
         <span
-          className={tableLayout ? "shrink-0 text-[12px] text-faint" : "shrink-0 text-faint"}
+          className={tableLayout ? "shrink-0 text-body text-faint" : "shrink-0 text-faint"}
           aria-hidden
         >
           ▾
         </span>
       </div>
 
-      {open ? (
+      {tableDesktopPanel ? createPortal(tableDesktopPanel, document.body) : null}
+
+      {open && !(tableLayout && isDesktop) ? (
         <>
           <div
             className="fixed inset-0 z-[295] bg-black/45 lg:hidden"

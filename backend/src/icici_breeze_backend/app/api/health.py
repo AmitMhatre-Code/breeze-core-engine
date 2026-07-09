@@ -49,9 +49,11 @@ async def runtime_metrics() -> RuntimeMetricsResponse:
     from icici_breeze_backend.app.db.redis_client import redis_runtime_stats
     from icici_breeze_backend.app.services.reference_data.active_chains import active_chain_stats
     from icici_breeze_backend.app.services.ws_tick_pipeline import pipeline_stats
+    from icici_breeze_backend.app.services.portfolio_pnl_engine import pnl_engine_stats
 
     return RuntimeMetricsResponse(
         redis=redis_runtime_stats(),
         ws_tick_pipeline=pipeline_stats(),
         active_chains=active_chain_stats(),
+        pnl_engine=pnl_engine_stats(),
     )

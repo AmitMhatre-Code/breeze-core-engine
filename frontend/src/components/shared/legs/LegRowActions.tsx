@@ -2,7 +2,7 @@
 
 import type { StrategyLeg } from "@/lib/strategy-builder/types";
 
-function TrashIcon() {
+function CrossIcon() {
   return (
     <svg
       width="16"
@@ -15,11 +15,8 @@ function TrashIcon() {
       strokeLinejoin="round"
       aria-hidden
     >
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="M19 6l-1 14H6L5 6" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
+      <path d="M18 6 6 18" />
+      <path d="M6 6l12 12" />
     </svg>
   );
 }
@@ -81,11 +78,11 @@ export function LegRowActions({
       </button>
       <button
         type="button"
-        className="rounded p-1 text-down transition hover:bg-down-tint"
+        className="rounded p-1 text-muted transition hover:bg-down-tint hover:text-down"
         aria-label={legDeleteLabel(leg)}
         onClick={onDelete}
       >
-        <TrashIcon />
+        <CrossIcon />
       </button>
     </div>
   );

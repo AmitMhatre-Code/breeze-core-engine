@@ -21,7 +21,7 @@ type LimitsData = {
 };
 
 const inputCls =
-  "w-24 rounded-[7px] border border-border bg-panel2 px-2 py-1 text-right font-mono text-foreground focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30";
+  "w-24 rounded-t-[2px] border-0 border-b border-muted bg-background dark:bg-elevated px-2 py-1 text-right font-mono text-foreground transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none";
 
 function rowKey(r: LimitRow) {
   return `${r.short_name}\0${r.exchange_code}\0${r.segment_code ?? ""}`;
@@ -99,7 +99,7 @@ export function QuantityLimitsScreen() {
       ) : (
         <section className="app-card space-y-4 p-5">
           {q.data.message ? (
-            <p className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-3 py-2 text-[13px] leading-relaxed text-amber-accent">
+            <p className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-3 py-2 text-heading leading-relaxed text-amber-accent">
               {q.data.message}
             </p>
           ) : null}
@@ -134,7 +134,7 @@ export function QuantityLimitsScreen() {
             </p>
           </div>
           <div className="max-h-[70vh] overflow-auto rounded-[10px] border border-border">
-            <table className="min-w-full text-left text-[13px]">
+            <table className="min-w-full text-left text-heading">
               <thead className="sticky top-0 bg-panel2 text-faint">
                 <tr>
                   <th className="px-2.5 py-2 font-semibold uppercase tracking-wide">Symbol</th>

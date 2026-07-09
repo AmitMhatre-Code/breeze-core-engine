@@ -500,10 +500,10 @@ export default function DashboardPage() {
 
   return (
     <AppShell>
-      <div className="space-y-4">
+      <div className="mx-auto max-w-[1200px] space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="app-text-title text-[21px]">Dashboard</h1>
+            <h1 className="app-text-title">Dashboard</h1>
             <p className="mt-0.5 text-xs app-text-muted">
               Snapshot ·{" "}
               <span className="font-mono">
@@ -515,7 +515,7 @@ export default function DashboardPage() {
             type="button"
             onClick={refreshDashboard}
             disabled={volatilityFetching}
-            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-transparent px-3.5 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-strong transition hover:bg-border-soft disabled:pointer-events-none disabled:opacity-60 text-[10px]"
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-transparent px-3.5 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-strong transition hover:bg-border-soft disabled:pointer-events-none disabled:opacity-60 text-micro"
           >
             <VolatilityRefreshIcon spinning={volatilityFetching} />
             Refresh
@@ -601,8 +601,8 @@ export default function DashboardPage() {
           />
         </div>
 
-        <div className="grid gap-3 md:grid-cols-5">
-          <section className="app-card min-w-0 overflow-hidden md:col-span-3">
+        <div className="grid gap-3 md:grid-cols-2">
+          <section className="app-card min-w-0 overflow-hidden">
             <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border-soft p-3">
               <div className="flex min-w-0 flex-wrap items-baseline gap-2">
                 <h2 className="app-text-heading">NIFTY 50</h2>
@@ -632,7 +632,7 @@ export default function DashboardPage() {
                   </span>
                 ) : null}
               </div>
-              <span className="app-text-muted shrink-0 rounded-full border border-border px-2 py-0.5 font-mono text-[13px]">
+              <span className="app-text-muted shrink-0 rounded-full border border-border px-2 py-0.5 font-mono text-heading">
                 {optsLoading ? (
                   <span className="app-skeleton inline-block h-3 w-14 rounded-sm border-0" />
                 ) : nextExpiryShort ? (
@@ -653,7 +653,7 @@ export default function DashboardPage() {
               <div className="divide-y divide-border-soft text-sm">
                 <div className="grid divide-border-soft sm:grid-cols-2 sm:divide-x">
                   <div className="p-3">
-                    <div className="text-[13px] uppercase tracking-wide text-faint">
+                    <div className="text-heading uppercase tracking-wide text-faint">
                       ATM IV
                     </div>
                     <div className="mt-1 font-mono text-lg font-semibold text-foreground">
@@ -677,7 +677,7 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="p-3">
-                    <div className="text-[13px] uppercase tracking-wide text-faint">
+                    <div className="text-heading uppercase tracking-wide text-faint">
                       PCR (OI)
                     </div>
                     <div className="mt-1 font-mono text-lg font-semibold text-foreground">
@@ -702,7 +702,7 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="p-3">
-                  <div className="text-[13px] uppercase tracking-wide text-faint">
+                  <div className="text-heading uppercase tracking-wide text-faint">
                     Expected range (based on 2σ)
                   </div>
                   <div className="font-mono text-lg font-semibold text-foreground">
@@ -713,7 +713,7 @@ export default function DashboardPage() {
                         {formatNiftyIndexInt(expectedRange2Sigma[0])} –{" "}
                         {formatNiftyIndexInt(expectedRange2Sigma[1])}
                         {expectedMove2SigmaPct != null ? (
-                          <span className="mt-0.5 block text-[12px] font-normal text-faint">
+                          <span className="mt-0.5 block text-body font-normal text-faint">
                             ±{expectedMove2SigmaPct.toFixed(1)}%
                             {expectedMove2SigmaPts != null
                               ? ` · ±${expectedMove2SigmaPts.toLocaleString("en-IN")} pts`
@@ -729,7 +729,7 @@ export default function DashboardPage() {
 
                 <div className="p-3">
                   <div
-                    className="text-[13px] uppercase tracking-wide text-faint"
+                    className="text-heading uppercase tracking-wide text-faint"
                     title="From lowest to highest of the strikes with max call OI and max put OI (nearest expiry)"
                   >
                     Expected range (based on highest OI)
@@ -744,7 +744,7 @@ export default function DashboardPage() {
                           ? ` – ${oiRangeHi.toLocaleString("en-IN")}`
                           : null}
                         {oiRangeHalfWidthPct != null ? (
-                          <span className="mt-0.5 block text-[12px] font-normal text-faint">
+                          <span className="mt-0.5 block text-body font-normal text-faint">
                             ±{oiRangeHalfWidthPct.toFixed(1)}%
                             {oiRangeHalfWidthPts != null
                               ? ` · ±${Math.round(oiRangeHalfWidthPts).toLocaleString("en-IN")} pts`
@@ -760,16 +760,16 @@ export default function DashboardPage() {
               </div>
             )}
             {opts?.error ? (
-              <p className="px-3 pb-3 text-[13px] text-amber-accent">
+              <p className="px-3 pb-3 text-heading text-amber-accent">
                 IV / PCR: {opts.error}
               </p>
             ) : null}
           </section>
 
-          <section className="app-card min-w-0 space-y-3 p-3 md:col-span-2">
+          <section className="app-card min-w-0 space-y-3 p-3">
             <header className="flex items-center justify-between gap-2">
               <h2 className="app-text-heading">India VIX</h2>
-              <span className="app-text-muted text-[13px]">
+              <span className="app-text-muted text-heading">
                 30-day
               </span>
             </header>
@@ -822,7 +822,7 @@ export default function DashboardPage() {
               </>
             )}
             {core?.error ? (
-              <p className="text-[13px] text-amber-accent">
+              <p className="text-heading text-amber-accent">
                 VIX: {core.error}
               </p>
             ) : null}
@@ -845,7 +845,7 @@ export default function DashboardPage() {
             <button
               type="button"
               disabled={refreshOutlookM.isPending}
-              className="app-btn-outline gap-1.5 uppercase tracking-wide text-[10px]"
+              className="app-btn-outline gap-1.5 uppercase tracking-wide text-micro"
               onClick={() => refreshOutlookM.mutate()}
             >
               <OutlookRefreshIcon spinning={refreshOutlookM.isPending} />
@@ -902,7 +902,7 @@ function MetricTile({
 }) {
   return (
     <div className="app-card p-[14px_15px]">
-      <div className="text-[13px] uppercase tracking-wide text-faint">
+      <div className="text-heading uppercase tracking-wide text-faint">
         {label}
       </div>
       <div
@@ -916,7 +916,7 @@ function MetricTile({
         {loading ? <DashboardMetricSkeleton /> : (value ?? "—")}
       </div>
       {caption ? (
-        <div className="mt-1.5 text-[13px] app-text-muted">{caption}</div>
+        <div className="mt-1.5 text-heading app-text-muted">{caption}</div>
       ) : null}
     </div>
   );
@@ -932,7 +932,7 @@ function ProgressBar({ pct }: { pct: number }) {
           style={{ width: `${clamped}%` }}
         />
       </div>
-      <span className="font-mono text-[13px] tabular-nums app-text-muted">
+      <span className="font-mono text-heading tabular-nums app-text-muted">
         {clamped.toFixed(0)}%
       </span>
     </div>
@@ -1029,7 +1029,7 @@ function MarketOutlookConnectionBadge({
 }) {
   if (phase === "idle") {
     return (
-      <span className="rounded-full border border-border px-2 py-0.5 text-[12px] uppercase tracking-wide text-faint">
+      <span className="rounded-full border border-border px-2 py-0.5 text-body uppercase tracking-wide text-faint">
         idle
       </span>
     );
@@ -1059,7 +1059,7 @@ function MarketOutlookConnectionBadge({
 
   return (
     <span
-      className={`rounded-full border px-2 py-0.5 text-[12px] uppercase tracking-wide ${cfg.cls}`}
+      className={`rounded-full border px-2 py-0.5 text-body uppercase tracking-wide ${cfg.cls}`}
     >
       {cfg.label}
     </span>

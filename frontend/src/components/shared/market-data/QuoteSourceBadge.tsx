@@ -1,6 +1,6 @@
 "use client";
 
-import { InfoPopover } from "@/components/strategy-builder/InfoPopover";
+import { InfoPopover } from "@/components/ui/InfoPopover";
 import {
   formatQuoteAsOf,
   formatQuoteSourceDetail,
@@ -21,15 +21,15 @@ function variantClasses(variant: QuoteSourceBadgeProps["variant"], live: boolean
   const base =
     "inline-flex max-w-full items-center gap-1.5 rounded-full border font-medium leading-tight";
   if (variant === "compact") {
-    return `${base} border-border bg-panel2 px-2 py-0.5 text-[12px] text-muted`;
+    return `${base} border-border bg-panel2 px-2 py-0.5 text-body text-muted`;
   }
   if (variant === "footnote") {
-    return `${base} border-transparent bg-transparent px-0 py-0 text-[13px] text-muted`;
+    return `${base} border-transparent bg-transparent px-0 py-0 text-heading text-muted`;
   }
   if (live) {
-    return `${base} border-up/35 bg-up-tint px-2.5 py-1 text-xs text-up`;
+    return `${base} border-up/35 bg-up-tint px-2.5 py-1 text-micro text-up`;
   }
-  return `${base} border-border bg-panel2 px-2.5 py-1 text-xs text-muted`;
+  return `${base} border-border bg-panel2 px-2.5 py-1 text-micro text-muted`;
 }
 
 function LiveDot({ pulse }: { pulse: boolean }) {
@@ -77,7 +77,7 @@ export function QuoteSourceBadge({
   if (variant === "footnote") {
     return (
       <span className={`inline-flex flex-wrap items-center gap-1.5 ${className}`.trim()}>
-        <span className="text-[13px] text-muted">Leg prices from</span>
+        <span className="text-heading text-muted">Leg prices from</span>
         {pill}
         <InfoPopover
           title="Quote source"

@@ -38,7 +38,7 @@ export function InterpretationBadge({
     <span
       title={tooltip}
       style={TONE_STYLE[tone]}
-      className="inline-flex max-w-[9.5rem] cursor-help items-center rounded-lg px-2 py-0.5 text-[10px] uppercase tracking-wide"
+      className="inline-flex max-w-[9.5rem] cursor-help items-center rounded-lg px-2 py-0.5 text-micro uppercase tracking-wide"
     >
       {label}
     </span>

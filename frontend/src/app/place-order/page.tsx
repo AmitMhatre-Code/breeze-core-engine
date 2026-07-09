@@ -14,14 +14,18 @@ import { AppShell } from "@/components/layout/AppShell";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { ManualContractFieldWarningDialog } from "@/components/order/ManualContractFieldWarningDialog";
 import { AggressiveLimitOrderField } from "@/components/order/AggressiveLimitOrderField";
-import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
-import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
-import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
-import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
-import { StrikeSelectPill } from "@/components/strategy-builder/StrikeSelectPill";
+import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
+import { OrderSideBadge } from "@/components/shared/badges/OrderSideBadge";
+import { QuoteSourceBadge } from "@/components/shared/market-data/QuoteSourceBadge";
+import { useOrderConfirm } from "@/components/shared/order/OrderConfirmProvider";
+import { OptionChainUnderlyingSearch } from "@/components/shared/order/OptionChainUnderlyingSearch";
+import { ExchangeFlipToggle } from "@/components/shared/order/ExchangeFlipToggle";
+import { ExpirySelectPill } from "@/components/shared/order/ExpirySelectPill";
+import { StrikeSelectPill } from "@/components/shared/order/StrikeSelectPill";
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { isValidExpiryDisplay, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import { snapQuantityToLotMultiple } from "@/lib/strategy-builder/leg-ui-helpers";
 import {
   consumePlaceOrderClonePayload,
   placeOrderPrefillFromSearchParams,
@@ -34,7 +38,7 @@ import { quoteMetaFromChain } from "@/lib/quote-source";
 import {
   ChainBuildStatus,
   inferChainBuildPhase,
-} from "@/components/market-data/ChainBuildStatus";
+} from "@/components/shared/market-data/ChainBuildStatus";
 import { sb } from "@/lib/strategy-builder/ui";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 import type {
@@ -90,6 +94,64 @@ function ListIcon() {
       <path d="M3 6h.01" />
       <path d="M3 12h.01" />
       <path d="M3 18h.01" />
+    </svg>
+  );
+}
+
+function RefreshIcon({ spinning }: { spinning?: boolean }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className={spinning ? "animate-spin" : ""}
+    >
+      <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+      <path d="M21 3v5h-5" />
+    </svg>
+  );
+}
+
+function BuyArrowIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 19V5" />
+      <path d="m5 12 7-7 7 7" />
+    </svg>
+  );
+}
+
+function SellArrowIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 5v14" />
+      <path d="m19 12-7 7-7-7" />
     </svg>
   );
 }
@@ -186,7 +248,10 @@ function PlaceOrderPageInner() {
   });
 
   // Redis-cached chain, refetched on a WS-aware interval — the single source of truth
-  // for scrip details below, so no separate manual "fetch" round-trip is needed.
+  // for scrip details below, so no separate manual "fetch" round-trip is needed. Kept
+  // enabled even when contractFieldsLocked (clone / square-off / URL prefill): only the
+  // strike/expiry *pickers* are locked, live LTP is still needed for scrip details,
+  // margin, and the price auto-fill below.
   const chainQ = useQuery({
     ...chainQueryOptions({
       queryKeyPrefix: ["place-order"],
@@ -194,7 +259,6 @@ function PlaceOrderPageInner() {
       expiry_date: expiryDate,
       exchange_code: segment,
       subscription_holder: subscriptionHolder,
-      enabled: !contractFieldsLocked,
     }),
   });
 
@@ -500,6 +564,11 @@ function PlaceOrderPageInner() {
       ? priceNum * qtyNum
       : null;
   const expiryDisplay = chainSuccess?.expiry_display?.trim() || expiryDate.trim();
+  const isAtmStrike =
+    strikeFieldMode === "dropdown" &&
+    defaultStrike != null &&
+    effectiveStrike != null &&
+    Math.round(effectiveStrike) === Math.round(defaultStrike);
 
   return (
     <AppShell>
@@ -507,333 +576,317 @@ function PlaceOrderPageInner() {
         <div className="mx-auto max-w-[1040px] space-y-5">
           <header>
             <h1 className="text-[22px] font-bold tracking-tight text-foreground">
-              Place order
+              Place Order
             </h1>
-            <p className="mt-1 text-sm leading-relaxed text-muted">
-              F&amp;O (NFO / BFO): select a contract — scrip details and margin update
-              automatically from the live chain.
+            <p className="mt-[3px] text-button text-muted">
+              Single-leg F&amp;O order ·{" "}
+              <span className="font-mono">{segment === "NFO" ? "NSE" : "BSE"}</span> segment
             </p>
           </header>
+          {contractFieldsLocked ? (
+            <p className="rounded-md border border-accent/30 bg-accent-tint px-3 py-2 text-xs leading-snug text-accent-strong">
+              Contract details are fixed based on the order being cloned. Change quantity, limit price, or tap Buy
+              / Sell when ready.
+            </p>
+          ) : null}          
 
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.5fr_1fr] lg:items-start">
             <section
-              className={`${sb.section} relative z-20 space-y-4`}
+              className="relative z-20 rounded-[13px] border border-border bg-panel"
               aria-label="Options order entry"
             >
-              {contractFieldsLocked ? (
-                <p className="rounded-md border border-accent/30 bg-accent-tint px-3 py-2 text-xs leading-snug text-accent-strong">
-                  Contract details are fixed. Change quantity, limit price, or tap Buy
-                  / Sell when ready.
-                </p>
-              ) : null}
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-end justify-between gap-3">
-                  <div
-                    className="flex flex-wrap items-center gap-2"
-                    role="group"
-                    aria-label="Exchange segment"
-                  >
-                    <div className={sb.segmentGroup}>
-                      <button
-                        type="button"
-                        disabled={contractFieldsLocked}
-                        onClick={() => {
-                          setSegment("NFO");
-                          resetOrderForm();
-                        }}
-                        className={[
-                          sb.segmentBtn,
-                          segment === "NFO" ? sb.segmentBtnActive : sb.segmentBtnInactive,
-                          "disabled:pointer-events-none disabled:opacity-50",
-                        ].join(" ")}
-                        aria-pressed={segment === "NFO"}
-                      >
-                        NSE
-                      </button>
-                      <button
-                        type="button"
-                        disabled={contractFieldsLocked}
-                        onClick={() => {
-                          setSegment("BFO");
-                          resetOrderForm();
-                        }}
-                        className={[
-                          sb.segmentBtn,
-                          segment === "BFO" ? sb.segmentBtnActive : sb.segmentBtnInactive,
-                          "disabled:pointer-events-none disabled:opacity-50",
-                        ].join(" ")}
-                        aria-pressed={segment === "BFO"}
-                      >
-                        BSE
-                      </button>
-                    </div>
+              <div className="flex flex-col gap-4 p-[18px]">
+                <div className="flex items-end gap-2.5">
+                  <div className="shrink-0">
+                    {/* <span className={sb.fieldLabel}>Exchange</span> */}
+                    <ExchangeFlipToggle
+                      value={segment}
+                      disabled={contractFieldsLocked}
+                      onChange={(next) => {
+                        setSegment(next);
+                        resetOrderForm();
+                      }}
+                    />
                   </div>
-                  <div
-                    className="flex flex-wrap items-center gap-2"
-                    role="group"
-                    aria-label="Call or Put"
-                  >
-                    <div className={sb.segmentGroup}>
-                      <button
-                        type="button"
+                  <div className="min-w-0 flex-1">
+                    <span className={sb.fieldLabel}>Underlying</span>
+                    <OptionChainUnderlyingSearch
+                      variant="ticker"
+                      underlyings={uq.data?.underlyings ?? []}
+                      value={stockCode}
+                      disabled={uq.isLoading || contractFieldsLocked}
+                      spot={spot}
+                      loading={chainLoading}
+                      quoteMeta={chainQuoteMeta}
+                      onChange={(code) => {
+                        setStockCode(code);
+                        setExpiryDate("");
+                        setStrikeSelection(null);
+                        setQuantity("");
+                        setPrice("");
+                        setLockedOrderSide(null);
+                        resetContractFieldModes();
+                      }}
+                    />
+                  </div>
+                  <div className="shrink-0">
+                    {/* <span className={sb.fieldLabel}>Type</span> */}
+                    {/* <div className="flex h-11 items-center"> */}
+                      <OptionTypeBadge
+                        right={right}
                         disabled={contractFieldsLocked}
-                        className={[
-                          sb.segmentBtn,
-                          right === "Call" ? sb.segmentBtnActive : sb.segmentBtnInactive,
-                          "disabled:pointer-events-none disabled:opacity-50",
-                        ].join(" ")}
-                        aria-pressed={right === "Call"}
-                        onClick={() => setRight("Call")}
-                      >
-                        Call
-                      </button>
-                      <button
-                        type="button"
-                        disabled={contractFieldsLocked}
-                        className={[
-                          sb.segmentBtn,
-                          right === "Put" ? sb.segmentBtnActive : sb.segmentBtnInactive,
-                          "disabled:pointer-events-none disabled:opacity-50",
-                        ].join(" ")}
-                        aria-pressed={right === "Put"}
-                        onClick={() => setRight("Put")}
-                      >
-                        Put
-                      </button>
-                    </div>
+                        onToggle={setRight}
+                        className="inline-flex h-10 items-center justify-center rounded-[9px] border-[1.5px] px-3.5 font-mono text-table font-bold uppercase tracking-[.04em] transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:pointer-events-none disabled:opacity-50"
+                      />
+                    {/* </div> */}
                   </div>
                 </div>
 
-                <div className="w-full min-w-0">
-                  <span className={sb.fieldLabel}>Scrip</span>
-                  <OptionChainUnderlyingSearch
-                    variant="ticker"
-                    chainBar
-                    underlyings={uq.data?.underlyings ?? []}
-                    value={stockCode}
-                    disabled={uq.isLoading || contractFieldsLocked}
-                    spot={spot}
-                    loading={chainLoading}
-                    quoteMeta={chainQuoteMeta}
-                    onChange={(code) => {
-                      setStockCode(code);
-                      setExpiryDate("");
-                      setStrikeSelection(null);
-                      setQuantity("");
-                      setPrice("");
-                      setLockedOrderSide(null);
-                      resetContractFieldModes();
-                    }}
-                  />
-                </div>
-
-                <div className="w-full min-w-0">
-                  <span className={sb.fieldLabel}>Expiry</span>
-                  <div className="flex items-stretch gap-1.5">
-                    <div className="min-w-0 flex-1">
-                      {expiryFieldMode === "dropdown" ? (
-                        <ExpirySelectPill
-                          layout="default"
-                          hideLabel
-                          rootClassName={pillStretch}
-                          dates={expiryOptions}
-                          value={expiryDate}
-                          disabled={!stockCode || contractFieldsLocked}
-                          onChange={onExpiryChange}
-                        />
-                      ) : (
-                        <input
-                          type="text"
-                          className={sb.input}
-                          value={expiryDate}
-                          disabled={!stockCode || contractFieldsLocked}
-                          placeholder="21-Mar-2026"
-                          aria-label="Expiry date"
-                          onChange={(e) => onExpiryChange(e.target.value)}
-                        />
-                      )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <span className={sb.fieldLabel}>Expiry</span>
+                    <div className="flex items-stretch gap-1.5">
+                      <div className="min-w-0 flex-1">
+                        {expiryFieldMode === "dropdown" ? (
+                          <ExpirySelectPill
+                            layout="default"
+                            hideLabel
+                            rootClassName={pillStretch}
+                            dates={expiryOptions}
+                            value={expiryDate}
+                            disabled={!stockCode || contractFieldsLocked}
+                            onChange={onExpiryChange}
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            className={sb.input}
+                            value={expiryDate}
+                            disabled={!stockCode || contractFieldsLocked}
+                            placeholder="21-Mar-2026"
+                            aria-label="Expiry date"
+                            onChange={(e) => onExpiryChange(e.target.value)}
+                          />
+                        )}
+                      </div>
+                      {!contractFieldsLocked ? (
+                        expiryFieldMode === "dropdown" ? (
+                          <button
+                            type="button"
+                            className={fieldModeBtnClass}
+                            disabled={!stockCode}
+                            aria-label="Edit expiry manually"
+                            onClick={() => setManualEditPrompt("expiry")}
+                          >
+                            <EditIcon />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className={fieldModeBtnClass}
+                            aria-label="Choose expiry from list"
+                            onClick={() => setExpiryFieldMode("dropdown")}
+                          >
+                            <ListIcon />
+                          </button>
+                        )
+                      ) : null}
                     </div>
-                    {!contractFieldsLocked ? (
-                      expiryFieldMode === "dropdown" ? (
-                        <button
-                          type="button"
-                          className={fieldModeBtnClass}
-                          disabled={!stockCode}
-                          aria-label="Edit expiry manually"
-                          onClick={() => setManualEditPrompt("expiry")}
-                        >
-                          <EditIcon />
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className={fieldModeBtnClass}
-                          aria-label="Choose expiry from list"
-                          onClick={() => setExpiryFieldMode("dropdown")}
-                        >
-                          <ListIcon />
-                        </button>
-                      )
+                    {expiryInvalid ? (
+                      <p className="mt-1 text-xs text-amber-accent">
+                        Use DD-Mon-YYYY format (e.g. 21-Mar-2026).
+                      </p>
                     ) : null}
                   </div>
-                  {expiryInvalid ? (
-                    <p className="mt-1 text-xs text-amber-accent">
-                      Use DD-Mon-YYYY format (e.g. 21-Mar-2026).
-                    </p>
-                  ) : null}
+
+                  <div>
+                    <span className={sb.fieldLabel}>Strike</span>
+                    <div className="flex items-stretch gap-1.5">
+                      <div className="min-w-0 flex-1">
+                        {strikeFieldMode === "dropdown" ? (
+                          <StrikeSelectPill
+                            layout="default"
+                            hideLabel
+                            rootClassName={pillStretch}
+                            strikes={strikes}
+                            value={effectiveStrike}
+                            atmBadge={isAtmStrike}
+                            busy={Boolean(
+                              stockCode &&
+                                expiryDate &&
+                                chainQ.isFetching &&
+                                !strikes.length,
+                            )}
+                            disabled={strikeDropdownDisabled}
+                            onChange={(k) => {
+                              setStrikeSelection(k);
+                            }}
+                          />
+                        ) : (
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            className={sb.input}
+                            value={manualStrikeValue}
+                            disabled={!stockCode || contractFieldsLocked}
+                            placeholder="24500"
+                            aria-label="Strike price"
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              if (raw === "") {
+                                setStrikeSelection(null);
+                              } else {
+                                const n = parseNum(raw);
+                                setStrikeSelection(Number.isFinite(n) ? n : null);
+                              }
+                            }}
+                          />
+                        )}
+                      </div>
+                      {!contractFieldsLocked ? (
+                        strikeFieldMode === "dropdown" ? (
+                          <button
+                            type="button"
+                            className={fieldModeBtnClass}
+                            disabled={!stockCode}
+                            aria-label="Edit strike manually"
+                            onClick={() => setManualEditPrompt("strike")}
+                          >
+                            <EditIcon />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className={fieldModeBtnClass}
+                            aria-label="Choose strike from list"
+                            onClick={() => setStrikeFieldMode("dropdown")}
+                          >
+                            <ListIcon />
+                          </button>
+                        )
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
 
                 <ChainBuildStatus visible={chainLoading} phase={chainBuildPhase} />
 
-                <div className="w-full min-w-0">
-                  <span className={sb.fieldLabel}>Strike</span>
-                  <div className="flex items-stretch gap-1.5">
-                    <div className="min-w-0 flex-1">
-                      {strikeFieldMode === "dropdown" ? (
-                        <StrikeSelectPill
-                          layout="default"
-                          hideLabel
-                          rootClassName={pillStretch}
-                          strikes={strikes}
-                          value={effectiveStrike}
-                          busy={Boolean(
-                            stockCode &&
-                              expiryDate &&
-                              chainQ.isFetching &&
-                              !strikes.length,
-                          )}
-                          disabled={strikeDropdownDisabled}
-                          onChange={(k) => {
-                            setStrikeSelection(k);
-                          }}
-                        />
-                      ) : (
-                        <input
-                          type="number"
-                          min={0}
-                          step={1}
-                          className={sb.input}
-                          value={manualStrikeValue}
-                          disabled={!stockCode || contractFieldsLocked}
-                          placeholder="24500"
-                          aria-label="Strike price"
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (raw === "") {
-                              setStrikeSelection(null);
-                            } else {
-                              const n = parseNum(raw);
-                              setStrikeSelection(Number.isFinite(n) ? n : null);
-                            }
-                          }}
-                        />
-                      )}
-                    </div>
-                    {!contractFieldsLocked ? (
-                      strikeFieldMode === "dropdown" ? (
-                        <button
-                          type="button"
-                          className={fieldModeBtnClass}
-                          disabled={!stockCode}
-                          aria-label="Edit strike manually"
-                          onClick={() => setManualEditPrompt("strike")}
-                        >
-                          <EditIcon />
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className={fieldModeBtnClass}
-                          aria-label="Choose strike from list"
-                          onClick={() => setStrikeFieldMode("dropdown")}
-                        >
-                          <ListIcon />
-                        </button>
-                      )
-                    ) : null}
+                {!chainLoading && stockCode && expiryDate ? (
+                  <div className="flex items-center justify-between gap-2 px-0.5">
+                    <span className="flex items-center gap-[7px] text-table text-muted">
+                      <span
+                        className={`size-1.5 shrink-0 rounded-full ${chainSuccess ? "bg-up" : "bg-faint"}`}
+                        aria-hidden
+                      />
+                      Details loaded automatically
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => chainQ.refetch()}
+                      disabled={chainQ.isFetching}
+                      className="flex shrink-0 items-center gap-[5px] rounded-md px-1.5 py-1 text-table font-semibold text-accent-strong transition hover:bg-accent-tint disabled:pointer-events-none disabled:opacity-50"
+                    >
+                      <RefreshIcon spinning={chainQ.isFetching} />
+                      Refresh
+                    </button>
                   </div>
-                </div>
-              </div>
+                ) : null}
 
-              <div className="space-y-4 border-t border-border-soft pt-4">
-                <h2 className={sb.sectionTitle}>Quantity &amp; price</h2>
-                <div className="grid grid-cols-1 gap-4">
-                  <label className={sb.fieldLabel}>
-                    Quantity (units)
-                    {lotSizeForHints != null &&
-                    typeof lotSizeForHints === "number" &&
-                    Number.isFinite(lotSizeForHints) ? (
-                      <span className="font-normal normal-case tracking-normal text-muted">
-                        {" "}
-                        · lot {lotSizeForHints.toLocaleString("en-IN")}
-                      </span>
-                    ) : null}
-                    <input
-                      type="number"
-                      min={1}
-                      className={`${sb.input} mt-1.5`}
-                      value={quantity}
-                      onChange={(e) => setQuantity(e.target.value)}
-                      placeholder="e.g. 65"
+                <div className="flex flex-col gap-4 pt-4">
+                  {/* <h2 className={sb.sectionTitle}>Quantity &amp; price</h2> */}
+                  <div className="grid grid-cols-1 gap-4">
+                    <label className={sb.fieldLabel}>
+                      Quantity (units)
+                      {lotSizeForHints != null &&
+                      typeof lotSizeForHints === "number" &&
+                      Number.isFinite(lotSizeForHints) ? (
+                        <span className="font-normal normal-case tracking-normal text-muted">
+                          {" "}
+                          · lot {lotSizeForHints.toLocaleString("en-IN")}
+                        </span>
+                      ) : null}
+                      <input
+                        type="number"
+                        min={1}
+                        className={`${sb.input} mt-1.5`}
+                        value={quantity}
+                        onChange={(e) => setQuantity(e.target.value)}
+                        onBlur={() => {
+                          if (!lotSizeForHints || lotSizeForHints <= 0) return;
+                          const n = parseNum(quantity);
+                          if (!Number.isFinite(n) || n <= 0) return;
+                          setQuantity(String(snapQuantityToLotMultiple(n, lotSizeForHints)));
+                        }}
+                        placeholder="e.g. 65"
+                      />
+                    </label>
+                    <AggressiveLimitOrderField
+                      aggressive={aggressiveLimit}
+                      price={price}
+                      onAggressiveChange={(checked) => {
+                        setAggressiveLimit(checked);
+                        if (checked) setPrice("");
+                      }}
+                      onPriceChange={setPrice}
                     />
-                  </label>
-                  <AggressiveLimitOrderField
-                    aggressive={aggressiveLimit}
-                    price={price}
-                    onAggressiveChange={(checked) => {
-                      setAggressiveLimit(checked);
-                      if (checked) setPrice("");
-                    }}
-                    onPriceChange={setPrice}
-                  />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-up-btn px-4 py-3 text-[14.5px] font-bold tracking-[.02em] text-white transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-up/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={!previewLeg || lockedOrderSide === "Sell"}
+                      onClick={() => openPreview("Buy")}
+                    >
+                      <BuyArrowIcon />
+                      Buy
+                    </button>
+                    <button
+                      type="button"
+                      className={`${sb.btnDanger} w-full gap-2 px-4 py-3 text-[14.5px] tracking-[.02em]`}
+                      disabled={!previewLeg || lockedOrderSide === "Buy"}
+                      onClick={() => openPreview("Sell")}
+                    >
+                      <SellArrowIcon />
+                      Sell
+                    </button>
+                  </div>
+                  {!previewLeg &&
+                  stockCode &&
+                  expiryDate &&
+                  effectiveStrike != null ? (
+                    <p className="text-sm text-muted">
+                      {aggressiveLimit
+                        ? "Enter a positive quantity to enable execution preview."
+                        : "Enter a positive quantity and valid price to enable the execution preview."}
+                    </p>
+                  ) : null}
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    className="inline-flex w-full items-center justify-center rounded-lg bg-up-btn px-4 py-2.5 text-sm font-bold text-white transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-up/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={!previewLeg || lockedOrderSide === "Sell"}
-                    onClick={() => openPreview("Buy")}
-                  >
-                    Buy
-                  </button>
-                  <button
-                    type="button"
-                    className={`${sb.btnDanger} w-full px-4 py-2.5 text-sm`}
-                    disabled={!previewLeg || lockedOrderSide === "Buy"}
-                    onClick={() => openPreview("Sell")}
-                  >
-                    Sell
-                  </button>
-                </div>
-                {!previewLeg &&
-                stockCode &&
-                expiryDate &&
-                effectiveStrike != null ? (
-                  <p className="text-sm text-muted">
-                    {aggressiveLimit
-                      ? "Enter a positive quantity to enable execution preview."
-                      : "Enter a positive quantity and valid price to enable the execution preview."}
-                  </p>
+
+                {chainError ? (
+                  <div className="app-alert-error text-xs">{chainError}</div>
                 ) : null}
               </div>
-
-              {chainError ? (
-                <div className="app-alert-error text-xs">{chainError}</div>
-              ) : null}
             </section>
 
             <div className="space-y-4 lg:sticky lg:top-[76px]">
-              <div className={sb.section} aria-label="Scrip details">
-                <p className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[13px] font-bold uppercase tracking-[.07em] text-faint">
-                  <span>Scrip details</span>
+              <div
+                className="overflow-hidden rounded-[13px] border border-border bg-panel"
+                aria-label="Scrip details"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-soft px-4 py-[13px]">
+                  <span className="text-hint font-bold uppercase tracking-[.07em] text-muted">
+                    Scrip details
+                  </span>
                   {chainQuoteMeta ? (
-                    <QuoteSourceBadge meta={chainQuoteMeta} variant="compact" showAsOf />
+                    <QuoteSourceBadge meta={chainQuoteMeta} variant="default" showAsOf={false} />
                   ) : null}
-                </p>
+                </div>
+                <div className="p-4">
                 {cellDetails ? (
-                  <div className="grid grid-cols-2 gap-3 gap-y-3 sm:grid-cols-3">
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-[14px]">
                     <ScripStat
-                      label="LTP (₹)"
+                      label="LTP ₹"
                       value={
                         cellDetails.ltp != null
                           ? cellDetails.ltp.toLocaleString("en-IN", {
@@ -841,26 +894,24 @@ function PlaceOrderPageInner() {
                             })
                           : "—"
                       }
+                      emphasize
+                    />
+                    <ScripStat
+                      label="B:S ratio"
+                      value={cellDetails.buySellRatioLabel}
+                      emphasize
                     />
                     <ScripStat
                       label="Buy qty"
                       value={cellDetails.totalBuyQty.toLocaleString("en-IN")}
+                      tone="up"
                     />
                     <ScripStat
                       label="Sell qty"
                       value={cellDetails.totalSellQty.toLocaleString("en-IN")}
+                      tone="down"
                     />
-                    <ScripStat label="B:S ratio" value={cellDetails.buySellRatioLabel} />
-                    <ScripStat
-                      label="Lot"
-                      value={
-                        cellDetails.lotSize != null
-                          ? cellDetails.lotSize.toLocaleString("en-IN")
-                          : "—"
-                      }
-                    />
-                    <div />
-                    <div className="col-span-3 grid min-w-0 grid-cols-2 gap-3 border-t border-border-soft pt-3">
+                    <div className="col-span-2 grid min-w-0 grid-cols-2 gap-3 border-t border-border-soft pt-[13px]">
                       <ScripStat
                         label="Margin / lot · Buy"
                         value={
@@ -891,17 +942,29 @@ function PlaceOrderPageInner() {
                   </p>
                 )}
                 {marginQ.data?.marginError ? (
-                  <p className="mt-2 text-[13px] leading-snug text-amber-accent">
+                  <p className="mt-2 text-heading leading-snug text-amber-accent">
                     {marginQ.data.marginError}
                   </p>
                 ) : null}
+                </div>
               </div>
 
-              <div className={sb.section} aria-label="Order summary">
-                <p className="mb-3 text-[13px] font-bold uppercase tracking-[.07em] text-faint">
+              <div
+                className="rounded-[13px] border border-border bg-panel2 p-4"
+                aria-label="Order summary"
+              >
+                <p className="mb-3 text-hint font-bold uppercase tracking-[.07em] text-muted">
                   Order summary
                 </p>
-                <div className="divide-y divide-border-soft text-sm">
+                {stockCode && effectiveStrike != null ? (
+                  <div className="mb-[14px] flex items-center gap-2">
+                    <OrderSideBadge side={previewSide} />
+                    <span className="font-mono text-sm font-semibold text-foreground">
+                      {stockCode} {Math.round(effectiveStrike)} {right === "Call" ? "CE" : "PE"}
+                    </span>
+                  </div>
+                ) : null}
+                <div className="flex flex-col gap-[9px] text-button">
                   <SummaryRow label="Expiry" value={expiryDisplay || "—"} />
                   <SummaryRow
                     label="Quantity"
@@ -915,7 +978,7 @@ function PlaceOrderPageInner() {
                     label="Limit price"
                     value={
                       aggressiveLimit
-                        ? "Market"
+                        ? "Aggressive Limit"
                         : Number.isFinite(priceNum) && priceNum > 0
                           ? `₹${priceNum.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
                           : "—"
@@ -925,10 +988,14 @@ function PlaceOrderPageInner() {
                     label={`Est. margin (${previewSide})`}
                     value={estMargin != null ? formatIndianMoneyCompact(estMargin) : "—"}
                   />
-                  <SummaryRow
-                    label="Order value"
-                    value={orderValue != null ? formatIndianMoneyCompact(orderValue) : "—"}
-                  />
+                </div>
+                <div className="mt-[3px] flex items-baseline justify-between border-t border-border pt-[11px]">
+                  <span className="text-button font-semibold text-foreground">
+                    Order value
+                  </span>
+                  <span className="font-mono text-base font-bold text-foreground">
+                    {orderValue != null ? formatIndianMoneyCompact(orderValue) : "—"}
+                  </span>
                 </div>
               </div>
             </div>
@@ -945,13 +1012,27 @@ function PlaceOrderPageInner() {
   );
 }
 
-function ScripStat({ label, value }: { label: string; value: string }) {
+function ScripStat({
+  label,
+  value,
+  tone,
+  emphasize,
+}: {
+  label: string;
+  value: string;
+  tone?: "up" | "down";
+  emphasize?: boolean;
+}) {
   return (
     <div className="min-w-0">
-      <div className="text-[12px] font-semibold uppercase tracking-wide text-faint">
+      <div className="text-micro font-semibold uppercase tracking-[.06em] text-faint">
         {label}
       </div>
-      <div className="mt-0.5 font-mono text-xs font-medium tabular-nums text-foreground">
+      <div
+        className={`mt-[3px] font-mono tabular-nums ${emphasize ? "text-base font-semibold" : "text-sm font-medium"} ${
+          tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-foreground"
+        }`}
+      >
         {value}
       </div>
     </div>
@@ -960,7 +1041,7 @@ function ScripStat({ label, value }: { label: string; value: string }) {
 
 function SummaryRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
+    <div className="flex items-center justify-between gap-3">
       <span className="text-muted">{label}</span>
       <span className="font-mono font-semibold tabular-nums text-foreground">{value}</span>
     </div>

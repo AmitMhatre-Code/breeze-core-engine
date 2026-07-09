@@ -48,14 +48,14 @@ export function IciciHandoffHelpLinks() {
 
   return (
     <div className="space-y-1 pt-2">
-      <p className="text-center text-[13px] text-muted">
+      <p className="text-center text-heading text-muted">
         New to Breeze Modern?{" "}
-        <HelpLink topicId="login-flow" className="text-[13px]">
+        <HelpLink topicId="login-flow" className="text-heading">
           Login &amp; registration help
         </HelpLink>
       </p>
       {staticIpUrl ? (
-        <p className="text-center text-[13px] text-muted">
+        <p className="text-center text-heading text-muted">
           Need help in registering Static IP with ICICI Direct? Read instructions{" "}
           <a href={staticIpUrl} target="_blank" rel="noopener noreferrer" className="app-link">
             here
@@ -64,7 +64,7 @@ export function IciciHandoffHelpLinks() {
         </p>
       ) : null}
       {userRegUrl ? (
-        <p className="text-center text-[13px] text-muted">
+        <p className="text-center text-heading text-muted">
           Need help in registering user on this app? Read instructions{" "}
           <a href={userRegUrl} target="_blank" rel="noopener noreferrer" className="app-link">
             here

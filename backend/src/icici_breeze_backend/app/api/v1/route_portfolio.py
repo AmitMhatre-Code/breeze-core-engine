@@ -145,6 +145,9 @@ async def get_portfolio_api(ctx: RequestContext = Depends(get_request_context)):
     # quotes, current_profit / carry_profit, span & ELM.
     data = breeze.get_positions(user_id)
     if isinstance(data, dict):
+        from icici_breeze_backend.app.services.portfolio_pnl_engine import sync_positions_from_response
+
+        sync_positions_from_response(user_id, data)
         data = _normalize_portfolio_success_for_ui(data)
     AuditLogger(None).log_portfolio_access(user_id)
     return IciciApiResponse.model_validate(data)

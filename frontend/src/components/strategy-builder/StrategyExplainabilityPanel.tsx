@@ -5,7 +5,6 @@ import { PopLabel } from "@/components/strategy-builder/PopLabel";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { downloadStrategyBuilderAudit } from "@/lib/strategy-builder/api";
 import { displayPopLabel } from "@/lib/strategy-builder/pop-help";
-import { sb } from "@/lib/strategy-builder/ui";
 import type {
   ExecutiveSummary,
   FunnelStage,
@@ -35,25 +34,23 @@ function DisclosureSection({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/60 dark:border-zinc-700/80 dark:bg-zinc-950/40">
+    <div className="rounded-lg border border-border-soft bg-panel2">
       <button
         type="button"
         className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <span className="text-xs font-semibold uppercase tracking-wide text-faint">
           Level {level}
         </span>
-        <span className="flex-1 text-sm font-medium text-zinc-900 dark:text-zinc-100">
+        <span className="flex-1 text-sm font-medium text-foreground">
           {title}
         </span>
-        <span className="text-zinc-500 dark:text-zinc-400">{open ? "−" : "+"}</span>
+        <span className="text-faint">{open ? "−" : "+"}</span>
       </button>
       {open ? (
-        <div className="border-t border-zinc-200/80 px-4 py-3 dark:border-zinc-700/80">
-          {children}
-        </div>
+        <div className="border-t border-border-soft px-4 py-3">{children}</div>
       ) : null}
     </div>
   );
@@ -65,12 +62,12 @@ export function FunnelStepper({ funnel }: { funnel: FunnelStage[] }) {
       {funnel.map((stage) => (
         <li
           key={stage.stage}
-          className="min-w-[7rem] flex-1 rounded-md border border-zinc-200/90 bg-white px-2.5 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900/80"
+          className="min-w-[7rem] flex-1 rounded-md border border-border bg-panel px-2.5 py-2 text-center"
         >
-          <p className="text-[12px] leading-tight text-zinc-500 dark:text-zinc-400">
+          <p className="text-body leading-tight text-faint">
             {displayPopLabel(stage.label)}
           </p>
-          <p className="mt-0.5 text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+          <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
             {stage.count === "not_applied" ? "N/A" : stage.count}
           </p>
         </li>
@@ -89,7 +86,7 @@ function WhyThisTradeMetrics({
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200">
+        <span className="text-xs font-medium text-foreground">
           {trade.strategy_name}
           {trade.variant_rank != null && trade.variant_rank > 1
             ? ` #${trade.variant_rank}`
@@ -98,52 +95,50 @@ function WhyThisTradeMetrics({
         {trade.badges?.map((badge) => (
           <span
             key={badge}
-            className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[12px] font-medium text-sky-700 ring-1 ring-sky-500/20 dark:text-sky-300"
+            className="rounded-full bg-accent-tint px-2 py-0.5 text-body font-medium text-accent-strong"
           >
             {badge}
           </span>
         ))}
       </div>
       {trade.badge_explanations?.length ? (
-        <ul className="mt-1.5 space-y-0.5 text-[13px] text-zinc-500 dark:text-zinc-400">
+        <ul className="mt-1.5 space-y-0.5 text-heading text-faint">
           {trade.badge_explanations.map((b) => (
             <li key={b.badge}>
-              <span className="font-medium text-zinc-600 dark:text-zinc-300">
-                {b.badge}:
-              </span>{" "}
+              <span className="font-medium text-muted">{b.badge}:</span>{" "}
               {b.rationale}
             </li>
           ))}
         </ul>
       ) : null}
-      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-4">
+      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-heading sm:grid-cols-4">
         <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">
+          <dt className="text-faint">
             <PopLabel variant="inline" showInfo={showPopInfo} />
           </dt>
-          <dd className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+          <dd className="font-mono font-medium tabular-nums text-foreground">
             {trade.metrics.pop_pct != null ? `${trade.metrics.pop_pct}%` : "—"}
           </dd>
         </div>
         <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Net credit</dt>
-          <dd className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+          <dt className="text-faint">Net credit</dt>
+          <dd className="font-mono font-medium tabular-nums text-foreground">
             {trade.metrics.net_credit != null
               ? formatIndianMoneyCompact(trade.metrics.net_credit)
               : "—"}
           </dd>
         </div>
         <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Annual ROI</dt>
-          <dd className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+          <dt className="text-faint">Annual ROI</dt>
+          <dd className="font-mono font-medium tabular-nums text-foreground">
             {trade.metrics.annualized_return_pct != null
               ? `${trade.metrics.annualized_return_pct}%`
               : "—"}
           </dd>
         </div>
         <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Margin</dt>
-          <dd className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+          <dt className="text-faint">Margin</dt>
+          <dd className="font-mono font-medium tabular-nums text-foreground">
             {trade.metrics.margin != null
               ? formatIndianMoneyCompact(trade.metrics.margin)
               : "—"}
@@ -156,19 +151,19 @@ function WhyThisTradeMetrics({
 
 function WhyThisBlock({ entry }: { entry: WhyThisStrategy }) {
   return (
-    <div className="space-y-3 rounded-md border border-emerald-200/60 bg-emerald-50/40 p-3 dark:border-emerald-900/40 dark:bg-emerald-950/20">
-      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+    <div className="space-y-3 rounded-md border border-up/30 bg-up-tint p-3">
+      <p className="text-sm font-medium text-foreground">
         {entry.strategy_name}
       </p>
       {entry.pop_filter_note ? (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">{entry.pop_filter_note}</p>
+        <p className="text-xs text-faint">{entry.pop_filter_note}</p>
       ) : null}
       <FunnelStepper funnel={entry.funnel} />
       <div className="space-y-2">
         {entry.returned_trades.map((trade, idx) => (
           <div
             key={`${entry.strategy_id}-${trade.variant_rank ?? idx}`}
-            className="rounded-md border border-zinc-200/80 bg-white/80 p-2.5 dark:border-zinc-700 dark:bg-zinc-900/60"
+            className="rounded-md border border-border-soft bg-panel p-2.5"
           >
             <WhyThisTradeMetrics trade={trade} showPopInfo={idx === 0} />
           </div>
@@ -180,8 +175,8 @@ function WhyThisBlock({ entry }: { entry: WhyThisStrategy }) {
 
 function WhyNotBlock({ entry }: { entry: WhyNotStrategy }) {
   return (
-    <div className="space-y-2 rounded-md border border-zinc-200/80 bg-white/60 p-3 dark:border-zinc-700 dark:bg-zinc-900/40">
-      <p className="text-sm text-zinc-800 dark:text-zinc-200">{entry.explanation}</p>
+    <div className="space-y-2 rounded-md border border-border-soft bg-panel2 p-3">
+      <p className="text-sm text-muted">{entry.explanation}</p>
       <FunnelStepper funnel={entry.funnel} />
     </div>
   );
@@ -198,20 +193,20 @@ export function ExplainabilityLevel1View({
     <div className="space-y-4">
       <dl className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
         <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Category</dt>
-          <dd className="font-medium text-zinc-900 dark:text-zinc-100">
+          <dt className="text-faint">Category</dt>
+          <dd className="font-medium text-foreground">
             {CATEGORY_LABELS[inputs.strategy_category] ?? inputs.strategy_category}
           </dd>
         </div>
         <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Capital</dt>
-          <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+          <dt className="text-faint">Capital</dt>
+          <dd className="font-mono font-medium tabular-nums text-foreground">
             ₹{inputs.margin_lacs}L
           </dd>
         </div>
         <div>
-          <dt className="text-zinc-500 dark:text-zinc-400">Max loss</dt>
-          <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+          <dt className="text-faint">Max loss</dt>
+          <dd className="font-mono font-medium tabular-nums text-foreground">
             {inputs.allow_infinite_loss
               ? "Infinite loss"
               : inputs.max_loss_lacs != null
@@ -221,18 +216,18 @@ export function ExplainabilityLevel1View({
         </div>
         {inputs.min_pop_pct != null ? (
           <div>
-            <dt className="text-zinc-500 dark:text-zinc-400">
+            <dt className="text-faint">
               <PopLabel variant="field" showInfo />
             </dt>
-            <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+            <dd className="font-mono font-medium tabular-nums text-foreground">
               {inputs.min_pop_pct}%
             </dd>
           </div>
         ) : null}
         {inputs.min_ann_return_pct != null ? (
           <div>
-            <dt className="text-zinc-500 dark:text-zinc-400">Min annual ROI</dt>
-            <dd className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+            <dt className="text-faint">Min annual ROI</dt>
+            <dd className="font-mono font-medium tabular-nums text-foreground">
               {inputs.min_ann_return_pct}%
             </dd>
           </div>
@@ -241,29 +236,29 @@ export function ExplainabilityLevel1View({
 
       <div className="flex flex-wrap gap-4 text-xs">
         <p>
-          <span className="text-zinc-500 dark:text-zinc-400">Evaluated: </span>
-          <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+          <span className="text-faint">Evaluated: </span>
+          <span className="font-mono font-semibold tabular-nums text-foreground">
             {executiveSummary.strategies_evaluated}
           </span>
         </p>
         <p>
-          <span className="text-zinc-500 dark:text-zinc-400">Recommended: </span>
-          <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+          <span className="text-faint">Recommended: </span>
+          <span className="font-semibold text-up">
             {executiveSummary.strategies_recommended.length
               ? executiveSummary.strategies_recommended.map((s) => s.strategy_name).join(", ")
               : "None"}
           </span>
         </p>
         <p>
-          <span className="text-zinc-500 dark:text-zinc-400">Skipped: </span>
-          <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+          <span className="text-faint">Skipped: </span>
+          <span className="font-mono font-semibold tabular-nums text-foreground">
             {executiveSummary.strategies_skipped.length}
           </span>
         </p>
         {executiveSummary.generation_duration_seconds != null ? (
           <p>
-            <span className="text-zinc-500 dark:text-zinc-400">Generated in: </span>
-            <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+            <span className="text-faint">Generated in: </span>
+            <span className="font-mono font-semibold tabular-nums text-foreground">
               {executiveSummary.generation_duration_seconds.toFixed(1)} s
             </span>
           </p>
@@ -271,10 +266,10 @@ export function ExplainabilityLevel1View({
       </div>
 
       {executiveSummary.strategies_skipped.length > 0 ? (
-        <ul className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+        <ul className="space-y-1.5 text-xs text-muted">
           {executiveSummary.strategies_skipped.map((s) => (
             <li key={s.strategy_id} className="leading-snug">
-              <span className="font-medium text-zinc-800 dark:text-zinc-200">
+              <span className="font-medium text-foreground">
                 {s.strategy_name}:
               </span>{" "}
               {s.summary}
@@ -295,7 +290,7 @@ export function ExplainabilityLevel2View({
 }) {
   if (whyThis.length === 0 && whyNot.length === 0) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="text-sm text-muted">
         No strategy decision details are available for this build.
       </p>
     );
@@ -305,7 +300,7 @@ export function ExplainabilityLevel2View({
     <div className="space-y-4">
       {whyThis.length > 0 ? (
         <div className="space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+          <p className="text-xs font-semibold uppercase tracking-wide text-up">
             Recommended
           </p>
           {whyThis.map((entry) => (
@@ -315,12 +310,12 @@ export function ExplainabilityLevel2View({
       ) : null}
       {whyNot.length > 0 ? (
         <div className="space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <p className="text-xs font-semibold uppercase tracking-wide text-faint">
             Skipped
           </p>
           {whyNot.map((entry) => (
             <div key={entry.strategy_id}>
-              <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+              <p className="mb-1 text-xs font-medium text-muted">
                 {entry.strategy_name}
               </p>
               <WhyNotBlock entry={entry} />
@@ -335,7 +330,7 @@ export function ExplainabilityLevel2View({
 export function ExplainabilityLevel3View({ insights }: { insights: WhatIfInsight[] }) {
   if (insights.length === 0) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="text-sm text-muted">
         No constraint sensitivity insights are available for this build.
       </p>
     );
@@ -346,7 +341,7 @@ export function ExplainabilityLevel3View({ insights }: { insights: WhatIfInsight
       {insights.map((insight, idx) => (
         <li
           key={`${insight.constraint}-${idx}`}
-          className="rounded-md border border-amber-200/70 bg-amber-50/50 px-3 py-2 text-xs leading-snug text-zinc-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-zinc-300"
+          className="rounded-md border border-amber-accent/40 bg-amber-tint px-3 py-2 text-xs leading-snug text-amber-accent"
         >
           {insight.message}
         </li>
@@ -366,11 +361,7 @@ export function StrategyExplainabilityPanel({
   const [auditError, setAuditError] = useState<string | null>(null);
 
   return (
-    <div className={`${sb.section} space-y-3`} id="strategy-builder-explainability">
-      <h3 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-        Decision transparency
-      </h3>
-
+    <div className="space-y-3" id="strategy-builder-explainability">
       <DisclosureSection title="Executive summary" level={1} defaultOpen>
         <ExplainabilityLevel1View executiveSummary={report.executive_summary} />
       </DisclosureSection>
@@ -392,12 +383,12 @@ export function StrategyExplainabilityPanel({
 
       {auditSessionId ? (
         <DisclosureSection title="Technical audit" level={4}>
-          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+          <p className="text-xs text-muted">
             Download the full technical audit JSON for this strategy-builder session.
           </p>
           <button
             type="button"
-            className="mt-2 font-normal text-sky-600 underline underline-offset-2 hover:text-sky-500 disabled:cursor-wait disabled:opacity-60 dark:text-sky-400 dark:hover:text-sky-300"
+            className="mt-2 font-normal text-accent-strong underline underline-offset-2 transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
             title="Download full technical audit JSON"
             disabled={auditDownloading}
             onClick={() => {
@@ -419,7 +410,7 @@ export function StrategyExplainabilityPanel({
             {auditDownloading ? "downloading…" : "download audit"}
           </button>
           {auditError ? (
-            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{auditError}</p>
+            <p className="mt-2 text-sm text-down">{auditError}</p>
           ) : null}
         </DisclosureSection>
       ) : null}

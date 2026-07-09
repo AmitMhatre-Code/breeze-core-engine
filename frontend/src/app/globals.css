@@ -228,13 +228,25 @@
   --color-violet-950: #14111f;
 
   /**
-   * Readability pass: bumps the minimum secondary-text size app-wide (labels, captions, table
-   * heads all rely on `text-xs`) from Tailwind's default 12px to 13px. Micro-labels using
-   * arbitrary `text-[10px]`/`text-[11px]` literals aren't covered by this override (see note
-   * above) — those are bumped directly at each call site instead.
+   * Terminal Pro type scale (docs/ui-revamp/DESIGN_LANGUAGE.md §1.3) — the single place to
+   * change font sizes app-wide. Each role below maps to a `text-*` Tailwind utility.
    */
-  --text-xs: 0.8125rem;
-  --text-xs--line-height: 1.25rem;
+  --text-micro: 0.625rem; /* 10px — eyebrows, uppercase micro-labels */
+  --text-micro--line-height: 0.875rem;
+  --text-hint: 0.6875rem; /* 11px — small helper / hint text */
+  --text-hint--line-height: 1rem;
+  --text-table: 0.71875rem; /* 11.5px — table cell data */
+  --text-table--line-height: 1rem;
+  --text-body: 0.75rem; /* 12px — body / description */
+  --text-body--line-height: 1.125rem;
+  --text-button: 0.78125rem; /* 12.5px — buttons */
+  --text-button--line-height: 1.125rem;
+  --text-heading: 0.84375rem; /* 13.5px — card/section heading, nav item */
+  --text-heading--line-height: 1.25rem;
+  --text-subtitle: 1.125rem; /* 18px — sub-screen title */
+  --text-subtitle--line-height: 1.5rem;
+  --text-title: 1.3125rem; /* 21px — screen title */
+  --text-title--line-height: 1.625rem;
 }
 
 @layer base {
@@ -291,23 +303,37 @@
   .app-btn-secondary {
     @apply inline-flex items-center justify-center rounded-lg border border-border bg-panel2 px-3 py-1.5 text-xs font-semibold text-text transition hover:bg-border-soft disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50;
   }
+  /** Destructive confirm — solid red fill, white text (Terminal Pro §5.3). */
+  .app-btn-danger {
+    @apply inline-flex items-center justify-center rounded-lg bg-down-btn px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50;
+  }
   /** Section titles inside cards */
   .app-text-heading {
-    @apply text-sm font-semibold tracking-tight text-text;
+    @apply text-heading font-bold tracking-tight text-text;
   }
   /** Page title (H1-style) */
   .app-text-title {
-    @apply text-base font-semibold tracking-tight text-text;
+    @apply text-title font-bold tracking-tight text-text;
   }
   .app-text-muted {
-    @apply text-xs leading-snug text-muted;
+    @apply text-body leading-snug text-muted;
   }
   .app-input {
-    @apply w-full rounded-[9px] border border-border bg-panel2 px-3 py-2 font-mono text-sm text-text placeholder:text-faint transition;
-    @apply focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25;
+    @apply w-full rounded-t-[3px] border-0 border-b border-muted bg-background px-3 py-2 font-mono text-sm text-text placeholder:text-faint transition;
+    @apply hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none;
+  }
+  .dark .app-input {
+    @apply bg-elevated;
   }
   input.app-input:is([type="date"], [type="time"], [type="datetime-local"]) {
     @apply min-h-10 w-full min-w-0 tabular-nums;
+  }
+  input.app-input[type="number"] {
+    @apply [-moz-appearance:textfield] [appearance:textfield];
+  }
+  input.app-input[type="number"]::-webkit-inner-spin-button,
+  input.app-input[type="number"]::-webkit-outer-spin-button {
+    @apply m-0 appearance-none;
   }
   input.app-input:is([type="date"], [type="time"], [type="datetime-local"])::-webkit-calendar-picker-indicator {
     @apply size-5 shrink-0 cursor-pointer rounded-md opacity-55 transition-opacity hover:opacity-90;
@@ -407,86 +433,6 @@
     margin-bottom: 1.5rem;
   }
 
-  /**
-   * Order book date range surface + fetch button: html.dark descendants so styling
-   * survives if `dark:*` utilities are missed or variant ordering shifts.
-   */
-  .orders-date-surface {
-    border-radius: 0.375rem;
-    border: 1px solid rgb(219 225 233 / 0.9);
-    background-color: rgb(245 247 250 / 0.7);
-    padding: 0.75rem 1rem;
-  }
-  html.dark .orders-date-surface {
-    border-color: rgb(35 42 54);
-    background-color: rgb(18 21 28);
-  }
-  .orders-fetch-btn {
-    display: inline-flex;
-    width: 100%;
-    height: 2.5rem;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    border-radius: 0.25rem;
-    border: 1px solid rgb(8 145 178 / 0.45);
-    background-color: rgb(8 145 178);
-    padding: 0 1.25rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #fff;
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
-    transition: background-color 0.15s ease, border-color 0.15s ease;
-  }
-  .orders-fetch-btn:hover:not(:disabled) {
-    background-color: rgb(34 211 238);
-    border-color: rgb(34 211 238 / 0.5);
-  }
-  .orders-fetch-btn:focus-visible {
-    outline: none;
-    box-shadow:
-      0 0 0 2px rgb(255 255 255),
-      0 0 0 4px rgb(34 211 238 / 0.45);
-  }
-  html.dark .orders-fetch-btn:focus-visible {
-    box-shadow: 0 0 0 2px rgb(10 12 16 / 0.9), 0 0 0 4px rgb(34 211 238 / 0.35);
-  }
-  .orders-fetch-btn:disabled {
-    pointer-events: none;
-    cursor: not-allowed;
-    background-color: rgb(14 116 144);
-    border-color: rgb(14 116 144);
-    color: rgb(255 255 255 / 0.92);
-  }
-  html.dark .orders-fetch-btn:disabled {
-    background-color: rgb(12 34 41);
-    border-color: rgb(12 34 41);
-  }
-  @media (min-width: 640px) {
-    .orders-fetch-btn {
-      width: auto;
-    }
-  }
-  .orders-date-caption {
-    margin-bottom: 0.75rem;
-    font-size: 0.8125rem;
-    line-height: 1.35;
-    color: var(--faint);
-  }
-  .orders-date-sep {
-    flex-shrink: 0;
-    text-align: center;
-    font-size: 0.875rem;
-    color: var(--faint);
-  }
-  .orders-page-desc {
-    font-size: 0.875rem;
-    line-height: 1.45;
-    color: rgb(90 100 115);
-  }
-  html.dark .orders-page-desc {
-    color: rgb(245 247 250);
-  }
   .app-alert-error {
     @apply rounded-md border border-down/40 bg-down-tint p-3 text-sm text-down;
   }

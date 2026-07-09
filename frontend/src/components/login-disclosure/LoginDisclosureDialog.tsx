@@ -86,7 +86,7 @@ export function LoginDisclosureDialog({
       panelClassName="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl border border-zinc-700 bg-zinc-950 shadow-2xl"
     >
       <header className="shrink-0 border-b border-zinc-800 px-5 py-4">
-        <p className="text-[12px] font-semibold uppercase tracking-[0.2em] text-blue-400">
+        <p className="text-body font-semibold uppercase tracking-[0.2em] text-blue-400">
           Required
         </p>
         <h2

@@ -49,7 +49,7 @@ export default function PortfolioPage() {
   const [liveGroupCount, setLiveGroupCount] = useState(0);
 
   return (
-    <AppShell contentWidth="wide">
+    <AppShell>
       {q.isLoading ? (
         <div className="app-card space-y-3 p-4">
           <div className="h-5 w-32 app-skeleton rounded-sm border-0" />
@@ -66,7 +66,7 @@ export default function PortfolioPage() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h1 className="app-text-title text-[21px]">Portfolio</h1>
+              <h1 className="app-text-title">Portfolio</h1>
               <p className="mt-0.5 text-sm app-text-muted">
                 Open positions in NFO/BFO options only
               </p>
@@ -93,7 +93,7 @@ export default function PortfolioPage() {
 
           <section className="app-card min-w-0 overflow-hidden">
             <header className="border-b border-border-soft px-4 py-2.5">
-              <h2 className="text-[13px] font-semibold uppercase tracking-wide text-faint">
+              <h2 className="text-heading font-semibold uppercase tracking-wide text-faint">
                 Open positions
               </h2>
             </header>
@@ -171,15 +171,15 @@ function SummaryTile({
 }) {
   return (
     <div className="p-4">
-      <div className="text-[13px] uppercase tracking-wide text-faint">
+      <div className="text-heading uppercase tracking-wide text-faint">
         {label}
       </div>
       <div
-        className={`mt-1.5 font-mono text-[21px] font-semibold tabular-nums ${valueClassName}`}
+        className={`mt-1.5 font-mono text-title font-semibold tabular-nums ${valueClassName}`}
       >
         {value}
       </div>
-      <div className="mt-1.5 text-[13px] app-text-muted">{caption}</div>
+      <div className="mt-1.5 text-heading app-text-muted">{caption}</div>
     </div>
   );
 }

@@ -16,6 +16,20 @@ export function premiumFromChainRow(
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+/** Order-book buy:sell ratio from loaded chain rows for strike + right, if known. */
+export function buySellRatioFromChainRow(
+  rows: ChainRow[],
+  strike: number,
+  right: OptionRight,
+): number | string | null {
+  const row = rows.find((r) => r.strike_price === strike);
+  if (!row) return null;
+  const cell = right === "Call" ? row.call : row.put;
+  if (!cell || typeof cell !== "object") return null;
+  const raw = (cell as Record<string, unknown>).buy_sell_ratio;
+  return raw == null ? null : (raw as number | string);
+}
+
 export function strikesFromChain(rows: ChainRow[]): number[] {
   return rows
     .map((r) => r.strike_price)

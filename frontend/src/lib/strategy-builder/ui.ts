@@ -5,7 +5,8 @@
  */
 export const sb = {
   section: "rounded-[13px] border border-border bg-panel p-5",
-  sectionTitle: "text-[13.5px] font-bold tracking-tight text-foreground",
+  sectionTitle:
+    "text-[11px] font-bold uppercase tracking-[.07em] text-faint",
   fieldLabel:
     "mb-1.5 block text-[10.5px] font-semibold uppercase tracking-[.06em] text-faint",
   fieldRow: "flex items-center gap-3",
@@ -14,20 +15,14 @@ export const sb = {
   select:
     "w-full min-w-[10rem] cursor-pointer rounded-[9px] border border-border bg-panel2 px-3.5 py-2.5 font-mono text-sm text-foreground outline-none transition hover:border-accent focus:border-accent focus:ring-2 focus:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50",
   input:
-    "w-full rounded-[9px] border border-border bg-panel2 px-3.5 py-2.5 font-mono text-sm text-foreground outline-none transition placeholder:text-faint hover:border-accent/60 focus:border-accent focus:ring-2 focus:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50",
+    "w-full rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 font-mono text-sm text-foreground outline-none transition placeholder:text-faint hover:border-accent focus:border-accent-strong focus:bg-panel disabled:cursor-not-allowed disabled:opacity-50",
   inputNarrow:
-    "w-20 rounded-[7px] border border-border bg-panel2 px-2.5 py-2 font-mono text-sm text-foreground outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/25",
+    "w-20 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-2.5 py-2 font-mono text-sm text-foreground outline-none transition hover:border-accent focus:border-accent-strong focus:bg-panel",
   checkbox:
     "size-4 shrink-0 cursor-pointer rounded-md border-border text-accent-strong transition focus:ring-2 focus:ring-accent/35 focus:ring-offset-0 focus:ring-offset-transparent",
   checkboxRow: "flex cursor-pointer items-center gap-2.5 select-none",
   range:
     "h-2 w-full cursor-pointer appearance-none rounded-full bg-track accent-accent-strong",
-  segmentGroup:
-    "inline-flex rounded-[9px] border border-border bg-panel2 p-[3px]",
-  segmentBtn:
-    "rounded-[6px] px-3.5 py-1.5 font-mono text-[11.5px] font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
-  segmentBtnActive: "bg-accent-strong text-accent-ink",
-  segmentBtnInactive: "text-muted hover:text-foreground",
   outlookGroup: "flex flex-wrap gap-2",
   outlookChip:
     "rounded-lg border px-4 py-2 text-xs font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40",
@@ -44,7 +39,7 @@ export const sb = {
   tableSelect:
     "max-w-[8.5rem] cursor-pointer rounded-[7px] border border-border bg-panel2 px-2 py-1.5 font-mono text-xs text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/20",
   tableInput:
-    "w-16 rounded-[7px] border border-border bg-panel2 px-2 py-1.5 font-mono text-xs tabular-nums text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/20",
+    "w-16 rounded-t-[2px] border-0 border-b border-muted bg-background dark:bg-elevated px-2 py-1.5 font-mono text-xs tabular-nums text-foreground outline-none transition hover:border-accent focus:border-accent-strong focus:bg-panel",
   tableToggle:
     "rounded-[7px] border border-border bg-panel2 px-2.5 py-1 font-mono text-xs font-semibold text-foreground transition hover:bg-border-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/30",
   cardTemplate:
@@ -57,6 +52,6 @@ export const sb = {
     "flex cursor-pointer items-center gap-2.5 text-xs font-medium text-muted",
   radio: "size-4 shrink-0 border-border text-accent-strong focus:ring-accent/30",
   parameterCard:
-    "flex h-full flex-col gap-4 rounded-[13px] border border-border bg-panel2 p-4",
+    "flex h-full flex-col gap-4 rounded-[13px] border border-border bg-panel p-4",
   parameterCardTitle: "text-[13.5px] font-bold text-foreground",
 } as const;

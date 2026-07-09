@@ -14,6 +14,7 @@ import zipfile
 import os
 from pathlib import Path
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 import sqlite3
 import csv
 import re
@@ -2856,10 +2857,8 @@ class processor():
         product_type = cfg.OPTIONS
 
         try:
-            all_trades = []
-            first_error = None
-            for exchange_code in (cfg.NFO, cfg.BFO):
-                trades_resp = breeze.get_trade_list(
+            def _fetch_trades(exchange_code):
+                resp = breeze.get_trade_list(
                     from_date=start_date,
                     to_date=end_date,
                     exchange_code=exchange_code,
@@ -2867,8 +2866,17 @@ class processor():
                     action="",
                     stock_code="",
                 )
-                self._maybe_evict_session(user_id, trades_resp)
+                self._maybe_evict_session(user_id, resp)
+                return resp
 
+            # NFO and BFO trade lists are independent calls; fetch them concurrently
+            # instead of waiting on two sequential ICICI round-trips.
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                trade_responses = list(executor.map(_fetch_trades, (cfg.NFO, cfg.BFO)))
+
+            all_trades = []
+            first_error = None
+            for trades_resp in trade_responses:
                 if trades_resp.get("Status") == 200 and trades_resp.get("Success"):
                     all_trades.extend(trades_resp.get("Success") or [])
                 elif first_error is None and trades_resp.get("Status") != 200:

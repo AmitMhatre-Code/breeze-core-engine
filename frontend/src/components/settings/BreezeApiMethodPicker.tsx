@@ -180,7 +180,7 @@ export function BreezeApiMethodPicker({
         {selected ? (
           <span
             className={[
-              "hidden shrink-0 rounded-full px-2 py-0.5 text-[12px] font-semibold uppercase tracking-wide ring-1 ring-inset sm:inline",
+              "hidden shrink-0 rounded-full px-2 py-0.5 text-body font-semibold uppercase tracking-wide ring-1 ring-inset sm:inline",
               RISK_BADGE[selected.risk_level],
             ].join(" ")}
           >
@@ -219,7 +219,7 @@ export function BreezeApiMethodPicker({
               filteredGroups.map((g) => (
                 <li key={g.level} role="presentation" className="mb-2 last:mb-0">
                   <div
-                    className="sticky top-0 z-[1] bg-elevated px-2 py-1.5 text-[13px] font-semibold uppercase tracking-wider text-faint"
+                    className="sticky top-0 z-[1] bg-elevated px-2 py-1.5 text-heading font-semibold uppercase tracking-wider text-faint"
                     aria-hidden
                   >
                     {g.label}
@@ -253,13 +253,13 @@ export function BreezeApiMethodPicker({
                               <span className="block text-sm font-medium text-foreground">
                                 {item.title}
                               </span>
-                              <span className="mt-0.5 block truncate font-mono text-[13px] text-muted">
+                              <span className="mt-0.5 block truncate font-mono text-heading text-muted">
                                 {item.method}
                               </span>
                             </span>
                             <span
                               className={[
-                                "mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[12px] font-semibold uppercase tracking-wide ring-1 ring-inset",
+                                "mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-body font-semibold uppercase tracking-wide ring-1 ring-inset",
                                 RISK_BADGE[item.risk_level],
                               ].join(" ")}
                             >

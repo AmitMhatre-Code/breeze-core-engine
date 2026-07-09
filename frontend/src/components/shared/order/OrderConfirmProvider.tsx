@@ -12,7 +12,7 @@ import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionP
 import {
   OrderExecutionConfirmDialog,
   type ExecutionPreviewLeg,
-} from "@/components/order/OrderExecutionConfirmDialog";
+} from "@/components/shared/order/OrderExecutionConfirmDialog";
 import type { OrderConfirmPayload } from "@/lib/order-confirm";
 import type { OptionRight, QuoteMeta } from "@/lib/strategy-builder/types";
 

@@ -15,7 +15,6 @@ export function LegQuantityInput({
   onLotsChange,
   className,
   maxDigits,
-  snapWhileTyping = false,
 }: {
   legId: string;
   lots: number;
@@ -23,7 +22,6 @@ export function LegQuantityInput({
   onLotsChange: (newLots: number) => void;
   className: string;
   maxDigits?: number;
-  snapWhileTyping?: boolean;
 }) {
   const ls = lotSize > 0 ? lotSize : 1;
   const [text, setText] = useState(() =>
@@ -37,21 +35,17 @@ export function LegQuantityInput({
     return () => clearTimeout(timer);
   }, [legId, lots, ls]);
 
-  const commitQuantity = (rawText: string, live: boolean) => {
+  const commitQuantity = (rawText: string) => {
     const t = applyDigitLimit(rawText.replace(/,/g, "").trim(), maxDigits);
     if (t === "") {
-      if (!live) {
-        onLotsChange(0);
-        setText("");
-      }
+      onLotsChange(0);
+      setText("");
       return;
     }
     const raw = parseInt(t, 10);
     if (!Number.isFinite(raw) || raw <= 0) {
-      if (!live) {
-        onLotsChange(0);
-        setText("");
-      }
+      onLotsChange(0);
+      setText("");
       return;
     }
     const snapped = snapQuantityToLotMultiple(raw, ls);
@@ -72,14 +66,9 @@ export function LegQuantityInput({
         const t = applyDigitLimit(e.target.value.replace(/,/g, ""), maxDigits);
         if (t === "" || /^\d+$/.test(t)) {
           setText(t);
-          if (snapWhileTyping && t !== "") {
-            commitQuantity(t, true);
-          } else if (snapWhileTyping && t === "") {
-            onLotsChange(0);
-          }
         }
       }}
-      onBlur={() => commitQuantity(text, false)}
+      onBlur={() => commitQuantity(text)}
     />
   );
 }

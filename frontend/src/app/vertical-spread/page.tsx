@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { AppShell } from "@/components/layout/AppShell";
-import { PrefilledOrderCard } from "@/components/order/PrefilledOrderCard";
+import { PrefilledOrderCard } from "@/components/shared/order/PrefilledOrderCard";
 
 function Inner() {
   const sp = useSearchParams();

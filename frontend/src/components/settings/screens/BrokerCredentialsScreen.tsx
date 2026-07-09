@@ -13,7 +13,7 @@ type CredData = {
 };
 
 const inputCls =
-  "mt-1.5 w-full rounded-[9px] border border-border bg-panel2 px-3 py-2.5 font-mono text-sm text-foreground focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25";
+  "mt-1.5 w-full rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 py-2.5 font-mono text-sm text-foreground transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none";
 
 function LockIcon() {
   return (
@@ -98,7 +98,7 @@ function CredentialsFormLoaded(props: {
           props.onSubmit(props.userId);
         }}
       >
-        <label className="block text-[10.5px] font-semibold uppercase tracking-[.06em] text-faint">
+        <label className="block text-micro font-semibold uppercase tracking-[.06em] text-faint">
           ICICI User ID
           <input
             className={`${inputCls} cursor-not-allowed border-dashed text-faint`}
@@ -106,7 +106,7 @@ function CredentialsFormLoaded(props: {
             readOnly
           />
         </label>
-        <label className="block text-[10.5px] font-semibold uppercase tracking-[.06em] text-faint">
+        <label className="block text-micro font-semibold uppercase tracking-[.06em] text-faint">
           API Key
           <input
             required
@@ -115,7 +115,7 @@ function CredentialsFormLoaded(props: {
             onChange={(e) => props.setApiKey(e.target.value)}
           />
         </label>
-        <label className="block text-[10.5px] font-semibold uppercase tracking-[.06em] text-faint">
+        <label className="block text-micro font-semibold uppercase tracking-[.06em] text-faint">
           Secret Fragment
           <input
             required
@@ -126,7 +126,7 @@ function CredentialsFormLoaded(props: {
             autoComplete="off"
           />
         </label>
-        <button type="submit" disabled={props.busy} aria-busy={props.busy} className="app-btn-primary rounded-[9px] px-5 py-2.5 text-[13px]">
+        <button type="submit" disabled={props.busy} aria-busy={props.busy} className="app-btn-primary rounded-[9px] px-5 py-2.5 text-heading">
           <AsyncLabelSpan busy={props.busy} idleLabel="Save" busyLabel="Saving…" />
         </button>
       </form>

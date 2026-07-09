@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
+import { QuoteSourceBadge } from "@/components/shared/market-data/QuoteSourceBadge";
 import type { QuoteMeta, UnderlyingEntry } from "@/lib/strategy-builder/types";
 import {
   useComboboxBlurClose,
@@ -27,6 +27,11 @@ type Props = {
    * When true with `variant="ticker"`, render as a flat strip (no box border) for embedding in the dark chain bar.
    */
   chainBar?: boolean;
+  /**
+   * When true with `chainBar`, render `quoteMeta` inline at the end of the ticker row instead of
+   * stacked on its own line below — needs a wide-enough container to avoid wrapping.
+   */
+  quoteMetaInline?: boolean;
 };
 
 function SearchIcon({ className }: { className?: string }) {
@@ -86,6 +91,7 @@ export function OptionChainUnderlyingSearch({
   changePct = null,
   quoteMeta = null,
   chainBar = false,
+  quoteMetaInline = false,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -238,7 +244,7 @@ export function OptionChainUnderlyingSearch({
                       <span
                         className={[
                           "mt-0.5 block truncate text-xs font-normal leading-snug text-faint",
-                          chainBar ? "text-[13px] normal-case" : "",
+                          chainBar ? "text-heading normal-case" : "",
                         ].join(" ")}
                       >
                         {u.long_name}
@@ -284,7 +290,7 @@ export function OptionChainUnderlyingSearch({
           onKeyDown={handleKeyDown}
           onBlur={handleInputBlur}
           placeholder="Type stock name: SBIN, TCS etc."
-          className="w-full rounded-[9px] border border-border bg-panel2 py-2 pl-9 pr-2 font-mono text-sm text-foreground outline-none placeholder:text-faint focus:border-accent focus:ring-1 focus:ring-accent/30"
+          className="w-full rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated py-2 pl-9 pr-2 text-sm text-foreground outline-none transition placeholder:text-faint hover:border-accent focus:border-accent-strong focus:bg-panel"
         />
       </div>
     </div>
@@ -297,8 +303,10 @@ export function OptionChainUnderlyingSearch({
 
   if (variant === "ticker") {
     const rowClass = chainBar
-      ? "flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 sm:gap-x-3"
-      : "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-[9px] border border-border bg-panel2 px-3 py-2 sm:gap-x-3";
+      ? `flex min-w-0 items-center gap-x-2.5 gap-y-1 sm:gap-x-3 ${
+          quoteMetaInline ? "flex-nowrap" : "flex-wrap"
+        }`
+      : "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 py-2 transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel sm:gap-x-3";
 
     const tickerRow = (
       <div className={rowClass}>
@@ -324,7 +332,7 @@ export function OptionChainUnderlyingSearch({
             onKeyDown={handleKeyDown}
             onBlur={handleInputBlur}
             placeholder="Select underlying"
-            className="min-w-0 flex-1 truncate border-0 bg-transparent p-0 font-mono text-sm font-semibold tracking-tight text-foreground outline-none ring-0 placeholder:font-normal placeholder:tracking-normal placeholder:text-faint focus:ring-0 disabled:cursor-not-allowed disabled:text-faint"
+            className="min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm font-semibold tracking-tight text-foreground outline-none ring-0 placeholder:font-normal placeholder:tracking-normal placeholder:text-faint focus:ring-0 disabled:cursor-not-allowed disabled:text-faint"
           />
         </label>
         {loading ? (
@@ -350,6 +358,9 @@ export function OptionChainUnderlyingSearch({
             </span>
           ) : null
         ) : null}
+        {chainBar && quoteMetaInline && quoteMeta ? (
+          <QuoteSourceBadge meta={quoteMeta} variant="compact" className="shrink-0" />
+        ) : null}
       </div>
     );
 
@@ -358,18 +369,16 @@ export function OptionChainUnderlyingSearch({
         ref={rootRef}
         className={`relative min-w-0 flex-1 ${open ? "z-[300]" : "z-0"}`}
       >
-        {chainBar ? (
+        {chainBar && quoteMeta && !quoteMetaInline ? (
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             {tickerRow}
-            {quoteMeta ? (
-              <div className="flex w-full justify-end">
-                <QuoteSourceBadge
-                  meta={quoteMeta}
-                  variant="compact"
-                  className="shrink-0"
-                />
-              </div>
-            ) : null}
+            <div className="flex w-full justify-end">
+              <QuoteSourceBadge
+                meta={quoteMeta}
+                variant="compact"
+                className="shrink-0"
+              />
+            </div>
           </div>
         ) : (
           tickerRow

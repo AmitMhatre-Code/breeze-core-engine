@@ -2,15 +2,17 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useOrderConfirm } from "@/components/order/OrderConfirmProvider";
+import { useOrderConfirm } from "@/components/shared/order/OrderConfirmProvider";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { Modal } from "@/components/ui/Modal";
-import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
-import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
+import { ExpirySelectPill } from "@/components/shared/order/ExpirySelectPill";
+import { OptionChainUnderlyingSearch } from "@/components/shared/order/OptionChainUnderlyingSearch";
+import { ExchangeFlipToggle } from "@/components/shared/order/ExchangeFlipToggle";
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { ltpAsOrderPrice } from "@/lib/order-confirm";
 import { fetchStrategyBuilderChain } from "@/lib/strategy-builder/api";
+import { snapQuantityToLotMultiple } from "@/lib/strategy-builder/leg-ui-helpers";
 import { quoteMetaFromChain } from "@/lib/quote-source";
 import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
@@ -19,7 +21,7 @@ import {
   legLotSize,
   OptionChainTable,
   scrollOptionChainAtmIntoView,
-} from "@/components/order/OptionChainTable";
+} from "@/components/shared/order/OptionChainTable";
 import type {
   ChainApiResponse,
   ChainRow,
@@ -199,6 +201,18 @@ export function OptionChainPlaceSection() {
     [sheet, defaultLot],
   );
 
+  const sheetLegForMargin = useMemo(() => {
+    if (!sheet) return null;
+    return sheetRight === "Call"
+      ? (sheet.row.call ?? null)
+      : (sheet.row.put ?? null);
+  }, [sheet, sheetRight]);
+
+  const sheetLotUnits = useMemo(() => {
+    if (!sheetLegForMargin) return 0;
+    return legLotSize(sheetLegForMargin, defaultLot);
+  }, [sheetLegForMargin, defaultLot]);
+
   const submitFromSheet = useCallback(
     (action: "Buy" | "Sell") => {
       if (!chainSuccess || !sheet) return;
@@ -210,11 +224,13 @@ export function OptionChainPlaceSection() {
         setSheetFormError("This strike has no data for the selected side.");
         return;
       }
-      const qn = parseInt(sheetQty.trim(), 10);
-      if (!Number.isFinite(qn) || qn <= 0) {
+      const rawQty = parseInt(sheetQty.trim(), 10);
+      if (!Number.isFinite(rawQty) || rawQty <= 0) {
         setSheetFormError("Enter a valid quantity (positive integer).");
         return;
       }
+      const qn =
+        sheetLotUnits > 0 ? snapQuantityToLotMultiple(rawQty, sheetLotUnits) : rawQty;
       setSheetFormError(null);
       closeSheet();
       openOrderConfirm(
@@ -238,6 +254,7 @@ export function OptionChainPlaceSection() {
       sheetRight,
       sheetQty,
       sheetPrice,
+      sheetLotUnits,
       closeSheet,
       openOrderConfirm,
       chainQuoteMeta,
@@ -246,18 +263,6 @@ export function OptionChainPlaceSection() {
 
   const sheetHasCall = Boolean(sheet?.row.call);
   const sheetHasPut = Boolean(sheet?.row.put);
-
-  const sheetLegForMargin = useMemo(() => {
-    if (!sheet) return null;
-    return sheetRight === "Call"
-      ? (sheet.row.call ?? null)
-      : (sheet.row.put ?? null);
-  }, [sheet, sheetRight]);
-
-  const sheetLotUnits = useMemo(() => {
-    if (!sheetLegForMargin) return 0;
-    return legLotSize(sheetLegForMargin, defaultLot);
-  }, [sheetLegForMargin, defaultLot]);
 
   const marginPerLotQ = useQuery({
     queryKey: [
@@ -314,33 +319,8 @@ export function OptionChainPlaceSection() {
       >
         <div
           className="flex shrink-0 items-center border-b border-zinc-200 dark:border-zinc-700/70 px-2 py-2 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-0 sm:ps-2.5 sm:pe-2"
-          role="group"
-          aria-label="Exchange segment"
         >
-          <div className="inline-flex rounded-lg bg-zinc-200/70 p-0.5 ring-1 ring-zinc-300/70 dark:bg-black/30 dark:ring-zinc-700/70">
-            <button
-              type="button"
-              onClick={() => onSegmentChange("NFO")}
-              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
-                segmentExchange === "NFO"
-                  ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
-                  : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
-              }`}
-            >
-              NSE
-            </button>
-            <button
-              type="button"
-              onClick={() => onSegmentChange("BFO")}
-              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 sm:text-sm ${
-                segmentExchange === "BFO"
-                  ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white"
-                  : "text-zinc-600 hover:bg-zinc-300/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200"
-              }`}
-            >
-              BSE
-            </button>
-          </div>
+          <ExchangeFlipToggle value={segmentExchange} onChange={onSegmentChange} />
         </div>
 
         <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center overflow-visible border-b border-zinc-200 dark:border-zinc-700/70 px-3 py-2 sm:border-b-0 sm:border-r sm:border-zinc-200 sm:dark:border-zinc-700/70 sm:py-2.5">
@@ -522,6 +502,12 @@ export function OptionChainPlaceSection() {
                   className="mt-1 block h-8 w-full min-w-0 rounded-lg border border-zinc-200/90 bg-zinc-50/80 px-2.5 py-0 text-sm tabular-nums text-zinc-900 shadow-inner shadow-zinc-900/5 transition placeholder:text-zinc-400 focus:border-sky-500/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-sky-500/25 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-100 dark:shadow-none dark:placeholder:text-zinc-600 dark:focus:border-sky-500/50 dark:focus:bg-zinc-950"
                   value={sheetQty}
                   onChange={(e) => setSheetQty(e.target.value)}
+                  onBlur={() => {
+                    if (!(sheetLotUnits > 0)) return;
+                    const n = parseInt(sheetQty.trim(), 10);
+                    if (!Number.isFinite(n) || n <= 0) return;
+                    setSheetQty(String(snapQuantityToLotMultiple(n, sheetLotUnits)));
+                  }}
                 />
               </div>
               <div className="w-full min-w-0">

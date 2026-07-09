@@ -23,7 +23,7 @@ export function SettingsScreenHeader({
         {icon}
       </span>
       <div className="min-w-0 pt-0.5">
-        <h2 className={["text-[18px] font-bold", danger ? "text-down" : "text-foreground"].join(" ")}>
+        <h2 className={["text-subtitle font-bold", danger ? "text-down" : "text-foreground"].join(" ")}>
           {title}
         </h2>
         {description ? (

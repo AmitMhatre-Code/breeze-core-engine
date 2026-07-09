@@ -6,16 +6,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 import { ChunkSizeOrderField } from "@/components/order/ChunkSizeOrderField";
+import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
+import { OrderSideBadge } from "@/components/shared/badges/OrderSideBadge";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
 import type { BreakChunkDefaultsResponse } from "@/lib/break-chunk-defaults";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { runBreakOrderChunks } from "@/lib/icici-rate-limit-flow";
 import { fetchMarketStatus } from "@/lib/market-status";
-import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
+import { QuoteSourceBadge } from "@/components/shared/market-data/QuoteSourceBadge";
 import { HelpLink } from "@/components/help/HelpLink";
 import { createParkedOrders, deleteParkedOrdersMany, patchParkedOrder } from "@/lib/parked-orders";
 import { randomUuid } from "@/lib/random-uuid";
+import { formatOptionSymbolLabel } from "@/lib/strategy-builder/leg-ui-helpers";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   MarginApiResponse,
@@ -78,46 +81,6 @@ function parseSpanMarginFromResponse(
     (m.Success as { span_margin_required?: unknown }).span_margin_required,
   );
   return Number.isFinite(v) ? v : null;
-}
-
-function formatOptionSymbolLabel(
-  stock: string,
-  expiryDisplay: string,
-  strike: number,
-  right: OptionRight,
-): string {
-  const sym = right === "Call" ? "CE" : "PE";
-  const expShort = (() => {
-    const p = expiryDisplay.trim().split("-");
-    if (
-      p.length >= 2 &&
-      /^\d{1,2}$/.test(p[0]!) &&
-      /^[A-Za-z]{3}/.test(p[1]!)
-    ) {
-      const day = p[0]!.padStart(2, "0");
-      const mon =
-        p[1]!.slice(0, 1).toUpperCase() + p[1]!.slice(1, 3).toLowerCase();
-      return `${day}-${mon}`;
-    }
-    return expiryDisplay.trim() || "—";
-  })();
-  const k = Number.isFinite(strike) ? Math.round(strike).toString() : "—";
-  return `${stock || "—"}-${expShort}-${k}-${sym}`;
-}
-
-function LegPositionChip({ side }: { side: OrderSide }) {
-  const buy = side === "Buy";
-  return (
-    <span
-      className={
-        buy
-          ? "inline-flex shrink-0 rounded-full border border-emerald-600/80 bg-emerald-600/15 px-2 py-0.5 text-sm font-semibold text-emerald-800 dark:border-emerald-500/70 dark:bg-emerald-500/15 dark:text-emerald-200"
-          : "inline-flex shrink-0 rounded-full border border-red-600/80 bg-red-600/15 px-2 py-0.5 text-sm font-semibold text-red-800 dark:border-red-500/70 dark:bg-red-500/15 dark:text-red-200"
-      }
-    >
-      {side}
-    </span>
-  );
 }
 
 export function OrderExecutionConfirmDialog({
@@ -209,6 +172,14 @@ export function OrderExecutionConfirmDialog({
 
   const marginState = marginQ.data;
   const spanMargin = parseSpanMarginFromResponse(marginState);
+
+  const netPremium = useMemo(() => {
+    if (legs.some((l) => l.aggressiveLimit)) return null;
+    return legs.reduce((sum, l) => {
+      const linePrem = l.premiumPerUnit * Math.round(l.quantity);
+      return sum + (l.side === "Buy" ? -linePrem : linePrem);
+    }, 0);
+  }, [legs]);
 
   const execMut = useMutation({
     mutationFn: async () => {
@@ -331,44 +302,38 @@ export function OrderExecutionConfirmDialog({
       pending={pending}
       titleId="order-exec-confirm-title"
       zIndexClass="z-[120]"
-      panelClassName={`${sb.modalPanel} !w-max max-w-[min(96vw,42rem)] mx-auto`}
+      panelClassName={`${sb.modalPanel} !max-w-[min(96vw,44rem)] mx-auto`}
     >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h3
               id="order-exec-confirm-title"
-              className="text-base font-semibold text-zinc-900 dark:text-zinc-50"
+              className="app-text-title"
             >
               Confirm execution
             </h3>
-            <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+            <p className="mt-1 text-sm leading-relaxed text-muted">
               The following legs will be sent as orders. Total margin is
               computed for the full basket (single SPAN calculation).
             </p>
           </div>
-          <button
-            type="button"
-            className="-m-1 size-9 shrink-0 rounded-lg text-xl leading-none text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-200 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
-            onClick={() => {
-              if (!pending) onClose();
-            }}
-            disabled={pending}
-            aria-label="Close"
-          >
-            ×
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {quoteMeta ? <QuoteSourceBadge meta={quoteMeta} variant="compact" /> : null}
+            <button
+              type="button"
+              className="-m-1 size-9 shrink-0 rounded-lg text-xl leading-none text-muted transition hover:bg-border-soft hover:text-foreground disabled:cursor-not-allowed disabled:text-faint disabled:hover:bg-transparent"
+              onClick={() => {
+                if (!pending) onClose();
+              }}
+              disabled={pending}
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
         </div>
 
-        {quoteMeta ? (
-          <div
-            role="status"
-            className="mt-3 rounded-md border border-zinc-200/90 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700/80 dark:bg-zinc-900/50"
-          >
-            <QuoteSourceBadge meta={quoteMeta} variant="default" />
-          </div>
-        ) : null}
-
-        <ul className="mt-3 max-h-64 divide-y divide-zinc-200/90 overflow-x-auto overflow-y-auto rounded-md border border-zinc-200/80 dark:divide-zinc-700/90 dark:border-zinc-700/80">
+        <ul className="mt-3 max-h-64 divide-y divide-border-soft overflow-x-auto overflow-y-auto">
           {legs.map((l, idx) => {
             const q = Math.round(l.quantity);
             const linePrem = l.aggressiveLimit ? null : l.premiumPerUnit * q;
@@ -376,21 +341,24 @@ export function OrderExecutionConfirmDialog({
               stockCode,
               expiryDisplay,
               l.strike,
-              l.right,
             );
             return (
-              <li key={`${l.strike}-${l.right}-${idx}`} className="px-3 py-2.5">
-                <div className="flex w-max min-w-full flex-nowrap items-center gap-3 text-sm font-normal tabular-nums text-zinc-800 dark:text-zinc-200">
-                  <span className="shrink-0 whitespace-nowrap" title={label}>
+              <li key={`${l.strike}-${l.right}-${idx}`} className="px-1 py-2.5">
+                <div className="flex w-max min-w-full flex-nowrap items-center gap-3 font-mono text-sm font-normal tabular-nums text-foreground">
+                  <span
+                    className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap"
+                    title={label}
+                  >
                     {label}
+                    <OptionTypeBadge right={l.right} />
                   </span>
-                  <LegPositionChip side={l.side} />
-                  <span className="shrink-0 whitespace-nowrap">
+                  <OrderSideBadge side={l.side} />
+                  <span className="shrink-0 whitespace-nowrap text-muted">
                     Qty {q <= 0 ? "—" : q.toLocaleString("en-IN")}
                   </span>
-                  <span className="shrink-0 whitespace-nowrap">
+                  <span className="shrink-0 whitespace-nowrap text-muted">
                     {l.aggressiveLimit ? (
-                      <span className="rounded-full border border-amber-500/60 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-800 dark:text-amber-200">
+                      <span className="rounded-full bg-amber-tint px-2 py-0.5 font-sans text-xs font-medium text-amber-accent">
                         Aggressive limit
                       </span>
                     ) : (
@@ -402,7 +370,7 @@ export function OrderExecutionConfirmDialog({
                       </>
                     )}
                   </span>
-                  <span className="shrink-0 whitespace-nowrap">
+                  <span className="shrink-0 whitespace-nowrap text-muted">
                     Premium{" "}
                     {linePrem == null
                       ? "—"
@@ -414,6 +382,36 @@ export function OrderExecutionConfirmDialog({
           })}
         </ul>
 
+        <div className="mt-3 space-y-1.5 rounded-lg bg-panel2 px-3 py-2 text-sm">
+          <div>
+            <span className="font-semibold text-foreground">
+              Net premium:{" "}
+            </span>
+            <span className="font-mono tabular-nums text-foreground">
+              {netPremium == null
+                ? "—"
+                : `${netPremium < 0 ? "Debit " : "Credit "}${formatIndianMoneyCompact(
+                    Math.abs(netPremium),
+                  )}`}
+            </span>
+          </div>
+          <div>
+            <span className="font-semibold text-foreground">
+              Total margin required (SPAN):{" "}
+            </span>
+            <span className="font-mono tabular-nums text-foreground">
+              {marginQ.isFetching ? (
+                "…"
+              ) : spanMargin != null && Number.isFinite(spanMargin) ? (
+                formatIndianMoneyCompact(spanMargin)
+              ) : (
+                marginState?.Error ??
+                (marginQ.isError ? "Margin request failed" : "—")
+              )}
+            </span>
+          </div>
+        </div>
+
         <ChunkSizeOrderField
           id="order-exec-confirm-chunk-qty"
           className="mt-3"
@@ -423,31 +421,15 @@ export function OrderExecutionConfirmDialog({
           disabled={pending}
         />
 
-        <div className="mt-3 rounded-lg bg-zinc-100/90 px-3 py-2 text-sm dark:bg-zinc-800/80">
-          <span className="font-semibold text-zinc-800 dark:text-zinc-100">
-            Total margin required (SPAN):{" "}
-          </span>
-          <span className="tabular-nums text-zinc-900 dark:text-zinc-50">
-            {marginQ.isFetching ? (
-              "…"
-            ) : spanMargin != null && Number.isFinite(spanMargin) ? (
-              formatIndianMoneyCompact(spanMargin)
-            ) : (
-              marginState?.Error ??
-              (marginQ.isError ? "Margin request failed" : "—")
-            )}
-          </span>
-        </div>
-
         {execMut.isError ? (
-          <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+          <p className="app-alert-error mt-2 text-xs">
             {execMut.error instanceof Error
               ? execMut.error.message
               : "Execution failed"}
           </p>
         ) : null}
         {parkMut.isError ? (
-          <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+          <p className="app-alert-error mt-2 text-xs">
             {parkMut.error instanceof Error
               ? parkMut.error.message
               : "Could not park execution"}
@@ -457,7 +439,7 @@ export function OrderExecutionConfirmDialog({
         {marketClosed ? (
           <div
             role="status"
-            className="mt-3 rounded-md border border-amber-500/60 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-950 dark:text-amber-100"
+            className="mt-3 rounded-md border border-amber-accent/40 bg-amber-tint px-3 py-2.5 text-sm text-amber-accent"
           >
             The market is currently closed ({marketStatus.closed_reason}). Orders
             can only be{" "}
@@ -465,12 +447,12 @@ export function OrderExecutionConfirmDialog({
             the{" "}
             <Link
               href="/orders"
-              className="font-medium underline underline-offset-2 text-amber-900 hover:text-amber-950 dark:text-amber-50 dark:hover:text-white"
+              className="font-medium underline underline-offset-2 text-amber-accent hover:brightness-110"
             >
               Orders
             </Link>{" "}
             page and execute your parked orders once the market opens.{" "}
-            <HelpLink topicId="parked-orders" className="text-sm text-amber-900 dark:text-amber-50">
+            <HelpLink topicId="parked-orders" className="text-sm text-amber-accent">
               Help
             </HelpLink>
           </div>

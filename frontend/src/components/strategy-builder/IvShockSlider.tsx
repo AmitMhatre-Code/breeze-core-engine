@@ -19,7 +19,7 @@ export function IvShockSlider({
           <div className="text-xs font-semibold text-foreground">
             Implied volatility shock
           </div>
-          <p className="mt-0.5 max-w-xl text-[13px] leading-relaxed text-muted">
+          <p className="mt-0.5 max-w-xl text-heading leading-relaxed text-muted">
             Adjust modeled IV for the chart and Greeks. Range −20% to +20%
             relative to chain IV.
           </p>
@@ -71,7 +71,7 @@ export function IvShockSlider({
           aria-label="IV shock percent"
           aria-valuetext={`${value >= 0 ? "+" : ""}${value} percent`}
         />
-        <div className="mt-2 flex justify-between font-mono text-[12px] font-medium tabular-nums text-faint">
+        <div className="mt-2 flex justify-between font-mono text-body font-medium tabular-nums text-faint">
           <span>−20%</span>
           <span className="text-muted">0</span>
           <span>+20%</span>

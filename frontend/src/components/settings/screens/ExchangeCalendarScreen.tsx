@@ -145,7 +145,7 @@ export function ExchangeCalendarScreen() {
 
       <section className="app-card max-w-[640px] space-y-5 p-5">
         {data ? (
-          <p className="text-[13px] text-faint">
+          <p className="text-heading text-faint">
             Source: {data.source === "console_sync" ? "Breeze Console Admin Settings" : "Local"}
             {data.console_updated_at ? ` · last synced ${data.console_updated_at}` : ""}
           </p>
@@ -159,10 +159,10 @@ export function ExchangeCalendarScreen() {
         {syncError ? <p className="app-alert-error text-xs">{syncError}</p> : null}
 
         <div className="space-y-3 rounded-[10px] border border-border px-4 py-3.5">
-          <h3 className="text-[13px] font-bold text-foreground">Regular session (IST)</h3>
+          <h3 className="text-heading font-bold text-foreground">Regular session (IST)</h3>
           <div className="flex flex-wrap gap-5">
             <div>
-              <label className="mb-1 block text-[10.5px] text-muted">Market open</label>
+              <label className="mb-1 block text-micro text-muted">Market open</label>
               <div className="flex items-center gap-1.5">
                 <input
                   type="number"
@@ -184,7 +184,7 @@ export function ExchangeCalendarScreen() {
               </div>
             </div>
             <div>
-              <label className="mb-1 block text-[10.5px] text-muted">Market close</label>
+              <label className="mb-1 block text-micro text-muted">Market close</label>
               <div className="flex items-center gap-1.5">
                 <input
                   type="number"
@@ -210,9 +210,9 @@ export function ExchangeCalendarScreen() {
 
         <div className="space-y-4 rounded-[10px] border border-border px-4 py-3.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-[13px] font-bold text-foreground">Exchange holidays</h3>
+            <h3 className="text-heading font-bold text-foreground">Exchange holidays</h3>
             {sortedHolidays.length > 0 ? (
-              <span className="text-[13px] text-muted">
+              <span className="text-heading text-muted">
                 <span className="font-mono tabular-nums">{sortedHolidays.length}</span> configured
               </span>
             ) : null}
@@ -220,11 +220,11 @@ export function ExchangeCalendarScreen() {
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <label className="block min-w-0 flex-1 space-y-1.5">
-              <span className="text-[13px] text-muted">Date</span>
+              <span className="text-heading text-muted">Date</span>
               <DatePicker value={newDate} onChange={setNewDate} />
             </label>
             <label className="block min-w-0 flex-[1.5] space-y-1.5">
-              <span className="text-[13px] text-muted">Holiday name</span>
+              <span className="text-heading text-muted">Holiday name</span>
               <input
                 type="text"
                 className="app-input h-10 w-full"
@@ -276,7 +276,7 @@ export function ExchangeCalendarScreen() {
         </div>
 
         <div className="space-y-3 rounded-[10px] border border-accent/30 bg-accent-tint p-4">
-          <h3 className="text-[13px] font-bold text-foreground">Breeze Console Admin Settings</h3>
+          <h3 className="text-heading font-bold text-foreground">Breeze Console Admin Settings</h3>
           <p className="text-xs text-muted">
             Replace your local calendar with the operator-maintained calendar from breeze-ui.com Console.
           </p>

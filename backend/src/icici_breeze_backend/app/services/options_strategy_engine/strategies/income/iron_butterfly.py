@@ -88,6 +88,7 @@ def calc_iron_butterfly(ctx: EngineContext) -> StrategyResult:
         rr=f"{max_loss:.0f} : {credit * qty:.0f}",
         pop=pop,
         net_premium_val=credit * qty,
+        max_profit=credit * qty,
     )
     if violations:
         return mark_relaxed_result(result, violations)

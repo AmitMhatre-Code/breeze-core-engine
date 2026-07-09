@@ -779,7 +779,7 @@ export function PayoffChart({
               y={PAD_T + innerH / 2}
               textAnchor="middle"
               dominantBaseline="middle"
-              className="fill-faint text-[12px]"
+              className="fill-faint text-body"
             >
               Pick a readymade strategy or add legs to see payoff
             </text>
@@ -851,7 +851,7 @@ export function PayoffChart({
           {yLabelTicks.map((t, i) => (
             <span
               key={`ov-yl-${i}`}
-              className={`absolute left-0.5 -translate-y-1/2 whitespace-nowrap font-mono text-[9px] tabular-nums ${
+              className={`absolute left-0.5 -translate-y-1/2 whitespace-nowrap font-mono text-micro tabular-nums ${
                 Math.abs(t) <= yTickEps ? "font-semibold text-foreground" : "text-faint"
               }`}
               style={{ top: yScaleFn(t) }}
@@ -862,7 +862,7 @@ export function PayoffChart({
           {xAxisTicks.map(({ price, x }, i) => (
             <span
               key={`ov-xl-${i}`}
-              className="absolute -translate-x-1/2 whitespace-nowrap font-mono text-[9px] tabular-nums text-faint"
+              className="absolute -translate-x-1/2 whitespace-nowrap font-mono text-micro tabular-nums text-faint"
               style={{ left: `${(x / W) * 100}%`, top: PAD_T + innerH + 3 }}
             >
               {formatXAxisPrice(price)}
@@ -875,7 +875,7 @@ export function PayoffChart({
               return (
                 <span
                   key={`ov-strike-${i}`}
-                  className="absolute -translate-x-1/2 whitespace-nowrap rounded-sm bg-panel/90 px-1 font-mono text-[9px] font-semibold tabular-nums text-gtt ring-1 ring-gtt/30"
+                  className="absolute -translate-x-1/2 whitespace-nowrap rounded-sm bg-panel/90 px-1 font-mono text-micro font-semibold tabular-nums text-gtt ring-1 ring-gtt/30"
                   style={{ left: `${(x / W) * 100}%`, top: PAD_T + 1 }}
                 >
                   {formatXAxisPrice(k)}
@@ -884,7 +884,7 @@ export function PayoffChart({
             })}
           {!idle && hoverPrice != null ? (
             <div
-              className="absolute z-10 -translate-x-1/2 rounded-md border border-border bg-panel px-2.5 py-2 text-[11px] shadow-lg"
+              className="absolute z-10 -translate-x-1/2 rounded-md border border-border bg-panel px-2.5 py-2 text-hint shadow-lg"
               style={{
                 left: `clamp(4.25rem, ${(xScaleFn(hoverPrice) / W) * 100}%, calc(100% - 4.25rem))`,
                 top: PAD_T + 3,

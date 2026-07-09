@@ -115,11 +115,11 @@ export function PortfolioHedgePanel({
   return (
     <div className="min-w-0 p-3">
       <div className="mb-3 space-y-1">
-        <h3 className="text-[13px] font-semibold uppercase tracking-wide text-faint">
+        <h3 className="text-heading font-semibold uppercase tracking-wide text-faint">
           Hedge candidates
         </h3>
         {summary ? (
-          <p className="text-[13px] text-muted">
+          <p className="text-heading text-muted">
             {riskProfileLabel(summary.risk_profile)} · Δ{" "}
             {summary.strategy_delta.toFixed(2)} · Γ{" "}
             {summary.strategy_gamma.toFixed(4)} · Max loss budget{" "}
@@ -191,7 +191,7 @@ export function PortfolioHedgePanel({
                   <button
                     type="button"
                     title="Click to unselect"
-                    className="inline-flex shrink-0 items-center justify-center self-start rounded-lg px-3 py-1 text-[13px] font-bold uppercase tracking-wide transition hover:brightness-95 sm:self-center"
+                    className="inline-flex shrink-0 items-center justify-center self-start rounded-lg px-3 py-1 text-heading font-bold uppercase tracking-wide transition hover:brightness-95 sm:self-center"
                     style={ACCENT_SOLID_STYLE}
                     onClick={(e) => {
                       e.stopPropagation();

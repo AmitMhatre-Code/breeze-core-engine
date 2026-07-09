@@ -1,52 +1,52 @@
 "use client";
 
-import { QuoteSourceBadge } from "@/components/market-data/QuoteSourceBadge";
-import { InfoPopover } from "@/components/strategy-builder/InfoPopover";
-import { LegAggressivePriceInput } from "@/components/strategy-builder/LegAggressivePriceInput";
-import { LegQuantityInput } from "@/components/strategy-builder/LegQuantityInput";
-import { LegQuantityHeader } from "@/components/strategy-builder/LegQuantityHeader";
-import { cloneLeg, LegRowActions } from "@/components/strategy-builder/LegRowActions";
-import { LegRightToggle, LegSideToggle } from "@/components/strategy-builder/LegToggles";
+import { InfoPopover } from "@/components/ui/InfoPopover";
+import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
+import { LegQuantityInput } from "@/components/shared/legs/LegQuantityInput";
+import { LegQuantityHeader } from "@/components/shared/legs/LegQuantityHeader";
+import { cloneLeg, LegRowActions } from "@/components/shared/legs/LegRowActions";
+import { LegRightToggle, LegSideToggle } from "@/components/shared/legs/LegToggles";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
-import { formatLegMargin } from "@/lib/strategy-builder/leg-ui-helpers";
+import {
+  formatBuySellRatio,
+  formatLegMargin,
+  formatSignedLegPremium,
+} from "@/lib/strategy-builder/leg-ui-helpers";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   BasketLegMarginEntry,
   OptionRight,
   OrderSide,
-  QuoteMeta,
   StrategyLeg,
 } from "@/lib/strategy-builder/types";
-
-function formatBuySellRatio(raw: number | string | null | undefined): string {
-  if (raw == null || raw === "NA") return "—";
-  const n = typeof raw === "number" ? raw : parseFloat(String(raw));
-  return Number.isFinite(n) ? n.toFixed(4) : "—";
-}
 
 export function StrategyLegsPanel({
   sectionTitle = "4. Legs",
   lotSize,
   legs,
   onLegsChange,
+  onAddLeg,
   onRightChange,
   onSideChange,
   onPriceChange,
+  onAggressiveChange,
   legMargins,
   spanBaselineLoading = false,
   totalsNetPremium,
   totalsMargin,
   onExecute,
   executeDisabled,
-  quoteMeta = null,
+  marginWarnings,
 }: {
   sectionTitle?: string;
   lotSize: number;
   legs: StrategyLeg[];
   onLegsChange: (updater: (prev: StrategyLeg[]) => StrategyLeg[]) => void;
+  onAddLeg?: () => void;
   onRightChange: (legId: string, right: OptionRight) => void;
   onSideChange: (legId: string, side: OrderSide) => void;
   onPriceChange: (legId: string, premiumPerUnit: number | undefined) => void;
+  onAggressiveChange: (legId: string, checked: boolean) => void;
   legMargins: Record<string, BasketLegMarginEntry>;
   spanBaselineLoading?: boolean;
   totalsNetPremium: number;
@@ -58,27 +58,35 @@ export function StrategyLegsPanel({
   };
   onExecute: () => void;
   executeDisabled: boolean;
-  quoteMeta?: QuoteMeta | null;
+  marginWarnings?: string[];
 }) {
+  const sortedLegs = [...legs].sort((a, b) => a.strike - b.strike);
   return (
-    <section id="strategy-builder-legs" className={`${sb.section} space-y-4`}>
-      <h2 className={sb.sectionTitle}>{sectionTitle}</h2>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className={sb.sectionTitle}>{sectionTitle}</h2>
+        {onAddLeg && legs.length > 0 ? (
+          <button
+            type="button"
+            onClick={onAddLeg}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-accent-strong bg-transparent px-3 py-1.5 text-xs font-bold text-accent-strong transition hover:bg-accent-strong hover:text-accent-ink"
+          >
+            <PlusIcon />
+            Add leg
+          </button>
+        ) : null}
+      </div>
       {legs.length === 0 ? (
         <p className="text-sm text-muted">
           Select a proposed trade to load legs here.
         </p>
       ) : (
         <>
-          {quoteMeta ? (
-            <div className="mb-1">
-              <QuoteSourceBadge meta={quoteMeta} variant="footnote" />
-            </div>
-          ) : null}
-          <div className="app-table-wrap">
+          <div className="-mx-5 overflow-x-auto">
             <table className="w-full min-w-[52rem] border-collapse text-left text-xs">
               <thead className="app-table-head">
                 <tr>
-                  <th className="px-2 py-1.5 font-medium">Strike</th>
+                  <th className="py-1.5 pl-5 pr-2 font-medium">Strike</th>
                   <th className="px-2 py-1.5 font-medium">Type</th>
                   <th className="px-2 py-1.5 font-medium">Position</th>
                   <LegQuantityHeader />
@@ -95,11 +103,11 @@ export function StrategyLegsPanel({
                       </InfoPopover>
                     </span>
                   </th>
-                  <th className="px-2 py-1.5 font-medium" />
+                  <th className="py-1.5 pl-2 pr-5 font-medium" />
                 </tr>
               </thead>
               <tbody>
-                {legs.map((l) => {
+                {sortedLegs.map((l) => {
                   const qtyU = l.lots > 0 ? Math.round(l.lots * lotSize) : 0;
                   const aggressive = l.aggressiveLimit ?? false;
                   const premTotal = aggressive
@@ -108,7 +116,7 @@ export function StrategyLegsPanel({
                   const legEntry = legMargins[l.id];
                   return (
                     <tr key={l.id} className="app-table-row">
-                      <td className="px-2 py-1.5 tabular-nums text-foreground">
+                      <td className="py-1.5 pl-5 pr-2 tabular-nums text-foreground">
                         {l.strike.toLocaleString("en-IN")}
                       </td>
                       <td className="px-2 py-1.5">
@@ -129,7 +137,6 @@ export function StrategyLegsPanel({
                           lots={l.lots}
                           lotSize={lotSize}
                           maxDigits={8}
-                          snapWhileTyping
                           onLotsChange={(newLots) =>
                             onLegsChange((prev) =>
                               prev.map((x) =>
@@ -146,19 +153,7 @@ export function StrategyLegsPanel({
                           premiumPerUnit={l.premiumPerUnit}
                           ariaLabel={`Aggressive limit for ${l.strike} ${l.right}`}
                           onAggressiveChange={(checked) =>
-                            onLegsChange((prev) =>
-                              prev.map((x) =>
-                                x.id === l.id
-                                  ? {
-                                      ...x,
-                                      aggressiveLimit: checked,
-                                      ...(checked
-                                        ? { premiumPerUnit: undefined }
-                                        : {}),
-                                    }
-                                  : x,
-                              ),
-                            )
+                            onAggressiveChange(l.id, checked)
                           }
                           onPriceChange={(premiumPerUnit) =>
                             onPriceChange(l.id, premiumPerUnit)
@@ -168,15 +163,15 @@ export function StrategyLegsPanel({
                       <td className="px-2 py-1.5 tabular-nums text-muted">
                         {formatBuySellRatio(l.buySellRatio)}
                       </td>
-                      <td className="px-2 py-1.5 tabular-nums text-foreground">
-                        {premTotal == null
-                          ? "—"
-                          : formatIndianMoneyCompact(premTotal)}
+                      <td
+                        className={`px-2 py-1.5 tabular-nums ${formatSignedLegPremium(premTotal, l.side).toneClass}`}
+                      >
+                        {formatSignedLegPremium(premTotal, l.side).text}
                       </td>
-                      <td className="px-2 py-1.5 tabular-nums text-foreground">
+                      <td className="px-2 py-1.5 tabular-nums text-muted">
                         {formatLegMargin(l, legEntry, spanBaselineLoading)}
                       </td>
-                      <td className="px-2 py-1.5">
+                      <td className="py-1.5 pl-2 pr-5">
                         <LegRowActions
                           leg={l}
                           onClone={() =>
@@ -195,7 +190,7 @@ export function StrategyLegsPanel({
               </tbody>
             </table>
           </div>
-          <div className={`${sb.stickyBar} flex flex-wrap items-center justify-between gap-4`}>
+          <div className="-mx-5 flex flex-wrap items-center justify-between gap-4 border-t border-border-soft bg-panel2 px-5 py-3.5">
             <div className="flex flex-wrap items-center gap-5">
               <TotalStat
                 label="Net premium"
@@ -236,9 +231,12 @@ export function StrategyLegsPanel({
               {legs.filter((l) => l.lots > 0).length === 1 ? "" : "s"}
             </button>
           </div>
+          {marginWarnings && marginWarnings.length > 0 ? (
+            <p className="app-alert-error text-heading">{marginWarnings[0]}</p>
+          ) : null}
         </>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -255,7 +253,7 @@ function TotalStat({
     tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-foreground";
   return (
     <div>
-      <div className="text-[12px] font-semibold uppercase tracking-wide text-faint">
+      <div className="text-body font-semibold uppercase tracking-wide text-faint">
         {label}
       </div>
       <div className={`mt-0.5 font-mono text-sm font-semibold tabular-nums ${toneClass}`}>
@@ -269,6 +267,24 @@ function ExecuteIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
       <polygon points="5 3 19 12 5 21 5 3" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 5v14M5 12h14" />
     </svg>
   );
 }

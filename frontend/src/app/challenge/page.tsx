@@ -144,7 +144,7 @@ function ChallengeForm() {
             />
           </button>
         </form>
-        <div className="mt-6 space-y-3 text-center text-[13px] text-zinc-400">
+        <div className="mt-6 space-y-3 text-center text-heading text-zinc-400">
           <Link href="/login" className="app-link">
             Back to login
           </Link>

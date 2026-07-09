@@ -130,19 +130,19 @@ function LoginContent() {
           </div>
         )}
         <div className="space-y-3">
-          <p className="text-center text-[13px] text-muted">
+          <p className="text-center text-heading text-muted">
             New user?{" "}
             <a href="/register" className="app-link">
               Register
             </a>
           </p>
-          <p className="text-center text-[13px] text-muted">
+          <p className="text-center text-heading text-muted">
             Wrong credentials?{" "}
             <a href="/register/correct" className="app-link">
               Update credentials
             </a>
           </p>
-          <p className="text-center text-[13px] text-muted">
+          <p className="text-center text-heading text-muted">
             Forgot password?{" "}
             <a href="/register/forgot-password" className="app-link">
               Reset via ICICI
@@ -154,7 +154,7 @@ function LoginContent() {
           <div className="absolute inset-0 flex items-center">
             <span className="w-full border-t border-border" />
           </div>
-          <div className="relative flex justify-center text-[12px] font-semibold uppercase tracking-wide text-faint">
+          <div className="relative flex justify-center text-body font-semibold uppercase tracking-wide text-faint">
             <span className="bg-panel px-2">App password</span>
           </div>
         </div>
@@ -167,7 +167,7 @@ function LoginContent() {
         <form onSubmit={onDirectSubmit} className="space-y-3">
           <input
             required
-            className="w-full rounded-[9px] border border-border bg-panel2 px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-faint focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25"
+            className="w-full rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-faint transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none"
             placeholder="ICICI user id"
             value={directUserId}
             onChange={(e) => setDirectUserId(e.target.value)}
@@ -176,7 +176,7 @@ function LoginContent() {
           <input
             required
             type="password"
-            className="w-full rounded-[9px] border border-border bg-panel2 px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-faint focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25"
+            className="w-full rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-faint transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none"
             placeholder="App password"
             value={directPassword}
             onChange={(e) => setDirectPassword(e.target.value)}

@@ -245,7 +245,7 @@ export function DatePicker({
             {WEEKDAY_LABELS.map((w) => (
               <div
                 key={w}
-                className="py-1 text-[12px] font-semibold uppercase tracking-wide text-faint"
+                className="py-1 text-body font-semibold uppercase tracking-wide text-faint"
               >
                 {w}
               </div>

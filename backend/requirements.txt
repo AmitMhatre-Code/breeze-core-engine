@@ -26,6 +26,7 @@ requests==2.31.0
 httpx==0.25.1
 docker>=7.0.0,<8
 markupsafe>=2.1.0
+numpy>=1.26.0,<3
 scipy>=1.11.0
 feedparser>=6.0.0
 

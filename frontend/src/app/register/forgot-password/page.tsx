@@ -74,7 +74,7 @@ export default function RegisterForgotPasswordPage() {
             />
           </button>
         </form>
-        <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+        <p className="mt-4 text-center text-heading text-zinc-500 dark:text-zinc-400">
           Know your app password and need to update API key or secret?{" "}
           <Link href="/register/correct" className="app-link">
             Update credentials

@@ -2,9 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { PayoffChart } from "@/components/strategy-builder/PayoffChart";
-import { InfinitySymbol } from "@/components/strategy-builder/InfinitySymbol";
-import { PayoffScenarioControls } from "@/components/portfolio/PayoffScenarioControls";
+import { PayoffChart } from "@/components/shared/payoff/PayoffChart";
+import { InfinitySymbol } from "@/components/shared/payoff/InfinitySymbol";
+import { PayoffScenarioControls } from "@/components/shared/payoff/PayoffScenarioControls";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { normRight, normSide } from "@/lib/portfolio/legNormalize";
@@ -266,7 +266,7 @@ export function PortfolioGroupPayoffPanel({
 
   return (
     <div className="min-w-0 p-3">
-      <h3 className="mb-2 text-[13px] font-semibold uppercase tracking-wide text-faint">
+      <h3 className="mb-2 text-heading font-semibold uppercase tracking-wide text-faint">
         Group payoff
       </h3>
       <PayoffChart
@@ -343,7 +343,7 @@ export function PortfolioGroupPayoffPanel({
         </span>
       </div>
       {hasProposedHedge ? (
-        <p className="mt-2 text-[13px] font-medium leading-relaxed text-accent-strong">
+        <p className="mt-2 text-heading font-medium leading-relaxed text-accent-strong">
           Includes proposed hedge leg (Buy {proposedLeg!.right}{" "}
           {proposedLeg!.strike}).
         </p>

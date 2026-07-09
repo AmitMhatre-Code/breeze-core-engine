@@ -256,6 +256,27 @@ try:
     CHAIN_SPOT_CACHE_TTL_SECONDS = int(os.environ.get("CHAIN_SPOT_CACHE_TTL_SECONDS", "60") or "60")
 except ValueError:
     CHAIN_SPOT_CACHE_TTL_SECONDS = 60
+try:
+    PNL_QUOTE_FLUSH_INTERVAL_SECONDS = float(
+        os.environ.get("PNL_QUOTE_FLUSH_INTERVAL_SECONDS", "2.0") or "2.0"
+    )
+except ValueError:
+    PNL_QUOTE_FLUSH_INTERVAL_SECONDS = 2.0
+try:
+    PNL_QUOTE_TTL_SECONDS = int(os.environ.get("PNL_QUOTE_TTL_SECONDS", "30") or "30")
+except ValueError:
+    PNL_QUOTE_TTL_SECONDS = 30
+try:
+    PNL_ENGINE_INTERVAL_SECONDS = float(os.environ.get("PNL_ENGINE_INTERVAL_SECONDS", "2.0") or "2.0")
+except ValueError:
+    PNL_ENGINE_INTERVAL_SECONDS = 2.0
+try:
+    PNL_STALE_QUOTE_SECONDS = float(os.environ.get("PNL_STALE_QUOTE_SECONDS", "10") or "10")
+except ValueError:
+    PNL_STALE_QUOTE_SECONDS = 10.0
+PNL_ENGINE_ENABLED = str(os.environ.get("PNL_ENGINE_ENABLED", "true")).strip().lower() not in (
+    "0", "false", "no",
+)
 
 
 def redis_connection_url() -> str:

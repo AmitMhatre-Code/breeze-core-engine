@@ -46,7 +46,7 @@ function KindBadge({ kind }: { kind: ReleaseKind }) {
   return (
     <span
       className={[
-        "inline-flex shrink-0 rounded-full px-2 py-0.5 text-[12px] font-semibold uppercase tracking-wide",
+        "inline-flex shrink-0 rounded-full px-2 py-0.5 text-body font-semibold uppercase tracking-wide",
         badge.className,
       ].join(" ")}
     >

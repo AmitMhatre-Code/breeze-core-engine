@@ -6,10 +6,11 @@ import { AppShell } from "@/components/layout/AppShell";
 import { HelpLink } from "@/components/help/HelpLink";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { Modal } from "@/components/ui/Modal";
-import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
-import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionConfirmDialog";
-import { BuildYourOwnChainSection } from "@/components/strategy-builder/BuildYourOwnChainSection";
-import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
+import { OptionChainUnderlyingSearch } from "@/components/shared/order/OptionChainUnderlyingSearch";
+import { QuoteSourceBadge } from "@/components/shared/market-data/QuoteSourceBadge";
+import { ExchangeFlipToggle } from "@/components/shared/order/ExchangeFlipToggle";
+import { OrderExecutionConfirmDialog } from "@/components/shared/order/OrderExecutionConfirmDialog";
+import { ExpirySelectPill } from "@/components/shared/order/ExpirySelectPill";
 import { OutlookFilterButtons } from "@/components/strategy-builder/OutlookFilterButtons";
 import { MasonryGrid } from "@/components/strategy-builder/MasonryGrid";
 import { PopLabel } from "@/components/strategy-builder/PopLabel";
@@ -37,16 +38,10 @@ import { quoteMetaFromChain } from "@/lib/quote-source";
 import {
   ChainBuildStatus,
   inferChainBuildPhase,
-} from "@/components/market-data/ChainBuildStatus";
+} from "@/components/shared/market-data/ChainBuildStatus";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
-import {
-  appendLegFromChainRow,
-  buildYourOwnAddedSlots,
-  buildYourOwnSlotKey,
-} from "@/lib/strategy-builder/build-your-own";
-import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
 import { premiumFromChainRow } from "@/lib/strategy-builder/chain-quote";
-import { expiryDisplayToYears, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import {
   buildLegMarginsFromPortfolio,
   computeNetSpanMargin,
@@ -67,7 +62,6 @@ import {
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   BuilderMode,
-  ChainRow,
   OptionRight,
   OrderSide,
   Outlook,
@@ -97,18 +91,34 @@ const MIN_ANN_RETURN_HINT =
 const DIRECTIONAL_HINT =
   "Generates Conservative, Moderate, and Aggressive variants automatically from your capital and max-loss limits.";
 
-const BYO_HINT =
-  "Pick buy/sell legs from the full liquid option chain and simulate payoffs before execution.";
-
 function FieldHint({ text }: { text: string }) {
   return (
     <span
       title={text}
       aria-label={text}
-      className="inline-flex size-4 shrink-0 cursor-help items-center justify-center rounded-full text-[12px] font-bold leading-none text-faint ring-1 ring-border"
+      className="inline-flex size-4 shrink-0 cursor-help items-center justify-center rounded-full text-body font-bold leading-none text-faint ring-1 ring-border"
     >
       i
     </span>
+  );
+}
+
+function ChevronIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className={className}
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
   );
 }
 
@@ -175,10 +185,8 @@ export default function StrategyBuilderPage() {
     useState<StrategyCategory | null>(null);
   const activeJobIdRef = useRef<string | null>(null);
   const [executePreviewOpen, setExecutePreviewOpen] = useState(false);
-  const [ivShockPct, setIvShockPct] = useState(0);
-  const [showGreeks, setShowGreeks] = useState(false);
-  const [showToday, setShowToday] = useState(true);
   const [showBuilderTip, setShowBuilderTip] = useState(false);
+  const [showTransparency, setShowTransparency] = useState(false);
   const [priceManuallyEdited, setPriceManuallyEdited] = useState<Set<string>>(
     new Set(),
   );
@@ -253,13 +261,7 @@ export default function StrategyBuilderPage() {
   const lotSize = proposedData?.lot_size ?? chainLotSize;
   const spot = chainSpot ?? proposedData?.spot_price ?? null;
 
-  const byoAtmIv = useMemo(() => {
-    if (!chainSuccess || builderMode !== "build_your_own") return null;
-    const T = expiryDisplayToYears(expiryDate || "01-Jan-2099");
-    return atmSigmaFromChain(chainSuccess, T);
-  }, [chainSuccess, builderMode, expiryDate]);
-
-  const atmIv = proposedData?.atm_iv ?? byoAtmIv ?? null;
+  const atmIv = proposedData?.atm_iv ?? null;
 
   const section1Complete = Boolean(stockCode.trim() && expiryDate.trim());
   const chainInitiallyLoaded = !chainQ.isPending && chainQ.data != null;
@@ -267,16 +269,18 @@ export default function StrategyBuilderPage() {
     section1Complete && chainSpot != null && chainInitiallyLoaded;
   const trades: ProposedTrade[] = proposedData?.trades ?? [];
   const relaxedTrades: ProposedTrade[] = proposedData?.relaxed_trades ?? [];
-  const section3EngineReady =
+  const section3Ready =
     proposedData != null &&
     (trades.some((t) => t.status === "ok") || relaxedTrades.length > 0);
-  const section3ByoReady =
-    builderMode === "build_your_own" &&
-    Boolean(chainSuccess?.chain_rows?.length);
-  const section3Ready = section3EngineReady || section3ByoReady;
-  const section4Ready =
-    legs.length > 0 &&
-    (selectedTradeId != null || builderMode === "build_your_own");
+  const section4Ready = legs.length > 0 && selectedTradeId != null;
+  const selectedTradeName = useMemo(() => {
+    if (!selectedTradeId) return null;
+    const all = [...trades, ...relaxedTrades];
+    return (
+      all.find((t) => tradeSelectionKey(t) === selectedTradeId)
+        ?.strategy_name ?? null
+    );
+  }, [selectedTradeId, trades, relaxedTrades]);
 
   const marginLacsNum = parsePositiveNum(marginLacs);
   const maxLossLacsNum = parsePositiveNum(maxLossLacs);
@@ -657,6 +661,48 @@ export default function StrategyBuilderPage() {
     );
   }, []);
 
+  const onAddLeg = useCallback(() => {
+    setLegs((prev) => {
+      const last = prev[prev.length - 1];
+      const strike =
+        last?.strike ?? (spot != null ? Math.round(spot / 50) * 50 : 0);
+      const right = last?.right ?? "Call";
+      const newLeg: StrategyLeg = {
+        id: `leg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        right,
+        side: last?.side ?? "Sell",
+        strike,
+        lots: 1,
+        premiumPerUnit: premiumFromChainRow(chainRows, strike, right) ?? undefined,
+      };
+      return [...prev, newLeg];
+    });
+  }, [spot, chainRows]);
+
+  const onAggressiveChange = useCallback(
+    (legId: string, checked: boolean) => {
+      setPriceManuallyEdited((prev) => {
+        if (!prev.has(legId)) return prev;
+        const next = new Set(prev);
+        next.delete(legId);
+        return next;
+      });
+      setLegs((prev) => {
+        const leg = prev.find((x) => x.id === legId);
+        if (!leg) return prev;
+        const premiumPerUnit = checked
+          ? undefined
+          : (premiumFromChainRow(chainRows, leg.strike, leg.right) ?? undefined);
+        return prev.map((x) =>
+          x.id === legId
+            ? { ...x, aggressiveLimit: checked, premiumPerUnit }
+            : x,
+        );
+      });
+    },
+    [chainRows],
+  );
+
   const onPriceChange = useCallback(
     (legId: string, premiumPerUnit: number | undefined) => {
       setPriceManuallyEdited((prev) => {
@@ -719,7 +765,8 @@ export default function StrategyBuilderPage() {
           quantity: Math.round(l.lots * lotSize),
           premiumPerUnit: l.aggressiveLimit ? 0 : (l.premiumPerUnit ?? 0),
           aggressiveLimit: l.aggressiveLimit ?? false,
-        })),
+        }))
+        .sort((a, b) => a.strike - b.strike),
     [legs, lotSize],
   );
 
@@ -729,13 +776,6 @@ export default function StrategyBuilderPage() {
     setExpiryDate("");
     resetDownstream(downstreamSetters, true);
   };
-
-  const handleStrategyChainBuySell = useCallback(
-    (side: OrderSide, row: ChainRow, right: OptionRight) => {
-      setLegs((prev) => appendLegFromChainRow(prev, side, row, right));
-    },
-    [],
-  );
 
   useEffect(() => {
     try {
@@ -756,24 +796,10 @@ export default function StrategyBuilderPage() {
     }
   }, []);
 
-  const buildYourOwnSlots = useMemo(
-    () => buildYourOwnAddedSlots(legs, stockCode, expiryDate),
-    [legs, stockCode, expiryDate],
-  );
-
-  const startBuildYourOwn = useCallback(() => {
-    setGenerateError(null);
-    setProposedData(null);
-    setSelectedTradeId(null);
-    setLegs([]);
-    setPriceManuallyEdited(new Set());
-    setBuilderMode("build_your_own");
-  }, []);
-
   return (
     <AppShell>
       <RevokedTradingPageGuard>
-        <div className="space-y-5">
+        <div className="mx-auto max-w-[1240px] space-y-5">
           <header>
             <h1 className="text-xl font-semibold tracking-tight text-foreground">
               Strategy Builder
@@ -783,30 +809,23 @@ export default function StrategyBuilderPage() {
             </p>
           </header>
 
-          <section className={`${sb.section} relative z-20 space-y-5`}>
+          {chainQuoteMeta ? (
+            <div className="flex justify-end">
+              <QuoteSourceBadge meta={chainQuoteMeta} variant="compact" />
+            </div>
+          ) : null}
+
+          <section className="relative z-20 divide-y divide-border-soft rounded-[13px] border border-border bg-panel">
+          <div className="space-y-4 p-5">
             <h2 className={sb.sectionTitle}>1. Underlying &amp; Expiry</h2>
             <div
-              className="flex min-h-[2.75rem] flex-col overflow-visible rounded-[9px] border border-border bg-panel2 sm:flex-row sm:items-center"
+              className="flex min-h-[2.75rem] flex-col overflow-visible rounded-[9px] sm:flex-row sm:items-center"
               role="toolbar"
             >
               <div className="flex shrink-0 items-center border-b border-border-soft px-2 py-2 sm:border-b-0 sm:border-r sm:py-0 sm:ps-2.5 sm:pe-2">
-                <div className={sb.segmentGroup}>
-                  {(["NFO", "BFO"] as const).map((ex) => (
-                    <button
-                      key={ex}
-                      type="button"
-                      onClick={() => onSegmentChange(ex)}
-                      className={[
-                        sb.segmentBtn,
-                        segmentExchange === ex ? sb.segmentBtnActive : sb.segmentBtnInactive,
-                      ].join(" ")}
-                    >
-                      {ex === "NFO" ? "NSE" : "BSE"}
-                    </button>
-                  ))}
-                </div>
+                <ExchangeFlipToggle value={segmentExchange} onChange={onSegmentChange} />
               </div>
-              <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center px-3 py-2 sm:border-r sm:border-border-soft">
+              <div className="relative z-30 flex min-w-0 max-w-[min(100%,34rem)] flex-1 items-center px-3 py-2 sm:border-r sm:border-border-soft">
                 {uq.isLoading ? (
                   <span className="text-xs app-text-muted animate-pulse">
                     Loading underlyings…
@@ -814,7 +833,6 @@ export default function StrategyBuilderPage() {
                 ) : (
                 <OptionChainUnderlyingSearch
                   variant="ticker"
-                  chainBar
                   underlyings={uq.data?.underlyings ?? []}
                   value={stockCode}
                   disabled={uq.isLoading}
@@ -842,18 +860,44 @@ export default function StrategyBuilderPage() {
                 />
               </div>
             </div>
-          </section>
+          </div>
 
-          {section1Complete ? (
-            <ChainBuildStatus visible={chainLoading} phase={chainBuildPhase} />
+          {section1Complete && chainLoading ? (
+            <div className="p-5">
+              <ChainBuildStatus visible={chainLoading} phase={chainBuildPhase} />
+            </div>
           ) : null}
 
           <SectionGate locked={!section2Ready} dimWhenLocked={section1Complete}>
-            <section
+            <div
               id="strategy-builder-parameters"
-              className={`${sb.section} space-y-4`}
+              className="space-y-4 p-5"
             >
-              <h2 className={sb.sectionTitle}>2. Parameters</h2>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className={sb.sectionTitle}>2. Choose a strategy path</h2>
+                <label
+                  className={`${sb.checkboxRow} gap-2 text-xs font-medium leading-snug text-muted`}
+                >
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={provisionElm}
+                    aria-label="Toggle Provision for ELM"
+                    onClick={() => setProvisionElm(!provisionElm)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+                      provisionElm ? "bg-accent-strong" : "bg-border"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block size-5 transform rounded-full bg-white shadow transition ${
+                        provisionElm ? "translate-x-[22px]" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                  Provision for ELM{" "}
+                  <span className="text-faint">— applies to all paths</span>
+                </label>
+              </div>
               {showBuilderTip ? (
                 <div className="flex items-start justify-between gap-3 rounded-md border border-accent/25 bg-accent-tint px-3 py-2.5 text-sm text-foreground">
                   <p>
@@ -872,7 +916,7 @@ export default function StrategyBuilderPage() {
                 </div>
               ) : null}
               <div className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-2">
                   <label className={sb.fieldRow}>
                     <span className={`${sb.fieldLabelInline} min-w-[9.5rem]`}>
                       Margin to deploy (Lacs)
@@ -903,32 +947,9 @@ export default function StrategyBuilderPage() {
                       aria-label="Maximum loss in Lacs"
                     />
                   </label>
-                  <div className={sb.fieldRow}>
-                    <div
-                      className={`${sb.checkboxRow} gap-2 text-xs font-medium leading-snug text-muted`}
-                    >
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={provisionElm}
-                        aria-label="Toggle Provision for ELM"
-                        onClick={() => setProvisionElm(!provisionElm)}
-                        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
-                          provisionElm ? "bg-accent-strong" : "bg-border"
-                        }`}
-                      >
-                        <span
-                          className={`inline-block size-5 transform rounded-full bg-white shadow transition ${
-                            provisionElm ? "translate-x-[22px]" : "translate-x-0.5"
-                          }`}
-                        />
-                      </button>
-                      Provision for ELM
-                    </div>
-                  </div>
                 </div>
 
-                <div className="grid gap-4 lg:grid-cols-3">
+                <div className="grid gap-4 lg:grid-cols-2">
                   <div className={sb.parameterCard}>
                     <h3 className={sb.parameterCardTitle}>Income strategies</h3>
                     <div className="flex flex-1 flex-col gap-4">
@@ -998,10 +1019,10 @@ export default function StrategyBuilderPage() {
                     <h3 className={sb.parameterCardTitle}>Directional strategies</h3>
                     <div className="flex-1 space-y-2 text-sm text-muted">
                       <p>{DIRECTIONAL_HINT}</p>
-                      <p className="inline-flex flex-wrap items-center gap-1 text-xs text-muted">
+                      <div className="inline-flex flex-wrap items-center gap-1 text-xs text-muted">
                         <span>Est. probability of profit is shown on each trade for reference.</span>
                         <PopHelpTrigger />
-                      </p>
+                      </div>
                     </div>
                     <div className="mt-auto grid gap-2 sm:grid-cols-2">
                       {(["bullish", "bearish"] as const).map((category) => (
@@ -1018,21 +1039,6 @@ export default function StrategyBuilderPage() {
                         </button>
                       ))}
                     </div>
-                  </div>
-
-                  <div className={sb.parameterCard}>
-                    <h3 className={sb.parameterCardTitle}>Build your own</h3>
-                    <p className="flex-1 text-sm text-muted">
-                      {BYO_HINT}
-                    </p>
-                    <button
-                      type="button"
-                      className={`${sb.btnPrimary} mt-auto w-full`}
-                      disabled={!section2Ready || isGenerating}
-                      onClick={startBuildYourOwn}
-                    >
-                      Build Your Own
-                    </button>
                   </div>
                 </div>
               </div>
@@ -1052,42 +1058,14 @@ export default function StrategyBuilderPage() {
                   progressTotal={jobProgress.progress_total}
                 />
               ) : null}
-            </section>
+            </div>
           </SectionGate>
 
           <SectionGate locked={!section3Ready}>
-            <section
+            <div
               id="strategy-builder-proposed-trades"
-              className={`${sb.section} space-y-4`}
+              className="space-y-4 p-5"
             >
-              {builderMode === "build_your_own" ? (
-                <>
-                  <h2 className={sb.sectionTitle}>3. Option Chain</h2>
-                  <BuildYourOwnChainSection
-                    chainSuccess={chainSuccess ?? null}
-                    isFetching={chainQ.isFetching}
-                    isError={chainQ.isError}
-                    error={chainQ.error}
-                    chainStatus={chainQ.data?.Status}
-                    chainError={chainQ.data?.Error}
-                    stockCode={stockCode}
-                    expiryDate={expiryDate}
-                    onStrategyBuySell={handleStrategyChainBuySell}
-                    isStrategySlotAdded={(strike, right, side) =>
-                      buildYourOwnSlots.has(
-                        buildYourOwnSlotKey(
-                          stockCode,
-                          expiryDate,
-                          strike,
-                          right,
-                          side,
-                        ),
-                      )
-                    }
-                  />
-                </>
-              ) : (
-                <>
               <div className="flex flex-wrap items-baseline justify-between gap-3">
                 <h2 className={sb.sectionTitle}>
                   3. Proposed Trades
@@ -1101,7 +1079,7 @@ export default function StrategyBuilderPage() {
                 </h2>
                 {trades.some((t) => t.status === "ok") ||
                 relaxedTrades.length > 0 ? (
-                  <div className="flex shrink-0 flex-wrap items-center gap-3 text-[13px]">
+                  <div className="flex shrink-0 flex-wrap items-center gap-3 text-heading">
                     <OutlookFilterButtons
                       selected={outlookFilter}
                       onChange={setOutlookFilter}
@@ -1116,12 +1094,6 @@ export default function StrategyBuilderPage() {
                   </div>
                 ) : null}
               </div>
-              {proposedData?.user_report ? (
-                <StrategyExplainabilityPanel
-                  report={proposedData.user_report}
-                  auditSessionId={proposedData.audit_session_id}
-                />
-              ) : null}
               {!trades.some((t) => t.status === "ok") &&
               !relaxedTrades.length ? (
                 <p className="text-sm text-muted">
@@ -1152,8 +1124,6 @@ export default function StrategyBuilderPage() {
                           expiryDate={expiryDate}
                           selected={selectedTradeId === tradeSelectionKey(trade)}
                           onSelect={() => selectTrade(trade)}
-                          minPopPct={minPopPctNum}
-                          minAnnReturnPct={minAnnReturnPctNum}
                         />
                       )}
                     />
@@ -1200,8 +1170,6 @@ export default function StrategyBuilderPage() {
                               selectedTradeId === tradeSelectionKey(trade)
                             }
                             onSelect={() => selectTrade(trade)}
-                            minPopPct={minPopPctNum}
-                            minAnnReturnPct={minAnnReturnPctNum}
                           />
                         )}
                       />
@@ -1209,20 +1177,44 @@ export default function StrategyBuilderPage() {
                   ) : null}
                 </>
               )}
-                </>
-              )}
-            </section>
+              {proposedData?.user_report ? (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowTransparency((v) => !v)}
+                    aria-expanded={showTransparency}
+                    className="flex items-center gap-1.5 text-body text-faint transition hover:text-muted"
+                  >
+                    <ChevronIcon
+                      className={`transition-transform ${showTransparency ? "rotate-180" : ""}`}
+                    />
+                    How were these trades chosen?
+                  </button>
+                  {showTransparency ? (
+                    <div className="mt-2.5">
+                      <StrategyExplainabilityPanel
+                        report={proposedData.user_report}
+                        auditSessionId={proposedData.audit_session_id}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </SectionGate>
 
           <SectionGate locked={!section4Ready}>
-            <div id="strategy-builder-legs" className="space-y-5">
+            <div id="strategy-builder-legs" className="p-5">
             <StrategyLegsPanel
+              sectionTitle={`4. Legs${selectedTradeName ? ` — ${selectedTradeName}` : ""}`}
               lotSize={lotSize}
               legs={legs}
               onLegsChange={setLegs}
+              onAddLeg={onAddLeg}
               onRightChange={onRightChange}
               onSideChange={onSideChange}
               onPriceChange={onPriceChange}
+              onAggressiveChange={onAggressiveChange}
               legMargins={legMargins}
               spanBaselineLoading={spanBaselineQ.isFetching}
               totalsNetPremium={totalsNetPremium}
@@ -1234,37 +1226,21 @@ export default function StrategyBuilderPage() {
                 !stockCode ||
                 !expiryDate
               }
-              quoteMeta={chainQuoteMeta}
+              marginWarnings={strategyBuilderMarginWarnings}
             />
+            </div>
 
+            <div className="p-5">
             <StrategyPayoffPanel
               legs={legs}
               spot={spot}
               atmIv={atmIv}
               expiryDate={expiryDate}
               lotSize={lotSize}
-              ivShockPct={ivShockPct}
-              onIvShockChange={setIvShockPct}
-              showToday={showToday}
-              onShowTodayChange={setShowToday}
-              showGreeks={showGreeks}
-              onShowGreeksChange={setShowGreeks}
-              spanMargin={spanMargin}
-              marginFetching={spanBaselineQ.isFetching || portfolioMarginQ.isFetching}
-              marginQtyStale={false}
-              onRefreshMargin={() => {
-                void spanBaselineQ.refetch();
-                void portfolioMarginQ.refetch();
-              }}
-              marginError={
-                spanBaselineQ.isError
-                  ? String(spanBaselineQ.error ?? "SPAN baseline unavailable")
-                  : null
-              }
-              marginWarnings={strategyBuilderMarginWarnings}
             />
             </div>
           </SectionGate>
+          </section>
         </div>
 
         <OrderExecutionConfirmDialog

@@ -102,7 +102,7 @@ export function HelpDialog({
             </h2>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
               Topics and keyboard shortcuts. Press{" "}
-              <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 py-0.5 font-mono text-[12px] dark:border-zinc-700 dark:bg-zinc-900">
+              <kbd className="rounded border border-zinc-200 bg-zinc-50 px-1 py-0.5 font-mono text-body dark:border-zinc-700 dark:bg-zinc-900">
                 ?
               </kbd>{" "}
               anytime.

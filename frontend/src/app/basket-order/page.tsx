@@ -1,28 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { HelpLink } from "@/components/help/HelpLink";
 import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
+import { Modal } from "@/components/ui/Modal";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { BasketLegsPanel } from "@/components/basket-order/BasketLegsPanel";
-import { OptionChainUnderlyingSearch } from "@/components/order/OptionChainUnderlyingSearch";
-import { OrderExecutionConfirmDialog } from "@/components/order/OrderExecutionConfirmDialog";
+import { BasketPayoffPanel } from "@/components/basket-order/BasketPayoffPanel";
+import { OptionChainUnderlyingSearch } from "@/components/shared/order/OptionChainUnderlyingSearch";
+import { ExchangeFlipToggle } from "@/components/shared/order/ExchangeFlipToggle";
+import { OrderExecutionConfirmDialog } from "@/components/shared/order/OrderExecutionConfirmDialog";
 import { BuildYourOwnChainSection } from "@/components/strategy-builder/BuildYourOwnChainSection";
-import { ExpirySelectPill } from "@/components/strategy-builder/ExpirySelectPill";
+import { ExpirySelectPill } from "@/components/shared/order/ExpirySelectPill";
 import { SectionGate } from "@/components/strategy-builder/SectionGate";
-import { StrategyPayoffPanel } from "@/components/strategy-builder/StrategyPayoffPanel";
 import { apiClient } from "@/lib/api-client";
 import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
 import {
   chainIsLoading,
 } from "@/lib/strategy-builder/chain-loading";
 import { quoteMetaFromChain } from "@/lib/quote-source";
+import { QuoteSourceBadge } from "@/components/shared/market-data/QuoteSourceBadge";
 import {
   ChainBuildStatus,
   inferChainBuildPhase,
-} from "@/components/market-data/ChainBuildStatus";
+} from "@/components/shared/market-data/ChainBuildStatus";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 import {
   appendLegFromChainRow,
@@ -30,6 +33,7 @@ import {
   buildYourOwnSlotKey,
 } from "@/lib/strategy-builder/build-your-own";
 import {
+  buySellRatioFromChainRow,
   createBlankLeg,
   premiumFromChainRow,
   strikesFromChain,
@@ -46,6 +50,7 @@ import {
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   ChainRow,
+  ChainSuccess,
   OptionRight,
   OrderSide,
   StrategyLeg,
@@ -75,13 +80,18 @@ export default function BasketOrderPage() {
   const [ivShockPct, setIvShockPct] = useState(0);
   const [showGreeks, setShowGreeks] = useState(false);
   const [showToday, setShowToday] = useState(true);
-  const [showOptionChain, setShowOptionChain] = useState(false);
-  const optionChainRef = useRef<HTMLElement>(null);
+  const [chainModalOpen, setChainModalOpen] = useState(false);
+  /** Frozen at the moment the modal opens — doesn't track subsequent live-quote polls. */
+  const [chainSnapshot, setChainSnapshot] = useState<{
+    chainSuccess: ChainSuccess;
+    stockCode: string;
+    expiryDate: string;
+  } | null>(null);
 
   const resetBasket = useCallback(() => {
     setLegs([]);
     setPriceManuallyEdited(new Set());
-    setShowOptionChain(false);
+    setChainModalOpen(false);
   }, []);
 
   const uq = useQuery({
@@ -211,6 +221,30 @@ export default function BasketOrderPage() {
     [],
   );
 
+  const onAggressiveChange = useCallback(
+    (legId: string, checked: boolean) => {
+      setPriceManuallyEdited((prev) => {
+        if (!prev.has(legId)) return prev;
+        const next = new Set(prev);
+        next.delete(legId);
+        return next;
+      });
+      setLegs((prev) => {
+        const leg = prev.find((x) => x.id === legId);
+        if (!leg) return prev;
+        const premiumPerUnit = checked
+          ? undefined
+          : (premiumFromChainRow(chainRows, leg.strike, leg.right) ?? undefined);
+        return prev.map((x) =>
+          x.id === legId
+            ? { ...x, aggressiveLimit: checked, premiumPerUnit }
+            : x,
+        );
+      });
+    },
+    [chainRows],
+  );
+
   const onAddLeg = useCallback(() => {
     const leg = createBlankLeg(atmStrike, strikes);
     const prem = premiumFromChainRow(chainRows, leg.strike, leg.right);
@@ -236,6 +270,14 @@ export default function BasketOrderPage() {
     () => legs.filter((l) => l.lots > 0),
     [legs],
   );
+
+  const legBuySellRatios = useMemo(() => {
+    const map: Record<string, number | string | null> = {};
+    for (const l of legs) {
+      map[l.id] = buySellRatioFromChainRow(chainRows, l.strike, l.right);
+    }
+    return map;
+  }, [legs, chainRows]);
 
   const spanBaselineQ = useQuery({
     queryKey: [
@@ -395,7 +437,8 @@ export default function BasketOrderPage() {
           quantity: Math.round(l.lots * lotSize),
           premiumPerUnit: l.aggressiveLimit ? 0 : (l.premiumPerUnit ?? 0),
           aggressiveLimit: l.aggressiveLimit ?? false,
-        })),
+        }))
+        .sort((a, b) => a.strike - b.strike),
     [legs, lotSize],
   );
 
@@ -418,29 +461,20 @@ export default function BasketOrderPage() {
     resetBasket();
   };
 
-  const legsSectionNumber = showOptionChain ? 3 : 2;
-  const payoffSectionNumber = showOptionChain ? 4 : 3;
+  const openChainModal = useCallback(() => {
+    if (!chainSuccess) return;
+    setChainSnapshot({ chainSuccess, stockCode, expiryDate });
+    setChainModalOpen(true);
+  }, [chainSuccess, stockCode, expiryDate]);
 
-  const handleShowOptionChain = useCallback(() => {
-    setShowOptionChain(true);
+  const closeChainModal = useCallback(() => {
+    setChainModalOpen(false);
   }, []);
-
-  const handleHideOptionChain = useCallback(() => {
-    setShowOptionChain(false);
-  }, []);
-
-  useEffect(() => {
-    if (!showOptionChain) return;
-    const id = requestAnimationFrame(() => {
-      optionChainRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    return () => cancelAnimationFrame(id);
-  }, [showOptionChain]);
 
   return (
     <AppShell>
       <RevokedTradingPageGuard>
-        <div className="space-y-5">
+        <div className="mx-auto max-w-[1240px] space-y-5">
           <header>
             <h1 className="flex items-center gap-2 text-[22px] font-bold tracking-tight text-foreground">
               Basket Order
@@ -455,161 +489,118 @@ export default function BasketOrderPage() {
             </p>
           </header>
 
-          <section className={`${sb.section} relative z-20 space-y-5`}>
-            <h2 className={sb.sectionTitle}>1. Underlying &amp; Expiry</h2>
-            <div
-              className="flex min-h-[2.75rem] flex-col overflow-visible rounded-[9px] border border-border bg-panel2 sm:flex-row sm:items-center"
-              role="toolbar"
-            >
-              <div className="flex shrink-0 items-center border-b border-border-soft px-2 py-2 sm:border-b-0 sm:border-r sm:py-0 sm:ps-2.5 sm:pe-2">
-                <div className={sb.segmentGroup}>
-                  {(["NFO", "BFO"] as const).map((ex) => (
-                    <button
-                      key={ex}
-                      type="button"
-                      onClick={() => onSegmentChange(ex)}
-                      className={[
-                        sb.segmentBtn,
-                        segmentExchange === ex ? sb.segmentBtnActive : sb.segmentBtnInactive,
-                      ].join(" ")}
-                    >
-                      {ex === "NFO" ? "NSE" : "BSE"}
-                    </button>
-                  ))}
+          {chainQuoteMeta ? (
+            <div className="flex justify-end">
+              <QuoteSourceBadge meta={chainQuoteMeta} variant="compact" />
+            </div>
+          ) : null}
+
+          <section className="rounded-[14px] border border-border bg-panel">
+            <div className="relative z-20 flex flex-wrap items-center gap-3.5 border-b border-border-soft px-[18px] py-3.5">
+              <span className="shrink-0 text-hint font-bold uppercase tracking-[.07em] text-faint">
+                1. Underlying
+              </span>
+              {/* <div
+                className="flex min-h-[2.75rem] w-full flex-1 flex-col overflow-visible rounded-[9px] bg-panel2 sm:w-auto sm:flex-row sm:items-center"
+                role="toolbar"
+              > */}
+                <div className="flex shrink-0 items-center border-b border-border-soft px-2 py-2 sm:border-b-0 sm:border-r sm:py-0 sm:ps-2.5 sm:pe-2">
+                  <ExchangeFlipToggle value={segmentExchange} onChange={onSegmentChange} />
                 </div>
-              </div>
-              <div className="relative z-30 flex min-w-0 max-w-[min(100%,26rem)] flex-1 items-center px-3 py-2 sm:border-r sm:border-border-soft">
-                {uq.isLoading ? (
-                  <span className="text-xs app-text-muted animate-pulse">
-                    Loading underlyings…
-                  </span>
-                ) : (
-                  <OptionChainUnderlyingSearch
-                    variant="ticker"
-                    chainBar
-                    underlyings={uq.data?.underlyings ?? []}
-                    value={stockCode}
-                    disabled={uq.isLoading}
-                    spot={spot}
-                    loading={chainLoading}
-                    quoteMeta={chainQuoteMeta}
-                    onChange={(code) => {
-                      setStockCode(code);
-                      setExpiryDate("");
+                <div className="relative z-30 flex min-w-0 max-w-[min(100%,34rem)] flex-1 items-center px-3 py-2 sm:border-r sm:border-border-soft">
+                  {uq.isLoading ? (
+                    <span className="text-xs app-text-muted animate-pulse">
+                      Loading underlyings…
+                    </span>
+                  ) : (
+                    <OptionChainUnderlyingSearch
+                      variant="ticker"
+                      underlyings={uq.data?.underlyings ?? []}
+                      value={stockCode}
+                      disabled={uq.isLoading}
+                      spot={spot}
+                      loading={chainLoading}
+                      quoteMeta={chainQuoteMeta}
+                      onChange={(code) => {
+                        setStockCode(code);
+                        setExpiryDate("");
+                        resetBasket();
+                      }}
+                    />
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center px-3 py-2 sm:pe-3.5">
+                  <ExpirySelectPill
+                    layout="toolbar"
+                    dates={expiryOptions}
+                    value={expiryDate}
+                    disabled={!stockCode}
+                    onChange={(d) => {
+                      setExpiryDate(d);
                       resetBasket();
                     }}
                   />
-                )}
-              </div>
-              <div className="flex shrink-0 items-center px-3 py-2 sm:pe-3.5">
-                <ExpirySelectPill
-                  layout="toolbar"
-                  dates={expiryOptions}
-                  value={expiryDate}
-                  disabled={!stockCode}
-                  onChange={(d) => {
-                    setExpiryDate(d);
-                    resetBasket();
-                  }}
+                </div>
+              {/* </div> */}
+            </div>
+
+            <SectionGate locked={!section1Complete}>
+              <div className="border-b border-border-soft">
+                <BasketLegsPanel
+                  sectionLabel="2. Legs"
+                  strikes={strikes}
+                  chainBusy={chainQ.isFetching}
+                  chainReady={section2Ready}
+                  onPickFromChain={openChainModal}
+                  lotSize={lotSize}
+                  legs={legs}
+                  onLegsChange={setLegs}
+                  onAddLeg={onAddLeg}
+                  onStrikeChange={onStrikeChange}
+                  onRightChange={onRightChange}
+                  onSideChange={onSideChange}
+                  onPriceChange={onPriceChange}
+                  onAggressiveChange={onAggressiveChange}
+                  legMargins={legMargins}
+                  legBuySellRatios={legBuySellRatios}
+                  spanBaselineLoading={spanBaselineQ.isFetching}
+                  totalsNetPremium={totalsNetPremium}
+                  totalsMargin={totalsMargin}
+                  onExecute={() => setExecutePreviewOpen(true)}
+                  executeDisabled={executeDisabled}
+                  addLegDisabled={!section2Ready}
+                  marginWarnings={basketMarginWarnings}
+                  marginError={
+                    spanBaselineQ.isError
+                      ? String(spanBaselineQ.error ?? "SPAN baseline unavailable")
+                      : portfolioMarginQ.isError
+                        ? String(
+                            portfolioMarginQ.error ??
+                              "Portfolio SPAN unavailable",
+                          )
+                        : null
+                  }
                 />
               </div>
-            </div>
+
+              <BasketPayoffPanel
+                sectionLabel="3. Payoff simulation"
+                legs={legs}
+                spot={spot}
+                atmIv={atmIv}
+                expiryDate={expiryDate}
+                lotSize={lotSize}
+                ivShockPct={ivShockPct}
+                onIvShockChange={setIvShockPct}
+                showToday={showToday}
+                onShowTodayChange={setShowToday}
+                showGreeks={showGreeks}
+                onShowGreeksChange={setShowGreeks}
+              />
+            </SectionGate>
           </section>
 
           <ChainBuildStatus visible={chainLoading} phase={chainBuildPhase} />
-
-          {showOptionChain && section2Ready ? (
-            <section
-              ref={optionChainRef}
-              id="basket-option-chain"
-              className={`${sb.section} space-y-4`}
-            >
-              <h2 className={sb.sectionTitle}>2. Option chain</h2>
-              <BuildYourOwnChainSection
-                chainSuccess={chainSuccess ?? null}
-                isFetching={chainQ.isFetching}
-                isError={chainQ.isError}
-                error={chainQ.error}
-                chainStatus={chainQ.data?.Status}
-                chainError={chainQ.data?.Error}
-                stockCode={stockCode}
-                expiryDate={expiryDate}
-                onStrategyBuySell={handleStrategyChainBuySell}
-                isStrategySlotAdded={(strike, right, side) =>
-                  buildYourOwnSlots.has(
-                    buildYourOwnSlotKey(
-                      stockCode,
-                      expiryDate,
-                      strike,
-                      right,
-                      side,
-                    ),
-                  )
-                }
-              />
-            </section>
-          ) : null}
-
-          <SectionGate locked={!section1Complete}>
-            <BasketLegsPanel
-              sectionNumber={legsSectionNumber}
-              strikes={strikes}
-              chainBusy={chainQ.isFetching}
-              chainReady={section2Ready}
-              showOptionChain={showOptionChain}
-              onShowOptionChain={handleShowOptionChain}
-              onHideOptionChain={handleHideOptionChain}
-              lotSize={lotSize}
-              legs={legs}
-              onLegsChange={setLegs}
-              onAddLeg={onAddLeg}
-              onStrikeChange={onStrikeChange}
-              onRightChange={onRightChange}
-              onSideChange={onSideChange}
-              onPriceChange={onPriceChange}
-              legMargins={legMargins}
-              spanBaselineLoading={spanBaselineQ.isFetching}
-              totalsNetPremium={totalsNetPremium}
-              totalsMargin={totalsMargin}
-              onExecute={() => setExecutePreviewOpen(true)}
-              executeDisabled={executeDisabled}
-              addLegDisabled={!section2Ready}
-              quoteMeta={chainQuoteMeta}
-            />
-
-            <StrategyPayoffPanel
-              sectionTitle={`${payoffSectionNumber}. Payoff simulation`}
-              legs={legs}
-              spot={spot}
-              atmIv={atmIv}
-              expiryDate={expiryDate}
-              lotSize={lotSize}
-              ivShockPct={ivShockPct}
-              onIvShockChange={setIvShockPct}
-              showToday={showToday}
-              onShowTodayChange={setShowToday}
-              showGreeks={showGreeks}
-              onShowGreeksChange={setShowGreeks}
-              spanMargin={spanMargin}
-              marginFetching={spanBaselineQ.isFetching || portfolioMarginQ.isFetching}
-              marginQtyStale={false}
-              onRefreshMargin={() => {
-                void spanBaselineQ.refetch();
-                void portfolioMarginQ.refetch();
-              }}
-              marginError={
-                spanBaselineQ.isError
-                  ? String(spanBaselineQ.error ?? "SPAN baseline unavailable")
-                  : portfolioMarginQ.isError
-                    ? String(
-                        portfolioMarginQ.error ??
-                          "Portfolio SPAN unavailable",
-                      )
-                    : null
-              }
-              marginWarnings={basketMarginWarnings}
-            />
-          </SectionGate>
         </div>
 
         <OrderExecutionConfirmDialog
@@ -627,7 +618,80 @@ export default function BasketOrderPage() {
             chunkReady,
           }}
         />
+
+        <Modal
+          open={chainModalOpen}
+          onClose={closeChainModal}
+          titleId="basket-option-chain-title"
+          zIndexClass="z-[120]"
+          panelClassName="flex max-h-[88vh] w-full !max-w-[min(96vw,74rem)] flex-col overflow-hidden rounded-[13px] border border-border bg-elevated shadow-pop"
+        >
+          <div className="flex items-start justify-between gap-3 border-b border-border-soft px-5 py-4">
+            <div className="min-w-0 flex-1">
+              <h3 id="basket-option-chain-title" className="text-[15px] font-bold text-foreground">
+                Pick from option chain
+              </h3>
+              <p className="mt-1 text-xs text-muted">
+                {chainSnapshot
+                  ? `${chainSnapshot.stockCode} · ${chainSnapshot.expiryDate} — snapshot as of when you opened this. Close and reopen for fresh quotes.`
+                  : "Close and reopen for fresh quotes."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={closeChainModal}
+              aria-label="Close"
+              className="-m-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-border-soft hover:text-foreground"
+            >
+              <CloseIcon />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            {chainSnapshot ? (
+              <BuildYourOwnChainSection
+                chainSuccess={chainSnapshot.chainSuccess}
+                isFetching={false}
+                isError={false}
+                error={null}
+                chainStatus={200}
+                chainError={undefined}
+                stockCode={chainSnapshot.stockCode}
+                expiryDate={chainSnapshot.expiryDate}
+                onStrategyBuySell={handleStrategyChainBuySell}
+                isStrategySlotAdded={(strike, right, side) =>
+                  buildYourOwnSlots.has(
+                    buildYourOwnSlotKey(
+                      chainSnapshot.stockCode,
+                      chainSnapshot.expiryDate,
+                      strike,
+                      right,
+                      side,
+                    ),
+                  )
+                }
+              />
+            ) : null}
+          </div>
+        </Modal>
       </RevokedTradingPageGuard>
     </AppShell>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
   );
 }
