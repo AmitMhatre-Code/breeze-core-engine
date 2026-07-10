@@ -7,9 +7,10 @@ import { InfinitySymbol } from "@/components/shared/payoff/InfinitySymbol";
 import { PayoffScenarioControls } from "@/components/shared/payoff/PayoffScenarioControls";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
-import { normRight, normSide } from "@/lib/portfolio/legNormalize";
+import { chainLotSize, rowsToStrategyLegs } from "@/lib/portfolio/legsFromRows";
 import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
 import { payoffQuoteQueryOptions } from "@/lib/strategy-builder/chain-query";
+import { usePnlRecomputeRefetchMs } from "@/lib/portfolio/usePnlRecomputeRefetchMs";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
   estimateProbabilityOfProfit,
@@ -24,62 +25,10 @@ import {
   isUnlimitedMaxLoss,
   isUnlimitedMaxProfit,
 } from "@/lib/strategy-builder/trade-metrics";
-import type { ChainSuccess, StrategyLeg } from "@/lib/strategy-builder/types";
+import type { StrategyLeg } from "@/lib/strategy-builder/types";
 
 /** Default view shows at least ±10% around spot; widens to fit any strike further out. */
 const DEFAULT_VIEW_HALFBAND = 0.1;
-
-function parseNum(v: unknown): number | null {
-  if (v == null || v === "") return null;
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const t = v.trim().replace(/,/g, "");
-    if (!t || t === "*") return null;
-    const n = Number(t);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
-function chainLotSize(chain: ChainSuccess): number {
-  const row = chain.chain_rows[0];
-  if (!row) return 1;
-  const ls =
-    parseNum(row.call?.lot_size) ?? parseNum(row.put?.lot_size) ?? NaN;
-  return Number.isFinite(ls) && ls > 0 ? Math.round(ls) : 1;
-}
-
-function rowsToStrategyLegs(
-  rows: PortfolioPositionRecord[],
-  lotSize: number,
-): StrategyLeg[] {
-  const ls = lotSize > 0 ? lotSize : 1;
-  const legs: StrategyLeg[] = [];
-  let i = 0;
-  for (const row of rows) {
-    const side = normSide(String(row.action ?? ""));
-    const right = normRight(String(row.right ?? ""));
-    const strike = parseNum(row.strike_price);
-    const qtyRaw = parseNum(row.quantity);
-    if (!side || !right || strike == null || strike <= 0 || qtyRaw == null) {
-      continue;
-    }
-    const absQty = Math.abs(qtyRaw);
-    if (absQty <= 0) continue;
-    const lots = absQty / ls;
-    const prem =
-      parseNum(row.average_price) ?? parseNum(row.ltp) ?? 0;
-    legs.push({
-      id: `port-${i++}`,
-      right,
-      side,
-      strike,
-      lots,
-      premiumPerUnit: prem,
-    });
-  }
-  return legs;
-}
 
 type Props = {
   stockCode: string;
@@ -91,7 +40,8 @@ type Props = {
   /**
    * Stable per-group WS feed subscription id (see `useGroupSubscriptionHolders`).
    * Rendered only while the group is expanded, so this keeps the chain "hot"
-   * server-side and polls at `CHAIN_WS_REFETCH_MS` for as long as it stays open.
+   * server-side and polls at the user's P&L recalc interval (see
+   * `usePnlRecomputeRefetchMs`) for as long as it stays open.
    */
   holderId: string;
 };
@@ -113,6 +63,7 @@ export function PortfolioGroupPayoffPanel({
   const [dteOverrideDays, setDteOverrideDays] = useState<number | null>(null);
   const [ivShockPct, setIvShockPct] = useState(0);
 
+  const refetchIntervalMs = usePnlRecomputeRefetchMs();
   const cq = useQuery({
     ...payoffQuoteQueryOptions({
       queryKeyPrefix: ["portfolio", "group-payoff-chain"],
@@ -120,6 +71,7 @@ export function PortfolioGroupPayoffPanel({
       expiry_date: expiryDisplay,
       exchange_code: exchangeCode,
       subscription_holder: holderId,
+      refetchIntervalMs,
     }),
     enabled: Boolean(stockCode && expiryDisplay && rows.length > 0),
   });

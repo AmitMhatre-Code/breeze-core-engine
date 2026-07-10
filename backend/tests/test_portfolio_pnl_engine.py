@@ -20,11 +20,13 @@ from icici_breeze_backend.app.services import portfolio_pnl_engine as engine
 def _reset_engine_state():
     engine._legs_by_user.clear()
     engine._portfolio_rules.clear()
+    engine._group_rules.clear()
     engine._rule_hit_listeners.clear()
     engine._latest_snapshots.clear()
     yield
     engine._legs_by_user.clear()
     engine._portfolio_rules.clear()
+    engine._group_rules.clear()
     engine._rule_hit_listeners.clear()
     engine._latest_snapshots.clear()
 
@@ -286,6 +288,142 @@ class TestRuleEvaluation:
 
         assert len(hits) == 1
         assert hits[0]["reason"] == "portfolio_target_hit"
+
+
+class TestGroupRuleEvaluation:
+    def test_group_target_hit_sums_matching_legs_and_dispatches_resolved_orders(self, monkeypatch):
+        buy_leg = engine.leg_from_position_row(
+            "u1", _row(action="Buy", quantity="50", average_price="100", strike_price="25000", right="Call")
+        )
+        sell_leg = engine.leg_from_position_row(
+            "u1", _row(action="Sell", quantity="50", average_price="20", strike_price="24500", right="Put")
+        )
+        engine.register_positions("u1", [buy_leg, sell_leg])
+        engine.set_group_rule(
+            "u1", "rule-1", stock_code="NIFTY", expiry_display="30-Jun-2026", target_pnl=600.0
+        )
+
+        # Buy leg: (110-100)*50=500. Sell leg: (20-15)*50=250. Group total=750 >= 600.
+        monkeypatch.setattr(
+            engine,
+            "_fetch_quotes",
+            lambda keys: {buy_leg.scrip_key: {"ltp": "110"}, sell_leg.scrip_key: {"ltp": "15"}},
+        )
+        monkeypatch.setattr(engine, "is_tick_stream_stale", lambda: False)
+
+        hits = []
+        engine.register_rule_hit_listener(hits.append)
+        try:
+            engine.run_pnl_tick()
+        finally:
+            engine.unregister_rule_hit_listener(hits.append)
+
+        assert len(hits) == 1
+        hit = hits[0]
+        assert hit["reason"] == "group_target_hit"
+        assert hit["rule_id"] == "rule-1"
+        assert hit["total_pnl"] == pytest.approx(750.0)
+        assert len(hit["legs"]) == 2
+        by_strike = {leg["strike_price"]: leg for leg in hit["legs"]}
+        # Close a long (Buy) with Sell, close a short (Sell) with Buy.
+        assert by_strike["25000.0"]["action"] == "Sell"
+        assert by_strike["24500.0"]["action"] == "Buy"
+
+    def test_group_stop_loss_hit(self, monkeypatch):
+        leg = engine.leg_from_position_row(
+            "u1", _row(action="Buy", quantity="50", average_price="100", strike_price="25000")
+        )
+        engine.register_positions("u1", [leg])
+        engine.set_group_rule(
+            "u1", "rule-2", stock_code="NIFTY", expiry_display="30-Jun-2026", stop_loss_pnl=200.0
+        )
+
+        # (80-100)*50 = -1000, well past a 200 stop.
+        monkeypatch.setattr(engine, "_fetch_quotes", lambda keys: {leg.scrip_key: {"ltp": "80"}})
+        monkeypatch.setattr(engine, "is_tick_stream_stale", lambda: False)
+
+        hits = []
+        engine.register_rule_hit_listener(hits.append)
+        try:
+            engine.run_pnl_tick()
+        finally:
+            engine.unregister_rule_hit_listener(hits.append)
+
+        assert len(hits) == 1
+        assert hits[0]["reason"] == "group_stop_loss_hit"
+
+    def test_group_rule_removed_after_firing_does_not_double_dispatch(self, monkeypatch):
+        leg = engine.leg_from_position_row(
+            "u1", _row(action="Buy", quantity="50", average_price="100", strike_price="25000")
+        )
+        engine.register_positions("u1", [leg])
+        engine.set_group_rule("u1", "rule-3", stock_code="NIFTY", expiry_display="30-Jun-2026", target_pnl=100.0)
+
+        monkeypatch.setattr(engine, "_fetch_quotes", lambda keys: {leg.scrip_key: {"ltp": "110"}})
+        monkeypatch.setattr(engine, "is_tick_stream_stale", lambda: False)
+
+        hits = []
+        engine.register_rule_hit_listener(hits.append)
+        try:
+            engine.run_pnl_tick()
+            engine.run_pnl_tick()  # position still open (no listener actually closed it) -> must not re-fire
+        finally:
+            engine.unregister_rule_hit_listener(hits.append)
+
+        assert len(hits) == 1
+        assert engine._group_rules.get("u1", {}) == {}
+
+    def test_group_rule_ignores_legs_from_a_different_expiry(self, monkeypatch):
+        matching_leg = engine.leg_from_position_row(
+            "u1", _row(action="Buy", quantity="50", average_price="100", expiry_date="2026-06-30T06:00:00.000Z")
+        )
+        other_expiry_leg = engine.leg_from_position_row(
+            "u1",
+            _row(
+                action="Buy",
+                quantity="50",
+                average_price="100",
+                strike_price="24000",
+                expiry_date="2026-07-31T06:00:00.000Z",
+            ),
+        )
+        engine.register_positions("u1", [matching_leg, other_expiry_leg])
+        engine.set_group_rule("u1", "rule-4", stock_code="NIFTY", expiry_display="30-Jun-2026", target_pnl=400.0)
+
+        # Only the matching-expiry leg profits; the other expiry's huge gain must not count.
+        monkeypatch.setattr(
+            engine,
+            "_fetch_quotes",
+            lambda keys: {matching_leg.scrip_key: {"ltp": "105"}, other_expiry_leg.scrip_key: {"ltp": "500"}},
+        )
+        monkeypatch.setattr(engine, "is_tick_stream_stale", lambda: False)
+
+        hits = []
+        engine.register_rule_hit_listener(hits.append)
+        try:
+            engine.run_pnl_tick()
+        finally:
+            engine.unregister_rule_hit_listener(hits.append)
+
+        assert hits == []  # (105-100)*50=250 < 400; the other expiry's P&L must not leak in
+
+    def test_clear_group_rule_prevents_dispatch(self, monkeypatch):
+        leg = engine.leg_from_position_row("u1", _row(action="Buy", quantity="50", average_price="100"))
+        engine.register_positions("u1", [leg])
+        engine.set_group_rule("u1", "rule-5", stock_code="NIFTY", expiry_display="30-Jun-2026", target_pnl=100.0)
+        engine.clear_group_rule("u1", "NIFTY", "30-Jun-2026")
+
+        monkeypatch.setattr(engine, "_fetch_quotes", lambda keys: {leg.scrip_key: {"ltp": "110"}})
+        monkeypatch.setattr(engine, "is_tick_stream_stale", lambda: False)
+
+        hits = []
+        engine.register_rule_hit_listener(hits.append)
+        try:
+            engine.run_pnl_tick()
+        finally:
+            engine.unregister_rule_hit_listener(hits.append)
+
+        assert hits == []
 
 
 class TestStaleStreamCircuitBreaker:

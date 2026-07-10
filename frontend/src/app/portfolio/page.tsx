@@ -16,6 +16,7 @@ import {
   formatSignedRupees,
 } from "@/lib/portfolio/totals";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
+import { usePnlRecomputeRefetchMs } from "@/lib/portfolio/usePnlRecomputeRefetchMs";
 
 type IciciApiResponse = {
   Status: number;
@@ -25,14 +26,15 @@ type IciciApiResponse = {
   };
 };
 
-/** Base positions poll — collapsed groups have no live chain subscription, so this is their only refresh path. */
-const PORTFOLIO_POLL_MS = 30_000;
-
 export default function PortfolioPage() {
+  // Collapsed groups have no live chain subscription, so this poll is their only
+  // refresh path — follows the same Settings > Advanced P&L recompute interval
+  // the live overlay uses, so every figure on the page shares one cadence.
+  const portfolioPollMs = usePnlRecomputeRefetchMs();
   const q = useQuery({
     queryKey: ["portfolio", "positions"],
     queryFn: async () => apiClient.get<IciciApiResponse>("/portfolio/data"),
-    refetchInterval: PORTFOLIO_POLL_MS,
+    refetchInterval: portfolioPollMs,
   });
 
   const data = q.data;

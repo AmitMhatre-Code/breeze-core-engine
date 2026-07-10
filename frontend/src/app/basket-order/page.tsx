@@ -475,39 +475,37 @@ export default function BasketOrderPage() {
     <AppShell>
       <RevokedTradingPageGuard>
         <div className="mx-auto max-w-[1240px] space-y-5">
-          <header>
-            <h1 className="flex items-center gap-2 text-[22px] font-bold tracking-tight text-foreground">
-              Basket Order
-              <NewFeatureBadge />
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
-              Build a multi-leg option basket, simulate payoff, and execute all
-              legs at once.{" "}
-              <HelpLink topicId="basket-order" className="text-sm">
-                Learn more
-              </HelpLink>
-            </p>
+          <header className="flex items-end justify-between gap-4">
+            <div>
+              <h1 className="flex items-center gap-2 text-[22px] font-bold tracking-tight text-foreground">
+                Basket Order
+                <NewFeatureBadge />
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
+                Build a multi-leg option basket, simulate payoff, and execute all
+                legs at once.{" "}
+                <HelpLink topicId="basket-order" className="text-sm">
+                  Learn more
+                </HelpLink>
+              </p>
+            </div>
+
+            {chainQuoteMeta ? (
+              <QuoteSourceBadge meta={chainQuoteMeta} variant="compact" />
+            ) : null}
           </header>
 
-          {chainQuoteMeta ? (
-            <div className="flex justify-end">
-              <QuoteSourceBadge meta={chainQuoteMeta} variant="compact" />
-            </div>
-          ) : null}
-
-          <section className="rounded-[14px] border border-border bg-panel">
-            <div className="relative z-20 flex flex-wrap items-center gap-3.5 border-b border-border-soft px-[18px] py-3.5">
-              <span className="shrink-0 text-hint font-bold uppercase tracking-[.07em] text-faint">
-                1. Underlying
-              </span>
-              {/* <div
-                className="flex min-h-[2.75rem] w-full flex-1 flex-col overflow-visible rounded-[9px] bg-panel2 sm:w-auto sm:flex-row sm:items-center"
+          <section className="relative z-20 divide-y divide-border-soft rounded-[14px] border border-border bg-panel">
+            <div className="space-y-4 p-5">
+              <h2 className={sb.sectionTitle}>1. Underlying &amp; Expiry</h2>
+              <div
+                className="flex min-h-[2.75rem] flex-col overflow-visible rounded-[9px] sm:flex-row sm:items-center"
                 role="toolbar"
-              > */}
+              >
                 <div className="flex shrink-0 items-center border-b border-border-soft px-2 py-2 sm:border-b-0 sm:border-r sm:py-0 sm:ps-2.5 sm:pe-2">
                   <ExchangeFlipToggle value={segmentExchange} onChange={onSegmentChange} />
                 </div>
-                <div className="relative z-30 flex min-w-0 max-w-[min(100%,34rem)] flex-1 items-center px-3 py-2 sm:border-r sm:border-border-soft">
+                <div className="relative z-30 flex min-w-0 max-w-[min(100%,17rem)] flex-1 items-center px-3 py-2 sm:border-r sm:border-border-soft">
                   {uq.isLoading ? (
                     <span className="text-xs app-text-muted animate-pulse">
                       Loading underlyings…
@@ -532,6 +530,7 @@ export default function BasketOrderPage() {
                 <div className="flex shrink-0 items-center px-3 py-2 sm:pe-3.5">
                   <ExpirySelectPill
                     layout="toolbar"
+                    fullDate
                     dates={expiryOptions}
                     value={expiryDate}
                     disabled={!stockCode}
@@ -541,7 +540,7 @@ export default function BasketOrderPage() {
                     }}
                   />
                 </div>
-              {/* </div> */}
+              </div>
             </div>
 
             <SectionGate locked={!section1Complete}>

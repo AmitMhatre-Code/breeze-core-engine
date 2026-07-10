@@ -6,19 +6,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { SettingsScreenHeader } from "@/components/settings/SettingsScreenHeader";
 import { apiClient } from "@/lib/api-client";
-
-type PnlEnginePreferences = {
-  quote_flush_interval_seconds: number;
-  pnl_recompute_interval_seconds: number;
-  quote_flush_min_seconds: number;
-  quote_flush_max_seconds: number;
-  quote_flush_recommended_min_seconds: number;
-  quote_flush_recommended_max_seconds: number;
-  pnl_recompute_min_seconds: number;
-  pnl_recompute_max_seconds: number;
-  pnl_recompute_recommended_min_seconds: number;
-  pnl_recompute_recommended_max_seconds: number;
-};
+import {
+  fetchPnlEnginePreferences,
+  PNL_ENGINE_PREFERENCES_QUERY_KEY,
+  type PnlEnginePreferences,
+} from "@/lib/settings/pnl-engine-preferences";
 
 type Zone = "ok" | "caution" | "danger" | "lagging";
 
@@ -131,8 +123,8 @@ export function AdvancedPnlEngineScreen() {
   const [recomputeDraft, setRecomputeDraft] = useState("");
 
   const q = useQuery({
-    queryKey: ["settings", "pnl-engine-preferences"],
-    queryFn: () => apiClient.get<PnlEnginePreferences>("/api/settings/pnl-engine/preferences"),
+    queryKey: PNL_ENGINE_PREFERENCES_QUERY_KEY,
+    queryFn: fetchPnlEnginePreferences,
   });
 
   useEffect(() => {
@@ -147,7 +139,7 @@ export function AdvancedPnlEngineScreen() {
     mutationFn: (body: { quote_flush_interval_seconds: number; pnl_recompute_interval_seconds: number }) =>
       apiClient.put<PnlEnginePreferences>("/api/settings/pnl-engine/preferences", body),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["settings", "pnl-engine-preferences"] });
+      void qc.invalidateQueries({ queryKey: PNL_ENGINE_PREFERENCES_QUERY_KEY });
     },
   });
 

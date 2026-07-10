@@ -7,6 +7,7 @@ import { normRight } from "@/lib/portfolio/legNormalize";
 import type { PortfolioPositionGroup } from "@/lib/portfolio/groupPositions";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import type { ChainRow } from "@/lib/strategy-builder/types";
+import { usePnlRecomputeRefetchMs } from "@/lib/portfolio/usePnlRecomputeRefetchMs";
 
 function parseNum(v: unknown): number | null {
   if (v == null || v === "") return null;
@@ -43,7 +44,9 @@ function overlayRowWithLiveLtp(
   }
   const isSell = action === "SELL";
   const currentProfit = isSell ? (avg - liveLtp) * qty : (liveLtp - avg) * qty;
-  const carryProfit = isSell ? liveLtp * qty : -liveLtp * qty;
+  // Carry = P&L if this leg expires worthless (full premium kept/lost) minus MTM already captured.
+  const worthlessValue = isSell ? avg * qty : -avg * qty;
+  const carryProfit = worthlessValue - currentProfit;
   const next: PortfolioPositionRecord = {
     ...row,
     ltp: liveLtp,
@@ -76,7 +79,9 @@ function chainLtpLookup(chainRows: ChainRow[]): Map<string, number> {
 /**
  * Live-overlays a portfolio group's rows with the same WS-fed chain
  * `PortfolioGroupPayoffPanel` already fetches for the payoff curve (same query key via
- * `chainQueryOptions`, so this shares the cached request rather than double-fetching).
+ * `chainQueryOptions`, so this shares the cached request rather than double-fetching —
+ * both must pass the same `refetchIntervalMs` from `usePnlRecomputeRefetchMs` or their
+ * observers fight over the shared query's poll cadence).
  * Only active while `live` (the group is expanded) — collapsed groups stay on the
  * ~30s base `/portfolio/data` poll.
  */
@@ -85,6 +90,7 @@ export function useGroupLiveOverlay(
   holderId: string,
   live: boolean,
 ) {
+  const refetchIntervalMs = usePnlRecomputeRefetchMs();
   const cq = useQuery({
     ...chainQueryOptions({
       queryKeyPrefix: ["portfolio", "group-payoff-chain"],
@@ -92,6 +98,7 @@ export function useGroupLiveOverlay(
       expiry_date: group.expiryDate,
       exchange_code: group.exchangeCode,
       subscription_holder: holderId,
+      refetchIntervalMs,
     }),
     enabled: live && Boolean(group.stockCode && group.expiryDate),
   });

@@ -27,6 +27,8 @@ type Props = {
   layout?: "default" | "toolbar";
   rootClassName?: string;
   hideLabel?: boolean;
+  /** Toolbar layout only: show the full `DD-Mon-YYYY` value instead of the short `D Mon` chip. */
+  fullDate?: boolean;
 };
 
 export function ExpirySelectPill({
@@ -37,6 +39,7 @@ export function ExpirySelectPill({
   layout = "default",
   rootClassName,
   hideLabel,
+  fullDate,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -120,7 +123,9 @@ export function ExpirySelectPill({
   const expiryChip = value ? formatExpiryChipShort(value) : null;
   const closedDisplay = toolbarLayout
     ? value
-      ? (expiryChip ?? value)
+      ? fullDate
+        ? value
+        : (expiryChip ?? value)
       : ""
     : value;
   const inputDisplay = open ? q : closedDisplay;
@@ -138,7 +143,8 @@ export function ExpirySelectPill({
 
   const buttonClass = (() => {
     if (toolbarLayout) {
-      return "flex min-w-[11rem] shrink-0 items-center justify-between gap-2 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel disabled:cursor-not-allowed disabled:opacity-50";
+      const minWidth = fullDate ? "min-w-[12.5rem]" : "min-w-[11rem]";
+      return `flex ${minWidth} shrink-0 items-center justify-between gap-2 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel disabled:cursor-not-allowed disabled:opacity-50`;
     }
     return "flex w-full min-w-0 items-center justify-between gap-2 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel disabled:cursor-not-allowed disabled:opacity-50";
   })();

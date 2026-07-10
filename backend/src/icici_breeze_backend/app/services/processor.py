@@ -1535,7 +1535,9 @@ class processor():
                         else:
                             if i['action'] == cfg.SELL:
                                 i['current_profit'] = (float(i['average_price']) - float(i['ltp'])) * int(i['quantity'])
-                                i['carry_profit'] = float(i['ltp']) * int(i['quantity'])
+                                # Carry = P&L if this leg expires worthless (full premium kept) minus MTM already captured.
+                                worthless_value = float(i['average_price']) * int(i['quantity'])
+                                i['carry_profit'] = worthless_value - i['current_profit']
                                 margin_input = [{}]
                                 margin_input[0]['strike_price'] = i['strike_price']
                                 margin_input[0]['quantity'] = i['quantity']
@@ -1560,10 +1562,13 @@ class processor():
                                     i['span_margin_required'] = None
                                     i['carry_margin_returns'] = None
 
-                                # Extreme Loss Margin (ELM) calculations applicable for Index shorts only
+                                # Extreme Loss Margin (ELM) calculations applicable for Index shorts only.
+                                # ELM is waived on the option's own expiry date (no overnight risk to cover).
                                 if (i['stock_index_indicator'] == cfg.INDEX and i['action'] == cfg.SELL):
                                     if i['spot_price'] == "Err":
                                         i['elm_margin_required'] = None
+                                    elif _parse_option_expiry_date(i['expiry_date']) == today_ist_date():
+                                        i['elm_margin_required'] = 0.0
                                     else:
                                         i['elm_margin_required'] = float(i['quantity']) * float(i['spot_price']) * cfg.ELM
                                 else:
@@ -1586,7 +1591,9 @@ class processor():
                                     )
                             else:
                                 i['current_profit'] = (float(i['ltp']) - float(i['average_price'])) * int(i['quantity'])
-                                i['carry_profit'] = - float(i['ltp']) * int(i['quantity'])
+                                # Carry = P&L if this leg expires worthless (full premium lost) minus MTM already captured.
+                                worthless_value = - float(i['average_price']) * int(i['quantity'])
+                                i['carry_profit'] = worthless_value - i['current_profit']
                                 i['span_margin_required'] = None
                                 i['elm_margin_required'] = None
                                 i['carry_margin_returns'] = None

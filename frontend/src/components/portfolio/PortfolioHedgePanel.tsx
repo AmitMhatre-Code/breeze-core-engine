@@ -60,6 +60,8 @@ type PortfolioHedgePanelProps = {
   onSelectCandidate: (c: StrategyHedgeCandidate | null) => void;
   onExecute: () => void;
   onLotSizeChange?: (lotSize: number) => void;
+  /** Hide the "Hedge candidates" heading — used inside HedgeCandidatesModal, which has its own title. */
+  showHeading?: boolean;
 };
 
 /** Auto-fetches candidates for the group's default (span-based) risk budget as soon as it's rendered — no manual entry step, matching the Terminal design. */
@@ -69,6 +71,7 @@ export function PortfolioHedgePanel({
   onSelectCandidate,
   onExecute,
   onLotSizeChange,
+  showHeading = true,
 }: PortfolioHedgePanelProps) {
   const maxLoss = defaultMaxLossForGroup(group);
 
@@ -115,9 +118,11 @@ export function PortfolioHedgePanel({
   return (
     <div className="min-w-0 p-3">
       <div className="mb-3 space-y-1">
-        <h3 className="text-heading font-semibold uppercase tracking-wide text-faint">
-          Hedge candidates
-        </h3>
+        {showHeading ? (
+          <h3 className="text-heading font-semibold uppercase tracking-wide text-faint">
+            Hedge candidates
+          </h3>
+        ) : null}
         {summary ? (
           <p className="text-heading text-muted">
             {riskProfileLabel(summary.risk_profile)} · Δ{" "}

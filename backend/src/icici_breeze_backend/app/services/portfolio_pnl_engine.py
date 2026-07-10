@@ -8,9 +8,13 @@ broker's 100 req/min budget. Tracked legs are registered from the live
 wired from `route_portfolio.get_portfolio_api`); this module never calls the
 broker itself.
 
-Target/stop-loss rules are an in-memory, per-process concept (there is no
-persisted user-rule store in this codebase yet) — `set_leg_rule` /
-`set_portfolio_rule` are the extension points a future route would call.
+Target/stop-loss rules come in three tiers: per-leg (`set_leg_rule`) and
+whole-portfolio (`set_portfolio_rule`) are in-memory-only extension points
+nothing calls yet; group rules (`set_group_rule`, keyed by user+stock+expiry —
+the same bucket Hedge and Square Off All group by) back the Portfolio page's
+profit/loss-triggered square-off feature and are persisted via
+`app.repositories.squareoff_rules` / hydrated into this module's registry at
+startup by `app.services.squareoff_dispatcher`.
 """
 from __future__ import annotations
 
@@ -103,6 +107,28 @@ _snapshot_lock = threading.RLock()
 _latest_snapshots: dict[str, dict[str, Any]] = {}
 
 
+@dataclass(frozen=True)
+class GroupRule:
+    """A profit/loss square-off rule scoped to one (stock_code, expiry_display)
+    bucket for one user — the same grouping the Portfolio page's Hedge and
+    Square Off All actions use."""
+
+    rule_id: str
+    user_id: str
+    stock_code: str
+    expiry_display: str
+    exchange_code: str
+    target_pnl: float | None
+    stop_loss_pnl: float | None
+
+
+def _group_key(stock_code: str, expiry_display: str) -> str:
+    return f"{stock_code.strip().upper()}|{expiry_display.strip()}"
+
+
+_group_rules: dict[str, dict[str, GroupRule]] = {}
+
+
 def register_positions(user_id: str, legs: list[PositionLeg]) -> None:
     """Replace the tracked leg set for a user, carrying forward any
     previously-set target/stop-loss rule for legs that still exist."""
@@ -168,6 +194,38 @@ def set_leg_rule(
 def set_portfolio_rule(user_id: str, *, target_pnl: float | None = None, stop_loss_pnl: float | None = None) -> None:
     with _registry_lock:
         _portfolio_rules[user_id] = {"target_pnl": target_pnl, "stop_loss_pnl": stop_loss_pnl}
+
+
+def set_group_rule(
+    user_id: str,
+    rule_id: str,
+    *,
+    stock_code: str,
+    expiry_display: str,
+    exchange_code: str = "NFO",
+    target_pnl: float | None = None,
+    stop_loss_pnl: float | None = None,
+) -> None:
+    """Arm (or re-arm) a profit/loss rule for one (stock_code, expiry_display)
+    group. Called both from the arm route and from startup hydration."""
+    rule = GroupRule(
+        rule_id=rule_id,
+        user_id=user_id,
+        stock_code=stock_code,
+        expiry_display=expiry_display,
+        exchange_code=exchange_code,
+        target_pnl=target_pnl,
+        stop_loss_pnl=stop_loss_pnl,
+    )
+    with _registry_lock:
+        _group_rules.setdefault(user_id, {})[_group_key(stock_code, expiry_display)] = rule
+
+
+def clear_group_rule(user_id: str, stock_code: str, expiry_display: str) -> None:
+    with _registry_lock:
+        user_rules = _group_rules.get(user_id)
+        if user_rules is not None:
+            user_rules.pop(_group_key(stock_code, expiry_display), None)
 
 
 def register_rule_hit_listener(cb: RuleHitHandler) -> None:
@@ -320,6 +378,26 @@ def _build_squareoff_payload(leg: PositionLeg, *, reason: str, pnl: float) -> di
     }
 
 
+def _build_group_leg_order(leg: PositionLeg, *, pnl: float) -> dict[str, Any]:
+    """One leg's *closing* order, resolved to an actual Buy/Sell action (close
+    a long with Sell, close a short with Buy — mirrors the frontend's
+    `squareOffToOrderPayload`), for the dispatcher to hand straight to
+    `processor.place_order(..., aggressive_limit=True)`."""
+    close_action = cfg.SELL if leg.action == cfg.BUY else cfg.BUY
+    return {
+        "scrip_key": leg.scrip_key,
+        "product_type": cfg.OPTIONS,
+        "stock_code": leg.stock_code,
+        "exchange_code": leg.exchange_code,
+        "expiry_display": leg.expiry_display,
+        "right": cfg.CALL if leg.right == "call" else cfg.PUT,
+        "strike_price": str(leg.strike),
+        "quantity": str(leg.quantity),
+        "action": close_action,
+        "pnl": pnl,
+    }
+
+
 def _dispatch_rule_hit(payload: dict[str, Any]) -> None:
     for listener in list(_rule_hit_listeners):
         try:
@@ -340,24 +418,61 @@ def _evaluate_rules(snapshot: dict[str, Any], legs_by_key: dict[str, PositionLeg
 
     with _registry_lock:
         rule = _portfolio_rules.get(user_id)
-    if not rule:
-        return
-    total = snapshot["total_pnl"]
-    target = rule.get("target_pnl")
-    stop = rule.get("stop_loss_pnl")
-    if target is not None and total >= target:
+    if rule:
+        total = snapshot["total_pnl"]
+        target = rule.get("target_pnl")
+        stop = rule.get("stop_loss_pnl")
+        if target is not None and total >= target:
+            _dispatch_rule_hit({
+                "user_id": user_id,
+                "reason": "portfolio_target_hit",
+                "total_pnl": total,
+                "legs": [r["scrip_key"] for r in snapshot["legs"]],
+            })
+        elif stop is not None and total <= -abs(stop):
+            _dispatch_rule_hit({
+                "user_id": user_id,
+                "reason": "portfolio_stop_loss_hit",
+                "total_pnl": total,
+                "legs": [r["scrip_key"] for r in snapshot["legs"]],
+            })
+
+    with _registry_lock:
+        group_rules = list(_group_rules.get(user_id, {}).values())
+    for group_rule in group_rules:
+        key = _group_key(group_rule.stock_code, group_rule.expiry_display)
+        matching = [
+            r for r in snapshot["legs"]
+            if _group_key(r["stock_code"], r["expiry_display"]) == key
+        ]
+        if not matching:
+            continue
+        group_total = sum(r["pnl"] for r in matching)
+        reason: str | None = None
+        if group_rule.target_pnl is not None and group_total >= group_rule.target_pnl:
+            reason = "group_target_hit"
+        elif group_rule.stop_loss_pnl is not None and group_total <= -abs(group_rule.stop_loss_pnl):
+            reason = "group_stop_loss_hit"
+        if reason is None:
+            continue
+        # Pop before dispatch (not after) so a slow/blocking listener can't
+        # let the next tick re-evaluate the same rule and double-fire orders.
+        with _registry_lock:
+            user_rules = _group_rules.get(user_id)
+            if user_rules is None or user_rules.get(key) is not group_rule:
+                continue  # already fired/cleared by a concurrent tick
+            del user_rules[key]
         _dispatch_rule_hit({
             "user_id": user_id,
-            "reason": "portfolio_target_hit",
-            "total_pnl": total,
-            "legs": [r["scrip_key"] for r in snapshot["legs"]],
-        })
-    elif stop is not None and total <= -abs(stop):
-        _dispatch_rule_hit({
-            "user_id": user_id,
-            "reason": "portfolio_stop_loss_hit",
-            "total_pnl": total,
-            "legs": [r["scrip_key"] for r in snapshot["legs"]],
+            "rule_id": group_rule.rule_id,
+            "reason": reason,
+            "stock_code": group_rule.stock_code,
+            "expiry_display": group_rule.expiry_display,
+            "total_pnl": group_total,
+            "legs": [
+                _build_group_leg_order(legs_by_key[r["scrip_key"]], pnl=r["pnl"])
+                for r in matching
+            ],
         })
 
 

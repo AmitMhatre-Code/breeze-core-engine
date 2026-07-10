@@ -515,7 +515,7 @@ export default function DashboardPage() {
             type="button"
             onClick={refreshDashboard}
             disabled={volatilityFetching}
-            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-transparent px-3.5 py-1.5 text-sm font-semibold uppercase tracking-wide text-accent-strong transition hover:bg-border-soft disabled:pointer-events-none disabled:opacity-60 text-micro"
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-transparent px-3.5 py-1.5 font-semibold uppercase tracking-wide text-accent-strong transition hover:bg-border-soft disabled:pointer-events-none disabled:opacity-60 text-micro"
           >
             <VolatilityRefreshIcon spinning={volatilityFetching} />
             Refresh
@@ -605,7 +605,7 @@ export default function DashboardPage() {
           <section className="app-card min-w-0 overflow-hidden">
             <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border-soft p-3">
               <div className="flex min-w-0 flex-wrap items-baseline gap-2">
-                <h2 className="app-text-heading">NIFTY 50</h2>
+                <h2 className="text-lg font-semibold">NIFTY 50</h2>
                 {volatilityCoreLoading ? (
                   <DashboardMetricSkeleton className="w-20" />
                 ) : (
@@ -845,7 +845,7 @@ export default function DashboardPage() {
             <button
               type="button"
               disabled={refreshOutlookM.isPending}
-              className="app-btn-outline gap-1.5 uppercase tracking-wide text-micro"
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-transparent px-3.5 py-1.5 font-semibold uppercase tracking-wide transition hover:bg-border-soft disabled:pointer-events-none disabled:opacity-60 text-micro text-muted"
               onClick={() => refreshOutlookM.mutate()}
             >
               <OutlookRefreshIcon spinning={refreshOutlookM.isPending} />

@@ -18,6 +18,8 @@ export type ChainQueryParams = {
 export type ChainQueryOptionsArgs = ChainQueryParams & {
   queryKeyPrefix: string | readonly unknown[];
   enabled?: boolean;
+  /** Overrides CHAIN_WS_REFETCH_MS, e.g. to follow the user's P&L recalc interval setting. */
+  refetchIntervalMs?: number;
 };
 
 export function chainQueryKey(
@@ -35,11 +37,11 @@ export function chainQueryKey(
   ];
 }
 
-export function chainRefetchInterval(
-  query: Query<ChainApiResponse, Error>,
-): number | false {
-  const src = query.state.data?.Success?.quote_source;
-  return src === "websocket" ? CHAIN_WS_REFETCH_MS : false;
+export function chainRefetchInterval(intervalMs: number = CHAIN_WS_REFETCH_MS) {
+  return (query: Query<ChainApiResponse, Error>): number | false => {
+    const src = query.state.data?.Success?.quote_source;
+    return src === "websocket" ? intervalMs : false;
+  };
 }
 
 export function chainQueryOptions({
@@ -49,6 +51,7 @@ export function chainQueryOptions({
   exchange_code,
   subscription_holder,
   enabled = true,
+  refetchIntervalMs,
 }: ChainQueryOptionsArgs) {
   const params: ChainQueryParams = {
     stock_code,
@@ -63,7 +66,7 @@ export function chainQueryOptions({
       fetchStrategyBuilderChain(params, signal),
     enabled: enabled && ready,
     staleTime: CHAIN_STALE_MS,
-    refetchInterval: chainRefetchInterval,
+    refetchInterval: chainRefetchInterval(refetchIntervalMs),
     placeholderData: (prev: any) => prev,
   };
 }
@@ -77,6 +80,7 @@ export function payoffQuoteQueryOptions({
   exchange_code,
   subscription_holder,
   enabled = true,
+  refetchIntervalMs,
 }: ChainQueryOptionsArgs) {
   const params: ChainQueryParams = {
     stock_code,
@@ -91,7 +95,7 @@ export function payoffQuoteQueryOptions({
       fetchPortfolioPayoffQuote(params, signal),
     enabled: enabled && ready,
     staleTime: CHAIN_STALE_MS,
-    refetchInterval: chainRefetchInterval,
+    refetchInterval: chainRefetchInterval(refetchIntervalMs),
     placeholderData: (prev: any) => prev,
   };
 }

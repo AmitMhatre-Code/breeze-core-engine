@@ -30,7 +30,7 @@ export function OptionTypeBadge({
   if (!onToggle) {
     return (
       <span
-        className={className ?? "inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-button"}
+        className={className ?? "inline-flex items-center justify-center rounded-sm border px-2 py-0.5 text-button"}
         style={style}
       >
         {label}
@@ -52,7 +52,7 @@ export function OptionTypeBadge({
       onClick={() => onToggle(isPut ? "Call" : "Put")}
       className={
         className ??
-        "inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-button transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:pointer-events-none disabled:opacity-50"
+        "inline-flex items-center justify-center rounded-sm border px-2 py-0.5 text-button transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:pointer-events-none disabled:opacity-50"
       }
       style={style}
     >

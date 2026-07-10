@@ -26,6 +26,12 @@ class OperationType(str, Enum):
     # Portfolio operations
     PORTFOLIO_VIEW = "portfolio_view"
     PORTFOLIO_UPDATE = "portfolio_update"
+
+    # Profit/loss triggered square-off rules (Portfolio > group Exit Rule)
+    SQUAREOFF_RULE_ARMED = "squareoff_rule_armed"
+    SQUAREOFF_RULE_DISARMED = "squareoff_rule_disarmed"
+    SQUAREOFF_RULE_FIRED = "squareoff_rule_fired"
+    SQUAREOFF_RULE_FIRE_FAILED = "squareoff_rule_fire_failed"
     
     # Credential operations
     CREDENTIAL_ROTATION = "credential_rotation"

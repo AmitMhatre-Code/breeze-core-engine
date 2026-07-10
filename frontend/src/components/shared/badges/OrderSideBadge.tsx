@@ -31,7 +31,7 @@ export function OrderSideBadge({
   if (!onToggle) {
     return (
       <span
-        className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-button uppercase"
+        className="inline-flex items-center justify-center rounded-sm border px-2 py-0.5 text-button uppercase"
         style={style}
       >
         {label}
@@ -51,7 +51,7 @@ export function OrderSideBadge({
           : "Sell. Click to switch to Buy."
       }
       onClick={() => onToggle(isBuy ? "Sell" : "Buy")}
-      className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-button transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:pointer-events-none disabled:opacity-50 uppercase"
+      className="inline-flex items-center justify-center rounded-sm border px-2 py-0.5 text-button transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:pointer-events-none disabled:opacity-50 uppercase"
       style={style}
     >
       {label}

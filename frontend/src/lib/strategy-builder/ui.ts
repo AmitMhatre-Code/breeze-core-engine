@@ -52,6 +52,6 @@ export const sb = {
     "flex cursor-pointer items-center gap-2.5 text-xs font-medium text-muted",
   radio: "size-4 shrink-0 border-border text-accent-strong focus:ring-accent/30",
   parameterCard:
-    "flex h-full flex-col gap-4 rounded-[13px] border border-border bg-panel p-4",
+    "flex flex-col gap-4 rounded-[13px] border border-border bg-panel p-4",
   parameterCardTitle: "text-[13.5px] font-bold text-foreground",
 } as const;

@@ -187,6 +187,11 @@ def _ensure_app_database() -> None:
             )
 
             ensure_pnl_engine_settings_table(db_path)
+            from icici_breeze_backend.app.db.squareoff_rules_migrate import (
+                ensure_squareoff_rules_table,
+            )
+
+            ensure_squareoff_rules_table(db_path)
         except Exception:
             _logger.exception("user_account schema migration failed")
 
@@ -332,6 +337,14 @@ def start_application():
         if pnl_engine_enabled():
             pnl_flush_task = asyncio.create_task(run_pnl_quote_flush_loop())
             pnl_loop_task = asyncio.create_task(run_pnl_loop())
+
+            from icici_breeze_backend.app.services.squareoff_dispatcher import (
+                hydrate_group_rules_on_startup,
+                register_squareoff_dispatcher,
+            )
+
+            hydrate_group_rules_on_startup()
+            register_squareoff_dispatcher()
 
         yield
         if task is not None:

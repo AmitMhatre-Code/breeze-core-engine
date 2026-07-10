@@ -12,7 +12,6 @@ import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
-import { ManualContractFieldWarningDialog } from "@/components/order/ManualContractFieldWarningDialog";
 import { AggressiveLimitOrderField } from "@/components/order/AggressiveLimitOrderField";
 import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
 import { OrderSideBadge } from "@/components/shared/badges/OrderSideBadge";
@@ -24,7 +23,7 @@ import { ExpirySelectPill } from "@/components/shared/order/ExpirySelectPill";
 import { StrikeSelectPill } from "@/components/shared/order/StrikeSelectPill";
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
-import { isValidExpiryDisplay, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import { snapQuantityToLotMultiple } from "@/lib/strategy-builder/leg-ui-helpers";
 import {
   consumePlaceOrderClonePayload,
@@ -51,52 +50,6 @@ import type {
 } from "@/lib/strategy-builder/types";
 
 type Segment = "NFO" | "BFO";
-type FieldMode = "dropdown" | "manual";
-
-const fieldModeBtnClass =
-  "flex shrink-0 items-center justify-center self-center rounded-md p-2 text-muted transition hover:bg-panel2 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:pointer-events-none disabled:opacity-40";
-
-function EditIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-    </svg>
-  );
-}
-
-function ListIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M8 6h13" />
-      <path d="M8 12h13" />
-      <path d="M8 18h13" />
-      <path d="M3 6h.01" />
-      <path d="M3 12h.01" />
-      <path d="M3 18h.01" />
-    </svg>
-  );
-}
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
   return (
@@ -209,11 +162,6 @@ function PlaceOrderPageInner() {
   const [lockedOrderSide, setLockedOrderSide] = useState<OrderSide | null>(null);
   /** Exchange, scrip, expiry, strike, option fixed — only qty, price, and locked side editable. */
   const [contractFieldsLocked, setContractFieldsLocked] = useState(false);
-  const [expiryFieldMode, setExpiryFieldMode] = useState<FieldMode>("dropdown");
-  const [strikeFieldMode, setStrikeFieldMode] = useState<FieldMode>("dropdown");
-  const [manualEditPrompt, setManualEditPrompt] = useState<
-    "expiry" | "strike" | null
-  >(null);
 
   useEffect(() => {
     if (prefillConsumedRef.current) return;
@@ -289,10 +237,7 @@ function PlaceOrderPageInner() {
     return first != null && Number.isFinite(Number(first)) ? Number(first) : null;
   }, [chainSuccess]);
 
-  const effectiveStrike =
-    strikeFieldMode === "manual"
-      ? strikeSelection
-      : strikeSelection ?? defaultStrike;
+  const effectiveStrike = strikeSelection ?? defaultStrike;
 
   // Scrip details (LTP / B:S / lot size) derive live from the polling chain — updates
   // automatically as the cache refreshes, no manual fetch button.
@@ -395,12 +340,6 @@ function PlaceOrderPageInner() {
     staleTime: 15_000,
   });
 
-  function resetContractFieldModes() {
-    setExpiryFieldMode("dropdown");
-    setStrikeFieldMode("dropdown");
-    setManualEditPrompt(null);
-  }
-
   function resetOrderForm() {
     setStockCode("");
     setExpiryDate("");
@@ -409,19 +348,6 @@ function PlaceOrderPageInner() {
     setPrice("");
     setLockedOrderSide(null);
     setContractFieldsLocked(false);
-    resetContractFieldModes();
-  }
-
-  function confirmManualEdit() {
-    if (manualEditPrompt === "expiry") {
-      setExpiryFieldMode("manual");
-    }
-    if (manualEditPrompt === "strike") {
-      const prefill = strikeSelection ?? defaultStrike;
-      if (prefill != null) setStrikeSelection(prefill);
-      setStrikeFieldMode("manual");
-    }
-    setManualEditPrompt(null);
   }
 
   function onExpiryChange(d: string) {
@@ -538,22 +464,12 @@ function PlaceOrderPageInner() {
     isInitialLoad: chainLoading,
   });
 
-  const expiryInvalid =
-    expiryFieldMode === "manual" &&
-    expiryDate.trim().length > 0 &&
-    !isValidExpiryDisplay(expiryDate);
-
   const strikeDropdownDisabled =
     !stockCode ||
     !expiryDate ||
     (chainQ.isFetching && !strikes.length) ||
     !strikes.length ||
     contractFieldsLocked;
-
-  const manualStrikeValue =
-    strikeSelection != null && Number.isFinite(strikeSelection)
-      ? String(strikeSelection)
-      : "";
 
   const marginPerLotForSide =
     previewSide === "Buy" ? marginQ.data?.marginPerLotBuy : marginQ.data?.marginPerLotSell;
@@ -565,7 +481,6 @@ function PlaceOrderPageInner() {
       : null;
   const expiryDisplay = chainSuccess?.expiry_display?.trim() || expiryDate.trim();
   const isAtmStrike =
-    strikeFieldMode === "dropdown" &&
     defaultStrike != null &&
     effectiveStrike != null &&
     Math.round(effectiveStrike) === Math.round(defaultStrike);
@@ -590,7 +505,7 @@ function PlaceOrderPageInner() {
             </p>
           ) : null}          
 
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.5fr_1fr] lg:items-start">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.05fr_1fr] lg:items-start">
             <section
               className="relative z-20 rounded-[13px] border border-border bg-panel"
               aria-label="Options order entry"
@@ -625,7 +540,6 @@ function PlaceOrderPageInner() {
                         setQuantity("");
                         setPrice("");
                         setLockedOrderSide(null);
-                        resetContractFieldModes();
                       }}
                     />
                   </div>
@@ -645,128 +559,37 @@ function PlaceOrderPageInner() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <span className={sb.fieldLabel}>Expiry</span>
-                    <div className="flex items-stretch gap-1.5">
-                      <div className="min-w-0 flex-1">
-                        {expiryFieldMode === "dropdown" ? (
-                          <ExpirySelectPill
-                            layout="default"
-                            hideLabel
-                            rootClassName={pillStretch}
-                            dates={expiryOptions}
-                            value={expiryDate}
-                            disabled={!stockCode || contractFieldsLocked}
-                            onChange={onExpiryChange}
-                          />
-                        ) : (
-                          <input
-                            type="text"
-                            className={sb.input}
-                            value={expiryDate}
-                            disabled={!stockCode || contractFieldsLocked}
-                            placeholder="21-Mar-2026"
-                            aria-label="Expiry date"
-                            onChange={(e) => onExpiryChange(e.target.value)}
-                          />
-                        )}
-                      </div>
-                      {!contractFieldsLocked ? (
-                        expiryFieldMode === "dropdown" ? (
-                          <button
-                            type="button"
-                            className={fieldModeBtnClass}
-                            disabled={!stockCode}
-                            aria-label="Edit expiry manually"
-                            onClick={() => setManualEditPrompt("expiry")}
-                          >
-                            <EditIcon />
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className={fieldModeBtnClass}
-                            aria-label="Choose expiry from list"
-                            onClick={() => setExpiryFieldMode("dropdown")}
-                          >
-                            <ListIcon />
-                          </button>
-                        )
-                      ) : null}
-                    </div>
-                    {expiryInvalid ? (
-                      <p className="mt-1 text-xs text-amber-accent">
-                        Use DD-Mon-YYYY format (e.g. 21-Mar-2026).
-                      </p>
-                    ) : null}
+                    <ExpirySelectPill
+                      layout="default"
+                      hideLabel
+                      rootClassName={pillStretch}
+                      dates={expiryOptions}
+                      value={expiryDate}
+                      disabled={!stockCode || contractFieldsLocked}
+                      onChange={onExpiryChange}
+                    />
                   </div>
 
                   <div>
                     <span className={sb.fieldLabel}>Strike</span>
-                    <div className="flex items-stretch gap-1.5">
-                      <div className="min-w-0 flex-1">
-                        {strikeFieldMode === "dropdown" ? (
-                          <StrikeSelectPill
-                            layout="default"
-                            hideLabel
-                            rootClassName={pillStretch}
-                            strikes={strikes}
-                            value={effectiveStrike}
-                            atmBadge={isAtmStrike}
-                            busy={Boolean(
-                              stockCode &&
-                                expiryDate &&
-                                chainQ.isFetching &&
-                                !strikes.length,
-                            )}
-                            disabled={strikeDropdownDisabled}
-                            onChange={(k) => {
-                              setStrikeSelection(k);
-                            }}
-                          />
-                        ) : (
-                          <input
-                            type="number"
-                            min={0}
-                            step={1}
-                            className={sb.input}
-                            value={manualStrikeValue}
-                            disabled={!stockCode || contractFieldsLocked}
-                            placeholder="24500"
-                            aria-label="Strike price"
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              if (raw === "") {
-                                setStrikeSelection(null);
-                              } else {
-                                const n = parseNum(raw);
-                                setStrikeSelection(Number.isFinite(n) ? n : null);
-                              }
-                            }}
-                          />
-                        )}
-                      </div>
-                      {!contractFieldsLocked ? (
-                        strikeFieldMode === "dropdown" ? (
-                          <button
-                            type="button"
-                            className={fieldModeBtnClass}
-                            disabled={!stockCode}
-                            aria-label="Edit strike manually"
-                            onClick={() => setManualEditPrompt("strike")}
-                          >
-                            <EditIcon />
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className={fieldModeBtnClass}
-                            aria-label="Choose strike from list"
-                            onClick={() => setStrikeFieldMode("dropdown")}
-                          >
-                            <ListIcon />
-                          </button>
-                        )
-                      ) : null}
-                    </div>
+                    <StrikeSelectPill
+                      layout="default"
+                      hideLabel
+                      rootClassName={pillStretch}
+                      strikes={strikes}
+                      value={effectiveStrike}
+                      atmBadge={isAtmStrike}
+                      busy={Boolean(
+                        stockCode &&
+                          expiryDate &&
+                          chainQ.isFetching &&
+                          !strikes.length,
+                      )}
+                      disabled={strikeDropdownDisabled}
+                      onChange={(k) => {
+                        setStrikeSelection(k);
+                      }}
+                    />
                   </div>
                 </div>
 
@@ -795,7 +618,7 @@ function PlaceOrderPageInner() {
 
                 <div className="flex flex-col gap-4 pt-4">
                   {/* <h2 className={sb.sectionTitle}>Quantity &amp; price</h2> */}
-                  <div className="grid grid-cols-1 gap-4">
+                  <div className="grid grid-cols-2 gap-3">
                     <label className={sb.fieldLabel}>
                       Quantity (units)
                       {lotSizeForHints != null &&
@@ -1001,12 +824,6 @@ function PlaceOrderPageInner() {
             </div>
           </div>
         </div>
-        <ManualContractFieldWarningDialog
-          open={manualEditPrompt != null}
-          field={manualEditPrompt ?? "expiry"}
-          onCancel={() => setManualEditPrompt(null)}
-          onConfirm={confirmManualEdit}
-        />
       </RevokedTradingPageGuard>
     </AppShell>
   );

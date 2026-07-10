@@ -800,20 +800,20 @@ export default function StrategyBuilderPage() {
     <AppShell>
       <RevokedTradingPageGuard>
         <div className="mx-auto max-w-[1240px] space-y-5">
-          <header>
-            <h1 className="text-xl font-semibold tracking-tight text-foreground">
-              Strategy Builder
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
-              Parameter-driven strategy proposals with batched market data
-            </p>
-          </header>
-
-          {chainQuoteMeta ? (
-            <div className="flex justify-end">
-              <QuoteSourceBadge meta={chainQuoteMeta} variant="compact" />
+          <header className="flex items-end justify-between gap-4">
+            <div>
+              <h1 className="text-xl font-semibold tracking-tight text-foreground">
+                Strategy Builder
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
+                Parameter-driven strategy proposals with batched market data
+              </p>
             </div>
-          ) : null}
+
+            {chainQuoteMeta ? (
+              <QuoteSourceBadge meta={chainQuoteMeta} variant="compact" />
+            ) : null}
+          </header>
 
           <section className="relative z-20 divide-y divide-border-soft rounded-[13px] border border-border bg-panel">
           <div className="space-y-4 p-5">
@@ -825,7 +825,7 @@ export default function StrategyBuilderPage() {
               <div className="flex shrink-0 items-center border-b border-border-soft px-2 py-2 sm:border-b-0 sm:border-r sm:py-0 sm:ps-2.5 sm:pe-2">
                 <ExchangeFlipToggle value={segmentExchange} onChange={onSegmentChange} />
               </div>
-              <div className="relative z-30 flex min-w-0 max-w-[min(100%,34rem)] flex-1 items-center px-3 py-2 sm:border-r sm:border-border-soft">
+              <div className="relative z-30 flex min-w-0 max-w-[min(100%,17rem)] flex-1 items-center px-3 py-2 sm:border-r sm:border-border-soft">
                 {uq.isLoading ? (
                   <span className="text-xs app-text-muted animate-pulse">
                     Loading underlyings…
@@ -850,6 +850,7 @@ export default function StrategyBuilderPage() {
               <div className="flex shrink-0 items-center px-3 py-2 sm:pe-3.5">
                 <ExpirySelectPill
                   layout="toolbar"
+                  fullDate
                   dates={expiryOptions}
                   value={expiryDate}
                   disabled={!stockCode}
@@ -916,14 +917,14 @@ export default function StrategyBuilderPage() {
                 </div>
               ) : null}
               <div className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label className={sb.fieldRow}>
+                <div className="flex flex-wrap items-start justify-start gap-x-8 gap-y-4">
+                  <label className={`${sb.fieldRow} w-auto`}>
                     <span className={`${sb.fieldLabelInline} min-w-[9.5rem]`}>
                       Margin to deploy (Lacs)
                     </span>
                     <input
                       type="number"
-                      className={`${sb.input} min-w-0 flex-1`}
+                      className={`${sb.input} !w-[16rem] max-w-full`}
                       value={marginLacs}
                       onChange={(e) => setMarginLacs(e.target.value)}
                       min={0}
@@ -931,13 +932,13 @@ export default function StrategyBuilderPage() {
                       step={0.1}
                     />
                   </label>
-                  <label className={sb.fieldRow}>
+                  <label className={`${sb.fieldRow} w-auto`}>
                     <span className={`${sb.fieldLabelInline} min-w-[9.5rem]`}>
-                      Max loss
+                      Max loss (in lacs)
                     </span>
                     <input
                       type="number"
-                      className={`${sb.input} min-w-0 flex-1`}
+                      className={`${sb.input} !w-[16rem] max-w-full`}
                       value={maxLossLacs}
                       onChange={(e) => setMaxLossLacs(e.target.value)}
                       placeholder="∞ Unlimited"
@@ -949,21 +950,21 @@ export default function StrategyBuilderPage() {
                   </label>
                 </div>
 
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <div className={sb.parameterCard}>
+                <div className="flex flex-wrap items-stretch justify-start gap-4">
+                  <div className={`${sb.parameterCard} w-full max-w-[30rem]`}>
                     <h3 className={sb.parameterCardTitle}>Income strategies</h3>
                     <div className="flex flex-1 flex-col gap-4">
                       <div className="min-w-0 space-y-1">
-                        <label className={`${sb.fieldRow} flex-wrap`}>
+                        <label className={sb.fieldRow}>
                           <span
-                            className={`${sb.fieldLabelInline} flex min-w-[11.5rem] items-center gap-1.5`}
+                            className={`${sb.fieldLabelInline} flex min-w-[11.5rem] items-center gap-1.5 whitespace-nowrap`}
                           >
                             <PopLabel variant="field" />
                             {" (%)"}
                           </span>
                           <input
                             type="number"
-                            className={`${sb.input} min-w-0 flex-1`}
+                            className={`${sb.input} !w-[9.5rem] max-w-full`}
                             value={minPopPct}
                             onChange={(e) => setMinPopPct(e.target.value)}
                             min={1}
@@ -987,7 +988,7 @@ export default function StrategyBuilderPage() {
                           </span>
                           <input
                             type="number"
-                            className={`${sb.input} min-w-0 flex-1`}
+                            className={`${sb.input} !w-[9.5rem] max-w-full`}
                             value={minAnnReturnPct}
                             onChange={(e) => setMinAnnReturnPct(e.target.value)}
                             min={0}
@@ -1015,7 +1016,7 @@ export default function StrategyBuilderPage() {
                     </button>
                   </div>
 
-                  <div className={sb.parameterCard}>
+                  <div className={`${sb.parameterCard} w-full max-w-[30rem]`}>
                     <h3 className={sb.parameterCardTitle}>Directional strategies</h3>
                     <div className="flex-1 space-y-2 text-sm text-muted">
                       <p>{DIRECTIONAL_HINT}</p>
