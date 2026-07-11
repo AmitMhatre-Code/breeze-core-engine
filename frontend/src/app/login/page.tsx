@@ -167,7 +167,7 @@ function LoginContent() {
         <form onSubmit={onDirectSubmit} className="space-y-3">
           <input
             required
-            className="w-full rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-faint transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none"
+            className="w-full rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 py-2.5 text-sm text-foreground placeholder:text-faint transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none"
             placeholder="ICICI user id"
             value={directUserId}
             onChange={(e) => setDirectUserId(e.target.value)}
@@ -176,7 +176,7 @@ function LoginContent() {
           <input
             required
             type="password"
-            className="w-full rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-faint transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none"
+            className="w-full rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 py-2.5 text-sm text-foreground placeholder:text-faint transition hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none"
             placeholder="App password"
             value={directPassword}
             onChange={(e) => setDirectPassword(e.target.value)}

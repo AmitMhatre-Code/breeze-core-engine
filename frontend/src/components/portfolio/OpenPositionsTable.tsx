@@ -19,6 +19,10 @@ import { PortfolioGroupPayoffPanel } from "@/components/shared/payoff/PortfolioG
 import { HedgeCandidatesModal } from "@/components/portfolio/HedgeCandidatesModal";
 import { SquareOffLegsModal } from "@/components/portfolio/SquareOffLegsModal";
 import { SquareOffRuleModal } from "@/components/portfolio/SquareOffRuleModal";
+import {
+  LegExitRuleModal,
+  type LegExitRuleTarget,
+} from "@/components/portfolio/LegExitRuleModal";
 import { Checkbox } from "@/components/ui/Checkbox";
 import {
   squareOffRuleGroupKey,
@@ -40,9 +44,12 @@ import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { useGroupLiveOverlay } from "@/lib/portfolio/useGroupLiveOverlay";
 import { useGroupSubscriptionHolders } from "@/lib/portfolio/useGroupSubscriptionHolders";
 import { useGroupPoP } from "@/lib/portfolio/useGroupPoP";
+import { useLegPoP } from "@/lib/portfolio/useLegPoP";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { formatOptionSymbolLabel } from "@/lib/strategy-builder/leg-ui-helpers";
 import type { StrategyLeg } from "@/lib/strategy-builder/types";
+
+export type PortfolioPositionsViewMode = "grouped" | "individual";
 
 /**
  * Matches legacy `templates/portfolio.html` fed by `get_positions` (see
@@ -263,6 +270,8 @@ type OpenPositionsTableProps = {
   defaultExpandedGroupKey?: string | null;
   /** Fires whenever the number of currently-live (expanded, WS-fed) groups changes. */
   onLiveGroupCountChange?: (count: number) => void;
+  /** "grouped" (default): legs bundled by scrip+expiry. "individual": one row per leg, no payoff chart. */
+  viewMode?: PortfolioPositionsViewMode;
 };
 
 /** One-shot pill trigger (Exit Rule / Square Off Selected / Hedge) — always the outline style, never a toggle. */
@@ -271,11 +280,13 @@ function GroupPillButton({
   label,
   onClick,
   disabled = false,
+  title,
 }: {
   variant: "table" | "card";
   label: string;
   onClick: (e: MouseEvent) => void;
   disabled?: boolean;
+  title?: string;
 }) {
   const className = variant === "table" ? pillOutlineTable : pillOutlineCard;
   return (
@@ -285,11 +296,42 @@ function GroupPillButton({
       style={ACCENT_OUTLINE_STYLE}
       onClick={onClick}
       disabled={disabled}
+      title={title}
     >
       {label}
     </button>
   );
 }
+
+/** Stable per-leg identity — unlike a group key, includes strike+right+action so
+ * individual legs of the same scrip+expiry are distinguishable. */
+function legIdentityKey(row: PortfolioPositionRecord): string {
+  return [
+    String(row.stock_code ?? "").trim().toUpperCase(),
+    String(row.exchange_code ?? "NFO").trim().toUpperCase(),
+    String(row.expiry_date ?? "").trim(),
+    String(row.strike_price ?? "").trim(),
+    String(row.right ?? "").trim().toUpperCase(),
+    String(row.action ?? "").trim().toUpperCase(),
+  ].join("|");
+}
+
+function legToExitRuleTarget(row: PortfolioPositionRecord): LegExitRuleTarget {
+  return {
+    stock_code: String(row.stock_code ?? "").trim(),
+    exchange_code: String(row.exchange_code ?? "NFO").trim(),
+    expiry_date: String(row.expiry_date ?? "").trim(),
+    strike_price: String(row.strike_price ?? "").trim(),
+    right: String(row.right ?? "").trim(),
+    quantity: String(row.quantity ?? "").trim(),
+    product_type:
+      row.product_type != null ? String(row.product_type) : undefined,
+    action: String(row.action ?? "").trim(),
+  };
+}
+
+/** Individual-legs table column count: Row, Option, Type, Position, Qty, Avg, LTP, Spot, MTM, Carry, Span+ELM, PoP, Actions. */
+const LEG_TABLE_COL_COUNT = 13;
 
 /**
  * Compact status chip for a group's profit/loss exit rule — shown next to the
@@ -379,6 +421,44 @@ function GroupExpandedExtras({
             />
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Individual-leg counterpart of `GroupExpandedExtras` — no payoff panel (a single
+ * naked leg's isolated payoff/breakevens aren't a very meaningful chart, and the
+ * PoP number alone is already shown on the row), and Hedge is disabled since
+ * `PortfolioHedgePanel` computes net delta/margin across a whole group's rows.
+ */
+function LegExpandedActions({
+  onOpenExitRuleModal,
+  onSquareOffClick,
+}: {
+  onOpenExitRuleModal: (e: MouseEvent) => void;
+  onSquareOffClick: (e: MouseEvent) => void;
+}) {
+  return (
+    <div className="border-t border-border-soft bg-panel2 p-6">
+      <div className="flex w-full max-w-[13rem] flex-col gap-3">
+        <GroupPillButton
+          variant="table"
+          label="Exit Rule"
+          onClick={onOpenExitRuleModal}
+        />
+        <GroupPillButton
+          variant="table"
+          label="Square Off"
+          onClick={onSquareOffClick}
+        />
+        <GroupPillButton
+          variant="table"
+          label="Hedge"
+          onClick={() => {}}
+          disabled
+          title="Hedge is only available in grouped view"
+        />
       </div>
     </div>
   );
@@ -793,11 +873,244 @@ function PortfolioGroupCardBlock({
   );
 }
 
+type LegBlockProps = {
+  row: PortfolioPositionRecord;
+  isOpen: boolean;
+  onToggle: () => void;
+  rowNumber: number;
+  onOpenExitRuleModal: (e: MouseEvent) => void;
+  onSquareOffClick: (e: MouseEvent) => void;
+};
+
+/**
+ * One leg's own row (desktop table), individual-legs view. No live-chain overlay
+ * or WS subscription — PoP is a one-shot REST fetch that dedupes with sibling
+ * legs' (and the grouped view's) fetch for the same scrip+expiry, same as a
+ * collapsed group's PoP column.
+ */
+function PortfolioLegTableBlock({
+  row,
+  isOpen,
+  onToggle,
+  rowNumber,
+  onOpenExitRuleModal,
+  onSquareOffClick,
+}: LegBlockProps) {
+  const stockCode = String(row.stock_code ?? "");
+  const expiryDate = String(row.expiry_date ?? "");
+  const exchangeCode = String(row.exchange_code ?? "NFO");
+  const pop = useLegPoP(row, stockCode, expiryDate, exchangeCode);
+  const mtm = formatMtmCarry(row.current_profit);
+  const carry = formatMtmCarry(row.carry_profit);
+  const cr = formatCarryRet(coerceNum(row.carry_margin_returns));
+  const spot = formatSpot(row.spot_price);
+  const qty = coerceNum(row.quantity);
+  const span = coerceNum(row.span_margin_required);
+  const elm = coerceNum(row.elm_margin_required);
+  const label = formatOptionSymbol(row);
+
+  return (
+    <Fragment>
+      <tr
+        role="button"
+        tabIndex={0}
+        aria-expanded={isOpen}
+        title={isOpen ? "Collapse" : "Expand"}
+        className="app-table-row cursor-pointer select-none hover:bg-panel2"
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+      >
+        <td className={`${tdBase} text-center font-mono tabular-nums`}>
+          {rowNumber}
+        </td>
+        <td className={`${tdBase} font-medium`}>{label}</td>
+        <td className={tdBase}>
+          <OptionTypeBadge right={row.right} />
+        </td>
+        <td className={tdBase}>
+          <OrderSideBadge side={row.action} />
+        </td>
+        <td className={`${tdBase} text-right font-mono tabular-nums`}>
+          {qty != null
+            ? qty.toLocaleString("en-IN", {
+                maximumFractionDigits: Number.isInteger(qty) ? 0 : 4,
+              })
+            : "—"}
+        </td>
+        <td className={`${tdBase} text-right font-mono tabular-nums`}>
+          {formatPriceCell(row.average_price)}
+        </td>
+        <td className={`${tdBase} text-right font-mono tabular-nums`}>
+          {formatPriceCell(row.ltp)}
+        </td>
+        <td className={`${tdBase} text-right font-mono tabular-nums ${spot.className}`}>
+          {spot.text}
+        </td>
+        <td className={`${tdShell} text-right font-mono tabular-nums font-medium ${mtm.className}`}>
+          {mtm.text}
+        </td>
+        <td className={`${tdShell} text-right font-mono tabular-nums`}>
+          <span className="inline-flex flex-col items-end leading-tight">
+            <span className={`font-medium ${carry.className}`}>{carry.text}</span>
+            <span className={`text-[11px] font-normal ${demoteWeight(cr.className)}`}>
+              {cr.text}
+            </span>
+          </span>
+        </td>
+        <td className={`${tdBase} text-right font-mono tabular-nums`}>
+          <SpanElmCell span={span} elm={elm} />
+        </td>
+        <td className={`${tdBase} text-right font-mono tabular-nums`}>
+          {formatPoP(pop)}
+        </td>
+        <td className={`${tdBase} text-right align-middle`}>
+          {!isOpen ? <SeeActionsHint /> : null}
+        </td>
+      </tr>
+      {isOpen ? (
+        <tr className="app-table-row">
+          <td className="w-px min-w-full p-0 align-top" colSpan={LEG_TABLE_COL_COUNT}>
+            <LegExpandedActions
+              onOpenExitRuleModal={onOpenExitRuleModal}
+              onSquareOffClick={onSquareOffClick}
+            />
+          </td>
+        </tr>
+      ) : null}
+    </Fragment>
+  );
+}
+
+/** One leg's own card (mobile), individual-legs view. */
+function PortfolioLegCardBlock({
+  row,
+  isOpen,
+  onToggle,
+  onOpenExitRuleModal,
+  onSquareOffClick,
+}: LegBlockProps) {
+  const stockCode = String(row.stock_code ?? "");
+  const expiryDate = String(row.expiry_date ?? "");
+  const exchangeCode = String(row.exchange_code ?? "NFO");
+  const pop = useLegPoP(row, stockCode, expiryDate, exchangeCode);
+  const mtm = formatMtmCarry(row.current_profit);
+  const carry = formatMtmCarry(row.carry_profit);
+  const cr = formatCarryRet(coerceNum(row.carry_margin_returns));
+  const spot = formatSpot(row.spot_price);
+  const qty = coerceNum(row.quantity);
+  const span = coerceNum(row.span_margin_required);
+  const elm = coerceNum(row.elm_margin_required);
+  const label = formatOptionSymbol(row);
+
+  return (
+    <div className="app-card-muted overflow-hidden text-sm">
+      <div className="flex items-start gap-3 p-4 sm:p-5">
+        <button
+          type="button"
+          aria-expanded={isOpen}
+          className="mt-0.5 shrink-0 tabular-nums text-muted"
+          onClick={onToggle}
+        >
+          {isOpen ? "▼" : "▶"}
+        </button>
+        <div
+          role="button"
+          tabIndex={0}
+          aria-expanded={isOpen}
+          className="min-w-0 flex-1 cursor-pointer space-y-2 text-left"
+          onClick={onToggle}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onToggle();
+            }
+          }}
+        >
+          <h3 className="flex flex-wrap items-center gap-1.5 text-base font-semibold leading-snug text-foreground">
+            {label}
+          </h3>
+          <p className="flex items-center gap-2">
+            <OptionTypeBadge right={row.right} />
+            <OrderSideBadge side={row.action} />
+          </p>
+          <p>
+            <span className="app-text-muted">Qty:</span>{" "}
+            <span className="font-mono tabular-nums">
+              {qty != null
+                ? qty.toLocaleString("en-IN", {
+                    maximumFractionDigits: Number.isInteger(qty) ? 0 : 4,
+                  })
+                : "—"}
+            </span>
+          </p>
+          <p>
+            <span className="app-text-muted">Avg Price:</span>{" "}
+            <span className="font-mono tabular-nums">
+              {formatPriceCell(row.average_price)}
+            </span>
+          </p>
+          <p>
+            <span className="app-text-muted">LTP:</span>{" "}
+            <span className="font-mono tabular-nums">
+              {formatPriceCell(row.ltp)}
+            </span>
+          </p>
+          <p>
+            <span className="app-text-muted">Spot:</span>{" "}
+            <span className={spot.className}>{spot.text}</span>
+          </p>
+          <p>
+            <span className="app-text-muted">MTM:</span>{" "}
+            <span className={`font-mono tabular-nums font-medium ${mtm.className}`}>{mtm.text}</span>
+          </p>
+          <p>
+            <span className="app-text-muted">Carry:</span>{" "}
+            <span className={`font-mono tabular-nums font-medium ${carry.className}`}>{carry.text}</span>{" "}
+            <span className={`font-mono tabular-nums text-xs font-normal ${demoteWeight(cr.className)}`}>
+              {cr.text}
+            </span>
+          </p>
+          <p>
+            <span className="app-text-muted">Span + ELM:</span>{" "}
+            <span className="font-mono tabular-nums">
+              {formatSpanElm(span)}{" "}
+              <span className="text-xs font-normal app-text-muted">
+                + {formatSpanElm(elm)}
+              </span>
+            </span>
+          </p>
+          <p>
+            <span className="app-text-muted">PoP:</span>{" "}
+            <span className="font-mono tabular-nums">{formatPoP(pop)}</span>
+          </p>
+          {!isOpen ? (
+            <p>
+              <SeeActionsHint />
+            </p>
+          ) : null}
+        </div>
+      </div>
+      {isOpen ? (
+        <LegExpandedActions
+          onOpenExitRuleModal={onOpenExitRuleModal}
+          onSquareOffClick={onSquareOffClick}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 export function OpenPositionsTable({
   positions,
   emptyMessage = "No positions to display",
   defaultExpandedGroupKey = null,
   onLiveGroupCountChange,
+  viewMode = "grouped",
 }: OpenPositionsTableProps) {
   const groups = useMemo(
     () => buildPortfolioPositionGroups(positions),
@@ -806,6 +1119,13 @@ export function OpenPositionsTable({
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(defaultExpandedGroupKey ? [defaultExpandedGroupKey] : []),
   );
+  const [expandedLegKeys, setExpandedLegKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [legExitRuleTarget, setLegExitRuleTarget] = useState<{
+    leg: LegExitRuleTarget;
+    label: string;
+  } | null>(null);
   const [selectedLegsByGroup, setSelectedLegsByGroup] = useState<
     Map<string, Set<number>>
   >(() => new Map());
@@ -965,6 +1285,34 @@ export function OpenPositionsTable({
     [groups, exitRuleModalGroupKey],
   );
 
+  const toggleLegExpand = useCallback((key: string) => {
+    setExpandedLegKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const handleOpenLegExitRuleModal = useCallback(
+    (e: MouseEvent, row: PortfolioPositionRecord) => {
+      e.stopPropagation();
+      setLegExitRuleTarget({
+        leg: legToExitRuleTarget(row),
+        label: formatOptionSymbol(row),
+      });
+    },
+    [],
+  );
+
+  const handleSquareOffLegClick = useCallback(
+    (e: MouseEvent, row: PortfolioPositionRecord) => {
+      e.stopPropagation();
+      setSquareOffRows([row]);
+    },
+    [],
+  );
+
   const handleExecuteHedge = useCallback(() => {
     if (!selectedCandidate || !hedgeActiveGroup) return;
     setExecuteOpen(true);
@@ -986,126 +1334,222 @@ export function OpenPositionsTable({
 
   return (
     <>
-      <div className="hidden min-w-0 max-w-full xl:block">
-        <div className="app-table-wrap w-full min-w-0 max-w-full rounded-none border-0 bg-transparent dark:bg-transparent">
-          <table className="w-full min-w-max table-auto border-collapse text-left">
-            <thead>
-              <tr className="border-b border-border bg-panel2">
-                <th className={`${thBase} w-10 text-center`}>
-                  <span className="sr-only">Select</span>
-                </th>
-                <th className={`${thBase} w-10 text-center`}>
-                  <span className="sr-only">Row</span>
-                </th>
-                <th className={`${thBase} min-w-[11rem] text-left 2xl:min-w-[14rem]`}>
-                  Option
-                </th>
-                <th className={`${thBase} text-left`}>Type</th>
-                <th className={`${thBase} text-left`}>Position</th>
-                <th className={`${thBase} text-right`}>Qty</th>
-                <th className={`${thBase} text-right`}>Avg</th>
-                <th className={`${thBase} text-right`}>LTP</th>
-                <th className={`${thBase} text-right`}>Spot</th>
-                <th className={`${thBase} text-right`}>MTM</th>
-                <th
-                  className={`${thBase} text-right`}
-                  title="Carry Ret. (annualised %, group level only): (Carry ÷ DTE) × 365 ÷ (Span + ELM) × 100"
-                >
-                  Carry
-                </th>
-                <th
-                  className={`${thBase} text-right`}
-                  title="Span Margin + ELM at 2% — shown at group level only"
-                >
-                  <span className="inline-flex flex-col items-end leading-tight">
-                    <span>Span</span>
-                    <span className="text-[10px] font-normal app-text-muted">
-                      + ELM
-                    </span>
-                  </span>
-                </th>
-                <th
-                  className={`${thBase} text-right`}
-                  title="Probability of profit at expiry — group level only"
-                >
-                  PoP
-                </th>
-                <th className={`${thBase} text-right whitespace-nowrap`}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={TABLE_COL_COUNT}
-                    className="px-3 py-8 text-center text-sm app-text-muted"
+      {viewMode === "grouped" ? (
+        <div className="hidden min-w-0 max-w-full xl:block">
+          <div className="app-table-wrap w-full min-w-0 max-w-full rounded-none border-0 bg-transparent dark:bg-transparent">
+            <table className="w-full min-w-max table-auto border-collapse text-left">
+              <thead>
+                <tr className="border-b border-border bg-panel2">
+                  <th className={`${thBase} w-10 text-center`}>
+                    <span className="sr-only">Select</span>
+                  </th>
+                  <th className={`${thBase} w-10 text-center`}>
+                    <span className="sr-only">Row</span>
+                  </th>
+                  <th className={`${thBase} min-w-[11rem] text-left 2xl:min-w-[14rem]`}>
+                    Option
+                  </th>
+                  <th className={`${thBase} text-left`}>Type</th>
+                  <th className={`${thBase} text-left`}>Position</th>
+                  <th className={`${thBase} text-right`}>Qty</th>
+                  <th className={`${thBase} text-right`}>Avg</th>
+                  <th className={`${thBase} text-right`}>LTP</th>
+                  <th className={`${thBase} text-right`}>Spot</th>
+                  <th className={`${thBase} text-right`}>MTM</th>
+                  <th
+                    className={`${thBase} text-right`}
+                    title="Carry Ret. (annualised %, group level only): (Carry ÷ DTE) × 365 ÷ (Span + ELM) × 100"
                   >
-                    {emptyMessage}
-                  </td>
+                    Carry
+                  </th>
+                  <th
+                    className={`${thBase} text-right`}
+                    title="Span Margin + ELM at 2% — shown at group level only"
+                  >
+                    <span className="inline-flex flex-col items-end leading-tight">
+                      <span>Span</span>
+                      <span className="text-[10px] font-normal app-text-muted">
+                        + ELM
+                      </span>
+                    </span>
+                  </th>
+                  <th
+                    className={`${thBase} text-right`}
+                    title="Probability of profit at expiry — group level only"
+                  >
+                    PoP
+                  </th>
+                  <th className={`${thBase} text-right whitespace-nowrap`}></th>
                 </tr>
-              ) : (
-                groups.map((g, gi) => (
-                  <PortfolioGroupTableBlock
-                    key={g.key}
-                    g={g}
-                    isOpen={expandedGroups.has(g.key)}
-                    onToggle={() => toggleGroup(g.key)}
-                    holderId={getHolderId(g.key)}
-                    proposedLeg={hedgeGroupKey === g.key ? proposedLegForActive : null}
-                    startNumber={groupStartNumbers[gi]}
-                    onLiveChange={handleLiveChange}
-                    squareOffRule={squareOffRulesByGroup.get(squareOffRuleGroupKey(g.stockCode, g.expiryDate)) ?? null}
-                    onOpenExitRuleModal={(e) => handleOpenExitRuleModal(e, g.key)}
-                    selectedLegs={getSelectedLegs(g.key)}
-                    onToggleLeg={(idx) => toggleLeg(g.key, idx)}
-                    onToggleGroupAll={() => toggleGroupAll(g.key, g.rows.length)}
-                    onSquareOffSelectedClick={(e) =>
-                      handleSquareOffSelectedClick(e, g.key, g.rows)
-                    }
-                    onOpenHedgeModal={(e) => {
-                      e.stopPropagation();
-                      openHedgeModalForGroup(g.key);
-                    }}
-                  />
-                ))
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {positions.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={TABLE_COL_COUNT}
+                      className="px-3 py-8 text-center text-sm app-text-muted"
+                    >
+                      {emptyMessage}
+                    </td>
+                  </tr>
+                ) : (
+                  groups.map((g, gi) => (
+                    <PortfolioGroupTableBlock
+                      key={g.key}
+                      g={g}
+                      isOpen={expandedGroups.has(g.key)}
+                      onToggle={() => toggleGroup(g.key)}
+                      holderId={getHolderId(g.key)}
+                      proposedLeg={hedgeGroupKey === g.key ? proposedLegForActive : null}
+                      startNumber={groupStartNumbers[gi]}
+                      onLiveChange={handleLiveChange}
+                      squareOffRule={squareOffRulesByGroup.get(squareOffRuleGroupKey(g.stockCode, g.expiryDate)) ?? null}
+                      onOpenExitRuleModal={(e) => handleOpenExitRuleModal(e, g.key)}
+                      selectedLegs={getSelectedLegs(g.key)}
+                      onToggleLeg={(idx) => toggleLeg(g.key, idx)}
+                      onToggleGroupAll={() => toggleGroupAll(g.key, g.rows.length)}
+                      onSquareOffSelectedClick={(e) =>
+                        handleSquareOffSelectedClick(e, g.key, g.rows)
+                      }
+                      onOpenHedgeModal={(e) => {
+                        e.stopPropagation();
+                        openHedgeModalForGroup(g.key);
+                      }}
+                    />
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="hidden min-w-0 max-w-full xl:block">
+          <div className="app-table-wrap w-full min-w-0 max-w-full rounded-none border-0 bg-transparent dark:bg-transparent">
+            <table className="w-full min-w-max table-auto border-collapse text-left">
+              <thead>
+                <tr className="border-b border-border bg-panel2">
+                  <th className={`${thBase} w-10 text-center`}>
+                    <span className="sr-only">Row</span>
+                  </th>
+                  <th className={`${thBase} min-w-[11rem] text-left 2xl:min-w-[14rem]`}>
+                    Option
+                  </th>
+                  <th className={`${thBase} text-left`}>Type</th>
+                  <th className={`${thBase} text-left`}>Position</th>
+                  <th className={`${thBase} text-right`}>Qty</th>
+                  <th className={`${thBase} text-right`}>Avg</th>
+                  <th className={`${thBase} text-right`}>LTP</th>
+                  <th className={`${thBase} text-right`}>Spot</th>
+                  <th className={`${thBase} text-right`}>MTM</th>
+                  <th className={`${thBase} text-right`} title="Carry Ret. (annualised %): (Carry ÷ DTE) × 365 ÷ (Span + ELM) × 100">
+                    Carry
+                  </th>
+                  <th className={`${thBase} text-right`} title="Span Margin + ELM at 2%">
+                    <span className="inline-flex flex-col items-end leading-tight">
+                      <span>Span</span>
+                      <span className="text-[10px] font-normal app-text-muted">
+                        + ELM
+                      </span>
+                    </span>
+                  </th>
+                  <th
+                    className={`${thBase} text-right`}
+                    title="Probability of profit at expiry for this single leg — no payoff chart in this view"
+                  >
+                    PoP
+                  </th>
+                  <th className={`${thBase} text-right whitespace-nowrap`}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {positions.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={LEG_TABLE_COL_COUNT}
+                      className="px-3 py-8 text-center text-sm app-text-muted"
+                    >
+                      {emptyMessage}
+                    </td>
+                  </tr>
+                ) : (
+                  positions.map((row, idx) => {
+                    const key = legIdentityKey(row);
+                    return (
+                      <PortfolioLegTableBlock
+                        key={key}
+                        row={row}
+                        isOpen={expandedLegKeys.has(key)}
+                        onToggle={() => toggleLegExpand(key)}
+                        rowNumber={idx + 1}
+                        onOpenExitRuleModal={(e) => handleOpenLegExitRuleModal(e, row)}
+                        onSquareOffClick={(e) => handleSquareOffLegClick(e, row)}
+                      />
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
-      <div className="space-y-3 xl:hidden">
-        {positions.length === 0 ? (
-          <p className="py-6 text-center text-base app-text-muted">
-            {emptyMessage}
-          </p>
-        ) : (
-          groups.map((g) => (
-            <PortfolioGroupCardBlock
-              key={`card-group-${g.key}`}
-              g={g}
-              isOpen={expandedGroups.has(g.key)}
-              onToggle={() => toggleGroup(g.key)}
-              holderId={getHolderId(g.key)}
-              proposedLeg={hedgeGroupKey === g.key ? proposedLegForActive : null}
-              startNumber={0}
-              onLiveChange={handleLiveChange}
-              squareOffRule={squareOffRulesByGroup.get(squareOffRuleGroupKey(g.stockCode, g.expiryDate)) ?? null}
-              onOpenExitRuleModal={(e) => handleOpenExitRuleModal(e, g.key)}
-              selectedLegs={getSelectedLegs(g.key)}
-              onToggleLeg={(idx) => toggleLeg(g.key, idx)}
-              onToggleGroupAll={() => toggleGroupAll(g.key, g.rows.length)}
-              onSquareOffSelectedClick={(e) =>
-                handleSquareOffSelectedClick(e, g.key, g.rows)
-              }
-              onOpenHedgeModal={(e) => {
-                e.stopPropagation();
-                openHedgeModalForGroup(g.key);
-              }}
-            />
-          ))
-        )}
-      </div>
+      {viewMode === "grouped" ? (
+        <div className="space-y-3 xl:hidden">
+          {positions.length === 0 ? (
+            <p className="py-6 text-center text-base app-text-muted">
+              {emptyMessage}
+            </p>
+          ) : (
+            groups.map((g) => (
+              <PortfolioGroupCardBlock
+                key={`card-group-${g.key}`}
+                g={g}
+                isOpen={expandedGroups.has(g.key)}
+                onToggle={() => toggleGroup(g.key)}
+                holderId={getHolderId(g.key)}
+                proposedLeg={hedgeGroupKey === g.key ? proposedLegForActive : null}
+                startNumber={0}
+                onLiveChange={handleLiveChange}
+                squareOffRule={squareOffRulesByGroup.get(squareOffRuleGroupKey(g.stockCode, g.expiryDate)) ?? null}
+                onOpenExitRuleModal={(e) => handleOpenExitRuleModal(e, g.key)}
+                selectedLegs={getSelectedLegs(g.key)}
+                onToggleLeg={(idx) => toggleLeg(g.key, idx)}
+                onToggleGroupAll={() => toggleGroupAll(g.key, g.rows.length)}
+                onSquareOffSelectedClick={(e) =>
+                  handleSquareOffSelectedClick(e, g.key, g.rows)
+                }
+                onOpenHedgeModal={(e) => {
+                  e.stopPropagation();
+                  openHedgeModalForGroup(g.key);
+                }}
+              />
+            ))
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3 xl:hidden">
+          {positions.length === 0 ? (
+            <p className="py-6 text-center text-base app-text-muted">
+              {emptyMessage}
+            </p>
+          ) : (
+            positions.map((row) => {
+              const key = legIdentityKey(row);
+              return (
+                <PortfolioLegCardBlock
+                  key={`card-leg-${key}`}
+                  row={row}
+                  isOpen={expandedLegKeys.has(key)}
+                  onToggle={() => toggleLegExpand(key)}
+                  rowNumber={0}
+                  onOpenExitRuleModal={(e) => handleOpenLegExitRuleModal(e, row)}
+                  onSquareOffClick={(e) => handleSquareOffLegClick(e, row)}
+                />
+              );
+            })
+          )}
+        </div>
+      )}
 
       <HedgeCandidatesModal
         group={hedgeActiveGroup}
@@ -1149,6 +1593,15 @@ export function OpenPositionsTable({
           }
           onArmed={invalidateSquareOffRules}
           onDisarmed={invalidateSquareOffRules}
+        />
+      ) : null}
+
+      {legExitRuleTarget ? (
+        <LegExitRuleModal
+          open={legExitRuleTarget != null}
+          onClose={() => setLegExitRuleTarget(null)}
+          leg={legExitRuleTarget.leg}
+          label={legExitRuleTarget.label}
         />
       ) : null}
     </>

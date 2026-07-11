@@ -26,6 +26,8 @@ const LINE_WIDTH = 1.25;
 /** Target on-screen px for axis text (matches ~`text-[12px]` / small widget copy; SVG viewBox scaling otherwise blows it up). */
 const AXIS_LABEL_SCREEN_PX = 12;
 const HOVER_LABEL_SCREEN_PX = 12;
+const HOVER_BOX_W = 100;
+const HOVER_BOX_H = 38;
 const AREA_TOP_OPACITY = 0.38;
 const AREA_BOTTOM_OPACITY = 0.03;
 
@@ -403,8 +405,8 @@ export function Vix30dChart({
     const [px, py] = pts[hi];
     const date = formatChartDate(series[hi].date);
     const val = series[hi].value.toFixed(2);
-    const boxW = 92;
-    const boxH = 36;
+    const boxW = HOVER_BOX_W;
+    const boxH = HOVER_BOX_H;
     let lx = px - boxW / 2;
     let ly = py - boxH - 6;
     lx = Math.min(Math.max(lx, padL + 2), W - PAD_R - boxW - 2);
@@ -587,37 +589,42 @@ export function Vix30dChart({
             </>
           ) : null}
           {hoverLabel ? (
-            <g pointerEvents="none">
+            <g
+              pointerEvents="none"
+              style={{
+                filter: "drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45))",
+              }}
+            >
               <rect
                 x={hoverLabel.x}
                 y={hoverLabel.y}
-                width={92}
-                height={36}
+                width={HOVER_BOX_W}
+                height={HOVER_BOX_H}
                 rx={4}
-                className="fill-zinc-900/90 stroke-zinc-600/35 dark:fill-zinc-950/94 dark:stroke-zinc-500/35"
-                strokeWidth={0.5}
+                className="fill-zinc-900 stroke-zinc-600/70 dark:fill-[var(--elevated)] dark:stroke-[var(--border)]"
+                strokeWidth={0.75}
               />
               <text
-                x={hoverLabel.x + 46}
+                x={hoverLabel.x + HOVER_BOX_W / 2}
                 y={hoverLabel.y + 15}
                 textAnchor="middle"
                 dominantBaseline="middle"
                 fill="rgb(244 244 245)"
                 className="font-mono"
                 fontSize={hoverFontUser}
-                fontWeight={500}
+                fontWeight={600}
               >
                 {hoverLabel.date}
               </text>
               <text
-                x={hoverLabel.x + 46}
+                x={hoverLabel.x + HOVER_BOX_W / 2}
                 y={hoverLabel.y + 29}
                 textAnchor="middle"
                 dominantBaseline="middle"
                 fill={LINE_BLUE}
                 className="font-mono"
                 fontSize={hoverFontUser}
-                fontWeight={600}
+                fontWeight={700}
               >
                 {`VIX ${hoverLabel.val}`}
               </text>

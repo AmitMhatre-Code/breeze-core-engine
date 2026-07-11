@@ -216,6 +216,11 @@ def _icici_error(error_msg: str, status: int = 400) -> dict:
     return {"Status": status, "Error": error_msg}
 
 
+# No existing helper distinguishes index vs. single-stock underlyings anywhere in this codebase;
+# GTT placement is the first caller that needs it (breeze_connect's `index_or_stock` param).
+_GTT_INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+
+
 def _single_line_preview(text: str, max_len: int = 400) -> str:
     """Collapse whitespace for compact log lines."""
     one = " ".join(str(text).split())
@@ -2182,6 +2187,108 @@ class processor():
 
         self._maybe_evict_session(user_id, response)
         return response
+
+    def place_gtt_oco_exit_order(
+        self,
+        user_id,
+        product_type,
+        stock_code,
+        exchange_code,
+        strike_price,
+        right,
+        quantity,
+        expiry_date,
+        close_action,
+        target_trigger_price,
+        target_limit_price,
+        stop_trigger_price,
+        stop_limit_price,
+    ):
+        """Place a broker-monitored GTT OCO (target + stoploss) bracket to exit one held leg.
+        Unlike the group Exit Rule, ICICI itself watches the triggers — no local P&L polling."""
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return _icici_error("Unable to connect to broker. Please log out and log back in.")
+        try:
+            expiry_api = _expiry_to_breeze_place_order(expiry_date)
+        except (ValueError, TypeError) as e:
+            return _icici_error(f"Invalid expiry_date for GTT order: {expiry_date!r} ({e})")
+        try:
+            strike = strike_for_broker(strike_price)
+        except (TypeError, ValueError):
+            return _icici_error(f"Invalid strike_price for GTT order: {strike_price!r}")
+        try:
+            qty_str = str(abs(int(quantity)))
+        except (TypeError, ValueError):
+            return _icici_error(f"Invalid quantity for GTT order: {quantity!r}")
+
+        act = str(close_action or "").strip().lower()
+        rgt = str(right or "").strip().lower()
+        prod = str(product_type or cfg.OPTIONS).strip().lower()
+        index_or_stock = "index" if str(stock_code).strip().upper() in _GTT_INDEX_SYMBOLS else "stock"
+
+        try:
+            response = breeze.gtt_three_leg_place_order(
+                exchange_code=exchange_code,
+                stock_code=stock_code,
+                product=prod,
+                quantity=qty_str,
+                expiry_date=expiry_api,
+                right=rgt,
+                strike_price=strike,
+                gtt_type="oco",
+                index_or_stock=index_or_stock,
+                trade_date=str(today_ist_date()) + "T06:00:00.000Z",
+                order_details=[
+                    {
+                        "gtt_leg_type": "target",
+                        "action": act,
+                        "limit_price": str(target_limit_price),
+                        "trigger_price": str(target_trigger_price),
+                    },
+                    {
+                        "gtt_leg_type": "stoploss",
+                        "action": act,
+                        "limit_price": str(stop_limit_price),
+                        "trigger_price": str(stop_trigger_price),
+                    },
+                ],
+            )
+        except Exception as e:
+            _logger.warning(
+                "place_gtt_oco_exit_order: Breeze SDK exception user_id=%s stock_code=%s exchange=%s "
+                "action=%s qty=%s strike=%s right=%r exc_type=%s err=%s",
+                user_id, stock_code, exchange_code, act, qty_str, strike, rgt, type(e).__name__, e,
+                exc_info=True,
+            )
+            return _icici_error(f"Error calling ICICI Breeze API gtt_three_leg_place_order: {e}")
+        return response or _icici_error("Empty response from ICICI Breeze API gtt_three_leg_place_order")
+
+    def get_gtt_order_book(self, user_id, exchange_code, from_date, to_date):
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return _icici_error("Unable to connect to broker. Please log out and log back in.")
+        try:
+            return breeze.gtt_order_book(exchange_code=exchange_code, from_date=from_date, to_date=to_date)
+        except Exception as e:
+            _logger.warning(
+                "get_gtt_order_book: Breeze SDK exception user_id=%s exc_type=%s err=%s",
+                user_id, type(e).__name__, e, exc_info=True,
+            )
+            return _icici_error(f"Error calling ICICI Breeze API gtt_order_book: {e}")
+
+    def cancel_gtt_order(self, user_id, exchange_code, gtt_order_id):
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return _icici_error("Unable to connect to broker. Please log out and log back in.")
+        try:
+            return breeze.gtt_three_leg_cancel_order(exchange_code=exchange_code, gtt_order_id=gtt_order_id)
+        except Exception as e:
+            _logger.warning(
+                "cancel_gtt_order: Breeze SDK exception user_id=%s gtt_order_id=%s exc_type=%s err=%s",
+                user_id, gtt_order_id, type(e).__name__, e, exc_info=True,
+            )
+            return _icici_error(f"Error calling ICICI Breeze API gtt_three_leg_cancel_order: {e}")
 
     def break_order_finalize_user_messages(
         self,

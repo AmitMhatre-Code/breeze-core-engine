@@ -32,7 +32,12 @@ class OperationType(str, Enum):
     SQUAREOFF_RULE_DISARMED = "squareoff_rule_disarmed"
     SQUAREOFF_RULE_FIRED = "squareoff_rule_fired"
     SQUAREOFF_RULE_FIRE_FAILED = "squareoff_rule_fire_failed"
-    
+
+    # Per-leg GTT OCO exit orders (Portfolio > individual leg > Exit Rule)
+    GTT_EXIT_ORDER_PLACED = "gtt_exit_order_placed"
+    GTT_EXIT_ORDER_PLACE_FAILED = "gtt_exit_order_place_failed"
+    GTT_EXIT_ORDER_CANCELLED = "gtt_exit_order_cancelled"
+
     # Credential operations
     CREDENTIAL_ROTATION = "credential_rotation"
     CREDENTIAL_REVOCATION = "credential_revocation"

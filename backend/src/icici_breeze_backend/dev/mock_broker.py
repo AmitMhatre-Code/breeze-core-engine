@@ -132,6 +132,8 @@ class MockBreezeSdk:
         self._ws_tokens: set[str] = set()
         self._ws_stop: threading.Event | None = None
         self._ws_thread: threading.Thread | None = None
+        self._gtt_orders: dict[str, dict] = {}
+        self._gtt_seq = 0
 
     def generate_session(self, **kwargs):
         return None
@@ -406,23 +408,58 @@ class MockBreezeSdk:
         }
 
     def gtt_three_leg_place_order(self, **kwargs):
+        """Tracks placed GTT orders in-memory (keyed on the mock session) so `gtt_order_book`
+        reflects what was actually placed/cancelled during a mock-mode dev session, letting the
+        per-leg Exit Rule modal's "existing GTT status" display be exercised locally."""
+        self._gtt_seq += 1
+        gtt_order_id = f"MOCK-GTT-{self._gtt_seq}"
+        order_details = [
+            {**leg, "gtt_order_id": gtt_order_id, "status": "Pending"}
+            for leg in kwargs.get("order_details") or []
+        ]
+        self._gtt_orders[gtt_order_id] = {
+            "exchange_code": kwargs.get("exchange_code"),
+            "product_type": kwargs.get("product"),
+            "stock_code": kwargs.get("stock_code"),
+            "expiry_date": kwargs.get("expiry_date"),
+            "strike_price": kwargs.get("strike_price"),
+            "right": kwargs.get("right"),
+            "quantity": kwargs.get("quantity"),
+            "index_or_stock": kwargs.get("index_or_stock"),
+            "gtt_type": kwargs.get("gtt_type"),
+            "fresh_order_id": None,
+            "order_datetime": datetime.datetime.now().strftime("%d-%b-%Y %H:%M:%S"),
+            "order_details": order_details,
+        }
         return {
             "Status": 200,
-            "Success": {"gtt_order_id": "MOCK-GTT-1", "message": "Mock GTT placed"},
+            "Success": {"gtt_order_id": gtt_order_id, "message": "Mock GTT Order Request Placed Successfully"},
             "Error": None,
         }
 
     def gtt_three_leg_modify_order(self, **kwargs):
+        gtt_order_id = kwargs.get("gtt_order_id", "MOCK-GTT-1")
+        record = self._gtt_orders.get(gtt_order_id)
+        if record is not None:
+            record["order_details"] = [
+                {**leg, "gtt_order_id": gtt_order_id, "status": "Pending"}
+                for leg in kwargs.get("order_details") or []
+            ]
         return {
             "Status": 200,
-            "Success": {"gtt_order_id": kwargs.get("gtt_order_id", "MOCK-GTT-1"), "message": "Mock GTT modified"},
+            "Success": {"gtt_order_id": gtt_order_id, "message": "Mock GTT modified"},
             "Error": None,
         }
 
     def gtt_three_leg_cancel_order(self, **kwargs):
+        gtt_order_id = kwargs.get("gtt_order_id", "MOCK-GTT-1")
+        record = self._gtt_orders.get(gtt_order_id)
+        if record is not None:
+            for leg in record["order_details"]:
+                leg["status"] = "Cancelled"
         return {
             "Status": 200,
-            "Success": {"gtt_order_id": kwargs.get("gtt_order_id", "MOCK-GTT-1"), "message": "Mock GTT cancelled"},
+            "Success": {"gtt_order_id": gtt_order_id, "message": "Your request for order cancellation successfully submitted !"},
             "Error": None,
         }
 
@@ -436,7 +473,7 @@ class MockBreezeSdk:
         return self.gtt_three_leg_cancel_order(**kwargs)
 
     def gtt_order_book(self, **kwargs):
-        return {"Status": 200, "Success": [], "Error": None}
+        return {"Status": 200, "Success": list(self._gtt_orders.values()), "Error": None}
 
     def get_trade_detail(self, exchange_code: str = "", order_id: str = "", **kwargs):
         return {"Status": 200, "Success": [], "Error": None}

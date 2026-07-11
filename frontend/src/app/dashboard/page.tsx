@@ -34,6 +34,7 @@ import {
   getMarketOutlook,
   outlookFetchErrorMessage,
   type OutlookResponse,
+  type OutlookSummaryCategory,
 } from "@/lib/outlook-api";
 
 type Vix30Point = { date: string; value: number };
@@ -1135,19 +1136,11 @@ function buildMarketOutlookHeaderAlert(opts: {
   return null;
 }
 
-/** Single flowing paragraph composed from the existing structured outlook fields. */
-function composeOutlookParagraph(data: OutlookResponse): string {
-  const parts: string[] = [];
-  if (data.summary?.length) parts.push(data.summary.join(" "));
-  if (data.inference?.volatility_view) parts.push(data.inference.volatility_view);
-  return parts.join(" ");
-}
-
 const OUTLOOK_NUMBER_TOKEN =
   /(\d{1,3}(?:,\d{2,3})*(?:\.\d+)?%?|\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))/g;
 
-/** Bold numeric/date tokens (prices, percentages, strikes, expiry dates) within the paragraph. */
-function renderOutlookParagraph(text: string): ReactNode[] {
+/** Bold numeric/date tokens (prices, percentages, strikes, expiry dates) within a line of text. */
+function renderOutlookText(text: string): ReactNode[] {
   return text.split(OUTLOOK_NUMBER_TOKEN).map((chunk, i) =>
     i % 2 === 1 ? (
       <strong key={i} className="font-semibold text-foreground">
@@ -1156,6 +1149,112 @@ function renderOutlookParagraph(text: string): ReactNode[] {
     ) : (
       <span key={i}>{chunk}</span>
     ),
+  );
+}
+
+const OUTLOOK_CONFIDENCE_BADGE_CLS: Record<string, string> = {
+  low: "border-border bg-panel2 text-faint",
+  medium: "border-amber-accent/40 bg-amber-tint text-amber-accent",
+  high: "border-up/40 bg-up-tint text-up",
+};
+
+function OutlookConfidenceBadge({ confidence }: { confidence?: string }) {
+  if (!confidence) return null;
+  const cls = OUTLOOK_CONFIDENCE_BADGE_CLS[confidence] ?? OUTLOOK_CONFIDENCE_BADGE_CLS.low;
+  return (
+    <span className={`rounded-full border px-2 py-0.5 text-micro uppercase tracking-wide ${cls}`}>
+      {confidence} confidence
+    </span>
+  );
+}
+
+const OUTLOOK_SUMMARY_SECTIONS: { category: OutlookSummaryCategory; label: string }[] = [
+  { category: "macro_global", label: "Global" },
+  { category: "macro_local", label: "Domestic" },
+  { category: "positioning", label: "Positioning" },
+];
+
+/** Full structured render of the outlook payload: summary, inference, strategy ideas, sources. */
+function OutlookContent({ data }: { data: OutlookResponse }) {
+  const inference = data.inference;
+  const strategyIdeas = data.strategy_ideas ?? [];
+  const sources = data.sources ?? [];
+  return (
+    <div className="space-y-3">
+      {data.summary.length > 0
+        ? OUTLOOK_SUMMARY_SECTIONS.map(({ category, label }) => {
+            const items = data.summary.filter((item) => item.category === category);
+            if (items.length === 0) return null;
+            return (
+              <div key={category}>
+                <div className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</div>
+                <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-foreground">
+                  {items.map((item, i) => (
+                    <li key={i}>{renderOutlookText(item.text)}</li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })
+        : null}
+
+      {inference ? (
+        <div className="space-y-1.5 rounded-lg border border-border-soft bg-panel2 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {inference.volatility_view ? (
+              <span className="text-xs text-muted">
+                Volatility:{" "}
+                <span className="text-foreground">{renderOutlookText(inference.volatility_view)}</span>
+              </span>
+            ) : null}
+            <OutlookConfidenceBadge confidence={inference.confidence} />
+          </div>
+          {inference.movement_scenarios?.length ? (
+            <ul className="list-disc space-y-0.5 pl-5 text-xs text-muted">
+              {inference.movement_scenarios.map((s, i) => (
+                <li key={i}>{renderOutlookText(s)}</li>
+              ))}
+            </ul>
+          ) : null}
+          {inference.caveats?.length ? (
+            <p className="text-xs text-faint italic">{inference.caveats.join(" · ")}</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {strategyIdeas.length > 0 ? (
+        <ul className="space-y-1.5">
+          {strategyIdeas.map((idea, i) => (
+            <li key={i} className="rounded-lg border border-border-soft bg-panel2 p-3 text-xs">
+              <span className="font-semibold uppercase tracking-wide text-foreground">{idea.tag}</span>
+              <p className="mt-0.5 text-muted">{renderOutlookText(idea.rationale)}</p>
+              {idea.risk_note ? (
+                <p className="mt-0.5 text-faint italic">Risk: {idea.risk_note}</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {sources.length > 0 ? (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          {sources.map((s, i) => (
+            <a
+              key={i}
+              href={s.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="app-link"
+              title={s.publisher}
+            >
+              {s.title}
+            </a>
+          ))}
+        </div>
+      ) : null}
+
+      {data.disclaimer ? <p className="text-micro text-faint">{data.disclaimer}</p> : null}
+    </div>
   );
 }
 
@@ -1189,9 +1288,5 @@ function OutlookParagraph({
       </div>
     );
   }
-  return (
-    <p className="text-sm leading-relaxed text-foreground">
-      {renderOutlookParagraph(composeOutlookParagraph(data))}
-    </p>
-  );
+  return <OutlookContent data={data} />;
 }

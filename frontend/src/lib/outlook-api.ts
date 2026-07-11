@@ -20,6 +20,13 @@ export type OutlookStrategyIdea = {
   risk_note: string;
 };
 
+export type OutlookSummaryCategory = "macro_global" | "macro_local" | "positioning";
+
+export type OutlookSummaryItem = {
+  category: OutlookSummaryCategory;
+  text: string;
+};
+
 export type OutlookWarning = {
   error_code: string;
   message: string;
@@ -32,16 +39,32 @@ export type OutlookResponse = {
   as_of: string;
   english_only: boolean;
   disclaimer: string;
-  summary: string[];
+  summary: OutlookSummaryItem[];
   inference: OutlookInference;
   strategy_ideas: OutlookStrategyIdea[];
   sources: OutlookSource[];
   warning?: OutlookWarning;
 };
 
+/**
+ * The portal's summary schema was previously a flat string[]. Deployments upgrade
+ * independently of the portal, so this repo's frontend may briefly receive either
+ * shape from a not-yet-upgraded portal cache -- normalize defensively rather than
+ * assume both sides are always in lockstep.
+ */
+function normalizeOutlookSummary(raw: unknown): OutlookSummaryItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) =>
+    typeof item === "string" ? { category: "macro_global" as const, text: item } : (item as OutlookSummaryItem),
+  );
+}
+
 export function getMarketOutlook(forceRefresh = false) {
   const suffix = forceRefresh ? "?force_refresh=true" : "";
-  return apiClient.get<OutlookResponse>(`/api/outlook/market${suffix}`);
+  return apiClient.get<OutlookResponse>(`/api/outlook/market${suffix}`).then((data) => ({
+    ...data,
+    summary: normalizeOutlookSummary(data.summary),
+  }));
 }
 
 /** User-visible copy for outlook fetch failures. */

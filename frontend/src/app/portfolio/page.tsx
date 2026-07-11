@@ -1,11 +1,14 @@
 // Client component so auth cookies are included with browser fetch.
 "use client";
 
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { apiClient } from "@/lib/api-client";
-import { OpenPositionsTable } from "@/components/portfolio/OpenPositionsTable";
+import {
+  OpenPositionsTable,
+  type PortfolioPositionsViewMode,
+} from "@/components/portfolio/OpenPositionsTable";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import {
   buildPortfolioPositionGroups,
@@ -25,6 +28,8 @@ type IciciApiResponse = {
     positions?: PortfolioPositionRecord[];
   };
 };
+
+const POSITIONS_VIEW_MODE_STORAGE_KEY = "breeze-core-engine-portfolio-view";
 
 export default function PortfolioPage() {
   // Collapsed groups have no live chain subscription, so this poll is their only
@@ -49,6 +54,21 @@ export default function PortfolioPage() {
   const totals = useMemo(() => computePortfolioTotals(groups), [groups]);
   const topGroupKey = useMemo(() => pickTopGroupKey(groups), [groups]);
   const [liveGroupCount, setLiveGroupCount] = useState(0);
+  const [positionsViewMode, setPositionsViewMode] =
+    useState<PortfolioPositionsViewMode>("grouped");
+
+  useLayoutEffect(() => {
+    const stored = localStorage.getItem(POSITIONS_VIEW_MODE_STORAGE_KEY);
+    if (stored === "grouped" || stored === "individual") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync after layout boot script, matches ThemeProvider
+      setPositionsViewMode(stored);
+    }
+  }, []);
+
+  const setViewModeAndPersist = (mode: PortfolioPositionsViewMode) => {
+    setPositionsViewMode(mode);
+    localStorage.setItem(POSITIONS_VIEW_MODE_STORAGE_KEY, mode);
+  };
 
   return (
     <AppShell>
@@ -94,16 +114,21 @@ export default function PortfolioPage() {
           <PortfolioSummaryPanel totals={totals} />
 
           <section className="app-card min-w-0 overflow-hidden">
-            <header className="border-b border-border-soft px-4 py-2.5">
+            <header className="flex items-center justify-between border-b border-border-soft px-4 py-2.5">
               <h2 className="text-heading font-semibold uppercase tracking-wide text-faint">
                 Open positions
               </h2>
+              <PositionsViewModeToggle
+                value={positionsViewMode}
+                onChange={setViewModeAndPersist}
+              />
             </header>
             <div className="p-0">
               <OpenPositionsTable
                 positions={positions}
                 defaultExpandedGroupKey={topGroupKey}
                 onLiveGroupCountChange={setLiveGroupCount}
+                viewMode={positionsViewMode}
               />
             </div>
           </section>
@@ -182,6 +207,45 @@ function SummaryTile({
         {value}
       </div>
       <div className="mt-1.5 text-heading app-text-muted">{caption}</div>
+    </div>
+  );
+}
+
+function PositionsViewModeToggle({
+  value,
+  onChange,
+}: {
+  value: PortfolioPositionsViewMode;
+  onChange: (mode: PortfolioPositionsViewMode) => void;
+}) {
+  const options: { mode: PortfolioPositionsViewMode; label: string }[] = [
+    { mode: "grouped", label: "Grouped" },
+    { mode: "individual", label: "Individual legs" },
+  ];
+  return (
+    <div
+      role="group"
+      aria-label="Open positions view"
+      className="inline-flex shrink-0 items-center rounded-lg border border-border-soft bg-panel2 p-0.5"
+    >
+      {options.map((opt) => {
+        const active = value === opt.mode;
+        return (
+          <button
+            key={opt.mode}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(opt.mode)}
+            className={`rounded-md px-2.5 py-1 text-micro font-semibold uppercase tracking-wide transition ${
+              active
+                ? "bg-accent-strong text-accent-ink"
+                : "text-faint hover:text-foreground"
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

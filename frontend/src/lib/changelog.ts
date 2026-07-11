@@ -20,10 +20,10 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "2.1.0-b",
+    version: "2.1.0-c",
     date: "26-Jun-2026",
     releaseKind: "patch",
-    summary: "Login Disclosure bug fix, minor UI tweaks and storage cleanup",
+    summary: "Websocket for live quotes, After Market-hours Orders (AMO) improvements, Basket Order and Trigger based exits",
     changes: [
       "New Basket Order page: build multi-leg option baskets, view payoff and PoP, and execute all legs at once.",
       "Place Order and Strategy Builder support aggressive limit orders (ICICI derives price from LTP; no manual limit price required).",
