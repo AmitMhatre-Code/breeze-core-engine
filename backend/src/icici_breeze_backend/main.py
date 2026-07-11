@@ -107,6 +107,21 @@ if os.environ.get("ICICI_BREEZE_INSECURE_SSL", "").lower() in ("1", "true", "yes
 
     ssl._create_default_https_context = ssl._create_unverified_context
 
+# breeze_connect (vendored SDK) hardcodes its 'APILogger'/'WebsocketLogger' loggers to
+# DEBUG and attaches unrotated FileHandlers that dump every raw API request/response and
+# WS tick to disk (apiLogs_1305.log / websocketLogs_1305.log) with no size cap — a real
+# risk on a small EBS volume. Import it here (before anything else triggers the same
+# cached import) and strip those handlers immediately; our own app logging is unaffected.
+import breeze_connect  # noqa: F401
+
+for _bc_logger_name in ("APILogger", "WebsocketLogger"):
+    _bc_logger = logging.getLogger(_bc_logger_name)
+    for _bc_handler in list(_bc_logger.handlers):
+        _bc_logger.removeHandler(_bc_handler)
+        _bc_handler.close()
+    _bc_logger.addHandler(logging.NullHandler())
+    _bc_logger.propagate = False
+
 from icici_breeze_backend.app.api.router import app_router
 from fastapi import FastAPI, Request
 from fastapi.exceptions import HTTPException
@@ -270,9 +285,32 @@ def _ensure_scrips_database() -> None:
         )
 
 
+def _enable_wal_mode() -> None:
+    """One-time PRAGMA journal_mode=WAL per DB file.
+
+    journal_mode is persisted in the SQLite file header, so setting it once here covers
+    every future connection regardless of call site (dozens of `sqlite3.connect(...)` sites
+    across the codebase don't need to opt in individually). Roughly halves fsyncs per write
+    versus the default rollback-journal mode and lets readers proceed during a writer.
+    """
+    import sqlite3
+
+    from icici_breeze_backend.core import config as cfg
+
+    for db_path in (cfg.DATA_PATH + cfg.USERS_DB, cfg.DATA_PATH + cfg.SCRIP_DB):
+        if not os.path.isfile(db_path):
+            continue
+        try:
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+        except Exception as e:
+            _logger.warning("Could not enable WAL mode for %s: %s", db_path, e)
+
+
 def start_application():
     _ensure_app_database()
     _ensure_scrips_database()
+    _enable_wal_mode()
     _ensure_freeze_limit_files()
     import icici_breeze_backend.app.core.config as cfg
     from icici_breeze_backend.core import config as core_cfg

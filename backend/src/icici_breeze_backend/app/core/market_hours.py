@@ -96,6 +96,27 @@ def _previous_trading_day(d: date) -> date:
     return prev
 
 
+def latest_opened_trading_day(now: datetime | None = None) -> date:
+    """Most recent trading day whose session has already opened as of `now`.
+
+    Used to detect stale EOD (bhavcopy) prices: once a session opens, that
+    day's prices are known to have moved, regardless of whether it has
+    closed yet.
+    """
+    dt = (now or datetime.now(IST)).astimezone(IST)
+    if is_india_trading_day(dt) and dt >= _open_time(dt):
+        return dt.date()
+    return _previous_trading_day(dt.date())
+
+
+def bhavcopy_is_stale(bhavcopy_date: date | None, now: datetime | None = None) -> bool:
+    """True once a trading session has opened after `bhavcopy_date` — the EOD
+    prices are known to no longer reflect the live market."""
+    if bhavcopy_date is None:
+        return False
+    return latest_opened_trading_day(now) > bhavcopy_date
+
+
 def get_reference_time_for_iv_ist(now: datetime | None = None) -> datetime:
     """
     Reference time for IV calculation (IST): now if market is open,

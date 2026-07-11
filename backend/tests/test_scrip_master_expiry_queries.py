@@ -5,8 +5,27 @@ import ssl
 # breeze_connect downloads SecurityMaster at import time; allow tests on MITM networks.
 ssl._create_default_https_context = ssl._create_unverified_context
 
+import pytest
+
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.db.redis_client import get_redis
 from icici_breeze_backend.app.services.processor import processor
+
+
+@pytest.fixture(autouse=True)
+def _clean_refdata_namespace():
+    """list_option_strikes/fetch_lot_size read the scrip index's Redis-backed memory
+    cache; a real local Redis (not the in-process fallback) persists refdata:* keys
+    across separate pytest runs, so it must be flushed rather than assumed empty."""
+    redis = get_redis()
+
+    def _flush() -> None:
+        for key in redis.keys("refdata:*"):
+            redis.delete(key)
+
+    _flush()
+    yield
+    _flush()
 
 
 def _init_scrip_db(tmp_path, monkeypatch) -> None:

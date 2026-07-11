@@ -264,14 +264,14 @@ class TestStrategyBuilderAuditSession(unittest.TestCase):
 
 class TestEngineAuditIntegration(unittest.TestCase):
     def _ctx(self, audit: StrategyBuilderAuditSession) -> EngineContext:
-        strikes = list(range(23000, 24100, 50))
+        strikes = list(range(22000, 25100, 50))
         cache = {}
         for s in strikes:
             call_delta = min(0.35, 0.08 + (s - 23500) / 5000.0)
             put_delta = -min(0.35, 0.08 + (23500 - s) / 5000.0)
-            call_bid = max(1.0, 30.0 - (s - 23000) / 50.0)
+            call_bid = max(1.0, 30.0 - abs(s - 23500) / 50.0)
             call_ask = call_bid + 0.5
-            put_bid = max(1.0, 30.0 - (23500 - s) / 50.0)
+            put_bid = max(1.0, 30.0 - abs(s - 23500) / 50.0)
             put_ask = put_bid + 0.5
             cache[(s, "Call")] = QuoteRow(
                 strike=s,
@@ -329,26 +329,22 @@ class TestEngineAuditIntegration(unittest.TestCase):
                 "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
                 return_value=tmp,
             ):
-                with patch(
-                    "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bear_call_spread.MIN_BCS_ANNUALIZED_RETURN_PCT",
-                    0.0,
-                ):
-                    audit = StrategyBuilderAuditSession(
-                        user_id="u1",
-                        request={"stock_code": "NIFTY"},
-                    )
-                    ctx = self._ctx(audit)
-                    ctx.processor = proc
-                    results = asyncio.run(calc_bear_call_spread(ctx))
-                    res = results[0]
-                    audit.finalize({"status": "ok", "strategy": res.strategy_id})
+                audit = StrategyBuilderAuditSession(
+                    user_id="u1",
+                    request={"stock_code": "NIFTY"},
+                )
+                ctx = self._ctx(audit)
+                ctx.processor = proc
+                ctx.min_ann_return_pct = 0.0
+                results = asyncio.run(calc_bear_call_spread(ctx))
+                res = results[0]
+                audit.finalize({"status": "ok", "strategy": res.strategy_id})
                 calc_titles = [
                     e["message"]
                     for e in audit.events
                     if e["category"] == "calculation"
                 ]
-                self.assertIn("Bear call spread candidate search", calc_titles)
-                self.assertIn("Bear call spread SPAN refinement", calc_titles)
+                self.assertIn("Bear call spread objective champions", calc_titles)
 
     def test_bull_put_audit_records_wing_search(self):
         proc = MagicMock()
@@ -360,26 +356,22 @@ class TestEngineAuditIntegration(unittest.TestCase):
                 "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
                 return_value=tmp,
             ):
-                with patch(
-                    "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bull_put_spread.MIN_BPS_ANNUALIZED_RETURN_PCT",
-                    0.0,
-                ):
-                    audit = StrategyBuilderAuditSession(
-                        user_id="u1",
-                        request={"stock_code": "NIFTY"},
-                    )
-                    ctx = self._ctx(audit)
-                    ctx.processor = proc
-                    results = asyncio.run(calc_bull_put_spread(ctx))
-                    res = results[0]
-                    audit.finalize({"status": "ok", "strategy": res.strategy_id})
+                audit = StrategyBuilderAuditSession(
+                    user_id="u1",
+                    request={"stock_code": "NIFTY"},
+                )
+                ctx = self._ctx(audit)
+                ctx.processor = proc
+                ctx.min_ann_return_pct = 0.0
+                results = asyncio.run(calc_bull_put_spread(ctx))
+                res = results[0]
+                audit.finalize({"status": "ok", "strategy": res.strategy_id})
                 calc_titles = [
                     e["message"]
                     for e in audit.events
                     if e["category"] == "calculation"
                 ]
-                self.assertIn("Bull put spread candidate search", calc_titles)
-                self.assertIn("Bull put spread SPAN refinement", calc_titles)
+                self.assertIn("Bull put spread objective champions", calc_titles)
 
     def test_run_propose_trades_emits_audit_metadata(self):
         from icici_breeze_backend.app.services.options_strategy_engine import run_propose_trades

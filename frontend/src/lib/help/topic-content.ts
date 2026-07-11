@@ -5,6 +5,7 @@ import {
   helpTopics,
   type HelpTopic,
 } from "@/lib/help/topics";
+import { formatIsoDateDdMmmYyyy } from "@/lib/format-iso-date";
 
 export function getTopicsByCategory(
   category: HelpCategory,
@@ -50,15 +51,20 @@ export const POP_HELP_DISCLAIMER = popTopic?.body[3] ?? "";
 export function quoteSourceDetailLine(
   source: "websocket" | "bhavcopy" | "icici_api",
   bhavcopyDate?: string | null,
+  bhavcopyStale?: boolean,
 ): string {
   switch (source) {
     case "websocket":
       return "Prices and depth are streamed from the ICICI Breeze WebSocket during market hours. Values refresh automatically while you stay on this page.";
-    case "bhavcopy":
+    case "bhavcopy": {
+      const staleNote = bhavcopyStale
+        ? " The market has since opened, so these prices no longer reflect the live market."
+        : "";
       if (bhavcopyDate) {
-        return `Closing prices from the NSE/BSE FO Bhavcopy for ${bhavcopyDate}. Open interest and depth reflect the last concluded session, not live market data.`;
+        return `Closing prices from the NSE/BSE FO Bhavcopy for ${formatIsoDateDdMmmYyyy(bhavcopyDate)}. Open interest and depth reflect the last concluded session, not live market data.${staleNote}`;
       }
-      return "Closing prices from the NSE/BSE FO Bhavcopy after market hours. Not live market data.";
+      return `Closing prices from the NSE/BSE FO Bhavcopy after market hours. Not live market data.${staleNote}`;
+    }
     case "icici_api":
       return "Quotes were fetched via the ICICI Breeze REST API because live WebSocket or Bhavcopy data was unavailable.";
     default:

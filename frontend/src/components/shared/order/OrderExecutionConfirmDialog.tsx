@@ -305,18 +305,12 @@ export function OrderExecutionConfirmDialog({
       panelClassName={`${sb.modalPanel} !max-w-[min(96vw,44rem)] mx-auto`}
     >
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <h3
-              id="order-exec-confirm-title"
-              className="app-text-title"
-            >
-              Confirm execution
-            </h3>
-            <p className="mt-1 text-sm leading-relaxed text-muted">
-              The following legs will be sent as orders. Total margin is
-              computed for the full basket (single SPAN calculation).
-            </p>
-          </div>
+          <h3
+            id="order-exec-confirm-title"
+            className="min-w-0 flex-1 app-text-title"
+          >
+            Confirm execution
+          </h3>
           <div className="flex shrink-0 items-center gap-2">
             {quoteMeta ? <QuoteSourceBadge meta={quoteMeta} variant="compact" /> : null}
             <button
@@ -332,6 +326,10 @@ export function OrderExecutionConfirmDialog({
             </button>
           </div>
         </div>
+        <p className="mt-1 text-sm leading-relaxed text-muted">
+          The following legs will be sent as orders. Total margin is computed
+          for the full basket (single SPAN calculation).
+        </p>
 
         <ul className="mt-3 max-h-64 divide-y divide-border-soft overflow-x-auto overflow-y-auto">
           {legs.map((l, idx) => {
@@ -387,10 +385,18 @@ export function OrderExecutionConfirmDialog({
             <span className="font-semibold text-foreground">
               Net premium:{" "}
             </span>
-            <span className="font-mono tabular-nums text-foreground">
+            <span
+              className={`font-mono tabular-nums ${
+                netPremium == null
+                  ? "text-foreground"
+                  : netPremium < 0
+                    ? "text-down"
+                    : "text-up"
+              }`}
+            >
               {netPremium == null
                 ? "—"
-                : `${netPremium < 0 ? "Debit " : "Credit "}${formatIndianMoneyCompact(
+                : `${netPremium < 0 ? "−" : "+"}${formatIndianMoneyCompact(
                     Math.abs(netPremium),
                   )}`}
             </span>

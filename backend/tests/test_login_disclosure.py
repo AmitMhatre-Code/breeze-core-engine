@@ -28,7 +28,7 @@ def login_disclosure_client(monkeypatch):
 
 def test_login_disclosure_current_unconfigured(login_disclosure_client, monkeypatch):
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.portal_login_disclosure.portal_login_disclosure_configured",
+        "icici_breeze_backend.app.api.v1.route_login_disclosure.portal_login_disclosure_configured",
         lambda: False,
     )
     r = login_disclosure_client.get("/api/login-disclosure/current")
@@ -37,7 +37,7 @@ def test_login_disclosure_current_unconfigured(login_disclosure_client, monkeypa
 
 def test_login_disclosure_public_current_proxy(login_disclosure_client, monkeypatch):
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.portal_login_disclosure.portal_login_disclosure_configured",
+        "icici_breeze_backend.app.api.v1.route_login_disclosure.portal_login_disclosure_configured",
         lambda: True,
     )
 
@@ -49,7 +49,7 @@ def test_login_disclosure_public_current_proxy(login_disclosure_client, monkeypa
         }
 
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.portal_login_disclosure.fetch_portal_login_disclosure_current",
+        "icici_breeze_backend.app.api.v1.route_login_disclosure.fetch_portal_login_disclosure_current",
         _fetch,
     )
     r = login_disclosure_client.get("/api/login-disclosure/public/current")
@@ -61,7 +61,7 @@ def test_login_disclosure_public_current_proxy(login_disclosure_client, monkeypa
 
 def test_login_disclosure_current_proxy(login_disclosure_client, monkeypatch):
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.portal_login_disclosure.portal_login_disclosure_configured",
+        "icici_breeze_backend.app.api.v1.route_login_disclosure.portal_login_disclosure_configured",
         lambda: True,
     )
 
@@ -73,7 +73,7 @@ def test_login_disclosure_current_proxy(login_disclosure_client, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.portal_login_disclosure.fetch_portal_login_disclosure_current",
+        "icici_breeze_backend.app.api.v1.route_login_disclosure.fetch_portal_login_disclosure_current",
         _fetch,
     )
     r = login_disclosure_client.get("/api/login-disclosure/current")
@@ -84,9 +84,12 @@ def test_login_disclosure_current_proxy(login_disclosure_client, monkeypatch):
 
 
 def test_login_disclosure_accept_proxy(login_disclosure_client, monkeypatch):
+    async def _accept(**_):
+        return {"ok": True, "icici_user_id": "ICICIUSER1", "disclosure_version": 1}
+
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.portal_login_disclosure.post_portal_login_disclosure_accept",
-        lambda **_: {"ok": True, "icici_user_id": "ICICIUSER1", "disclosure_version": 1},
+        "icici_breeze_backend.app.api.v1.route_login_disclosure.post_portal_login_disclosure_accept",
+        _accept,
     )
     r = login_disclosure_client.post(
         "/api/login-disclosure/accept",

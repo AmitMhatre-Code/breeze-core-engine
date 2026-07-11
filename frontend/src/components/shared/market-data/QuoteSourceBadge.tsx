@@ -5,6 +5,7 @@ import {
   formatQuoteAsOf,
   formatQuoteSourceDetail,
   formatQuoteSourceLabel,
+  isBhavcopyStale,
   isLiveQuoteSource,
 } from "@/lib/quote-source";
 import { useRelativeTime } from "@/lib/use-relative-time";
@@ -17,9 +18,22 @@ type QuoteSourceBadgeProps = {
   className?: string;
 };
 
-function variantClasses(variant: QuoteSourceBadgeProps["variant"], live: boolean): string {
+function variantClasses(
+  variant: QuoteSourceBadgeProps["variant"],
+  live: boolean,
+  stale: boolean,
+): string {
   const base =
     "inline-flex max-w-full items-center gap-1.5 rounded-full border font-medium leading-tight";
+  if (stale) {
+    if (variant === "footnote") {
+      return `${base} border-transparent bg-transparent px-0 py-0 text-heading text-down`;
+    }
+    if (variant === "compact") {
+      return `${base} border-down/40 bg-down-tint px-2 py-0.5 text-body text-down`;
+    }
+    return `${base} border-down/40 bg-down-tint px-2.5 py-1 text-micro text-down`;
+  }
   if (variant === "compact") {
     return `${base} border-border bg-panel2 px-2 py-0.5 text-body text-muted`;
   }
@@ -55,6 +69,7 @@ export function QuoteSourceBadge({
   if (!meta) return null;
 
   const live = isLiveQuoteSource(meta);
+  const stale = isBhavcopyStale(meta);
   const label = formatQuoteSourceLabel(meta);
   const asOf =
     showAsOf && variant !== "footnote"
@@ -65,7 +80,7 @@ export function QuoteSourceBadge({
   const detail = formatQuoteSourceDetail(meta);
 
   const pill = (
-    <span className={`${variantClasses(variant, live)} ${className}`.trim()}>
+    <span className={`${variantClasses(variant, live, stale)} ${className}`.trim()}>
       {live ? <LiveDot pulse={variant !== "footnote"} /> : null}
       <span className="truncate">{label}</span>
       {asOf ? (

@@ -393,7 +393,7 @@ class TestCalcIronCondor(unittest.TestCase):
         self.assertGreater(best_return, 0)
         self.assertEqual(len(scores), 2)
 
-    def test_skips_when_annualized_return_below_minimum(self):
+    def test_flags_relaxed_when_annualized_return_below_minimum(self):
         strikes = list(range(22700, 24700, 50))
         cache = _fill_strikes(
             strikes,
@@ -411,8 +411,9 @@ class TestCalcIronCondor(unittest.TestCase):
         )
         results = asyncio.run(calc_iron_condor(ctx))
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].status, "skipped")
-        self.assertIn("annualized return", (results[0].skip_reason or "").lower())
+        self.assertEqual(results[0].status, "ok")
+        self.assertEqual(results[0].compliance, "relaxed")
+        self.assertIn("min_ann_return", results[0].constraint_violations)
 
     def test_returns_top_variants_with_ranks(self):
         strikes = list(range(22600, 24700, 50))

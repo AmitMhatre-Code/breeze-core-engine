@@ -42,7 +42,7 @@ POP_TOLERANCE_PCT = 7.0
 POP_PRE_FILTER_TOLERANCE = 2.0
 
 
-@dataclass
+@dataclass(slots=True)
 class QuoteRow:
     strike: Strike
     right: Right
@@ -75,7 +75,7 @@ class QuoteRow:
         return 0.0
 
 
-@dataclass
+@dataclass(slots=True)
 class TradeLeg:
     right: Right
     side: Side
@@ -100,7 +100,7 @@ class TradeLeg:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class TileMetric:
     label: str
     value: str

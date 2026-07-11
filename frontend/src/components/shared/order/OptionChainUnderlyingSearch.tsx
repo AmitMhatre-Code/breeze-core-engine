@@ -271,31 +271,6 @@ export function OptionChainUnderlyingSearch({
     );
   };
 
-  const filterInputDefault = (
-    <div className="border-b border-border-soft p-2">
-      <label className="sr-only" htmlFor="option-chain-underlying-filter">
-        Filter symbols
-      </label>
-      <div className="relative flex items-center">
-        <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-faint" />
-        <input
-          id="option-chain-underlying-filter"
-          ref={inputRef}
-          data-scrip-input
-          type="search"
-          autoComplete="off"
-          disabled={disabled}
-          value={open ? q : ""}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onBlur={handleInputBlur}
-          placeholder="Type stock name: SBIN, TCS etc."
-          className="w-full rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated py-2 pl-9 pr-2 text-sm text-foreground outline-none transition placeholder:text-faint hover:border-accent focus:border-accent-strong focus:bg-panel"
-        />
-      </div>
-    </div>
-  );
-
   const changeStr =
     changePct != null && Number.isFinite(changePct)
       ? `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`
@@ -331,7 +306,9 @@ export function OptionChainUnderlyingSearch({
             onFocus={handleInputFocus}
             onKeyDown={handleKeyDown}
             onBlur={handleInputBlur}
-            placeholder="Select underlying"
+            placeholder={
+              open ? "Type stock name: SBIN, TCS etc." : "Select underlying"
+            }
             className="min-w-0 flex-1 truncate border-0 bg-transparent p-0 text-sm font-semibold tracking-tight text-foreground outline-none ring-0 placeholder:font-normal placeholder:tracking-normal placeholder:text-faint focus:ring-0 disabled:cursor-not-allowed disabled:text-faint"
           />
         </label>
@@ -420,7 +397,6 @@ export function OptionChainUnderlyingSearch({
                       </span>
                     </button>
                   </div>
-                  {filterInputDefault}
                   {renderUnderlyingList("default", filtered)}
                 </>
               )}

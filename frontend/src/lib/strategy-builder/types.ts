@@ -34,6 +34,8 @@ export type QuoteMeta = {
   quote_source: QuoteSource;
   bhavcopy_date?: string | null;
   quote_as_of?: string | null;
+  /** True once a trading session has opened after `bhavcopy_date` — EOD prices are known stale. */
+  bhavcopy_stale?: boolean;
 };
 
 export type ChainSuccess = {
@@ -52,6 +54,7 @@ export type ChainSuccess = {
   quote_source?: QuoteSource;
   bhavcopy_date?: string | null;
   quote_as_of?: string | null;
+  bhavcopy_stale?: boolean;
 };
 
 export type ChainApiResponse = {

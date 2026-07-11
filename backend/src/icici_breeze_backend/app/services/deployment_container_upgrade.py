@@ -29,6 +29,15 @@ REDIS_IMAGE = "redis:7-alpine"
 DEFAULT_REDIS_URL = "redis://breeze-redis:6379/0"
 REDIS_MAXMEMORY_POLICY = "allkeys-lru"
 
+# t4g.small has 2GiB total RAM; these are hard container-level caps (on top of Redis's own
+# --maxmemory / app-level tuning) so one container can't starve its siblings via OOM. Redis
+# gets memory==memory-swap (no swap) since a swapped-out in-memory store defeats the point;
+# the app container gets a swap cushion for transient spikes. Must match
+# infra/breeze-core-engine-stack.yaml's docker run commands in breeze-saas-portal.
+REDIS_MEMORY_LIMIT = "450m"
+APP_MEMORY_LIMIT = "1400m"
+APP_MEMORY_SWAP_LIMIT = "1800m"
+
 
 def redis_maxmemory_mb() -> int:
     """Sidecar Redis maxmemory cap (MB); overridable via REDIS_MAXMEMORY_MB env."""
@@ -95,6 +104,8 @@ def _start_redis_sidecar_sdk(client: Any) -> None:
         restart_policy={"Name": "unless-stopped"},
         network=REDIS_NETWORK_NAME,
         command=redis_server_command(),
+        mem_limit=REDIS_MEMORY_LIMIT,
+        memswap_limit=REDIS_MEMORY_LIMIT,
     )
     logger.info(
         "deployment upgrade: started %s on %s (maxmemory=%smb)",
@@ -117,7 +128,8 @@ def _redis_sidecar_shell_lines() -> list[str]:
     policy = REDIS_MAXMEMORY_POLICY
     redis_run_cmd = (
         f"docker run -d --name {REDIS_CONTAINER_NAME} --network {REDIS_NETWORK_NAME} "
-        f"--restart unless-stopped {REDIS_IMAGE} redis-server --maxmemory {mb}mb "
+        f"--restart unless-stopped --memory {REDIS_MEMORY_LIMIT} --memory-swap {REDIS_MEMORY_LIMIT} "
+        f"{REDIS_IMAGE} redis-server --maxmemory {mb}mb "
         f"--maxmemory-policy {policy}"
     )
     return [
@@ -463,6 +475,7 @@ def upgrade_shell_script(
             '--name "$NAME" '
             "--restart unless-stopped "
             f"--network {REDIS_NETWORK_NAME} "
+            f"--memory {APP_MEMORY_LIMIT} --memory-swap {APP_MEMORY_SWAP_LIMIT} "
             f"-p {int(host_port)}:{_CONTAINER_PORT} "
             f"-v {qd}:/app/backend/data "
             '-v "$ENV_FILE":"$ENV_FILE":ro '
@@ -595,6 +608,8 @@ def recreate_deployment_container(client: Any, *, image: str, container_name: st
         ports={f"{_CONTAINER_PORT}/tcp": host_port},
         volumes=volumes,
         environment=environment,
+        mem_limit=APP_MEMORY_LIMIT,
+        memswap_limit=APP_MEMORY_SWAP_LIMIT,
     )
     logger.info("deployment upgrade: container %s is up", container_name)
     _prune_docker_after_upgrade(client)

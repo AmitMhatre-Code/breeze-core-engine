@@ -48,6 +48,7 @@ def _sample_orders_success():
                 "status": "Ordered",
                 "product_type": "Options",
                 "exchange_code": "NFO",
+                "option": "NIFTY-16-Jun-2026-24000-Call",
             },
             {
                 "stock_code": "NIFTY",
@@ -60,6 +61,7 @@ def _sample_orders_success():
                 "status": "Ordered",
                 "product_type": "Options",
                 "exchange_code": "NFO",
+                "option": "NIFTY-16-Jun-2026-24000-Call",
             },
         ],
     }

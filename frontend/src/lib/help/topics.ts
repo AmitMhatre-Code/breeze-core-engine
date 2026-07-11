@@ -170,12 +170,12 @@ export const helpTopics: HelpTopic[] = [
   {
     id: "quote-sources",
     category: "quotes",
-    title: "Quote source badges (Live, EOD, ICICI API)",
+    title: "Quote source badges (Live, Bhavcopy, ICICI API)",
     summary:
       "Prices come from WebSocket during market hours, Bhavcopy after hours, or REST as fallback.",
     body: [
       "Live · WebSocket — prices and depth stream from ICICI Breeze WebSocket during market hours. Values refresh while you stay on the page.",
-      "EOD · Bhavcopy — closing prices from NSE/BSE FO Bhavcopy after market hours. Open interest and depth reflect the last session, not live data.",
+      "Bhavcopy (dd-MMM-yyyy) — closing prices from NSE/BSE FO Bhavcopy for the shown session. Open interest and depth reflect that session, not live data. The badge turns red once the market has opened since that date, since prices are then known to be stale.",
       "ICICI API — quotes fetched via REST when WebSocket or Bhavcopy is unavailable.",
     ],
     keywords: ["websocket", "bhavcopy", "live", "eod", "stale"],

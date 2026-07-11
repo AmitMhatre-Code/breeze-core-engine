@@ -38,6 +38,10 @@ out/
 .vercel
 *.tsbuildinfo
 
+# --- Redis (local dev snapshot; never part of the app) ---
+dump.rdb
+*.rdb
+
 # --- Logs ---
 logs/
 *.log

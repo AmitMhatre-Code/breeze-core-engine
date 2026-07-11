@@ -140,7 +140,7 @@ function formatRatio(raw: unknown): string {
   if (raw === "NA" || raw === null || raw === undefined) return "—";
   const n = typeof raw === "number" ? raw : parseNum(raw);
   if (!Number.isFinite(n)) return "—";
-  return n.toFixed(4);
+  return n.toFixed(1);
 }
 
 function PlaceOrderPageInner() {

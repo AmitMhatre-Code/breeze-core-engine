@@ -1,5 +1,6 @@
 """Tests for bhavcopy SQLite persistence."""
 import datetime as dt
+import sqlite3
 from unittest.mock import patch
 
 import icici_breeze_backend.app.core.config as cfg
@@ -12,7 +13,44 @@ from icici_breeze_backend.app.services.reference_data.bhavcopy_store import (
     publish_bhavcopy_rows,
 )
 from icici_breeze_backend.app.services.reference_data.cache_bootstrap import is_bhavcopy_cached
-from icici_breeze_backend.app.services.reference_data.scrip_index import current_version
+from icici_breeze_backend.app.services.reference_data.scrip_index import (
+    current_version,
+    publish_scrip_index_from_db,
+)
+
+
+def _seed_tradeable_scrip_master(strikes: list[int]) -> None:
+    """Minimal scrip_master rows so is_tradeable_contract() (MarginPercentage > 0) passes."""
+    db_path = cfg.DATA_PATH + cfg.SCRIP_DB
+    with sqlite3.connect(db_path, timeout=30) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scrip_master (
+                ShortName TEXT,
+                CompanyName TEXT,
+                ExpiryDate TEXT,
+                ExchangeCode TEXT,
+                StrikePrice REAL,
+                SegmentCode TEXT,
+                LotSize INTEGER,
+                OptionType TEXT,
+                MarginPercentage REAL
+            )
+            """
+        )
+        for strike in strikes:
+            for opt in ("CE", "PE"):
+                conn.execute(
+                    """
+                    INSERT INTO scrip_master (
+                        ShortName, CompanyName, ExpiryDate, ExchangeCode,
+                        StrikePrice, SegmentCode, LotSize, OptionType, MarginPercentage
+                    ) VALUES ('NIFTY', 'NIFTY 50', '2026-06-30', 'NFO', ?, 'NFO', 75, ?, 12.5)
+                    """,
+                    (strike, opt),
+                )
+        conn.commit()
+    publish_scrip_index_from_db()
 
 
 def _sample_row(strike: str | float | int = 23500) -> dict[str, str]:
@@ -144,6 +182,7 @@ def test_build_chain_from_bhavcopy_uses_passed_strikes(mock_get_strikes, monkeyp
         _nifty_30jun_row(24000, cfg.PUT, "96.45"),
     ]
     publish_bhavcopy_rows(rows, segment="nfo", source_date=day, source_url="http://example/nse")
+    _seed_tradeable_scrip_master([23900, 24000])
 
     from icici_breeze_backend.app.services.reference_data.bhavcopy_store import build_chain_from_bhavcopy
 

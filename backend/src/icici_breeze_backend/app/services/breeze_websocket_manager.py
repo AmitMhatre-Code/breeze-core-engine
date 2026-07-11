@@ -397,7 +397,7 @@ def sync_holder_chain_subscriptions(
     )
     with _lock:
         current = set(_holders.get(hid, set()))
-    for token in current - desired:
+    for token in sorted(current - desired):
         _detach_holder_from_token(hid, token)
     new_tokens = sorted(desired - current)
     if new_tokens:

@@ -1,6 +1,8 @@
 """Tests for reference data cache bootstrap."""
 import sqlite3
 
+import pytest
+
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.redis_client import get_redis
 from icici_breeze_backend.app.services.reference_data.cache_bootstrap import (
@@ -9,6 +11,22 @@ from icici_breeze_backend.app.services.reference_data.cache_bootstrap import (
     is_scrip_cached,
     is_span_cached,
 )
+
+
+def _flush_refdata_keys() -> None:
+    """These tests assert a clean refdata:* namespace; a real local Redis (not the
+    in-process fallback) persists keys across separate pytest runs, so this must be
+    flushed explicitly rather than assumed empty."""
+    redis = get_redis()
+    for key in redis.keys("refdata:*"):
+        redis.delete(key)
+
+
+@pytest.fixture(autouse=True)
+def _clean_refdata_namespace():
+    _flush_refdata_keys()
+    yield
+    _flush_refdata_keys()
 
 
 def _init_db(tmp_path, monkeypatch) -> None:
@@ -26,14 +44,18 @@ def _init_db(tmp_path, monkeypatch) -> None:
                 StrikePrice REAL,
                 SegmentCode TEXT,
                 LotSize INTEGER,
-                OptionType TEXT
+                OptionType TEXT,
+                MarginPercentage REAL
             )
             """
         )
         conn.execute(
             """
-            INSERT INTO scrip_master (ShortName, CompanyName, ExpiryDate, ExchangeCode, StrikePrice, SegmentCode)
-            VALUES ('NIFTY', 'NIFTY 50', '2026-06-26', 'NIFTY', 23500, 'NFO')
+            INSERT INTO scrip_master (
+                ShortName, CompanyName, ExpiryDate, ExchangeCode,
+                StrikePrice, SegmentCode, LotSize, OptionType, MarginPercentage
+            )
+            VALUES ('NIFTY', 'NIFTY 50', '2026-06-26', 'NIFTY', 23500, 'NFO', 75, 'CE', 12.5)
             """
         )
         conn.execute(

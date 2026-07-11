@@ -99,13 +99,11 @@ class AuditLogger:
 
         # Persist audit entry into the audit_log table.
         try:
-            import sqlite3
-            import icici_breeze_backend.app.core.config as cfg
+            from icici_breeze_backend.app.repositories.base import get_sync_connection
 
-            db_path = cfg.DATA_PATH + cfg.USERS_DB
-            with sqlite3.connect(db_path) as conn:
-                cur = conn.cursor()
-                cur.execute(
+            conn = get_sync_connection()
+            try:
+                conn.execute(
                     "INSERT INTO audit_log (user_id, operation_type, resource_type, resource_id, action_status, request_id, ip_address, error_details, metadata, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
                     (
                         user_id,
@@ -120,6 +118,8 @@ class AuditLogger:
                     ),
                 )
                 conn.commit()
+            finally:
+                conn.close()
             return True
         except Exception as e:
             _logger.warning("Audit log write failed: user_id=%s op=%s: %s", user_id, operation_type, e)

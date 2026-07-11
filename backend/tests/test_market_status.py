@@ -23,7 +23,7 @@ def market_status_client():
         )
 
     app = FastAPI()
-    app.include_router(router, prefix="/api/settings")
+    app.include_router(router)
     app.dependency_overrides[get_request_context] = _ctx
     with TestClient(app) as client:
         yield client

@@ -119,6 +119,35 @@ def test_enrich_quote_metadata_bhavcopy():
     assert out["quote_as_of"] == "2026-06-27"
 
 
+@patch(
+    "icici_breeze_backend.app.services.quote_source_router.bhavcopy_is_stale",
+    return_value=True,
+)
+def test_enrich_quote_metadata_bhavcopy_stale(mock_stale):
+    payload = {
+        "quote_source": "bhavcopy",
+        "bhavcopy_date": "2026-06-27",
+        "chain_rows": [],
+    }
+    out = _enrich_quote_metadata(payload)
+    assert out["bhavcopy_stale"] is True
+    mock_stale.assert_called_once_with(date(2026, 6, 27))
+
+
+@patch(
+    "icici_breeze_backend.app.services.quote_source_router.bhavcopy_is_stale",
+    return_value=False,
+)
+def test_enrich_quote_metadata_bhavcopy_not_stale(mock_stale):
+    payload = {
+        "quote_source": "bhavcopy",
+        "bhavcopy_date": "2026-06-27",
+        "chain_rows": [],
+    }
+    out = _enrich_quote_metadata(payload)
+    assert out["bhavcopy_stale"] is False
+
+
 @patch("icici_breeze_backend.app.services.quote_source_router.now_ist")
 def test_enrich_quote_metadata_icici_api(mock_now):
     mock_now.return_value = datetime(2026, 6, 27, 16, 0, tzinfo=IST)

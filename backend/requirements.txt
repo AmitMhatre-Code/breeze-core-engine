@@ -15,6 +15,7 @@ python-multipart==0.0.6
 
 # ICICI Breeze API
 breeze-connect==1.0.65
+pandas==3.0.3  # transitive dep of breeze-connect; pinned explicitly for reproducible arm64 wheel resolution
 
 # Environment & Configuration
 python-dotenv==1.0.0

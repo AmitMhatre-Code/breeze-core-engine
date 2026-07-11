@@ -443,6 +443,15 @@ async def calc_bear_call_spread(ctx: EngineContext) -> list[StrategyResult]:
         skip_reason = stats.skip_message() if stats else (
             "No bear call spread meets minimum PoP within risk limits."
         )
+        if ctx.audit:
+            audit_calc(
+                ctx,
+                "Bear call spread candidate search",
+                {"survivors": 0, "pop_band_target": [ctx.min_pop_pct, ctx.min_pop_pct + pop_band(ctx.min_pop_pct)]},
+                {"rejection_counts": stats.counts if stats else {}},
+                rationale="No bear call spread passed feasibility filters.",
+                strategy_id=sid,
+            )
         return [skip(sid, name, skip_reason)]
 
     recommended, relaxed = await run_income_champion_pipeline(ctx, candidates, **pipeline_kwargs)
@@ -466,6 +475,16 @@ async def calc_bear_call_spread(ctx: EngineContext) -> list[StrategyResult]:
                 f"{ctx.min_ann_return_pct:.1f}%.",
             )
         ]
+
+    if ctx.audit:
+        audit_calc(
+            ctx,
+            "Bear call spread objective champions",
+            {"feasible": len(candidates), "returned": len(results)},
+            {"search_state": search_state.__dict__},
+            rationale="Constraint-first multi-objective champions from feasible set.",
+            strategy_id=sid,
+        )
 
     return results
 

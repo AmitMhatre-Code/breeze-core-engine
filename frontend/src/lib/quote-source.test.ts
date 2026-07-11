@@ -3,6 +3,7 @@ import {
   formatQuoteAsOf,
   formatQuoteSourceDetail,
   formatQuoteSourceLabel,
+  isBhavcopyStale,
   isLiveQuoteSource,
   quoteMetaFromChain,
 } from "@/lib/quote-source";
@@ -32,7 +33,18 @@ describe("quoteMetaFromChain", () => {
       quote_source: "websocket",
       bhavcopy_date: null,
       quote_as_of: "2026-06-27T10:15:00+05:30",
+      bhavcopy_stale: false,
     });
+  });
+
+  it("extracts bhavcopy staleness", () => {
+    const meta = quoteMetaFromChain({
+      ...baseChain,
+      quote_source: "bhavcopy",
+      bhavcopy_date: "2026-06-27",
+      bhavcopy_stale: true,
+    });
+    expect(meta?.bhavcopy_stale).toBe(true);
   });
 });
 
@@ -42,12 +54,12 @@ describe("formatQuoteSourceLabel", () => {
     expect(formatQuoteSourceLabel(meta)).toBe("Live · WebSocket");
   });
 
-  it("labels bhavcopy with date", () => {
+  it("labels bhavcopy with dd-MMM-yyyy date, no EOD prefix", () => {
     const meta: QuoteMeta = {
       quote_source: "bhavcopy",
       bhavcopy_date: "2026-06-27",
     };
-    expect(formatQuoteSourceLabel(meta)).toBe("EOD · Bhavcopy (2026-06-27)");
+    expect(formatQuoteSourceLabel(meta)).toBe("Bhavcopy (27-Jun-2026)");
   });
 
   it("labels icici api fallback", () => {
@@ -67,13 +79,13 @@ describe("formatQuoteAsOf", () => {
     expect(formatQuoteAsOf(meta, now)).toBe("Updated 10s ago");
   });
 
-  it("shows session date for bhavcopy", () => {
+  it("has no separate asOf line for bhavcopy (date is already in the label)", () => {
     const meta: QuoteMeta = {
       quote_source: "bhavcopy",
       bhavcopy_date: "2026-06-27",
       quote_as_of: "2026-06-27",
     };
-    expect(formatQuoteAsOf(meta, now)).toBe("Session close · 2026-06-27");
+    expect(formatQuoteAsOf(meta, now)).toBeNull();
   });
 });
 
@@ -89,5 +101,21 @@ describe("isLiveQuoteSource", () => {
   it("is true only for websocket", () => {
     expect(isLiveQuoteSource({ quote_source: "websocket" })).toBe(true);
     expect(isLiveQuoteSource({ quote_source: "bhavcopy" })).toBe(false);
+  });
+});
+
+describe("isBhavcopyStale", () => {
+  it("is true only for bhavcopy with bhavcopy_stale set", () => {
+    expect(
+      isBhavcopyStale({ quote_source: "bhavcopy", bhavcopy_stale: true }),
+    ).toBe(true);
+    expect(
+      isBhavcopyStale({ quote_source: "bhavcopy", bhavcopy_stale: false }),
+    ).toBe(false);
+    expect(isBhavcopyStale({ quote_source: "bhavcopy" })).toBe(false);
+    expect(
+      isBhavcopyStale({ quote_source: "websocket", bhavcopy_stale: true }),
+    ).toBe(false);
+    expect(isBhavcopyStale(null)).toBe(false);
   });
 });

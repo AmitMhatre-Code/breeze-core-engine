@@ -21,7 +21,6 @@ import re
 from markupsafe import Markup
 
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from icici_breeze_backend.app.repositories import parked_orders as parked_orders_repo
@@ -48,21 +47,6 @@ from icici_breeze_backend.app.services.icici_api_pacing import (
     is_breeze_rate_limited,
     is_icici_daily_limit_exceeded,
 )
-
-
-@dataclass
-class OptionChainBackoff:
-    """Legacy holder for per-run pause config; pacing uses GlobalIciciApiLimiter."""
-
-    pause_seconds: float = 0.0
-    consecutive_rate_limited: int = 0
-
-    def on_rate_limit(self) -> float:
-        self.consecutive_rate_limited += 1
-        return float(max(0.0, self.pause_seconds))
-
-    def on_success(self) -> None:
-        self.consecutive_rate_limited = 0
 
 
 def _scrip_master_connection():
@@ -1740,62 +1724,6 @@ class processor():
         """Retrieve and flush transient messages for user."""
         from icici_breeze_backend.app.repositories.message_repository import retrieve_and_flush_messages as _retrieve
         return _retrieve(user_id)
-
-    def fetch_option_chain_quotes_sb(
-        self,
-        user_id: str,
-        stock_code: str,
-        exchange_code: str,
-        expiry_api: str,
-        right: str,
-        *,
-        strike_price: str | None = None,
-        audit: "StrategyBuilderAuditSession | None" = None,
-        audit_rationale: str | None = None,
-        backoff: OptionChainBackoff,
-        max_attempts: int = 3,
-    ) -> dict[str, Any]:
-        """Strategy-builder option chain fetch with user-configured pause on 429/503 (up to max_attempts)."""
-        del max_attempts
-        from icici_breeze_backend.app.services.quote_source_router import (
-            fetch_chain_side_icici_response,
-            fetch_quote_icici_response,
-        )
-
-        if strike_price is not None:
-            quote = fetch_quote_icici_response(
-                self,
-                user_id,
-                stock_code,
-                exchange_code,
-                expiry_api,
-                right,
-                strike_price,
-                audit=audit,
-                audit_rationale=audit_rationale,
-            )
-        else:
-            quote = fetch_chain_side_icici_response(
-                self, user_id, stock_code, exchange_code, expiry_api, right
-            )
-
-        if quote.get("Status") == 200:
-            backoff.on_success()
-            return quote
-
-        if quote.get("quote_source") == "icici_api" and quote.get("Status") in (429, 503):
-            pass
-        else:
-            backoff.on_success()
-        if quote.get("Error"):
-            _logger.warning(
-                "fetch_option_chain_quotes_sb failed: stock_code=%s right=%s strike=%s error=%s",
-                stock_code,
-                right,
-                strike_price,
-                quote["Error"],
-            )
-        return quote
 
     def get_quote(
         self,

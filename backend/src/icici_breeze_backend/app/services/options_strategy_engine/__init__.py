@@ -5,9 +5,7 @@ from typing import Any
 
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     floor_lots,
-    strategy_boundary_strikes,
     strike_window,
-    tail_strikes_needed,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     STRATEGY_CATALOG,
@@ -26,8 +24,6 @@ _LAZY_EXPORTS = {
     "build_liquidity_cache",
     "finalize_liquidity_cache",
     "plan_targeted_fetches",
-    "expand_chain_to_liquidity_boundary",
-    "fetch_full_chain_side",
     "calc_bear_call_spread",
     "calc_bear_put_spread",
     "calc_bull_call_spread",
@@ -46,12 +42,8 @@ _LAZY_EXPORTS = {
     "calc_short_strangle",
     "_attach_margins_and_returns",
     "_build_liquidity_cache",
-    "_expand_chain_to_liquidity_boundary",
-    "_fetch_full_chain_side",
     "_floor_lots",
-    "_strategy_boundary_strikes",
     "_strike_window",
-    "_tail_strikes_needed",
 }
 
 
@@ -90,22 +82,10 @@ def _resolve_lazy(name: str) -> Any:
         from icici_breeze_backend.app.services.options_strategy_engine.strike_planner import plan_targeted_fetches
 
         return plan_targeted_fetches
-    if name in ("expand_chain_to_liquidity_boundary", "_expand_chain_to_liquidity_boundary"):
-        from icici_breeze_backend.app.services.options_strategy_engine.universe import expand_chain_to_liquidity_boundary
-
-        return expand_chain_to_liquidity_boundary
-    if name in ("fetch_full_chain_side", "_fetch_full_chain_side"):
-        from icici_breeze_backend.app.services.options_strategy_engine.universe import fetch_full_chain_side
-
-        return fetch_full_chain_side
     if name == "_floor_lots":
         return floor_lots
-    if name == "_strategy_boundary_strikes":
-        return strategy_boundary_strikes
     if name == "_strike_window":
         return strike_window
-    if name == "_tail_strikes_needed":
-        return tail_strikes_needed
 
     calc_map = {
         "calc_bear_call_spread": "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bear_call_spread",
@@ -161,20 +141,12 @@ __all__ = [
     "calc_naked_pe_short",
     "calc_short_straddle",
     "calc_short_strangle",
-    "expand_chain_to_liquidity_boundary",
-    "fetch_full_chain_side",
     "floor_lots",
     "get_icici_rate_limit_pause_seconds",
     "run_propose_trades",
-    "strategy_boundary_strikes",
     "strike_window",
-    "tail_strikes_needed",
     "_attach_margins_and_returns",
     "_build_liquidity_cache",
-    "_expand_chain_to_liquidity_boundary",
-    "_fetch_full_chain_side",
     "_floor_lots",
-    "_strategy_boundary_strikes",
     "_strike_window",
-    "_tail_strikes_needed",
 ]

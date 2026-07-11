@@ -118,35 +118,6 @@ def strike_window(
     return sorted(set(window))
 
 
-def strategy_boundary_strikes(
-    all_strikes: list[Strike],
-    range_lower: float,
-    range_upper: float,
-    spot: float,
-    atm: Strike,
-) -> set[Strike]:
-    needed: set[Strike] = set()
-    if atm in all_strikes:
-        needed.add(atm)
-    needed.add(min(all_strikes, key=lambda s: abs(s - spot)))
-    needed.add(min(all_strikes, key=lambda s: abs(s - range_lower)))
-    needed.add(min(all_strikes, key=lambda s: abs(s - range_upper)))
-    ce_above = [s for s in all_strikes if s > range_upper]
-    if ce_above:
-        needed.add(ce_above[0])
-    pe_below = [s for s in all_strikes if s < range_lower]
-    if pe_below:
-        needed.add(pe_below[-1])
-    return needed
-
-
-def tail_strikes_needed(needed_strikes: list[Strike], chain_strikes: set[Strike]) -> list[Strike]:
-    if not chain_strikes:
-        return list(needed_strikes)
-    lo, hi = min(chain_strikes), max(chain_strikes)
-    return [s for s in needed_strikes if s < lo or s > hi]
-
-
 def floor_lots(qty_rupees: float, per_lot_cost: float, lot_size: int) -> int:
     if per_lot_cost <= 0 or lot_size <= 0:
         return 0

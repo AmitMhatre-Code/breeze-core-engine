@@ -8,7 +8,7 @@ from typing import Any, TYPE_CHECKING
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_for_broker, strike_key
-from icici_breeze_backend.app.core.market_hours import is_india_market_open
+from icici_breeze_backend.app.core.market_hours import bhavcopy_is_stale, is_india_market_open
 from icici_breeze_backend.app.core.timezone import IST, now_ist
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.app.services.reference_data.bhavcopy_store import (
@@ -101,6 +101,11 @@ def _enrich_quote_metadata(payload: dict[str, Any]) -> dict[str, Any]:
         bd = payload.get("bhavcopy_date")
         if bd:
             payload["quote_as_of"] = str(bd)
+            try:
+                bhav_date = dt.date.fromisoformat(str(bd))
+            except ValueError:
+                bhav_date = None
+            payload["bhavcopy_stale"] = bhavcopy_is_stale(bhav_date)
     elif source == "icici_api":
         payload["quote_as_of"] = now_ist().isoformat()
     return payload

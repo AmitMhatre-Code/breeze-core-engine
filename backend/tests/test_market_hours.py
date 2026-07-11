@@ -1,7 +1,7 @@
 """Unit tests for NSE/BSE market hours and exchange holiday calendar."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
@@ -64,3 +64,49 @@ def test_get_reference_time_skips_holiday():
 def test_open_window_boundaries(hour, minute, open_):
     dt = _ist(2026, 6, 25, hour, minute)
     assert mh.is_india_market_open(dt) is open_
+
+
+# Thursday 2026-06-25: regular trading day.
+# Friday 2026-06-26: exchange holiday (Muharram).
+# Saturday 2026-06-27: weekend.
+
+
+def test_latest_opened_trading_day_during_session():
+    dt = _ist(2026, 6, 25, 10, 0)
+    assert mh.latest_opened_trading_day(dt) == date(2026, 6, 25)
+
+
+def test_latest_opened_trading_day_holiday_falls_back():
+    dt = _ist(2026, 6, 26, 10, 0)  # holiday, no session opens
+    assert mh.latest_opened_trading_day(dt) == date(2026, 6, 25)
+
+
+def test_latest_opened_trading_day_weekend_falls_back():
+    dt = _ist(2026, 6, 27, 10, 0)
+    assert mh.latest_opened_trading_day(dt) == date(2026, 6, 25)
+
+
+def test_bhavcopy_is_stale_none_date():
+    assert mh.bhavcopy_is_stale(None, _ist(2026, 6, 25, 10, 0)) is False
+
+
+def test_bhavcopy_is_stale_same_session_not_stale():
+    dt = _ist(2026, 6, 25, 10, 0)
+    assert mh.bhavcopy_is_stale(date(2026, 6, 25), dt) is False
+
+
+def test_bhavcopy_is_stale_once_market_reopens():
+    dt = _ist(2026, 6, 25, 10, 0)  # Thursday session open
+    assert mh.bhavcopy_is_stale(date(2026, 6, 24), dt) is True
+
+
+def test_bhavcopy_is_stale_weekend_not_yet_stale():
+    # Saturday: bhavcopy from Thursday's close hasn't been superseded yet.
+    dt = _ist(2026, 6, 27, 10, 0)
+    assert mh.bhavcopy_is_stale(date(2026, 6, 25), dt) is False
+
+
+def test_bhavcopy_is_stale_holiday_not_yet_stale():
+    # Friday holiday: market hasn't opened, Thursday's bhavcopy still current.
+    dt = _ist(2026, 6, 26, 10, 0)
+    assert mh.bhavcopy_is_stale(date(2026, 6, 25), dt) is False

@@ -1,5 +1,6 @@
 import type { ChainSuccess, QuoteMeta, QuoteSource } from "@/lib/strategy-builder/types";
 import { quoteSourceDetailLine } from "@/lib/help/topic-content";
+import { formatIsoDateDdMmmYyyy } from "@/lib/format-iso-date";
 
 const VALID_SOURCES: QuoteSource[] = ["websocket", "bhavcopy", "icici_api"];
 
@@ -16,11 +17,17 @@ export function quoteMetaFromChain(
     quote_source: success.quote_source,
     bhavcopy_date: success.bhavcopy_date ?? null,
     quote_as_of: success.quote_as_of ?? null,
+    bhavcopy_stale: success.bhavcopy_stale ?? false,
   };
 }
 
 export function isLiveQuoteSource(meta: QuoteMeta | null | undefined): boolean {
   return meta?.quote_source === "websocket";
+}
+
+/** True once a trading session has opened after the bhavcopy source date. */
+export function isBhavcopyStale(meta: QuoteMeta | null | undefined): boolean {
+  return meta?.quote_source === "bhavcopy" && meta.bhavcopy_stale === true;
 }
 
 export function formatQuoteSourceLabel(meta: QuoteMeta): string {
@@ -29,8 +36,8 @@ export function formatQuoteSourceLabel(meta: QuoteMeta): string {
       return "Live · WebSocket";
     case "bhavcopy":
       return meta.bhavcopy_date
-        ? `EOD · Bhavcopy (${meta.bhavcopy_date})`
-        : "EOD · Bhavcopy";
+        ? `Bhavcopy (${formatIsoDateDdMmmYyyy(meta.bhavcopy_date)})`
+        : "Bhavcopy";
     case "icici_api":
       return "ICICI API";
     default:
@@ -43,7 +50,7 @@ export function formatQuoteSourceDetail(meta: QuoteMeta): string {
     case "websocket":
       return quoteSourceDetailLine("websocket");
     case "bhavcopy":
-      return quoteSourceDetailLine("bhavcopy", meta.bhavcopy_date);
+      return quoteSourceDetailLine("bhavcopy", meta.bhavcopy_date, meta.bhavcopy_stale);
     case "icici_api":
       return quoteSourceDetailLine("icici_api");
     default:
@@ -83,9 +90,8 @@ export function formatQuoteAsOf(
     return `Updated ${formatRelativeAge(nowMs - asOfMs)}`;
   }
   if (meta.quote_source === "bhavcopy") {
-    return meta.bhavcopy_date
-      ? `Session close · ${meta.bhavcopy_date}`
-      : "End of day prices";
+    // Bhavcopy date is already shown in the label itself; no separate asOf line.
+    return null;
   }
   if (meta.quote_source === "icici_api") {
     return `Fetched ${formatRelativeAge(nowMs - asOfMs)}`;

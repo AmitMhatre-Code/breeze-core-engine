@@ -40,8 +40,8 @@ def users_db_env(monkeypatch, tmp_path):
     yield "u_play"
 
 
-def test_catalog_has_thirty_methods():
-    assert len(ALLOWED_METHODS) == 30
+def test_catalog_has_thirty_three_methods():
+    assert len(ALLOWED_METHODS) == 33
     assert get_catalog_entry("place_order") is not None
     assert get_catalog_entry("get_order_list") is not None
 

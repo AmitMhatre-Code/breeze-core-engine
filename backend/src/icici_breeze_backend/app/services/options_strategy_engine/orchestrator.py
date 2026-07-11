@@ -1,6 +1,7 @@
 """Strategy engine orchestration and delivery."""
 from __future__ import annotations
 
+import asyncio
 import inspect
 import time
 from typing import Any
@@ -315,7 +316,7 @@ async def run_propose_trades(
         progress=progress,
     )
 
-    build_bulk_chain_cache(ctx)
+    await asyncio.to_thread(build_bulk_chain_cache, ctx)
     if ctx.halted:
         return _fail(400, ctx.halt_reason or "Insufficient market depth.")
 
@@ -356,8 +357,8 @@ async def run_propose_trades(
             rationale="Delta-anchored template parameters from chain strikes.",
         )
 
-    ctx.atm_iv = compute_atm_iv(ctx)
-    enrich_greeks(ctx)
+    ctx.atm_iv = await asyncio.to_thread(compute_atm_iv, ctx)
+    await asyncio.to_thread(enrich_greeks, ctx)
 
     finalize_liquidity_cache(ctx)
     if ctx.halted:

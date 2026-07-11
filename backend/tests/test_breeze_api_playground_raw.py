@@ -19,6 +19,7 @@ from icici_breeze_backend.app.services.breeze_websocket_manager import (
     ws_disconnect_playground,
     ws_release_playground,
 )
+import icici_breeze_backend.app.services.ws_tick_pipeline as ws_tick_pipeline
 
 
 def _reset_bwm(monkeypatch) -> None:
@@ -112,7 +113,7 @@ def test_playground_subscribe_stock_token_list(monkeypatch):
     monkeypatch.setattr(bwm, "_sdk", sdk)
     monkeypatch.setattr(bwm, "_connected", True)
     monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
-    monkeypatch.setattr(bwm, "start_tick_pipeline", lambda: None)
+    monkeypatch.setattr(ws_tick_pipeline, "start_tick_pipeline", lambda: None)
 
     out = playground_subscribe(
         proc,
@@ -150,7 +151,7 @@ def test_playground_subscribe_empty_strike_calls_sdk(monkeypatch):
     proc.get_session_breeze.return_value = sdk
     _reset_bwm(monkeypatch)
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.breeze_websocket_manager.start_tick_pipeline",
+        "icici_breeze_backend.app.services.ws_tick_pipeline.start_tick_pipeline",
         lambda: None,
     )
     import icici_breeze_backend.app.services.breeze_websocket_manager as bwm
@@ -213,7 +214,7 @@ def test_ws_connect_playground_includes_icici_command(monkeypatch):
     proc.get_session_breeze.return_value = sdk
     _reset_bwm(monkeypatch)
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.breeze_websocket_manager.start_tick_pipeline",
+        "icici_breeze_backend.app.services.ws_tick_pipeline.start_tick_pipeline",
         lambda: None,
     )
 
@@ -240,7 +241,7 @@ def test_playground_subscribe_success_tracks_active_subscriptions(monkeypatch):
     ), "_sdk", sdk)
     monkeypatch.setattr(bwm, "_connected", True)
     monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
-    monkeypatch.setattr(bwm, "start_tick_pipeline", lambda: None)
+    monkeypatch.setattr(ws_tick_pipeline, "start_tick_pipeline", lambda: None)
 
     out = playground_subscribe(
         proc,
@@ -275,11 +276,15 @@ def test_release_keeps_socket_ws_disconnect_closes(monkeypatch):
     _reset_bwm(monkeypatch)
     import icici_breeze_backend.app.services.breeze_websocket_manager as bwm
 
-    monkeypatch.setattr(bwm, "start_tick_pipeline", lambda: None)
-    monkeypatch.setattr(bwm, "stop_tick_pipeline", lambda: None)
+    monkeypatch.setattr(ws_tick_pipeline, "start_tick_pipeline", lambda: None)
+    monkeypatch.setattr(ws_tick_pipeline, "stop_tick_pipeline", lambda: None)
     monkeypatch.setattr(bwm, "_sdk", sdk)
     monkeypatch.setattr(bwm, "_connected", True)
     monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.reference_data.ws_token_index.lookup_token_for_contract",
+        lambda *_args, **_kwargs: 44684,
+    )
 
     bwm.subscribe_option(proc, "u1", "NFO", "NIFTY", "30-Jun-2026", 25000.0, "call", holder_id="h1")
     out = ws_release_playground("h1")

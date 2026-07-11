@@ -213,7 +213,10 @@ def _liquid_contract_rows(conn: sqlite3.Connection, exchange_code: str) -> list[
           AND MarginPercentage > 0
           AND StrikePrice IS NOT NULL AND StrikePrice > 0
     """
-    return conn.execute(sql, (exchange_code,)).fetchall()
+    try:
+        return conn.execute(sql, (exchange_code,)).fetchall()
+    except sqlite3.Error:
+        return []
 
 
 def publish_scrip_index_from_db(version: int | None = None) -> int:
