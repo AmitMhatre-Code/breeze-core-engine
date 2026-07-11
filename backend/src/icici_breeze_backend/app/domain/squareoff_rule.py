@@ -14,6 +14,12 @@ class ArmSquareOffRuleRequest(BaseModel):
     exchange_code: str = "NFO"
     profit_target_pnl: float = Field(..., gt=0)
     loss_limit_pnl: float = Field(..., gt=0)
+    target_premium_pct: int = Field(
+        ..., ge=1, le=20, description="% above/below LTP for the profit-booking exit limit order"
+    )
+    stop_loss_premium_pct: int = Field(
+        ..., ge=1, le=20, description="% above/below LTP for the stop-loss exit limit order"
+    )
 
 
 class SquareOffRuleLegResult(BaseModel):
@@ -33,6 +39,8 @@ class SquareOffRuleRecord(BaseModel):
     exchange_code: str
     profit_target_pnl: float
     loss_limit_pnl: float
+    target_premium_pct: int
+    stop_loss_premium_pct: int
     status: SquareOffRuleStatus
     leg_results: Optional[List[SquareOffRuleLegResult]] = None
     created_at: Optional[str] = None

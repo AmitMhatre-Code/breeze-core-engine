@@ -36,6 +36,8 @@ def _row_to_record(row: sqlite3.Row) -> SquareOffRuleRecord:
         exchange_code=str(d["exchange_code"] or "NFO"),
         profit_target_pnl=float(d["profit_target_pnl"]),
         loss_limit_pnl=float(d["loss_limit_pnl"]),
+        target_premium_pct=int(d["target_premium_pct"]),
+        stop_loss_premium_pct=int(d["stop_loss_premium_pct"]),
         status=d["status"],  # type: ignore[arg-type]
         leg_results=leg_results,
         created_at=str(d["created_at"]) if d.get("created_at") else None,
@@ -45,7 +47,8 @@ def _row_to_record(row: sqlite3.Row) -> SquareOffRuleRecord:
 
 _SELECT_COLUMNS = (
     "id, user_id, stock_code, expiry_display, exchange_code, profit_target_pnl, "
-    "loss_limit_pnl, status, leg_results, created_at, fired_at"
+    "loss_limit_pnl, target_premium_pct, stop_loss_premium_pct, status, leg_results, "
+    "created_at, fired_at"
 )
 
 
@@ -90,6 +93,8 @@ def arm_rule(
     exchange_code: str,
     profit_target_pnl: float,
     loss_limit_pnl: float,
+    target_premium_pct: int,
+    stop_loss_premium_pct: int,
 ) -> SquareOffRuleRecord:
     stock_code = stock_code.strip().upper()
     expiry_display = expiry_display.strip()
@@ -108,10 +113,18 @@ def arm_rule(
             conn.execute(
                 """
                 UPDATE portfolio_squareoff_rules
-                SET profit_target_pnl = ?, loss_limit_pnl = ?, exchange_code = ?
+                SET profit_target_pnl = ?, loss_limit_pnl = ?, exchange_code = ?,
+                    target_premium_pct = ?, stop_loss_premium_pct = ?
                 WHERE id = ?
                 """,
-                (profit_target_pnl, loss_limit_pnl, exchange_code, rule_id),
+                (
+                    profit_target_pnl,
+                    loss_limit_pnl,
+                    exchange_code,
+                    target_premium_pct,
+                    stop_loss_premium_pct,
+                    rule_id,
+                ),
             )
         else:
             rule_id = str(uuid.uuid4())
@@ -119,8 +132,9 @@ def arm_rule(
                 """
                 INSERT INTO portfolio_squareoff_rules (
                     id, user_id, stock_code, expiry_display, exchange_code,
-                    profit_target_pnl, loss_limit_pnl, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'armed')
+                    profit_target_pnl, loss_limit_pnl, target_premium_pct,
+                    stop_loss_premium_pct, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'armed')
                 """,
                 (
                     rule_id,
@@ -130,6 +144,8 @@ def arm_rule(
                     exchange_code,
                     profit_target_pnl,
                     loss_limit_pnl,
+                    target_premium_pct,
+                    stop_loss_premium_pct,
                 ),
             )
         conn.commit()

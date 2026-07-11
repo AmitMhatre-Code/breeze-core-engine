@@ -19,6 +19,8 @@ export type SquareOffRuleRecord = {
   exchange_code: string;
   profit_target_pnl: number;
   loss_limit_pnl: number;
+  target_premium_pct: number;
+  stop_loss_premium_pct: number;
   status: SquareOffRuleStatus;
   leg_results?: SquareOffRuleLegResult[] | null;
   created_at?: string | null;
@@ -31,6 +33,8 @@ export type ArmSquareOffRuleRequest = {
   exchange_code?: string;
   profit_target_pnl: number;
   loss_limit_pnl: number;
+  target_premium_pct: number;
+  stop_loss_premium_pct: number;
 };
 
 export const SQUAREOFF_RULES_QUERY_KEY = ["portfolio", "squareoff-rules"] as const;

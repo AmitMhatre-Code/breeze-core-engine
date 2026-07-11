@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.repositories import squareoff_rules as repo
 from icici_breeze_backend.app.services.deployment_license_status import trading_mutations_allowed
 from icici_breeze_backend.app.services.portfolio_pnl_engine import (
@@ -22,6 +23,27 @@ from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
 _logger = logging.getLogger(__name__)
 _GROUP_REASONS = {"group_target_hit", "group_stop_loss_hit"}
+_NFO_TICK_SIZE = 0.05
+
+
+def _round_to_tick(price: float) -> float:
+    return round(round(price / _NFO_TICK_SIZE) * _NFO_TICK_SIZE, 2)
+
+
+def _leg_limit_price(leg: dict[str, Any], *, reason: str, payload: dict[str, Any]) -> float:
+    """Marketable limit price for a closing leg: a Buy is placed at a premium
+    to LTP, a Sell at a discount, using whichever of the rule's two
+    user-configured percentages matches why it fired (profit-booking vs
+    stop-loss) — so the order is priced to fill without being a raw,
+    unbounded-slippage MARKET order."""
+    pct = (
+        payload["target_premium_pct"]
+        if reason == "group_target_hit"
+        else payload["stop_loss_premium_pct"]
+    )
+    ltp = float(leg["ltp"])
+    factor = 1 + pct / 100 if leg["action"] == cfg.BUY else 1 - pct / 100
+    return _round_to_tick(ltp * factor)
 
 
 def hydrate_group_rules_on_startup() -> None:
@@ -36,6 +58,8 @@ def hydrate_group_rules_on_startup() -> None:
             exchange_code=str(row.get("exchange_code") or "NFO"),
             target_pnl=float(row["profit_target_pnl"]),
             stop_loss_pnl=float(row["loss_limit_pnl"]),
+            target_premium_pct=int(row["target_premium_pct"]),
+            stop_loss_premium_pct=int(row["stop_loss_premium_pct"]),
         )
 
 
@@ -77,6 +101,7 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
     all_ok = True
     for leg in legs:
         try:
+            limit_price = _leg_limit_price(leg, reason=reason, payload=payload)
             response = breeze.place_order(
                 user_id=user_id,
                 product_type=leg["product_type"],
@@ -84,11 +109,11 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
                 action=leg["action"],
                 strike_price=leg["strike_price"],
                 right=leg["right"],
-                price="0",
+                price=str(limit_price),
                 expiry_date=leg["expiry_display"],
                 quantity=leg["quantity"],
                 exchange_code=leg["exchange_code"],
-                aggressive_limit=True,
+                aggressive_limit=False,
             )
             ok = isinstance(response, dict) and response.get("Status") == 200
             error = None if ok else str((response or {}).get("Error") or "Broker rejected the order")

@@ -16,6 +16,19 @@ function digitsToIndianGroups(digits: string): string {
   return Number(digits).toLocaleString("en-IN");
 }
 
+const PCT_MIN = 1;
+const PCT_MAX = 20;
+
+function isValidPct(value: string): boolean {
+  if (!/^\d{1,2}$/.test(value)) return false;
+  const n = Number(value);
+  return n >= PCT_MIN && n <= PCT_MAX;
+}
+
+function handlePctInput(e: ChangeEvent<HTMLInputElement>, setValue: (v: string) => void) {
+  setValue(e.target.value.replace(/\D/g, "").slice(0, 2));
+}
+
 /**
  * Reformats an amount `<input>` with Indian comma grouping (₹1,00,000 style)
  * as the user types, preserving cursor position across the reformat so
@@ -87,6 +100,8 @@ export function SquareOffRuleModal({
 }) {
   const [profitTarget, setProfitTarget] = useState("");
   const [lossLimit, setLossLimit] = useState("");
+  const [targetPremiumPct, setTargetPremiumPct] = useState("");
+  const [stopLossPremiumPct, setStopLossPremiumPct] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [disarming, setDisarming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +114,8 @@ export function SquareOffRuleModal({
     setLossLimit(
       existingRule ? digitsToIndianGroups(String(existingRule.loss_limit_pnl)) : "",
     );
+    setTargetPremiumPct(existingRule ? String(existingRule.target_premium_pct) : "");
+    setStopLossPremiumPct(existingRule ? String(existingRule.stop_loss_premium_pct) : "");
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -107,7 +124,12 @@ export function SquareOffRuleModal({
   const target = Number(profitTarget.replace(/,/g, ""));
   const stop = Number(lossLimit.replace(/,/g, ""));
   const canSubmit =
-    Number.isFinite(target) && target > 0 && Number.isFinite(stop) && stop > 0;
+    Number.isFinite(target) &&
+    target > 0 &&
+    Number.isFinite(stop) &&
+    stop > 0 &&
+    isValidPct(targetPremiumPct) &&
+    isValidPct(stopLossPremiumPct);
 
   const handleSubmit = async () => {
     if (!canSubmit || submitting) return;
@@ -120,6 +142,8 @@ export function SquareOffRuleModal({
         exchange_code: exchangeCode,
         profit_target_pnl: target,
         loss_limit_pnl: stop,
+        target_premium_pct: Number(targetPremiumPct),
+        stop_loss_premium_pct: Number(stopLossPremiumPct),
       });
       onArmed(record);
       onClose();
@@ -231,12 +255,47 @@ export function SquareOffRuleModal({
             />
           </div>
         </label>
+        <label className="block">
+          <span className={sb.fieldLabel} style={{ color: "var(--up)" }}>
+            Profit-booking offset
+          </span>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              inputMode="numeric"
+              className={sb.input}
+              value={targetPremiumPct}
+              onChange={(e) => handlePctInput(e, setTargetPremiumPct)}
+              placeholder="10"
+              disabled={!!existingRule}
+            />
+            <span className="text-sm text-faint">%</span>
+          </div>
+        </label>
+        <label className="block">
+          <span className={sb.fieldLabel} style={{ color: "var(--down)" }}>
+            Stop-loss offset
+          </span>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              inputMode="numeric"
+              className={sb.input}
+              value={stopLossPremiumPct}
+              onChange={(e) => handlePctInput(e, setStopLossPremiumPct)}
+              placeholder="5"
+              disabled={!!existingRule}
+            />
+            <span className="text-sm text-faint">%</span>
+          </div>
+        </label>
       </div>
 
       <p className="px-3 py-2 text-xs leading-relaxed text-faint">
-        On hit: fires an aggressive limit (market) order to square off every leg
-        in this group. Re-evaluated on the same clock as the P&amp;L engine
-        (Settings &rsaquo; Advanced).
+        On hit: closes every leg with a limit order priced off LTP by the
+        offset above — Buy legs at a premium, Sell legs at a discount — so the
+        order is priced to fill rather than a raw market order. Re-evaluated
+        on the same clock as the P&amp;L engine (Settings &rsaquo; Advanced).
       </p>
 
       {error ? <p className="text-sm text-down">{error}</p> : null}

@@ -41,6 +41,8 @@ async def arm_rule(
         exchange_code=body.exchange_code,
         profit_target_pnl=body.profit_target_pnl,
         loss_limit_pnl=body.loss_limit_pnl,
+        target_premium_pct=body.target_premium_pct,
+        stop_loss_premium_pct=body.stop_loss_premium_pct,
     )
     portfolio_pnl_engine.set_group_rule(
         ctx.user_id,
@@ -50,13 +52,19 @@ async def arm_rule(
         exchange_code=body.exchange_code,
         target_pnl=body.profit_target_pnl,
         stop_loss_pnl=body.loss_limit_pnl,
+        target_premium_pct=body.target_premium_pct,
+        stop_loss_premium_pct=body.stop_loss_premium_pct,
     )
     AuditLogger(None).log_operation(
         ctx.user_id,
         OperationType.SQUAREOFF_RULE_ARMED,
         "PortfolioSquareOffRule",
         record.id,
-        error_details=f"{stock_code} {expiry_display} target={body.profit_target_pnl} stop={body.loss_limit_pnl}",
+        error_details=(
+            f"{stock_code} {expiry_display} target={body.profit_target_pnl} "
+            f"stop={body.loss_limit_pnl} target_pct={body.target_premium_pct} "
+            f"stop_pct={body.stop_loss_premium_pct}"
+        ),
     )
     return record
 

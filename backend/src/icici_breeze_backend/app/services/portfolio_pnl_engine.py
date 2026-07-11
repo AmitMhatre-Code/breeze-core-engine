@@ -120,6 +120,8 @@ class GroupRule:
     exchange_code: str
     target_pnl: float | None
     stop_loss_pnl: float | None
+    target_premium_pct: int
+    stop_loss_premium_pct: int
 
 
 def _group_key(stock_code: str, expiry_display: str) -> str:
@@ -205,6 +207,8 @@ def set_group_rule(
     exchange_code: str = "NFO",
     target_pnl: float | None = None,
     stop_loss_pnl: float | None = None,
+    target_premium_pct: int = 1,
+    stop_loss_premium_pct: int = 1,
 ) -> None:
     """Arm (or re-arm) a profit/loss rule for one (stock_code, expiry_display)
     group. Called both from the arm route and from startup hydration."""
@@ -216,6 +220,8 @@ def set_group_rule(
         exchange_code=exchange_code,
         target_pnl=target_pnl,
         stop_loss_pnl=stop_loss_pnl,
+        target_premium_pct=target_premium_pct,
+        stop_loss_premium_pct=stop_loss_premium_pct,
     )
     with _registry_lock:
         _group_rules.setdefault(user_id, {})[_group_key(stock_code, expiry_display)] = rule
@@ -378,11 +384,11 @@ def _build_squareoff_payload(leg: PositionLeg, *, reason: str, pnl: float) -> di
     }
 
 
-def _build_group_leg_order(leg: PositionLeg, *, pnl: float) -> dict[str, Any]:
+def _build_group_leg_order(leg: PositionLeg, *, pnl: float, ltp: float) -> dict[str, Any]:
     """One leg's *closing* order, resolved to an actual Buy/Sell action (close
     a long with Sell, close a short with Buy — mirrors the frontend's
-    `squareOffToOrderPayload`), for the dispatcher to hand straight to
-    `processor.place_order(..., aggressive_limit=True)`."""
+    `squareOffToOrderPayload`), plus the LTP the dispatcher needs to price a
+    premium/discount limit order (see `squareoff_dispatcher`)."""
     close_action = cfg.SELL if leg.action == cfg.BUY else cfg.BUY
     return {
         "scrip_key": leg.scrip_key,
@@ -395,6 +401,7 @@ def _build_group_leg_order(leg: PositionLeg, *, pnl: float) -> dict[str, Any]:
         "quantity": str(leg.quantity),
         "action": close_action,
         "pnl": pnl,
+        "ltp": ltp,
     }
 
 
@@ -469,8 +476,10 @@ def _evaluate_rules(snapshot: dict[str, Any], legs_by_key: dict[str, PositionLeg
             "stock_code": group_rule.stock_code,
             "expiry_display": group_rule.expiry_display,
             "total_pnl": group_total,
+            "target_premium_pct": group_rule.target_premium_pct,
+            "stop_loss_premium_pct": group_rule.stop_loss_premium_pct,
             "legs": [
-                _build_group_leg_order(legs_by_key[r["scrip_key"]], pnl=r["pnl"])
+                _build_group_leg_order(legs_by_key[r["scrip_key"]], pnl=r["pnl"], ltp=r["ltp"])
                 for r in matching
             ],
         })

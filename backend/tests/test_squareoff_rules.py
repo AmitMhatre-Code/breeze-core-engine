@@ -23,7 +23,15 @@ def db_path(tmp_path, monkeypatch):
     return path
 
 
-def _arm(user_id="u1", stock_code="NIFTY", expiry_display="30-Jun-2026", target=100000.0, stop=20000.0):
+def _arm(
+    user_id="u1",
+    stock_code="NIFTY",
+    expiry_display="30-Jun-2026",
+    target=100000.0,
+    stop=20000.0,
+    target_premium_pct=10,
+    stop_loss_premium_pct=5,
+):
     return repo.arm_rule(
         user_id,
         stock_code=stock_code,
@@ -31,6 +39,8 @@ def _arm(user_id="u1", stock_code="NIFTY", expiry_display="30-Jun-2026", target=
         exchange_code="NFO",
         profit_target_pnl=target,
         loss_limit_pnl=stop,
+        target_premium_pct=target_premium_pct,
+        stop_loss_premium_pct=stop_loss_premium_pct,
     )
 
 
@@ -112,7 +122,12 @@ class TestRoutes:
 
         monkeypatch.setattr(engine, "_group_rules", {})
         body = ArmSquareOffRuleRequest(
-            stock_code="nifty", expiry_date="2026-06-30T06:00:00.000Z", profit_target_pnl=100000, loss_limit_pnl=20000
+            stock_code="nifty",
+            expiry_date="2026-06-30T06:00:00.000Z",
+            profit_target_pnl=100000,
+            loss_limit_pnl=20000,
+            target_premium_pct=10,
+            stop_loss_premium_pct=5,
         )
         record = asyncio.run(route.arm_rule(body, _ctx()))
         assert record.status == "armed"
@@ -165,11 +180,20 @@ class TestDispatcher:
             "quantity": "50",
             "action": "Sell",
             "pnl": 500.0,
+            "ltp": 100.0,
         }
         base.update(overrides)
         return base
 
-    def _payload(self, *, reason="group_target_hit", legs=None, rule_id="rule-1"):
+    def _payload(
+        self,
+        *,
+        reason="group_target_hit",
+        legs=None,
+        rule_id="rule-1",
+        target_premium_pct=10,
+        stop_loss_premium_pct=5,
+    ):
         return {
             "user_id": "u1",
             "rule_id": rule_id,
@@ -177,6 +201,8 @@ class TestDispatcher:
             "stock_code": "NIFTY",
             "expiry_display": "30-Jun-2026",
             "total_pnl": 500.0,
+            "target_premium_pct": target_premium_pct,
+            "stop_loss_premium_pct": stop_loss_premium_pct,
             "legs": legs if legs is not None else [self._leg()],
         }
 
@@ -268,3 +294,53 @@ class TestDispatcher:
 
         assert len(failed_calls) == 1
         assert "read-only" in failed_calls[0][1][0]["error"].lower()
+
+    def test_target_hit_prices_buy_leg_at_a_premium_to_ltp(self, monkeypatch):
+        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: None)
+
+        captured = {}
+
+        class _FakeBreeze:
+            def place_order(self, **kwargs):
+                captured.update(kwargs)
+                return {"Status": 200, "Success": {}}
+
+        monkeypatch.setattr(squareoff_dispatcher, "processor", lambda: _FakeBreeze())
+
+        leg = self._leg(action="Buy", ltp=100.0)
+        squareoff_dispatcher._handle_group_rule_hit(
+            self._payload(reason="group_target_hit", legs=[leg], target_premium_pct=10)
+        )
+
+        assert captured["price"] == "110.0"
+        assert captured["aggressive_limit"] is False
+
+    def test_stop_loss_hit_prices_sell_leg_at_a_discount_to_ltp(self, monkeypatch):
+        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: None)
+
+        captured = {}
+
+        class _FakeBreeze:
+            def place_order(self, **kwargs):
+                captured.update(kwargs)
+                return {"Status": 200, "Success": {}}
+
+        monkeypatch.setattr(squareoff_dispatcher, "processor", lambda: _FakeBreeze())
+
+        leg = self._leg(action="Sell", ltp=100.0)
+        squareoff_dispatcher._handle_group_rule_hit(
+            self._payload(reason="group_stop_loss_hit", legs=[leg], stop_loss_premium_pct=5)
+        )
+
+        assert captured["price"] == "95.0"
+        assert captured["aggressive_limit"] is False
+
+    def test_limit_price_rounds_to_nearest_tick(self):
+        leg = self._leg(action="Buy", ltp=33.3)
+        price = squareoff_dispatcher._leg_limit_price(
+            leg, reason="group_target_hit", payload=self._payload(target_premium_pct=7)
+        )
+        # 33.3 * 1.07 = 35.631 -> nearest 0.05 tick is 35.65
+        assert price == pytest.approx(35.65)
