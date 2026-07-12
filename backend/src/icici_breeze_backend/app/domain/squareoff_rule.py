@@ -5,7 +5,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-SquareOffRuleStatus = Literal["armed", "fired", "fire_failed", "disarmed"]
+SquareOffRuleStatus = Literal["armed", "triggered", "fired", "fire_failed", "disarmed"]
 
 
 class ArmSquareOffRuleRequest(BaseModel):
@@ -30,6 +30,9 @@ class SquareOffRuleLegResult(BaseModel):
     quantity: str
     status: Literal["success", "failed"]
     error: Optional[str] = None
+    order_id: Optional[str] = None
+    action: Optional[str] = None
+    price: Optional[str] = None
 
 
 class SquareOffRuleRecord(BaseModel):

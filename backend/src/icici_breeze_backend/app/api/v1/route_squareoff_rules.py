@@ -23,6 +23,13 @@ async def list_rules(ctx: RequestContext = Depends(get_request_context)):
     return SquareOffRuleListResponse(rules=repo.list_active_rules(ctx.user_id))
 
 
+@router.get("/for-exit-board", response_model=SquareOffRuleListResponse)
+async def list_rules_for_exit_board(ctx: RequestContext = Depends(get_request_context)):
+    """Orders page > Profit Booking / Stop Loss table — includes fire_failed/fired
+    history alongside armed/triggered, unlike Portfolio's own badge query above."""
+    return SquareOffRuleListResponse(rules=repo.list_all_rules_for_exit_board(ctx.user_id))
+
+
 @router.post("", response_model=SquareOffRuleRecord)
 async def arm_rule(
     body: ArmSquareOffRuleRequest,

@@ -63,7 +63,25 @@ def list_active_rules(user_id: str) -> list[SquareOffRuleRecord]:
         cur = conn.execute(
             f"""
             SELECT {_SELECT_COLUMNS} FROM portfolio_squareoff_rules
-            WHERE user_id = ? AND status IN ('armed', 'fired', 'fire_failed')
+            WHERE user_id = ? AND status IN ('armed', 'triggered', 'fired', 'fire_failed')
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        )
+        return [_row_to_record(r) for r in cur.fetchall()]
+
+
+def list_all_rules_for_exit_board(user_id: str) -> list[SquareOffRuleRecord]:
+    """Every non-disarmed rule for the Orders page > Profit Booking / Stop Loss table —
+    same set as `list_active_rules` today (disarmed rows are the only ones excluded),
+    kept as a separate query so that table's shape can diverge from Portfolio's badge
+    query independently later without one page's needs constraining the other's."""
+    with sqlite3.connect(_db_path()) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            f"""
+            SELECT {_SELECT_COLUMNS} FROM portfolio_squareoff_rules
+            WHERE user_id = ? AND status != 'disarmed'
             ORDER BY created_at DESC
             """,
             (user_id,),
@@ -170,6 +188,18 @@ def disarm_rule(user_id: str, rule_id: str) -> bool:
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+def mark_triggered(rule_id: str) -> None:
+    """Transient marker: this poll cycle detected a breach and is dispatching close
+    orders now. Defensive WHERE so a rule that's already moved on (e.g. re-fired by a
+    duplicate event) isn't bounced back to 'triggered'."""
+    with sqlite3.connect(_db_path()) as conn:
+        conn.execute(
+            "UPDATE portfolio_squareoff_rules SET status = 'triggered' WHERE id = ? AND status = 'armed'",
+            (rule_id,),
+        )
+        conn.commit()
 
 
 def mark_fired(rule_id: str, leg_results: list[dict[str, Any]]) -> None:

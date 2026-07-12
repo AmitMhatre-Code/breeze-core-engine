@@ -12,6 +12,7 @@ import {
   type MouseEvent,
 } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
 import { HelpLink } from "@/components/help/HelpLink";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
@@ -42,6 +43,15 @@ import {
   parkedOrderToConfirmPayload,
   type ParkedOrderListItem,
 } from "@/lib/parked-orders";
+import {
+  buildExitRuleRows,
+  isExitRuleActive,
+  type ExitRuleEffectiveStatus,
+  type ExitRuleRow,
+  type RuleSpawnedOrderRow,
+} from "@/lib/orders/exit-rules";
+import { fetchSquareOffRulesForExitBoard } from "@/lib/portfolio/squareoff-rules";
+import { fetchAllGttExitOrders } from "@/lib/portfolio/gtt-exit-orders";
 import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 import {
   buildPlaceOrderCloneFromBookRow,
@@ -169,6 +179,7 @@ type BookDataResponse = {
   start: string;
   end: string;
   orders_failed: boolean;
+  rule_spawned_orders: RuleSpawnedOrderRow[] | null;
 };
 
 function parsePositiveInt(raw: string): number | null {
@@ -231,6 +242,85 @@ function statusChipClass(status: string | undefined): string {
     return `${base} bg-accent-tint text-accent-strong`;
   if (s.includes("expir")) return `${base} bg-amber-tint text-amber-accent`;
   return `${base} bg-panel2 text-faint`;
+}
+
+const exitRuleScopeGroupClass =
+  "inline-flex rounded-full border border-border px-2.5 py-0.5 text-micro font-bold uppercase tracking-[.05em] text-muted";
+const exitRuleScopeLegClass =
+  "inline-flex rounded-full bg-gtt-tint px-2.5 py-0.5 text-micro font-bold uppercase tracking-[.05em] text-gtt";
+
+function exitRuleStatusChipClass(status: ExitRuleEffectiveStatus): string {
+  const base =
+    "inline-flex rounded-full px-2.5 py-0.5 text-micro font-bold uppercase tracking-[.05em] ";
+  switch (status) {
+    case "armed":
+      return `${base} bg-accent-tint text-accent-strong`;
+    case "triggered":
+      return `${base} bg-amber-tint text-amber-accent`;
+    case "fired":
+      return `${base} border border-amber-accent/45 bg-transparent text-amber-accent`;
+    case "exited":
+      return `${base} bg-up-tint text-up`;
+    case "fire_failed":
+      return `${base} bg-down-tint text-down`;
+  }
+}
+
+function exitRuleStatusLabel(status: ExitRuleEffectiveStatus): string {
+  switch (status) {
+    case "armed":
+      return "Armed";
+    case "triggered":
+      return "Triggered";
+    case "fired":
+      return "Fired";
+    case "exited":
+      return "Exited";
+    case "fire_failed":
+      return "Fire Failed";
+  }
+}
+
+/** Canonical title for a rule row, mirroring `bookGroupTitle`'s "stock · expiry · N
+ * legs" shape for Group rules, or a single option symbol label for Leg·GTT rules. */
+function exitRuleTitle(row: ExitRuleRow): string {
+  if (row.kind === "group") {
+    const count = row.legCount ?? 0;
+    return `${row.stockCode} · ${row.expiryDisplay}${
+      count ? ` · ${count} leg${count === 1 ? "" : "s"}` : ""
+    }`;
+  }
+  const strike = row.strikePrice != null ? Number(row.strikePrice) : NaN;
+  if (row.stockCode && row.expiryDisplay && Number.isFinite(strike) && row.right) {
+    return formatOptionSymbolLabel(row.stockCode, row.expiryDisplay, strike);
+  }
+  return row.stockCode || "Leg";
+}
+
+function formatExitRuleAmount(value: number | null, kind: "group" | "leg_gtt"): string {
+  if (value == null) return "—";
+  if (kind === "group") {
+    return `₹${Math.round(value).toLocaleString("en-IN")}`;
+  }
+  return `₹${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Same lookup shape as `cancelDetailForOrderKey`, over a flat exit-rule order list
+ * instead of `BookGroup[]`. */
+function cancelDetailForExitRuleOrderKey(
+  key: string,
+  orders: RuleSpawnedOrderRow[],
+): { option: string; open_quantity: number } {
+  for (const o of orders) {
+    const k = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
+    if (k === key) {
+      const raw = o.open_quantity ?? o.quantity ?? 0;
+      const open_quantity =
+        typeof raw === "number" ? raw : parseInt(String(raw), 10) || 0;
+      return { option: String(o.option ?? "").trim(), open_quantity };
+    }
+  }
+  return { option: "", open_quantity: 0 };
 }
 
 function CloneOrderGlyph({ className }: { className?: string }) {
@@ -400,7 +490,9 @@ function CancelWarnGlyph() {
 type CancelPrompt =
   | { kind: "book-single"; key: string }
   | { kind: "book-bulk" }
-  | { kind: "parked-bulk" };
+  | { kind: "parked-bulk" }
+  | { kind: "exitrule-single"; key: string }
+  | { kind: "exitrule-bulk" };
 
 function CancelConfirmDialog({
   prompt,
@@ -415,9 +507,9 @@ function CancelConfirmDialog({
 }) {
   const titleId = "cancel-confirm-title";
   const title =
-    prompt?.kind === "book-single"
+    prompt?.kind === "book-single" || prompt?.kind === "exitrule-single"
       ? "Cancel this order?"
-      : prompt?.kind === "book-bulk"
+      : prompt?.kind === "book-bulk" || prompt?.kind === "exitrule-bulk"
         ? "Cancel selected orders?"
         : "Cancel selected parked orders?";
   const body =
@@ -450,7 +542,8 @@ function CancelConfirmDialog({
           disabled={pending}
           onClick={onClose}
         >
-          Keep order{prompt?.kind !== "book-single" ? "s" : ""}
+          Keep order
+          {prompt?.kind !== "book-single" && prompt?.kind !== "exitrule-single" ? "s" : ""}
         </button>
         <button
           type="button"
@@ -617,6 +710,132 @@ function OrdersBody() {
     });
   }, []);
 
+  // ---- Profit Booking / Stop Loss ----
+  const [exitRuleSelected, setExitRuleSelected] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [exitRuleExpanded, setExitRuleExpanded] = useState<
+    Record<string, boolean>
+  >({});
+  const [exitRuleTab, setExitRuleTab] = useState<"active" | "history">(
+    "active",
+  );
+
+  const squareOffExitBoardQuery = useQuery({
+    queryKey: ["exit-rules", "squareoff"],
+    queryFn: fetchSquareOffRulesForExitBoard,
+    refetchOnWindowFocus: false,
+  });
+  const gttExitBoardQuery = useQuery({
+    queryKey: ["exit-rules", "gtt"],
+    queryFn: fetchAllGttExitOrders,
+    refetchOnWindowFocus: false,
+  });
+
+  const exitRuleRows = useMemo(
+    () =>
+      buildExitRuleRows(
+        squareOffExitBoardQuery.data ?? [],
+        gttExitBoardQuery.data ?? [],
+        data?.rule_spawned_orders ?? [],
+      ),
+    [squareOffExitBoardQuery.data, gttExitBoardQuery.data, data?.rule_spawned_orders],
+  );
+  const exitRuleRowsForTab = useMemo(
+    () =>
+      exitRuleRows.filter((row) =>
+        exitRuleTab === "active"
+          ? isExitRuleActive(row.effectiveStatus)
+          : !isExitRuleActive(row.effectiveStatus),
+      ),
+    [exitRuleRows, exitRuleTab],
+  );
+  const allExitRuleOrders = useMemo(
+    () => exitRuleRows.flatMap((row) => row.orders),
+    [exitRuleRows],
+  );
+
+  const toggleExitRuleRow = useCallback((rowId: string) => {
+    setExitRuleExpanded((prev) => ({ ...prev, [rowId]: !prev[rowId] }));
+  }, []);
+
+  const toggleExitRuleOne = useCallback((value: string, checked: boolean) => {
+    setExitRuleSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(value);
+      else next.delete(value);
+      return next;
+    });
+  }, []);
+
+  const toggleExitRuleGroup = useCallback(
+    (row: ExitRuleRow, checked: boolean) => {
+      setExitRuleSelected((prev) => {
+        const next = new Set(prev);
+        for (const o of row.orders) {
+          if (!o.cancelable || !o.order_id) continue;
+          const key = `${o.order_id}|${o.exchange_code ?? ""}`;
+          if (checked) next.add(key);
+          else next.delete(key);
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const exitRuleGroupAllSelected = useCallback(
+    (row: ExitRuleRow) => {
+      const cancelable = row.orders.filter((o) => o.cancelable && o.order_id);
+      if (!cancelable.length) return false;
+      return cancelable.every((o) =>
+        exitRuleSelected.has(`${o.order_id}|${o.exchange_code ?? ""}`),
+      );
+    },
+    [exitRuleSelected],
+  );
+
+  const exitRuleGroupSomeSelected = useCallback(
+    (row: ExitRuleRow) => {
+      const cancelable = row.orders.filter((o) => o.cancelable && o.order_id);
+      return cancelable.some((o) =>
+        exitRuleSelected.has(`${o.order_id}|${o.exchange_code ?? ""}`),
+      );
+    },
+    [exitRuleSelected],
+  );
+
+  const exitRuleCancelMut = useMutation({
+    mutationFn: (payload: {
+      order_ids: string[];
+      cancel_details: { option: string; open_quantity: number }[];
+    }) =>
+      runCancelOrdersWithPacing({
+        orderIds: payload.order_ids,
+        cancel_details: payload.cancel_details,
+        onRateLimitWait: wait,
+      }),
+    onSuccess: async () => {
+      setExitRuleSelected(new Set());
+      setCancelPrompt(null);
+      invalidateTradingShellQueries(queryClient);
+      queryClient.invalidateQueries({ queryKey: ["exit-rules", "squareoff"] });
+      queryClient.invalidateQueries({ queryKey: ["exit-rules", "gtt"] });
+    },
+  });
+
+  const cloneExitRuleOrderToPlace = useCallback(
+    (o: RuleSpawnedOrderRow, e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const payload = buildPlaceOrderCloneFromBookRow(o);
+      if (!payload) return;
+      setPlaceOrderClonePayload(payload);
+      router.push("/place-order");
+    },
+    [router],
+  );
+
   const toggleGroup = useCallback(
     (group: BookGroup, checked: boolean) => {
       const rows = group.group_orders ?? [];
@@ -695,6 +914,20 @@ function OrdersBody() {
       parkedDeleteManyMut.mutate(Array.from(parkedSelected));
       return;
     }
+    if (cancelPrompt.kind === "exitrule-single" || cancelPrompt.kind === "exitrule-bulk") {
+      const ids =
+        cancelPrompt.kind === "exitrule-single"
+          ? [cancelPrompt.key]
+          : Array.from(exitRuleSelected);
+      if (!ids.length) return;
+      exitRuleCancelMut.mutate({
+        order_ids: ids,
+        cancel_details: ids.map((id) =>
+          cancelDetailForExitRuleOrderKey(id, allExitRuleOrders),
+        ),
+      });
+      return;
+    }
     if (!groups) return;
     const ids =
       cancelPrompt.kind === "book-single"
@@ -705,12 +938,24 @@ function OrdersBody() {
       order_ids: ids,
       cancel_details: ids.map((id) => cancelDetailForOrderKey(id, groups)),
     });
-  }, [cancelPrompt, parkedDeleteManyMut, parkedSelected, groups, selected, cancelMut]);
+  }, [
+    cancelPrompt,
+    parkedDeleteManyMut,
+    parkedSelected,
+    groups,
+    selected,
+    cancelMut,
+    exitRuleSelected,
+    allExitRuleOrders,
+    exitRuleCancelMut,
+  ]);
 
   const cancelPromptPending =
     cancelPrompt?.kind === "parked-bulk"
       ? parkedDeleteManyMut.isPending
-      : cancelMut.isPending;
+      : cancelPrompt?.kind === "exitrule-single" || cancelPrompt?.kind === "exitrule-bulk"
+        ? exitRuleCancelMut.isPending
+        : cancelMut.isPending;
 
   const applyDateRange = useCallback(() => {
     const s = (draftStart || data?.start || "").trim();
@@ -1626,6 +1871,379 @@ function OrdersBody() {
           </div>
         </section>
       )}
+
+      <section className="app-card min-w-0 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-border-soft px-[18px] py-3.5">
+          <span className="text-hint font-bold uppercase tracking-[.07em] text-faint">
+            Profit Booking / Stop Loss
+          </span>
+          <div className="inline-flex gap-0.5 rounded-lg border border-border bg-panel2 p-0.5">
+            {(["active", "history"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                className={`rounded-md px-3 py-1 text-xs font-semibold capitalize transition ${
+                  exitRuleTab === tab
+                    ? "bg-accent-strong text-accent-ink"
+                    : "text-muted hover:text-foreground"
+                }`}
+                onClick={() => setExitRuleTab(tab)}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="px-[18px] py-3">
+          <p className="text-sm text-muted">
+            Rules armed from Portfolio, and the broker orders they&apos;ve placed.
+            Orders here are excluded from Order Book above.
+          </p>
+        </div>
+
+        {squareOffExitBoardQuery.isLoading || gttExitBoardQuery.isLoading ? (
+          <div className="app-card-muted mx-[18px] mb-4 space-y-2 border-dashed p-4">
+            {[0, 1].map((i) => (
+              <div key={i} className="h-9 w-full app-skeleton rounded-sm border-0" />
+            ))}
+          </div>
+        ) : exitRuleRowsForTab.length === 0 ? (
+          <div className="app-card-muted mx-[18px] mb-4 border-dashed p-8 text-center text-sm app-text-muted">
+            {exitRuleTab === "active"
+              ? "No active Profit Booking / Stop Loss rules."
+              : "No resolved Profit Booking / Stop Loss rules yet."}
+          </div>
+        ) : (
+          <div className="px-[18px] pb-4">
+            <div className="hidden min-w-0 -mx-[18px] overflow-x-auto md:block">
+              <table className="min-w-full text-left text-sm text-foreground">
+                <thead className="border-b border-border bg-panel2">
+                  <tr>
+                    <th className="px-4 py-3 text-heading font-semibold uppercase tracking-wider text-faint">
+                      Scope
+                    </th>
+                    <th className="px-4 py-3 text-heading font-semibold uppercase tracking-wider text-faint">
+                      Contract
+                    </th>
+                    <th className="px-4 py-3 text-heading font-semibold uppercase tracking-wider text-faint">
+                      Target / Stop
+                    </th>
+                    <th className="px-4 py-3 text-heading font-semibold uppercase tracking-wider text-faint">
+                      Status
+                    </th>
+                    <th className="px-4 py-3 text-heading font-semibold uppercase tracking-wider text-faint">
+                      Placed / Resolved
+                    </th>
+                    <th className="px-4 py-3 text-right text-heading font-semibold uppercase tracking-wider text-faint">
+                      <span className="sr-only">Portfolio link</span>
+                    </th>
+                    <th className="py-3 pl-4 pr-[18px] text-right text-heading font-semibold uppercase tracking-wider text-faint">
+                      Legs
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border-soft">
+                  {exitRuleRowsForTab.map((row) => {
+                    const rowKey = `${row.kind}:${row.id}`;
+                    const isOpen = !!exitRuleExpanded[rowKey];
+                    const cancelableLegs = row.orders.filter(
+                      (o) => o.cancelable && o.order_id,
+                    );
+                    return (
+                      <Fragment key={rowKey}>
+                        <tr
+                          className={
+                            cancelableLegs.length
+                              ? "cursor-pointer transition-colors hover:bg-panel2"
+                              : ""
+                          }
+                          role={cancelableLegs.length ? "button" : undefined}
+                          tabIndex={cancelableLegs.length ? 0 : undefined}
+                          aria-expanded={cancelableLegs.length ? isOpen : undefined}
+                          onClick={
+                            cancelableLegs.length || row.orders.length
+                              ? () => toggleExitRuleRow(rowKey)
+                              : undefined
+                          }
+                        >
+                          <td className="px-4 py-3.5 align-middle">
+                            <span
+                              className={
+                                row.kind === "group"
+                                  ? exitRuleScopeGroupClass
+                                  : exitRuleScopeLegClass
+                              }
+                            >
+                              {row.kind === "group" ? "Group" : "Leg · GTT"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3.5 align-middle font-medium text-foreground">
+                            {exitRuleTitle(row)}
+                          </td>
+                          <td className="px-4 py-3.5 align-middle">
+                            <div className="flex flex-col gap-0.5 font-mono text-xs tabular-nums">
+                              <span className="text-up">
+                                Target {formatExitRuleAmount(row.targetValue, row.kind)}
+                              </span>
+                              <span className="text-down">
+                                Stop {formatExitRuleAmount(row.stopValue, row.kind)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3.5 align-middle">
+                            <span className={exitRuleStatusChipClass(row.effectiveStatus)}>
+                              {exitRuleStatusLabel(row.effectiveStatus)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3.5 align-middle font-mono text-xs text-muted">
+                            <div>{row.placedAt || "—"}</div>
+                            {row.resolvedAt ? <div>{row.resolvedAt}</div> : null}
+                          </td>
+                          <td
+                            className="px-4 py-3.5 align-middle text-right"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Link
+                              href="/portfolio"
+                              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-semibold text-accent-strong transition hover:bg-accent-tint"
+                            >
+                              Portfolio
+                            </Link>
+                          </td>
+                          <td className="py-3.5 pl-4 pr-[18px] align-middle text-right text-faint">
+                            {row.orders.length ? (
+                              <span className="inline-flex items-center gap-1">
+                                <ChevronGlyph expanded={isOpen} />
+                                {row.orders.length}
+                              </span>
+                            ) : (
+                              <span aria-hidden>—</span>
+                            )}
+                          </td>
+                        </tr>
+                        {isOpen && row.orders.length ? (
+                          <tr className="border-b border-border-soft bg-panel2">
+                            <td colSpan={7} className="px-[18px]">
+                              <table className="min-w-full text-left text-sm">
+                                <thead>
+                                  <tr className="border-b border-border-soft">
+                                    <th className="w-10 px-4 py-2.5 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                                      {cancelableLegs.length ? (
+                                        <Checkbox
+                                          checked={exitRuleGroupAllSelected(row)}
+                                          indeterminate={
+                                            exitRuleGroupSomeSelected(row) &&
+                                            !exitRuleGroupAllSelected(row)
+                                          }
+                                          onChange={(checked) =>
+                                            toggleExitRuleGroup(row, checked)
+                                          }
+                                          aria-label={`Select all cancelable orders in ${exitRuleTitle(row)}`}
+                                        />
+                                      ) : null}
+                                    </th>
+                                    <th className="py-2.5 pl-10 pr-4 text-heading font-semibold uppercase tracking-wider text-faint">
+                                      Order
+                                    </th>
+                                    <th className="px-4 py-2.5 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                                      Qty
+                                    </th>
+                                    <th className="px-4 py-2.5 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                                      Open
+                                    </th>
+                                    <th className="px-4 py-2.5 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                                      Price ₹
+                                    </th>
+                                    <th className="px-4 py-2.5 text-heading font-semibold uppercase tracking-wider text-faint">
+                                      Status
+                                    </th>
+                                    <th className="w-10 px-1 py-2.5 text-center text-heading font-semibold uppercase tracking-wider text-faint">
+                                      <span className="sr-only">Clone to Place Order</span>
+                                    </th>
+                                    <th className="w-20 px-2 py-2.5 text-right text-heading font-semibold uppercase tracking-wider text-faint">
+                                      <span className="sr-only">Cancel</span>
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border-soft">
+                                  {row.orders.map((o, j) => {
+                                    const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
+                                    const canCancel = o.cancelable && !!o.order_id;
+                                    return (
+                                      <tr
+                                        key={key || j}
+                                        className="transition-colors hover:bg-accent-tint"
+                                      >
+                                        <td className="px-4 py-2.5 text-center align-middle">
+                                          {canCancel ? (
+                                            <Checkbox
+                                              checked={exitRuleSelected.has(key)}
+                                              onChange={(checked) =>
+                                                toggleExitRuleOne(key, checked)
+                                              }
+                                              aria-label={`Select order ${o.order_id}`}
+                                            />
+                                          ) : null}
+                                        </td>
+                                        <td className="py-2.5 pl-10 pr-4 align-middle font-mono text-muted">
+                                          #{o.order_id ?? "—"}
+                                        </td>
+                                        <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums">
+                                          {formatQtyIndian(o.quantity)}
+                                        </td>
+                                        <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums">
+                                          {formatQtyIndian(o.open_quantity)}
+                                        </td>
+                                        <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums text-muted">
+                                          {o.price != null ? `₹${o.price}` : "—"}
+                                        </td>
+                                        <td className="px-4 py-2.5 align-middle">
+                                          <span className={statusChipClass(o.status)}>
+                                            {o.status}
+                                          </span>
+                                        </td>
+                                        <td className="px-1 py-2.5 align-middle text-center">
+                                          <button
+                                            type="button"
+                                            className={cloneToPlaceBtnClass}
+                                            aria-label="Clone order to Place Order"
+                                            onClick={(e) => cloneExitRuleOrderToPlace(o, e)}
+                                          >
+                                            <CloneOrderGlyph />
+                                          </button>
+                                        </td>
+                                        <td className="px-2 py-2.5 text-right align-middle">
+                                          {canCancel ? (
+                                            <button
+                                              type="button"
+                                              className={cancelOutlineBtnSmallClass}
+                                              onClick={() =>
+                                                setCancelPrompt({
+                                                  kind: "exitrule-single",
+                                                  key,
+                                                })
+                                              }
+                                            >
+                                              Cancel
+                                            </button>
+                                          ) : null}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {exitRuleSelected.size > 0 || exitRuleCancelMut.isPending ? (
+              <div className={ordersCancelBarClass}>
+                <span className="text-sm text-muted">
+                  {formatQtyIndian(exitRuleSelected.size)} leg order(s) selected
+                </span>
+                <button
+                  type="button"
+                  disabled={exitRuleCancelMut.isPending || exitRuleSelected.size === 0}
+                  aria-busy={exitRuleCancelMut.isPending}
+                  className={cancelOutlineBtnClass}
+                  onClick={() => setCancelPrompt({ kind: "exitrule-bulk" })}
+                >
+                  <AsyncLabelSpan
+                    busy={exitRuleCancelMut.isPending}
+                    idleLabel="Cancel selected"
+                    busyLabel="Cancelling…"
+                  />
+                </button>
+              </div>
+            ) : null}
+
+            {/* Mobile: card layout */}
+            <div className="space-y-3 md:hidden">
+              {exitRuleRowsForTab.map((row) => {
+                const rowKey = `${row.kind}:${row.id}`;
+                return (
+                  <div key={rowKey} className="app-card-muted overflow-hidden">
+                    <details>
+                      <summary className="cursor-pointer list-none px-3 py-2.5 text-base font-medium text-foreground">
+                        <span className="block">{exitRuleTitle(row)}</span>
+                        <span className="mt-1 flex flex-wrap items-center gap-1.5 text-sm font-normal text-muted">
+                          <span
+                            className={
+                              row.kind === "group"
+                                ? exitRuleScopeGroupClass
+                                : exitRuleScopeLegClass
+                            }
+                          >
+                            {row.kind === "group" ? "Group" : "Leg · GTT"}
+                          </span>
+                          <span className={exitRuleStatusChipClass(row.effectiveStatus)}>
+                            {exitRuleStatusLabel(row.effectiveStatus)}
+                          </span>
+                        </span>
+                      </summary>
+                      <div className="space-y-2 border-t border-border-soft px-3 py-2.5 text-sm text-muted">
+                        <div className="flex items-center justify-between">
+                          <span>
+                            Target: {formatExitRuleAmount(row.targetValue, row.kind)} · Stop:{" "}
+                            {formatExitRuleAmount(row.stopValue, row.kind)}
+                          </span>
+                          <Link
+                            href="/portfolio"
+                            className="rounded-md border border-border px-2.5 py-1 text-xs font-semibold text-accent-strong"
+                          >
+                            Portfolio
+                          </Link>
+                        </div>
+                        {row.orders.map((o, j) => {
+                          const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
+                          const canCancel = o.cancelable && !!o.order_id;
+                          return (
+                            <div
+                              key={key || j}
+                              className="rounded-lg border border-border bg-panel2 p-3 text-sm"
+                            >
+                              <p className="font-mono text-base font-medium text-foreground">
+                                #{o.order_id ?? "—"}
+                              </p>
+                              <p>
+                                Qty: {formatQtyIndian(o.quantity)} · Open:{" "}
+                                {formatQtyIndian(o.open_quantity)}
+                              </p>
+                              <p>Price: {o.price != null ? `₹${o.price}` : "—"}</p>
+                              <p>Status: {o.status}</p>
+                              {canCancel ? (
+                                <div className="mt-1 flex justify-end">
+                                  <button
+                                    type="button"
+                                    className={cancelOutlineBtnSmallClass}
+                                    onClick={() =>
+                                      setCancelPrompt({ kind: "exitrule-single", key })
+                                    }
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </details>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </section>
 
       <CancelConfirmDialog
         prompt={cancelPrompt}

@@ -18,10 +18,17 @@ from icici_breeze_backend.app.core.timezone import today_ist_date
 from icici_breeze_backend.app.domain.gtt_exit_order import (
     CancelGttExitOrderResponse,
     GttExitOrderLeg,
+    GttExitOrderListResponse,
     GttExitOrderRecord,
     GttExitOrderStatusResponse,
     PlaceGttExitOrderRequest,
     PlaceGttExitOrderResponse,
+)
+from icici_breeze_backend.app.services import gtt_order_book_cache
+from icici_breeze_backend.app.services.gtt_exit_order_mapping import (
+    fetch_all_gtt_raw_rows,
+    is_fully_cancelled,
+    map_gtt_order_book_rows,
 )
 from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.services.reference_data.scrip_master_sql import normalize_expiry_display
@@ -46,15 +53,6 @@ def _expiry_matches(a: str, b: str) -> bool:
 def _strike_matches(a, b) -> bool:
     pa, pb = parse_strike(a), parse_strike(b)
     return pa is not None and pa == pb
-
-
-def _is_fully_cancelled(row: dict) -> bool:
-    """True once every leg reads "Cancelled" — the one status string ICICI's SDK docs
-    confirm (the rest of the vocabulary isn't documented, see the GET handler below)."""
-    legs = row.get("order_details") or []
-    return bool(legs) and all(
-        str(leg.get("status") or "").strip().lower() == "cancelled" for leg in legs
-    )
 
 
 @router.post("", response_model=PlaceGttExitOrderResponse)
@@ -105,6 +103,7 @@ async def place_gtt_exit_order(
         str(success.get("gtt_order_id")),
         error_details=detail,
     )
+    gtt_order_book_cache.evict(ctx.user_id)
     return PlaceGttExitOrderResponse(
         gtt_order_id=str(success.get("gtt_order_id")), message=success.get("message")
     )
@@ -138,7 +137,7 @@ async def get_gtt_exit_order_status(
     ]
     # A fully-cancelled order shouldn't block placing a fresh one — treat it as if it
     # weren't there rather than showing a stale "Cancel" button for an already-dead order.
-    live_matches = [row for row in matches if not _is_fully_cancelled(row)]
+    live_matches = [row for row in matches if not is_fully_cancelled(row)]
     if not live_matches:
         return GttExitOrderStatusResponse(order=None)
 
@@ -165,6 +164,17 @@ async def get_gtt_exit_order_status(
     )
 
 
+@router.get("/all", response_model=GttExitOrderListResponse)
+async def list_all_gtt_exit_orders(ctx: RequestContext = Depends(get_request_context)):
+    """Every GTT order on the account across both exchanges (Orders page > Profit
+    Booking / Stop Loss), unlike the single-leg lookup above. This app has no other
+    GTT-placing feature, so every row ICICI returns is treated as one of this app's
+    Leg Exit Rules. Best-effort per exchange — one exchange failing doesn't blank the
+    whole list, same as `fetch_all_gtt_raw_rows`'s doc."""
+    raw_rows = fetch_all_gtt_raw_rows(breeze, ctx.user_id)
+    return GttExitOrderListResponse(orders=map_gtt_order_book_rows(raw_rows))
+
+
 @router.delete("/{gtt_order_id}", response_model=CancelGttExitOrderResponse)
 async def cancel_gtt_exit_order(
     gtt_order_id: str,
@@ -180,4 +190,5 @@ async def cancel_gtt_exit_order(
     AuditLogger(None).log_operation(
         ctx.user_id, OperationType.GTT_EXIT_ORDER_CANCELLED, "PortfolioGttExitOrder", gtt_order_id
     )
+    gtt_order_book_cache.evict(ctx.user_id)
     return CancelGttExitOrderResponse(ok=True, message=success.get("message"))

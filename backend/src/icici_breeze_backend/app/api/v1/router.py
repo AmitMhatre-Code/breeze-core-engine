@@ -23,6 +23,7 @@ from icici_breeze_backend.app.api.v1 import route_deployment
 from icici_breeze_backend.app.api.v1 import route_terms
 from icici_breeze_backend.app.api.v1 import route_market_data
 from icici_breeze_backend.app.api.v1 import route_login_disclosure
+from icici_breeze_backend.app.api.v1 import route_settings_telegram
 
 v1_router = APIRouter()
 
@@ -40,6 +41,7 @@ v1_router.include_router(route_book.router, prefix="/book", tags=[""], include_i
 v1_router.include_router(route_uncovered_shorts.router, prefix="/uncovered-shorts", tags=[""], include_in_schema=False)
 v1_router.include_router(route_vertical_spread.router, prefix="/vertical-spread", tags=[""], include_in_schema=False)
 v1_router.include_router(route_settings.router, prefix="", include_in_schema=False)
+v1_router.include_router(route_settings_telegram.router, prefix="", include_in_schema=False)
 v1_router.include_router(route_dashboard.router, prefix="/dashboard", tags=["dashboard"], include_in_schema=False)
 v1_router.include_router(route_outlook.router, prefix="", tags=["outlook"], include_in_schema=False)
 v1_router.include_router(route_performance.router, prefix="/performance", tags=[""], include_in_schema=False)

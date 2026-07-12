@@ -19,6 +19,7 @@ from icici_breeze_backend.app.services.portfolio_pnl_engine import (
     set_group_rule,
 )
 from icici_breeze_backend.app.services.processor import processor
+from icici_breeze_backend.app.services.telegram_alerts import notify_squareoff_fired
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
 _logger = logging.getLogger(__name__)
@@ -72,6 +73,10 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
     rule_id = str(payload["rule_id"])
     legs = payload.get("legs") or []
 
+    # Short-lived marker: this poll cycle detected the breach and is about to dispatch
+    # close orders. Real, if brief, since each leg below is a synchronous network call.
+    repo.mark_triggered(rule_id)
+
     if not trading_mutations_allowed():
         leg_results = [
             {
@@ -94,6 +99,7 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
             action_status="failure",
             error_details="Trading read-only at fire time (license not active)",
         )
+        notify_squareoff_fired(user_id, reason=reason, payload=payload, leg_results=leg_results, failed=True)
         return
 
     breeze = processor()
@@ -117,12 +123,14 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
             )
             ok = isinstance(response, dict) and response.get("Status") == 200
             error = None if ok else str((response or {}).get("Error") or "Broker rejected the order")
+            order_id = (response or {}).get("Success", {}).get("order_id") if ok else None
         except Exception as exc:  # defensive: one leg's failure must not stop the rest
             _logger.exception(
                 "Square-off order placement raised for rule_id=%s leg=%s", rule_id, leg.get("scrip_key")
             )
             ok = False
             error = str(exc)
+            order_id = None
         all_ok = all_ok and ok
         leg_results.append(
             {
@@ -133,6 +141,9 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
                 "quantity": leg["quantity"],
                 "status": "success" if ok else "failed",
                 "error": error,
+                "order_id": str(order_id) if order_id else None,
+                "action": leg["action"],
+                "price": str(limit_price) if ok else None,
             }
         )
 
@@ -146,6 +157,7 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
             action_status="success",
             error_details=f"reason={reason} total_pnl={payload.get('total_pnl')}",
         )
+        notify_squareoff_fired(user_id, reason=reason, payload=payload, leg_results=leg_results, failed=False)
     else:
         repo.mark_fire_failed(rule_id, leg_results)
         failed = [r for r in leg_results if r["status"] == "failed"]
@@ -157,6 +169,7 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
             action_status="failure",
             error_details=f"{len(failed)}/{len(leg_results)} leg(s) failed to place",
         )
+        notify_squareoff_fired(user_id, reason=reason, payload=payload, leg_results=leg_results, failed=True)
 
 
 def register_squareoff_dispatcher() -> None:

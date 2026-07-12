@@ -47,6 +47,23 @@ export type LegIdentity = {
   right: string;
 };
 
+/** One row of the account's full GTT order book (Orders page > Profit Booking / Stop
+ * Loss), unlike `GttExitOrderRecord` which is narrowed to a single leg's identity. */
+export type GttExitOrderRowRecord = {
+  gtt_order_id: string;
+  stock_code: string | null;
+  exchange_code: string | null;
+  expiry_display: string | null;
+  strike_price: string | null;
+  right: string | null;
+  quantity: string | null;
+  product_type: string | null;
+  gtt_type: string | null;
+  order_datetime: string | null;
+  legs: GttExitOrderLeg[];
+  is_cancelled: boolean;
+};
+
 export async function placeLegGttExitOrder(
   body: PlaceGttExitOrderRequest,
 ): Promise<{ gtt_order_id: string | null; message: string | null }> {
@@ -67,6 +84,15 @@ export async function fetchLegGttStatus(
     `/portfolio/gtt-exit-orders?${params.toString()}`,
   );
   return resp.order;
+}
+
+/** Every GTT order on the account (Orders page > Profit Booking / Stop Loss), unlike
+ * `fetchLegGttStatus` which is narrowed to one leg's identity. */
+export async function fetchAllGttExitOrders(): Promise<GttExitOrderRowRecord[]> {
+  const resp = await apiClient.get<{ orders: GttExitOrderRowRecord[] }>(
+    "/portfolio/gtt-exit-orders/all",
+  );
+  return resp.orders;
 }
 
 export async function cancelLegGttExitOrder(

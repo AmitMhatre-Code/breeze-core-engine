@@ -348,10 +348,10 @@ function ExitRuleBadge({ rule }: { rule: SquareOffRuleRecord }) {
     ? "bg-down-btn text-white"
     : "bg-accent-strong text-accent-ink";
   const title = failed
-    ? "One or more legs failed to square off — edit the exit rule to dismiss"
+    ? "One or more legs failed to square off — edit the Profit Booking / Stop Loss rule to dismiss"
     : fired
-      ? "Exit rule fired — edit the exit rule to dismiss"
-      : "Profit/loss exit rule armed";
+      ? "Profit Booking / Stop Loss rule fired — edit the rule to dismiss"
+      : "Profit Booking / Stop Loss rule armed";
   return (
     <span
       className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 font-mono text-[11px] font-semibold ${colorClassName}`}
@@ -405,7 +405,11 @@ function GroupExpandedExtras({
           <div className="flex w-full max-w-[13rem] flex-col gap-3">
             <GroupPillButton
               variant="table"
-              label={squareOffRule ? "Edit Exit Rule" : "Exit Rule"}
+              label={
+                squareOffRule
+                  ? "Edit Profit Booking / Stop Loss"
+                  : "Profit Booking / Stop Loss"
+              }
               onClick={onOpenExitRuleModal}
             />
             <GroupPillButton
@@ -444,7 +448,7 @@ function LegExpandedActions({
       <div className="flex w-full max-w-[13rem] flex-col gap-3">
         <GroupPillButton
           variant="table"
-          label="Exit Rule"
+          label="Profit Booking / Stop Loss"
           onClick={onOpenExitRuleModal}
         />
         <GroupPillButton

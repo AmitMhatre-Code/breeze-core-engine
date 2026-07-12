@@ -50,6 +50,28 @@ class GttExitOrderStatusResponse(BaseModel):
     order: Optional[GttExitOrderRecord] = None
 
 
+class GttExitOrderRowRecord(BaseModel):
+    """One row of the account's full GTT order book (Orders page > Profit Booking / Stop
+    Loss), unlike `GttExitOrderRecord` which is narrowed to a single leg's identity."""
+
+    gtt_order_id: str
+    stock_code: Optional[str] = None
+    exchange_code: Optional[str] = None
+    expiry_display: Optional[str] = None
+    strike_price: Optional[str] = None
+    right: Optional[str] = None
+    quantity: Optional[str] = None
+    product_type: Optional[str] = None
+    gtt_type: Optional[str] = None
+    order_datetime: Optional[str] = None
+    legs: List[GttExitOrderLeg] = []
+    is_cancelled: bool = False
+
+
+class GttExitOrderListResponse(BaseModel):
+    orders: List[GttExitOrderRowRecord] = []
+
+
 class CancelGttExitOrderResponse(BaseModel):
     ok: bool
     message: Optional[str] = None

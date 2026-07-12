@@ -1,6 +1,11 @@
 import { apiClient } from "@/lib/api-client";
 
-export type SquareOffRuleStatus = "armed" | "fired" | "fire_failed" | "disarmed";
+export type SquareOffRuleStatus =
+  | "armed"
+  | "triggered"
+  | "fired"
+  | "fire_failed"
+  | "disarmed";
 
 export type SquareOffRuleLegResult = {
   scrip_key: string;
@@ -10,6 +15,9 @@ export type SquareOffRuleLegResult = {
   quantity: string;
   status: "success" | "failed";
   error?: string | null;
+  order_id?: string | null;
+  action?: string | null;
+  price?: string | null;
 };
 
 export type SquareOffRuleRecord = {
@@ -42,6 +50,15 @@ export const SQUAREOFF_RULES_QUERY_KEY = ["portfolio", "squareoff-rules"] as con
 export async function fetchSquareOffRules(): Promise<SquareOffRuleRecord[]> {
   const resp = await apiClient.get<{ rules: SquareOffRuleRecord[] }>(
     "/portfolio/squareoff-rules",
+  );
+  return resp.rules;
+}
+
+/** Orders page > Profit Booking / Stop Loss — includes fired/fire_failed history
+ * alongside armed/triggered, unlike `fetchSquareOffRules` (Portfolio's own badge). */
+export async function fetchSquareOffRulesForExitBoard(): Promise<SquareOffRuleRecord[]> {
+  const resp = await apiClient.get<{ rules: SquareOffRuleRecord[] }>(
+    "/portfolio/squareoff-rules/for-exit-board",
   );
   return resp.rules;
 }

@@ -166,7 +166,7 @@ export function LegExitRuleModal({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h3 id="leg-exit-rule-title" className="text-base font-semibold text-foreground">
-            Exit rule (this leg)
+            Profit Booking / Stop Loss (this leg)
           </h3>
           <p className="mt-1 text-sm leading-relaxed text-muted">{label}</p>
         </div>
@@ -236,7 +236,7 @@ export function LegExitRuleModal({
             Places a GTT (Good Till Trigger) OCO bracket directly with ICICI for this
             one leg — the broker itself watches these trigger prices and fires the
             matching limit order when hit; whichever side fires cancels the other.
-            Unlike the grouped Exit Rule, this app does not poll P&amp;L for it.
+            Unlike the grouped Profit Booking / Stop Loss rule, this app does not poll P&amp;L for it.
           </p>
         </>
       )}

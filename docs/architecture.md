@@ -208,6 +208,16 @@ Every deployed instance is tied to a license issued by **breeze-saas-portal** an
 
 ---
 
+## Telegram alerts (stop-loss / profit-booking notifications)
+
+Users can link a Telegram account (`t.me/<TELEGRAM_BOT_USERNAME>?start=<token>` deep link, rendered as a QR code in Settings > Telegram Alerts) to get an instant message when a **group square-off rule** (Portfolio > group > Exit Rule) fires. Per-leg GTT exit orders are broker-owned (ICICI OCO bracket, never polled or persisted by this app — see the Persistence section) and are explicitly **not** covered.
+
+- **Linking, not a webhook** (`app/services/telegram_bot_poller.py`): rather than exposing a public webhook receiver, the app long-polls Telegram's `getUpdates` from a background `asyncio.Task` started in the app lifespan — the same idiom as the portal heartbeat loop. This means linking works identically under `./dev.sh` and in production with no public HTTPS endpoint or nginx change required. A single-use, 10-minute deep-link token (`app/repositories/user_telegram.py`) maps the `/start <token>` message back to the app's `user_id` and records the resulting Telegram `chat_id`.
+- **Dispatch** (`app/services/telegram_alerts.py`): hooked into `squareoff_dispatcher.py`'s `_handle_group_rule_hit`, right after a rule is marked fired (or fire-failed). Because that handler runs inside a worker thread (`run_pnl_tick` is invoked via `asyncio.to_thread`, not on the event loop), the actual Telegram `sendMessage` call is dispatched via a plain daemon `threading.Thread` rather than `asyncio.create_task` — it never blocks order placement, and doesn't need cross-thread access to the main event loop.
+- **Disabled unless configured**: with `TELEGRAM_BOT_TOKEN`/`TELEGRAM_BOT_USERNAME` unset, no background task starts and the Settings screen reports "not configured" — see `docs/configuration-reference.md`.
+
+---
+
 ## Reference data pipeline
 
 Options-chain trading depends on daily reference data — the ICICI scrip/security master, NSE/BSE derivatives bhavcopy files, and SPAN margin baselines — that used to be refreshed only on manual admin action. `app/services/reference_data/` now owns a scheduled pipeline for this:

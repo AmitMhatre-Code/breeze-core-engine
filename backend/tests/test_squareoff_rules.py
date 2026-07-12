@@ -168,6 +168,13 @@ class TestRoutes:
 
 
 class TestDispatcher:
+    @pytest.fixture(autouse=True)
+    def _stub_telegram_alert(self, monkeypatch):
+        # Real telegram_alerts.notify_squareoff_fired would hit the real users DB
+        # (no user_telegram fixture wired here); stub it by default so these
+        # order-placement tests stay isolated. Dedicated tests below override it.
+        monkeypatch.setattr(squareoff_dispatcher, "notify_squareoff_fired", lambda *a, **k: None)
+
     def _leg(self, **overrides):
         base = {
             "scrip_key": "NFO|NIFTY|30-Jun-2026|25000|CE",
@@ -344,3 +351,60 @@ class TestDispatcher:
         )
         # 33.3 * 1.07 = 35.631 -> nearest 0.05 tick is 35.65
         assert price == pytest.approx(35.65)
+
+    def test_all_legs_succeed_sends_telegram_alert_not_marked_failed(self, monkeypatch):
+        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: None)
+        calls = []
+        monkeypatch.setattr(
+            squareoff_dispatcher, "notify_squareoff_fired", lambda user_id, **kw: calls.append((user_id, kw))
+        )
+
+        class _FakeBreeze:
+            def place_order(self, **kwargs):
+                return {"Status": 200, "Success": {"order_id": "abc"}}
+
+        monkeypatch.setattr(squareoff_dispatcher, "processor", lambda: _FakeBreeze())
+
+        squareoff_dispatcher._handle_group_rule_hit(self._payload())
+
+        assert len(calls) == 1
+        user_id, kw = calls[0]
+        assert user_id == "u1"
+        assert kw["failed"] is False
+        assert kw["reason"] == "group_target_hit"
+
+    def test_read_only_license_still_sends_telegram_alert_marked_failed(self, monkeypatch):
+        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: False)
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results: None)
+        calls = []
+        monkeypatch.setattr(
+            squareoff_dispatcher, "notify_squareoff_fired", lambda user_id, **kw: calls.append((user_id, kw))
+        )
+
+        squareoff_dispatcher._handle_group_rule_hit(self._payload())
+
+        assert len(calls) == 1
+        assert calls[0][1]["failed"] is True
+
+    def test_one_leg_failing_still_sends_telegram_alert_marked_failed(self, monkeypatch):
+        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results: None)
+        calls = []
+        monkeypatch.setattr(
+            squareoff_dispatcher, "notify_squareoff_fired", lambda user_id, **kw: calls.append((user_id, kw))
+        )
+
+        responses = iter([{"Status": 200, "Success": {}}, {"Status": 400, "Error": "RMS:Margin Exceeds"}])
+
+        class _FakeBreeze:
+            def place_order(self, **kwargs):
+                return next(responses)
+
+        monkeypatch.setattr(squareoff_dispatcher, "processor", lambda: _FakeBreeze())
+
+        legs = [self._leg(scrip_key="leg-1", strike_price="25000.0"), self._leg(scrip_key="leg-2", strike_price="24500.0")]
+        squareoff_dispatcher._handle_group_rule_hit(self._payload(legs=legs))
+
+        assert len(calls) == 1
+        assert calls[0][1]["failed"] is True

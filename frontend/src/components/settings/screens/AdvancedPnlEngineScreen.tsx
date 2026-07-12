@@ -195,7 +195,7 @@ export function AdvancedPnlEngineScreen() {
         <section className="app-card space-y-3 p-5">
           <h3 className="text-heading font-bold text-foreground">P&L recompute interval</h3>
           <p className="text-xs leading-relaxed text-muted">
-            How often every open leg is repriced and checked against target/stop-loss exit rules. Runs
+            How often every open leg is repriced and checked against Profit Booking / Stop Loss rules. Runs
             entirely off the cached quotes above — never a broker API call, so it never counts against the
             ICICI rate limit.
           </p>

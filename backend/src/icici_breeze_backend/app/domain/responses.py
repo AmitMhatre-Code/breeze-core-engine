@@ -207,3 +207,11 @@ class BookDataResponse(BaseModel):
         False,
         description="True when get_orders returned non-200",
     )
+    rule_spawned_orders: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description=(
+            "Raw order rows excluded from grouped_orders because they were spawned by a "
+            "Profit Booking / Stop Loss exit rule; each is tagged with exit_rule_source "
+            "('squareoff_rule' | 'gtt_exit_order') and exit_rule_id"
+        ),
+    )

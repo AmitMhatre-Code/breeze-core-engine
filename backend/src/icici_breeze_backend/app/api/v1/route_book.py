@@ -27,7 +27,14 @@ from icici_breeze_backend.app.services.user_rate_limit_prefs import (
     get_icici_rate_limit_pause_seconds,
 )
 from icici_breeze_backend.app.domain.responses import BookDataResponse
+from icici_breeze_backend.app.repositories import squareoff_rules as squareoff_repo
 from icici_breeze_backend.app.services.broker_snapshot_cache import evict_broker_snapshot
+from icici_breeze_backend.app.services.exit_rule_orders import split_rule_spawned_orders
+from icici_breeze_backend.app.services.gtt_exit_order_mapping import (
+    fetch_all_gtt_raw_rows,
+    map_gtt_order_book_rows,
+)
+from icici_breeze_backend.app.services import gtt_order_book_cache
 from icici_breeze_backend.app.services.processor import processor
 
 router = APIRouter()
@@ -72,13 +79,25 @@ async def get_book_data(
     orders = breeze.get_orders(user_id, start=start, end=end)
     orders_failed = False
     grouped_orders = None
+    rule_spawned_orders: list[dict] | None = None
     if orders["Status"] != 200:
         grouped_orders = None
         orders_failed = True
     elif orders.get("Success") is None:
         grouped_orders = None
     else:
-        grouped_orders = breeze.group_orders(user_id, orders, fetch_ltp=False)
+        gtt_raw_rows = gtt_order_book_cache.get(user_id)
+        if gtt_raw_rows is None:
+            gtt_raw_rows = fetch_all_gtt_raw_rows(breeze, user_id)
+            gtt_order_book_cache.set_rows(user_id, gtt_raw_rows)
+        kept_orders, rule_spawned_orders = split_rule_spawned_orders(
+            squareoff_repo.list_all_rules_for_exit_board(user_id),
+            map_gtt_order_book_rows(gtt_raw_rows),
+            orders["Success"],
+        )
+        grouped_orders = breeze.group_orders(
+            user_id, {"Success": kept_orders}, fetch_ltp=False
+        )
 
     if orders_failed:
         messages = list(messages)
@@ -98,6 +117,7 @@ async def get_book_data(
         start=start,
         end=end,
         orders_failed=orders_failed,
+        rule_spawned_orders=rule_spawned_orders,
     )
 
 

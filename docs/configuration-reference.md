@@ -86,6 +86,16 @@ Use the **same** host you type in the browser (`localhost` vs `127.0.0.1` are di
 
 ---
 
+## Telegram alerts (stop-loss / profit-booking notifications)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `TELEGRAM_BOT_TOKEN` | unset | BotFather token. Leave unset to disable the feature entirely — no background loop starts, Settings > Telegram Alerts shows "not configured". |
+| `TELEGRAM_BOT_USERNAME` | unset | Bot's `@username` (without the `@`), used to build the `t.me/<username>?start=<token>` deep link. |
+| `TELEGRAM_POLL_TIMEOUT_SEC` | `25` | Telegram long-poll `timeout` for `getUpdates`, clamped to 5–60s. No public webhook/HTTPS endpoint is used — see `docs/architecture.md`. |
+
+---
+
 ## Rate limiting and testing
 
 | Variable | Default | Purpose |

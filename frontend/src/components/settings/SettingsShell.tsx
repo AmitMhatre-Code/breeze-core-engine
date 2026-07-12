@@ -11,6 +11,7 @@ import { DeleteAccountScreen } from "./screens/DeleteAccountScreen";
 import { ExchangeCalendarScreen } from "./screens/ExchangeCalendarScreen";
 import { QuantityLimitsScreen } from "./screens/QuantityLimitsScreen";
 import { ReferenceDataLoadsScreen } from "./screens/ReferenceDataLoadsScreen";
+import { TelegramAlertsScreen } from "./screens/TelegramAlertsScreen";
 
 type ScreenKey =
   | "credentials"
@@ -19,6 +20,7 @@ type ScreenKey =
   | "reference-data-loads"
   | "exchange-calendar"
   | "advanced-pnl-engine"
+  | "telegram-alerts"
   | "audit-logs"
   | "api-playground"
   | "delete-account";
@@ -42,6 +44,7 @@ const SCREENS: Record<ScreenKey, ComponentType> = {
   "reference-data-loads": ReferenceDataLoadsScreen,
   "exchange-calendar": ExchangeCalendarScreen,
   "advanced-pnl-engine": AdvancedPnlEngineScreen,
+  "telegram-alerts": TelegramAlertsScreen,
   "audit-logs": AuditLogsScreen,
   "api-playground": ApiPlaygroundScreen,
   "delete-account": DeleteAccountScreen,
@@ -62,6 +65,10 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "reference-data-loads", label: "Reference Data Loads", icon: DatabaseIcon },
       { key: "exchange-calendar", label: "Exchange Calendar", icon: CalendarIcon },
     ],
+  },
+  {
+    label: "Alerts",
+    items: [{ key: "telegram-alerts", label: "Telegram Alerts", icon: BellIcon }],
   },
   {
     label: "Advanced",
@@ -279,6 +286,15 @@ function DocIcon() {
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
       <path d="M14 2v6h6" />
       <path d="M9 13h6M9 17h6" />
+    </IconBase>
+  );
+}
+
+function BellIcon() {
+  return (
+    <IconBase>
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
     </IconBase>
   );
 }

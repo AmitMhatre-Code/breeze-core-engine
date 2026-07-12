@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ChangeEvent } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { TelegramNudgeBanner } from "@/components/telegram/TelegramNudgeBanner";
 import { sb } from "@/lib/strategy-builder/ui";
 import { formatSignedRupees } from "@/lib/portfolio/totals";
 import {
@@ -63,6 +64,7 @@ function handleAmountInput(
 
 const statusCopy: Record<SquareOffRuleRecord["status"], { label: string; className: string }> = {
   armed: { label: "Armed", className: "bg-accent-strong text-accent-ink" },
+  triggered: { label: "Triggered", className: "bg-accent-strong text-accent-ink" },
   fired: { label: "Fired", className: "bg-accent-strong text-accent-ink" },
   fire_failed: { label: "Fire failed", className: "bg-down-btn text-white" },
   disarmed: { label: "Disarmed", className: "bg-down-btn text-white" },
@@ -148,7 +150,11 @@ export function SquareOffRuleModal({
       onArmed(record);
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to arm exit rule");
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Failed to arm Profit Booking / Stop Loss rule",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -163,7 +169,11 @@ export function SquareOffRuleModal({
       onDisarmed();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to disarm exit rule");
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Failed to disarm Profit Booking / Stop Loss rule",
+      );
     } finally {
       setDisarming(false);
     }
@@ -186,7 +196,7 @@ export function SquareOffRuleModal({
             id="squareoff-rule-title"
             className="text-base font-semibold text-foreground"
           >
-            Set P&amp;L exit rule
+            Set P&amp;L Profit Booking / Stop Loss
           </h3>
           <p className="mt-1 text-sm leading-relaxed text-muted">
             {stockCode} &middot; {expiryDisplay}
@@ -201,6 +211,8 @@ export function SquareOffRuleModal({
           &times;
         </button>
       </div>
+
+      <TelegramNudgeBanner />
 
       <div className="flex items-center justify-between rounded-md border border-border-soft bg-panel2 px-3.5 py-2.5 text-sm">
         <span className="text-muted">Current group P&amp;L</span>

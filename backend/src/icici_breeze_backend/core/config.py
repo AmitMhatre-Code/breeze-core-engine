@@ -155,6 +155,15 @@ LICENSE_STATUS_OVERRIDE = (
     else ""
 )
 
+# Telegram alerts: BotFather token/username for stop-loss / profit-booking notifications.
+TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+TELEGRAM_BOT_USERNAME = (os.environ.get("TELEGRAM_BOT_USERNAME") or "").strip().lstrip("@")
+_TELEGRAM_POLL_TIMEOUT_RAW = (os.environ.get("TELEGRAM_POLL_TIMEOUT_SEC") or "25").strip()
+try:
+    TELEGRAM_POLL_TIMEOUT_SEC = max(5, min(60, int(_TELEGRAM_POLL_TIMEOUT_RAW)))
+except ValueError:
+    TELEGRAM_POLL_TIMEOUT_SEC = 25
+
 EXPIRED = "Expired"
 CANCELLED = "Cancelled"
 EXECUTED = "Executed"

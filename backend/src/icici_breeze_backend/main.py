@@ -187,6 +187,11 @@ def _ensure_app_database() -> None:
             migrate_user_account_if_needed(db_path)
             ensure_parked_orders_table(db_path)
             ensure_user_exchange_calendar_table(db_path)
+            from icici_breeze_backend.app.db.user_telegram_migrate import (
+                ensure_user_telegram_table,
+            )
+
+            ensure_user_telegram_table(db_path)
             from icici_breeze_backend.app.services.user_rate_limit_prefs import (
                 migrate_legacy_rate_limit_pause_default,
                 migrate_rate_limit_pause_bounds,
@@ -352,6 +357,15 @@ def start_application():
             await portal_market_outlook.refresh_once()
             outlook_task = asyncio.create_task(portal_market_outlook.run_market_outlook_refresh_loop())
 
+        from icici_breeze_backend.app.services.telegram_bot_poller import (
+            run_telegram_poll_loop,
+            telegram_bot_enabled,
+        )
+
+        telegram_task: asyncio.Task | None = None
+        if telegram_bot_enabled():
+            telegram_task = asyncio.create_task(run_telegram_poll_loop())
+
         from icici_breeze_backend.app.services.reference_data.scheduler import (
             bootstrap_reference_data_on_startup,
         )
@@ -395,6 +409,12 @@ def start_application():
             outlook_task.cancel()
             try:
                 await outlook_task
+            except asyncio.CancelledError:
+                pass
+        if telegram_task is not None:
+            telegram_task.cancel()
+            try:
+                await telegram_task
             except asyncio.CancelledError:
                 pass
         for pnl_task in (pnl_flush_task, pnl_loop_task):
