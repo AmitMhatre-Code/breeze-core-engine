@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, type ComponentType, type ReactNode } from "react";
+import { Suspense, useState, type ComponentType, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { AdvancedPnlEngineScreen } from "./screens/AdvancedPnlEngineScreen";
 import { ApiPlaygroundScreen } from "./screens/ApiPlaygroundScreen";
@@ -118,8 +119,14 @@ function pillItemClass(active: boolean, danger: boolean): string {
     : `${base} border-border bg-panel text-muted`;
 }
 
-export function SettingsShell() {
-  const [active, setActive] = useState<ScreenKey>("credentials");
+const SCREEN_KEYS = new Set<ScreenKey>(Object.keys(SCREENS) as ScreenKey[]);
+
+function SettingsShellInner() {
+  const sp = useSearchParams();
+  const tabParam = sp.get("tab");
+  const initialActive: ScreenKey =
+    tabParam && SCREEN_KEYS.has(tabParam as ScreenKey) ? (tabParam as ScreenKey) : "credentials";
+  const [active, setActive] = useState<ScreenKey>(initialActive);
   const ActiveScreen = SCREENS[active];
 
   return (
@@ -211,6 +218,14 @@ export function SettingsShell() {
         </div>
       </div>
     </div>
+  );
+}
+
+export function SettingsShell() {
+  return (
+    <Suspense fallback={null}>
+      <SettingsShellInner />
+    </Suspense>
   );
 }
 

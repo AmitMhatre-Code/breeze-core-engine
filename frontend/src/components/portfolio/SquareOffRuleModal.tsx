@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, type ChangeEvent } from "react";
+import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { Modal } from "@/components/ui/Modal";
-import { TelegramNudgeBanner } from "@/components/telegram/TelegramNudgeBanner";
 import { sb } from "@/lib/strategy-builder/ui";
 import { formatSignedRupees } from "@/lib/portfolio/totals";
 import {
@@ -10,6 +11,7 @@ import {
   disarmSquareOffRule,
   type SquareOffRuleRecord,
 } from "@/lib/portfolio/squareoff-rules";
+import { fetchTelegramStatus, TELEGRAM_STATUS_QUERY_KEY } from "@/lib/telegram/telegram-alerts";
 
 /** Indian-grouped digits only (no decimals — thresholds are whole rupees). */
 function digitsToIndianGroups(digits: string): string {
@@ -181,6 +183,15 @@ export function SquareOffRuleModal({
 
   const status = existingRule ? statusCopy[existingRule.status] : null;
 
+  const telegramStatusQ = useQuery({
+    queryKey: TELEGRAM_STATUS_QUERY_KEY,
+    queryFn: fetchTelegramStatus,
+    staleTime: 10_000,
+  });
+  const telegramStatus = telegramStatusQ.data;
+  const showTelegramRegisterMessage =
+    telegramStatusQ.isSuccess && !!telegramStatus?.bot_configured && !telegramStatus.connected;
+
   return (
     <Modal
       open={open}
@@ -194,9 +205,16 @@ export function SquareOffRuleModal({
         <div className="min-w-0 flex-1">
           <h3
             id="squareoff-rule-title"
-            className="text-base font-semibold text-foreground"
+            className="flex items-center gap-2 text-base font-semibold text-foreground"
           >
-            Set P&amp;L Profit Booking / Stop Loss
+            <span>Set P&amp;L Profit Booking / Stop Loss</span>
+            {status ? (
+              <span
+                className={`rounded-full px-2 py-0.5 font-mono text-[11px] font-semibold ${status.className}`}
+              >
+                {status.label}
+              </span>
+            ) : null}
           </h3>
           <p className="mt-1 text-sm leading-relaxed text-muted">
             {stockCode} &middot; {expiryDisplay}
@@ -212,25 +230,12 @@ export function SquareOffRuleModal({
         </button>
       </div>
 
-      <TelegramNudgeBanner />
-
       <div className="flex items-center justify-between rounded-md border border-border-soft bg-panel2 px-3.5 py-2.5 text-sm">
         <span className="text-muted">Current group P&amp;L</span>
         <span className={`font-mono font-semibold tabular-nums ${pnl.className}`}>
           {pnl.text}
         </span>
       </div>
-
-      {status ? (
-        <div className="flex items-center justify-between rounded-md border border-border-soft bg-panel2 px-3.5 py-2.5 text-sm">
-          <span className="text-muted">Rule status</span>
-          <span
-            className={`rounded-full px-2 py-0.5 font-mono text-[11px] font-semibold ${status.className}`}
-          >
-            {status.label}
-          </span>
-        </div>
-      ) : null}
 
       <div className="grid grid-cols-2 gap-4">
         <label className="block">
@@ -311,6 +316,19 @@ export function SquareOffRuleModal({
       </p>
 
       {error ? <p className="text-sm text-down">{error}</p> : null}
+
+      {showTelegramRegisterMessage ? (
+        <p className="text-center text-sm text-foreground">
+          <Link
+            href="/settings?tab=telegram-alerts"
+            className="app-link"
+            onClick={onClose}
+          >
+            Register
+          </Link>{" "}
+          to receive trigger alerts on Telegram
+        </p>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2 sm:gap-3">
         <button type="button" className={sb.btnSecondary} onClick={onClose}>

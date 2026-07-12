@@ -113,8 +113,8 @@ export function TelegramLinkPanel({ onConnected }: { onConnected?: () => void })
   return (
     <div className="space-y-3">
       <ol className="list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted">
-        <li>Open Telegram on your phone.</li>
-        <li>Scan the QR code below, or tap the link on the same device.</li>
+        <li>Install the Telegram app on your phone.</li>
+        <li>Scan the QR code below using your phone's QR code scanner, or tap the link on the same device.</li>
         <li>Press <span className="font-semibold text-foreground">Start</span> in the chat.</li>
       </ol>
 

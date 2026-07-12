@@ -91,7 +91,7 @@ export function TelegramAlertsScreen() {
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 <button
                   type="button"
-                  className="app-btn-outline rounded-[8px] px-3 py-1.5 text-xs"
+                  className="app-btn-outline rounded-sm px-3 py-1.5 text-xs"
                   disabled={unlinkMut.isPending}
                   onClick={() => {
                     if (!confirm("Disconnect this Telegram account and generate a new link for a different one?")) return;
@@ -102,7 +102,7 @@ export function TelegramAlertsScreen() {
                 </button>
                 <button
                   type="button"
-                  className="rounded-[8px] bg-down-btn px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-[1.06] disabled:opacity-50"
+                  className="rounded-sm bg-down-btn px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-[1.06] disabled:opacity-50"
                   disabled={unlinkMut.isPending}
                   onClick={() => {
                     if (!confirm("Deregister this Telegram account? You will stop receiving alerts.")) return;

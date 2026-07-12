@@ -218,34 +218,28 @@ function PositionsViewModeToggle({
   value: PortfolioPositionsViewMode;
   onChange: (mode: PortfolioPositionsViewMode) => void;
 }) {
-  const options: { mode: PortfolioPositionsViewMode; label: string }[] = [
-    { mode: "grouped", label: "Grouped" },
-    { mode: "individual", label: "Individual legs" },
-  ];
+  const grouped = value === "grouped";
   return (
-    <div
-      role="group"
-      aria-label="Open positions view"
-      className="inline-flex shrink-0 items-center rounded-lg border border-border-soft bg-panel2 p-0.5"
-    >
-      {options.map((opt) => {
-        const active = value === opt.mode;
-        return (
-          <button
-            key={opt.mode}
-            type="button"
-            aria-pressed={active}
-            onClick={() => onChange(opt.mode)}
-            className={`rounded-md px-2.5 py-1 text-micro font-semibold uppercase tracking-wide transition ${
-              active
-                ? "bg-accent-strong text-accent-ink"
-                : "text-faint hover:text-foreground"
-            }`}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
+    <label className="flex shrink-0 items-center gap-2">
+      <span className="text-micro font-semibold uppercase tracking-wide text-faint">
+        Group legs
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={grouped}
+        aria-label="Group legs"
+        onClick={() => onChange(grouped ? "individual" : "grouped")}
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+          grouped ? "bg-accent-strong" : "bg-border"
+        }`}
+      >
+        <span
+          className={`inline-block size-5 transform rounded-full bg-white shadow transition ${
+            grouped ? "translate-x-[22px]" : "translate-x-0.5"
+          }`}
+        />
+      </button>
+    </label>
   );
 }
