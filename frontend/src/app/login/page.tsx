@@ -102,7 +102,7 @@ function LoginContent() {
               alt="Breeze"
               width={44}
               height={44}
-              className="size-11 rounded-lg object-contain"
+              className="size-11 rounded-sm object-contain"
               priority
             />
           </div>

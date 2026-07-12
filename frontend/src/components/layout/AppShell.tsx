@@ -427,7 +427,7 @@ function BrandMark() {
       aria-hidden
       width={34}
       height={34}
-      className="size-[34px] shrink-0 rounded-lg object-contain"
+      className="size-[34px] shrink-0 rounded-sm object-contain"
       priority
     />
   );
