@@ -193,12 +193,34 @@ async def post_heartbeat() -> dict | None:
         return None
 
 
+async def _maybe_execute_upgrade(policy: dict) -> None:
+    """Run the portal-approved upgrade if the policy calls for it right now.
+
+    Shared by the startup heartbeat and the periodic tick so an upgrade queued
+    while a deployment was powered off is acted on as soon as it checks back
+    in, instead of only on the next periodic tick (which the portal's
+    one-shot consume-on-delivery semantics may never re-offer).
+    """
+    if policy.get("status") != "OK":
+        logger.warning("portal heartbeat unexpected status: %s", policy.get("status"))
+        return
+
+    if policy.get("trigger_upgrade"):
+        if _upgrade_allowed(policy):
+            target_tag = policy.get("target_tag")
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, execute_upgrade, target_tag)
+        else:
+            logger.info("portal heartbeat upgrade deferred: outside operator upgrade window")
+
+
 async def send_startup_heartbeat() -> bool:
     """First portal check-in after DB/master init (before periodic loop)."""
     policy = await post_heartbeat()
     if policy:
         _apply_policy_from_body(policy)
         logger.info("portal startup heartbeat succeeded")
+        await _maybe_execute_upgrade(policy)
         return True
     logger.warning("portal startup heartbeat failed or skipped")
     return False
@@ -215,17 +237,7 @@ async def heartbeat_tick() -> int:
     if not policy:
         return _last_interval_sec
 
-    if policy.get("status") != "OK":
-        logger.warning("portal heartbeat unexpected status: %s", policy.get("status"))
-        return _last_interval_sec
-
-    if policy.get("trigger_upgrade"):
-        if _upgrade_allowed(policy):
-            target_tag = policy.get("target_tag")
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, execute_upgrade, target_tag)
-        else:
-            logger.info("portal heartbeat upgrade deferred: outside operator upgrade window")
+    await _maybe_execute_upgrade(policy)
 
     return _last_interval_sec
 

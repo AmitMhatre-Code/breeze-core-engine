@@ -45,6 +45,47 @@ def test_send_startup_heartbeat_success():
     asyncio.run(_run())
 
 
+def test_send_startup_heartbeat_runs_upgrade_when_triggered(monkeypatch):
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/example/breeze-core-engine:latest")
+
+    async def _run():
+        with patch.object(
+            hb,
+            "post_heartbeat",
+            return_value={
+                "status": "OK",
+                "trigger_upgrade": True,
+                "target_tag": "latest",
+                "upgrade_allowed_now": True,
+            },
+        ):
+            with patch.object(hb, "execute_upgrade") as upgrade:
+                ok = await hb.send_startup_heartbeat()
+                assert ok is True
+                upgrade.assert_called_once_with("latest")
+
+    asyncio.run(_run())
+
+
+def test_send_startup_heartbeat_defers_upgrade_when_not_allowed():
+    async def _run():
+        with patch.object(
+            hb,
+            "post_heartbeat",
+            return_value={
+                "status": "OK",
+                "trigger_upgrade": True,
+                "target_tag": "latest",
+                "upgrade_allowed_now": False,
+            },
+        ):
+            with patch.object(hb, "execute_upgrade") as upgrade:
+                await hb.send_startup_heartbeat()
+                upgrade.assert_not_called()
+
+    asyncio.run(_run())
+
+
 def test_run_heartbeat_loop_sleeps_before_tick():
     async def _run():
         order: list[str] = []
