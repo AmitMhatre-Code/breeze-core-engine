@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useOrderConfirm } from "@/components/shared/order/OrderConfirmProvider";
 import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
 import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Modal } from "@/components/ui/Modal";
 import { ltpAsOrderPrice, positionRowToExecutionLeg } from "@/lib/order-confirm";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
@@ -137,14 +138,12 @@ export function SquareOffLegsModal({
               className="flex items-center gap-3 px-3 py-2.5"
             >
               {showCheckbox ? (
-                <input
-                  type="checkbox"
-                  className={sb.checkbox}
+                <Checkbox
                   checked={state.included}
-                  onChange={(e) =>
+                  onChange={(checked) =>
                     setLegStates((prev) =>
                       prev.map((s, i) =>
-                        i === idx ? { ...s, included: e.target.checked } : s,
+                        i === idx ? { ...s, included: checked } : s,
                       ),
                     )
                   }

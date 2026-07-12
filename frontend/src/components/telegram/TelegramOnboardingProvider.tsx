@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Modal } from "@/components/ui/Modal";
 import { TelegramLinkPanel } from "@/components/telegram/TelegramLinkPanel";
 import { fetchAuthSession } from "@/lib/auth-session";
@@ -101,11 +102,10 @@ export function TelegramOnboardingProvider({ children }: { children: ReactNode }
         <TelegramLinkPanel onConnected={close} />
 
         <label className="flex items-center gap-2 text-xs text-muted">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={dontShowAgain}
-            onChange={(e) => setDontShowAgain(e.target.checked)}
-            className="size-3.5 accent-[var(--accent-strong)]"
+            onChange={setDontShowAgain}
+            aria-label="Do not show this message again"
           />
           Do not show this message again
         </label>

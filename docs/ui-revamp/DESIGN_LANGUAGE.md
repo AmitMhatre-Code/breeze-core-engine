@@ -289,6 +289,20 @@ Track is `--panel2` with a 1px border and `padding:3px`; the active segment is a
 </button>
 ```
 
+### 5.12a Checkbox (NOT native OS checkbox chrome)
+Native `<input type="checkbox">` renders unstyled OS chrome (a round-ish, differently-shaped box
+per browser/OS) that breaks the dark theme even when colored via `accent-color`. Always use the
+shared `<Checkbox />` component (`frontend/src/components/ui/Checkbox.tsx`) — never a raw
+`<input type="checkbox" className="...">`. It renders a flat **16×16px square**: `border-border` +
+`bg-panel2` unchecked, `bg-accent-strong` + `border-accent-strong` checked, with an inline SVG
+check mark in `--accent-ink` (no native browser tick) and an indeterminate-state dash. An ESLint
+rule (`no-restricted-syntax` in `frontend/eslint.config.mjs`) enforces this — a bare
+`type="checkbox"` fails lint outside of `Checkbox.tsx` itself. Reference usage: the Orders page
+row-select checkboxes.
+```tsx
+<Checkbox checked={value} onChange={setValue} aria-label="…" />
+```
+
 ### 5.12 Custom dropdown / combobox (NOT a native `<select>`)
 Native selects render an OS-themed popup that breaks the dark theme — the Settings screens use a
 custom dropdown everywhere a picker is needed. Pattern:
@@ -360,6 +374,7 @@ danger items use `--down-tint` and a `--down` left bar instead of accent.
 1. **Don't** use any font other than IBM Plex Sans (UI) and IBM Plex Mono (numbers/code).
 2. **Don't** hardcode hex codes in components — only `var(--token)` / the mapped Tailwind class.
 3. **Don't** use native `<select>` — build the custom dropdown in §5.12 so it respects the theme.
+3a. **Don't** use a raw native `<input type="checkbox">` — use `<Checkbox />` (§5.12a); lint enforces this.
 4. **Don't** give cards drop shadows; only popovers/menus get `--shadow`.
 5. **Don't** use gradients, glassmorphism, or rounded-corner-with-left-accent "AI-slop" callouts. Accent bars belong only on the active nav item.
 6. **Don't** mix radii randomly — follow the ladder in §4 (cards 13, buttons 8, inputs 7–9, pills 999).
@@ -377,6 +392,7 @@ danger items use `--down-tint` and a `--down` left bar instead of accent.
 - Buttons: primary = accent fill + `--accent-ink` + 700 + radius 8; ghost = transparent + 1px `--border` + 600; danger = `--down-btn` + white.
 - Cards: `--panel`, 1px `--border`, radius **13**, padding 20, **no shadow**.
 - Inputs: `--panel2`, 1px `--border`, radius 7–9, mono, height 32–40.
+- Checkboxes: always `<Checkbox />` from `components/ui/Checkbox.tsx` — never raw `type="checkbox"`.
 - Radii ladder: card 13 · button 8 · input 7–9 · small ghost 6 · pill 999.
 - Semantic pairs: up/`up-tint`, down/`down-tint`, amber/`amber-tint`, gtt/`gtt-tint`, accent/`accent-tint`.
 - Shell: sidebar 236 · header 52 · content max-w 1280 · settings sub-nav 252 (sticky).

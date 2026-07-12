@@ -18,8 +18,6 @@ export const sb = {
     "w-full rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 font-mono text-sm text-foreground outline-none transition placeholder:text-faint hover:border-accent focus:border-accent-strong focus:bg-panel disabled:cursor-not-allowed disabled:opacity-50",
   inputNarrow:
     "w-20 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-2.5 py-2 font-mono text-sm text-foreground outline-none transition hover:border-accent focus:border-accent-strong focus:bg-panel",
-  checkbox:
-    "size-4 shrink-0 cursor-pointer rounded-md border-border text-accent-strong transition focus:ring-2 focus:ring-accent/35 focus:ring-offset-0 focus:ring-offset-transparent",
   checkboxRow: "flex cursor-pointer items-center gap-2.5 select-none",
   range:
     "h-2 w-full cursor-pointer appearance-none rounded-full bg-track accent-accent-strong",

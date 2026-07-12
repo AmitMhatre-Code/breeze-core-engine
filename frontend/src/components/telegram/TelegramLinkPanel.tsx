@@ -4,9 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
 
+import { copyTextToClipboard } from "@/lib/copy-to-clipboard";
 import {
   fetchTelegramStatus,
   generateTelegramLinkToken,
+  telegramAppDeepLink,
   telegramDeepLink,
   TELEGRAM_STATUS_QUERY_KEY,
 } from "@/lib/telegram/telegram-alerts";
@@ -28,6 +30,7 @@ export function TelegramLinkPanel({ onConnected }: { onConnected?: () => void })
   const qc = useQueryClient();
   const [now, setNow] = useState(() => Date.now());
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   const statusQ = useQuery({
     queryKey: TELEGRAM_STATUS_QUERY_KEY,
@@ -79,6 +82,13 @@ export function TelegramLinkPanel({ onConnected }: { onConnected?: () => void })
     return telegramDeepLink(status.bot_username, status.link_token);
   }, [status?.bot_username, status?.link_token]);
 
+  // QR-only: opens the Telegram app directly instead of bouncing through the
+  // phone's browser first (see telegramAppDeepLink's doc comment).
+  const qrDeepLink = useMemo(() => {
+    if (!status?.bot_username || !status.link_token) return null;
+    return telegramAppDeepLink(status.bot_username, status.link_token);
+  }, [status?.bot_username, status?.link_token]);
+
   if (statusQ.isLoading) {
     return <p className="text-xs text-muted">Loading…</p>;
   }
@@ -109,9 +119,9 @@ export function TelegramLinkPanel({ onConnected }: { onConnected?: () => void })
       </ol>
 
       <div className="flex flex-col items-center gap-3 rounded-[9px] border border-border-soft bg-panel2 p-4">
-        {deepLink && !expired ? (
+        {qrDeepLink && !expired ? (
           <div className="rounded-md bg-white p-2">
-            <QRCodeSVG value={deepLink} size={168} />
+            <QRCodeSVG value={qrDeepLink} size={168} />
           </div>
         ) : (
           <div className="flex size-[184px] items-center justify-center text-xs text-faint">
@@ -129,13 +139,17 @@ export function TelegramLinkPanel({ onConnected }: { onConnected?: () => void })
           <button
             type="button"
             className="app-btn-outline rounded-[8px] px-3 py-1.5 text-xs"
-            onClick={async () => {
-              await navigator.clipboard.writeText(deepLink);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
+            onClick={() => {
+              const result = copyTextToClipboard(deepLink);
+              setCopied(result.ok);
+              setCopyFailed(!result.ok);
+              setTimeout(() => {
+                setCopied(false);
+                setCopyFailed(false);
+              }, 1500);
             }}
           >
-            {copied ? "Copied!" : "Copy Link"}
+            {copied ? "Copied!" : copyFailed ? "Couldn't copy" : "Copy Link"}
           </button>
         ) : null}
       </div>

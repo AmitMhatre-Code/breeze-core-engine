@@ -42,3 +42,15 @@ export async function setTelegramAlertsEnabled(enabled: boolean): Promise<Telegr
 export function telegramDeepLink(botUsername: string, token: string): string {
   return `https://t.me/${botUsername}?start=${token}`;
 }
+
+/**
+ * `tg://` custom-scheme variant of the same deep link. A phone's camera app has no
+ * universal-link registration for `https://t.me/...`, so scanning that URL opens the
+ * system browser first, which then hands off to Telegram — a visible, slower hop.
+ * `tg://resolve` has no browser fallback at all, so only the Telegram app can handle
+ * it and the OS opens it directly. Used for the QR code only; the copyable link stays
+ * on the `https://t.me/...` form since that's what's safe to paste elsewhere.
+ */
+export function telegramAppDeepLink(botUsername: string, token: string): string {
+  return `tg://resolve?domain=${encodeURIComponent(botUsername)}&start=${encodeURIComponent(token)}`;
+}

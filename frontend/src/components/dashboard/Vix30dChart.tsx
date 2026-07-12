@@ -94,38 +94,43 @@ const MONTHS = [
 ] as const;
 
 /**
- * WebKit/Safari often reports `getBoundingClientRect().width === 0` on `<svg>` on the
- * first layout pass even when the chart paints. Prefer the block wrapper’s
- * `clientWidth` / `offsetWidth`, then SVG rect, then parent.
+ * The `<svg>` element's own rendered CSS width is the exact value the browser
+ * divides by `W` to scale the `viewBox` — it must be the single source of
+ * truth for font-size math (see `pxPerViewUnit` below). Taking `Math.max()`
+ * across container/svg/parent (as this used to) lets a transiently-larger
+ * sibling reading "win" during layout settling and get locked into state,
+ * permanently mismatching the JS-computed scale factor against what the
+ * browser actually renders — the direct cause of the tooltip/axis font size
+ * being wrong (too small or too large) on some page loads but not others.
+ *
+ * Only fall back to the container/parent when the svg rect is exactly 0,
+ * which is a documented WebKit/Safari first-layout-pass quirk.
  */
 function readChartLayoutWidthPx(
   container: HTMLElement | null,
   svg: SVGSVGElement | null,
 ): number {
-  let w = 0;
+  if (svg) {
+    const svgW = svg.getBoundingClientRect().width;
+    if (svgW > 0) return svgW;
+  }
   if (container) {
-    w = Math.max(
-      w,
+    const w = Math.max(
       container.clientWidth,
       container.offsetWidth,
       container.getBoundingClientRect().width,
     );
-  }
-  if (svg) {
-    w = Math.max(w, svg.getBoundingClientRect().width);
-    const sw = svg.width?.baseVal?.value;
-    if (typeof sw === "number" && sw > 0) w = Math.max(w, sw);
+    if (w > 0) return w;
   }
   const parent = container?.parentElement;
   if (parent) {
-    w = Math.max(
-      w,
+    return Math.max(
       parent.clientWidth,
       (parent as HTMLElement).offsetWidth,
       parent.getBoundingClientRect().width,
     );
   }
-  return w;
+  return 0;
 }
 
 /** When layout width is still 0 (Safari first paint), cap by viewport so label font is never oversized. */
@@ -247,7 +252,17 @@ export function Vix30dChart({
 
     const ros: ResizeObserver[] = [];
     if (typeof ResizeObserver !== "undefined" && targets.length) {
-      const ro = new ResizeObserver(applyWidth);
+      const ro = new ResizeObserver((entries) => {
+        // Prefer the observer's own authoritative reading for the svg element
+        // (ground truth for viewBox scaling) over re-deriving it heuristically.
+        const svgEntry = entries.find((e) => e.target === svgRef.current);
+        const w = svgEntry?.contentRect.width;
+        if (w && w > 0) {
+          setSvgClientW((prev) => (Math.abs(prev - w) < 0.25 ? prev : w));
+        } else {
+          applyWidth();
+        }
+      });
       for (const t of targets) ro.observe(t);
       ros.push(ro);
     }

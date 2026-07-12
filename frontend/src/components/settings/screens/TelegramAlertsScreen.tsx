@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { SettingsScreenHeader } from "@/components/settings/SettingsScreenHeader";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { TelegramLinkPanel } from "@/components/telegram/TelegramLinkPanel";
 import {
   disconnectTelegram,
@@ -79,12 +80,11 @@ export function TelegramAlertsScreen() {
 
               <label className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-muted">Alerts enabled</span>
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={status.alerts_enabled}
                   disabled={alertsToggle.isPending}
-                  onChange={(e) => alertsToggle.mutate(e.target.checked)}
-                  className="size-4 accent-[var(--accent-strong)]"
+                  onChange={(checked) => alertsToggle.mutate(checked)}
+                  aria-label="Alerts enabled"
                 />
               </label>
 
