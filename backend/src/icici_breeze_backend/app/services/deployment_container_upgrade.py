@@ -334,19 +334,27 @@ def write_host_file_via_docker(client: Any, host_path: str, content: str, *, mod
         raise
 
 
-def prepare_upgrade_env_file(client: Any, container_name: str) -> str:
+def prepare_upgrade_env_file(
+    client: Any, container_name: str, *, env_overrides: dict[str, str] | None = None
+) -> str:
     """
     Resolve full environment (host .env + running container) and write .upgrade.env on the host.
     The helper uses this file so recreate survives missing or stale host .env files.
+
+    `env_overrides` (e.g. a Telegram bot token pushed from the portal Console) is merged in
+    last, winning over both the on-disk .env and the running container's inherited env.
     """
     canonical = deployment_env_file_path()
     env = resolve_recreate_environment(client, container_name, canonical)
-    if not env:
+    if not env and not env_overrides:
         logger.warning(
             "deployment upgrade: no env keys resolved; helper will fall back to %s if present",
             canonical,
         )
         return canonical
+
+    if env_overrides:
+        env.update(env_overrides)
 
     env = ensure_redis_url_in_env(env)
     dotenv_text = format_dotenv_text(env)
@@ -502,14 +510,23 @@ def pull_upgrade_helper_image(client: Any) -> None:
         raise
 
 
-def schedule_recreate_via_helper(client: Any, *, image: str, container_name: str) -> None:
+def schedule_recreate_via_helper(
+    client: Any,
+    *,
+    image: str,
+    container_name: str,
+    env_overrides: dict[str, str] | None = None,
+) -> None:
     """
     Run stop/rm/run in a detached docker-cli container so the app container can be
     replaced without killing the process that scheduled the upgrade.
+
+    `env_overrides` lets a config-only recreate (same image, new env from the portal
+    Console's fleet settings) reuse this exact same helper path as an image upgrade.
     """
     from docker.errors import APIError, DockerException
 
-    env_file = prepare_upgrade_env_file(client, container_name)
+    env_file = prepare_upgrade_env_file(client, container_name, env_overrides=env_overrides)
     data_host = deployment_data_host_path()
     host_port = deployment_publish_port()
     script = upgrade_shell_script(

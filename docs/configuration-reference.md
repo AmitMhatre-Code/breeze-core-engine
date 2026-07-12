@@ -94,6 +94,8 @@ Use the **same** host you type in the browser (`localhost` vs `127.0.0.1` are di
 | `TELEGRAM_BOT_USERNAME` | unset | Bot's `@username` (without the `@`), used to build the `t.me/<username>?start=<token>` deep link. |
 | `TELEGRAM_POLL_TIMEOUT_SEC` | `25` | Telegram long-poll `timeout` for `getUpdates`, clamped to 5–60s. No public webhook/HTTPS endpoint is used — see `docs/architecture.md`. |
 
+For **licensed deployments**, `TELEGRAM_BOT_TOKEN`/`TELEGRAM_BOT_USERNAME` are centrally managed via the portal Console (Admin → Core Engine fleet settings) and pushed to every deployment automatically over the existing heartbeat channel — the portal has no other way to reach an instance running in a customer's own AWS account. Manually setting these in `.env` is a fallback for unlicensed/local dev instances, not the primary path; see `docs/architecture.md#telegram-alerts-stop-loss--profit-booking-notifications` for how the push mechanism works.
+
 ---
 
 ## Rate limiting and testing

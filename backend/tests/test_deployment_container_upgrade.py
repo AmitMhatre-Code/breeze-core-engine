@@ -146,7 +146,9 @@ def test_schedule_recreate_via_helper_detached_cli(monkeypatch):
     mock_helper = MagicMock()
     mock_helper.id = "helper123"
     mock_client.containers.run.return_value = mock_helper
-    monkeypatch.setattr(dcu, "prepare_upgrade_env_file", lambda _c, _n: "/opt/breeze-core-engine/.upgrade.env")
+    monkeypatch.setattr(
+        dcu, "prepare_upgrade_env_file", lambda _c, _n, **_: "/opt/breeze-core-engine/.upgrade.env"
+    )
     monkeypatch.setattr(dcu, "deployment_data_host_path", lambda: "/opt/breeze-core-engine/data")
     monkeypatch.setattr(dcu, "deployment_publish_port", lambda: 80)
     monkeypatch.setattr(dcu, "pull_upgrade_helper_image", lambda _c: None)
@@ -165,6 +167,76 @@ def test_schedule_recreate_via_helper_detached_cli(monkeypatch):
     assert "/var/run/docker.sock" in kwargs["volumes"]
     assert dcu._DEPLOY_ROOT in kwargs["volumes"]
     assert 'ENV_FILE=' in kwargs["command"][0]
+
+
+def test_schedule_recreate_via_helper_threads_env_overrides(monkeypatch):
+    mock_client = MagicMock()
+    mock_client.containers.run.return_value = MagicMock(id="helper123")
+    captured = {}
+
+    def _capture_prepare(_c, _n, **kwargs):
+        captured.update(kwargs)
+        return "/opt/breeze-core-engine/.upgrade.env"
+
+    monkeypatch.setattr(dcu, "prepare_upgrade_env_file", _capture_prepare)
+    monkeypatch.setattr(dcu, "deployment_data_host_path", lambda: "/opt/breeze-core-engine/data")
+    monkeypatch.setattr(dcu, "deployment_publish_port", lambda: 80)
+    monkeypatch.setattr(dcu, "pull_upgrade_helper_image", lambda _c: None)
+
+    dcu.schedule_recreate_via_helper(
+        mock_client,
+        image="ghcr.io/org/breeze-core-engine:latest",
+        container_name="breeze-core-engine",
+        env_overrides={"TELEGRAM_BOT_TOKEN": "123:abc"},
+    )
+
+    assert captured["env_overrides"] == {"TELEGRAM_BOT_TOKEN": "123:abc"}
+
+
+def test_prepare_upgrade_env_file_merges_overrides_winning_over_existing(monkeypatch):
+    mock_client = MagicMock()
+    written: dict[str, str] = {}
+
+    def _capture_write(_c, path, content, **_):
+        written[path] = content
+        return path
+
+    monkeypatch.setattr(
+        dcu,
+        "resolve_recreate_environment",
+        lambda _c, _n, _p: {"TELEGRAM_BOT_TOKEN": "stale-token", "OTHER_VAR": "keep-me"},
+    )
+    monkeypatch.setattr(dcu, "write_host_file_via_docker", _capture_write)
+
+    dcu.prepare_upgrade_env_file(
+        mock_client, "breeze-core-engine", env_overrides={"TELEGRAM_BOT_TOKEN": "fresh-token"}
+    )
+
+    content = written[dcu._UPGRADE_ENV_FILE]
+    assert "TELEGRAM_BOT_TOKEN=fresh-token" in content
+    assert "stale-token" not in content
+    assert "OTHER_VAR=keep-me" in content
+
+
+def test_prepare_upgrade_env_file_applies_overrides_even_when_no_existing_env(monkeypatch):
+    """Regression guard: overrides must not be skipped just because resolve_recreate_environment
+    found nothing on disk (e.g. a fresh instance whose bootstrap .env write hasn't landed yet)."""
+    mock_client = MagicMock()
+    written: dict[str, str] = {}
+
+    def _capture_write(_c, path, content, **_):
+        written[path] = content
+        return path
+
+    monkeypatch.setattr(dcu, "resolve_recreate_environment", lambda _c, _n, _p: {})
+    monkeypatch.setattr(dcu, "write_host_file_via_docker", _capture_write)
+
+    path = dcu.prepare_upgrade_env_file(
+        mock_client, "breeze-core-engine", env_overrides={"TELEGRAM_BOT_TOKEN": "fresh-token"}
+    )
+
+    assert path == dcu._UPGRADE_ENV_FILE
+    assert "TELEGRAM_BOT_TOKEN=fresh-token" in written[dcu._UPGRADE_ENV_FILE]
 
 
 def test_recreate_deployment_container_stops_and_runs_with_env(tmp_path, monkeypatch):

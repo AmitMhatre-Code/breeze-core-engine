@@ -337,3 +337,102 @@ def test_execute_upgrade_pulls_and_recreates_container(monkeypatch):
         image="ghcr.io/org/breeze-core-engine:latest",
         container_name="breeze-core-engine",
     )
+
+
+def _fake_docker_module(monkeypatch, mock_client):
+    docker_mod = types.ModuleType("docker")
+    docker_errors = types.ModuleType("docker.errors")
+    docker_errors.DockerException = Exception
+    docker_errors.APIError = Exception
+    docker_mod.from_env = MagicMock(return_value=mock_client)
+    docker_mod.errors = docker_errors
+    monkeypatch.setitem(sys.modules, "docker", docker_mod)
+    monkeypatch.setitem(sys.modules, "docker.errors", docker_errors)
+
+
+def test_apply_env_overrides_recreates_with_version_stamped(monkeypatch):
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/org/breeze-core-engine:v1.0.0")
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_CONTAINER_NAME", "breeze-core-engine")
+
+    mock_client = MagicMock()
+    _fake_docker_module(monkeypatch, mock_client)
+
+    with patch(
+        "icici_breeze_backend.app.services.deployment_container_upgrade.schedule_recreate_via_helper",
+    ) as schedule:
+        hb.apply_env_overrides({"TELEGRAM_BOT_TOKEN": "123:abc"}, "hash123")
+
+    # Same currently-running image — no upgrade, config-only recreate.
+    mock_client.images.pull.assert_not_called()
+    schedule.assert_called_once_with(
+        mock_client,
+        image="ghcr.io/org/breeze-core-engine:v1.0.0",
+        container_name="breeze-core-engine",
+        env_overrides={"TELEGRAM_BOT_TOKEN": "123:abc", "BREEZE_ENV_OVERRIDES_VERSION": "hash123"},
+    )
+
+
+def test_maybe_apply_env_overrides_noop_when_absent():
+    async def _run():
+        with patch.object(hb, "apply_env_overrides") as apply:
+            await hb._maybe_apply_env_overrides({"status": "OK"})
+            apply.assert_not_called()
+
+    asyncio.run(_run())
+
+
+def test_maybe_apply_env_overrides_noop_when_version_unchanged(monkeypatch):
+    monkeypatch.setenv("BREEZE_ENV_OVERRIDES_VERSION", "hash123")
+
+    async def _run():
+        with patch.object(hb, "apply_env_overrides") as apply:
+            await hb._maybe_apply_env_overrides(
+                {
+                    "status": "OK",
+                    "env_overrides": {"TELEGRAM_BOT_TOKEN": "123:abc"},
+                    "env_overrides_version": "hash123",
+                }
+            )
+            apply.assert_not_called()
+
+    asyncio.run(_run())
+
+
+def test_maybe_apply_env_overrides_applies_when_version_changed(monkeypatch):
+    monkeypatch.setenv("BREEZE_ENV_OVERRIDES_VERSION", "old-hash")
+
+    async def _run():
+        with patch.object(hb, "apply_env_overrides") as apply:
+            await hb._maybe_apply_env_overrides(
+                {
+                    "status": "OK",
+                    "env_overrides": {"TELEGRAM_BOT_TOKEN": "123:abc"},
+                    "env_overrides_version": "new-hash",
+                }
+            )
+            apply.assert_called_once_with({"TELEGRAM_BOT_TOKEN": "123:abc"}, "new-hash")
+
+    asyncio.run(_run())
+
+
+def test_heartbeat_tick_applies_env_overrides_independently_of_upgrade(monkeypatch):
+    monkeypatch.delenv("BREEZE_ENV_OVERRIDES_VERSION", raising=False)
+
+    async def _run():
+        with patch.object(
+            hb,
+            "post_heartbeat",
+            return_value={
+                "status": "OK",
+                "env_overrides": {"TELEGRAM_BOT_USERNAME": "MyBot"},
+                "env_overrides_version": "v2",
+            },
+        ):
+            with patch.object(hb, "execute_upgrade") as upgrade, patch.object(
+                hb, "apply_env_overrides"
+            ) as apply:
+                await hb.heartbeat_tick()
+                upgrade.assert_not_called()
+                apply.assert_called_once_with({"TELEGRAM_BOT_USERNAME": "MyBot"}, "v2")
+
+    asyncio.run(_run())

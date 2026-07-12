@@ -146,6 +146,54 @@ def execute_upgrade(target_tag: str | None) -> None:
         logger.warning("portal heartbeat upgrade: container recreate failed: %s", exc)
 
 
+def apply_env_overrides(env_overrides: dict, version: str) -> None:
+    """Recreate the deployment container with new env vars pushed from the portal
+    Console's fleet settings (e.g. TELEGRAM_BOT_TOKEN) — same image, new env.
+
+    Reuses the image-upgrade helper path since nothing short of a container
+    recreate applies a new env var (os.environ is only read at import time;
+    docker --env-file is only read at container creation, not on restart).
+    """
+    from icici_breeze_backend.app.services.deployment_container_upgrade import (
+        schedule_recreate_via_helper,
+    )
+
+    image = _resolve_upgrade_image(None)
+    if not image:
+        logger.warning("portal heartbeat env-override apply skipped: DEPLOYMENT_GHCR_IMAGE not set")
+        return
+
+    container_name = (cfg.DEPLOYMENT_CONTAINER_NAME or "breeze-core-engine").strip() or "breeze-core-engine"
+
+    try:
+        import docker
+        from docker.errors import APIError, DockerException
+    except ImportError:
+        logger.warning("portal heartbeat env-override apply skipped: docker SDK not installed")
+        return
+
+    try:
+        client = docker.from_env()
+    except DockerException as exc:
+        logger.warning("portal heartbeat env-override apply: docker connection failed: %s", exc)
+        return
+
+    # Deliberately never log env_overrides' values — only that an update is happening.
+    logger.info(
+        "portal heartbeat env-override apply: scheduling detached helper recreate for %s (version=%s)",
+        container_name,
+        version,
+    )
+    overrides = dict(env_overrides)
+    overrides["BREEZE_ENV_OVERRIDES_VERSION"] = version
+    try:
+        schedule_recreate_via_helper(
+            client, image=image, container_name=container_name, env_overrides=overrides
+        )
+    except (APIError, DockerException) as exc:
+        logger.warning("portal heartbeat env-override apply: container recreate failed: %s", exc)
+
+
 async def post_heartbeat() -> dict | None:
     """POST heartbeat to portal; return verified policy dict or None on failure."""
     base = (cfg.PORTAL_API_BASE_URL or "").strip().rstrip("/")
@@ -214,6 +262,29 @@ async def _maybe_execute_upgrade(policy: dict) -> None:
             logger.info("portal heartbeat upgrade deferred: outside operator upgrade window")
 
 
+def _local_env_overrides_version() -> str:
+    return (os.environ.get("BREEZE_ENV_OVERRIDES_VERSION") or "").strip()
+
+
+async def _maybe_apply_env_overrides(policy: dict) -> None:
+    """Recreate with portal-pushed env vars (e.g. Telegram bot token) if the
+    fleet config version has changed since we last applied one.
+
+    Independent of `_maybe_execute_upgrade` — checked separately, not merged
+    into one atomic recreate. If both happen to fire in the same tick, that's
+    two sequential recreates instead of one (the second catches up on the next
+    tick); simpler than coordinating the two, and the coincidence is rare.
+    """
+    env_overrides = policy.get("env_overrides")
+    version = str(policy.get("env_overrides_version") or "").strip()
+    if not env_overrides or not version:
+        return
+    if version == _local_env_overrides_version():
+        return
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, apply_env_overrides, env_overrides, version)
+
+
 async def send_startup_heartbeat() -> bool:
     """First portal check-in after DB/master init (before periodic loop)."""
     policy = await post_heartbeat()
@@ -221,6 +292,7 @@ async def send_startup_heartbeat() -> bool:
         _apply_policy_from_body(policy)
         logger.info("portal startup heartbeat succeeded")
         await _maybe_execute_upgrade(policy)
+        await _maybe_apply_env_overrides(policy)
         return True
     logger.warning("portal startup heartbeat failed or skipped")
     return False
@@ -238,6 +310,7 @@ async def heartbeat_tick() -> int:
         return _last_interval_sec
 
     await _maybe_execute_upgrade(policy)
+    await _maybe_apply_env_overrides(policy)
 
     return _last_interval_sec
 
