@@ -94,7 +94,7 @@ function LoginContent() {
         open={changelogOpen}
         onClose={() => setChangelogOpen(false)}
       />
-      <div className="w-full max-w-[400px] rounded-2xl border border-border bg-panel p-8">
+      <div className="w-full max-w-md rounded-2xl border border-border bg-panel p-8">
         <div className="mb-6 flex gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center">
             <Image
@@ -130,19 +130,19 @@ function LoginContent() {
           </div>
         )}
         <div className="space-y-3">
-          <p className="text-center text-heading text-muted">
+          <p className="text-center text-body text-muted">
             New user?{" "}
             <a href="/register" className="app-link">
               Register
             </a>
           </p>
-          <p className="text-center text-heading text-muted">
+          <p className="text-center text-body text-muted">
             Wrong credentials?{" "}
             <a href="/register/correct" className="app-link">
               Update credentials
             </a>
           </p>
-          <p className="text-center text-heading text-muted">
+          <p className="text-center text-body text-muted">
             Forgot password?{" "}
             <a href="/register/forgot-password" className="app-link">
               Reset via ICICI

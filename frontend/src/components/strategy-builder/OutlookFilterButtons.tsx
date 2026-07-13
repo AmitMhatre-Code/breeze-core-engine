@@ -1,6 +1,5 @@
 "use client";
 
-import { OutlookIcon } from "@/components/strategy-builder/OutlookIcon";
 import {
   ALL_OUTLOOKS,
   outlookFilterBtnClassName,
@@ -36,11 +35,10 @@ export function OutlookFilterButtons({
             type="button"
             aria-pressed={on}
             aria-label={`${outlookPillLabel(o)} strategies`}
-            title={outlookPillLabel(o)}
             onClick={() => toggle(o)}
             className={outlookFilterBtnClassName(o, on)}
           >
-            <OutlookIcon outlook={o} className="size-5" />
+            {outlookPillLabel(o)}
           </button>
         );
       })}

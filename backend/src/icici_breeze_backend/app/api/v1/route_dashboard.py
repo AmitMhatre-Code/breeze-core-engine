@@ -10,9 +10,23 @@ from icici_breeze_backend.app.services.dashboard_vix import (
     fetch_vix_options,
     fetch_vix_options_atm_skew,
 )
+from icici_breeze_backend.app.services.system_chain_health import get_system_health_status
 
 router = APIRouter()
 breeze = processor()
+
+
+@router.get("/ws-health")
+@router.get("/ws-health/")
+async def get_dashboard_ws_health(ctx: RequestContext = Depends(get_request_context)):
+    """Combined NIFTY+SENSEX system-chain WS health for the navbar status dot.
+
+    No `ctx.broker_token` check (unlike the /vix* routes below) -- this reads
+    process-wide state, not a per-user broker session, so it must resolve
+    correctly even for a logged-in user whose own session hasn't touched the
+    broker yet.
+    """
+    return get_system_health_status()
 
 
 @router.get("/bootstrap")

@@ -126,11 +126,29 @@ def extract_user_context(request: Request) -> Optional[RequestContext]:
     return ctx
 
 
+def _fire_system_prefetch(ctx: RequestContext) -> None:
+    """Piggyback the market-data health dot's NIFTY/SENSEX pre-subscription on
+    the first authenticated request of the trading day that has a broker
+    session -- there's no stored service credential to run this from a
+    background cron with nobody logged in. Fire-and-forget; never raises."""
+    if not ctx.broker_token:
+        return
+    try:
+        from icici_breeze_backend.app.services.system_chain_health import (
+            maybe_trigger_system_prefetch,
+        )
+
+        maybe_trigger_system_prefetch(ctx.user_id)
+    except Exception:
+        _logger.debug("system prefetch trigger failed", exc_info=True)
+
+
 async def get_request_context(request: Request) -> RequestContext:
     from fastapi import HTTPException
     ctx = extract_user_context(request)
     if not ctx or not ctx.is_authenticated:
         raise HTTPException(status_code=401, detail="Invalid or missing authentication token")
+    _fire_system_prefetch(ctx)
     return ctx
 
 
@@ -148,4 +166,5 @@ async def get_request_context_or_redirect(request: Request) -> RequestContext:
         raise RedirectToLogin()
     if not ctx.broker_token:
         raise RedirectToLogin()
+    _fire_system_prefetch(ctx)
     return ctx

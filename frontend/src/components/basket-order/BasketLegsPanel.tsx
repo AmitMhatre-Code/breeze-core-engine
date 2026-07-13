@@ -42,14 +42,15 @@ export function BasketLegsPanel({
   onAggressiveChange,
   legMargins,
   legBuySellRatios,
-  spanBaselineLoading = false,
   totalsNetPremium,
   totalsMargin,
   onExecute,
   executeDisabled,
   addLegDisabled,
   marginError = null,
-  marginWarnings = [],
+  onCalculateMargins,
+  calculatingMargins,
+  calculateMarginsDisabled,
 }: {
   sectionLabel: string;
   strikes: number[];
@@ -67,7 +68,6 @@ export function BasketLegsPanel({
   onAggressiveChange: (legId: string, checked: boolean) => void;
   legMargins: Record<string, BasketLegMarginEntry>;
   legBuySellRatios: Record<string, number | string | null>;
-  spanBaselineLoading?: boolean;
   totalsNetPremium: number;
   totalsMargin: {
     hasPositiveLots: boolean;
@@ -79,7 +79,9 @@ export function BasketLegsPanel({
   executeDisabled: boolean;
   addLegDisabled: boolean;
   marginError?: string | null;
-  marginWarnings?: string[];
+  onCalculateMargins: () => void;
+  calculatingMargins: boolean;
+  calculateMarginsDisabled: boolean;
 }) {
   const activeLegCount = legs.filter((l) => l.lots > 0).length;
   const sortedLegs = [...legs].sort((a, b) => a.strike - b.strike);
@@ -222,7 +224,7 @@ export function BasketLegsPanel({
                           {formatSignedLegPremium(premTotal, l.side).text}
                         </td>
                         <td className="px-2.5 py-2 text-right font-mono tabular-nums text-muted">
-                          {formatLegMargin(l, legEntry, spanBaselineLoading)}
+                          {formatLegMargin(l, legEntry, false)}
                         </td>
                         <td className="py-2 pl-2.5 pr-[18px] text-center">
                           <LegRowActions
@@ -245,9 +247,7 @@ export function BasketLegsPanel({
             </div>
           </>
         )}
-        {marginWarnings.length > 0 ? (
-          <p className="mt-3 app-alert-error text-heading">{marginWarnings[0]}</p>
-        ) : marginError ? (
+        {marginError ? (
           <p className="mt-3 app-alert-error text-heading">{marginError}</p>
         ) : null}
       </div>
@@ -264,7 +264,7 @@ export function BasketLegsPanel({
             value={
               !totalsMargin.hasPositiveLots
                 ? "—"
-                : totalsMargin.isFetching || spanBaselineLoading
+                : totalsMargin.isFetching
                   ? "…"
                   : totalsMargin.netMargin != null && Number.isFinite(totalsMargin.netMargin)
                     ? formatIndianMoneyCompact(totalsMargin.netMargin)
@@ -281,15 +281,25 @@ export function BasketLegsPanel({
             tone="accent"
           />
         </div>
-        <button
-          type="button"
-          disabled={executeDisabled}
-          onClick={onExecute}
-          className="inline-flex items-center gap-2 rounded-[10px] bg-accent-strong px-5 py-[11px] text-sm font-bold tracking-[.01em] text-accent-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <ExecuteIcon />
-          Execute basket · {activeLegCount} leg{activeLegCount === 1 ? "" : "s"}
-        </button>
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            disabled={calculateMarginsDisabled}
+            onClick={onCalculateMargins}
+            className={sb.btnSecondary}
+          >
+            {calculatingMargins ? "Calculating…" : "Calculate Margins"}
+          </button>
+          <button
+            type="button"
+            disabled={executeDisabled}
+            onClick={onExecute}
+            className="inline-flex items-center gap-2 rounded-[10px] bg-accent-strong px-5 py-[11px] text-sm font-bold tracking-[.01em] text-accent-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <ExecuteIcon />
+            Execute basket · {activeLegCount} leg{activeLegCount === 1 ? "" : "s"}
+          </button>
+        </div>
       </div>
     </div>
   );

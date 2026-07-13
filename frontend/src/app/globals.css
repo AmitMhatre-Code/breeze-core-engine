@@ -294,7 +294,7 @@
   }
   /** Inline & text links — brand accent. */
   .app-link {
-    @apply font-medium text-accent-strong underline-offset-2 transition-colors hover:text-accent hover:underline;
+    @apply text-accent-strong underline-offset-2 transition-colors hover:text-accent hover:underline;
   }
   button.app-link:disabled {
     @apply cursor-not-allowed text-faint no-underline hover:text-faint;

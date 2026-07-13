@@ -26,7 +26,7 @@ export function HelpLink({
   return (
     <button
       type="button"
-      className={`app-link cursor-pointer border-0 bg-transparent p-0 text-left font-medium underline-offset-2 hover:underline ${className}`}
+      className={`app-link cursor-pointer border-0 bg-transparent p-0 text-left underline-offset-2 hover:underline ${className}`}
       onClick={() => help.openHelp(topicId)}
     >
       {label}

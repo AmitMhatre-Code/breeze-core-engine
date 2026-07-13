@@ -31,12 +31,14 @@ export function StrategyLegsPanel({
   onPriceChange,
   onAggressiveChange,
   legMargins,
-  spanBaselineLoading = false,
   totalsNetPremium,
   totalsMargin,
   onExecute,
   executeDisabled,
   marginWarnings,
+  onCalculateMargins,
+  calculatingMargins,
+  calculateMarginsDisabled,
 }: {
   sectionTitle?: string;
   lotSize: number;
@@ -48,7 +50,6 @@ export function StrategyLegsPanel({
   onPriceChange: (legId: string, premiumPerUnit: number | undefined) => void;
   onAggressiveChange: (legId: string, checked: boolean) => void;
   legMargins: Record<string, BasketLegMarginEntry>;
-  spanBaselineLoading?: boolean;
   totalsNetPremium: number;
   totalsMargin: {
     hasPositiveLots: boolean;
@@ -59,6 +60,9 @@ export function StrategyLegsPanel({
   onExecute: () => void;
   executeDisabled: boolean;
   marginWarnings?: string[];
+  onCalculateMargins: () => void;
+  calculatingMargins: boolean;
+  calculateMarginsDisabled: boolean;
 }) {
   const sortedLegs = [...legs].sort((a, b) => a.strike - b.strike);
   return (
@@ -169,7 +173,7 @@ export function StrategyLegsPanel({
                         {formatSignedLegPremium(premTotal, l.side).text}
                       </td>
                       <td className="px-2 py-1.5 tabular-nums text-muted">
-                        {formatLegMargin(l, legEntry, spanBaselineLoading)}
+                        {formatLegMargin(l, legEntry, false)}
                       </td>
                       <td className="py-1.5 pl-2 pr-5">
                         <LegRowActions
@@ -202,7 +206,7 @@ export function StrategyLegsPanel({
                 value={
                   !totalsMargin.hasPositiveLots
                     ? "—"
-                    : totalsMargin.isFetching || spanBaselineLoading
+                    : totalsMargin.isFetching
                       ? "…"
                       : totalsMargin.netMargin != null && Number.isFinite(totalsMargin.netMargin)
                         ? formatIndianMoneyCompact(totalsMargin.netMargin)
@@ -220,16 +224,26 @@ export function StrategyLegsPanel({
                 tone="up"
               />
             </div>
-            <button
-              type="button"
-              disabled={executeDisabled}
-              onClick={onExecute}
-              className={`${sb.btnPrimary} gap-2`}
-            >
-              <ExecuteIcon />
-              Execute strategy · {legs.filter((l) => l.lots > 0).length} leg
-              {legs.filter((l) => l.lots > 0).length === 1 ? "" : "s"}
-            </button>
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                disabled={calculateMarginsDisabled}
+                onClick={onCalculateMargins}
+                className={sb.btnSecondary}
+              >
+                {calculatingMargins ? "Calculating…" : "Calculate Margins"}
+              </button>
+              <button
+                type="button"
+                disabled={executeDisabled}
+                onClick={onExecute}
+                className={`${sb.btnPrimary} gap-2`}
+              >
+                <ExecuteIcon />
+                Execute strategy · {legs.filter((l) => l.lots > 0).length} leg
+                {legs.filter((l) => l.lots > 0).length === 1 ? "" : "s"}
+              </button>
+            </div>
           </div>
           {marginWarnings && marginWarnings.length > 0 ? (
             <p className="app-alert-error text-heading">{marginWarnings[0]}</p>

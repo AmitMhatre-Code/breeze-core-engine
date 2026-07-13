@@ -227,16 +227,18 @@ def _apply_chain_spot(
     exchange_code: str,
     expiry_display: str,
     strikes: list[Strike],
+    spot: float | None = None,
 ) -> dict[str, Any]:
-    spot = _parse_positive_spot(payload.get("spot_price"))
-    if spot is None:
-        spot = _resolve_chain_spot(
+    resolved = _parse_positive_spot(payload.get("spot_price"))
+    if resolved is None:
+        resolved = spot if spot is not None else _resolve_chain_spot(
             proc, user_id, stock_code, exchange_code, expiry_display, strikes
         )
     else:
-        spot = _remember_chain_spot(exchange_code, stock_code, spot)
-    if spot is None:
+        resolved = _remember_chain_spot(exchange_code, stock_code, resolved)
+    if resolved is None:
         return payload
+    spot = resolved
     payload["spot_price"] = spot
     chain_rows = payload.get("chain_rows") or []
     chain_strikes = sorted(
@@ -430,6 +432,11 @@ def fetch_chain_payload_routed(
     if not strikes:
         return None
 
+    # Resolved once up front (cache/bhavcopy-sourced, cheap after the first call) so the
+    # completeness gate below can require live quotes only near the ATM strike instead of
+    # every tradeable strike -- see `chain_readiness.is_chain_complete`.
+    spot = _resolve_chain_spot(proc, user_id, stock_code, exchange_code, expiry_display, strikes)
+
     if source == "websocket":
         from icici_breeze_backend.app.services.breeze_websocket_manager import ensure_chain_subscriptions
 
@@ -443,6 +450,7 @@ def fetch_chain_payload_routed(
             lot_size=int(lot_size) if lot_size else 0,
             freeze_quantity=freeze_quantity,
             holder_id=holder_id,
+            spot=spot,
         )
         if ws_payload is not None:
             ws_payload = _apply_chain_spot(
@@ -453,12 +461,14 @@ def fetch_chain_payload_routed(
                 exchange_code=exchange_code,
                 expiry_display=expiry_display,
                 strikes=strikes,
+                spot=spot,
             )
         if ws_payload is not None and is_chain_complete(
             ws_payload,
             stock_code=stock_code,
             exchange_code=exchange_code,
             expiry_display=expiry_display,
+            spot=spot,
         ):
             return _enrich_quote_metadata(ws_payload)
 
@@ -482,6 +492,7 @@ def fetch_chain_payload_routed(
             stock_code=stock_code,
             exchange_code=exchange_code,
             expiry_display=expiry_display,
+            spot=spot,
         ):
             return _enrich_quote_metadata(
                 _apply_chain_spot(
@@ -492,6 +503,7 @@ def fetch_chain_payload_routed(
                     exchange_code=exchange_code,
                     expiry_display=expiry_display,
                     strikes=strikes,
+                    spot=spot,
                 )
             )
         _logger.warning("Bhavcopy chain incomplete for %s %s", stock_code, expiry_display)

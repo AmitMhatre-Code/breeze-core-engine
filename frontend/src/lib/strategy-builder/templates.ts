@@ -60,23 +60,14 @@ export function outlookPillClassName(o: Outlook): string {
   }
 }
 
-/** Bordered icon toggle for outlook filters (fixed 40×40px). */
+/** Text-label pill toggle for outlook filters. */
 export function outlookFilterBtnClassName(o: Outlook, on: boolean): string {
   const base =
-    "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
+    "inline-flex shrink-0 items-center justify-center rounded-md border px-2.5 py-1.5 text-hint font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
   if (!on) {
-    return `${base} border-border bg-panel opacity-50 hover:border-accent/40 hover:bg-panel2 hover:opacity-75`;
+    return `${base} border-border bg-transparent text-muted hover:bg-panel2`;
   }
-  switch (o) {
-    case "bullish":
-      return `${base} border-up bg-up-tint opacity-100`;
-    case "bearish":
-      return `${base} border-down bg-down-tint opacity-100`;
-    case "neutral":
-      return `${base} border-accent bg-accent-tint opacity-100`;
-    case "volatile":
-      return `${base} border-gtt bg-gtt-tint opacity-100`;
-  }
+  return `${base} border-accent/40 bg-accent-tint text-accent-strong`;
 }
 
 export const STRATEGY_TEMPLATES: StrategyTemplateMeta[] = [

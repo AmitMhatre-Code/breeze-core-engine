@@ -30,6 +30,7 @@ import {
   type HomeDataResponse,
 } from "@/lib/home-data";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import { useWsHealth } from "@/lib/use-ws-health";
 
 // Hidden from nav (route still works): { href: "/trade-options-chain", label: "Trade Options Chain" },
 const navItems = [
@@ -79,6 +80,12 @@ export function AppShell({
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
 
   const { licenseStatus, contactSalesMailto } = useLicenseRestrictions();
+
+  const wsHealthQ = useWsHealth();
+  const wsHealthStatus = wsHealthQ.data?.status ?? "gray";
+  const wsHealthReason = wsHealthQ.data?.reason ?? "Checking market data status…";
+  const wsHealthDotClass =
+    wsHealthStatus === "green" ? "bg-up" : wsHealthStatus === "red" ? "bg-down" : "bg-faint";
 
   const homeQ = useQuery({
     queryKey: ["home", "data"],
@@ -203,13 +210,17 @@ export function AppShell({
           <div className="text-body font-semibold uppercase tracking-[0.2em] text-faint">
             Session
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" title={wsHealthReason}>
             <span className="relative flex size-2 shrink-0">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-up opacity-75" />
-              <span className="relative inline-flex size-2 rounded-full bg-up" />
+              {wsHealthStatus === "green" ? (
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-up opacity-75" />
+              ) : null}
+              <span
+                className={`relative inline-flex size-2 rounded-full ${wsHealthDotClass}`}
+              />
             </span>
             <span className="truncate text-xs text-muted">
-              ICICI Breeze · active
+              ICICI Breeze · {wsHealthReason}
             </span>
           </div>
         </div>
@@ -282,8 +293,8 @@ export function AppShell({
             )}
             <span className="hidden text-xs text-faint lg:inline">ICICI</span>
             <span
-              className="hidden h-2 w-2 rounded-full bg-up sm:inline"
-              title="Session active"
+              className={`hidden h-2 w-2 rounded-full sm:inline ${wsHealthDotClass}`}
+              title={wsHealthReason}
               aria-hidden
             />
             <button

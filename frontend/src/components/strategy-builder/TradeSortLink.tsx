@@ -9,12 +9,16 @@ import {
 
 export type TradeSortKey = "score" | "server" | "pop" | "net_premium" | "max_loss";
 
-const SORT_OPTIONS: { key: TradeSortKey; label: string }[] = [
-  { key: "score", label: "Score (high → low)" },
-  { key: "server", label: "Server order" },
-  { key: "pop", label: POP_SORT_LABEL },
-  { key: "net_premium", label: "Net Premium (high → low)" },
-  { key: "max_loss", label: "Max Loss (low → high)" },
+const SORT_OPTIONS: { key: TradeSortKey; label: string; shortLabel: string }[] = [
+  { key: "score", label: "Score (high → low)", shortLabel: "Score" },
+  { key: "server", label: "Server order", shortLabel: "Server order" },
+  { key: "pop", label: POP_SORT_LABEL, shortLabel: "PoP" },
+  {
+    key: "net_premium",
+    label: "Net Premium (high → low)",
+    shortLabel: "Net Premium",
+  },
+  { key: "max_loss", label: "Max Loss (low → high)", shortLabel: "Max Loss" },
 ];
 
 export function TradeSortLink({
@@ -52,19 +56,24 @@ export function TradeSortLink({
     listRef,
   });
 
+  const selected = SORT_OPTIONS.find((opt) => opt.key === value);
+
   return (
     <div ref={rootRef} className="relative">
       <button
         ref={triggerRef}
         type="button"
-        className="text-heading font-normal text-accent-strong underline underline-offset-2 hover:text-accent"
+        className="flex items-center gap-1.5 text-hint text-muted"
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-controls={listId}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={handleTriggerKeyDown}
       >
-        sort by
+        Sort
+        <span className="font-semibold text-accent-strong">
+          {selected?.shortLabel} ▾
+        </span>
       </button>
       {open ? (
         <div

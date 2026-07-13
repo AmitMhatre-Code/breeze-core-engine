@@ -78,6 +78,10 @@ const nextConfig = {
         destination: `${backendUpstream}/dashboard/bootstrap`,
       },
       {
+        source: "/dashboard/ws-health",
+        destination: `${backendUpstream}/dashboard/ws-health`,
+      },
+      {
         source: "/dashboard/vix/:path*",
         destination: `${backendUpstream}/dashboard/vix/:path*`,
       },

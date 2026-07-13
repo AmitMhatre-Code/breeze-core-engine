@@ -47,20 +47,44 @@ def _cell_has_quote(cell: Any, *, exchange_code: str) -> bool:
     return buy > 0 or sell > 0
 
 
+def _atm_window_strikes(tradeable_strikes: list[Strike], spot: float) -> set[Strike]:
+    ordered = sorted(tradeable_strikes)
+    atm_index = min(range(len(ordered)), key=lambda i: abs(ordered[i] - spot))
+    try:
+        window = max(0, int(getattr(cfg, "CHAIN_READY_ATM_STRIKE_WINDOW", 20) or 20))
+    except (TypeError, ValueError):
+        window = 20
+    lo = max(0, atm_index - window)
+    hi = min(len(ordered), atm_index + window + 1)
+    return set(ordered[lo:hi])
+
+
 def is_chain_complete(
     payload: dict[str, Any] | None,
     *,
     stock_code: str,
     exchange_code: str,
     expiry_display: str,
+    spot: float | None = None,
 ) -> bool:
     """Completeness is judged by per-contract quotes (ltp / bid-ask / buy-sell qty via
-    `_cell_has_quote`), not `spot_price`. Real WS option ticks never carry a `spot_price`
-    field at all -- it's a passthrough that only bhavcopy-sourced cells populate -- so a
-    payload built purely from live WS ticks could never satisfy a `spot_price > 0` gate,
-    even once every tradeable strike has a genuine live quote. `spot_price` for the
-    response is filled in separately by `quote_source_router._apply_chain_spot()` (from
-    the same bhavcopy-fed cache) after this completeness check passes, not derived here.
+    `_cell_has_quote`), not `payload["spot_price"]`. Real WS option ticks never carry a
+    `spot_price` field at all -- it's a passthrough that only bhavcopy-sourced cells
+    populate -- so a payload built purely from live WS ticks could never satisfy a
+    `payload["spot_price"] > 0` gate. `payload["spot_price"]` for the response is filled
+    in separately by `quote_source_router._apply_chain_spot()`.
+
+    Every tradeable strike must still be *present* as a row (chain_rows is always built
+    as a full skeleton -- see `chain_build_service.build_canonical_chain` -- so this is
+    a structural sanity check, not a liveness one). But only strikes within
+    `CHAIN_READY_ATM_STRIKE_WINDOW` of the ATM strike (resolved from the externally
+    supplied `spot`, e.g. cache/bhavcopy-sourced -- not `payload["spot_price"]`) must
+    actually have a live quote. Deep OTM/ITM strikes on a wide chain (NIFTY, BANKNIFTY)
+    routinely take longer than `CHAIN_WS_WAIT_TIMEOUT_MS` to tick at all; requiring them
+    too meant one illiquid strike could flip an otherwise-live chain to bhavcopy. Rows
+    outside the window are still returned to the caller (possibly with null call/put
+    cells) and fill in as later requests re-poll the same canonical chain. If `spot` is
+    unavailable, falls back to requiring every tradeable strike (the old behavior).
     """
     if not isinstance(payload, dict):
         return False
@@ -86,7 +110,13 @@ def is_chain_complete(
     if set(row_by_strike.keys()) != set(tradeable_strikes):
         return False
 
+    required_strikes = set(tradeable_strikes)
+    if spot is not None and spot > 0:
+        required_strikes = _atm_window_strikes(tradeable_strikes, spot)
+
     for strike in tradeable_strikes:
+        if strike not in required_strikes:
+            continue
         row = row_by_strike.get(strike) or {}
         for opt, side in ((cfg.CALL, "call"), (cfg.PUT, "put")):
             if not is_tradeable_contract(
@@ -176,6 +206,7 @@ def wait_for_canonical_chain(
     *,
     lot_size: int = 0,
     freeze_quantity: int | None = None,
+    spot: float | None = None,
 ) -> dict[str, Any] | None:
     return _poll_canonical_chain(
         exchange_code,
@@ -188,6 +219,7 @@ def wait_for_canonical_chain(
             stock_code=stock_code,
             exchange_code=exchange_code,
             expiry_display=expiry_display,
+            spot=spot,
         ),
     )
 
