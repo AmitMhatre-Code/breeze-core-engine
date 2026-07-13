@@ -224,3 +224,68 @@ export async function runCancelOrdersWithPacing(args: {
   });
   return { redirect: fin.redirect };
 }
+
+export type LegModifyOrderRef = {
+  order_id: string;
+  exchange_code: string;
+  quantity: number;
+  pending_quantity: number;
+  status: string;
+  price?: string | null;
+};
+
+export type LegModifyOrderOutcome = {
+  order_id: string;
+  quantity: number;
+  price?: string | null;
+};
+
+export type LegModifyFailure = { ref: string; error: string };
+
+export type LegModifyResponse = {
+  success: boolean;
+  cancelled_order_ids: string[];
+  modified: LegModifyOrderOutcome[];
+  placed: LegModifyOrderOutcome[];
+  failures: LegModifyFailure[];
+  rate_limited: boolean;
+  rate_limit_pause_seconds?: number;
+};
+
+export type ModifyLegArgs = {
+  stock_code: string;
+  expiry_date: string;
+  strike_price: string;
+  right: string;
+  product_type: string;
+  exchange_code: string;
+  action: "Buy" | "Sell";
+  orders: LegModifyOrderRef[];
+  new_quantity: string;
+  new_price?: string;
+  rule_id?: string;
+  scrip_key?: string;
+  onRateLimitWait: (seconds: number) => Promise<void>;
+};
+
+/**
+ * Modify a leg's total quantity/price in one server-side call (the backend
+ * redistributes across the leg's underlying chunk orders). On a 429, waits
+ * and retries the whole call — the server recomputes its plan from current
+ * broker state each time, so a retry naturally reconciles with whatever
+ * already succeeded.
+ */
+export async function runModifyLegWithPacing(
+  args: ModifyLegArgs,
+): Promise<LegModifyResponse> {
+  const { onRateLimitWait, ...payload } = args;
+  for (;;) {
+    const res = await apiClient.post<LegModifyResponse>("/book/modify-leg", payload);
+    if (res.rate_limited) {
+      const sec = rateLimitWaitSeconds(res.rate_limit_pause_seconds);
+      await onRateLimitWait(sec);
+      continue;
+    }
+    return res;
+  }
+}

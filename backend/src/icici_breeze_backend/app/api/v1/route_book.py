@@ -18,11 +18,21 @@ from icici_breeze_backend.app.domain.order import (
     BookCancelOneRequest,
     BookGroupLtpRequest,
     BookGroupLtpResponse,
+    LegModifyFailure,
+    LegModifyOrderOutcome,
+    LegModifyRequest,
+    LegModifyResponse,
     ParkedOrderCreateRequest,
     ParkedOrderIdsRequest,
     ParkedOrderListResponse,
     ParkedOrderPatchRequest,
 )
+from icici_breeze_backend.app.services.leg_order_redistribution import (
+    LegModifyValidationError,
+    LegOrderState,
+    plan_leg_redistribution,
+)
+from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 from icici_breeze_backend.app.services.user_rate_limit_prefs import (
     get_icici_rate_limit_pause_seconds,
 )
@@ -173,6 +183,11 @@ async def post_cancel_one(
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
     r = breeze.cancel_order_single(context.user_id, body.order_id.strip())
+    AuditLogger(None).log_operation(
+        context.user_id, OperationType.ORDER_CANCEL, "Order", body.order_id.strip(),
+        action_status="success" if r.get("success") else "failure",
+        error_details=r.get("error"),
+    )
     pause = get_icici_rate_limit_pause_seconds(context.user_id)
     return JSONResponse({**r, "rate_limit_pause_seconds": pause})
 
@@ -199,9 +214,101 @@ async def post_cancel_commit(
         success_idx, failures, orders, details
     )
     breeze.store_messages(context.user_id, messages)
+    audit = AuditLogger(None)
+    for i, order_ref in enumerate(orders):
+        ok = i in success_idx
+        err = None if ok else next((e for ref, e in failures if ref == order_ref), None)
+        audit.log_operation(
+            context.user_id, OperationType.ORDER_CANCEL, "Order", order_ref,
+            action_status="success" if ok else "failure", error_details=err,
+        )
     if success_idx:
         evict_broker_snapshot(context.user_id, context.broker_token or "")
     return json_redirect("/orders")
+
+
+@router.post("/modify-leg", response_model=LegModifyResponse)
+async def post_modify_leg(
+    body: LegModifyRequest,
+    context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
+):
+    if not context.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+
+    leg_orders = [
+        LegOrderState(
+            order_id=o.order_id,
+            exchange_code=o.exchange_code,
+            quantity=o.quantity,
+            pending_quantity=o.pending_quantity,
+            status=o.status,
+        )
+        for o in body.orders
+    ]
+    new_quantity = int(body.new_quantity)
+    qty_limits = breeze.fetch_qty_limits(body.stock_code, exchange_code=body.exchange_code)
+    lot_size = breeze.fetch_lot_size(body.stock_code, body.expiry_date, exchange_code=body.exchange_code)
+    qty_per_order = new_quantity
+    if qty_limits and lot_size:
+        aligned = (max(1, int(qty_limits)) // int(lot_size)) * int(lot_size)
+        if aligned > 0:
+            qty_per_order = aligned
+
+    try:
+        plan = plan_leg_redistribution(leg_orders, qty_per_order, new_quantity)
+    except LegModifyValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    current_price = next((o.price for o in body.orders if o.price), None)
+    old_quantity = sum(o.quantity for o in body.orders)
+
+    result = breeze.execute_leg_modification(
+        context.user_id,
+        plan,
+        contract={
+            "product_type": body.product_type,
+            "stock_code": body.stock_code,
+            "action": body.action,
+            "strike_price": body.strike_price,
+            "right": body.right,
+            "expiry_date": body.expiry_date,
+            "exchange_code": body.exchange_code,
+        },
+        new_price=body.new_price,
+        current_price=current_price,
+    )
+
+    if body.rule_id and body.scrip_key:
+        untouched = {o.order_id for o in body.orders} - set(plan.cancel_order_ids) - {
+            m["order_id"] for m in plan.modify
+        }
+        final_ids = list(untouched) + [m["order_id"] for m in plan.modify] + [p["order_id"] for p in result["placed"]]
+        squareoff_repo.update_leg_order_ids(body.rule_id, body.scrip_key, final_ids)
+
+    contract_label = f"{body.stock_code}-{body.expiry_date}-{body.strike_price}-{body.right}"
+    messages = breeze.build_modify_leg_messages(
+        contract_label,
+        old_quantity,
+        new_quantity,
+        float(current_price) if current_price else None,
+        float(body.new_price) if body.new_price else None,
+        result,
+    )
+    breeze.store_messages(context.user_id, messages)
+    if result["cancelled"] or result["modified"] or result["placed"]:
+        evict_broker_snapshot(context.user_id, context.broker_token or "")
+
+    pause = get_icici_rate_limit_pause_seconds(context.user_id)
+    return LegModifyResponse(
+        success=result["all_ok"],
+        cancelled_order_ids=result["cancelled"],
+        modified=[LegModifyOrderOutcome(**m) for m in result["modified"]],
+        placed=[LegModifyOrderOutcome(**p) for p in result["placed"]],
+        failures=[LegModifyFailure(ref=ref, error=err) for ref, err in result["failures"]],
+        rate_limited=result["rate_limited"],
+        rate_limit_pause_seconds=pause,
+    )
 
 
 @router.get("/parked-orders", response_model=ParkedOrderListResponse)

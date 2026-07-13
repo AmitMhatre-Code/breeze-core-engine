@@ -31,6 +31,41 @@ def _round_to_tick(price: float) -> float:
     return round(round(price / _NFO_TICK_SIZE) * _NFO_TICK_SIZE, 2)
 
 
+def _leg_qty_per_order(breeze, leg: dict[str, Any]) -> int:
+    """Freeze-aligned max quantity per single order for this leg's contract.
+
+    Falls back to the leg's full quantity (i.e. no chunking) if the scrip
+    master doesn't have freeze-limit/lot-size data for this contract, so a
+    lookup gap doesn't newly block a square-off that used to work unchunked.
+    """
+    total_qty = int(leg["quantity"])
+    try:
+        qty_limits = breeze.fetch_qty_limits(leg["stock_code"], exchange_code=leg["exchange_code"])
+        lot_size = breeze.fetch_lot_size(leg["stock_code"], leg["expiry_display"], exchange_code=leg["exchange_code"])
+        if not qty_limits or not lot_size:
+            return total_qty
+        per_order = (max(1, int(qty_limits)) // int(lot_size)) * int(lot_size)
+        return per_order if per_order > 0 else total_qty
+    except Exception:
+        _logger.warning(
+            "Could not resolve freeze-qty limit for square-off leg=%s; placing unchunked",
+            leg.get("scrip_key"),
+            exc_info=True,
+        )
+        return total_qty
+
+
+def _split_into_chunks(total_qty: int, qty_per_order: int) -> list[int]:
+    if qty_per_order <= 0 or qty_per_order >= total_qty:
+        return [total_qty]
+    iterations = total_qty // qty_per_order
+    remainder = total_qty % qty_per_order
+    chunks = [qty_per_order] * iterations
+    if remainder:
+        chunks.append(remainder)
+    return chunks
+
+
 def _leg_limit_price(leg: dict[str, Any], *, reason: str, payload: dict[str, Any]) -> float:
     """Marketable limit price for a closing leg: a Buy is placed at a premium
     to LTP, a Sell at a discount, using whichever of the rule's two
@@ -106,32 +141,49 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
     leg_results: list[dict[str, Any]] = []
     all_ok = True
     for leg in legs:
+        order_ids: list[str] = []
+        chunk_errors: list[str] = []
+        limit_price: float | None = None
         try:
             limit_price = _leg_limit_price(leg, reason=reason, payload=payload)
-            response = breeze.place_order(
-                user_id=user_id,
-                product_type=leg["product_type"],
-                stock_code=leg["stock_code"],
-                action=leg["action"],
-                strike_price=leg["strike_price"],
-                right=leg["right"],
-                price=str(limit_price),
-                expiry_date=leg["expiry_display"],
-                quantity=leg["quantity"],
-                exchange_code=leg["exchange_code"],
-                aggressive_limit=False,
-            )
-            ok = isinstance(response, dict) and response.get("Status") == 200
-            error = None if ok else str((response or {}).get("Error") or "Broker rejected the order")
-            order_id = (response or {}).get("Success", {}).get("order_id") if ok else None
+            qty_per_order = _leg_qty_per_order(breeze, leg)
+            chunks = _split_into_chunks(int(leg["quantity"]), qty_per_order)
+            for chunk_qty in chunks:
+                response = breeze.place_order(
+                    user_id=user_id,
+                    product_type=leg["product_type"],
+                    stock_code=leg["stock_code"],
+                    action=leg["action"],
+                    strike_price=leg["strike_price"],
+                    right=leg["right"],
+                    price=str(limit_price),
+                    expiry_date=leg["expiry_display"],
+                    quantity=chunk_qty,
+                    exchange_code=leg["exchange_code"],
+                    aggressive_limit=False,
+                )
+                ok = isinstance(response, dict) and response.get("Status") == 200
+                if not ok:
+                    chunk_errors.append(str((response or {}).get("Error") or "Broker rejected the order"))
+                    continue
+                order_id = (response or {}).get("Success", {}).get("order_id")
+                if order_id:
+                    order_ids.append(str(order_id))
+                else:
+                    chunk_errors.append("Broker did not return an order id")
         except Exception as exc:  # defensive: one leg's failure must not stop the rest
             _logger.exception(
                 "Square-off order placement raised for rule_id=%s leg=%s", rule_id, leg.get("scrip_key")
             )
-            ok = False
-            error = str(exc)
-            order_id = None
-        all_ok = all_ok and ok
+            chunk_errors.append(str(exc))
+
+        if order_ids and not chunk_errors:
+            leg_status = "success"
+        elif order_ids:
+            leg_status = "partial"
+        else:
+            leg_status = "failed"
+        all_ok = all_ok and leg_status == "success"
         leg_results.append(
             {
                 "scrip_key": leg["scrip_key"],
@@ -139,11 +191,11 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
                 "strike_price": leg["strike_price"],
                 "right": leg["right"],
                 "quantity": leg["quantity"],
-                "status": "success" if ok else "failed",
-                "error": error,
-                "order_id": str(order_id) if order_id else None,
+                "status": leg_status,
+                "error": "; ".join(chunk_errors) if chunk_errors else None,
+                "order_ids": order_ids,
                 "action": leg["action"],
-                "price": str(limit_price) if ok else None,
+                "price": str(limit_price) if order_ids and limit_price is not None else None,
             }
         )
 

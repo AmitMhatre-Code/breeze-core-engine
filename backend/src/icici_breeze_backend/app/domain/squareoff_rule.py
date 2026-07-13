@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 SquareOffRuleStatus = Literal["armed", "triggered", "fired", "fire_failed", "disarmed"]
 
@@ -28,11 +28,19 @@ class SquareOffRuleLegResult(BaseModel):
     strike_price: str
     right: str
     quantity: str
-    status: Literal["success", "failed"]
+    status: Literal["success", "partial", "failed"]
     error: Optional[str] = None
     order_id: Optional[str] = None
+    """Legacy singular field, kept for rules fired before order_ids existed (only ever one order per leg then)."""
+    order_ids: List[str] = Field(default_factory=list)
     action: Optional[str] = None
     price: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _normalize_order_ids(self):
+        if not self.order_ids and self.order_id:
+            self.order_ids = [self.order_id]
+        return self
 
 
 class SquareOffRuleRecord(BaseModel):

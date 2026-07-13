@@ -236,3 +236,28 @@ def get_rule(rule_id: str) -> Optional[SquareOffRuleRecord]:
             (rule_id,),
         ).fetchone()
         return _row_to_record(row) if row else None
+
+
+def update_leg_order_ids(rule_id: str, scrip_key: str, order_ids: list[str]) -> bool:
+    """Patch one leg's `order_ids` within a fired rule's stored leg_results, after a
+    leg-modify has cancelled/modified/added orders for it — so the next read (PB/SL
+    table, future modify/cancel matching) resolves the currently-live set."""
+    rule = get_rule(rule_id)
+    if rule is None or not rule.leg_results:
+        return False
+    updated = False
+    new_legs = []
+    for leg in rule.leg_results:
+        if leg.scrip_key == scrip_key:
+            leg = leg.model_copy(update={"order_ids": order_ids, "order_id": order_ids[0] if order_ids else None})
+            updated = True
+        new_legs.append(leg)
+    if not updated:
+        return False
+    with sqlite3.connect(_db_path()) as conn:
+        conn.execute(
+            "UPDATE portfolio_squareoff_rules SET leg_results = ? WHERE id = ?",
+            (json.dumps([leg.model_dump() for leg in new_legs]), rule_id),
+        )
+        conn.commit()
+    return True

@@ -150,6 +150,63 @@ class BookCancelCommitRequest(BaseModel):
     cancel_details: Optional[List[CancelOrderDetail]] = None
 
 
+class LegModifyOrderRef(BaseModel):
+    """One constituent order in a leg, as currently displayed in Order Book."""
+
+    order_id: str
+    exchange_code: str = "NFO"
+    quantity: int
+    pending_quantity: int = 0
+    status: str
+    price: Optional[str] = None
+
+
+class LegModifyRequest(BaseModel):
+    """Change the total quantity/price of a leg (1..N underlying chunk orders)."""
+
+    stock_code: str
+    expiry_date: str
+    strike_price: str
+    right: str
+    product_type: str = "Options"
+    exchange_code: str = "NFO"
+    action: Literal["Buy", "Sell"]
+    orders: List[LegModifyOrderRef]
+    new_quantity: str
+    new_price: Optional[str] = None
+    rule_id: Optional[str] = None
+    scrip_key: Optional[str] = None
+
+    @model_validator(mode="after")
+    def require_orders_and_positive_quantity(self):
+        if not self.orders:
+            raise ValueError("orders must not be empty")
+        if int(self.new_quantity) <= 0:
+            raise ValueError("new_quantity must be positive")
+        return self
+
+
+class LegModifyOrderOutcome(BaseModel):
+    order_id: str
+    quantity: int
+    price: Optional[str] = None
+
+
+class LegModifyFailure(BaseModel):
+    ref: str
+    error: str
+
+
+class LegModifyResponse(BaseModel):
+    success: bool
+    cancelled_order_ids: List[str] = Field(default_factory=list)
+    modified: List[LegModifyOrderOutcome] = Field(default_factory=list)
+    placed: List[LegModifyOrderOutcome] = Field(default_factory=list)
+    failures: List[LegModifyFailure] = Field(default_factory=list)
+    rate_limited: bool = False
+    rate_limit_pause_seconds: Optional[int] = None
+
+
 class BookGroupLtpItem(BaseModel):
     """One order-book group row for batched LTP lookup."""
 

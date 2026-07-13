@@ -19,12 +19,18 @@ export type RuleSpawnedOrderRow = {
   price?: number | string;
   status?: string;
   cancelable?: boolean;
+  modifiable?: boolean;
+  pending_quantity?: number | string;
   stock_code?: string;
   expiry_date?: string;
   strike_price?: number | string;
   right?: string;
+  product_type?: string;
   exit_rule_source: "squareoff_rule" | "gtt_exit_order";
   exit_rule_id: string;
+  /** Group square-off rules only — which leg (scrip) within the rule this order belongs to,
+   * so a leg-modify can patch just that leg's stored order_ids. */
+  exit_rule_scrip_key?: string;
 };
 
 export type ExitRuleEffectiveStatus =

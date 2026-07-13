@@ -2,8 +2,10 @@
 main Order Book list (`route_book.py`), so they can be surfaced instead under the
 Orders page's dedicated Profit Booking / Stop Loss table with their owning rule.
 
-Group rules: exact match via `order_id`, captured at dispatch time
-(`squareoff_dispatcher.py`) into `SquareOffRuleLegResult.order_id` — fully reliable.
+Group rules: exact match via `order_ids`, captured at dispatch time
+(`squareoff_dispatcher.py`) into `SquareOffRuleLegResult.order_ids` — fully reliable
+(a leg can have more than one order_id when its quantity was split across multiple
+freeze-quantity-capped chunk orders).
 
 Leg·GTT rules: ICICI's GTT placement/list APIs don't confirm a resulting order_id for
 the order a trigger eventually produces (unverified against real ICICI — the mock
@@ -43,12 +45,12 @@ def split_rule_spawned_orders(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Returns (kept, excluded). `excluded` entries are the original order dicts plus
     `exit_rule_source` ('squareoff_rule' | 'gtt_exit_order') and `exit_rule_id`."""
-    known: dict[str, tuple[str, str]] = {}
+    known: dict[str, tuple[str, str, str | None]] = {}
 
     for rule in squareoff_rules:
         for leg in rule.leg_results or []:
-            if leg.order_id:
-                known[leg.order_id] = ("squareoff_rule", rule.id)
+            for oid in leg.order_ids:
+                known[oid] = ("squareoff_rule", rule.id, leg.scrip_key)
 
     unmatched = [o for o in raw_orders if o.get("order_id") not in known]
     for gtt in gtt_rows:
@@ -70,15 +72,18 @@ def split_rule_spawned_orders(
         if len(candidates) == 1:
             oid = candidates[0].get("order_id")
             if oid:
-                known[oid] = ("gtt_exit_order", gtt.gtt_order_id)
+                known[oid] = ("gtt_exit_order", gtt.gtt_order_id, None)
 
     kept: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
     for o in raw_orders:
         tag = known.get(o.get("order_id") or "")
         if tag:
-            source, rule_id = tag
-            excluded.append({**o, "exit_rule_source": source, "exit_rule_id": rule_id})
+            source, rule_id, scrip_key = tag
+            entry = {**o, "exit_rule_source": source, "exit_rule_id": rule_id}
+            if scrip_key:
+                entry["exit_rule_scrip_key"] = scrip_key
+            excluded.append(entry)
         else:
             kept.append(o)
     return kept, excluded

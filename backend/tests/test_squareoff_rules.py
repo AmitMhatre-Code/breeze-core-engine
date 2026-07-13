@@ -242,13 +242,49 @@ class TestDispatcher:
         assert rule_id == "rule-1"
         assert results[0]["status"] == "success"
 
+    def test_leg_quantity_exceeding_freeze_limit_is_split_into_chunk_orders(self, monkeypatch):
+        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
+        fired_calls = []
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: fired_calls.append((rid, results)))
+        monkeypatch.setattr(
+            squareoff_dispatcher.repo,
+            "mark_fire_failed",
+            lambda rid, results: (_ for _ in ()).throw(AssertionError("should not fail")),
+        )
+
+        placed_quantities: list[str] = []
+        order_ids = iter(["o1", "o2", "o3"])
+
+        class _FakeBreeze:
+            def fetch_qty_limits(self, stock_code, exchange_code="NFO"):
+                return 1800  # freeze limit
+
+            def fetch_lot_size(self, stock_code, expiry_date, exchange_code="NFO"):
+                return 900  # lot size -> freeze-aligned chunk = 1800
+
+            def place_order(self, **kwargs):
+                placed_quantities.append(kwargs["quantity"])
+                return {"Status": 200, "Success": {"order_id": next(order_ids)}}
+
+        monkeypatch.setattr(squareoff_dispatcher, "processor", lambda: _FakeBreeze())
+
+        # Total leg quantity 4000 with a freeze-aligned chunk of 1800 -> 1800, 1800, 400.
+        legs = [self._leg(quantity="4000")]
+        squareoff_dispatcher._handle_group_rule_hit(self._payload(legs=legs))
+
+        assert placed_quantities == [1800, 1800, 400]
+        assert len(fired_calls) == 1
+        _, results = fired_calls[0]
+        assert results[0]["status"] == "success"
+        assert results[0]["order_ids"] == ["o1", "o2", "o3"]
+
     def test_one_leg_fails_marks_fire_failed_with_per_leg_detail(self, monkeypatch):
         monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
         failed_calls = []
         monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: (_ for _ in ()).throw(AssertionError))
         monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results: failed_calls.append((rid, results)))
 
-        responses = iter([{"Status": 200, "Success": {}}, {"Status": 400, "Error": "RMS:Margin Exceeds"}])
+        responses = iter([{"Status": 200, "Success": {"order_id": "abc"}}, {"Status": 400, "Error": "RMS:Margin Exceeds"}])
 
         class _FakeBreeze:
             def place_order(self, **kwargs):
@@ -274,7 +310,7 @@ class TestDispatcher:
             def place_order(self, **kwargs):
                 if kwargs["strike_price"] == "25000.0":
                     raise RuntimeError("network blip")
-                return {"Status": 200, "Success": {}}
+                return {"Status": 200, "Success": {"order_id": "abc"}}
 
         monkeypatch.setattr(squareoff_dispatcher, "processor", lambda: _FakeBreeze())
 

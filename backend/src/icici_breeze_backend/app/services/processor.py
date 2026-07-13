@@ -42,6 +42,7 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import elm_addon
 from icici_breeze_backend.app.services.options_strategy_engine.types import TradeLeg
 from icici_breeze_backend.app.services.reference_data.bhavcopy_store import _lookup_bhav_row
+from icici_breeze_backend.app.services.leg_order_redistribution import LegRedistributionPlan
 
 _logger = logging.getLogger(__name__)
 
@@ -1147,6 +1148,7 @@ class processor():
                 order['cancelable'] = True
             else:
                 order['cancelable'] = False
+            order['modifiable'] = order['cancelable']
 
         return orders
 
@@ -1378,6 +1380,45 @@ class processor():
 
         return messages
 
+    def build_modify_leg_messages(
+        self,
+        contract_label: str,
+        old_quantity: int,
+        new_quantity: int,
+        old_price: float | None,
+        new_price: float | None,
+        result: dict,
+    ) -> list[dict]:
+        messages: list[dict] = []
+        did_anything = bool(result.get("cancelled") or result.get("modified") or result.get("placed"))
+        if did_anything:
+            parts = [f"Modified {contract_label}"]
+            if old_quantity != new_quantity:
+                parts.append(
+                    f"quantity {_format_indian_integer_digits(old_quantity)} "
+                    f"→ {_format_indian_integer_digits(new_quantity)}"
+                )
+            if old_price is not None and new_price is not None and old_price != new_price:
+                parts.append(
+                    f"price {_format_inr_integer_indian(old_price)} → {_format_inr_integer_indian(new_price)}"
+                )
+            messages.append({"type": cfg.SUCCESS, "message": ": ".join([parts[0], ", ".join(parts[1:])]) if len(parts) > 1 else parts[0]})
+
+        failures = result.get("failures") or []
+        if failures:
+            fail_parts = [f"{ref}: {err}" for ref, err in failures[:5]]
+            extra = len(failures) - 5
+            tail = f" (+{extra} more)" if extra > 0 else ""
+            messages.append(
+                {
+                    "type": cfg.DANGER,
+                    "message": f"Failed to modify {len(failures)} order(s) for {contract_label}: "
+                    + "; ".join(fail_parts)
+                    + tail,
+                }
+            )
+        return messages
+
     def cancel_order_single(self, user_id, order_ref: str) -> dict:
         """Cancel one order; used for client-paced cancels on 429."""
         breeze = self.get_session_breeze(user_id)
@@ -1412,6 +1453,50 @@ class processor():
             "error": err,
         }
 
+    def modify_order_single(
+        self,
+        user_id,
+        order_ref: str,
+        *,
+        quantity: str | None = None,
+        price: str | None = None,
+    ) -> dict:
+        """Modify quantity/price of one order; building block for leg-modify execution."""
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return {
+                "success": False,
+                "rate_limited": False,
+                "error": "Unable to connect to broker. Please log out and log back in.",
+            }
+        order_id = order_ref
+        exchange_code = cfg.NFO
+        if isinstance(order_ref, str) and "|" in order_ref:
+            order_id, exchange_code = order_ref.split("|", 1)
+        try:
+            response = breeze.modify_order(
+                order_id=order_id,
+                exchange_code=exchange_code,
+                quantity=str(quantity) if quantity not in (None, "") else "",
+                price=str(price) if price not in (None, "") else "",
+            )
+        except Exception as e:
+            response = _icici_error(
+                f"Error calling ICICI Breeze API modify_order(exchange_code={exchange_code},order_id={order_id}): {e}"
+            )
+
+        self._maybe_evict_session(user_id, response)
+        if response.get("Status") == 200:
+            return {"success": True, "rate_limited": False, "daily_limit_exhausted": False, "error": None}
+        err = str(response.get("Error") or "Unknown error")
+        rl, daily_exhausted = _order_rate_limit_flags(response)
+        return {
+            "success": False,
+            "rate_limited": rl,
+            "daily_limit_exhausted": daily_exhausted,
+            "error": err,
+        }
+
     def cancel_orders(self, user_id, orders, cancel_details: list | None = None):
         success_idx: list[int] = []
         failures: list[tuple[str, str]] = []
@@ -1424,6 +1509,105 @@ class processor():
         return self.build_cancel_order_messages(
             success_idx, failures, list(orders), cancel_details
         )
+
+    def execute_leg_modification(
+        self,
+        user_id,
+        plan: LegRedistributionPlan,
+        *,
+        contract: dict,
+        new_price: str | None,
+        current_price: str | None,
+    ) -> dict:
+        """Carry out a leg-modify plan: cancel/modify existing orders, place new chunks."""
+        from icici_breeze_backend.audit.logger import AuditLogger, OperationType
+
+        audit = AuditLogger(None)
+        cancelled: list[str] = []
+        modified: list[dict] = []
+        placed: list[dict] = []
+        failures: list[tuple[str, str]] = []
+        rate_limited = False
+        price_changed = (
+            new_price is not None
+            and str(new_price).strip() != ""
+            and str(new_price) != str(current_price)
+        )
+
+        for order_id in plan.cancel_order_ids:
+            if rate_limited:
+                break
+            one = self.cancel_order_single(user_id, order_id)
+            if one["success"]:
+                cancelled.append(order_id)
+                audit.log_operation(user_id, OperationType.ORDER_CANCEL, "Order", order_id, action_status="success")
+            else:
+                failures.append((order_id, str(one.get("error") or "Unknown error")))
+                audit.log_operation(
+                    user_id, OperationType.ORDER_CANCEL, "Order", order_id,
+                    action_status="failure", error_details=str(one.get("error") or ""),
+                )
+                if one.get("rate_limited"):
+                    rate_limited = True
+
+        for item in plan.modify:
+            if rate_limited:
+                break
+            order_id = item["order_id"]
+            one = self.modify_order_single(
+                user_id,
+                f"{order_id}|{item['exchange_code']}",
+                quantity=str(item["quantity"]),
+                price=str(new_price) if price_changed else None,
+            )
+            if one["success"]:
+                modified.append({"order_id": order_id, "quantity": item["quantity"], "price": new_price if price_changed else current_price})
+                audit.log_operation(user_id, OperationType.ORDER_MODIFY, "Order", order_id, action_status="success")
+            else:
+                failures.append((order_id, str(one.get("error") or "Unknown error")))
+                audit.log_operation(
+                    user_id, OperationType.ORDER_MODIFY, "Order", order_id,
+                    action_status="failure", error_details=str(one.get("error") or ""),
+                )
+                if one.get("rate_limited"):
+                    rate_limited = True
+
+        for qty in plan.place_new_quantities:
+            if rate_limited:
+                break
+            response = self.place_order(
+                user_id=user_id,
+                product_type=contract["product_type"],
+                stock_code=contract["stock_code"],
+                action=contract["action"],
+                strike_price=contract["strike_price"],
+                right=contract["right"],
+                price=str(new_price if price_changed else current_price),
+                expiry_date=contract["expiry_date"],
+                quantity=qty,
+                exchange_code=contract["exchange_code"],
+            )
+            ok = isinstance(response, dict) and response.get("Status") == 200
+            order_id = (response or {}).get("Success", {}).get("order_id") if ok else None
+            if ok and order_id:
+                placed.append({"order_id": str(order_id), "quantity": qty, "price": new_price if price_changed else current_price})
+                audit.log_operation(user_id, OperationType.ORDER_PLACE, "Order", str(order_id), action_status="success")
+            else:
+                err = str((response or {}).get("Error") or "Unknown error")
+                failures.append((f"new order (qty={qty})", err))
+                audit.log_operation(user_id, OperationType.ORDER_PLACE, "Order", None, action_status="failure", error_details=err)
+                rl, _ = _order_rate_limit_flags(response)
+                if rl:
+                    rate_limited = True
+
+        return {
+            "cancelled": cancelled,
+            "modified": modified,
+            "placed": placed,
+            "failures": failures,
+            "all_ok": not failures,
+            "rate_limited": rate_limited,
+        }
 
     def list_parked_orders(self, user_id: str) -> list[ParkedOrderListItem]:
         return parked_orders_repo.list_parked_orders(user_id)

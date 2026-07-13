@@ -35,7 +35,11 @@ import {
   fetchBookGroupLtps,
   type BookGroupLtpItem,
 } from "@/lib/book-ltp";
-import { runCancelOrdersWithPacing } from "@/lib/icici-rate-limit-flow";
+import {
+  runCancelOrdersWithPacing,
+  runModifyLegWithPacing,
+  type LegModifyOrderRef,
+} from "@/lib/icici-rate-limit-flow";
 import { invalidateTradingShellQueries } from "@/lib/trading-cache";
 import {
   deleteParkedOrdersMany,
@@ -69,13 +73,16 @@ type BookOrderRow = {
   action?: string;
   quantity?: number | string;
   open_quantity?: number | string;
+  pending_quantity?: number | string;
   price?: number | string;
   status?: string;
   cancelable?: boolean;
+  modifiable?: boolean;
   stock_code?: string;
   expiry_date?: string;
   strike_price?: number | string;
   right?: string;
+  product_type?: string;
 };
 
 type BookGroup = {
@@ -173,6 +180,96 @@ function cancelDetailForOrderKey(
   return { option: "", open_quantity: 0 };
 }
 
+/** Common shape both BookOrderRow and RuleSpawnedOrderRow satisfy — enough to build a
+ * leg-modify request regardless of which table the leg came from. */
+type LegModifyableOrder = {
+  order_id?: string;
+  exchange_code?: string;
+  quantity?: number | string;
+  pending_quantity?: number | string;
+  price?: number | string;
+  status?: string;
+  modifiable?: boolean;
+};
+
+function toIntOrZero(raw: number | string | undefined): number {
+  if (raw == null) return 0;
+  const n = typeof raw === "number" ? raw : parseInt(String(raw), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function buildLegModifyOrders(orders: LegModifyableOrder[]): LegModifyOrderRef[] {
+  return orders
+    .filter((o) => !!o.order_id)
+    .map((o) => ({
+      order_id: String(o.order_id),
+      exchange_code: String(o.exchange_code ?? "NFO"),
+      quantity: toIntOrZero(o.quantity),
+      pending_quantity: toIntOrZero(o.pending_quantity),
+      status: String(o.status ?? ""),
+      price: o.price != null ? String(o.price) : null,
+    }));
+}
+
+/** Sum of already-filled quantity across every order in a leg — the floor a new
+ * total quantity can never go below. Mirrors the backend's plan_leg_redistribution. */
+function legFilledFloor(orders: LegModifyOrderRef[]): number {
+  return orders.reduce((sum, o) => sum + (o.quantity - o.pending_quantity), 0);
+}
+
+function legHasModifiable(orders: LegModifyableOrder[]): boolean {
+  return orders.some((o) => o.modifiable && o.order_id);
+}
+
+/** A leg + its current orders, as displayed, ready to hand to ModifyLegDialog. */
+type ModifyLegTarget = {
+  contract: {
+    stock_code: string;
+    expiry_date: string;
+    strike_price: string;
+    right: string;
+    product_type: string;
+    exchange_code: string;
+    action: "Buy" | "Sell";
+  };
+  contractLabel: string;
+  orders: LegModifyOrderRef[];
+  currentQuantity: number;
+  currentPrice: string | null;
+  ruleId?: string;
+  scripKey?: string;
+};
+
+/** Groups a flat list of PB/SL rule-spawned orders (which may span several legs
+ * within one rule) by contract+action, so each leg gets its own Modify action —
+ * mirrors the `option+action-exchange_code` grouping key `processor.group_orders`
+ * already uses for the main Order Book. */
+function groupRuleOrdersByLeg(orders: RuleSpawnedOrderRow[]): {
+  key: string;
+  contractLabel: string;
+  orders: RuleSpawnedOrderRow[];
+}[] {
+  const byKey = new Map<string, RuleSpawnedOrderRow[]>();
+  for (const o of orders) {
+    const key = [
+      o.stock_code ?? "",
+      o.expiry_date ?? "",
+      o.strike_price ?? "",
+      o.right ?? "",
+      o.action ?? "",
+      o.exchange_code ?? "",
+    ].join("|");
+    const list = byKey.get(key);
+    if (list) list.push(o);
+    else byKey.set(key, [o]);
+  }
+  return Array.from(byKey.entries()).map(([key, legOrders]) => {
+    const first = legOrders[0];
+    const contractLabel = `${first.stock_code ?? ""}-${first.expiry_date ?? ""}-${first.strike_price ?? ""}-${first.right ?? ""}`;
+    return { key, contractLabel, orders: legOrders };
+  });
+}
+
 type BookDataResponse = {
   messages: BookMessage[];
   grouped_orders: BookGroup[] | null;
@@ -208,6 +305,9 @@ const fetchOrdersBtnClass =
 
 const cancelOutlineBtnSmallClass =
   "inline-flex items-center justify-center rounded-md border border-down/40 bg-transparent px-2.5 py-1 text-hint font-semibold text-down transition hover:bg-down-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-down/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
+
+const modifyOutlineBtnSmallClass =
+  "inline-flex items-center justify-center rounded-md border border-accent/40 bg-transparent px-2.5 py-1 text-hint font-semibold text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
 
 const cloneToPlaceBtnClass =
   "inline-flex rounded-md p-1.5 text-faint transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
@@ -563,6 +663,121 @@ function CancelConfirmDialog({
   );
 }
 
+function ModifyLegDialog({
+  target,
+  pending,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  target: ModifyLegTarget | null;
+  pending: boolean;
+  error: string | null;
+  onClose: () => void;
+  onConfirm: (quantity: string, price: string) => void;
+}) {
+  const titleId = "modify-leg-title";
+  const [quantity, setQuantity] = useState("");
+  const [price, setPrice] = useState("");
+  const lastKeyRef = useRef<string | null>(null);
+  const key = target ? `${target.contractLabel}|${target.orders.map((o) => o.order_id).join(",")}` : null;
+  if (key !== lastKeyRef.current) {
+    lastKeyRef.current = key;
+    if (target) {
+      setQuantity(String(target.currentQuantity));
+      setPrice(target.currentPrice ?? "");
+    }
+  }
+
+  const floor = target ? legFilledFloor(target.orders) : 0;
+  const parsedQty = parsePositiveInt(quantity);
+  const qtyValid = parsedQty != null && parsedQty >= floor;
+  const qtyChanged = target ? String(parsedQty ?? "") !== String(target.currentQuantity) : false;
+  const priceChanged = target ? price.trim() !== "" && price.trim() !== (target.currentPrice ?? "") : false;
+  const canConfirm = !!target && qtyValid && (qtyChanged || priceChanged) && !pending;
+
+  return (
+    <Modal
+      open={target != null}
+      onClose={onClose}
+      pending={pending}
+      titleId={titleId}
+      role="alertdialog"
+      panelClassName="w-full max-w-[420px] rounded-[14px] border border-border bg-panel p-[22px] shadow-pop"
+    >
+      <div className="mb-3 flex items-center gap-2.5">
+        <span id={titleId} className="text-[15px] font-bold text-foreground">
+          Modify {target?.contractLabel ?? "order"}
+        </span>
+      </div>
+      <p className="mb-3 text-heading leading-relaxed text-muted">
+        Changes apply to the whole leg — the app will cancel, resize, or add
+        orders as needed to reach the new total. Already-filled quantity
+        ({formatQtyIndian(floor)}) can&apos;t be reduced.
+      </p>
+      <div className="mb-3 space-y-3">
+        <label className="block text-sm">
+          <span className="mb-1 block font-medium text-foreground">Quantity</span>
+          <input
+            type="number"
+            min={floor}
+            className="app-input w-full"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            disabled={pending}
+          />
+          {target && qtyChanged ? (
+            <span className="mt-1 block font-mono text-xs text-accent-strong">
+              {formatQtyIndian(target.currentQuantity)} → {quantity || "—"}
+            </span>
+          ) : null}
+          {!qtyValid && quantity.trim() !== "" ? (
+            <span className="mt-1 block text-xs text-down">
+              Cannot be less than the filled quantity ({formatQtyIndian(floor)}).
+            </span>
+          ) : null}
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block font-medium text-foreground">Price</span>
+          <input
+            type="number"
+            step={0.05}
+            className="app-input w-full"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            disabled={pending}
+          />
+          {target && priceChanged ? (
+            <span className="mt-1 block font-mono text-xs text-accent-strong">
+              ₹{target.currentPrice ?? "0"} → ₹{price}
+            </span>
+          ) : null}
+        </label>
+      </div>
+      {error ? <p className="mb-3 text-xs text-down">{error}</p> : null}
+      <div className="flex gap-2.5">
+        <button
+          type="button"
+          className="app-btn-secondary h-10 min-h-10 flex-1"
+          disabled={pending}
+          onClick={onClose}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="app-btn-primary h-10 min-h-10 flex-1"
+          disabled={!canConfirm}
+          aria-busy={pending}
+          onClick={() => onConfirm(quantity.trim(), price.trim())}
+        >
+          <AsyncLabelSpan busy={pending} idleLabel="Modify order" busyLabel="Modifying…" />
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function OrdersBody() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -597,6 +812,8 @@ function OrdersBody() {
   >({});
   const [parkedError, setParkedError] = useState<string | null>(null);
   const [cancelPrompt, setCancelPrompt] = useState<CancelPrompt | null>(null);
+  const [modifyTarget, setModifyTarget] = useState<ModifyLegTarget | null>(null);
+  const [modifyError, setModifyError] = useState<string | null>(null);
 
   const queryString = useMemo(() => {
     if (!appliedRange) return "";
@@ -684,6 +901,40 @@ function OrdersBody() {
       setCancelPrompt(null);
       invalidateTradingShellQueries(queryClient);
     },
+  });
+
+  const modifyLegMut = useMutation({
+    mutationFn: (payload: { new_quantity: string; new_price: string }) => {
+      if (!modifyTarget) throw new Error("Nothing to modify");
+      return runModifyLegWithPacing({
+        stock_code: modifyTarget.contract.stock_code,
+        expiry_date: modifyTarget.contract.expiry_date,
+        strike_price: modifyTarget.contract.strike_price,
+        right: modifyTarget.contract.right,
+        product_type: modifyTarget.contract.product_type,
+        exchange_code: modifyTarget.contract.exchange_code,
+        action: modifyTarget.contract.action,
+        orders: modifyTarget.orders,
+        new_quantity: payload.new_quantity,
+        new_price: payload.new_price || undefined,
+        rule_id: modifyTarget.ruleId,
+        scrip_key: modifyTarget.scripKey,
+        onRateLimitWait: wait,
+      });
+    },
+    onSuccess: (res) => {
+      if (!res.success && res.failures.length) {
+        setModifyError(res.failures.map((f) => `${f.ref}: ${f.error}`).join("; "));
+        return;
+      }
+      setModifyTarget(null);
+      setModifyError(null);
+      invalidateTradingShellQueries(queryClient);
+      queryClient.invalidateQueries({ queryKey: ["exit-rules", "squareoff"] });
+      queryClient.invalidateQueries({ queryKey: ["exit-rules", "gtt"] });
+    },
+    onError: (e) =>
+      setModifyError(e instanceof Error ? e.message : "Could not modify this leg"),
   });
 
   const parkedDeleteManyMut = useMutation({
@@ -824,6 +1075,43 @@ function OrdersBody() {
     },
   });
 
+  const openModifyForRuleLeg = useCallback(
+    (row: ExitRuleRow, leg: { key: string; contractLabel: string; orders: RuleSpawnedOrderRow[] }) => {
+      const first = leg.orders[0];
+      if (!first) return;
+      const legOrders = buildLegModifyOrders(leg.orders);
+      if (!legOrders.length) return;
+      const legQty = leg.orders.reduce((sum, o) => sum + toIntOrZero(o.quantity), 0);
+      const firstWithPrice = leg.orders.find((o) => o.price != null);
+      const sameRuleScrip =
+        row.kind === "group" &&
+        leg.orders.every(
+          (o) =>
+            o.exit_rule_source === "squareoff_rule" &&
+            o.exit_rule_scrip_key === first.exit_rule_scrip_key,
+        );
+      setModifyError(null);
+      setModifyTarget({
+        contract: {
+          stock_code: String(first.stock_code ?? ""),
+          expiry_date: String(first.expiry_date ?? ""),
+          strike_price: String(first.strike_price ?? ""),
+          right: String(first.right ?? ""),
+          product_type: String(first.product_type ?? "Options"),
+          exchange_code: String(first.exchange_code ?? "NFO"),
+          action: (first.action === "Sell" ? "Sell" : "Buy") as "Buy" | "Sell",
+        },
+        contractLabel: leg.contractLabel,
+        orders: legOrders,
+        currentQuantity: legQty,
+        currentPrice: firstWithPrice?.price != null ? String(firstWithPrice.price) : null,
+        ruleId: sameRuleScrip && first.exit_rule_scrip_key ? row.id : undefined,
+        scripKey: sameRuleScrip ? first.exit_rule_scrip_key : undefined,
+      });
+    },
+    [],
+  );
+
   const cloneExitRuleOrderToPlace = useCallback(
     (o: RuleSpawnedOrderRow, e: MouseEvent) => {
       e.preventDefault();
@@ -853,6 +1141,30 @@ function OrdersBody() {
     },
     [],
   );
+
+  const openModifyForBookGroup = useCallback((g: BookGroup) => {
+    const orders = g.group_orders ?? [];
+    const first = orders[0];
+    if (!first) return;
+    const legOrders = buildLegModifyOrders(orders);
+    if (!legOrders.length) return;
+    setModifyError(null);
+    setModifyTarget({
+      contract: {
+        stock_code: String(first.stock_code ?? ""),
+        expiry_date: String(first.expiry_date ?? ""),
+        strike_price: String(first.strike_price ?? ""),
+        right: String(first.right ?? ""),
+        product_type: String(first.product_type ?? "Options"),
+        exchange_code: String(first.exchange_code ?? g.group_exchange ?? "NFO"),
+        action: (g.group_action === "Sell" ? "Sell" : "Buy") as "Buy" | "Sell",
+      },
+      contractLabel: bookGroupTitle(g),
+      orders: legOrders,
+      currentQuantity: g.group_ordered ?? 0,
+      currentPrice: first.price != null ? String(first.price) : null,
+    });
+  }, []);
 
   const groups = bookQuery.data?.grouped_orders ?? null;
   const ltpPayload = useMemo(
@@ -949,6 +1261,14 @@ function OrdersBody() {
     allExitRuleOrders,
     exitRuleCancelMut,
   ]);
+
+  const confirmModify = useCallback(
+    (quantity: string, price: string) => {
+      setModifyError(null);
+      modifyLegMut.mutate({ new_quantity: quantity, new_price: price });
+    },
+    [modifyLegMut],
+  );
 
   const cancelPromptPending =
     cancelPrompt?.kind === "parked-bulk"
@@ -1603,8 +1923,22 @@ function OrdersBody() {
                               <td className="px-4 py-3.5 align-middle text-center font-mono tabular-nums font-medium text-up">
                                 {formatQtyIndian(g.group_executed)}
                               </td>
-                              <td className="py-3.5 pl-4 pr-[18px] align-middle text-right text-faint">
-                                <ChevronGlyph expanded={isOpen} />
+                              <td
+                                className="py-3.5 pl-4 pr-[18px] align-middle text-right text-faint"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="flex items-center justify-end gap-2">
+                                  {legHasModifiable(g.group_orders ?? []) ? (
+                                    <button
+                                      type="button"
+                                      className={modifyOutlineBtnSmallClass}
+                                      onClick={() => openModifyForBookGroup(g)}
+                                    >
+                                      Modify
+                                    </button>
+                                  ) : null}
+                                  <ChevronGlyph expanded={isOpen} />
+                                </div>
                               </td>
                             </tr>
                             {isOpen ? (
@@ -1782,19 +2116,32 @@ function OrdersBody() {
                         </span>
                       </summary>
                       <div className="space-y-2 border-t border-border-soft px-3 py-2.5 text-sm text-muted">
-                        {(g.group_open ?? 0) > 0 ? (
-                          <label className="flex items-center gap-2 font-medium">
-                            <Checkbox
-                              checked={groupAllSelected(g)}
-                              indeterminate={
-                                groupSomeSelected(g) && !groupAllSelected(g)
-                              }
-                              onChange={(checked) => toggleGroup(g, checked)}
-                              aria-label={`Select all cancelable in ${bookGroupLegLabel(g)}`}
-                            />
-                            Select all cancelable in group
-                          </label>
-                        ) : null}
+                        <div className="flex items-center justify-between gap-2">
+                          {(g.group_open ?? 0) > 0 ? (
+                            <label className="flex items-center gap-2 font-medium">
+                              <Checkbox
+                                checked={groupAllSelected(g)}
+                                indeterminate={
+                                  groupSomeSelected(g) && !groupAllSelected(g)
+                                }
+                                onChange={(checked) => toggleGroup(g, checked)}
+                                aria-label={`Select all cancelable in ${bookGroupLegLabel(g)}`}
+                              />
+                              Select all cancelable in group
+                            </label>
+                          ) : (
+                            <span />
+                          )}
+                          {legHasModifiable(g.group_orders ?? []) ? (
+                            <button
+                              type="button"
+                              className={modifyOutlineBtnSmallClass}
+                              onClick={() => openModifyForBookGroup(g)}
+                            >
+                              Modify
+                            </button>
+                          ) : null}
+                        </div>
                         {(g.group_orders ?? []).map((o, j) => {
                           const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
                           const canCancel = o.cancelable && !!o.order_id;
@@ -2024,7 +2371,41 @@ function OrdersBody() {
                         </tr>
                         {isOpen && row.orders.length ? (
                           <tr className="border-b border-border-soft bg-panel2">
-                            <td colSpan={7} className="px-[18px]">
+                            <td colSpan={7} className="px-[18px] pt-3">
+                              {groupRuleOrdersByLeg(row.orders).some((leg) =>
+                                legHasModifiable(leg.orders),
+                              ) ? (
+                                <div className="mb-3 space-y-1.5 rounded-lg border border-border-soft bg-panel p-2.5">
+                                  <p className="text-hint font-semibold uppercase tracking-wider text-faint">
+                                    Legs
+                                  </p>
+                                  {groupRuleOrdersByLeg(row.orders).map((leg) => {
+                                    if (!legHasModifiable(leg.orders)) return null;
+                                    const legQty = leg.orders.reduce(
+                                      (sum, o) => sum + toIntOrZero(o.quantity),
+                                      0,
+                                    );
+                                    return (
+                                      <div
+                                        key={leg.key}
+                                        className="flex items-center justify-between gap-2 text-sm"
+                                      >
+                                        <span className="font-mono text-muted">
+                                          {leg.contractLabel} · {leg.orders[0]?.action} · Qty{" "}
+                                          {formatQtyIndian(legQty)}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          className={modifyOutlineBtnSmallClass}
+                                          onClick={() => openModifyForRuleLeg(row, leg)}
+                                        >
+                                          Modify
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : null}
                               <table className="min-w-full text-left text-sm">
                                 <thead>
                                   <tr className="border-b border-border-soft">
@@ -2202,6 +2583,40 @@ function OrdersBody() {
                             Portfolio
                           </Link>
                         </div>
+                        {groupRuleOrdersByLeg(row.orders).some((leg) =>
+                          legHasModifiable(leg.orders),
+                        ) ? (
+                          <div className="space-y-1.5 rounded-lg border border-border-soft bg-panel2 p-2.5">
+                            <p className="text-hint font-semibold uppercase tracking-wider text-faint">
+                              Legs
+                            </p>
+                            {groupRuleOrdersByLeg(row.orders).map((leg) => {
+                              if (!legHasModifiable(leg.orders)) return null;
+                              const legQty = leg.orders.reduce(
+                                (sum, o) => sum + toIntOrZero(o.quantity),
+                                0,
+                              );
+                              return (
+                                <div
+                                  key={leg.key}
+                                  className="flex items-center justify-between gap-2 text-sm"
+                                >
+                                  <span className="font-mono text-muted">
+                                    {leg.contractLabel} · {leg.orders[0]?.action} · Qty{" "}
+                                    {formatQtyIndian(legQty)}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className={modifyOutlineBtnSmallClass}
+                                    onClick={() => openModifyForRuleLeg(row, leg)}
+                                  >
+                                    Modify
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
                         {row.orders.map((o, j) => {
                           const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
                           const canCancel = o.cancelable && !!o.order_id;
@@ -2250,6 +2665,16 @@ function OrdersBody() {
         pending={cancelPromptPending}
         onClose={() => setCancelPrompt(null)}
         onConfirm={confirmCancel}
+      />
+      <ModifyLegDialog
+        target={modifyTarget}
+        pending={modifyLegMut.isPending}
+        error={modifyError}
+        onClose={() => {
+          setModifyTarget(null);
+          setModifyError(null);
+        }}
+        onConfirm={confirmModify}
       />
     </div>
   );
