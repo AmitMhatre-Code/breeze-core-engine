@@ -204,7 +204,30 @@ class ICICIClient:
             'to_date': end_date or ''
         }
         return self._call_with_retries(breeze.get_order_list, user_id=user_id, **kwargs)
-    
+
+    def get_option_chain_quotes(
+        self,
+        breeze: Optional[BreezeConnect],
+        user_id: str = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Fetch option chain quotes via ICICI REST — the quote_source_router
+        fallback used when neither the live WebSocket nor the day's bhavcopy
+        is available (post-market-close, pre-bhavcopy gap).
+
+        Args:
+            breeze: Pre-authenticated BreezeConnect for the requesting user (required;
+                REST quotes are fetched per-user session, unlike portfolio/orders there
+                is no broker_token-based session creation here).
+            user_id: User ID (optional, for logging/context)
+            **kwargs: Forwarded to breeze.get_option_chain_quotes (stock_code,
+                exchange_code, product_type, expiry_date, right, strike_price?)
+        """
+        if breeze is None:
+            return {'Status': 500, 'Error': 'Failed to create ICICI session'}
+
+        return self._call_with_retries(breeze.get_option_chain_quotes, user_id=user_id, **kwargs)
+
     def get_metrics(self) -> Dict[str, Any]:
         """Return collected metrics."""
         return {

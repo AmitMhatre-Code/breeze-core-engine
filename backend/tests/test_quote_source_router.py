@@ -5,13 +5,15 @@ from unittest.mock import MagicMock, patch
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import IST
-from icici_breeze_backend.app.db.redis_client import get_redis
+from icici_breeze_backend.app.db.redis_client import cache_delete_pattern, get_redis
 from icici_breeze_backend.app.services.quote_source_router import (
     _cell_to_icici_row,
     _enrich_quote_metadata,
     _flatten_chain_side_rows,
+    _get_or_build_icici_rest_chain,
     _max_cell_updated_at,
     bhavcopy_is_fresh,
+    chain_fetch_error_response,
     fetch_chain_payload_routed,
     fetch_chain_side_icici_response,
     fetch_quote_icici_response,
@@ -19,6 +21,7 @@ from icici_breeze_backend.app.services.quote_source_router import (
     resolve_quote_source,
 )
 from icici_breeze_backend.app.services.reference_data.bhavcopy_store import publish_bhavcopy_rows
+from icici_breeze_backend.app.services.reference_data.keys import icici_rest_chain_key
 
 
 @patch("icici_breeze_backend.app.services.quote_source_router.is_india_market_open", return_value=True)
@@ -203,29 +206,52 @@ def test_fetch_quote_returns_cached_cell(mock_cache):
     assert out["Success"][0]["strike_price"] == 23500
 
 
+@patch("icici_breeze_backend.app.services.quote_source_router._fetch_cell_from_cache")
+def test_fetch_quote_returns_rest_sourced_cell(mock_cache):
+    """_fetch_cell_from_cache is the one place that decides websocket vs bhavcopy vs
+    REST (icici_api); fetch_quote_icici_response just has to echo whatever it hands
+    back, including the REST fallback source."""
+    proc = MagicMock()
+    mock_cache.return_value = (
+        {
+            "strike_price": 23500,
+            "ltp": 9.5,
+            "total_buy_qty": 0,
+            "total_sell_qty": 0,
+            "spot_price": 23480,
+        },
+        "icici_api",
+    )
+    out = fetch_quote_icici_response(
+        proc, "u1", "NIFTY", "NFO", "09-Jun-2025", "Call", "23500"
+    )
+    assert out["Status"] == 200
+    assert out["quote_source"] == "icici_api"
+    assert out["Success"][0]["strike_price"] == 23500
+
+
 @patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="icici_api")
-@patch("icici_breeze_backend.app.services.quote_source_router._fetch_quote_icici_rest")
 @patch("icici_breeze_backend.app.services.quote_source_router._fetch_cell_from_cache", return_value=(None, None))
-def test_fetch_quote_no_rest_fallback(mock_cell, mock_rest, _mock_source):
+def test_fetch_quote_miss_reports_icici_api_source(mock_cell, _mock_source):
+    """A genuine REST-fallback miss (e.g. circuit breaker open) should say so,
+    not blame bhavcopy for it."""
     proc = MagicMock()
     out = fetch_quote_icici_response(
         proc, "u1", "NIFTY", "NFO", "09-Jun-2025", "Call", "23500"
     )
     assert out["Status"] == 404
-    mock_rest.assert_not_called()
+    assert out["quote_source"] == "icici_api"
 
 
 @patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="bhavcopy")
-@patch("icici_breeze_backend.app.services.quote_source_router._fetch_quote_icici_rest")
 @patch("icici_breeze_backend.app.services.quote_source_router._fetch_cell_from_cache", return_value=(None, None))
-def test_fetch_quote_skips_rest_when_bhavcopy_active(mock_cell, mock_rest, _mock_source):
+def test_fetch_quote_skips_rest_when_bhavcopy_active(mock_cell, _mock_source):
     proc = MagicMock()
     out = fetch_quote_icici_response(
         proc, "u1", "NIFTY", "NFO", "09-Jun-2025", "Call", "23500"
     )
     assert out["Status"] == 404
     assert out["quote_source"] == "bhavcopy"
-    mock_rest.assert_not_called()
 
 
 @patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="bhavcopy")
@@ -365,3 +391,170 @@ def test_fetch_chain_payload_routed_websocket_enriches_missing_spot(
     assert payload["spot_price"] == 23946.25
     assert payload["atm_strike"] == 24000
     mock_spot.assert_called_once()
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="icici_api")
+@patch("icici_breeze_backend.app.services.quote_source_router._resolve_chain_metadata")
+@patch("icici_breeze_backend.app.services.quote_source_router._get_or_build_icici_rest_chain")
+@patch("icici_breeze_backend.app.services.chain_readiness.is_chain_complete", return_value=True)
+def test_fetch_chain_payload_routed_uses_icici_rest_fallback(
+    _mock_complete,
+    mock_rest_chain,
+    mock_meta,
+    _mock_source,
+):
+    """Post-close, pre-bhavcopy gap: resolve_quote_source says icici_api, and
+    fetch_chain_payload_routed should build the chain via the shared REST cache
+    instead of returning None."""
+    mock_meta.return_value = (65, None, [24000, 24100])
+    mock_rest_chain.return_value = {
+        "chain_rows": [
+            {"strike_price": 24000, "call": {"strike_price": 24000, "ltp": 10.0}, "put": None},
+        ],
+        "spot_price": 23946.25,
+        "quote_source": "icici_api",
+        "bhavcopy_date": None,
+        "exchange_code": cfg.NFO,
+        "stock_code": "NIFTY",
+        "expiry_display": "30-Jun-2026",
+    }
+    proc = MagicMock()
+    with patch(
+        "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
+        return_value=23946.25,
+    ):
+        payload = fetch_chain_payload_routed(proc, "u1", "NIFTY", cfg.NFO, "30-Jun-2026")
+    assert payload is not None
+    assert payload["quote_source"] == "icici_api"
+    mock_rest_chain.assert_called_once()
+
+
+@patch(
+    "icici_breeze_backend.app.services.quote_source_router.list_tradeable_strikes_memory",
+    return_value=[24000],
+)
+@patch("icici_breeze_backend.app.services.quote_source_router.is_india_market_open", return_value=False)
+@patch("icici_breeze_backend.app.services.quote_source_router.bhavcopy_is_fresh", return_value=False)
+def test_chain_fetch_error_response_reports_rest_gap(_bhav, _open, _strikes):
+    """When source is icici_api and the REST attempt itself failed, the error
+    should say so instead of blaming a missing bhavcopy load."""
+    out = chain_fetch_error_response(cfg.NFO, "NIFTY", "30-Jun-2026")
+    assert out["Status"] == 503
+    assert "REST" in out["Error"]
+
+
+def test_get_or_build_icici_rest_chain_shares_cache_across_users():
+    """One REST fetch per (exchange, stock, expiry) should serve every user for
+    the rest of the post-close gap -- a second caller must hit the cache, not
+    fire a second REST call pair."""
+    stock = "RESTCACHETEST"
+    expiry = "30-Jun-2026"
+    cache_delete_pattern(icici_rest_chain_key(cfg.NFO, stock, expiry))
+
+    proc = MagicMock()
+    proc._get_full_option_chain_icici_rest.return_value = {
+        "Status": 200,
+        "Error": None,
+        "Success": {
+            "chain_rows": [{"strike_price": 24000, "call": {"ltp": 10.0}, "put": None}],
+            "spot_price": 23980,
+            "atm_strike": 24000,
+        },
+    }
+
+    payload1 = _get_or_build_icici_rest_chain(
+        proc, "u1", stock, cfg.NFO, expiry, [24000], lot_size=65, freeze_quantity=None
+    )
+    assert payload1 is not None
+    assert payload1["quote_source"] == "icici_api"
+    proc._get_full_option_chain_icici_rest.assert_called_once()
+
+    payload2 = _get_or_build_icici_rest_chain(
+        proc, "u2", stock, cfg.NFO, expiry, [24000], lot_size=65, freeze_quantity=None
+    )
+    assert payload2 is not None
+    assert payload2["chain_rows"] == payload1["chain_rows"]
+    # Second user hit the shared cache -- no second REST call pair.
+    proc._get_full_option_chain_icici_rest.assert_called_once()
+
+
+@patch(
+    "icici_breeze_backend.app.services.reference_data.tradable_contracts.is_tradeable_contract",
+    return_value=True,
+)
+def test_get_full_option_chain_icici_rest_keeps_illiquid_but_quoted_strikes(_mock_tradeable, monkeypatch):
+    """After market close there is no live order-book depth even for strikes with a
+    perfectly good closing LTP -- the REST chain builder must not drop those rows
+    the way the old buy/sell-qty-based illiquidity filter did."""
+    from icici_breeze_backend.app.services.processor import processor
+
+    p = processor()
+    monkeypatch.setattr(p, "fetch_lot_size", lambda *a, **k: 65)
+    monkeypatch.setattr(p, "fetch_qty_limits", lambda *a, **k: None)
+
+    def fake_chain_side_raw(user_id, stock_code, exchange_code, expiry_api, right):
+        ltp = 10.5 if right == cfg.CALL else 8.2
+        rows = [
+            {
+                "strike_price": "24000",
+                "ltp": ltp,
+                "total_buy_qty": 0,
+                "total_sell_qty": 0,
+                "spot_price": 23980,
+                "open_interest": 100,
+            }
+        ]
+        return {"Status": 200, "Success": rows, "Error": None}
+
+    monkeypatch.setattr(p, "_fetch_icici_chain_side_raw", fake_chain_side_raw)
+
+    result = p._get_full_option_chain_icici_rest(
+        "u1", "NIFTY", cfg.NFO, "30-Jun-2026", strikes=[24000]
+    )
+    assert result["Status"] == 200
+    chain_rows = result["Success"]["chain_rows"]
+    assert len(chain_rows) == 1
+    row = chain_rows[0]
+    assert row["call"] is not None and row["call"]["ltp"] == 10.5
+    assert row["put"] is not None and row["put"]["ltp"] == 8.2
+    assert result["Success"]["quote_source"] == "icici_api"
+
+
+@patch(
+    "icici_breeze_backend.app.services.reference_data.tradable_contracts.is_tradeable_contract",
+    return_value=True,
+)
+def test_get_full_option_chain_icici_rest_builds_full_skeleton(_mock_tradeable, monkeypatch):
+    """Every strike passed in gets a chain_row, even when ICICI returned nothing
+    for it -- chain_readiness.is_chain_complete requires the full skeleton."""
+    from icici_breeze_backend.app.services.processor import processor
+
+    p = processor()
+    monkeypatch.setattr(p, "fetch_lot_size", lambda *a, **k: 65)
+    monkeypatch.setattr(p, "fetch_qty_limits", lambda *a, **k: None)
+
+    def fake_chain_side_raw(user_id, stock_code, exchange_code, expiry_api, right):
+        # ICICI only returned data for strike 24000, not 24100.
+        rows = [
+            {
+                "strike_price": "24000",
+                "ltp": 10.0,
+                "total_buy_qty": 1,
+                "total_sell_qty": 1,
+                "spot_price": 23980,
+                "open_interest": 100,
+            }
+        ]
+        return {"Status": 200, "Success": rows, "Error": None}
+
+    monkeypatch.setattr(p, "_fetch_icici_chain_side_raw", fake_chain_side_raw)
+
+    result = p._get_full_option_chain_icici_rest(
+        "u1", "NIFTY", cfg.NFO, "30-Jun-2026", strikes=[24000, 24100]
+    )
+    chain_rows = result["Success"]["chain_rows"]
+    strikes_seen = {r["strike_price"] for r in chain_rows}
+    assert strikes_seen == {24000, 24100}
+    missing_row = next(r for r in chain_rows if r["strike_price"] == 24100)
+    assert missing_row["call"] is None
+    assert missing_row["put"] is None

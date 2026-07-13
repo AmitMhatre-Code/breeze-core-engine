@@ -85,6 +85,15 @@ def canonical_chain_key(exchange_code: str, stock_code: str, expiry_display: str
     )
 
 
+def icici_rest_chain_key(exchange_code: str, stock_code: str, expiry_display: str) -> str:
+    """Shared cache for the REST-sourced full chain (post-close, pre-bhavcopy
+    fallback) -- one entry per (exchange, underlying, expiry) serves every user
+    until the day's bhavcopy loads or the TTL expires. See quote_source_router."""
+    return (
+        f"quotes:icici_api:chain:{exchange_code.upper()}:{stock_code.upper()}:{expiry_display}"
+    )
+
+
 def pnl_quote_key(scrip_key: str) -> str:
     """Conflated LTP/bid/ask hash for the portfolio P&L engine (contract-identity keyed)."""
     return f"quotes:pnl:{scrip_key}"

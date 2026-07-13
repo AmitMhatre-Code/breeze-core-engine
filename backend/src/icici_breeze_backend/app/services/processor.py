@@ -1811,7 +1811,9 @@ class processor():
             return _icici_error("Unable to connect to broker. Please log out and log back in.")
         try:
             _pt, _rt = _icici_option_chain_enums(cfg.OPTIONS, right)
-            r = breeze.get_option_chain_quotes(
+            r = icici_client.get_option_chain_quotes(
+                breeze,
+                user_id=user_id,
                 stock_code=stock_code,
                 exchange_code=exchange_code,
                 product_type=_pt,
@@ -1876,8 +1878,23 @@ class processor():
         stock_code: str,
         exchange_code: str,
         expiry_display: str,
+        *,
+        strikes: list[Strike] | None = None,
+        lot_size: int | None = None,
+        freeze_quantity: int | None = None,
     ):
-        """Legacy REST path: two get_option_chain_quotes calls (CE + PE)."""
+        """REST fallback: two get_option_chain_quotes calls (all CE strikes, all PE
+        strikes -- no per-strike looping) used when neither the live WebSocket nor
+        the day's bhavcopy is available (post-close, pre-bhavcopy gap -- see
+        quote_source_router.resolve_quote_source). Builds a full strike skeleton
+        (one chain_row per tradeable strike, nulls where ICICI returned nothing)
+        the same way bhavcopy_store.build_chain_from_bhavcopy does, so the result
+        satisfies chain_readiness.is_chain_complete's structural check. Does not
+        filter rows by live order-book depth -- after market close there is no
+        live depth even for strikes with a perfectly good closing LTP, so a
+        depth-based illiquidity filter would silently empty the whole chain;
+        completeness is judged downstream by is_chain_complete/_cell_has_quote,
+        which check ltp first."""
         expiry_api = _expiry_display_to_api(expiry_display)
 
         ce_res = self._fetch_icici_chain_side_raw(
@@ -1900,21 +1917,19 @@ class processor():
             stock_code, expiry_display, exchange_code, cfg.PUT, pe_raw
         )
 
-        from icici_breeze_backend.app.services.reference_data.scrip_index import get_strikes
         from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
             is_tradeable_contract,
             list_tradeable_strikes,
         )
 
-        scrip_strikes = get_strikes(stock_code, expiry_display, exchange_code=exchange_code)
-        if scrip_strikes:
-            strikes = sorted(set(scrip_strikes))
+        if strikes:
+            strike_list = sorted(set(strikes))
         else:
-            strikes = list_tradeable_strikes(
+            strike_list = list_tradeable_strikes(
                 stock_code, expiry_display, exchange_code=exchange_code
             )
-            if not strikes:
-                strikes = sorted(
+            if not strike_list:
+                strike_list = sorted(
                     set(r["strike_price"] for r in calls) | set(r["strike_price"] for r in puts)
                 )
         call_by_strike = {r["strike_price"]: r for r in calls}
@@ -1924,7 +1939,7 @@ class processor():
         max_put_oi = max((r["open_interest"] for r in puts), default=0)
 
         chain_rows = []
-        for k in strikes:
+        for k in strike_list:
             call_cell = call_by_strike.get(k)
             put_cell = put_by_strike.get(k)
             if call_cell and not is_tradeable_contract(
@@ -1935,22 +1950,11 @@ class processor():
                 stock_code, expiry_display, k, cfg.PUT, exchange_code=exchange_code
             ):
                 put_cell = None
-            if call_cell is None and put_cell is None:
-                continue
             chain_rows.append({
                 "strike_price": k,
                 "call": call_cell,
                 "put": put_cell,
             })
-
-        def _is_illiquid(row):
-            c, p = row.get("call"), row.get("put")
-            c_zero = c is None or (c.get("total_buy_qty", 0) == 0 and c.get("total_sell_qty", 0) == 0)
-            p_zero = p is None or (p.get("total_buy_qty", 0) == 0 and p.get("total_sell_qty", 0) == 0)
-            return c_zero and p_zero
-
-        if exchange_code != cfg.BFO:
-            chain_rows = [r for r in chain_rows if not _is_illiquid(r)]
 
         spot_price = None
         if calls:
@@ -1972,21 +1976,20 @@ class processor():
         if spot_price is not None and chain_strike_prices:
             atm_strike = min(chain_strike_prices, key=lambda s: abs(s - spot_price))
 
-        lot_size_for_series = self.fetch_lot_size(
-            stock_code, expiry_display, exchange_code=exchange_code
-        )
-        freeze_quantity = None
-        try:
-            if lot_size_for_series is not None:
-                ls = int(lot_size_for_series)
-                if ls > 0:
-                    qty_limits = self.fetch_qty_limits(
-                        stock_code, exchange_code=exchange_code
-                    )
-                    if qty_limits is not None:
-                        freeze_quantity = (max(1, int(qty_limits)) // ls) * ls
-        except (TypeError, ValueError):
-            freeze_quantity = None
+        if lot_size is None:
+            lot_size = self.fetch_lot_size(stock_code, expiry_display, exchange_code=exchange_code)
+        if freeze_quantity is None:
+            try:
+                if lot_size is not None:
+                    ls = int(lot_size)
+                    if ls > 0:
+                        qty_limits = self.fetch_qty_limits(
+                            stock_code, exchange_code=exchange_code
+                        )
+                        if qty_limits is not None:
+                            freeze_quantity = (max(1, int(qty_limits)) // ls) * ls
+            except (TypeError, ValueError):
+                freeze_quantity = None
 
         success_payload: dict[str, Any] = {
             "chain_rows": chain_rows,
@@ -1997,10 +2000,9 @@ class processor():
             "exchange_code": exchange_code,
             "spot_price": spot_price,
             "atm_strike": atm_strike,
-            "lot_size": int(lot_size_for_series)
-            if lot_size_for_series is not None
-            else None,
+            "lot_size": int(lot_size) if lot_size is not None else None,
             "freeze_quantity": freeze_quantity,
+            "quote_source": "icici_api",
         }
 
         return {

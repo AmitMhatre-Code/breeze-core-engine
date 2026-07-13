@@ -285,6 +285,15 @@ try:
 except ValueError:
     CHAIN_SPOT_CACHE_TTL_SECONDS = 60
 try:
+    # Post-close, pre-bhavcopy REST fallback: market is closed for the whole
+    # window this cache is read in, so a long TTL is safe -- it's a safety net
+    # against a stuck reference-data pipeline, not a freshness knob.
+    ICICI_REST_CHAIN_CACHE_TTL_SECONDS = int(
+        os.environ.get("ICICI_REST_CHAIN_CACHE_TTL_SECONDS", "1200") or "1200"
+    )
+except ValueError:
+    ICICI_REST_CHAIN_CACHE_TTL_SECONDS = 1200
+try:
     PNL_QUOTE_FLUSH_INTERVAL_SECONDS = float(
         os.environ.get("PNL_QUOTE_FLUSH_INTERVAL_SECONDS", "2.0") or "2.0"
     )
