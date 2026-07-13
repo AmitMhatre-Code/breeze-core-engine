@@ -12,7 +12,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     legs_to_margin_input,
     parse_float,
     pre_filter_pop_floor,
-    short_lots_in_legs,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.margin_async_fetch import (
     MarginFetchRequest,
@@ -265,7 +264,6 @@ def passes_capital_gate(
 ) -> bool:
     """True when at least one lot fits margin budget (pre-SPAN estimate)."""
     L = ctx.lot_size
-    unit_short_lots = short_lots_in_legs(legs, L)
     per_lot_margin = margin_estimate if margin_estimate is not None else max(
         unit_max_loss, sum(l.premium_per_unit for l in legs if l.side == "Sell") * L
     )
@@ -276,9 +274,12 @@ def passes_capital_gate(
         margin_rupees=ctx.margin_rupees,
         max_loss_rupees=ctx.max_loss_rupees,
         lot_size=L,
-        unit_short_lots=unit_short_lots,
+        unit_legs=legs,
         spot=ctx.spot,
         provision_elm=ctx.provision_elm,
+        is_index=ctx.is_index,
+        previous_close=ctx.previous_close,
+        same_day_expiry=ctx.same_day_expiry,
     )
     return qty >= L
 
@@ -294,8 +295,15 @@ def score_ann_return(
 
 
 def required_margin(ctx: EngineContext, unit_span: float, legs: list[TradeLeg]) -> float:
-    short_lots = short_lots_in_legs(legs, ctx.lot_size)
-    elm = elm_addon(ctx.spot, ctx.lot_size, short_lots, ctx.provision_elm)
+    elm = elm_addon(
+        ctx.spot,
+        ctx.lot_size,
+        legs,
+        provision_elm=ctx.provision_elm,
+        is_index=ctx.is_index,
+        previous_close=ctx.previous_close,
+        same_day_expiry=ctx.same_day_expiry,
+    )
     return unit_span + elm
 
 

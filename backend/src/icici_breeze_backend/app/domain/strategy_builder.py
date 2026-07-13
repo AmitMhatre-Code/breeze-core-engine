@@ -64,6 +64,10 @@ class StrategyBuilderChainResponse(BaseModel):
 
 
 class StrategyBuilderMarginResponse(BaseModel):
+    """Success also carries (when computable): elm_requirement (float, whole-basket ELM),
+    elm_is_index (bool), elm_approximate (bool, true when the stock flat-rate tier or a
+    previous-close-lookup fallback was used) — see processor.strategy_builder_margin."""
+
     model_config = {"extra": "allow"}
     Status: int
     Error: Optional[str] = None

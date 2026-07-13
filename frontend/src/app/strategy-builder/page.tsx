@@ -266,6 +266,7 @@ export default function StrategyBuilderPage() {
     stockCode,
     exchangeCode: segmentExchange,
     expiryDate,
+    spot,
   });
 
   const section1Complete = Boolean(stockCode.trim() && expiryDate.trim());

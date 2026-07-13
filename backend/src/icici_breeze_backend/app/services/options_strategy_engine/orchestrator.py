@@ -17,10 +17,13 @@ from icici_breeze_backend.app.services.options_strategy_engine.build_progress im
 from icici_breeze_backend.app.services.options_strategy_engine.greeks import compute_atm_iv, enrich_greeks
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     elm_for_legs,
+    is_same_day_expiry,
     legs_to_margin_input,
     margin_key,
     normalize_expiry_display,
 )
+from icici_breeze_backend.app.services.reference_data.bhavcopy_store import _lookup_bhav_row
+import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.services.options_strategy_engine.budget_resize import resize_results_to_budgets
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional._common import (
     refresh_directional_tile_metrics,
@@ -312,6 +315,8 @@ async def run_propose_trades(
         atm_strike=0.0,
         range_lower=0.0,
         range_upper=0.0,
+        is_index=cfg.is_index_symbol(stock_code),
+        same_day_expiry=is_same_day_expiry(expiry_display),
         audit=audit,
         progress=progress,
     )
@@ -319,6 +324,12 @@ async def run_propose_trades(
     await asyncio.to_thread(build_bulk_chain_cache, ctx)
     if ctx.halted:
         return _fail(400, ctx.halt_reason or "Insufficient market depth.")
+
+    bhav_row = await asyncio.to_thread(
+        _lookup_bhav_row, ctx.stock_code, ctx.expiry_display, "Call", ctx.atm_strike, ctx.exchange_code
+    )
+    prev_close = float(bhav_row["spot_price"]) if bhav_row and bhav_row.get("spot_price") else 0.0
+    ctx.previous_close = prev_close if prev_close > 0 else ctx.spot
 
     strikes = ctx.strikes
     if audit:

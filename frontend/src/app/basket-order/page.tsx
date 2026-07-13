@@ -274,6 +274,7 @@ export default function BasketOrderPage() {
     stockCode,
     exchangeCode: segmentExchange,
     expiryDate,
+    spot,
   });
 
   const totalsNetPremium = useMemo(() => {

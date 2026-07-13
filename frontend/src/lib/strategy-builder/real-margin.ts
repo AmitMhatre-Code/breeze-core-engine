@@ -3,8 +3,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
-import { parseSpanMarginFromResponse } from "@/lib/strategy-builder/leg-ui-helpers";
+import {
+  parseElmFromResponse,
+  parseSpanMarginFromResponse,
+} from "@/lib/strategy-builder/leg-ui-helpers";
 import type {
+  BasketElmInfo,
   BasketLegMarginEntry,
   MarginApiRequest,
   MarginApiResponse,
@@ -60,11 +64,30 @@ async function fetchRealMargin(
   return v;
 }
 
+/** Same as fetchRealMargin but also reads the basket-level ELM fields from the response.
+ * Only call this for the whole-basket request — ELM is basket-level only, never per-leg. */
+async function fetchRealMarginWithElm(
+  legs: MarginApiRequest["legs"],
+  spot: number | null,
+  signal?: AbortSignal,
+): Promise<{ span: number } & BasketElmInfo> {
+  const res = await apiClient.post<MarginApiResponse, MarginApiRequest>(
+    "/strategy-builder/margin",
+    { legs, margin_source: "breeze_api", spot: spot ?? undefined },
+    { signal },
+  );
+  const span = parseSpanMarginFromResponse(res);
+  if (span == null) {
+    throw new Error(res.Error || "ICICI did not return a margin figure");
+  }
+  return { span, ...parseElmFromResponse(res) };
+}
+
 export type OnDemandMarginData = {
   perLegMargin: Record<string, number>;
   spanMargin: number;
   marginBenefit: number;
-};
+} & BasketElmInfo;
 
 /**
  * Real ICICI margin has no per-leg breakdown, so this fans out one call per
@@ -79,14 +102,15 @@ export async function fetchRealBasketMargins(
     exchangeCode: string;
     expiryDate: string;
     lotSize: number;
+    spot: number | null;
   },
   signal?: AbortSignal,
 ): Promise<OnDemandMarginData> {
-  const { legs, ...ctx } = params;
+  const { legs, spot, ...ctx } = params;
   const activeLegs = legs.filter((l) => l.lots > 0);
   const sellLegs = activeLegs.filter((l) => l.side === "Sell");
 
-  const [perLegPairs, spanMargin] = await Promise.all([
+  const [perLegPairs, basket] = await Promise.all([
     Promise.all(
       sellLegs.map(async (leg): Promise<readonly [string, number]> => {
         const margin = await fetchRealMargin(
@@ -96,8 +120,9 @@ export async function fetchRealBasketMargins(
         return [leg.id, margin] as const;
       }),
     ),
-    fetchRealMargin(
+    fetchRealMarginWithElm(
       activeLegs.map((l) => buildMarginLegPayload(l, ctx)),
+      spot,
       signal,
     ),
   ]);
@@ -111,9 +136,16 @@ export async function fetchRealBasketMargins(
   }
 
   const sumStandalone = Object.values(perLegMargin).reduce((a, b) => a + b, 0);
-  const marginBenefit = Math.max(0, sumStandalone - spanMargin);
+  const marginBenefit = Math.max(0, sumStandalone - basket.span);
 
-  return { perLegMargin, spanMargin, marginBenefit };
+  return {
+    perLegMargin,
+    spanMargin: basket.span,
+    marginBenefit,
+    elmRequirement: basket.elmRequirement,
+    elmIsIndex: basket.elmIsIndex,
+    elmApproximate: basket.elmApproximate,
+  };
 }
 
 function formatMutationError(err: unknown): string {
@@ -135,8 +167,9 @@ export function useOnDemandBasketMargin(params: {
   stockCode: string;
   exchangeCode: string;
   expiryDate: string;
+  spot: number | null;
 }) {
-  const { legs, lotSize, stockCode, exchangeCode, expiryDate } = params;
+  const { legs, lotSize, stockCode, exchangeCode, expiryDate, spot } = params;
   const [lastResult, setLastResult] = useState<
     (OnDemandMarginData & { forKey: string }) | null
   >(null);
@@ -152,6 +185,7 @@ export function useOnDemandBasketMargin(params: {
         exchangeCode,
         expiryDate,
         lotSize,
+        spot,
       }),
     onSuccess: (data, vars) => {
       setLastResult({ forKey: vars.key, ...data });
@@ -164,7 +198,15 @@ export function useOnDemandBasketMargin(params: {
   }, [currentKey, legs]);
 
   const prefillSpanMargin = useCallback((spanMargin: number, forKey: string) => {
-    setLastResult({ forKey, perLegMargin: {}, spanMargin, marginBenefit: 0 });
+    setLastResult({
+      forKey,
+      perLegMargin: {},
+      spanMargin,
+      marginBenefit: 0,
+      elmRequirement: null,
+      elmIsIndex: false,
+      elmApproximate: false,
+    });
   }, []);
 
   const isFresh = lastResult != null && lastResult.forKey === currentKey;
@@ -188,6 +230,9 @@ export function useOnDemandBasketMargin(params: {
         isFresh && Object.keys(lastResult!.perLegMargin).length > 0
           ? lastResult!.marginBenefit
           : null,
+      elmRequirement: isFresh ? lastResult!.elmRequirement : null,
+      elmIsIndex: isFresh ? lastResult!.elmIsIndex : false,
+      elmApproximate: isFresh ? lastResult!.elmApproximate : false,
     }),
     [activeLegs.length, mutation.isPending, isFresh, lastResult],
   );

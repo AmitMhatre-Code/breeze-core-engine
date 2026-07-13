@@ -18,6 +18,25 @@ LIMITS_MASTER = "NSEFreezeLimits.txt"  # legacy alias for NSE quantity limits
 # Constants
 ELM = 0.02
 
+# Tiered ELM rates (index vs. single-stock, standard vs. deep-OTM). The stock "standard" tier is a
+# flat-rate approximation of ICICI's true 5%-or-1.5x-6mo-volatility rule — this codebase has no
+# historical daily-close pipeline to compute the volatility-based alternative.
+ELM_INDEX_STD = 0.02
+ELM_INDEX_DEEP_OTM = 0.03
+ELM_INDEX_DEEP_OTM_THRESHOLD = 0.10
+ELM_STOCK_STD = 0.05
+ELM_STOCK_DEEP_OTM = 0.0525
+ELM_STOCK_DEEP_OTM_THRESHOLD = 0.30
+
+# Index underlyings with listed F&O contracts. Used to classify a stock_code as index vs. single-stock
+# (e.g. for ELM tiering and GTT order placement's index_or_stock param) since no scrip-master-backed
+# classification exists.
+INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+
+
+def is_index_symbol(stock_code: str) -> bool:
+    return str(stock_code).strip().upper() in INDEX_SYMBOLS
+
 # Product Types
 OPTIONS = "Options"
 LIMIT = "limit"

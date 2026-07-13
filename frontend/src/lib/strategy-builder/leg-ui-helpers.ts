@@ -34,6 +34,24 @@ export function parseSpanMarginFromResponse(
   return Number.isFinite(v) ? v : null;
 }
 
+export function parseElmFromResponse(
+  m: MarginApiResponse | undefined,
+): { elmRequirement: number | null; elmIsIndex: boolean; elmApproximate: boolean } {
+  const empty = { elmRequirement: null, elmIsIndex: false, elmApproximate: false };
+  if (m?.Status !== 200 || !m.Success) return empty;
+  const success = m.Success as {
+    elm_requirement?: unknown;
+    elm_is_index?: unknown;
+    elm_approximate?: unknown;
+  };
+  const v = parseNum(success.elm_requirement);
+  return {
+    elmRequirement: Number.isFinite(v) ? v : null,
+    elmIsIndex: success.elm_is_index === true,
+    elmApproximate: success.elm_approximate === true,
+  };
+}
+
 /**
  * Canonical leg label used across Portfolio, Orders, Basket Order and Strategy
  * Builder: "STOCK.DD-Mon-YYYY.STRIKE" (e.g. "BSESEN.09-Jul-2026.82000"). Put/Call

@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { InfoPopover } from "@/components/ui/InfoPopover";
 import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
 import { LegQuantityInput } from "@/components/shared/legs/LegQuantityInput";
@@ -74,6 +75,9 @@ export function BasketLegsPanel({
     isFetching: boolean;
     netMargin: number | null;
     marginBenefit?: number | null;
+    elmRequirement?: number | null;
+    elmIsIndex?: boolean;
+    elmApproximate?: boolean;
   };
   onExecute: () => void;
   executeDisabled: boolean;
@@ -280,6 +284,29 @@ export function BasketLegsPanel({
             }
             tone="accent"
           />
+          <TotalStat
+            label={
+              <span className="inline-flex items-center gap-1">
+                Basket ELM
+                {totalsMargin.elmRequirement != null && totalsMargin.elmIsIndex === false ? (
+                  <InfoPopover title="Stock ELM approximate" ariaLabel="Stock ELM approximate help">
+                    Uses a flat rate (5%, or 5.25% if deep out-of-the-money). The exchange&apos;s
+                    actual ELM for stock options also factors in the underlying&apos;s historical
+                    volatility, so the real figure may differ from this estimate.
+                  </InfoPopover>
+                ) : null}
+              </span>
+            }
+            value={
+              !totalsMargin.hasPositiveLots
+                ? "—"
+                : totalsMargin.isFetching
+                  ? "…"
+                  : totalsMargin.elmRequirement != null && Number.isFinite(totalsMargin.elmRequirement)
+                    ? formatIndianMoneyCompact(totalsMargin.elmRequirement)
+                    : "—"
+            }
+          />
         </div>
         <div className="flex items-center gap-2.5">
           <button
@@ -310,7 +337,7 @@ function TotalStat({
   value,
   tone = "foreground",
 }: {
-  label: string;
+  label: ReactNode;
   value: string;
   tone?: "foreground" | "up" | "down" | "accent";
 }) {

@@ -79,6 +79,7 @@ async def resize_results_to_budgets(
         struct_key = structural_margin_key(result.legs)
         unit_max_loss = unit_max_loss_per_lot(result, L)
         unit_short_lots = short_lots_in_legs(result.legs, L)
+        unit_legs = legs_at_lots(result.legs, L, lots=1)
 
         if unit_short_lots == 0:
             if unit_max_loss <= 0:
@@ -125,9 +126,12 @@ async def resize_results_to_budgets(
             margin_rupees=ctx.margin_rupees,
             max_loss_rupees=ctx.max_loss_rupees,
             lot_size=L,
-            unit_short_lots=unit_short_lots,
+            unit_legs=unit_legs,
             spot=ctx.spot,
             provision_elm=ctx.provision_elm,
+            is_index=ctx.is_index,
+            previous_close=ctx.previous_close,
+            same_day_expiry=ctx.same_day_expiry,
         )
         if lots < 1:
             result.status = "skipped"

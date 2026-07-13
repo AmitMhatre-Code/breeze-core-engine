@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from icici_breeze_backend.app.auth.context import get_broker_token_for_request
 from icici_breeze_backend.app.services import breeze_websocket_manager as bwm
 from icici_breeze_backend.app.services import system_chain_health as sch
 
@@ -216,3 +217,28 @@ class TestGetSystemHealthStatus:
         monkeypatch.setattr(sch, "cache_get_json", lambda key: None)
         result = sch.get_system_health_status()
         assert result["status"] == "red"
+
+
+class TestStartPrefetchForNewBrokerSession:
+    """The login-path trigger (called from `_complete_icici_session` in
+    app/api/v1/home.py) is a deterministic alternative to the auth/context.py
+    hook -- fires at the moment ICICI OAuth completes, before Ts&Cs."""
+
+    def test_sets_broker_token_contextvar_before_triggering(self, monkeypatch):
+        seen_token = {}
+
+        def _fake_trigger(user_id):
+            seen_token["value"] = get_broker_token_for_request()
+            seen_token["user_id"] = user_id
+
+        monkeypatch.setattr(sch, "maybe_trigger_system_prefetch", _fake_trigger)
+        sch.start_prefetch_for_new_broker_session("user1", "broker-tok-123")
+        assert seen_token == {"value": "broker-tok-123", "user_id": "user1"}
+
+    def test_exception_from_trigger_does_not_propagate(self, monkeypatch):
+        def _raise(user_id):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(sch, "maybe_trigger_system_prefetch", _raise)
+        # Must not raise -- login must never break because of this side path.
+        sch.start_prefetch_for_new_broker_session("user1", "broker-tok-123")

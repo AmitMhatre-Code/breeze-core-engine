@@ -357,6 +357,12 @@ async def _complete_icici_session(
             )
 
             cache_breeze_session(form.user_id, broker_token, breeze_inst)
+
+            from icici_breeze_backend.app.services.system_chain_health import (
+                start_prefetch_for_new_broker_session,
+            )
+
+            start_prefetch_for_new_broker_session(form.user_id, broker_token)
             try:
                 login_bootstrap_portfolio, login_bootstrap_vix = warm_dashboard_bootstrap_snapshot(
                     form.user_id,

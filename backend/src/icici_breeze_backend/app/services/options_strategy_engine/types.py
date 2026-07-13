@@ -157,6 +157,9 @@ class EngineContext:
     risk_reward_profile: RiskRewardProfile = "moderate"
     min_ann_return_pct: float = 5.0
     atm_iv: float | None = None
+    is_index: bool = False
+    previous_close: float | None = None
+    same_day_expiry: bool = False
     cache: dict[tuple[Strike, Right], QuoteRow] = field(default_factory=dict)
     structure_modified: bool = False
     halted: bool = False

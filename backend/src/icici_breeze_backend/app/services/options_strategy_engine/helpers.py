@@ -170,10 +170,71 @@ def net_premium(legs: list[TradeLeg]) -> float:
     return round(total, 2)
 
 
-def elm_addon(spot: float, lot_size: int, short_lots: int, provision_elm: bool) -> float:
-    if not provision_elm or short_lots <= 0:
+def is_same_day_expiry(expiry_str: str) -> bool:
+    """True if expiry_str resolves to today (IST). Mirrors processor._parse_option_expiry_date
+    without importing processor."""
+    s = expiry_str.strip().removesuffix("T06:00:00.000Z")
+    try:
+        if len(s.split("-")[0]) == 4:
+            expiry_d = datetime.datetime.strptime(s[:10], "%Y-%m-%d").date()
+        else:
+            expiry_d = datetime.datetime.strptime(s, "%d-%b-%Y").date()
+    except ValueError:
+        return False
+    from icici_breeze_backend.app.core.timezone import today_ist_date
+
+    return expiry_d == today_ist_date()
+
+
+def _otm_elm_rate(right: Right, strike: float, previous_close: float, is_index: bool) -> float:
+    """ICICI's ELM rate for one short leg: standard, or a deep-OTM step-up based on how far the
+    strike sits from the underlying's previous close. Stock's "standard" tier is a flat-rate
+    approximation of the true 5%-or-1.5x-6mo-volatility rule (no historical-price pipeline exists
+    in this codebase to compute the volatility alternative)."""
+    if previous_close <= 0:
+        return cfg.ELM_INDEX_STD if is_index else cfg.ELM_STOCK_STD
+    if right == "Call":
+        otm_frac = max(0.0, (strike - previous_close) / previous_close)
+    else:
+        otm_frac = max(0.0, (previous_close - strike) / previous_close)
+    if is_index:
+        return (
+            cfg.ELM_INDEX_DEEP_OTM
+            if otm_frac > cfg.ELM_INDEX_DEEP_OTM_THRESHOLD
+            else cfg.ELM_INDEX_STD
+        )
+    return (
+        cfg.ELM_STOCK_DEEP_OTM
+        if otm_frac > cfg.ELM_STOCK_DEEP_OTM_THRESHOLD
+        else cfg.ELM_STOCK_STD
+    )
+
+
+def elm_addon(
+    spot: float,
+    lot_size: int,
+    legs: list[TradeLeg],
+    *,
+    provision_elm: bool,
+    is_index: bool,
+    previous_close: float | None,
+    same_day_expiry: bool,
+) -> float:
+    """Sum of per-leg ELM across all short legs. ELM is waived on same-day expiry (ICICI folds it
+    into the SPAN margin for contracts expiring today)."""
+    if not provision_elm or lot_size <= 0 or same_day_expiry:
         return 0.0
-    return spot * lot_size * short_lots * 0.02
+    pc = previous_close if previous_close and previous_close > 0 else spot
+    total = 0.0
+    for leg in legs:
+        if leg.side != "Sell":
+            continue
+        lots = leg.quantity // lot_size
+        if lots <= 0:
+            continue
+        rate = _otm_elm_rate(leg.right, float(leg.strike), pc, is_index)
+        total += spot * lot_size * lots * rate
+    return total
 
 
 def short_lots_in_legs(legs: list[TradeLeg], lot_size: int) -> int:
@@ -189,7 +250,16 @@ def elm_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> float | None:
     short_lots = short_lots_in_legs(legs, ctx.lot_size)
     if short_lots <= 0:
         return None
-    return round(elm_addon(ctx.spot, ctx.lot_size, short_lots, True), 2)
+    total = elm_addon(
+        ctx.spot,
+        ctx.lot_size,
+        legs,
+        provision_elm=True,
+        is_index=ctx.is_index,
+        previous_close=ctx.previous_close,
+        same_day_expiry=ctx.same_day_expiry,
+    )
+    return round(total, 2)
 
 
 def skip(strategy_id: str, name: str, reason: str, modified: bool = False) -> StrategyResult:

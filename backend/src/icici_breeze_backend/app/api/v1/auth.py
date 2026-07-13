@@ -91,8 +91,14 @@ async def auth_direct_login(request: Request, body: DirectLoginRequest):
             full_secret,
         )
         from icici_breeze_backend.app.services.portal_deployment_login import notify_portal_deployment_login
+        from icici_breeze_backend.app.services.system_chain_health import (
+            start_prefetch_for_new_broker_session,
+        )
 
         notify_portal_deployment_login(icici_user_id=uid.strip().upper() if uid else None)
+        start_prefetch_for_new_broker_session(
+            uid, getattr(cfg, "ICICI_MOCK_BROKER_COOKIE_VALUE", "mock")
+        )
         return response
     cookie_val = encrypt_direct_icici_cookie(uid, enc_key)
     if not cookie_val:

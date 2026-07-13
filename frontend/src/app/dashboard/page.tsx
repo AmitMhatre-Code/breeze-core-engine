@@ -12,7 +12,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { InterpretationBadge } from "@/components/dashboard/InterpretationBadge";
 import { DashboardMetricSkeleton } from "@/components/dashboard/DashboardLoading";
+import { MarketConnectionOverlay } from "@/components/dashboard/MarketConnectionOverlay";
 import { Vix30dChart } from "@/components/dashboard/Vix30dChart";
+import { useWsHealth } from "@/lib/use-ws-health";
 import {
   interpretAtmIvPercent,
   interpretIndiaVix,
@@ -212,6 +214,22 @@ export default function DashboardPage() {
     queryFn: fetchDashboardBootstrap,
     staleTime: 30_000,
   });
+
+  // NIFTY/SENSEX system chains may still be warming up right after login; show a
+  // brief connection overlay instead of racing widgets against a cold WS subscribe.
+  // Capped at 10s so a stuck/failed prefetch never blocks the page -- the
+  // dashboard's own data hooks below already wait correctly on chain readiness
+  // server-side regardless, so this is purely cosmetic once it steps aside.
+  const wsHealthQ = useWsHealth();
+  const [marketConnectionGateExpired, setMarketConnectionGateExpired] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setMarketConnectionGateExpired(true), 10_000);
+    return () => clearTimeout(id);
+  }, []);
+  const showMarketConnectionOverlay =
+    !marketConnectionGateExpired &&
+    wsHealthQ.data?.market_open === true &&
+    wsHealthQ.data?.status === "gray";
 
   useEffect(() => {
     if (!bootstrapQ.data) return;
@@ -501,6 +519,7 @@ export default function DashboardPage() {
 
   return (
     <AppShell>
+      {showMarketConnectionOverlay ? <MarketConnectionOverlay /> : null}
       <div className="mx-auto max-w-[1200px] space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>

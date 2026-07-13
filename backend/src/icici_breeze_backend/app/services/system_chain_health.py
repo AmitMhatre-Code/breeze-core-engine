@@ -141,6 +141,27 @@ def maybe_trigger_system_prefetch(user_id: str) -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
+def start_prefetch_for_new_broker_session(user_id: str, broker_token: str) -> None:
+    """Fire the system pre-subscription trigger at the moment a broker session is
+    first validated (ICICI OAuth completion in `app/api/v1/home.py`), before Ts&Cs
+    or any other request -- a deterministic alternative to relying on whichever
+    authenticated request happens to land first via `app/auth/context.py`.
+
+    `maybe_trigger_system_prefetch` resolves the broker session via the
+    `_broker_token_ctx` contextvar (not a function argument), so it must be set
+    here first -- safe because contextvars are task-scoped, and this reuses
+    whatever session was just cached for (user_id, broker_token) rather than
+    re-authenticating.
+    """
+    try:
+        from icici_breeze_backend.app.auth.context import set_broker_token_for_request
+
+        set_broker_token_for_request(broker_token)
+        maybe_trigger_system_prefetch(user_id)
+    except Exception:
+        _logger.debug("system prefetch trigger (login path) failed", exc_info=True)
+
+
 def _run_system_prefetch_blocking(user_id: str, today: date) -> None:
     from icici_breeze_backend.app.services.breeze_websocket_manager import (
         release_holder,

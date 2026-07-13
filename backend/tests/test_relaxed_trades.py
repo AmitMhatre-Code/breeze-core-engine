@@ -125,7 +125,7 @@ class TestInfiniteLossSizing(unittest.TestCase):
             margin_rupees=500_000,
             max_loss_rupees=None,
             lot_size=65,
-            unit_short_lots=2,
+            unit_legs=[],
             spot=23600,
             provision_elm=False,
         )

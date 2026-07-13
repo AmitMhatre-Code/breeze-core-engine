@@ -39,6 +39,9 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
     MARGIN_SOURCE_EXCHANGE,
     resolve_exchange_baseline_margin,
 )
+from icici_breeze_backend.app.services.options_strategy_engine.helpers import elm_addon
+from icici_breeze_backend.app.services.options_strategy_engine.types import TradeLeg
+from icici_breeze_backend.app.services.reference_data.bhavcopy_store import _lookup_bhav_row
 
 _logger = logging.getLogger(__name__)
 
@@ -198,11 +201,6 @@ def _annualized_roi_fraction_on_span(
 def _icici_error(error_msg: str, status: int = 400) -> dict:
     """Standard ICICI API error response dict."""
     return {"Status": status, "Error": error_msg}
-
-
-# No existing helper distinguishes index vs. single-stock underlyings anywhere in this codebase;
-# GTT placement is the first caller that needs it (breeze_connect's `index_or_stock` param).
-_GTT_INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
 
 
 def _single_line_preview(text: str, max_len: int = 400) -> str:
@@ -2153,7 +2151,7 @@ class processor():
         act = str(close_action or "").strip().lower()
         rgt = str(right or "").strip().lower()
         prod = str(product_type or cfg.OPTIONS).strip().lower()
-        index_or_stock = "index" if str(stock_code).strip().upper() in _GTT_INDEX_SYMBOLS else "stock"
+        index_or_stock = "index" if cfg.is_index_symbol(stock_code) else "stock"
 
         try:
             response = breeze.gtt_three_leg_place_order(
@@ -3366,6 +3364,9 @@ class processor():
         warnings: list[dict] = []
         missing_baseline_count = 0
         can_use_baseline = margin_source == MARGIN_SOURCE_EXCHANGE
+        elm_legs: list[TradeLeg] = []
+        elm_stock_code: str | None = None
+        elm_expiry_api: str | None = None
         for leg in legs:
             ed = (leg.get("expiry_date") or "").strip()
             if len(ed) >= 10 and ed[4] == "-" and "T" not in ed:
@@ -3388,6 +3389,10 @@ class processor():
                 right = leg["right"]
             except (TypeError, ValueError) as e:
                 return {"Status": 400, "Error": f"Invalid leg fields: {e}", "Success": None}
+            elm_legs.append(TradeLeg(right, action, strike_price, quantity, 0.0))
+            if elm_stock_code is None:
+                elm_stock_code = stock_code
+                elm_expiry_api = expiry_api
             if can_use_baseline:
                 baseline_margin = resolve_exchange_baseline_margin(
                     exchange_code=exchange_code,
@@ -3428,6 +3433,56 @@ class processor():
                     "right": right,
                 }
             )
+        elm_requirement: float | None = None
+        elm_is_index = False
+        elm_approximate = False
+        if elm_legs and elm_stock_code and elm_expiry_api and spot is not None:
+            elm_is_index = cfg.is_index_symbol(elm_stock_code)
+            elm_same_day = _parse_option_expiry_date(elm_expiry_api) == today_ist_date()
+            elm_expiry_display = _expiry_api_to_display(elm_expiry_api)
+            elm_previous_close: float | None = None
+            if not elm_same_day:
+                for elm_leg in elm_legs:
+                    row = _lookup_bhav_row(
+                        elm_stock_code, elm_expiry_display, elm_leg.right, elm_leg.strike, exchange_code
+                    )
+                    candidate = 0.0
+                    if row and row.get("spot_price"):
+                        try:
+                            candidate = float(row["spot_price"])
+                        except (TypeError, ValueError):
+                            candidate = 0.0
+                    if candidate > 0:
+                        elm_previous_close = candidate
+                        break
+                if elm_previous_close is None:
+                    elm_previous_close = spot
+                    elm_approximate = True
+            lot_size_for_elm = self.fetch_lot_size(
+                elm_stock_code, elm_expiry_display, exchange_code=exchange_code
+            )
+            if lot_size_for_elm and lot_size_for_elm > 0:
+                elm_requirement = round(
+                    elm_addon(
+                        spot,
+                        int(lot_size_for_elm),
+                        elm_legs,
+                        provision_elm=True,
+                        is_index=elm_is_index,
+                        previous_close=elm_previous_close,
+                        same_day_expiry=elm_same_day,
+                    ),
+                    2,
+                )
+                elm_approximate = elm_approximate or not elm_is_index
+
+        def _attach_elm(success: dict[str, Any]) -> dict[str, Any]:
+            if elm_requirement is not None:
+                success["elm_requirement"] = elm_requirement
+                success["elm_is_index"] = elm_is_index
+                success["elm_approximate"] = elm_approximate
+            return success
+
         if can_use_baseline and baseline_only and missing_baseline_count > 0:
             return {
                 "Status": 200,
@@ -3463,15 +3518,17 @@ class processor():
                         success["warnings"].extend(
                             {"type": "portfolio_span", "message": w} for w in scan_warnings
                         )
-                return {"Status": 200, "Error": "", "Success": success}
+                return {"Status": 200, "Error": "", "Success": _attach_elm(success)}
             return {
                 "Status": 200,
                 "Error": "",
-                "Success": {
-                    "span_margin_required": baseline_total,
-                    "margin_source": MARGIN_SOURCE_EXCHANGE,
-                    "warnings": warnings,
-                },
+                "Success": _attach_elm(
+                    {
+                        "span_margin_required": baseline_total,
+                        "margin_source": MARGIN_SOURCE_EXCHANGE,
+                        "warnings": warnings,
+                    }
+                ),
             }
         margin_rationale = (
             audit_rationale or "Batch SPAN margin for unique proposed leg structure."
@@ -3514,6 +3571,7 @@ class processor():
             margins["Success"]["margin_source"] = margin_source
             if warnings:
                 margins["Success"]["warnings"] = warnings
+            _attach_elm(margins["Success"])
         return margins
 
     # Real-time portfolio fetch for US3 (called by tests)

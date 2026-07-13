@@ -341,9 +341,12 @@ def evaluate_long_option(
                 margin_rupees=ctx.margin_rupees,
                 max_loss_rupees=ctx.effective_loss_sizing_budget(),
                 lot_size=L,
-                unit_short_lots=0,
+                unit_legs=[],
                 spot=ctx.spot,
                 provision_elm=ctx.provision_elm,
+                is_index=ctx.is_index,
+                previous_close=ctx.previous_close,
+                same_day_expiry=ctx.same_day_expiry,
             )
             if qty < L:
                 _record_reject(
@@ -559,6 +562,7 @@ def evaluate_vertical_spread(
                 )
 
                 max_loss_lot = net_per * L
+                unit_legs = [TradeLeg(right, "Sell", stp_s, L, sell_prem)]
                 qty = size_quantity_from_budgets(
                     sid,
                     buy_prem * L,
@@ -566,9 +570,12 @@ def evaluate_vertical_spread(
                     margin_rupees=ctx.margin_rupees,
                     max_loss_rupees=ctx.effective_loss_sizing_budget(),
                     lot_size=L,
-                    unit_short_lots=1,
+                    unit_legs=unit_legs,
                     spot=ctx.spot,
                     provision_elm=ctx.provision_elm,
+                    is_index=ctx.is_index,
+                    previous_close=ctx.previous_close,
+                    same_day_expiry=ctx.same_day_expiry,
                 )
                 if qty < L:
                     _record_reject(

@@ -48,6 +48,7 @@ def _ctx(
         search_interval=50,
         spot=23622.9,
         atm_strike=23600,
+        is_index=True,
     )
 
 

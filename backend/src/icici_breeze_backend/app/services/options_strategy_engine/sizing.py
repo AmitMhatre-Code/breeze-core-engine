@@ -17,12 +17,23 @@ def size_lots(
     margin_rupees: float,
     max_loss_rupees: float | None,
     lot_size: int,
-    unit_short_lots: int,
+    unit_legs: list[TradeLeg],
     spot: float,
     provision_elm: bool,
+    is_index: bool = False,
+    previous_close: float | None = None,
+    same_day_expiry: bool = False,
 ) -> int:
     """Return number of lots (not contracts)."""
-    unit_elm = elm_addon(spot, lot_size, unit_short_lots, provision_elm)
+    unit_elm = elm_addon(
+        spot,
+        lot_size,
+        unit_legs,
+        provision_elm=provision_elm,
+        is_index=is_index,
+        previous_close=previous_close,
+        same_day_expiry=same_day_expiry,
+    )
     total_unit_margin = unit_span_margin + unit_elm
 
     if total_unit_margin > 0:
@@ -49,9 +60,12 @@ def size_quantity_from_budgets(
     margin_rupees: float,
     max_loss_rupees: float | None,
     lot_size: int,
-    unit_short_lots: int,
+    unit_legs: list[TradeLeg],
     spot: float,
     provision_elm: bool,
+    is_index: bool = False,
+    previous_close: float | None = None,
+    same_day_expiry: bool = False,
 ) -> int:
     """Return contract quantity snapped to lot_size multiples."""
     lots = size_lots(
@@ -61,9 +75,12 @@ def size_quantity_from_budgets(
         margin_rupees=margin_rupees,
         max_loss_rupees=max_loss_rupees,
         lot_size=lot_size,
-        unit_short_lots=unit_short_lots,
+        unit_legs=unit_legs,
         spot=spot,
         provision_elm=provision_elm,
+        is_index=is_index,
+        previous_close=previous_close,
+        same_day_expiry=same_day_expiry,
     )
     return lots * lot_size
 

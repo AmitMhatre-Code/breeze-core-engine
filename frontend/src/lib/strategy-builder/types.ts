@@ -94,12 +94,22 @@ export type MarginApiRequest = {
   }[];
   margin_source?: "breeze_api" | "exchange_baseline";
   baseline_only?: boolean;
+  /** Live spot for the underlying; only needed to compute the basket-level ELM figure. */
+  spot?: number;
 };
 
 export type BasketLegMarginEntry = {
   lots: number;
   span: number | null;
   loading?: boolean;
+};
+
+export type BasketElmInfo = {
+  /** Whole-basket ELM (Extreme Loss Margin); null until computed or when not computable (e.g. no spot). */
+  elmRequirement: number | null;
+  elmIsIndex: boolean;
+  /** True when the ELM figure is a flat-rate approximation (always true for stock underlyings). */
+  elmApproximate: boolean;
 };
 
 export type SpanBaselineContract = {
