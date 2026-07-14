@@ -13,11 +13,26 @@ export type SquareOffRuleLegResult = {
   strike_price: string;
   right: string;
   quantity: string;
-  status: "success" | "failed";
+  status: "success" | "partial" | "failed";
   error?: string | null;
   order_id?: string | null;
   action?: string | null;
   price?: string | null;
+};
+
+/** One currently-open leg of an armed group rule's bucket, joined live from
+ * the P&L engine's position registry (not persisted with the rule) — unlike
+ * `SquareOffRuleLegResult` (only populated once the rule has fired),
+ * `live_legs` is what powers the Orders page's Current MTM column. `action`
+ * is the position's own entry side, not a closing order's inverted side. */
+export type SquareOffRuleLiveLeg = {
+  scrip_key: string;
+  stock_code: string;
+  strike_price: number;
+  right: string;
+  quantity: number;
+  action: string;
+  average_price: number;
 };
 
 export type SquareOffRuleRecord = {
@@ -31,6 +46,7 @@ export type SquareOffRuleRecord = {
   stop_loss_premium_pct: number;
   status: SquareOffRuleStatus;
   leg_results?: SquareOffRuleLegResult[] | null;
+  live_legs?: SquareOffRuleLiveLeg[] | null;
   created_at?: string | null;
   fired_at?: string | null;
 };

@@ -82,6 +82,10 @@ const nextConfig = {
         destination: `${backendUpstream}/dashboard/ws-health`,
       },
       {
+        source: "/dashboard/index-quotes",
+        destination: `${backendUpstream}/dashboard/index-quotes`,
+      },
+      {
         source: "/dashboard/vix/:path*",
         destination: `${backendUpstream}/dashboard/vix/:path*`,
       },

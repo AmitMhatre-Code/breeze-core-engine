@@ -8,7 +8,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.greeks import (
     prob_above_strike,
     prob_below_strike,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.helpers import sigma_for_pop
+from icici_breeze_backend.app.services.options_strategy_engine.iv_smile import resolve_leg_sigma
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, Right, TradeLeg
 
 
@@ -40,12 +40,16 @@ def pop_between_breakevens(
     lower: float,
     upper: float,
     t: float,
-    sigma: float,
+    sigma_lower: float,
+    sigma_upper: float,
 ) -> float:
+    """`sigma_lower`/`sigma_upper` are independent: this is two closed-form N(d2) evaluations,
+    not a shared-path simulation, so each breakeven can (and should) use its own side's
+    smile-resolved sigma rather than one blended value."""
     if lower >= upper:
         return 0.0
-    p_above_lower = prob_above_strike(spot, lower, t, sigma)
-    p_above_upper = prob_above_strike(spot, upper, t, sigma)
+    p_above_lower = prob_above_strike(spot, lower, t, sigma_lower)
+    p_above_upper = prob_above_strike(spot, upper, t, sigma_upper)
     p = max(0.0, p_above_lower - p_above_upper)
     return max(0.0, min(100.0, p * 100.0))
 
@@ -112,13 +116,13 @@ def pop_detail_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> PopDetail:
         return PopDetail(0.0, "unavailable")
 
     t = ctx.t_years
-    sigma = sigma_for_pop(ctx)
 
     if len(legs) == 1:
         leg = legs[0]
         q = ctx.cache.get((leg.strike, leg.right))
+        sigma_leg = resolve_leg_sigma(ctx, float(leg.strike), leg.right)
         delta = q.delta if q and q.delta is not None else bs_delta(
-            ctx.spot, float(leg.strike), t, sigma, leg.right
+            ctx.spot, float(leg.strike), t, sigma_leg, leg.right
         )
         if leg.side == "Sell":
             return PopDetail(pop_short_otm(delta), "short_strike_delta")
@@ -126,11 +130,13 @@ def pop_detail_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> PopDetail:
         if leg.right == "Call":
             lower = leg.strike + prem
             upper = None
+            sigma_be = resolve_leg_sigma(ctx, lower, leg.right)
         else:
             lower = None
             upper = leg.strike - prem
+            sigma_be = resolve_leg_sigma(ctx, upper, leg.right)
         return PopDetail(
-            pop_long_otm(ctx.spot, float(leg.strike), prem, leg.right, t, sigma),
+            pop_long_otm(ctx.spot, float(leg.strike), prem, leg.right, t, sigma_be),
             "long_strike_breakeven",
             lower_breakeven=lower,
             upper_breakeven=upper,
@@ -145,8 +151,10 @@ def pop_detail_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> PopDetail:
             if "Call" in strikes and "Put" in strikes:
                 lower = strikes["Put"] - net_credit
                 upper = strikes["Call"] + net_credit
+                sigma_lower = resolve_leg_sigma(ctx, lower, "Put")
+                sigma_upper = resolve_leg_sigma(ctx, upper, "Call")
                 return PopDetail(
-                    pop_between_breakevens(ctx.spot, lower, upper, t, sigma),
+                    pop_between_breakevens(ctx.spot, lower, upper, t, sigma_lower, sigma_upper),
                     "breakevens_from_short_strikes",
                     lower_breakeven=lower,
                     upper_breakeven=upper,
@@ -157,8 +165,9 @@ def pop_detail_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> PopDetail:
         if len(sells) == 1 and len(buys) == 1 and sells[0].right == buys[0].right:
             short_leg = sells[0]
             q = ctx.cache.get((short_leg.strike, short_leg.right))
+            sigma_leg = resolve_leg_sigma(ctx, float(short_leg.strike), short_leg.right)
             delta = q.delta if q and q.delta is not None else bs_delta(
-                ctx.spot, float(short_leg.strike), t, sigma, short_leg.right
+                ctx.spot, float(short_leg.strike), t, sigma_leg, short_leg.right
             )
             if short_leg.side == "Sell":
                 return PopDetail(pop_short_otm(delta), "short_strike_delta")
@@ -178,8 +187,10 @@ def pop_detail_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> PopDetail:
             )
             lower = sell_put.strike - net_credit
             upper = sell_call.strike + net_credit
+            sigma_lower = resolve_leg_sigma(ctx, lower, "Put")
+            sigma_upper = resolve_leg_sigma(ctx, upper, "Call")
             return PopDetail(
-                pop_between_breakevens(ctx.spot, lower, upper, t, sigma),
+                pop_between_breakevens(ctx.spot, lower, upper, t, sigma_lower, sigma_upper),
                 "breakevens_from_short_strikes",
                 lower_breakeven=lower,
                 upper_breakeven=upper,
@@ -197,8 +208,10 @@ def pop_detail_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> PopDetail:
         net_credit = sum(
             l.premium_per_unit if l.side == "Sell" else -l.premium_per_unit for l in legs
         )
+        sigma_lower = resolve_leg_sigma(ctx, lower, "Put")
+        sigma_upper = resolve_leg_sigma(ctx, upper, "Call")
         return PopDetail(
-            pop_between_breakevens(ctx.spot, lower, upper, t, sigma),
+            pop_between_breakevens(ctx.spot, lower, upper, t, sigma_lower, sigma_upper),
             "breakevens_from_long_strikes",
             lower_breakeven=lower,
             upper_breakeven=upper,

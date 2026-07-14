@@ -4,22 +4,10 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
 import { normRight } from "@/lib/portfolio/legNormalize";
+import { chainLtpLookup, computeLegMtm, parseNum } from "@/lib/portfolio/liveMtm";
 import type { PortfolioPositionGroup } from "@/lib/portfolio/groupPositions";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
-import type { ChainRow } from "@/lib/strategy-builder/types";
 import { usePnlRecomputeRefetchMs } from "@/lib/portfolio/usePnlRecomputeRefetchMs";
-
-function parseNum(v: unknown): number | null {
-  if (v == null || v === "") return null;
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const t = v.trim().replace(/,/g, "");
-    if (!t || t === "*") return null;
-    const n = Number(t);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
 
 /** (Carry ÷ DTE) × 365 ÷ margin × 100 — mirrors `_annualized_carry_percent_on_span` in processor.py. */
 function annualizedCarryPercent(
@@ -39,11 +27,11 @@ function overlayRowWithLiveLtp(
   const qty = parseNum(row.quantity);
   const avg = parseNum(row.average_price);
   const action = String(row.action ?? "").trim().toUpperCase();
-  if (qty == null || avg == null || (action !== "SELL" && action !== "BUY")) {
+  const currentProfit = computeLegMtm(action, avg, qty, liveLtp);
+  if (qty == null || avg == null || currentProfit == null) {
     return { ...row, ltp: liveLtp };
   }
   const isSell = action === "SELL";
-  const currentProfit = isSell ? (avg - liveLtp) * qty : (liveLtp - avg) * qty;
   // Carry = P&L if this leg expires worthless (full premium kept/lost) minus MTM already captured.
   const worthlessValue = isSell ? avg * qty : -avg * qty;
   const carryProfit = worthlessValue - currentProfit;
@@ -63,17 +51,6 @@ function overlayRowWithLiveLtp(
     }
   }
   return next;
-}
-
-function chainLtpLookup(chainRows: ChainRow[]): Map<string, number> {
-  const m = new Map<string, number>();
-  for (const row of chainRows) {
-    const callLtp = parseNum(row.call?.ltp);
-    if (callLtp != null && callLtp > 0) m.set(`Call|${row.strike_price}`, callLtp);
-    const putLtp = parseNum(row.put?.ltp);
-    if (putLtp != null && putLtp > 0) m.set(`Put|${row.strike_price}`, putLtp);
-  }
-  return m;
 }
 
 /**

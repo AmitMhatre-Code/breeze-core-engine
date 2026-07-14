@@ -31,6 +31,7 @@ import {
   startProposeTradesJob,
 } from "@/lib/strategy-builder/api";
 import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import { buildSigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import {
   chainIsLoading,
 } from "@/lib/strategy-builder/chain-loading";
@@ -41,7 +42,7 @@ import {
 } from "@/components/shared/market-data/ChainBuildStatus";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 import { premiumFromChainRow } from "@/lib/strategy-builder/chain-quote";
-import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import { expiryDisplayToYears, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import {
   computeMarginsCalcKey,
   useOnDemandBasketMargin,
@@ -259,6 +260,11 @@ export default function StrategyBuilderPage() {
   const spot = chainSpot ?? proposedData?.spot_price ?? null;
 
   const atmIv = proposedData?.atm_iv ?? null;
+  /** Live client-side chain smile — distinct from `atmIv` above (a backend snapshot). */
+  const sigmaSmiles = useMemo(
+    () => (chainSuccess ? buildSigmaSmiles(chainSuccess, expiryDisplayToYears(expiryDate)) : null),
+    [chainSuccess, expiryDate],
+  );
 
   const marginCalc = useOnDemandBasketMargin({
     legs,
@@ -446,7 +452,7 @@ export default function StrategyBuilderPage() {
       if (tradeSort === "server") return list;
 
       const withMetrics = list.map((t) => {
-        const pop = computeTradePop(t, spot, atmIv, expiryDate, lotSize);
+        const pop = computeTradePop(t, spot, atmIv, expiryDate, lotSize, sigmaSmiles);
         return {
           trade: t,
           pop,
@@ -479,7 +485,7 @@ export default function StrategyBuilderPage() {
         return aLoss - bLoss;
       });
     },
-    [tradeSort, spot, atmIv, expiryDate, lotSize],
+    [tradeSort, spot, atmIv, sigmaSmiles, expiryDate, lotSize],
   );
 
   const displayedTrades = useMemo(() => {
@@ -999,6 +1005,7 @@ export default function StrategyBuilderPage() {
                           lotSize={lotSize}
                           spot={spot}
                           atmIv={atmIv}
+                          sigmaSmiles={sigmaSmiles}
                           expiryDate={expiryDate}
                           selected={selectedTradeId === tradeSelectionKey(trade)}
                           onSelect={() => selectTrade(trade)}
@@ -1043,6 +1050,7 @@ export default function StrategyBuilderPage() {
                             lotSize={lotSize}
                             spot={spot}
                             atmIv={atmIv}
+                            sigmaSmiles={sigmaSmiles}
                             expiryDate={expiryDate}
                             selected={
                               selectedTradeId === tradeSelectionKey(trade)
@@ -1115,6 +1123,7 @@ export default function StrategyBuilderPage() {
               legs={legs}
               spot={spot}
               atmIv={atmIv}
+              sigmaSmiles={sigmaSmiles}
               expiryDate={expiryDate}
               lotSize={lotSize}
             />

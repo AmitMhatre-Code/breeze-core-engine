@@ -242,6 +242,20 @@ def _format_inr_integer_indian(value) -> str:
     return "₹" + _format_indian_integer_digits(int(round(v)))
 
 
+def _format_inr_2dp_indian(value) -> str:
+    """Rupees with 2 decimal places and Indian-style commas on the integer part."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "₹0.00"
+    if math.isnan(v) or math.isinf(v):
+        return "₹0.00"
+    sign = "-" if v < 0 else ""
+    cents = round(abs(v) * 100)
+    rupees, paise = divmod(cents, 100)
+    return f"{sign}₹{_format_indian_integer_digits(rupees)}.{paise:02d}"
+
+
 def _normalize_icici_response(data: dict) -> tuple:
     """Extract status, success payload, and error message from ICICI response (handles Status/status, etc.)."""
     status = data.get("Status") or data.get("status")
@@ -594,22 +608,35 @@ class processor():
         # Session retrieval removed. Callers should pass broker token per-request.
         return {'Status': 400, 'Error': 'Session persistence disabled; use per-request tokens'}
 
+    def _resolve_broker_token(self, user_id):
+        """Broker token for the current call: prefer the live request's cookie-derived
+        ContextVar; fall back to the persisted, encrypted per-user token (written once
+        at login, cleared on logout -- see app/repositories/broker_session.py) so
+        background work with no HTTP request in scope (e.g. PB/SL square-off dispatch)
+        can still get a session for the rest of the trading day. The persisted token
+        expires with the token's own end-of-day IST lifetime regardless of whether any
+        request has come in recently."""
+        from icici_breeze_backend.app.auth.context import get_broker_token_for_request
+        from icici_breeze_backend.app.repositories.broker_session import get_broker_session_token
+
+        return get_broker_token_for_request() or get_broker_session_token(user_id) or ""
+
     def get_session_breeze(self, user_id):
         """Create one BreezeConnect session per request and reuse it (ICICI Invalid Checksum if we call generate_session multiple times).
-        Uses broker token from HttpOnly cookie; fetches api_key and reconstructs secret from DB.
+        Uses broker token from HttpOnly cookie (or, absent a request, the persisted per-user token); fetches api_key and reconstructs secret from DB.
         Cross-request: consults breeze_session_cache (keyed by user_id + broker_token, TTL till midnight IST or config).
         """
         try:
-            from icici_breeze_backend.app.auth.context import get_broker_token_for_request, get_breeze_session_for_request, set_breeze_session_for_request
+            from icici_breeze_backend.app.auth.context import get_breeze_session_for_request, set_breeze_session_for_request
             from icici_breeze_backend.app.services.breeze_session_cache import get as cache_get, set as cache_set
 
             # Reuse session created earlier in this request
             cached = get_breeze_session_for_request()
             if cached is not None:
                 return cached
-            broker_token = get_broker_token_for_request() or ""
+            broker_token = self._resolve_broker_token(user_id)
             if not broker_token:
-                _logger.warning("get_session_breeze: no broker token in request (cookie missing or empty) user_id=%s", user_id)
+                _logger.warning("get_session_breeze: no broker token in request or persisted store user_id=%s", user_id)
                 return None
             if getattr(cfg, "ICICI_BROKER_MODE", "live") == "mock":
                 from icici_breeze_backend.dev.mock_broker import MockBreezeSdk
@@ -645,19 +672,17 @@ class processor():
             return None
 
     def get_session_token(self, user_id):
-        """Return broker token from request context (HttpOnly cookie)."""
+        """Return broker token from request context (HttpOnly cookie), or the last-seen token if none."""
         try:
-            from icici_breeze_backend.app.auth.context import get_broker_token_for_request
-            return get_broker_token_for_request()
+            return self._resolve_broker_token(user_id) or None
         except Exception:
             return None
 
     def _maybe_evict_session(self, user_id: str, response: dict | None) -> None:
         """If ICICI response indicates auth/session failure, evict session cache so next request creates fresh session."""
         try:
-            from icici_breeze_backend.app.auth.context import get_broker_token_for_request
             from icici_breeze_backend.app.services.breeze_session_cache import evict_if_icici_auth_failure
-            broker_token = get_broker_token_for_request() or ""
+            broker_token = self._resolve_broker_token(user_id)
             evict_if_icici_auth_failure(user_id, broker_token, response)
         except Exception:
             pass
@@ -1400,7 +1425,7 @@ class processor():
                 )
             if old_price is not None and new_price is not None and old_price != new_price:
                 parts.append(
-                    f"price {_format_inr_integer_indian(old_price)} → {_format_inr_integer_indian(new_price)}"
+                    f"price {_format_inr_2dp_indian(old_price)} → {_format_inr_2dp_indian(new_price)}"
                 )
             messages.append({"type": cfg.SUCCESS, "message": ": ".join([parts[0], ", ".join(parts[1:])]) if len(parts) > 1 else parts[0]})
 

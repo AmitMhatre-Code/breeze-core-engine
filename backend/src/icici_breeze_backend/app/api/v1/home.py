@@ -94,13 +94,19 @@ def _login_query_from_request(request: Request) -> str:
     return ("?" + "&".join(parts)) if parts else ""
 
 
-def _set_auth_cookies(response: Response, icici_token: str, access_token: str, full_secret: str | None) -> None:
+def _set_auth_cookies(
+    response: Response, icici_token: str, access_token: str, full_secret: str | None, user_id: str
+) -> None:
     from datetime import timedelta
 
     def _secs_until_midnight() -> int:
         now = now_ist()
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
         return int((midnight - now).total_seconds())
+
+    from icici_breeze_backend.app.repositories.broker_session import save_broker_session_token
+
+    save_broker_session_token(user_id, icici_token)
 
     response.delete_cookie(key=LOGIN_USER_ID_COOKIE, path="/")
     response.set_cookie(
@@ -203,12 +209,14 @@ async def logout(request: Request):
                 handler = JWTHandler(secret_key=secret)
                 payload = handler.validate_token(access_token)
                 if payload and getattr(payload, "user_id", None):
+                    from icici_breeze_backend.app.repositories.broker_session import clear_broker_session_token
                     from icici_breeze_backend.app.services.breeze_session_cache import evict
 
                     evict(payload.user_id, broker_token)
                     from icici_breeze_backend.app.services.broker_snapshot_cache import evict as evict_snapshot
 
                     evict_snapshot(payload.user_id, broker_token)
+                    clear_broker_session_token(payload.user_id)
         except Exception:
             pass
     response = redirect_to_frontend("/login")
@@ -483,7 +491,7 @@ async def _complete_icici_session(
     )
 
     response = JSONResponse({"redirect": "/dashboard"})
-    _set_auth_cookies(response, icici_token, access_token, full_secret)
+    _set_auth_cookies(response, icici_token, access_token, full_secret, form.user_id)
     from icici_breeze_backend.app.services.portal_deployment_login import notify_portal_deployment_login
 
     notify_portal_deployment_login(icici_user_id=icici_user_id)

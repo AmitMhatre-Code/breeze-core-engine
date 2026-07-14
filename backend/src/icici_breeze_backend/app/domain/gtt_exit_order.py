@@ -66,6 +66,7 @@ class GttExitOrderRowRecord(BaseModel):
     order_datetime: Optional[str] = None
     legs: List[GttExitOrderLeg] = []
     is_cancelled: bool = False
+    average_price: Optional[float] = None
 
 
 class GttExitOrderListResponse(BaseModel):

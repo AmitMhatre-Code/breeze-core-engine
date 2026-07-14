@@ -12,6 +12,7 @@ from icici_breeze_backend.app.services.quote_source_router import (
     _flatten_chain_side_rows,
     _get_or_build_icici_rest_chain,
     _max_cell_updated_at,
+    _spot_from_bhavcopy,
     bhavcopy_is_fresh,
     chain_fetch_error_response,
     fetch_chain_payload_routed,
@@ -518,6 +519,48 @@ def test_get_full_option_chain_icici_rest_keeps_illiquid_but_quoted_strikes(_moc
     assert row["call"] is not None and row["call"]["ltp"] == 10.5
     assert row["put"] is not None and row["put"]["ltp"] == 8.2
     assert result["Success"]["quote_source"] == "icici_api"
+
+
+def _bhav_row_with_spot(stock_code: str, strike: int, right: str, spot: str, exchange_code: str) -> dict[str, str]:
+    return {
+        "stock_code": stock_code,
+        "expiry_display": "16-Jul-2026",
+        "expiry_date": "2026-07-16",
+        "right": right,
+        "strike_price": str(strike),
+        "ltp": "10.0",
+        "best_bid_price": "10.0",
+        "best_offer_price": "10.0",
+        "total_buy_qty": "1",
+        "total_sell_qty": "1",
+        "open_interest": "100",
+        "spot_price": spot,
+        "open": "10.0",
+        "high": "10.0",
+        "low": "10.0",
+        "previous_close": "10.0",
+        "segment": exchange_code,
+    }
+
+
+def test_spot_from_bhavcopy_scans_past_the_lowest_few_strikes():
+    """Deep extremes of a thin chain (e.g. Sensex weeklies) routinely have no
+    bhavcopy row at all -- the lookup must keep scanning instead of giving up
+    after a handful of the lowest strikes, or `is_chain_complete` falls back to
+    requiring every tradeable strike to tick live (see chain_readiness.py),
+    which a less liquid chain may never satisfy."""
+    day = dt.date(2026, 7, 15)
+    publish_bhavcopy_rows(
+        [_bhav_row_with_spot("BSESEN", 83000, cfg.CALL, "82500.0", cfg.BFO)],
+        segment="bfo",
+        source_date=day,
+        source_url="http://example/bse",
+    )
+    # First 20 strikes (deep ITM/OTM, far from spot) have no bhavcopy row at all;
+    # only the 21st (nearest to the actual spot) does.
+    strikes = list(range(60000, 60000 + 20 * 100, 100)) + [83000]
+    spot = _spot_from_bhavcopy("BSESEN", "16-Jul-2026", cfg.BFO, strikes)
+    assert spot == 82500.0
 
 
 @patch(

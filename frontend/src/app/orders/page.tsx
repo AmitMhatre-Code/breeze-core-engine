@@ -6,6 +6,7 @@ import {
   Fragment,
   Suspense,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -56,6 +57,12 @@ import {
 } from "@/lib/orders/exit-rules";
 import { fetchSquareOffRulesForExitBoard } from "@/lib/portfolio/squareoff-rules";
 import { fetchAllGttExitOrders } from "@/lib/portfolio/gtt-exit-orders";
+import { useGroupSubscriptionHolders } from "@/lib/portfolio/useGroupSubscriptionHolders";
+import {
+  exitRuleChainKey,
+  useExitRuleLiveOverlay,
+} from "@/lib/orders/useExitRuleLiveOverlay";
+import { formatSignedRupees } from "@/lib/portfolio/totals";
 import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 import {
   buildPlaceOrderCloneFromBookRow,
@@ -405,6 +412,32 @@ function formatExitRuleAmount(value: number | null, kind: "group" | "leg_gtt"): 
   return `₹${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/** Current MTM cell — its own component (not inline in the row map) since it owns
+ * a live WS chain subscription and hooks can't be called a variable number of
+ * times inside one component body. `holderId` is shared across every row on the
+ * same chain (see `useGroupSubscriptionHolders` in the parent), so rows sharing
+ * a stock+expiry share one WS subscription rather than each opening their own. */
+function ExitRuleMtmCell({
+  row,
+  holderId,
+  enabled,
+}: {
+  row: ExitRuleRow;
+  holderId: string;
+  enabled: boolean;
+}) {
+  const { mtm } = useExitRuleLiveOverlay(row, holderId, enabled);
+  const { text, className } = formatSignedRupees(mtm);
+  return (
+    <span
+      className={`font-mono text-xs tabular-nums font-medium ${className}`}
+      title={mtm == null ? "Open Portfolio once this session to enable live MTM" : undefined}
+    >
+      {text}
+    </span>
+  );
+}
+
 /** Same lookup shape as `cancelDetailForOrderKey`, over a flat exit-rule order list
  * instead of `BookGroup[]`. */
 function cancelDetailForExitRuleOrderKey(
@@ -679,6 +712,8 @@ function ModifyLegDialog({
   const titleId = "modify-leg-title";
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
+  const [lotSize, setLotSize] = useState<number | null>(null);
+  const lotSizeCacheRef = useRef<Record<string, number>>({});
   const lastKeyRef = useRef<string | null>(null);
   const key = target ? `${target.contractLabel}|${target.orders.map((o) => o.order_id).join(",")}` : null;
   if (key !== lastKeyRef.current) {
@@ -686,6 +721,31 @@ function ModifyLegDialog({
     if (target) {
       setQuantity(String(target.currentQuantity));
       setPrice(target.currentPrice ?? "");
+      const lotCacheKey = parkedLotKey(
+        target.contract.stock_code,
+        target.contract.exchange_code,
+        target.contract.expiry_date,
+      );
+      const cachedLotSize = lotSizeCacheRef.current[lotCacheKey];
+      if (cachedLotSize) {
+        setLotSize(cachedLotSize);
+      } else {
+        setLotSize(null);
+        fetchBreakChunkDefaults({
+          stock_code: target.contract.stock_code,
+          exchange_code: target.contract.exchange_code || "NFO",
+          expiry_date: target.contract.expiry_date,
+        })
+          .then((res) => {
+            if (res.ok && res.lot_size && res.lot_size > 0) {
+              lotSizeCacheRef.current[lotCacheKey] = res.lot_size;
+              setLotSize(res.lot_size);
+            }
+          })
+          .catch(() => {});
+      }
+    } else {
+      setLotSize(null);
     }
   }
 
@@ -724,6 +784,14 @@ function ModifyLegDialog({
             className="app-input w-full"
             value={quantity}
             onChange={(e) => setQuantity(e.target.value)}
+            onBlur={() => {
+              if (!lotSize || lotSize <= 0) return;
+              const n = parsePositiveInt(quantity);
+              if (n == null) return;
+              const snapped = String(snapQuantityToLotMultiple(n, lotSize));
+              if (snapped === quantity) return;
+              setQuantity(snapped);
+            }}
             disabled={pending}
           />
           {target && qtyChanged ? (
@@ -1009,6 +1077,40 @@ function OrdersBody() {
     () => exitRuleRows.flatMap((row) => row.orders),
     [exitRuleRows],
   );
+
+  // Current MTM column: entry price only lives in the portfolio P&L engine's
+  // in-memory registry, populated when Portfolio's own /portfolio/data has
+  // loaded. Warm it once per Orders visit so MTM works even if the user never
+  // opens Portfolio this session — reuses Portfolio's own query key so a later
+  // Portfolio visit doesn't double-fetch. The exit-rule queries below have
+  // already fired by the time this resolves (both start on mount), so their
+  // average_price join would otherwise be stuck on a stale "not yet warmed"
+  // result for the rest of the session — refetch them once the warm-up lands.
+  useEffect(() => {
+    queryClient
+      .prefetchQuery({
+        queryKey: ["portfolio", "positions"],
+        queryFn: () => apiClient.get<unknown>("/portfolio/data"),
+      })
+      .then(() => {
+        queryClient.invalidateQueries({ queryKey: ["exit-rules"] });
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const exitRuleHolders = useGroupSubscriptionHolders();
+  const activeExitRuleChainKeys = useMemo(() => {
+    if (exitRuleTab !== "active") return new Set<string>();
+    return new Set(exitRuleRowsForTab.map(exitRuleChainKey));
+  }, [exitRuleTab, exitRuleRowsForTab]);
+  const prevExitRuleChainKeysRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const prev = prevExitRuleChainKeysRef.current;
+    for (const key of prev) {
+      if (!activeExitRuleChainKeys.has(key)) exitRuleHolders.releaseGroup(key);
+    }
+    prevExitRuleChainKeysRef.current = activeExitRuleChainKeys;
+  }, [activeExitRuleChainKeys, exitRuleHolders]);
 
   const toggleExitRuleRow = useCallback((rowId: string) => {
     setExitRuleExpanded((prev) => ({ ...prev, [rowId]: !prev[rowId] }));
@@ -2280,6 +2382,11 @@ function OrdersBody() {
                     <th className="px-4 py-3 text-heading font-semibold uppercase tracking-wider text-faint">
                       Target / Stop
                     </th>
+                    {exitRuleTab === "active" ? (
+                      <th className="px-4 py-3 text-heading font-semibold uppercase tracking-wider text-faint">
+                        Current MTM
+                      </th>
+                    ) : null}
                     <th className="px-4 py-3 text-heading font-semibold uppercase tracking-wider text-faint">
                       Status
                     </th>
@@ -2342,10 +2449,30 @@ function OrdersBody() {
                               </span>
                             </div>
                           </td>
+                          {exitRuleTab === "active" ? (
+                            <td
+                              className="px-4 py-3.5 align-middle"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExitRuleMtmCell
+                                row={row}
+                                holderId={exitRuleHolders.getHolderId(exitRuleChainKey(row))}
+                                enabled
+                              />
+                            </td>
+                          ) : null}
                           <td className="px-4 py-3.5 align-middle">
-                            <span className={exitRuleStatusChipClass(row.effectiveStatus)}>
+                            <span
+                              className={exitRuleStatusChipClass(row.effectiveStatus)}
+                              title={row.failureReason ?? undefined}
+                            >
                               {exitRuleStatusLabel(row.effectiveStatus)}
                             </span>
+                            {row.failureReason ? (
+                              <div className="mt-1 max-w-[220px] text-hint text-down">
+                                {row.failureReason}
+                              </div>
+                            ) : null}
                           </td>
                           <td className="px-4 py-3.5 align-middle font-mono text-xs text-muted">
                             <div>{row.placedAt || "—"}</div>
@@ -2375,7 +2502,10 @@ function OrdersBody() {
                         </tr>
                         {isOpen && row.orders.length ? (
                           <tr className="border-b border-border-soft bg-panel2">
-                            <td colSpan={7} className="px-[18px] pt-3">
+                            <td
+                              colSpan={exitRuleTab === "active" ? 8 : 7}
+                              className="px-[18px] pt-3"
+                            >
                               {groupRuleOrdersByLeg(row.orders).some((leg) =>
                                 legHasModifiable(leg.orders),
                               ) ? (
@@ -2575,6 +2705,9 @@ function OrdersBody() {
                         </span>
                       </summary>
                       <div className="space-y-2 border-t border-border-soft px-3 py-2.5 text-sm text-muted">
+                        {row.failureReason ? (
+                          <p className="text-hint text-down">{row.failureReason}</p>
+                        ) : null}
                         <div className="flex items-center justify-between">
                           <span>
                             Target: {formatExitRuleAmount(row.targetValue, row.kind)} · Stop:{" "}
@@ -2587,6 +2720,16 @@ function OrdersBody() {
                             Portfolio
                           </Link>
                         </div>
+                        {exitRuleTab === "active" ? (
+                          <p>
+                            <span className="app-text-muted">MTM:</span>{" "}
+                            <ExitRuleMtmCell
+                              row={row}
+                              holderId={exitRuleHolders.getHolderId(exitRuleChainKey(row))}
+                              enabled
+                            />
+                          </p>
+                        ) : null}
                         {groupRuleOrdersByLeg(row.orders).some((leg) =>
                           legHasModifiable(leg.orders),
                         ) ? (

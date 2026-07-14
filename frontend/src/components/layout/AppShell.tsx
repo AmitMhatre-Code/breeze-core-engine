@@ -31,6 +31,7 @@ import {
 } from "@/lib/home-data";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import { useWsHealth } from "@/lib/use-ws-health";
+import { useIndexQuotes, type IndexQuote } from "@/lib/use-index-quotes";
 
 // Hidden from nav (route still works): { href: "/trade-options-chain", label: "Trade Options Chain" },
 const navItems = [
@@ -86,6 +87,8 @@ export function AppShell({
   const wsHealthReason = wsHealthQ.data?.reason ?? "Checking market data status…";
   const wsHealthDotClass =
     wsHealthStatus === "green" ? "bg-up" : wsHealthStatus === "red" ? "bg-down" : "bg-faint";
+
+  const indexQuotesQ = useIndexQuotes();
 
   const homeQ = useQuery({
     queryKey: ["home", "data"],
@@ -276,6 +279,10 @@ export function AppShell({
             )}
           </div>
           <div className="flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-3">
+            <div className="hidden items-center gap-3 lg:flex">
+              <IndexTickerItem label="NIFTY" quote={indexQuotesQ.data?.quotes.nifty ?? null} />
+              <IndexTickerItem label="SENSEX" quote={indexQuotesQ.data?.quotes.sensex ?? null} />
+            </div>
             {homeDataReady && (
               <span
                 className={[
@@ -427,6 +434,52 @@ export function AppShell({
         </main>
       </div>
     </div>
+  );
+}
+
+function IndexTickerItem({
+  label,
+  quote,
+}: {
+  label: string;
+  quote: IndexQuote | null;
+}) {
+  if (!quote) {
+    return (
+      <span className="whitespace-nowrap font-mono text-xs text-faint">
+        {label} <span className="text-faint">—</span>
+      </span>
+    );
+  }
+  const change = quote.change;
+  const tone =
+    change == null || change === 0
+      ? "text-muted"
+      : change > 0
+        ? "text-up"
+        : "text-down";
+  const sign = change != null && change > 0 ? "+" : "";
+  const updatedTitle = Number.isFinite(quote.updated_at)
+    ? `${label} · updated ${new Date(quote.updated_at * 1000).toLocaleTimeString("en-IN", { hour12: false })}`
+    : label;
+
+  return (
+    <span
+      className="inline-flex items-baseline gap-1 whitespace-nowrap font-mono text-xs"
+      title={updatedTitle}
+    >
+      <span className="text-faint">{label}</span>
+      <span className="font-semibold tabular-nums text-foreground">
+        {quote.ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+      </span>
+      {change != null ? (
+        <span className={`tabular-nums ${tone}`}>
+          {sign}
+          {change.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+          {quote.change_pct != null ? ` (${sign}${quote.change_pct.toFixed(2)}%)` : ""}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

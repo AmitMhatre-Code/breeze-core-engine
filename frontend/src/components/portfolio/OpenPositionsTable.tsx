@@ -347,8 +347,19 @@ function ExitRuleBadge({ rule }: { rule: SquareOffRuleRecord }) {
   const colorClassName = failed
     ? "bg-down-btn text-white"
     : "bg-accent-strong text-accent-ink";
+  const failureErrors = failed
+    ? Array.from(
+        new Set(
+          (rule.leg_results ?? [])
+            .map((leg) => leg.error?.trim())
+            .filter((err): err is string => !!err),
+        ),
+      )
+    : [];
   const title = failed
-    ? "One or more legs failed to square off — edit the Profit Booking / Stop Loss rule to dismiss"
+    ? failureErrors.length
+      ? `${failureErrors.join(" ")} — edit the Profit Booking / Stop Loss rule to dismiss`
+      : "One or more legs failed to square off — edit the Profit Booking / Stop Loss rule to dismiss"
     : fired
       ? "Profit Booking / Stop Loss rule fired — edit the rule to dismiss"
       : "Profit Booking / Stop Loss rule armed";

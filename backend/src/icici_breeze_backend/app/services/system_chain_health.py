@@ -167,9 +167,16 @@ def _run_system_prefetch_blocking(user_id: str, today: date) -> None:
         release_holder,
         sync_holder_chain_subscriptions,
     )
+    from icici_breeze_backend.app.services.index_spot_feed import (
+        sync_index_spot_subscriptions,
+    )
     from icici_breeze_backend.app.services.processor import processor as Processor
 
     proc = Processor()
+    try:
+        sync_index_spot_subscriptions(proc, user_id)
+    except Exception:
+        _logger.warning("index spot subscription sync failed", exc_info=True)
     errors: list[str] = []
     expiries: dict[str, str] = {}
     subscribed_at: dict[str, float] = {}

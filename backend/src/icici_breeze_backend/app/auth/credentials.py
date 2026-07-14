@@ -37,6 +37,32 @@ def decrypt_from_session_cookie(encrypted: str, encryption_key: str) -> Optional
         return None
 
 
+def _broker_session_store_cipher(encryption_key: str):
+    """Fernet for the persisted broker session token store (distinct key from the
+    session cookie cipher, even though both protect the same underlying ICICI
+    session token) -- see app/repositories/broker_session.py."""
+    key_material = hashlib.sha256(((encryption_key or "") + "broker_session_token_store_v1").encode()).digest()
+    return Fernet(urlsafe_b64encode(key_material[:32]))
+
+
+def encrypt_broker_session_token(token: str, encryption_key: str) -> str:
+    if not token or not encryption_key:
+        return ""
+    try:
+        return _broker_session_store_cipher(encryption_key).encrypt(token.encode()).decode("ascii")
+    except Exception:
+        return ""
+
+
+def decrypt_broker_session_token(encrypted: str, encryption_key: str) -> Optional[str]:
+    if not encrypted or not encryption_key:
+        return None
+    try:
+        return _broker_session_store_cipher(encryption_key).decrypt(encrypted.encode()).decode()
+    except Exception:
+        return None
+
+
 def _direct_icici_cipher(encryption_key: str):
     """Fernet for short-lived direct-login → ICICI redirect cookie (user_id only)."""
     key_material = hashlib.sha256(((encryption_key or "") + "direct_icici_prelogin").encode()).digest()

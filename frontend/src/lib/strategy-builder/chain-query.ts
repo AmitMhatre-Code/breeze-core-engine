@@ -44,6 +44,30 @@ export function chainRefetchInterval(intervalMs: number = CHAIN_WS_REFETCH_MS) {
   };
 }
 
+/**
+ * Keeps the previous chain (and its spot price) on screen while only the
+ * expiry changes, so switching expiries within the same underlying doesn't
+ * flicker. Discards it when the underlying or exchange changes so a stale
+ * spot/chain from a different instrument never lingers on screen.
+ */
+function samePlaceholderInstrument(
+  exchange_code: string,
+  stock_code: string,
+) {
+  return (
+    prev: ChainApiResponse | undefined,
+    prevQuery: Query<ChainApiResponse, Error> | undefined,
+  ): ChainApiResponse | undefined => {
+    if (!prev || !prevQuery) return undefined;
+    const key = prevQuery.queryKey;
+    const prevExchange = key[key.length - 4];
+    const prevStock = key[key.length - 3];
+    return prevExchange === exchange_code && prevStock === stock_code.trim()
+      ? prev
+      : undefined;
+  };
+}
+
 export function chainQueryOptions({
   queryKeyPrefix,
   stock_code,
@@ -67,7 +91,7 @@ export function chainQueryOptions({
     enabled: enabled && ready,
     staleTime: CHAIN_STALE_MS,
     refetchInterval: chainRefetchInterval(refetchIntervalMs),
-    placeholderData: (prev: any) => prev,
+    placeholderData: samePlaceholderInstrument(exchange_code, stock_code),
   };
 }
 
@@ -96,6 +120,6 @@ export function payoffQuoteQueryOptions({
     enabled: enabled && ready,
     staleTime: CHAIN_STALE_MS,
     refetchInterval: chainRefetchInterval(refetchIntervalMs),
-    placeholderData: (prev: any) => prev,
+    placeholderData: samePlaceholderInstrument(exchange_code, stock_code),
   };
 }

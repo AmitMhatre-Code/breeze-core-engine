@@ -207,12 +207,18 @@ async def post_heartbeat() -> dict | None:
         return None
 
     url = f"{base}/api/public/heartbeat"
-    payload: dict[str, str] = {
+    payload: dict[str, object] = {
         "public_ip": public_ip,
         "version": _reported_version(),
     }
     if key:
         payload["license_key"] = key
+    try:
+        from icici_breeze_backend.app.services.squareoff_watch import build_squareoff_watch
+
+        payload["squareoff_watch"] = build_squareoff_watch()
+    except Exception:  # noqa: BLE001 -- best-effort telemetry, never block heartbeat
+        logger.debug("portal heartbeat: squareoff_watch build failed", exc_info=True)
     try:
         async with httpx.AsyncClient(timeout=_HEARTBEAT_TIMEOUT_SEC) as client:
             resp = await client.post(url, json=payload)

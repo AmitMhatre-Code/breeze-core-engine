@@ -11,6 +11,7 @@ from icici_breeze_backend.app.services.dashboard_vix import (
     fetch_vix_options_atm_skew,
 )
 from icici_breeze_backend.app.services.system_chain_health import get_system_health_status
+from icici_breeze_backend.app.services.index_spot_feed import get_index_quotes_status
 
 router = APIRouter()
 breeze = processor()
@@ -27,6 +28,16 @@ async def get_dashboard_ws_health(ctx: RequestContext = Depends(get_request_cont
     broker yet.
     """
     return get_system_health_status()
+
+
+@router.get("/index-quotes")
+@router.get("/index-quotes/")
+async def get_dashboard_index_quotes(ctx: RequestContext = Depends(get_request_context)):
+    """Live NIFTY/SENSEX spot + day's change for the navbar ticker.
+
+    Same process-wide-state rationale as /ws-health above -- no broker_token check.
+    """
+    return get_index_quotes_status()
 
 
 @router.get("/bootstrap")

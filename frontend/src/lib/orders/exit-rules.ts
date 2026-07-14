@@ -40,6 +40,20 @@ export type ExitRuleEffectiveStatus =
   | "fire_failed"
   | "exited";
 
+/** One currently-open leg of a group rule's bucket, for the live-MTM overlay —
+ * mirrors the backend's `SquareOffRuleLiveLeg` (joined live from the P&L
+ * engine's position registry, not the rule's own fired-order storage).
+ * `action` is the position's own entry side (BUY/SELL), already correct for
+ * the MTM formula — no inversion needed, unlike Leg·GTT's `action`. */
+export type ExitRuleLeg = {
+  scripKey: string;
+  strikePrice: string;
+  right: string;
+  action: string | null;
+  quantity: string;
+  averagePrice: number | null;
+};
+
 export type ExitRuleRow = {
   kind: "group" | "leg_gtt";
   id: string;
@@ -48,11 +62,17 @@ export type ExitRuleRow = {
   exchangeCode: string;
   /** Group only — number of legs the rule covers. */
   legCount: number | null;
+  /** Group only — per-leg detail for the live-MTM overlay. */
+  legs: ExitRuleLeg[] | null;
   /** Leg·GTT only. */
   strikePrice: string | null;
   right: string | null;
+  /** Leg·GTT only — the GTT leg's *closing* side (see `ExitRuleLeg.action`), same
+   * un-invert-before-use caveat applies. */
   action: string | null;
   quantity: string | null;
+  /** Leg·GTT only — live entry price, straight passthrough of the backend join. */
+  averagePrice: number | null;
   effectiveStatus: ExitRuleEffectiveStatus;
   /** Group: ₹ P&L target/stop. Leg·GTT: ₹ trigger price target/stop. Same shape, different unit. */
   targetValue: number | null;
@@ -63,7 +83,20 @@ export type ExitRuleRow = {
   placedAt: string | null;
   resolvedAt: string | null;
   orders: RuleSpawnedOrderRow[];
+  /** Group rules only — per-leg error text from the broker/dispatch attempt, joined,
+   * populated when effectiveStatus is 'fire_failed'. */
+  failureReason: string | null;
 };
+
+/** Joins the per-leg error strings captured when a group rule's fire attempt fails
+ * (`squareoff_dispatcher.py`'s `leg_results`) into one user-facing message. */
+function buildFailureReason(rule: SquareOffRuleRecord): string | null {
+  const errors = (rule.leg_results ?? [])
+    .map((leg) => leg.error?.trim())
+    .filter((err): err is string => !!err);
+  if (errors.length === 0) return null;
+  return Array.from(new Set(errors)).join(" ");
+}
 
 function isExecuted(row: RuleSpawnedOrderRow): boolean {
   return String(row.status ?? "").trim().toLowerCase().includes("execut");
@@ -125,6 +158,7 @@ export function buildExitRuleRows(
 
   for (const rule of squareOffRules) {
     const orders = ordersByRule.get(`squareoff_rule:${rule.id}`) ?? [];
+    const effectiveStatus = groupEffectiveStatus(rule.status, orders);
     rows.push({
       kind: "group",
       id: rule.id,
@@ -132,11 +166,22 @@ export function buildExitRuleRows(
       expiryDisplay: rule.expiry_display,
       exchangeCode: rule.exchange_code,
       legCount: rule.leg_results?.length ?? null,
+      legs: rule.live_legs
+        ? rule.live_legs.map((leg) => ({
+            scripKey: leg.scrip_key,
+            strikePrice: String(leg.strike_price),
+            right: leg.right,
+            action: leg.action,
+            quantity: String(leg.quantity),
+            averagePrice: leg.average_price,
+          }))
+        : null,
       strikePrice: null,
       right: null,
       action: null,
       quantity: null,
-      effectiveStatus: groupEffectiveStatus(rule.status, orders),
+      averagePrice: null,
+      effectiveStatus,
       targetValue: rule.profit_target_pnl,
       stopValue: rule.loss_limit_pnl,
       targetPct: rule.target_premium_pct,
@@ -144,6 +189,7 @@ export function buildExitRuleRows(
       placedAt: rule.created_at ?? null,
       resolvedAt: rule.fired_at ?? null,
       orders,
+      failureReason: effectiveStatus === "fire_failed" ? buildFailureReason(rule) : null,
     });
   }
 
@@ -163,10 +209,12 @@ export function buildExitRuleRows(
       expiryDisplay: gtt.expiry_display ?? "",
       exchangeCode: gtt.exchange_code ?? "NFO",
       legCount: null,
+      legs: null,
       strikePrice: gtt.strike_price,
       right: gtt.right,
       action: gtt.legs[0]?.action ?? null,
       quantity: gtt.quantity,
+      averagePrice: gtt.average_price ?? null,
       effectiveStatus: legGttEffectiveStatus(orders),
       targetValue: parseNum(targetLeg?.trigger_price),
       stopValue: parseNum(stopLeg?.trigger_price),
@@ -175,12 +223,20 @@ export function buildExitRuleRows(
       placedAt: gtt.order_datetime ?? null,
       resolvedAt: null,
       orders,
+      failureReason: null,
     });
   }
 
   return rows;
 }
 
+/** 'fire_failed' counts as active (not History) -- it needs the user's attention to
+ * retry or clean up, not a status they'd only think to look for after the fact. */
 export function isExitRuleActive(status: ExitRuleEffectiveStatus): boolean {
-  return status === "armed" || status === "triggered" || status === "fired";
+  return (
+    status === "armed" ||
+    status === "triggered" ||
+    status === "fired" ||
+    status === "fire_failed"
+  );
 }

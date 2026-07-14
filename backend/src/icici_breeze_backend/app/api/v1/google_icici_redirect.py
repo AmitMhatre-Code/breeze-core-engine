@@ -129,7 +129,7 @@ async def redirect_to_icici_login(request: Request) -> RedirectResponse:
         access_token = handler.create_access_token(user_id, user_id, google_id=google_id)
         mock_broker = getattr(cfg, "ICICI_MOCK_BROKER_COOKIE_VALUE", "mock") or "mock"
         response = RedirectResponse(url=frontend_url("/dashboard"), status_code=302)
-        _set_auth_cookies(response, mock_broker, access_token, None)
+        _set_auth_cookies(response, mock_broker, access_token, None, user_id)
         _delete_cookie(response, DIRECT_ICICI_COOKIE)
         _delete_cookie(response, BROKER_RECOVERY_BOOTSTRAP_COOKIE)
         _delete_cookie(response, BROKER_RECOVERY_PENDING_COOKIE)

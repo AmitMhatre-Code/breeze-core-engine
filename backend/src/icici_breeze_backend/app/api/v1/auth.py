@@ -89,6 +89,7 @@ async def auth_direct_login(request: Request, body: DirectLoginRequest):
             getattr(cfg, "ICICI_MOCK_BROKER_COOKIE_VALUE", "mock"),
             access_token,
             full_secret,
+            uid,
         )
         from icici_breeze_backend.app.services.portal_deployment_login import notify_portal_deployment_login
         from icici_breeze_backend.app.services.system_chain_health import (
@@ -126,11 +127,13 @@ async def logout_endpoint(ctx: RequestContext = Depends(get_current_user), reque
     ip_address = request_obj.client.host if request_obj.client else None
     request_id = getattr(request_obj.state, "correlation_id", None)
 
+    from icici_breeze_backend.app.repositories.broker_session import clear_broker_session_token
     from icici_breeze_backend.app.services.breeze_session_cache import evict
     from icici_breeze_backend.app.services.broker_snapshot_cache import evict as evict_snapshot
 
     evict(user_id, ctx.broker_token or "")
     evict_snapshot(user_id, ctx.broker_token or "")
+    clear_broker_session_token(user_id)
 
     response = JSONResponse(content=LogoutResponse().model_dump())
     response.delete_cookie(key=ICICI_BROKER_TOKEN_COOKIE, path="/")

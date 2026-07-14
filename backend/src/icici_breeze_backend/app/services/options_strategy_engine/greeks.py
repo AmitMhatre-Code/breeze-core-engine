@@ -6,6 +6,7 @@ from typing import Literal
 
 from icici_breeze_backend.app.services.iv_compute import DEFAULT_Q, DEFAULT_R, implied_volatility
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import sigma_for_pop
+from icici_breeze_backend.app.services.options_strategy_engine.iv_smile import is_trusted_quote, resolve_leg_sigma
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, QuoteRow, Right
 
 SnapPrefer = Literal["floor", "ceil", "nearest"]
@@ -251,27 +252,35 @@ def compute_atm_iv(ctx: EngineContext) -> float | None:
 
 
 def enrich_greeks(ctx: EngineContext) -> None:
-    """Back out IV and delta for every liquid quote in cache."""
+    """Back out IV and delta for every liquid quote in cache. Delta uses each quote's own IV
+    only when that quote is itself trust-gated (tight two-sided spread); otherwise it falls
+    back to the smile-interpolated sigma at that strike (from OTHER trust-gated quotes on the
+    same side), not flat ATM — avoids feeding a noisy thin-quote IV into its own delta."""
     t = ctx.t_years
-    fallback_sigma = sigma_for_pop(ctx)
     max_oi = max((q.oi for q in ctx.cache.values() if q.liquid), default=1) or 1
     max_depth = max(
         (min(q.total_buy_qty, q.total_sell_qty) for q in ctx.cache.values() if q.liquid),
         default=1,
     ) or 1
 
+    # Pass 1: invert IV + liquidity_score for every liquid quote.
     for q in ctx.cache.values():
         if not q.liquid:
             continue
         px = q.mid_price
         opt = "call" if q.right == "Call" else "put"
-        iv = implied_volatility(px, ctx.spot, q.strike, t, opt) if px > 0 else None
-        q.iv = iv
-        sigma = iv if iv and iv > 0 else fallback_sigma
-        q.delta = bs_delta(ctx.spot, float(q.strike), t, sigma, q.right)
+        q.iv = implied_volatility(px, ctx.spot, q.strike, t, opt) if px > 0 else None
         spread_penalty = 1.0 / (1.0 + q.spread) if q.spread > 0 else 1.0
         q.liquidity_score = (
             0.4 * (q.oi / max_oi)
             + 0.4 * (min(q.total_buy_qty, q.total_sell_qty) / max_depth)
             + 0.2 * spread_penalty
         )
+
+    # Pass 2: deltas, now that every quote's own IV is known and the smile can be built from it.
+    ctx.iv_smile_cache = None  # invalidate/force rebuild from the IVs pass 1 just computed
+    for q in ctx.cache.values():
+        if not q.liquid:
+            continue
+        sigma = q.iv if is_trusted_quote(q) else resolve_leg_sigma(ctx, float(q.strike), q.right)
+        q.delta = bs_delta(ctx.spot, float(q.strike), t, sigma, q.right)

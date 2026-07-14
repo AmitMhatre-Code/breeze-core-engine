@@ -20,17 +20,19 @@ from icici_breeze_backend.app.domain.gtt_exit_order import (
     GttExitOrderLeg,
     GttExitOrderListResponse,
     GttExitOrderRecord,
+    GttExitOrderRowRecord,
     GttExitOrderStatusResponse,
     PlaceGttExitOrderRequest,
     PlaceGttExitOrderResponse,
 )
-from icici_breeze_backend.app.services import gtt_order_book_cache
+from icici_breeze_backend.app.services import gtt_order_book_cache, portfolio_pnl_engine
 from icici_breeze_backend.app.services.gtt_exit_order_mapping import (
     fetch_all_gtt_raw_rows,
     is_fully_cancelled,
     map_gtt_order_book_rows,
 )
 from icici_breeze_backend.app.services.processor import processor
+from icici_breeze_backend.app.services.reference_data.scrip_index import contract_index_key
 from icici_breeze_backend.app.services.reference_data.scrip_master_sql import normalize_expiry_display
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
@@ -180,7 +182,25 @@ async def list_all_gtt_exit_orders(ctx: RequestContext = Depends(get_request_con
     if raw_rows is None:
         raw_rows = fetch_all_gtt_raw_rows(breeze, ctx.user_id)
         gtt_order_book_cache.set_rows(ctx.user_id, raw_rows)
-    return GttExitOrderListResponse(orders=map_gtt_order_book_rows(raw_rows))
+    rows = map_gtt_order_book_rows(raw_rows)
+    _attach_average_prices(ctx.user_id, rows)
+    return GttExitOrderListResponse(orders=rows)
+
+
+def _attach_average_prices(user_id: str, rows: list[GttExitOrderRowRecord]) -> None:
+    """Join each row's live entry price from the P&L engine's in-memory
+    position registry — ICICI's GTT order book has no entry-price field."""
+    avg_prices = portfolio_pnl_engine.average_prices_for_user(user_id)
+    if not avg_prices:
+        return
+    for row in rows:
+        if not row.stock_code or not row.exchange_code or not row.expiry_display or not row.right:
+            continue
+        strike = parse_strike(row.strike_price)
+        if strike is None:
+            continue
+        key = contract_index_key(row.exchange_code, row.stock_code, row.expiry_display, strike, row.right)
+        row.average_price = avg_prices.get(key)
 
 
 @router.delete("/{gtt_order_id}", response_model=CancelGttExitOrderResponse)

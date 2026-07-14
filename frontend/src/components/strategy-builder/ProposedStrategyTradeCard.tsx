@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { InfinitySymbol } from "@/components/shared/payoff/InfinitySymbol";
+import type { SigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { strategyOutlook } from "@/lib/strategy-builder/templates";
 import {
@@ -93,6 +94,7 @@ export function ProposedStrategyTradeCard({
   lotSize,
   spot,
   atmIv,
+  sigmaSmiles = null,
   expiryDate,
   selected,
   onSelect,
@@ -101,6 +103,8 @@ export function ProposedStrategyTradeCard({
   lotSize: number;
   spot: number | null;
   atmIv: number | null;
+  /** Per-strike IV smile (skew-aware); falls back to flat `atmIv` where a strike lacks trusted anchors. */
+  sigmaSmiles?: SigmaSmiles | null;
   expiryDate: string;
   selected: boolean;
   onSelect: () => void;
@@ -111,8 +115,8 @@ export function ProposedStrategyTradeCard({
   const tone = outlook ? OUTLOOK_BADGE_TONE[outlook] : null;
 
   const pop = useMemo(
-    () => computeTradePop(trade, spot, atmIv, expiryDate, lotSize),
-    [trade, spot, atmIv, expiryDate, lotSize],
+    () => computeTradePop(trade, spot, atmIv, expiryDate, lotSize, sigmaSmiles),
+    [trade, spot, atmIv, expiryDate, lotSize, sigmaSmiles],
   );
 
   if (skipped) {

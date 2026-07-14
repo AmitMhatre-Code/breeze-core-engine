@@ -99,4 +99,9 @@ def pnl_quote_key(scrip_key: str) -> str:
     return f"quotes:pnl:{scrip_key}"
 
 
+def index_spot_key(label: str) -> str:
+    """Live NIFTY/SENSEX index-tick cache for the navbar ticker (see `index_spot_feed`)."""
+    return f"quotes:index_spot:{label.lower()}"
+
+
 WS_TICK_DIRTY_CHANNEL = "ws:tick:dirty"

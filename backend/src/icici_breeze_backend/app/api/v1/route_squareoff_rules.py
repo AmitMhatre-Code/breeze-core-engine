@@ -8,6 +8,7 @@ from icici_breeze_backend.app.auth.context import RequestContext, get_request_co
 from icici_breeze_backend.app.domain.squareoff_rule import (
     ArmSquareOffRuleRequest,
     SquareOffRuleListResponse,
+    SquareOffRuleLiveLeg,
     SquareOffRuleRecord,
 )
 from icici_breeze_backend.app.repositories import squareoff_rules as repo
@@ -27,7 +28,36 @@ async def list_rules(ctx: RequestContext = Depends(get_request_context)):
 async def list_rules_for_exit_board(ctx: RequestContext = Depends(get_request_context)):
     """Orders page > Profit Booking / Stop Loss table — includes fire_failed/fired
     history alongside armed/triggered, unlike Portfolio's own badge query above."""
-    return SquareOffRuleListResponse(rules=repo.list_all_rules_for_exit_board(ctx.user_id))
+    rules = repo.list_all_rules_for_exit_board(ctx.user_id)
+    _attach_live_legs(ctx.user_id, rules)
+    return SquareOffRuleListResponse(rules=rules)
+
+
+def _attach_live_legs(user_id: str, rules: list[SquareOffRuleRecord]) -> None:
+    """Join each rule's currently-open legs from the P&L engine's live
+    position registry, for the Orders page's Current MTM column.
+
+    `rule.leg_results` (stored with the rule) only exists once the rule has
+    *fired* — for a still-armed rule (the common case: watching, not yet
+    triggered) there's no leg data on the rule itself at all, only the
+    threshold. The actual open legs live in Portfolio's own position data,
+    the same source `portfolio_pnl_engine` tracks."""
+    for rule in rules:
+        legs = portfolio_pnl_engine.group_legs_for_user(user_id, rule.stock_code, rule.expiry_display)
+        if not legs:
+            continue
+        rule.live_legs = [
+            SquareOffRuleLiveLeg(
+                scrip_key=leg.scrip_key,
+                stock_code=leg.stock_code,
+                strike_price=leg.strike,
+                right=leg.right,
+                quantity=leg.quantity,
+                action=leg.action,
+                average_price=leg.average_price,
+            )
+            for leg in legs
+        ]
 
 
 @router.post("", response_model=SquareOffRuleRecord)

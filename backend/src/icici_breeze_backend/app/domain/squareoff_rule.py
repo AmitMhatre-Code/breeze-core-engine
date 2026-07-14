@@ -43,6 +43,22 @@ class SquareOffRuleLegResult(BaseModel):
         return self
 
 
+class SquareOffRuleLiveLeg(BaseModel):
+    """One currently-open leg of an armed group rule's (stock_code,
+    expiry_display) bucket, joined live from the P&L engine's position
+    registry — not persisted with the rule itself. `action` is the
+    position's own entry side (BUY/SELL), unlike `SquareOffRuleLegResult
+    .action` which is the closing order's (inverted) side."""
+
+    scrip_key: str
+    stock_code: str
+    strike_price: float
+    right: str
+    quantity: int
+    action: str
+    average_price: float
+
+
 class SquareOffRuleRecord(BaseModel):
     id: str
     stock_code: str
@@ -54,6 +70,7 @@ class SquareOffRuleRecord(BaseModel):
     stop_loss_premium_pct: int
     status: SquareOffRuleStatus
     leg_results: Optional[List[SquareOffRuleLegResult]] = None
+    live_legs: Optional[List[SquareOffRuleLiveLeg]] = None
     created_at: Optional[str] = None
     fired_at: Optional[str] = None
 

@@ -684,6 +684,7 @@ class TestPopBreakevenParity(unittest.TestCase):
             24400 + net_credit,
             ctx.t_years,
             sigma_for_pop(ctx),
+            sigma_for_pop(ctx),
         )
         detail = pop_detail_for_legs(ctx, ic_legs)
         ic_pop = detail.pop_pct
@@ -697,6 +698,7 @@ class TestPopBreakevenParity(unittest.TestCase):
             22750 - net_credit,
             24500 + net_credit,
             ctx.t_years,
+            sigma_for_pop(ctx),
             sigma_for_pop(ctx),
         )
         self.assertLess(ic_pop, long_wing_pop)

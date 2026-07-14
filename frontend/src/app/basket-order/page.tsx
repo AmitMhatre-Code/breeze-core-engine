@@ -38,7 +38,7 @@ import {
   premiumFromChainRow,
   strikesFromChain,
 } from "@/lib/strategy-builder/chain-quote";
-import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
+import { atmSigmaFromChain, buildSigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { expiryDisplayToYears, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import { useOnDemandBasketMargin } from "@/lib/strategy-builder/real-margin";
 import { sb } from "@/lib/strategy-builder/ui";
@@ -145,6 +145,12 @@ export default function BasketOrderPage() {
     if (!chainSuccess) return null;
     const T = expiryDisplayToYears(expiryDate || "01-Jan-2099");
     return atmSigmaFromChain(chainSuccess, T);
+  }, [chainSuccess, expiryDate]);
+
+  const sigmaSmiles = useMemo(() => {
+    if (!chainSuccess) return null;
+    const T = expiryDisplayToYears(expiryDate || "01-Jan-2099");
+    return buildSigmaSmiles(chainSuccess, T);
   }, [chainSuccess, expiryDate]);
 
   const section1Complete = Boolean(stockCode.trim() && expiryDate.trim());
@@ -449,6 +455,7 @@ export default function BasketOrderPage() {
                 legs={legs}
                 spot={spot}
                 atmIv={atmIv}
+                sigmaSmiles={sigmaSmiles}
                 expiryDate={expiryDate}
                 lotSize={lotSize}
                 ivShockPct={ivShockPct}

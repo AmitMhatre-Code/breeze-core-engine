@@ -159,13 +159,26 @@ def _cached_chain_spot(exchange_code: str, stock_code: str) -> float | None:
     return _parse_positive_spot(cached.get("spot_price"))
 
 
+def remember_chain_spot(exchange_code: str, stock_code: str, spot: float | None) -> float | None:
+    """Public entry point for external live-spot sources (e.g. `index_spot_feed`'s
+    NIFTY/SENSEX index ticks) to seed the same cache `_resolve_chain_spot` reads
+    first -- keeping it warm from a source that doesn't depend on bhavcopy/REST
+    lets `chain_readiness.is_chain_complete` reliably use its lenient ATM-window
+    gate instead of falling back to requiring every tradeable strike to tick."""
+    return _remember_chain_spot(exchange_code, stock_code, spot)
+
+
 def _spot_from_bhavcopy(
     stock_code: str,
     expiry_display: str,
     exchange_code: str,
     strikes: list[Strike],
 ) -> float | None:
-    for strike in strikes[:8]:
+    """Scans every tradeable strike, not just the first few -- bhavcopy only carries
+    a row for strikes that actually traded that day, and for thinner chains (e.g.
+    Sensex weeklies) the deep extremes of the tradeable-strike range routinely have
+    no trades at all, so checking a handful of arbitrary strikes was fragile."""
+    for strike in strikes:
         for right in (cfg.CALL, cfg.PUT):
             row = _lookup_bhav_row(stock_code, expiry_display, right, strike, exchange_code)
             if not row:

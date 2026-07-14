@@ -3,6 +3,7 @@
 import { useId, useMemo } from "react";
 import { InfinitySymbol } from "@/components/shared/payoff/InfinitySymbol";
 import { PayoffChart } from "@/components/shared/payoff/PayoffChart";
+import { blendedSigmaForLegs, sigmaForLeg, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
@@ -123,6 +124,7 @@ export function BasketPayoffPanel({
   legs,
   spot,
   atmIv,
+  sigmaSmiles = null,
   expiryDate,
   lotSize,
   ivShockPct,
@@ -136,6 +138,8 @@ export function BasketPayoffPanel({
   legs: StrategyLeg[];
   spot: number | null;
   atmIv: number | null;
+  /** Per-strike IV smile (skew-aware); falls back to flat `atmIv` where a strike lacks trusted anchors. */
+  sigmaSmiles?: SigmaSmiles | null;
   expiryDate: string;
   lotSize: number;
   ivShockPct: number;
@@ -147,7 +151,6 @@ export function BasketPayoffPanel({
 }) {
   const T = useMemo(() => expiryDisplayToYears(expiryDate), [expiryDate]);
   const baseSigma = atmIv != null && atmIv > 0 ? atmIv : 0.2;
-  const sigma = baseSigma * (1 + ivShockPct / 100);
   const { minS, maxS } = useMemo(
     () => (spot != null ? payoffChartSpotDomain(spot) : { minS: 0, maxS: 1 }),
     [spot],
@@ -171,24 +174,39 @@ export function BasketPayoffPanel({
     let xt: number[] = [];
     let yt: number[] = [];
     if (showToday && T > 0) {
-      const r = scanMarkToModelCurve(minS, maxS, steps, L, lotSize, T, sigma);
+      const r = scanMarkToModelCurve(
+        minS,
+        maxS,
+        steps,
+        L,
+        lotSize,
+        T,
+        (leg) => sigmaForLeg(sigmaSmiles, leg, spot, baseSigma) * (1 + ivShockPct / 100),
+      );
       xt = r.xs;
       yt = r.ys;
     }
     return { xs: x1, ys: y1, summary: sum, xsToday: xt, ysToday: yt };
-  }, [legs, minS, maxS, spot, sigma, T, lotSize, showToday]);
+  }, [legs, minS, maxS, spot, baseSigma, sigmaSmiles, ivShockPct, T, lotSize, showToday]);
 
   const pop = useMemo(() => {
     if (spot == null || !legs.length) return 0;
+    const sigma = blendedSigmaForLegs(sigmaSmiles, legs, spot, lotSize, baseSigma) * (1 + ivShockPct / 100);
     return estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
-  }, [spot, T, sigma, legs, lotSize]);
+  }, [spot, T, baseSigma, sigmaSmiles, ivShockPct, legs, lotSize]);
 
   const greeks = useMemo(() => {
     if (spot == null || T <= 0 || !legs.length) {
       return { delta: 0, gamma: 0, vega: 0, thetaPerDay: 0 };
     }
-    return portfolioGreeks(spot, legs, lotSize, T, sigma);
-  }, [spot, T, sigma, legs, lotSize]);
+    return portfolioGreeks(
+      spot,
+      legs,
+      lotSize,
+      T,
+      (leg) => sigmaForLeg(sigmaSmiles, leg, spot, baseSigma) * (1 + ivShockPct / 100),
+    );
+  }, [spot, T, baseSigma, sigmaSmiles, ivShockPct, legs, lotSize]);
 
   const payoffTitleId = useId();
   const payoffDescId = useId();

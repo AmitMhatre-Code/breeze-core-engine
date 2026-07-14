@@ -1,6 +1,7 @@
 """Wait for complete canonical option chains before serving to clients."""
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Callable
 
@@ -10,6 +11,8 @@ from icici_breeze_backend.app.db.redis_client import cache_get_json
 from icici_breeze_backend.app.services.reference_data.keys import canonical_chain_key
 from icici_breeze_backend.app.services.reference_data.scrip_index import list_tradeable_strikes_memory
 from icici_breeze_backend.app.services.reference_data.tradable_contracts import is_tradeable_contract
+
+_logger = logging.getLogger(__name__)
 
 
 def _wait_timeout_ms() -> int:
@@ -86,11 +89,15 @@ def is_chain_complete(
     cells) and fill in as later requests re-poll the same canonical chain. If `spot` is
     unavailable, falls back to requiring every tradeable strike (the old behavior).
     """
+    label = f"{exchange_code}/{stock_code} {expiry_display}"
+
     if not isinstance(payload, dict):
+        _logger.debug("chain incomplete %s: no payload", label)
         return False
 
     chain_rows = payload.get("chain_rows") or []
     if not chain_rows:
+        _logger.debug("chain incomplete %s: empty chain_rows", label)
         return False
 
     row_by_strike: dict[Strike, dict[str, Any]] = {}
@@ -105,15 +112,28 @@ def is_chain_complete(
         stock_code, expiry_display, exchange_code=exchange_code
     )
     if not tradeable_strikes:
+        _logger.debug("chain incomplete %s: no tradeable strikes", label)
         return False
 
     if set(row_by_strike.keys()) != set(tradeable_strikes):
+        _logger.debug(
+            "chain incomplete %s: row/strike mismatch (rows=%d strikes=%d)",
+            label, len(row_by_strike), len(tradeable_strikes),
+        )
         return False
 
+    # Diagnostic aid: when `spot` never resolves for a thinner chain (e.g. BSE
+    # Sensex weeklies), the gate below silently widens to require every tradeable
+    # strike, which a less liquid chain may never satisfy inside the wait window --
+    # log which gate is active so that failure mode is visible without guessing.
+    gate = "atm_window"
     required_strikes = set(tradeable_strikes)
     if spot is not None and spot > 0:
         required_strikes = _atm_window_strikes(tradeable_strikes, spot)
+    else:
+        gate = "all_strikes_no_spot"
 
+    missing = 0
     for strike in tradeable_strikes:
         if strike not in required_strikes:
             continue
@@ -125,7 +145,14 @@ def is_chain_complete(
                 continue
             cell = row.get(side)
             if not _cell_has_quote(cell, exchange_code=exchange_code):
-                return False
+                missing += 1
+
+    if missing:
+        _logger.debug(
+            "chain incomplete %s: gate=%s spot=%s missing=%d contract-quotes out of %d required strikes",
+            label, gate, spot, missing, len(required_strikes),
+        )
+        return False
     return True
 
 

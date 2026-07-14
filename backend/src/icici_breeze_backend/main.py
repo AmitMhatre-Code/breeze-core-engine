@@ -212,6 +212,11 @@ def _ensure_app_database() -> None:
             )
 
             ensure_squareoff_rules_table(db_path)
+            from icici_breeze_backend.app.db.broker_session_migrate import (
+                ensure_broker_session_table,
+            )
+
+            ensure_broker_session_table(db_path)
         except Exception:
             _logger.exception("user_account schema migration failed")
 

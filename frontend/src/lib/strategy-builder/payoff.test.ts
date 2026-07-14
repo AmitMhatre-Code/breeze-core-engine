@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { bsCallDelta, bsCallPrice, bsPutDelta, bsPutPrice } from "@/lib/strategy-builder/blackScholes";
 import {
+  portfolioGreeks,
+  portfolioMarkToModel,
   portfolioPayoffAtExpiry,
   scanPayoffCurve,
   summarizePayoffExact,
@@ -120,5 +123,31 @@ describe("payoff", () => {
     expect(maxLoss).toBeLessThan(0);
     expect(Number.isFinite(maxLoss)).toBe(true);
     expect(portfolioPayoffAtExpiry(25_000, legs, 65)).toBeCloseTo(maxLoss, -2);
+  });
+
+  it("portfolioMarkToModel and portfolioGreeks resolve each leg's own sigma via a per-leg function", () => {
+    const callLeg: StrategyLeg = { id: "c", right: "Call", side: "Buy", strike: 100, lots: 1, premiumPerUnit: 5 };
+    const putLeg: StrategyLeg = { id: "p", right: "Put", side: "Buy", strike: 90, lots: 1, premiumPerUnit: 4 };
+    const legs = [callLeg, putLeg];
+    const S = 95;
+    const T = 0.1;
+    const lotSize = 1;
+    const sigmaByLeg = (leg: StrategyLeg) => (leg.id === "c" ? 0.15 : 0.35);
+
+    const modelViaResolver = portfolioMarkToModel(S, legs, lotSize, T, sigmaByLeg);
+    const expectedModel =
+      (bsCallPrice(S, callLeg.strike, T, 0.15) - callLeg.premiumPerUnit!) +
+      (bsPutPrice(S, putLeg.strike, T, 0.35) - putLeg.premiumPerUnit!);
+    expect(modelViaResolver).toBeCloseTo(expectedModel, 6);
+
+    // A flat scalar sigma must not equal the per-leg-resolved result here (sanity check that
+    // the resolver is actually taking effect, not silently ignored).
+    const modelViaFlatSigma = portfolioMarkToModel(S, legs, lotSize, T, 0.15);
+    expect(modelViaResolver).not.toBeCloseTo(modelViaFlatSigma, 6);
+
+    const greeksViaResolver = portfolioGreeks(S, legs, lotSize, T, sigmaByLeg);
+    const expectedDelta =
+      bsCallDelta(S, callLeg.strike, T, 0.15) + bsPutDelta(S, putLeg.strike, T, 0.35);
+    expect(greeksViaResolver.delta).toBeCloseTo(expectedDelta, 6);
   });
 });

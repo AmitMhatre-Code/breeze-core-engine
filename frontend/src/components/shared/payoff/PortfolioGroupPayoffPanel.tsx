@@ -8,7 +8,12 @@ import { PayoffScenarioControls } from "@/components/shared/payoff/PayoffScenari
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { chainLotSize, rowsToStrategyLegs } from "@/lib/portfolio/legsFromRows";
-import { atmSigmaFromChain } from "@/lib/strategy-builder/chainIv";
+import {
+  atmSigmaFromChain,
+  blendedSigmaForLegs,
+  buildSigmaSmiles,
+  sigmaForLeg,
+} from "@/lib/strategy-builder/chainIv";
 import { payoffQuoteQueryOptions } from "@/lib/strategy-builder/chain-query";
 import { usePnlRecomputeRefetchMs } from "@/lib/portfolio/usePnlRecomputeRefetchMs";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
@@ -102,6 +107,10 @@ export function PortfolioGroupPayoffPanel({
   const spot = chainSuccess?.spot_price ?? null;
   const T = expiryDisplayToYears(expiryDisplay || "01-Jan-2099");
   const sigma = chainSuccess ? atmSigmaFromChain(chainSuccess, T) : 0.22;
+  const sigmaSmiles = useMemo(
+    () => (chainSuccess ? buildSigmaSmiles(chainSuccess, T) : null),
+    [chainSuccess, T],
+  );
 
   const liveDteDays = Math.max(0, Math.round(T * 365));
   const dteDays = dteOverrideDays ?? liveDteDays;
@@ -177,11 +186,21 @@ export function PortfolioGroupPayoffPanel({
       legs,
       lotSize,
       tEffective,
-      sigmaEffective,
+      spot != null
+        ? (leg) => sigmaForLeg(sigmaSmiles, leg, spot, sigma) * (1 + ivShockPct / 100)
+        : sigmaEffective,
     );
     const exactSummary = summarizePayoffExact(legs, lotSize, spot);
     const popVal =
-      spot != null ? estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize) : 0;
+      spot != null
+        ? estimateProbabilityOfProfit(
+            spot,
+            T,
+            blendedSigmaForLegs(sigmaSmiles, legs, spot, lotSize, sigma),
+            legs,
+            lotSize,
+          )
+        : 0;
     return {
       xs: x1,
       ys: y1,
@@ -190,7 +209,7 @@ export function PortfolioGroupPayoffPanel({
       xsToday: x2,
       ysToday: y2,
     };
-  }, [legs, minS, maxS, spot, lotSize, T, sigma, tEffective, sigmaEffective]);
+  }, [legs, minS, maxS, spot, lotSize, T, sigma, sigmaSmiles, ivShockPct, tEffective, sigmaEffective]);
 
   const hasLegs = legs.length > 0;
 

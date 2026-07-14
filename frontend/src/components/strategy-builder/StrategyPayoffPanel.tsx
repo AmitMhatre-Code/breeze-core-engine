@@ -4,6 +4,7 @@ import { useId, useMemo, useState } from "react";
 import { InfinitySymbol } from "@/components/shared/payoff/InfinitySymbol";
 import { PayoffChart } from "@/components/shared/payoff/PayoffChart";
 import { PayoffScenarioControls } from "@/components/shared/payoff/PayoffScenarioControls";
+import { blendedSigmaForLegs, sigmaForLeg, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
   estimateProbabilityOfProfit,
@@ -34,6 +35,7 @@ export function StrategyPayoffPanel({
   legs,
   spot,
   atmIv,
+  sigmaSmiles = null,
   expiryDate,
   lotSize,
 }: {
@@ -41,6 +43,8 @@ export function StrategyPayoffPanel({
   legs: StrategyLeg[];
   spot: number | null;
   atmIv: number | null;
+  /** Per-strike IV smile (skew-aware); falls back to flat `atmIv` where a strike lacks trusted anchors. */
+  sigmaSmiles?: SigmaSmiles | null;
   expiryDate: string;
   lotSize: number;
 }) {
@@ -55,7 +59,6 @@ export function StrategyPayoffPanel({
   const liveDteDays = Math.max(0, Math.round(T * 365));
   const dteDays = dteOverrideDays ?? liveDteDays;
   const tEffective = dteDays / 365;
-  const sigmaEffective = sigma * (1 + ivShockPct / 100);
 
   const { minS, maxS } = useMemo(
     () => (spot != null ? payoffChartSpotDomain(spot) : { minS: 0, maxS: 1 }),
@@ -109,23 +112,35 @@ export function StrategyPayoffPanel({
       L,
       lotSize,
       tEffective,
-      sigmaEffective,
+      (leg) => sigmaForLeg(sigmaSmiles, leg, spot, sigma) * (1 + ivShockPct / 100),
     );
     const sum = summarizePayoffExact(L, lotSize, spot);
     return { xs: x1, ys: y1, summary: sum, xsToday: x2, ysToday: y2 };
-  }, [legs, minS, maxS, spot, lotSize, tEffective, sigmaEffective]);
+  }, [legs, minS, maxS, spot, lotSize, tEffective, sigma, sigmaSmiles, ivShockPct]);
 
   const pop = useMemo(() => {
     if (spot == null || !legs.length) return 0;
-    return estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
-  }, [spot, T, sigma, legs, lotSize]);
+    return estimateProbabilityOfProfit(
+      spot,
+      T,
+      blendedSigmaForLegs(sigmaSmiles, legs, spot, lotSize, sigma),
+      legs,
+      lotSize,
+    );
+  }, [spot, T, sigma, sigmaSmiles, legs, lotSize]);
 
   const greeks = useMemo(() => {
     if (spot == null || tEffective <= 0 || !legs.length) {
       return { delta: 0, gamma: 0, vega: 0, thetaPerDay: 0 };
     }
-    return portfolioGreeks(spot, legs, lotSize, tEffective, sigmaEffective);
-  }, [spot, tEffective, sigmaEffective, legs, lotSize]);
+    return portfolioGreeks(
+      spot,
+      legs,
+      lotSize,
+      tEffective,
+      (leg) => sigmaForLeg(sigmaSmiles, leg, spot, sigma) * (1 + ivShockPct / 100),
+    );
+  }, [spot, tEffective, sigma, sigmaSmiles, ivShockPct, legs, lotSize]);
 
   const payoffTitleId = useId();
   const payoffDescId = useId();

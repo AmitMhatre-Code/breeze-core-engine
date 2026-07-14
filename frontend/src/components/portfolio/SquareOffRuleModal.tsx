@@ -182,6 +182,16 @@ export function SquareOffRuleModal({
   };
 
   const status = existingRule ? statusCopy[existingRule.status] : null;
+  const fireFailureReason =
+    existingRule?.status === "fire_failed"
+      ? Array.from(
+          new Set(
+            (existingRule.leg_results ?? [])
+              .map((leg) => leg.error?.trim())
+              .filter((err): err is string => !!err),
+          ),
+        ).join(" ")
+      : null;
 
   const telegramStatusQ = useQuery({
     queryKey: TELEGRAM_STATUS_QUERY_KEY,
@@ -219,6 +229,9 @@ export function SquareOffRuleModal({
           <p className="mt-1 text-sm leading-relaxed text-muted">
             {stockCode} &middot; {expiryDisplay}
           </p>
+          {fireFailureReason ? (
+            <p className="mt-1.5 text-sm leading-relaxed text-down">{fireFailureReason}</p>
+          ) : null}
         </div>
         <button
           type="button"

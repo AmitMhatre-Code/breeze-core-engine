@@ -171,6 +171,7 @@ class EngineContext:
     range_upper: float = 0.0
     unit_span_by_structure: dict[tuple, float] = field(default_factory=dict)
     progress: Any | None = None
+    iv_smile_cache: dict[Right, list[tuple[float, float]]] | None = field(default=None, repr=False)
 
     def effective_max_loss_budget(self) -> float | None:
         if self.allow_infinite_loss or self.max_loss_rupees is None:

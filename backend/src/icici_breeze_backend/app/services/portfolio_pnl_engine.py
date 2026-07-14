@@ -256,6 +256,29 @@ def latest_snapshot(user_id: str) -> dict[str, Any] | None:
     return dict(snap) if snap else None
 
 
+def average_prices_for_user(user_id: str) -> dict[str, float]:
+    """scrip_key -> average_price for every leg currently tracked for this
+    user. Cheap: dict copy under the registry lock, no Redis/broker call."""
+    with _registry_lock:
+        return {leg.scrip_key: leg.average_price for leg in _legs_by_user.get(user_id, {}).values()}
+
+
+def group_legs_for_user(user_id: str, stock_code: str, expiry_display: str) -> list[PositionLeg]:
+    """Live open legs for one (stock_code, expiry_display) group — the same
+    live position data Portfolio's own group rows are built from, not the
+    group square-off rule's own storage (which only records `leg_results`
+    once the rule has *fired*, i.e. after the position is already closed).
+    Empty once every leg in the group has closed, or before the registry has
+    been warmed this session."""
+    key = _group_key(stock_code, expiry_display)
+    with _registry_lock:
+        return [
+            leg
+            for leg in _legs_by_user.get(user_id, {}).values()
+            if _group_key(leg.stock_code, leg.expiry_display) == key
+        ]
+
+
 def _stale_after_seconds() -> float:
     try:
         return max(2.0, float(getattr(cfg, "PNL_STALE_QUOTE_SECONDS", 10.0)))

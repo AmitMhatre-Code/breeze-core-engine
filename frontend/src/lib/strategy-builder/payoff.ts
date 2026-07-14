@@ -16,6 +16,15 @@ function intrinsic(S: number, K: number, right: "Call" | "Put"): number {
   return right === "Call" ? Math.max(0, S - K) : Math.max(0, K - S);
 }
 
+/** A flat number applies to every leg; a function resolves each leg's own sigma (e.g. from a
+ * per-strike IV smile) — used by the deterministic (non-Monte-Carlo) pricing/greeks functions
+ * below, which price each leg independently and so have no shared-path constraint. */
+export type SigmaInput = number | ((leg: StrategyLeg) => number);
+
+function resolveSigma(sigma: SigmaInput, leg: StrategyLeg): number {
+  return typeof sigma === "function" ? sigma(leg) : sigma;
+}
+
 /** Strike from a leg (chain / UI may surface strings — must not be dropped from exact payoff breakpoints). */
 function finiteStrikeFromLeg(leg: StrategyLeg): number | null {
   const raw = leg.strike as unknown;
@@ -231,7 +240,7 @@ export function portfolioMarkToModel(
   legs: StrategyLeg[],
   lotSize: number,
   T: number,
-  sigma: number,
+  sigma: SigmaInput,
   r: number = DEFAULT_R,
   q: number = DEFAULT_Q,
 ): number {
@@ -239,10 +248,11 @@ export function portfolioMarkToModel(
   for (const leg of legs) {
     const units = Math.max(0, leg.lots) * lotSize;
     const prem = leg.premiumPerUnit ?? 0;
+    const legSigma = resolveSigma(sigma, leg);
     const model =
       leg.right === "Call"
-        ? bsCallPrice(S, leg.strike, T, sigma, r, q)
-        : bsPutPrice(S, leg.strike, T, sigma, r, q);
+        ? bsCallPrice(S, leg.strike, T, legSigma, r, q)
+        : bsPutPrice(S, leg.strike, T, legSigma, r, q);
     if (leg.side === "Buy") {
       total += units * (model - prem);
     } else {
@@ -259,7 +269,7 @@ export function scanMarkToModelCurve(
   legs: StrategyLeg[],
   lotSize: number,
   T: number,
-  sigma: number,
+  sigma: SigmaInput,
   r: number = DEFAULT_R,
   q: number = DEFAULT_Q,
 ): { xs: number[]; ys: number[] } {
@@ -287,7 +297,7 @@ export function portfolioGreeks(
   legs: StrategyLeg[],
   lotSize: number,
   T: number,
-  sigma: number,
+  sigma: SigmaInput,
   r: number = DEFAULT_R,
   q: number = DEFAULT_Q,
 ): PortfolioGreeks {
@@ -298,16 +308,17 @@ export function portfolioGreeks(
   for (const leg of legs) {
     const units = Math.max(0, leg.lots) * lotSize;
     const sign = leg.side === "Buy" ? 1 : -1;
+    const legSigma = resolveSigma(sigma, leg);
     if (leg.right === "Call") {
-      delta += sign * units * bsCallDelta(S, leg.strike, T, sigma, r, q);
-      gamma += sign * units * bsGamma(S, leg.strike, T, sigma, r, q);
-      vega += sign * units * bsVega(S, leg.strike, T, sigma, r, q);
-      theta += sign * units * bsCallTheta(S, leg.strike, T, sigma, r, q);
+      delta += sign * units * bsCallDelta(S, leg.strike, T, legSigma, r, q);
+      gamma += sign * units * bsGamma(S, leg.strike, T, legSigma, r, q);
+      vega += sign * units * bsVega(S, leg.strike, T, legSigma, r, q);
+      theta += sign * units * bsCallTheta(S, leg.strike, T, legSigma, r, q);
     } else {
-      delta += sign * units * bsPutDelta(S, leg.strike, T, sigma, r, q);
-      gamma += sign * units * bsGamma(S, leg.strike, T, sigma, r, q);
-      vega += sign * units * bsVega(S, leg.strike, T, sigma, r, q);
-      theta += sign * units * bsPutTheta(S, leg.strike, T, sigma, r, q);
+      delta += sign * units * bsPutDelta(S, leg.strike, T, legSigma, r, q);
+      gamma += sign * units * bsGamma(S, leg.strike, T, legSigma, r, q);
+      vega += sign * units * bsVega(S, leg.strike, T, legSigma, r, q);
+      theta += sign * units * bsPutTheta(S, leg.strike, T, legSigma, r, q);
     }
   }
   return {

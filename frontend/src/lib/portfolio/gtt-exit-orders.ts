@@ -62,6 +62,7 @@ export type GttExitOrderRowRecord = {
   order_datetime: string | null;
   legs: GttExitOrderLeg[];
   is_cancelled: boolean;
+  average_price: number | null;
 };
 
 export async function placeLegGttExitOrder(
