@@ -66,8 +66,8 @@ jobs:
           build-args: |
             PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64=${{ steps.portal_drm.outputs.public_key_b64 }}
             PORTAL_ALLOWED_HOSTS=${{ steps.portal_drm.outputs.allowed_hosts }}
-          cache-from: type=gha,scope=arm64
-          cache-to: type=gha,mode=max,scope=arm64
+          cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-arm64
+          cache-to: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-arm64,mode=max
 
       - name: Verify image contains no secrets or env files
         env:
