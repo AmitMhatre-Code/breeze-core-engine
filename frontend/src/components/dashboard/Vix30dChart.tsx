@@ -1,15 +1,7 @@
 "use client";
 
 import type { KeyboardEvent, PointerEvent } from "react";
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { DashboardChartSkeleton } from "@/components/dashboard/DashboardLoading";
 
 type Point = { date: string; value: number };
@@ -23,9 +15,6 @@ const PAD_B = 28;
 
 const LINE_BLUE = "var(--accent)";
 const LINE_WIDTH = 1.25;
-/** Target on-screen px for axis text (matches ~`text-[12px]` / small widget copy; SVG viewBox scaling otherwise blows it up). */
-const AXIS_LABEL_SCREEN_PX = 12;
-const HOVER_LABEL_SCREEN_PX = 12;
 const HOVER_BOX_W = 100;
 const HOVER_BOX_H = 38;
 const AREA_TOP_OPACITY = 0.38;
@@ -93,52 +82,6 @@ const MONTHS = [
   "Dec",
 ] as const;
 
-/**
- * The `<svg>` element's own rendered CSS width is the exact value the browser
- * divides by `W` to scale the `viewBox` — it must be the single source of
- * truth for font-size math (see `pxPerViewUnit` below). Taking `Math.max()`
- * across container/svg/parent (as this used to) lets a transiently-larger
- * sibling reading "win" during layout settling and get locked into state,
- * permanently mismatching the JS-computed scale factor against what the
- * browser actually renders — the direct cause of the tooltip/axis font size
- * being wrong (too small or too large) on some page loads but not others.
- *
- * Only fall back to the container/parent when the svg rect is exactly 0,
- * which is a documented WebKit/Safari first-layout-pass quirk.
- */
-function readChartLayoutWidthPx(
-  container: HTMLElement | null,
-  svg: SVGSVGElement | null,
-): number {
-  if (svg) {
-    const svgW = svg.getBoundingClientRect().width;
-    if (svgW > 0) return svgW;
-  }
-  if (container) {
-    const w = Math.max(
-      container.clientWidth,
-      container.offsetWidth,
-      container.getBoundingClientRect().width,
-    );
-    if (w > 0) return w;
-  }
-  const parent = container?.parentElement;
-  if (parent) {
-    return Math.max(
-      parent.clientWidth,
-      (parent as HTMLElement).offsetWidth,
-      parent.getBoundingClientRect().width,
-    );
-  }
-  return 0;
-}
-
-/** When layout width is still 0 (Safari first paint), cap by viewport so label font is never oversized. */
-function viewportWidthFallbackPx(): number {
-  if (typeof window === "undefined") return W;
-  return Math.min(window.innerWidth, 2000);
-}
-
 function monthStartTickIndices(series: Point[]): { i: number; label: string }[] {
   const out: { i: number; label: string }[] = [];
   let prevKey = "";
@@ -194,93 +137,6 @@ export function Vix30dChart({
   const [viewMode, setViewMode] = useState<"chart" | "table">("chart");
   const [keyboardI, setKeyboardI] = useState<number | null>(null);
   const gradId = useId().replace(/:/g, "");
-  const containerRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
-  /**
-   * CSS width for scaling SVG label font. Starts at `W` for stable SSR/hydration;
-   * refined from layout, with `innerWidth` fallback when Safari reports 0 until
-   * a later pass (avoids invisible labels and avoids oversized text).
-   */
-  const [svgClientW, setSvgClientW] = useState(W);
-
-  useLayoutEffect(() => {
-    const applyWidth = () => {
-      const m = readChartLayoutWidthPx(containerRef.current, svgRef.current);
-      const cap = viewportWidthFallbackPx();
-      const next = m > 0 ? m : cap;
-      setSvgClientW((prev) =>
-        Math.abs(prev - next) < 0.25 ? prev : next,
-      );
-    };
-
-    applyWidth();
-    const t0 = window.setTimeout(applyWidth, 0);
-    const t1 = window.setTimeout(applyWidth, 50);
-    const t2 = window.setTimeout(applyWidth, 150);
-
-    let raf = 0;
-    let n = 0;
-    const retry = () => {
-      applyWidth();
-      if (readChartLayoutWidthPx(containerRef.current, svgRef.current) > 0)
-        return;
-      if (n++ < 48) raf = requestAnimationFrame(retry);
-    };
-    if (readChartLayoutWidthPx(containerRef.current, svgRef.current) <= 0) {
-      raf = requestAnimationFrame(retry);
-    }
-
-    const onWinResize = () => applyWidth();
-    window.addEventListener("resize", onWinResize);
-
-    let io: IntersectionObserver | undefined;
-    const wrap = containerRef.current;
-    if (wrap && typeof IntersectionObserver !== "undefined") {
-      io = new IntersectionObserver(
-        (entries) => {
-          if (entries.some((e) => e.isIntersecting)) applyWidth();
-        },
-        { rootMargin: "80px", threshold: 0 },
-      );
-      io.observe(wrap);
-    }
-
-    const targets: Element[] = [];
-    if (wrap) targets.push(wrap);
-    const svg = svgRef.current;
-    if (svg) targets.push(svg);
-
-    const ros: ResizeObserver[] = [];
-    if (typeof ResizeObserver !== "undefined" && targets.length) {
-      const ro = new ResizeObserver((entries) => {
-        // Prefer the observer's own authoritative reading for the svg element
-        // (ground truth for viewBox scaling) over re-deriving it heuristically.
-        const svgEntry = entries.find((e) => e.target === svgRef.current);
-        const w = svgEntry?.contentRect.width;
-        if (w && w > 0) {
-          setSvgClientW((prev) => (Math.abs(prev - w) < 0.25 ? prev : w));
-        } else {
-          applyWidth();
-        }
-      });
-      for (const t of targets) ro.observe(t);
-      ros.push(ro);
-    }
-
-    return () => {
-      window.removeEventListener("resize", onWinResize);
-      window.clearTimeout(t0);
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-      cancelAnimationFrame(raf);
-      io?.disconnect();
-      for (const ro of ros) ro.disconnect();
-    };
-  }, []);
-
-  const pxPerViewUnit = Math.max(svgClientW, 1) / W;
-  const axisFontUser = AXIS_LABEL_SCREEN_PX / pxPerViewUnit;
-  const hoverFontUser = HOVER_LABEL_SCREEN_PX / pxPerViewUnit;
   const padL = compact ? 4 : PAD_L;
 
   const layout = useMemo(() => {
@@ -389,11 +245,12 @@ export function Vix30dChart({
     [series],
   );
 
-  useEffect(() => {
-    if (viewMode === "chart" && keyboardI == null && series?.length) {
-      setKeyboardI(series.length - 1);
-    }
-  }, [viewMode, keyboardI, series]);
+  // Adjust state during render (React-recommended alternative to an effect
+  // here): self-guards via `keyboardI == null`, which flips permanently once
+  // set, so this can't loop.
+  if (viewMode === "chart" && keyboardI == null && series?.length) {
+    setKeyboardI(series.length - 1);
+  }
 
   if (loading) {
     return (
@@ -497,8 +354,7 @@ export function Vix30dChart({
         </div>
       ) : (
       <div
-        ref={containerRef}
-        className="w-full min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40"
+        className="relative w-full min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40"
         tabIndex={0}
         role="group"
         aria-label="India VIX last three months. Use left and right arrow keys to move through dates."
@@ -508,7 +364,6 @@ export function Vix30dChart({
           {liveAnnouncement}
         </p>
         <svg
-          ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}
           className="block w-full min-w-0 cursor-crosshair touch-none overflow-visible"
           style={{ aspectRatio: `${W} / ${H}` }}
@@ -543,26 +398,15 @@ export function Vix30dChart({
             ? yTicks.map((tick) => {
             const y = PAD_T + innerH - ((tick - minV) / spread) * innerH;
             return (
-              <g key={tick}>
-                <line
-                  x1={padL}
-                  y1={y}
-                  x2={W - PAD_R}
-                  y2={y}
-                  className="stroke-zinc-200 dark:stroke-zinc-700/90"
-                  strokeWidth={0.45}
-                />
-                <text
-                  x={padL - 5}
-                  y={y}
-                  textAnchor="end"
-                  dominantBaseline="middle"
-                  className="fill-zinc-600 font-sans dark:fill-zinc-400"
-                  fontSize={axisFontUser}
-                >
-                  {tick.toFixed(1)}
-                </text>
-              </g>
+              <line
+                key={tick}
+                x1={padL}
+                y1={y}
+                x2={W - PAD_R}
+                y2={y}
+                className="stroke-zinc-200 dark:stroke-zinc-700/90"
+                strokeWidth={0.45}
+              />
             );
           })
             : null}
@@ -603,62 +447,52 @@ export function Vix30dChart({
               />
             </>
           ) : null}
-          {hoverLabel ? (
-            <g
-              pointerEvents="none"
-              style={{
-                filter: "drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45))",
-              }}
-            >
-              <rect
-                x={hoverLabel.x}
-                y={hoverLabel.y}
-                width={HOVER_BOX_W}
-                height={HOVER_BOX_H}
-                rx={4}
-                className="fill-zinc-900 stroke-zinc-600/70 dark:fill-[var(--elevated)] dark:stroke-[var(--border)]"
-                strokeWidth={0.75}
-              />
-              <text
-                x={hoverLabel.x + HOVER_BOX_W / 2}
-                y={hoverLabel.y + 15}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fill="rgb(244 244 245)"
-                className="font-mono"
-                fontSize={hoverFontUser}
-                fontWeight={600}
-              >
-                {hoverLabel.date}
-              </text>
-              <text
-                x={hoverLabel.x + HOVER_BOX_W / 2}
-                y={hoverLabel.y + 29}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fill={LINE_BLUE}
-                className="font-mono"
-                fontSize={hoverFontUser}
-                fontWeight={700}
-              >
-                {`VIX ${hoverLabel.val}`}
-              </text>
-            </g>
-          ) : null}
-          {xTicks.map(({ x, label }) => (
-            <text
-              key={label + x}
-              x={Math.min(Math.max(x, padL + 14), W - 14)}
-              y={H - 6}
-              textAnchor="middle"
-              dominantBaseline="auto"
-              className="fill-zinc-600 font-mono dark:fill-zinc-400"
-              fontSize={axisFontUser}
-            >
-              {label}
-            </text>
-          ))}
         </svg>
+        {!compact
+          ? yTicks.map((tick) => {
+              const y = PAD_T + innerH - ((tick - minV) / spread) * innerH;
+              return (
+                <span
+                  key={tick}
+                  className="pointer-events-none absolute -translate-y-1/2 text-right font-sans text-xs text-zinc-600 dark:text-zinc-400"
+                  style={{ left: 0, width: `${((padL - 5) / W) * 100}%`, top: `${(y / H) * 100}%` }}
+                >
+                  {tick.toFixed(1)}
+                </span>
+              );
+            })
+          : null}
+        {xTicks.map(({ x, label }) => (
+          <span
+            key={label + x}
+            className="pointer-events-none absolute -translate-x-1/2 -translate-y-full font-mono text-xs text-zinc-600 dark:text-zinc-400"
+            style={{
+              left: `${(Math.min(Math.max(x, padL + 14), W - 14) / W) * 100}%`,
+              top: `${((H - 6) / H) * 100}%`,
+            }}
+          >
+            {label}
+          </span>
+        ))}
+        {hoverLabel ? (
+          <div
+            className="pointer-events-none absolute flex flex-col items-center justify-center gap-0.5 rounded-md border border-zinc-600/70 bg-zinc-900 font-mono dark:border-[var(--border)] dark:bg-[var(--elevated)]"
+            style={{
+              left: `${(hoverLabel.x / W) * 100}%`,
+              top: `${(hoverLabel.y / H) * 100}%`,
+              width: `${(HOVER_BOX_W / W) * 100}%`,
+              height: `${(HOVER_BOX_H / H) * 100}%`,
+              boxShadow: "0 2px 6px rgba(0, 0, 0, 0.45)",
+            }}
+          >
+            <span className="text-xs font-semibold" style={{ color: "rgb(244 244 245)" }}>
+              {hoverLabel.date}
+            </span>
+            <span className="text-xs font-bold" style={{ color: LINE_BLUE }}>
+              {`VIX ${hoverLabel.val}`}
+            </span>
+          </div>
+        ) : null}
       </div>
       )}
 

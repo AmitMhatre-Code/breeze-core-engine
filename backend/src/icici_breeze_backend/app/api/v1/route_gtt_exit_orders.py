@@ -170,8 +170,16 @@ async def list_all_gtt_exit_orders(ctx: RequestContext = Depends(get_request_con
     Booking / Stop Loss), unlike the single-leg lookup above. This app has no other
     GTT-placing feature, so every row ICICI returns is treated as one of this app's
     Leg Exit Rules. Best-effort per exchange — one exchange failing doesn't blank the
-    whole list, same as `fetch_all_gtt_raw_rows`'s doc."""
-    raw_rows = fetch_all_gtt_raw_rows(breeze, ctx.user_id)
+    whole list, same as `fetch_all_gtt_raw_rows`'s doc.
+
+    Shares `gtt_order_book_cache` with `GET /book/data` (route_book.py) so that a
+    post-mutation refresh — which invalidates both the book and this list in the same
+    burst — doesn't fire two real ICICI gttorder calls back to back and trip ICICI's
+    own rate limit."""
+    raw_rows = gtt_order_book_cache.get(ctx.user_id)
+    if raw_rows is None:
+        raw_rows = fetch_all_gtt_raw_rows(breeze, ctx.user_id)
+        gtt_order_book_cache.set_rows(ctx.user_id, raw_rows)
     return GttExitOrderListResponse(orders=map_gtt_order_book_rows(raw_rows))
 
 

@@ -104,3 +104,37 @@ class TestPlanLegRedistribution:
         assert plan.cancel_order_ids == []
         assert plan.modify == []
         assert plan.place_new_quantities == []
+
+    def test_price_only_change_still_resubmits_open_orders(self):
+        # Quantity is unchanged (target == current), but a price-only change
+        # must still surface every open order in `modify` so it actually
+        # reaches the broker instead of silently no-op'ing.
+        orders = [
+            _order("1", 900, 450, status=cfg.PARTIAL_EXECUTED),
+            _order("2", 900, 900),
+        ]
+        plan = plan_leg_redistribution(orders, 1800, 1800, price_changed=True)
+        assert plan.cancel_order_ids == []
+        assert plan.place_new_quantities == []
+        assert {m["order_id"] for m in plan.modify} == {"1", "2"}
+        assert next(m for m in plan.modify if m["order_id"] == "1")["quantity"] == 900
+        assert next(m for m in plan.modify if m["order_id"] == "2")["quantity"] == 900
+
+    def test_price_only_change_with_no_open_orders_raises(self):
+        # Every order already fully filled — nothing left on the broker side
+        # to carry a price update, so this must be a clear error, not a
+        # silent success.
+        orders = [_order("1", 500, 0, status=cfg.EXECUTED)]
+        try:
+            plan_leg_redistribution(orders, 1800, 500, price_changed=True)
+        except LegModifyValidationError:
+            pass
+        else:
+            raise AssertionError("expected LegModifyValidationError")
+
+    def test_price_unchanged_stays_a_true_no_op(self):
+        orders = [_order("1", 1000, 1000)]
+        plan = plan_leg_redistribution(orders, 1800, 1000, price_changed=False)
+        assert plan.cancel_order_ids == []
+        assert plan.modify == []
+        assert plan.place_new_quantities == []

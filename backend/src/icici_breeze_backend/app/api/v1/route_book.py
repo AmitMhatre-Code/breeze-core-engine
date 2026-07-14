@@ -255,13 +255,20 @@ async def post_modify_leg(
         if aligned > 0:
             qty_per_order = aligned
 
-    try:
-        plan = plan_leg_redistribution(leg_orders, qty_per_order, new_quantity)
-    except LegModifyValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
     current_price = next((o.price for o in body.orders if o.price), None)
     old_quantity = sum(o.quantity for o in body.orders)
+    price_changed = (
+        body.new_price is not None
+        and str(body.new_price).strip() != ""
+        and str(body.new_price) != str(current_price)
+    )
+
+    try:
+        plan = plan_leg_redistribution(
+            leg_orders, qty_per_order, new_quantity, price_changed=price_changed
+        )
+    except LegModifyValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     result = breeze.execute_leg_modification(
         context.user_id,

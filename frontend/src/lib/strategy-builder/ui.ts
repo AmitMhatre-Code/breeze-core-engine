@@ -30,6 +30,8 @@ export const sb = {
   stickyBar: "rounded-[13px] border border-border bg-panel px-4 py-3",
   btnPrimary:
     "inline-flex items-center justify-center rounded-lg bg-accent-strong px-4 py-2.5 text-sm font-bold text-accent-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
+  btnPrimaryOutline:
+    "inline-flex items-center justify-center rounded-lg border border-accent bg-transparent px-4 py-2.5 text-sm font-bold text-accent transition hover:bg-border-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",  
   btnSecondary:
     "inline-flex items-center justify-center rounded-lg border border-border bg-transparent px-3.5 py-2 text-xs font-semibold text-foreground transition hover:bg-border-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
   btnDanger:

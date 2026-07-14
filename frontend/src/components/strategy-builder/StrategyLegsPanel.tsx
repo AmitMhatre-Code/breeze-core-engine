@@ -258,7 +258,7 @@ export function StrategyLegsPanel({
                 type="button"
                 disabled={calculateMarginsDisabled}
                 onClick={onCalculateMargins}
-                className={sb.btnSecondary}
+                className={sb.btnPrimaryOutline}
               >
                 {calculatingMargins ? "Calculating…" : "Calculate Margins"}
               </button>

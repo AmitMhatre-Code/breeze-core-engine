@@ -923,8 +923,12 @@ function OrdersBody() {
       });
     },
     onSuccess: (res) => {
-      if (!res.success && res.failures.length) {
-        setModifyError(res.failures.map((f) => `${f.ref}: ${f.error}`).join("; "));
+      if (!res.success) {
+        setModifyError(
+          res.failures.length
+            ? res.failures.map((f) => `${f.ref}: ${f.error}`).join("; ")
+            : "Could not modify this leg",
+        );
         return;
       }
       setModifyTarget(null);

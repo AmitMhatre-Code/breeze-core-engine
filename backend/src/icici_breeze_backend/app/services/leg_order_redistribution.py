@@ -53,11 +53,15 @@ def plan_leg_redistribution(
     orders: list[LegOrderState],
     qty_per_order: int,
     new_total_qty: int,
+    *,
+    price_changed: bool = False,
 ) -> LegRedistributionPlan:
     """Compute cancel/modify/place-new actions to reach `new_total_qty` for a leg.
 
     Raises LegModifyValidationError if new_total_qty is below the sum of
-    already-filled quantity across every order (that portion can never move).
+    already-filled quantity across every order (that portion can never move),
+    or if `price_changed` is set but this leg has no open order left to carry
+    the price update (fully filled — nothing left to modify on the broker side).
     """
     floor = filled_floor(orders)
     if new_total_qty < floor:
@@ -73,6 +77,24 @@ def plan_leg_redistribution(
     plan = LegRedistributionPlan(cancel_order_ids=[], modify=[], place_new_quantities=[])
 
     if target_open_total == current_open_total:
+        if price_changed:
+            # Quantity is unchanged, so the redistribution logic below would
+            # otherwise return a totally empty plan — but a price-only change
+            # still needs to reach the broker, so re-submit every open order
+            # at its current quantity purely to carry the new price.
+            if not open_orders:
+                raise LegModifyValidationError(
+                    "Cannot change price: this leg has no open quantity left "
+                    "to modify (already fully filled)."
+                )
+            for o in open_orders:
+                plan.modify.append(
+                    {
+                        "order_id": o.order_id,
+                        "exchange_code": o.exchange_code,
+                        "quantity": o.quantity,
+                    }
+                )
         return plan
 
     if target_open_total < current_open_total:
