@@ -2029,16 +2029,16 @@ function OrdersBody() {
                               <td className="px-4 py-3.5 align-middle text-center font-mono tabular-nums font-medium text-up">
                                 {formatQtyIndian(g.group_executed)}
                               </td>
-                              <td
-                                className="py-3.5 pl-4 pr-[18px] align-middle text-right text-faint"
-                                onClick={(e) => e.stopPropagation()}
-                              >
+                              <td className="py-3.5 pl-4 pr-[18px] align-middle text-right text-faint">
                                 <div className="flex items-center justify-end gap-2">
                                   {legHasModifiable(g.group_orders ?? []) ? (
                                     <button
                                       type="button"
                                       className={modifyOutlineBtnSmallClass}
-                                      onClick={() => openModifyForBookGroup(g)}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openModifyForBookGroup(g);
+                                      }}
                                     >
                                       Modify
                                     </button>
