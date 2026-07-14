@@ -19,7 +19,6 @@ import {
   formatSignedRupees,
 } from "@/lib/portfolio/totals";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
-import { usePnlRecomputeRefetchMs } from "@/lib/portfolio/usePnlRecomputeRefetchMs";
 
 type IciciApiResponse = {
   Status: number;
@@ -32,14 +31,17 @@ type IciciApiResponse = {
 const POSITIONS_VIEW_MODE_STORAGE_KEY = "breeze-core-engine-portfolio-view";
 
 export default function PortfolioPage() {
-  // Collapsed groups have no live chain subscription, so this poll is their only
-  // refresh path — follows the same Settings > Advanced P&L recompute interval
-  // the live overlay uses, so every figure on the page shares one cadence.
-  const portfolioPollMs = usePnlRecomputeRefetchMs();
+  // The position *list* only changes on a fill, not every second, so this query
+  // is event-driven rather than polled: it refetches on mount, on window/tab
+  // focus regain, and after any order-affecting action this app submits (see
+  // invalidateTradingShellQueries). LTP/MTM updates for every open group (not
+  // just expanded ones) come from the WS live overlay instead — see
+  // useGroupLiveOverlay / useGroupSubscriptionHolders in OpenPositionsTable.
   const q = useQuery({
     queryKey: ["portfolio", "positions"],
     queryFn: async () => apiClient.get<IciciApiResponse>("/portfolio/data"),
-    refetchInterval: portfolioPollMs,
+    refetchInterval: false,
+    refetchOnWindowFocus: true,
   });
 
   const data = q.data;

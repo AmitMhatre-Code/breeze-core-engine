@@ -35,6 +35,18 @@ export function useGroupSubscriptionHolders() {
     releaseWsSubscriptionHolder(id);
   }, []);
 
+  /** Releases every tracked holder whose group key isn't in `liveKeys` — used to
+   * drop WS subscriptions once a position actually closes (not on collapse,
+   * since every open group now keeps a holder regardless of expand state). */
+  const releaseStaleGroups = useCallback(
+    (liveKeys: Set<string>) => {
+      for (const key of holdersRef.current.keys()) {
+        if (!liveKeys.has(key)) releaseGroup(key);
+      }
+    },
+    [releaseGroup],
+  );
+
   useEffect(() => {
     const holders = holdersRef.current;
     return () => {
@@ -45,5 +57,5 @@ export function useGroupSubscriptionHolders() {
     };
   }, []);
 
-  return { getHolderId, releaseGroup };
+  return { getHolderId, releaseGroup, releaseStaleGroups };
 }

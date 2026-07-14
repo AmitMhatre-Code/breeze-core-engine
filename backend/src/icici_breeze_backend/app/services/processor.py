@@ -289,6 +289,47 @@ def _quote_success_rows(quote: dict | None) -> list:
     return rows if isinstance(rows, list) else []
 
 
+# Margin only needs recomputing when a leg's identity actually changes (new
+# contract, qty, or action) -- not on a timer. The cache key encodes that
+# identity, so an unchanged leg reuses the same span_margin_required across
+# repeated /portfolio/data refreshes instead of re-calling margin_calculator.
+_PORTFOLIO_MARGIN_CACHE_TTL_SECONDS = 24 * 60 * 60
+
+
+def _portfolio_margin_cache_key(
+    user_id: str, exchange_code: str, stock_code: str, expiry_date: str,
+    strike_price: str, right: str, action: str, quantity: str,
+) -> str:
+    return (
+        f"portfolio_margin:{user_id}:{exchange_code}:{stock_code}:{expiry_date}:"
+        f"{strike_price}:{right}:{action}:{quantity}"
+    )
+
+
+def _cached_span_margin_required(cache_key: str) -> float | None:
+    from icici_breeze_backend.app.db.redis_client import cache_get_json
+
+    try:
+        cached = cache_get_json(cache_key)
+    except Exception:
+        return None
+    if cached is None:
+        return None
+    try:
+        return float(cached)
+    except (TypeError, ValueError):
+        return None
+
+
+def _remember_span_margin_required(cache_key: str, span_margin_required: float) -> None:
+    from icici_breeze_backend.app.db.redis_client import cache_set_json
+
+    try:
+        cache_set_json(cache_key, span_margin_required, ex=_PORTFOLIO_MARGIN_CACHE_TTL_SECONDS)
+    except Exception:
+        pass
+
+
 def build_margin_situation_from_raw(margin: dict | None, *, target_margin_ute: float = 100) -> dict:
     """Normalize raw ICICI margin API response into get_margin_situation Success shape."""
     margin_situation: dict = {}
@@ -1731,6 +1772,8 @@ class processor():
                     d for d in (success_data if isinstance(success_data, list) else [])
                     if (d.get("product_type") == cfg.OPTIONS and d.get("exchange_code") in (cfg.NFO, cfg.BFO))
                 ]
+                from icici_breeze_backend.app.services.quote_source_router import fetch_quote_icici_response
+
                 for i in positions["Success"]:
                     stock_code = i['stock_code']
                     exchange_code = i['exchange_code']
@@ -1739,9 +1782,15 @@ class processor():
                     right = i['right']
                     strike_price = i['strike_price']
                     try:
-                        quote = breeze.get_quotes(stock_code,exchange_code,expiry_date,product_type,right,strike_price)
+                        # Cache-first (WS tick -> bhavcopy -> ICICI REST) instead of a raw
+                        # get_quotes() call every poll -- same router other panels on this
+                        # page (payoff chart, live overlay, PoP) already read from.
+                        quote = fetch_quote_icici_response(
+                            self, user_id, stock_code, exchange_code, expiry_date, right, strike_price,
+                            product_type=product_type,
+                        )
                     except Exception as e:
-                        quote = _icici_error(f"Error calling ICICI Breeze API get_quotes({stock_code},{exchange_code},{expiry_date},{product_type},{right},{strike_price}): {e}")
+                        quote = _icici_error(f"Error resolving quote via router({stock_code},{exchange_code},{expiry_date},{product_type},{right},{strike_price}): {e}")
                     quote_rows = _quote_success_rows(quote)
                     if quote.get("Status") == 200 and quote_rows:
                         i["spot_price"] = quote_rows[0].get("spot_price", "Err")
@@ -1759,29 +1808,39 @@ class processor():
                                 # Carry = P&L if this leg expires worthless (full premium kept) minus MTM already captured.
                                 worthless_value = float(i['average_price']) * int(i['quantity'])
                                 i['carry_profit'] = worthless_value - i['current_profit']
-                                margin_input = [{}]
-                                margin_input[0]['strike_price'] = i['strike_price']
-                                margin_input[0]['quantity'] = i['quantity']
-                                margin_input[0]['right'] = i['right']
-                                margin_input[0]['action'] = i['action']
-                                margin_input[0]['product'] = i['product_type']
-                                margin_input[0]['expiry_date'] = i['expiry_date']
-                                margin_input[0]['stock_code'] = i['stock_code']
-                                margin_input[0]['cover_order_flow'] = "N"
-                                margin_input[0]['fresh_order_type'] = "N"
-                                margin_input[0]['cover_limit_rate'] = "0"
-                                margin_input[0]['cover_sltp_price'] = "0"
-                                margin_input[0]['fresh_limit_rate'] = "0"
-                                margin_input[0]['open_quantity'] = "0"
-                                try:
-                                    margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
-                                except Exception as e:
-                                    margins = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
-                                if margins.get('Status') == 200:
-                                    i['span_margin_required'] = float(margins['Success']['span_margin_required'])
+
+                                margin_cache_key = _portfolio_margin_cache_key(
+                                    user_id, exchange_code, i['stock_code'], i['expiry_date'],
+                                    i['strike_price'], i['right'], i['action'], i['quantity'],
+                                )
+                                cached_span_margin = _cached_span_margin_required(margin_cache_key)
+                                if cached_span_margin is not None:
+                                    i['span_margin_required'] = cached_span_margin
                                 else:
-                                    i['span_margin_required'] = None
-                                    i['carry_margin_returns'] = None
+                                    margin_input = [{}]
+                                    margin_input[0]['strike_price'] = i['strike_price']
+                                    margin_input[0]['quantity'] = i['quantity']
+                                    margin_input[0]['right'] = i['right']
+                                    margin_input[0]['action'] = i['action']
+                                    margin_input[0]['product'] = i['product_type']
+                                    margin_input[0]['expiry_date'] = i['expiry_date']
+                                    margin_input[0]['stock_code'] = i['stock_code']
+                                    margin_input[0]['cover_order_flow'] = "N"
+                                    margin_input[0]['fresh_order_type'] = "N"
+                                    margin_input[0]['cover_limit_rate'] = "0"
+                                    margin_input[0]['cover_sltp_price'] = "0"
+                                    margin_input[0]['fresh_limit_rate'] = "0"
+                                    margin_input[0]['open_quantity'] = "0"
+                                    try:
+                                        margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
+                                    except Exception as e:
+                                        margins = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
+                                    if margins.get('Status') == 200:
+                                        i['span_margin_required'] = float(margins['Success']['span_margin_required'])
+                                        _remember_span_margin_required(margin_cache_key, i['span_margin_required'])
+                                    else:
+                                        i['span_margin_required'] = None
+                                        i['carry_margin_returns'] = None
 
                                 # Extreme Loss Margin (ELM) calculations applicable for Index shorts only.
                                 # ELM is waived on the option's own expiry date (no overnight risk to cover).

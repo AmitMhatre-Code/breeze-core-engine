@@ -93,6 +93,19 @@ function demoteWeight(className: string): string {
   return className.replace(/\bfont-medium\b/g, "").trim();
 }
 
+/** Current MTM read-out inside the PB/SL gauge: compact (K/L/Cr) with an explicit +/− sign. */
+function formatSignedCompact(raw: number | null): { text: string; className: string } {
+  if (raw == null || !Number.isFinite(raw)) {
+    return { text: "—", className: "app-text-muted" };
+  }
+  const v = Math.round(raw);
+  if (v === 0) return { text: "₹0", className: mutedNumClass };
+  const compact = formatIndianMoneyCompact(Math.abs(v), { shortSuffix: true });
+  return v < 0
+    ? { text: `−${compact}`, className: "text-down" }
+    : { text: `+${compact}`, className: "text-up" };
+}
+
 /** Bundled "Span + ELM" cell (desktop table) — Span on top, muted "+ ELM" beneath. Group rows only. */
 function SpanElmCell({
   span,
@@ -250,6 +263,18 @@ const tdShell =
 const tdInk = "text-foreground";
 const tdBase = `${tdShell} ${tdInk}`;
 
+/**
+ * Taller variant for a group's summary row only — every cell in that row uses
+ * this (not just the title cell) so the row is uniform height whether or not
+ * the group carries a PB/SL rule: the title cell always reserves a second
+ * line (gauge when armed, "Set Profit Booking / Stop Loss" CTA when not), so
+ * every summary row needs the same extra vertical room, armed or not.
+ * Expanded child leg rows keep the shorter `tdShell`/`tdBase`.
+ */
+const tdSummaryShell =
+  "whitespace-nowrap px-2 py-3 align-middle text-xs 2xl:px-3 2xl:py-3.5 2xl:text-sm";
+const tdSummaryBase = `${tdSummaryShell} ${tdInk}`;
+
 /** Table column count: Select, Row, Option, Type, Position, Qty, Avg, LTP, Spot, MTM, Carry, Span+ELM, PoP, Actions. */
 const TABLE_COL_COUNT = 14;
 
@@ -370,6 +395,69 @@ function ExitRuleBadge({ rule }: { rule: SquareOffRuleRecord }) {
     >
       {label}
     </span>
+  );
+}
+
+const gaugeLineClass =
+  "inline-flex h-[18px] items-center gap-1.5 font-mono text-[10px] leading-none";
+
+/**
+ * Second line under a group's title, always present at the same height whether
+ * or not a PB/SL rule is armed (see `tdSummaryShell`) — a mini stop→target
+ * gauge with a dot marking where current MTM sits between the two thresholds.
+ * `profit_target_pnl`/`loss_limit_pnl` are always positive magnitudes (see
+ * SquareOffRuleModal), so the stop bound is the negation of `loss_limit_pnl`.
+ */
+function PnlTargetGauge({
+  rule,
+  currentMtm,
+}: {
+  rule: SquareOffRuleRecord;
+  currentMtm: number | null;
+}) {
+  const target = Math.abs(rule.profit_target_pnl);
+  const stopMagnitude = Math.abs(rule.loss_limit_pnl);
+  const stop = -stopMagnitude;
+  const span = target - stop;
+  const pct =
+    currentMtm != null && Number.isFinite(currentMtm) && span > 0
+      ? Math.min(100, Math.max(0, ((currentMtm - stop) / span) * 100))
+      : null;
+  const current = formatSignedCompact(currentMtm);
+  return (
+    <span
+      className={gaugeLineClass}
+      title={`Profit Booking / Stop Loss — target +₹${target.toLocaleString("en-IN")}, stop −₹${stopMagnitude.toLocaleString("en-IN")}`}
+    >
+      <span className="text-down">
+        −{formatIndianMoneyCompact(stopMagnitude, { shortSuffix: true })}
+      </span>
+      <span className="relative inline-block h-1 w-14 shrink-0 rounded-full bg-border 2xl:w-20">
+        {pct != null ? (
+          <span
+            className="absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-panel2 bg-foreground"
+            style={{ left: `${pct}%` }}
+          />
+        ) : null}
+      </span>
+      <span className="text-up">
+        +{formatIndianMoneyCompact(target, { shortSuffix: true })}
+      </span>
+      <span className={`font-semibold ${current.className}`}>{current.text}</span>
+    </span>
+  );
+}
+
+/** Unarmed counterpart of `PnlTargetGauge` — same line height so summary rows stay uniform regardless of rule state. */
+function PnlTargetCta({ onClick }: { onClick: (e: MouseEvent) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${gaugeLineClass} text-accent-strong opacity-80 transition hover:opacity-100 hover:underline`}
+    >
+      + Set Profit Booking / Stop Loss
+    </button>
   );
 }
 
@@ -518,7 +606,7 @@ function PortfolioGroupTableBlock({
   onSquareOffSelectedClick,
   onOpenHedgeModal,
 }: GroupBlockProps) {
-  const { rows: liveRows, isLive } = useGroupLiveOverlay(g, holderId, isOpen);
+  const { rows: liveRows, isLive } = useGroupLiveOverlay(g, holderId);
   const pop = useGroupPoP(g);
   useEffect(() => {
     onLiveChange(g.key, isLive);
@@ -552,7 +640,7 @@ function PortfolioGroupTableBlock({
         }}
       >
         <td
-          className={`${tdBase} text-center align-middle`}
+          className={`${tdSummaryBase} text-center align-middle`}
           onClick={(e) => e.stopPropagation()}
         >
           <Checkbox
@@ -562,30 +650,37 @@ function PortfolioGroupTableBlock({
             aria-label={`Select all legs in ${groupTitle}`}
           />
         </td>
-        <td className={`${tdBase} text-center tabular-nums text-muted`}>
+        <td className={`${tdSummaryBase} text-center tabular-nums text-muted`}>
           {isOpen ? "▼" : "▶"}
         </td>
-        <td className={`${tdBase} font-medium`}>
-          <span className="inline-flex items-center gap-1.5">
-            {groupTitle}
-            {isLive ? <LiveDot title="Live · WebSocket" /> : null}
+        <td className={`${tdSummaryBase} font-medium`}>
+          <div className="flex flex-col gap-1">
+            <span className="inline-flex items-center gap-1.5">
+              {groupTitle}
+              {isLive ? <LiveDot title="Live · WebSocket" /> : null}
+              {squareOffRule ? (
+                <ExitRuleBadge rule={squareOffRule} />
+              ) : null}
+            </span>
             {squareOffRule ? (
-              <ExitRuleBadge rule={squareOffRule} />
-            ) : null}
-          </span>
+              <PnlTargetGauge rule={squareOffRule} currentMtm={mtmSum} />
+            ) : (
+              <PnlTargetCta onClick={onOpenExitRuleModal} />
+            )}
+          </div>
         </td>
-        <td className={tdBase}>—</td>
-        <td className={tdBase}>—</td>
-        <td className={`${tdBase} text-right`}>—</td>
-        <td className={`${tdBase} text-right`}>—</td>
-        <td className={`${tdBase} text-right`}>—</td>
-        <td className={`${tdBase} text-right font-mono tabular-nums ${spotAgg.className}`}>
+        <td className={tdSummaryBase}>—</td>
+        <td className={tdSummaryBase}>—</td>
+        <td className={`${tdSummaryBase} text-right`}>—</td>
+        <td className={`${tdSummaryBase} text-right`}>—</td>
+        <td className={`${tdSummaryBase} text-right`}>—</td>
+        <td className={`${tdSummaryBase} text-right font-mono tabular-nums ${spotAgg.className}`}>
           {spotAgg.text}
         </td>
-        <td className={`${tdShell} text-right font-mono tabular-nums font-medium ${gMtm.className}`}>
+        <td className={`${tdSummaryShell} text-right font-mono tabular-nums font-medium ${gMtm.className}`}>
           {gMtm.text}
         </td>
-        <td className={`${tdShell} text-right font-mono tabular-nums`}>
+        <td className={`${tdSummaryShell} text-right font-mono tabular-nums`}>
           <span className="inline-flex flex-col items-end leading-tight">
             <span className={`font-medium ${gCarry.className}`}>{gCarry.text}</span>
             <span className={`text-[11px] font-normal ${demoteWeight(gCr.className)}`}>
@@ -593,13 +688,13 @@ function PortfolioGroupTableBlock({
             </span>
           </span>
         </td>
-        <td className={`${tdBase} text-right font-mono tabular-nums`}>
+        <td className={`${tdSummaryBase} text-right font-mono tabular-nums`}>
           <SpanElmCell span={spanSum} elm={elmSum} />
         </td>
-        <td className={`${tdBase} text-right font-mono tabular-nums`}>
+        <td className={`${tdSummaryBase} text-right font-mono tabular-nums`}>
           {formatPoP(pop)}
         </td>
-        <td className={`${tdBase} text-right align-middle`}>
+        <td className={`${tdSummaryBase} text-right align-middle`}>
           {!isOpen ? <SeeActionsHint /> : null}
         </td>
       </tr>
@@ -709,7 +804,7 @@ function PortfolioGroupCardBlock({
   onSquareOffSelectedClick,
   onOpenHedgeModal,
 }: GroupBlockProps) {
-  const { rows: liveRows, isLive } = useGroupLiveOverlay(g, holderId, isOpen);
+  const { rows: liveRows, isLive } = useGroupLiveOverlay(g, holderId);
   const pop = useGroupPoP(g);
   useEffect(() => {
     onLiveChange(g.key, isLive);
@@ -768,6 +863,11 @@ function PortfolioGroupCardBlock({
               <ExitRuleBadge rule={squareOffRule} />
             ) : null}
           </h3>
+          {squareOffRule ? (
+            <PnlTargetGauge rule={squareOffRule} currentMtm={mtmSum} />
+          ) : (
+            <PnlTargetCta onClick={onOpenExitRuleModal} />
+          )}
           <p>
             <span className="app-text-muted">Spot:</span>{" "}
             <span className={spotAgg.className}>{spotAgg.text}</span>
@@ -1158,7 +1258,7 @@ export function OpenPositionsTable({
   >(null);
   const squareOffRulesByGroup = useSquareOffRulesByGroup();
   const invalidateSquareOffRules = useInvalidateSquareOffRules();
-  const { getHolderId, releaseGroup } = useGroupSubscriptionHolders();
+  const { getHolderId, releaseStaleGroups } = useGroupSubscriptionHolders();
   const [liveGroupKeys, setLiveGroupKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1247,7 +1347,6 @@ export function OpenPositionsTable({
         const next = new Set(prev);
         if (next.has(key)) {
           next.delete(key);
-          releaseGroup(key);
           clearGroupSelection(key);
           if (hedgeGroupKey === key) {
             clearHedgeState();
@@ -1258,8 +1357,16 @@ export function OpenPositionsTable({
         return next;
       });
     },
-    [hedgeGroupKey, releaseGroup, clearGroupSelection, clearHedgeState],
+    [hedgeGroupKey, clearGroupSelection, clearHedgeState],
   );
+
+  // WS holders are registered per open-position group regardless of expand
+  // state (collapsed groups get live LTP too), so they're only released once
+  // the position itself closes and drops out of `groups` — not on collapse.
+  useEffect(() => {
+    const liveKeys = new Set(groups.map((g) => g.key));
+    releaseStaleGroups(liveKeys);
+  }, [groups, releaseStaleGroups]);
 
   const openHedgeModalForGroup = useCallback(
     (key: string) => {

@@ -59,13 +59,13 @@ function overlayRowWithLiveLtp(
  * `chainQueryOptions`, so this shares the cached request rather than double-fetching —
  * both must pass the same `refetchIntervalMs` from `usePnlRecomputeRefetchMs` or their
  * observers fight over the shared query's poll cadence).
- * Only active while `live` (the group is expanded) — collapsed groups stay on the
- * ~30s base `/portfolio/data` poll.
+ * Active for every open-position group regardless of expand state — a WS holder is
+ * registered for each group unconditionally (see `useGroupSubscriptionHolders`), so
+ * collapsed groups get live LTP too instead of waiting on a REST poll.
  */
 export function useGroupLiveOverlay(
   group: PortfolioPositionGroup,
   holderId: string,
-  live: boolean,
 ) {
   const refetchIntervalMs = usePnlRecomputeRefetchMs();
   const cq = useQuery({
@@ -77,11 +77,11 @@ export function useGroupLiveOverlay(
       subscription_holder: holderId,
       refetchIntervalMs,
     }),
-    enabled: live && Boolean(group.stockCode && group.expiryDate),
+    enabled: Boolean(group.stockCode && group.expiryDate),
   });
 
   const chainSuccess = cq.data?.Status === 200 ? cq.data.Success : null;
-  const isLive = live && chainSuccess?.quote_source === "websocket";
+  const isLive = chainSuccess?.quote_source === "websocket";
 
   const rows = useMemo(() => {
     if (!chainSuccess) return group.rows;
