@@ -516,7 +516,7 @@ export function ApiPlaygroundScreen() {
                 {(selected.risk_level === "trade" ||
                   selected.risk_level === "funds" ||
                   selected.risk_level === "gtt") && (
-                  <p className="rounded-[8px] border border-down/40 bg-down-tint px-2.5 py-1.5 text-xs font-medium text-down">
+                  <p className="rounded-[8px] border border-down/40 bg-down-tint px-2.5 py-1.5 text-xs text-down">
                     This API can modify live orders, funds, or GTT triggers. Double-check every
                     parameter before firing.
                   </p>

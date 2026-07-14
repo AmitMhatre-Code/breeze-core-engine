@@ -1446,6 +1446,10 @@ class processor():
             return {"success": True, "rate_limited": False, "daily_limit_exhausted": False, "error": None}
         err = str(response.get("Error") or "Unknown error")
         rl, daily_exhausted = _order_rate_limit_flags(response)
+        _logger.warning(
+            "cancel_order_single failed: user_id=%s order_id=%s exchange_code=%s status=%s error=%s rate_limited=%s",
+            user_id, order_id, exchange_code, response.get("Status"), err, rl,
+        )
         return {
             "success": False,
             "rate_limited": rl,
@@ -1490,6 +1494,10 @@ class processor():
             return {"success": True, "rate_limited": False, "daily_limit_exhausted": False, "error": None}
         err = str(response.get("Error") or "Unknown error")
         rl, daily_exhausted = _order_rate_limit_flags(response)
+        _logger.warning(
+            "modify_order_single failed: user_id=%s order_id=%s exchange_code=%s quantity=%s price=%s status=%s error=%s rate_limited=%s",
+            user_id, order_id, exchange_code, quantity, price, response.get("Status"), err, rl,
+        )
         return {
             "success": False,
             "rate_limited": rl,
@@ -1554,11 +1562,16 @@ class processor():
             if rate_limited:
                 break
             order_id = item["order_id"]
+            # ICICI's modify_order rejects a quantity-only change with a generic
+            # error unless price is resent too — omitting it isn't treated as
+            # "leave price alone", so always resend the (possibly unchanged) price.
             one = self.modify_order_single(
                 user_id,
                 f"{order_id}|{item['exchange_code']}",
                 quantity=str(item["quantity"]),
-                price=str(new_price) if price_changed else None,
+                price=str(new_price) if price_changed else (
+                    str(current_price) if current_price not in (None, "") else None
+                ),
             )
             if one["success"]:
                 modified.append({"order_id": order_id, "quantity": item["quantity"], "price": new_price if price_changed else current_price})
@@ -1599,6 +1612,10 @@ class processor():
                 rl, _ = _order_rate_limit_flags(response)
                 if rl:
                     rate_limited = True
+                _logger.warning(
+                    "execute_leg_modification place_order failed: user_id=%s qty=%s status=%s error=%s rate_limited=%s",
+                    user_id, qty, (response or {}).get("Status"), err, rl,
+                )
 
         return {
             "cancelled": cancelled,
