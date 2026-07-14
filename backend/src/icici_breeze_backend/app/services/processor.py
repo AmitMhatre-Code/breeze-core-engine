@@ -1478,11 +1478,19 @@ class processor():
         if isinstance(order_ref, str) and "|" in order_ref:
             order_id, exchange_code = order_ref.split("|", 1)
         try:
+            # ICICI's modify_order rejects a sparse patch (order_id/exchange_code/
+            # quantity/price only) with a generic 500 — it needs the same full
+            # field set as place_order, or it 500s with no useful detail.
             response = breeze.modify_order(
                 order_id=order_id,
                 exchange_code=exchange_code,
+                order_type=str(cfg.LIMIT).strip().lower(),
+                stoploss="",
                 quantity=str(quantity) if quantity not in (None, "") else "",
                 price=str(price) if price not in (None, "") else "",
+                validity="day",
+                disclosed_quantity="0",
+                validity_date=str(today_ist_date()) + "T06:00:00.000Z",
             )
         except Exception as e:
             response = _icici_error(
