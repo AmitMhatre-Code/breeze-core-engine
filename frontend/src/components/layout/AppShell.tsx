@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ApiLimitExhaustedBanner } from "@/components/api-usage/ApiLimitExhaustedBanner";
 import { ApiUsageWarningDialog } from "@/components/api-usage/ApiUsageWarningDialog";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
@@ -114,6 +115,10 @@ export function AppShell({
   const apiCallsLimit = homeQ.data?.api_calls_limit ?? 5000;
   const apiUsageBand = homeQ.data?.api_usage_band ?? "green";
   const apiUsageWarning = homeQ.data?.api_usage_warning ?? null;
+  // Populated either by this query directly, or (on /dashboard, where it's disabled to
+  // avoid a redundant ICICI round-trip) hydrated into the shared ["home","data"] cache
+  // by the dashboard bootstrap query -- see hydrateDashboardQueryCache.
+  const apiUsageBlocked = homeQ.data?.api_usage_blocked ?? false;
 
   const apiUsageWarnStorageKey = useMemo(() => {
     const istDay = new Date().toLocaleDateString("en-CA", {
@@ -418,6 +423,7 @@ export function AppShell({
           status={licenseStatus}
           contactSalesMailto={contactSalesMailto}
         />
+        <ApiLimitExhaustedBanner blocked={apiUsageBlocked} />
         <main
           id="main-content"
           tabIndex={-1}
