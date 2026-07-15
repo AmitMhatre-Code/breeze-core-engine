@@ -389,7 +389,10 @@ def sync_holder_chain_subscriptions(
     exchange_code: str,
     expiry_display: str,
     strikes: list[Strike] | None = None,
-) -> None:
+) -> bool:
+    """Returns False if new tokens needed subscribing but the batch subscribe
+    failed (e.g. no live broker session) -- callers that gate a daily retry
+    guard on this must not treat a False return as done-for-today."""
     del strikes  # liquid tokens resolved from scrip master
     hid = _effective_holder(holder_id)
     desired = set(
@@ -400,9 +403,11 @@ def sync_holder_chain_subscriptions(
     for token in sorted(current - desired):
         _detach_holder_from_token(hid, token)
     new_tokens = sorted(desired - current)
+    ok = True
     if new_tokens:
-        _subscribe_stock_token_batch(proc, user_id, new_tokens, holder_id=hid)
+        ok = _subscribe_stock_token_batch(proc, user_id, new_tokens, holder_id=hid)
     register_holder_chain(hid, exchange_code, stock_code, expiry_display)
+    return ok
 
 
 def ensure_chain_subscriptions(

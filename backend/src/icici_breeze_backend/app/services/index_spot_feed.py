@@ -139,21 +139,26 @@ def _fetch_previous_close(sdk: Any, cash_exchange: str, cash_stock_code: str) ->
     return pc if pc > 0 else None
 
 
-def sync_index_spot_subscriptions(proc: "Processor", user_id: str) -> None:
+def sync_index_spot_subscriptions(proc: "Processor", user_id: str) -> bool:
     """Idempotent per IST trading day. Call from the same daily trigger as
     `system_chain_health.maybe_trigger_system_prefetch` -- safe to call on every
-    request once today's subscriptions are already in place."""
+    request once today's subscriptions are already in place.
+
+    Returns False when the subscribe attempt didn't happen because there's no
+    live broker session -- the caller must not treat that as a permanent
+    daily "done" state, or a session that was dead on the first trigger of
+    the day will never get retried (see `system_chain_health._prefetch_last_error`)."""
     global _subscribed_date
     today = datetime.now(IST).date()
     with _lock:
         if _subscribed_date == today:
-            return
+            return True
 
     from icici_breeze_backend.app.services.breeze_websocket_manager import _ensure_ws
 
     sdk = _ensure_ws(proc, user_id)
     if sdk is None:
-        return
+        return False
 
     _register_listener_once()
     for cash_exchange, cash_stock_code, _opt_exchange, _opt_stock_code, label in _INDEX_SCRIPS:
@@ -183,12 +188,87 @@ def sync_index_spot_subscriptions(proc: "Processor", user_id: str) -> None:
 
     with _lock:
         _subscribed_date = today
+    return True
 
 
-def get_index_quotes_status() -> dict[str, Any]:
+def _extract_rest_ltp(row: dict[str, Any]) -> float | None:
+    """REST `get_quotes` rows use `ltp` (occasionally `last`) -- opposite field
+    priority from `_extract_ltp`, which parses raw WS tick payloads."""
+    raw_ltp = row.get("ltp") if row.get("ltp") is not None else row.get("last")
+    try:
+        ltp = float(raw_ltp)
+    except (TypeError, ValueError):
+        return None
+    return ltp if ltp > 0 else None
+
+
+def _fetch_eod_quote(proc: "Processor", user_id: str, cash_exchange: str, cash_stock_code: str) -> dict[str, Any] | None:
+    """One-off REST quote for the post-close fallback -- no WS session needed,
+    just an authenticated SDK instance (unlike `sync_index_spot_subscriptions`,
+    which needs `_ensure_ws` because it subscribes to live ticks)."""
+    sdk = proc.get_session_breeze(user_id)
+    if sdk is None:
+        return None
+    try:
+        r = sdk.get_quotes(
+            stock_code=cash_stock_code,
+            exchange_code=cash_exchange,
+            product_type="cash",
+            expiry_date="",
+            right="",
+            strike_price="",
+        )
+    except Exception:
+        _logger.warning(
+            "EOD index quote fetch failed for %s/%s", cash_exchange, cash_stock_code,
+            exc_info=True,
+        )
+        return None
+    if not isinstance(r, dict) or (r.get("Status") or r.get("status")) != 200:
+        return None
+    succ = r.get("Success") or r.get("success")
+    row = succ[0] if isinstance(succ, list) and succ else succ if isinstance(succ, dict) else None
+    if not isinstance(row, dict):
+        return None
+    ltp = _extract_rest_ltp(row)
+    if ltp is None:
+        return None
+    try:
+        prev_close = float(row.get("previous_close") or 0)
+        prev_close = prev_close if prev_close > 0 else None
+    except (TypeError, ValueError):
+        prev_close = None
+    change = ltp - prev_close if prev_close else None
+    change_pct = (change / prev_close * 100.0) if change is not None and prev_close else None
+    return {
+        "ltp": ltp,
+        "previous_close": prev_close,
+        "change": change,
+        "change_pct": change_pct,
+        "updated_at": time.time(),
+    }
+
+
+def get_index_quotes_status(proc: "Processor", user_id: str) -> dict[str, Any]:
+    """Live NIFTY/SENSEX spot for the navbar ticker.
+
+    During market hours, this is a pure cache read -- ticks arrive fast enough
+    (`_INDEX_SPOT_TTL_SECONDS`) that an empty cache just means "not subscribed
+    yet" and will fill in on its own. Outside market hours nothing is ticking,
+    so an empty cache means "market closed, nobody's fetched today's close
+    yet" -- fetch it once via REST and cache it with no TTL (the key gets
+    naturally overwritten by the first live tick the next time the market is
+    open, so there's no separate cleanup step)."""
+    from icici_breeze_backend.app.services.market_calendar import is_market_open
+
+    market_open = is_market_open(user_id)
     quotes: dict[str, Any] = {}
-    for _cash_ex, _cash_stock, _opt_ex, _opt_stock, label in _INDEX_SCRIPS:
+    for cash_exchange, cash_stock_code, _opt_ex, _opt_stock, label in _INDEX_SCRIPS:
         payload = cache_get_json(index_spot_key(label))
+        if payload is None and not market_open:
+            payload = _fetch_eod_quote(proc, user_id, cash_exchange, cash_stock_code)
+            if payload is not None:
+                cache_set_json(index_spot_key(label), payload, ex=None)
         quotes[label] = payload if isinstance(payload, dict) else None
     return {"quotes": quotes}
 

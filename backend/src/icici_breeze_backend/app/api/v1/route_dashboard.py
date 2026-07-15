@@ -35,9 +35,11 @@ async def get_dashboard_ws_health(ctx: RequestContext = Depends(get_request_cont
 async def get_dashboard_index_quotes(ctx: RequestContext = Depends(get_request_context)):
     """Live NIFTY/SENSEX spot + day's change for the navbar ticker.
 
-    Same process-wide-state rationale as /ws-health above -- no broker_token check.
+    Same process-wide-state rationale as /ws-health above -- no broker_token check
+    (the REST post-close fallback inside `get_index_quotes_status` resolves its own
+    session and degrades to null quotes if one isn't available).
     """
-    return get_index_quotes_status()
+    return get_index_quotes_status(breeze, ctx.user_id)
 
 
 @router.get("/bootstrap")

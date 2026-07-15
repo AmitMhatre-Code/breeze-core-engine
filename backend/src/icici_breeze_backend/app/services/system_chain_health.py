@@ -173,11 +173,13 @@ def _run_system_prefetch_blocking(user_id: str, today: date) -> None:
     from icici_breeze_backend.app.services.processor import processor as Processor
 
     proc = Processor()
-    try:
-        sync_index_spot_subscriptions(proc, user_id)
-    except Exception:
-        _logger.warning("index spot subscription sync failed", exc_info=True)
     errors: list[str] = []
+    try:
+        if not sync_index_spot_subscriptions(proc, user_id):
+            errors.append("index-spot: no live broker session")
+    except Exception:
+        errors.append("index-spot: subscribe raised an exception")
+        _logger.warning("index spot subscription sync failed", exc_info=True)
     expiries: dict[str, str] = {}
     subscribed_at: dict[str, float] = {}
     for exchange_code, stock_code, label in _SCRIPS:
@@ -194,7 +196,10 @@ def _run_system_prefetch_blocking(user_id: str, today: date) -> None:
             # forever, so it must self-clean before each day's subscribe or a weekly
             # expiry rollover leaks a permanently-stale chain into `chain:active`.
             release_holder(holder_id)
-            sync_holder_chain_subscriptions(proc, user_id, holder_id, stock_code, exchange_code, expiry)
+            ok = sync_holder_chain_subscriptions(proc, user_id, holder_id, stock_code, exchange_code, expiry)
+            if not ok:
+                errors.append(f"{label}: chain subscribe failed (no live broker session)")
+                continue
             expiries[label] = expiry
             subscribed_at[label] = time.monotonic()
         except Exception as exc:
@@ -208,6 +213,16 @@ def _run_system_prefetch_blocking(user_id: str, today: date) -> None:
         _prefetch_last_error = "; ".join(errors) if errors else None
         _prefetch_expiries.update(expiries)
         _prefetch_subscribed_at_monotonic.update(subscribed_at)
+
+    if errors:
+        _logger.warning("system prefetch completed with errors for %s: %s", today, "; ".join(errors))
+    else:
+        _logger.info(
+            "system prefetch completed OK for %s (nifty=%s, sensex=%s)",
+            today,
+            expiries.get("nifty"),
+            expiries.get("sensex"),
+        )
 
 
 def prefetch_state() -> dict[str, Any]:

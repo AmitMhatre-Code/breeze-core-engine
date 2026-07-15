@@ -8,6 +8,7 @@ import pytest
 
 from icici_breeze_backend.app.auth.context import get_broker_token_for_request
 from icici_breeze_backend.app.services import breeze_websocket_manager as bwm
+from icici_breeze_backend.app.services import index_spot_feed as isf
 from icici_breeze_backend.app.services import system_chain_health as sch
 
 
@@ -66,7 +67,7 @@ _FUTURE_SENSEX_EXPIRY = (date.today() + timedelta(days=6)).strftime("%d-%b-%Y")
 
 
 class TestMaybeTriggerSystemPrefetch:
-    def _stub_subscribe(self, monkeypatch, *, fail_once: bool = False):
+    def _stub_subscribe(self, monkeypatch, *, fail_once: bool = False, index_spot_ok: bool = True):
         calls: list[str] = []
         state = {"failed": False}
 
@@ -75,9 +76,13 @@ class TestMaybeTriggerSystemPrefetch:
                 state["failed"] = True
                 raise RuntimeError("boom")
             calls.append(holder_id)
+            return True
 
         monkeypatch.setattr(bwm, "sync_holder_chain_subscriptions", _sync)
         monkeypatch.setattr(bwm, "release_holder", lambda holder_id: {"released": 0, "holder_id": holder_id})
+        # `_run_system_prefetch_blocking` imports this via a local `from ... import`,
+        # so it must be patched on the real module, not on `sch`.
+        monkeypatch.setattr(isf, "sync_index_spot_subscriptions", lambda proc, user_id: index_spot_ok)
         monkeypatch.setattr(
             sch,
             "get_underlyings",
@@ -130,6 +135,34 @@ class TestMaybeTriggerSystemPrefetch:
         sch.maybe_trigger_system_prefetch("u1")
         assert len(calls) == 3
         assert sch.prefetch_state()["last_error"] is None
+
+    def test_index_spot_failure_recorded_and_retried(self, monkeypatch):
+        """Regression test: a dead broker session on the first trigger of the day
+        must not permanently mark the day as 'done' -- the daily guard used to
+        get set unconditionally even when the index-spot subscribe silently
+        failed (`sync_index_spot_subscriptions` returning False), so a session
+        that recovered later in the day never got retried until midnight IST."""
+        calls = self._stub_subscribe(monkeypatch, index_spot_ok=False)
+        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: True)
+
+        fake_now = {"t": 1000.0}
+        monkeypatch.setattr(time, "monotonic", lambda: fake_now["t"])
+
+        sch.maybe_trigger_system_prefetch("u1")
+        state = sch.prefetch_state()
+        assert state["last_error"] == "index-spot: no live broker session"
+        assert sorted(calls) == ["system:health:nifty", "system:health:sensex"]
+
+        # Within cooldown: no retry at all (holder chains didn't re-run either).
+        sch.maybe_trigger_system_prefetch("u1")
+        assert len(calls) == 2
+
+        # Session recovers; past cooldown, the whole prefetch retries and clears.
+        monkeypatch.setattr(isf, "sync_index_spot_subscriptions", lambda proc, user_id: True)
+        fake_now["t"] += sch._RETRY_COOLDOWN_SECONDS + 1
+        sch.maybe_trigger_system_prefetch("u1")
+        assert sch.prefetch_state()["last_error"] is None
+        assert len(calls) == 4
 
 
 class TestGetSystemHealthStatus:

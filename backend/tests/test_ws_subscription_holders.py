@@ -89,16 +89,18 @@ def test_sync_holder_chain_replaces_strikes(monkeypatch):
         lambda exchange_code, stock_code, expiry_display: list(state["tokens"]),
     )
 
-    bwm.sync_holder_chain_subscriptions(
+    ok = bwm.sync_holder_chain_subscriptions(
         proc, "u1", "h1", "NIFTY", "NFO", "30-Jun-2026", [24000.0, 25000.0]
     )
+    assert ok is True
     assert sdk.subscribe_feeds.call_count == 1
     assert sdk.subscribe_feeds.call_args.kwargs.get("stock_token") == tokens_v1
 
     state["tokens"] = list(tokens_v2)
-    bwm.sync_holder_chain_subscriptions(
+    ok = bwm.sync_holder_chain_subscriptions(
         proc, "u1", "h1", "NIFTY", "NFO", "30-Jun-2026", [25000.0, 26000.0]
     )
+    assert ok is True
     assert sdk.unsubscribe_feeds.call_count == 2
     unsubscribed = [
         tok
@@ -113,3 +115,22 @@ def test_sync_holder_chain_replaces_strikes(monkeypatch):
 def test_release_unknown_holder_is_idempotent():
     out = bwm.release_holder("missing-holder")
     assert out["released"] == 0
+
+
+def test_sync_holder_chain_returns_false_when_subscribe_fails(monkeypatch):
+    """Regression test: a dead broker session must be surfaced back to the
+    caller (used by system_chain_health to avoid a permanently-stuck daily
+    retry guard), not swallowed silently."""
+    _reset_bwm(monkeypatch)
+    proc = MagicMock()
+    proc.get_session_breeze.return_value = None  # no live broker session
+    monkeypatch.setattr(
+        bwm,
+        "list_ws_stock_tokens_for_liquid_contracts",
+        lambda exchange_code, stock_code, expiry_display: ["4.1!1", "4.1!2"],
+    )
+
+    ok = bwm.sync_holder_chain_subscriptions(
+        proc, "u1", "h1", "NIFTY", "NFO", "30-Jun-2026"
+    )
+    assert ok is False

@@ -83,13 +83,13 @@ def test_sync_index_spot_subscriptions_idempotent_same_day(monkeypatch):
     )
 
     proc = MagicMock()
-    isf.sync_index_spot_subscriptions(proc, "u1")
+    assert isf.sync_index_spot_subscriptions(proc, "u1") is True
     assert fake_sdk.subscribe_feeds.call_count == 2
     assert isf._symbol_to_label["4.1!4963"] == "nifty"
     assert isf._previous_close["nifty"] == 24700.0
 
     # Second call same day: no-op, no additional subscribe_feeds calls.
-    isf.sync_index_spot_subscriptions(proc, "u1")
+    assert isf.sync_index_spot_subscriptions(proc, "u1") is True
     assert fake_sdk.subscribe_feeds.call_count == 2
 
 
@@ -99,14 +99,79 @@ def test_sync_index_spot_subscriptions_noop_without_session(monkeypatch):
         lambda proc, user_id: None,
     )
     proc = MagicMock()
-    isf.sync_index_spot_subscriptions(proc, "u1")
+    assert isf.sync_index_spot_subscriptions(proc, "u1") is False
     assert isf._symbol_to_label == {}
 
 
-def test_get_index_quotes_status_reads_cache():
+def test_get_index_quotes_status_reads_cache(monkeypatch):
     from icici_breeze_backend.app.db.redis_client import cache_set_json
 
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open",
+        lambda user_id, now=None: True,
+    )
     cache_set_json(index_spot_key("nifty"), {"ltp": 24800.5}, ex=15)
-    status = isf.get_index_quotes_status()
+    proc = MagicMock()
+    status = isf.get_index_quotes_status(proc, "u1")
     assert status["quotes"]["nifty"] == {"ltp": 24800.5}
+    assert status["quotes"]["sensex"] is None
+    proc.get_session_breeze.assert_not_called()  # market open: pure cache read, no REST fallback
+
+
+def test_get_index_quotes_status_market_open_empty_cache_stays_null(monkeypatch):
+    """During market hours an empty cache means 'not subscribed yet' -- must not
+    trigger the REST fallback, which is reserved for closed-market reads."""
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open",
+        lambda user_id, now=None: True,
+    )
+    proc = MagicMock()
+    status = isf.get_index_quotes_status(proc, "u1")
+    assert status["quotes"]["nifty"] is None
+    assert status["quotes"]["sensex"] is None
+    proc.get_session_breeze.assert_not_called()
+
+
+def test_get_index_quotes_status_market_closed_fetches_rest_fallback(monkeypatch):
+    from icici_breeze_backend.app.db.redis_client import cache_get_json
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open",
+        lambda user_id, now=None: False,
+    )
+    fake_sdk = MagicMock()
+    fake_sdk.get_quotes.return_value = {
+        "Status": 200,
+        "Success": [{"ltp": "24850.25", "previous_close": "24700.0"}],
+    }
+    proc = MagicMock()
+    proc.get_session_breeze.return_value = fake_sdk
+
+    status = isf.get_index_quotes_status(proc, "u1")
+
+    nifty = status["quotes"]["nifty"]
+    assert nifty["ltp"] == 24850.25
+    assert nifty["previous_close"] == 24700.0
+    assert nifty["change"] == pytest.approx(150.25)
+    assert fake_sdk.get_quotes.call_count == 2  # nifty + sensex
+
+    # Cached with no TTL so a second read doesn't re-fetch.
+    cached = cache_get_json(index_spot_key("nifty"))
+    assert cached["ltp"] == 24850.25
+    fake_sdk.get_quotes.reset_mock()
+    status_again = isf.get_index_quotes_status(proc, "u1")
+    assert status_again["quotes"]["nifty"]["ltp"] == 24850.25
+    fake_sdk.get_quotes.assert_not_called()
+
+
+def test_get_index_quotes_status_market_closed_no_session_returns_null(monkeypatch):
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open",
+        lambda user_id, now=None: False,
+    )
+    proc = MagicMock()
+    proc.get_session_breeze.return_value = None
+
+    status = isf.get_index_quotes_status(proc, "u1")
+    assert status["quotes"]["nifty"] is None
     assert status["quotes"]["sensex"] is None
