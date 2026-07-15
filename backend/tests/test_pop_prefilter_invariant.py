@@ -132,9 +132,20 @@ class TestPreFilterHelpers(unittest.TestCase):
 
 class TestHighMinPopRegression(unittest.TestCase):
     def test_fixture_has_estimate_actual_gap(self):
-        cache = _high_pop_gap_cache()
-        ctx = _ctx_from_cache(cache, min_pop_pct=99.0)
-        short_put, short_call = 23100, 24100
+        """Single-leg PoP ~98.9% but full strangle PoP >= 99%, under the breakeven-based model.
+
+        Deliberately a separate, dedicated cache (not `_high_pop_gap_cache`): the breakeven
+        model ties leg PoP to strike distance/premium/sigma directly, so reproducing the
+        estimate/actual gap needs a put strike close enough to spot to keep the single-leg
+        PoP under the floor, with a wide net credit to keep the paired PoP over it.
+        """
+        spot = 23623.0
+        short_put, short_call = 23250, 24300
+        cache = {
+            (short_put, "Put"): _quote(short_put, "Put", bid=45.0, ask=45.1, spot=spot),
+            (short_call, "Call"): _quote(short_call, "Call", bid=45.0, ask=45.1, spot=spot),
+        }
+        ctx = _ctx_from_cache(cache, min_pop_pct=99.0, spot=spot)
         leg_pop = pop_for_short_strike(ctx, short_put, "Put")
         pair_pop = estimate_short_strangle_pop(ctx, short_put, short_call)
         self.assertLess(leg_pop, 99.0)

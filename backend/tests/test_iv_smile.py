@@ -6,7 +6,6 @@ import math
 import unittest
 from unittest.mock import MagicMock
 
-from icici_breeze_backend.app.services.options_strategy_engine.greeks import bs_delta
 from icici_breeze_backend.app.services.options_strategy_engine.iv_smile import (
     MAX_TRUSTED_REL_SPREAD,
     build_iv_smile,
@@ -15,7 +14,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.iv_smile import (
     resolve_leg_sigma,
     sigma_for_strike,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_detail_for_legs, pop_short_otm
+from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_detail_for_legs, pop_short_breakeven
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, QuoteRow, TradeLeg
 
 
@@ -172,15 +171,19 @@ class TestDeepOtmSkewRegression(unittest.TestCase):
         cache = self._skewed_cache()
         ctx = _ctx_from_cache(cache, atm_iv=0.15)
         leg = TradeLeg("Put", "Sell", 22750, 65, 5.0)
-        # leg's own strike is deliberately absent from ctx.cache -> exercises the bs_delta
-        # fallback path with resolve_leg_sigma, matching a thin/uncached deep-OTM quote.
+        # leg's own strike is deliberately absent from ctx.cache -> exercises the smile
+        # fallback path via resolve_leg_sigma, matching a thin/uncached deep-OTM quote.
         detail = pop_detail_for_legs(ctx, [leg])
-        self.assertEqual(detail.basis, "short_strike_delta")
+        self.assertEqual(detail.basis, "short_strike_breakeven")
 
-        skewed_delta = bs_delta(ctx.spot, 22750.0, ctx.t_years, resolve_leg_sigma(ctx, 22750, "Put"), "Put")
-        flat_atm_delta = bs_delta(ctx.spot, 22750.0, ctx.t_years, ctx.atm_iv, "Put")
-        skewed_pop = pop_short_otm(skewed_delta)
-        flat_atm_pop = pop_short_otm(flat_atm_delta)
+        be = leg.strike - leg.premium_per_unit
+        skewed_sigma = resolve_leg_sigma(ctx, be, "Put")
+        skewed_pop = pop_short_breakeven(
+            ctx.spot, leg.strike, leg.premium_per_unit, "Put", ctx.t_years, skewed_sigma
+        )
+        flat_atm_pop = pop_short_breakeven(
+            ctx.spot, leg.strike, leg.premium_per_unit, "Put", ctx.t_years, ctx.atm_iv
+        )
 
         self.assertAlmostEqual(detail.pop_pct, skewed_pop, places=6)
         self.assertLess(skewed_pop, flat_atm_pop)
