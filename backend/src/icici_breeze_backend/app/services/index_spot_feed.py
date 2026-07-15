@@ -114,6 +114,22 @@ def _register_listener_once() -> None:
         _listener_registered = True
 
 
+def _pick_quote_row(succ: Any, cash_exchange: str) -> dict[str, Any] | None:
+    """`get_quotes` can return multiple rows for one stock_code -- e.g. BSESEN
+    comes back as a junk exchange_code="NA"/ltp=0 placeholder followed by the
+    real exchange_code="BSE" row. Match on the exchange we actually asked for
+    instead of blindly taking the first element."""
+    if isinstance(succ, dict):
+        return succ
+    if not isinstance(succ, list) or not succ:
+        return None
+    for row in succ:
+        if isinstance(row, dict) and row.get("exchange_code") == cash_exchange:
+            return row
+    first = succ[0]
+    return first if isinstance(first, dict) else None
+
+
 def _fetch_previous_close(sdk: Any, cash_exchange: str, cash_stock_code: str) -> float | None:
     try:
         r = sdk.get_quotes(
@@ -133,7 +149,7 @@ def _fetch_previous_close(sdk: Any, cash_exchange: str, cash_stock_code: str) ->
     if not isinstance(r, dict) or (r.get("Status") or r.get("status")) != 200:
         return None
     succ = r.get("Success") or r.get("success")
-    row = succ[0] if isinstance(succ, list) and succ else succ if isinstance(succ, dict) else None
+    row = _pick_quote_row(succ, cash_exchange)
     if not isinstance(row, dict):
         return None
     try:
@@ -236,13 +252,22 @@ def _fetch_eod_quote(proc: "Processor", user_id: str, cash_exchange: str, cash_s
         )
         return None
     if not isinstance(r, dict) or (r.get("Status") or r.get("status")) != 200:
+        _logger.warning(
+            "EOD index quote non-200/malformed response for %s/%s: %r", cash_exchange, cash_stock_code, r,
+        )
         return None
     succ = r.get("Success") or r.get("success")
-    row = succ[0] if isinstance(succ, list) and succ else succ if isinstance(succ, dict) else None
+    row = _pick_quote_row(succ, cash_exchange)
     if not isinstance(row, dict):
+        _logger.warning(
+            "EOD index quote empty Success payload for %s/%s: %r", cash_exchange, cash_stock_code, r,
+        )
         return None
     ltp = _extract_rest_ltp(row)
     if ltp is None:
+        _logger.warning(
+            "EOD index quote unparseable ltp for %s/%s: %r", cash_exchange, cash_stock_code, row,
+        )
         return None
     try:
         prev_close = float(row.get("previous_close") or 0)
