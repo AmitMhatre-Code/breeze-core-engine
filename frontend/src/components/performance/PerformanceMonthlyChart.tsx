@@ -31,13 +31,31 @@ function serverDarkSnapshot(): boolean {
   return false;
 }
 
-function formatLakhTooltip(value: unknown): string {
+// Tooltip: each value gets its own natural unit (as-is / K / Lac / Crore).
+function formatTooltipMoney(value: unknown): string {
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return "—";
-  const abs = Math.abs(n);
-  const inLacs = abs / 100_000;
-  const formatted = inLacs % 1 === 0 ? `${inLacs}L` : `${inLacs.toFixed(2)}L`;
-  return `${n < 0 ? "−" : ""}₹${formatted}`;
+  const magnitude = formatIndianMoneyCompact(Math.abs(n), { shortSuffix: true });
+  return n < 0 ? `−${magnitude}` : magnitude;
+}
+
+// Axis: all ticks share one unit, chosen from the scale's actual rendered
+// range — otherwise a small-value month (e.g. a few thousand rupees) renders
+// every tick as "₹0.0L" once divided by a fixed 1-Lac unit.
+function pickAxisUnit(maxAbs: number): { divisor: number; suffix: string } {
+  if (maxAbs >= 1_00_00_000) return { divisor: 1_00_00_000, suffix: "Cr" };
+  if (maxAbs >= 1_00_000) return { divisor: 1_00_000, suffix: "L" };
+  if (maxAbs >= 1_000) return { divisor: 1_000, suffix: "K" };
+  return { divisor: 1, suffix: "" };
+}
+
+function formatAxisTick(n: number, unit: { divisor: number; suffix: string }): string {
+  if (!Number.isFinite(n)) return "";
+  const scaled = Math.abs(n) / unit.divisor;
+  const label = unit.suffix
+    ? `${scaled % 1 === 0 ? scaled : scaled.toFixed(scaled < 10 ? 2 : 1)}${unit.suffix}`
+    : scaled.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+  return n < 0 ? `−₹${label}` : `₹${label}`;
 }
 
 /** Terminal Pro palette (light / dark variants per bar). Chart.js draws to <canvas>, so these
@@ -166,7 +184,7 @@ export function PerformanceMonthlyChart({
           boxPadding: 6,
           callbacks: {
             label(ctx) {
-              const suffix = formatLakhTooltip(ctx.raw);
+              const suffix = formatTooltipMoney(ctx.raw);
               const label = ctx.dataset.label ?? "";
               return `${label}: ${suffix}`;
             },
@@ -203,10 +221,9 @@ export function PerformanceMonthlyChart({
                   ? tickValue
                   : Number(tickValue);
               if (!Number.isFinite(n)) return "";
-              const inLacs = n / 100_000;
-              const label =
-                inLacs % 1 === 0 ? `${Math.abs(inLacs)}L` : `${Math.abs(inLacs).toFixed(1)}L`;
-              return n < 0 ? `−₹${label}` : `₹${label}`;
+              const scaleMax = Math.max(Math.abs(this.max ?? 0), Math.abs(this.min ?? 0));
+              const unit = pickAxisUnit(scaleMax || Math.abs(n));
+              return formatAxisTick(n, unit);
             },
           },
         },
