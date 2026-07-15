@@ -37,9 +37,13 @@ _logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 
 # (cash exchange_code, cash stock_code, options exchange_code, options stock_code, label)
+# Cash stock_code must be the ICICI scrip-master ShortName, not the display
+# name -- BSE's SENSEX row has Token="SENSEX", ShortName="BSESEN", so "BSESEN"
+# is what get_stock_token_value()/get_quotes() need here (NSE's NIFTY row
+# happens to have ShortName="NIFTY", so it looks like the display name).
 _INDEX_SCRIPS: tuple[tuple[str, str, str, str, str], ...] = (
     ("NSE", "NIFTY", cfg.NFO, "NIFTY", "nifty"),
-    ("BSE", "SENSEX", cfg.BFO, "BSESEN", "sensex"),
+    ("BSE", "BSESEN", cfg.BFO, "BSESEN", "sensex"),
 )
 
 _INDEX_SPOT_TTL_SECONDS = 15
@@ -161,6 +165,13 @@ def sync_index_spot_subscriptions(proc: "Processor", user_id: str) -> bool:
         return False
 
     _register_listener_once()
+    # breeze_connect's get_stock_token_value() reads sdk.interval without the SDK ever
+    # initializing it in __init__ -- it's normally set as a side effect of subscribe_feeds().
+    # Calling get_stock_token_value() directly on a freshly connected sdk (as below) hits an
+    # uninitialized-attribute AttributeError inside the SDK, which it then returns instead of
+    # raising, breaking our tuple unpack. Prime it so the SDK's own check passes.
+    if not hasattr(sdk, "interval"):
+        sdk.interval = ""
     for cash_exchange, cash_stock_code, _opt_exchange, _opt_stock_code, label in _INDEX_SCRIPS:
         try:
             exch_token, _depth_token = sdk.get_stock_token_value(
