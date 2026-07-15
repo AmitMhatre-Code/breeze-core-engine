@@ -131,13 +131,14 @@ class TestPreFilterHelpers(unittest.TestCase):
 
 
 class TestHighMinPopRegression(unittest.TestCase):
-    def test_fixture_has_estimate_actual_gap(self):
-        """Single-leg PoP ~98.9% but full strangle PoP >= 99%, under the breakeven-based model.
-
-        Deliberately a separate, dedicated cache (not `_high_pop_gap_cache`): the breakeven
-        model ties leg PoP to strike distance/premium/sigma directly, so reproducing the
-        estimate/actual gap needs a put strike close enough to spot to keep the single-leg
-        PoP under the floor, with a wide net credit to keep the paired PoP over it.
+    def test_strangle_pop_never_exceeds_either_naked_leg(self):
+        """Under ICICI P(OTM) semantics the strangle keeps max profit only when BOTH legs expire
+        OTM, so its PoP = P(short_put < S_T < short_call) = leg_put_pop + leg_call_pop - 100 and
+        can never exceed either naked leg's PoP. This is the inverse of the old premium-inclusive
+        model (where the second leg's credit widened the first leg's breakeven and could *raise*
+        PoP). It is exactly what makes the single-leg pre-filter a SAFE, over-inclusive proxy: a
+        strike that clears the floor alone may still pair into a sub-floor strangle, but a strike
+        that fails the floor alone can never rescue itself by pairing.
         """
         spot = 23623.0
         short_put, short_call = 23250, 24300
@@ -146,10 +147,12 @@ class TestHighMinPopRegression(unittest.TestCase):
             (short_call, "Call"): _quote(short_call, "Call", bid=45.0, ask=45.1, spot=spot),
         }
         ctx = _ctx_from_cache(cache, min_pop_pct=99.0, spot=spot)
-        leg_pop = pop_for_short_strike(ctx, short_put, "Put")
+        leg_put = pop_for_short_strike(ctx, short_put, "Put")
+        leg_call = pop_for_short_strike(ctx, short_call, "Call")
         pair_pop = estimate_short_strangle_pop(ctx, short_put, short_call)
-        self.assertLess(leg_pop, 99.0)
-        self.assertGreaterEqual(pair_pop, 99.0)
+        self.assertAlmostEqual(pair_pop, leg_put + leg_call - 100.0, places=4)
+        self.assertLess(pair_pop, leg_put)
+        self.assertLess(pair_pop, leg_call)
 
     def test_min_pop_99_returns_iron_condor_above_floor(self):
         cache = _high_pop_gap_cache()

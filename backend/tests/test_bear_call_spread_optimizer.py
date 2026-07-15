@@ -79,14 +79,19 @@ class TestBearCallSpread(unittest.TestCase):
         self.assertGreater(stats.counts.get("pop_floor", 0), 0)
 
     def test_calc_returns_badges(self):
-        strikes = list(range(23000, 24000, 50))
+        # Genuine OTM call ladder above spot (23623): premiums decrease with strike so every
+        # bear call spread collects a real credit, and each short strike's P(OTM) clears the
+        # 50% floor. (A short strike below spot would be ITM with a sub-50% P(OTM), correctly
+        # rejected — see test_rejects_pop_floor.)
+        strikes = list(range(23700, 24300, 50))
+        bids = {s: max(3.0, 28.0 - (s - 23700) / 12.0) for s in strikes}
         cache = {
             (s, "Call"): _quote(
                 s,
                 "Call",
-                bid=20.0 if s == 23600 else 8.0,
-                ask=20.5 if s == 23600 else 8.5,
-                delta=0.08 if s == 23600 else 0.04,
+                bid=bids[s],
+                ask=bids[s] + 0.5,
+                delta=max(0.03, 0.10 - (s - 23700) / 20000),
             )
             for s in strikes
         }

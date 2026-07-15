@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { bsCallDelta, bsCallPrice, bsPutDelta, bsPutPrice } from "@/lib/strategy-builder/blackScholes";
+import { bsCallDelta, bsCallPrice, bsPutDelta, bsPutPrice, normCdf } from "@/lib/strategy-builder/blackScholes";
 import {
+  estimateProbabilityOfProfit,
   portfolioGreeks,
   portfolioMarkToModel,
   portfolioPayoffAtExpiry,
@@ -149,5 +150,78 @@ describe("payoff", () => {
     const expectedDelta =
       bsCallDelta(S, callLeg.strike, T, 0.15) + bsPutDelta(S, putLeg.strike, T, 0.35);
     expect(greeksViaResolver.delta).toBeCloseTo(expectedDelta, 6);
+  });
+});
+
+describe("estimateProbabilityOfProfit (P of OTM expiry, deterministic)", () => {
+  const spot = 24046;
+  const sigma = 0.132;
+  const T = 6 / 365;
+  const lotSize = 75;
+
+  /** Reference lognormal terminal-spot CDF, P(S_T < x), r=0.07 q=0 (mirrors the module). */
+  const pBelow = (x: number): number => {
+    const d2 = (Math.log(spot / x) + (0.07 - 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+    return normCdf(-d2);
+  };
+
+  const shortCall = (strike: number): StrategyLeg[] => [
+    { id: "sc", right: "Call", side: "Sell", strike, lots: 1, premiumPerUnit: 74.6 },
+  ];
+
+  it("is deterministic: identical inputs give byte-identical output across calls", () => {
+    const legs = shortCall(24300);
+    const first = estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
+    for (let i = 0; i < 25; i++) {
+      expect(estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize)).toBe(first);
+    }
+  });
+
+  it("short call PoP = P(S_T < strike) — premium excluded, ICICI convention", () => {
+    // Near-ATM 24300 strike: matches P(expire OTM) ~71%, NOT the premium-inclusive breakeven
+    // (~77%) the old Monte Carlo produced.
+    const pop = estimateProbabilityOfProfit(spot, T, sigma, shortCall(24300), lotSize);
+    expect(pop / 100).toBeCloseTo(pBelow(24300), 4);
+    expect(pop).toBeGreaterThan(70);
+    expect(pop).toBeLessThan(72);
+    // premium size must not move the answer — boundary is the strike, not strike+premium
+    const richPremium: StrategyLeg[] = [
+      { id: "sc", right: "Call", side: "Sell", strike: 24300, lots: 1, premiumPerUnit: 250 },
+    ];
+    expect(estimateProbabilityOfProfit(spot, T, sigma, richPremium, lotSize)).toBeCloseTo(pop, 6);
+  });
+
+  it("short put PoP = P(S_T > strike)", () => {
+    const legs: StrategyLeg[] = [
+      { id: "sp", right: "Put", side: "Sell", strike: 23800, lots: 1, premiumPerUnit: 60 },
+    ];
+    const pop = estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
+    expect(pop / 100).toBeCloseTo(1 - pBelow(23800), 4);
+  });
+
+  it("short strangle PoP = P(between short strikes) and is below each naked leg", () => {
+    const kp = 23600;
+    const kc = 24500;
+    const legs: StrategyLeg[] = [
+      { id: "sp", right: "Put", side: "Sell", strike: kp, lots: 1, premiumPerUnit: 40 },
+      { id: "sc", right: "Call", side: "Sell", strike: kc, lots: 1, premiumPerUnit: 40 },
+    ];
+    const pop = estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
+    expect(pop / 100).toBeCloseTo(pBelow(kc) - pBelow(kp), 4);
+    const legPut = estimateProbabilityOfProfit(spot, T, sigma, [legs[0]], lotSize);
+    const legCall = estimateProbabilityOfProfit(spot, T, sigma, [legs[1]], lotSize);
+    expect(pop).toBeLessThan(legPut);
+    expect(pop).toBeLessThan(legCall);
+  });
+
+  it("long call (debit) falls back to P(profit past breakeven)", () => {
+    const strike = 24000;
+    const premium = 300;
+    const legs: StrategyLeg[] = [
+      { id: "lc", right: "Call", side: "Buy", strike, lots: 1, premiumPerUnit: premium },
+    ];
+    const pop = estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
+    // debit => premium IS included: profit needs S_T > strike + premium
+    expect(pop / 100).toBeCloseTo(1 - pBelow(strike + premium), 4);
   });
 });

@@ -82,6 +82,7 @@ def _ctx_from_cache(
     margin_rupees: float = 50_000_000,
     max_loss_rupees: float = 4_000_000,
     processor: MagicMock | None = None,
+    expiry_display: str = "16-Jun-2026",
 ) -> EngineContext:
     strikes = sorted({s for s, _ in cache})
     return EngineContext(
@@ -89,7 +90,7 @@ def _ctx_from_cache(
         user_id="u1",
         stock_code="NIFTY",
         exchange_code="NFO",
-        expiry_display="16-Jun-2026",
+        expiry_display=expiry_display,
         margin_rupees=margin_rupees,
         max_loss_rupees=max_loss_rupees,
         min_pop_pct=min_pop_pct,
@@ -652,7 +653,7 @@ class TestIronCondorEvalAudit(unittest.TestCase):
         for ev in stats.evaluations:
             self.assertIn(ev["wing_width"], [50, 100, 150, 200])
             if ev["outcome"] == "accepted":
-                self.assertEqual(ev["pop_basis"], "breakevens_from_short_strikes")
+                self.assertEqual(ev["pop_basis"], "otm_between_short_strikes")
                 self.assertIsNotNone(ev["pop_pct"])
                 self.assertIsNotNone(ev["lower_breakeven"])
                 self.assertIsNotNone(ev["upper_breakeven"])
@@ -660,7 +661,7 @@ class TestIronCondorEvalAudit(unittest.TestCase):
 
 class TestPopBreakevenParity(unittest.TestCase):
     def test_ic_pop_uses_short_strike_breakevens(self):
-        from icici_breeze_backend.app.services.options_strategy_engine.helpers import sigma_for_pop
+        from icici_breeze_backend.app.services.options_strategy_engine.iv_smile import resolve_leg_sigma
         from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_between_breakevens
 
         cache = {
@@ -677,29 +678,33 @@ class TestPopBreakevenParity(unittest.TestCase):
             TradeLeg("Call", "Sell", 24400, qty, 5.40),
             TradeLeg("Call", "Buy", 24500, qty, 3.95),
         ]
-        net_credit = 6.80 - 5.80 + 5.40 - 3.95
+        # P(OTM) convention: the profit plateau is bounded by the SHORT strikes with no premium
+        # cushion (ICICI parity) — max profit needs both short legs to expire OTM.
         expected = pop_between_breakevens(
             ctx.spot,
-            22850 - net_credit,
-            24400 + net_credit,
+            22850,
+            24400,
             ctx.t_years,
-            sigma_for_pop(ctx),
-            sigma_for_pop(ctx),
+            resolve_leg_sigma(ctx, 22850, "Put"),
+            resolve_leg_sigma(ctx, 24400, "Call"),
         )
         detail = pop_detail_for_legs(ctx, ic_legs)
         ic_pop = detail.pop_pct
-        self.assertEqual(detail.basis, "breakevens_from_short_strikes")
+        self.assertEqual(detail.basis, "otm_between_short_strikes")
         self.assertEqual(detail.short_put, 22850)
         self.assertEqual(detail.short_call, 24400)
+        self.assertEqual(detail.lower_breakeven, 22850)
+        self.assertEqual(detail.upper_breakeven, 24400)
         self.assertAlmostEqual(ic_pop, expected, places=2)
         self.assertAlmostEqual(ic_pop, pop_for_legs(ctx, ic_legs), places=4)
+        # The wider long-strike band would only inflate PoP, so the short-strike plateau is lower.
         long_wing_pop = pop_between_breakevens(
             ctx.spot,
-            22750 - net_credit,
-            24500 + net_credit,
+            22750,
+            24500,
             ctx.t_years,
-            sigma_for_pop(ctx),
-            sigma_for_pop(ctx),
+            resolve_leg_sigma(ctx, 22750, "Put"),
+            resolve_leg_sigma(ctx, 24500, "Call"),
         )
         self.assertLess(ic_pop, long_wing_pop)
 
@@ -789,39 +794,34 @@ class TestSoftPreferredCredit(unittest.TestCase):
 
 class TestPopBandStrikeSelection(unittest.TestCase):
     def test_pop_band_strike_selection_covers_floor_to_floor_plus_two(self):
-        spot = 23622.9
-        strikes = list(range(22600, 24700, 50))
-        deltas = {
-            (22950, "Put"): 0.08,
-            (22900, "Put"): 0.07,
-            (22850, "Put"): 0.06,
-            (22800, "Put"): 0.055,
-            (22750, "Put"): 0.05,
-            (22700, "Put"): 0.045,
-            (22650, "Put"): 0.04,
-            (24350, "Call"): 0.08,
-            (24400, "Call"): 0.07,
-            (24450, "Call"): 0.06,
-            (24500, "Call"): 0.055,
-            (24550, "Call"): 0.05,
-            (24600, "Call"): 0.045,
-        }
+        # Self-consistent fixture: every strike's delta is its real Black-Scholes delta at a
+        # realistic (~30d) expiry, so the delta-anchored selection and the P(OTM) coverage check
+        # agree. Under P(OTM) the band strikes (~0.04-0.06 delta) are the ones that carry the
+        # [floor, floor+2] PoP band, and the selection must keep them (not let the many ATM
+        # strikes crowd the whole per-wing cap).
+        from datetime import date, timedelta
 
-        def bid_fn(s: int, r: str) -> float:
-            if (s, r) == (22950, "Put"):
-                return 1.0
-            if (s, r) in ((24350, "Call"), (24400, "Call")):
-                return 1.0
-            return 3.0
+        from icici_breeze_backend.app.services.options_strategy_engine.greeks import bs_delta
+        from icici_breeze_backend.app.services.options_strategy_engine.helpers import years_to_expiry
+
+        spot = 23622.9
+        sigma = 0.15
+        expiry = (date.today() + timedelta(days=30)).strftime("%d-%b-%Y")
+        t_years = years_to_expiry(expiry)
+        # Wide range so both the near-ATM strikes and the deep ~0.04-0.06 delta band exist.
+        strikes = list(range(20800, 26500, 50))
+
+        def delta_fn(s: int, r: str) -> float:
+            return abs(bs_delta(spot, float(s), t_years, sigma, "Call" if r == "Call" else "Put"))
 
         cache = _fill_strikes(
             strikes,
             spot,
-            bid_fn=bid_fn,
-            ask_fn=lambda s, r: bid_fn(s, r) + 0.15,
-            delta_fn=lambda s, r: deltas.get((s, r), 0.03),
+            bid_fn=lambda s, r: 3.0,
+            ask_fn=lambda s, r: 3.15,
+            delta_fn=delta_fn,
         )
-        ctx = _ctx_from_cache(cache, spot=spot, min_pop_pct=90.0)
+        ctx = _ctx_from_cache(cache, spot=spot, min_pop_pct=90.0, expiry_display=expiry)
         puts = _ic_short_strikes_for_pop_band(
             ctx,
             [s for s in ctx.liquid_pe_strikes if s < ctx.spot],

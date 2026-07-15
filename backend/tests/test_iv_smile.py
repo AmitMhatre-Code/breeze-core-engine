@@ -14,7 +14,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.iv_smile import (
     resolve_leg_sigma,
     sigma_for_strike,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_detail_for_legs, pop_short_breakeven
+from icici_breeze_backend.app.services.options_strategy_engine.pop import pop_detail_for_legs, pop_short_otm_expiry
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, QuoteRow, TradeLeg
 
 
@@ -174,16 +174,13 @@ class TestDeepOtmSkewRegression(unittest.TestCase):
         # leg's own strike is deliberately absent from ctx.cache -> exercises the smile
         # fallback path via resolve_leg_sigma, matching a thin/uncached deep-OTM quote.
         detail = pop_detail_for_legs(ctx, [leg])
-        self.assertEqual(detail.basis, "short_strike_breakeven")
+        self.assertEqual(detail.basis, "short_strike_otm")
 
-        be = leg.strike - leg.premium_per_unit
-        skewed_sigma = resolve_leg_sigma(ctx, be, "Put")
-        skewed_pop = pop_short_breakeven(
-            ctx.spot, leg.strike, leg.premium_per_unit, "Put", ctx.t_years, skewed_sigma
-        )
-        flat_atm_pop = pop_short_breakeven(
-            ctx.spot, leg.strike, leg.premium_per_unit, "Put", ctx.t_years, ctx.atm_iv
-        )
+        # PoP boundary is the strike itself (P of OTM expiry), so the leg's own strike sigma
+        # governs; honoring the put-side skew raises that sigma and lowers PoP vs flat ATM.
+        skewed_sigma = resolve_leg_sigma(ctx, float(leg.strike), "Put")
+        skewed_pop = pop_short_otm_expiry(ctx.spot, float(leg.strike), "Put", ctx.t_years, skewed_sigma)
+        flat_atm_pop = pop_short_otm_expiry(ctx.spot, float(leg.strike), "Put", ctx.t_years, ctx.atm_iv)
 
         self.assertAlmostEqual(detail.pop_pct, skewed_pop, places=6)
         self.assertLess(skewed_pop, flat_atm_pop)

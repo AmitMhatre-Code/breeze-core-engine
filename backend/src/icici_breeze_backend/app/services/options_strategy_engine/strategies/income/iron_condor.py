@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from itertools import zip_longest
 
 from icici_breeze_backend.app.services.options_strategy_engine.delta_anchor import (
     abs_delta,
@@ -296,10 +297,15 @@ def _ic_short_strikes_for_pop_band(
             seen.add(s)
             atm_strikes.append(s)
 
+    # Interleave band strikes (which carry the target PoP band) with ATM strikes (a secondary
+    # credit boost) so both survive the per-wing cap. A plain concatenation lets whichever list
+    # is longer crowd the other out entirely — and with realistic broker deltas either can be:
+    # many ATM strikes above the band, or (in a dense chain) many strikes inside the band itself.
     selected: list[int] = []
-    for s in atm_strikes + band_strikes:
-        if s not in selected:
-            selected.append(s)
+    for band_s, atm_s in zip_longest(band_strikes, atm_strikes):
+        for s in (band_s, atm_s):
+            if s is not None and s not in selected:
+                selected.append(s)
 
     if opposite_strikes is not None and not _pop_band_covered(
         ctx,
