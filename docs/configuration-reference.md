@@ -207,16 +207,16 @@ Customer deployments (the current, active path) get their `.env` written by bree
 
 ---
 
-## Exchange calendar (user settings + Console sync)
+## Exchange calendar (deployment-wide settings + Console sync)
 
-Per-user holidays and regular session hours (defaults 9:15–15:30 IST) live in `users.sqlite3` (`user_exchange_calendar` table). Users edit them under **Settings → Exchange calendar** or sync from Breeze Console when linked.
+Holidays and regular session hours (defaults 9:15–15:30 IST) are a single, deployment-wide value — not per-user — stored in `users.sqlite3` (`exchange_calendar` singleton table, one row). Any authenticated user can edit it under **Settings → Exchange calendar** or sync it from Breeze Console when linked; the edit takes effect for the whole deployment immediately, including background jobs (bhavcopy scheduler, chain health) that have no per-request user context. This is what a deployment operator uses to hand-enter special/holiday sessions (e.g. Muhurat trading) that no exchange API publishes — see [design-decisions.md #21](./design-decisions.md).
 
 | Variable | Purpose |
 |----------|---------|
 | `PORTAL_API_BASE_URL` | Base URL of breeze-saas-portal (e.g. `https://breeze-ui.com`). Required for **Sync from Breeze Console** on the exchange calendar settings page, and for the portal integration below. |
 | `DEPLOYMENT_LICENSE_KEY` | Used for other portal features (terms, heartbeat); **not** required for exchange calendar sync (public read endpoint). |
 
-Bundled `backend/data/exchange_holidays.json` seeds new users and remains the system default for non-user-scoped checks (e.g. admin integration tests).
+Bundled `backend/data/exchange_holidays.json` seeds the calendar's initial defaults on first startup (and is used as the migration's fallback when no legacy customization is found).
 
 ---
 

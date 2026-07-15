@@ -19,7 +19,7 @@ from datetime import date, datetime
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.core.market_hours import is_india_market_open, market_closed_reason
+from icici_breeze_backend.app.services.market_calendar import is_market_open, market_closed_reason
 from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.db.redis_client import cache_get_json
 from icici_breeze_backend.app.services.reference_data.keys import ws_raw_quote_key
@@ -113,7 +113,7 @@ def maybe_trigger_system_prefetch(user_id: str) -> None:
     broker-token contextvar already set for this request). Safe to call on
     every request; near-zero cost once today's prefetch has already run.
     """
-    if not is_india_market_open():
+    if not is_market_open():
         return
     today = datetime.now(IST).date()
     with _lock:
@@ -276,7 +276,7 @@ def get_system_health_status() -> dict[str, Any]:
     poll_interval = _quote_flush_interval_seconds()
     base = {"poll_interval_seconds": poll_interval}
 
-    if not is_india_market_open(now):
+    if not is_market_open(now):
         return {
             **base,
             "status": "gray",

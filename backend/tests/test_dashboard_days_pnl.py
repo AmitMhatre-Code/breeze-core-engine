@@ -27,8 +27,8 @@ def _position(**overrides):
 def _open_market_mocks():
     return patch.multiple(
         MODULE,
-        is_india_market_open=lambda now=None: True,
-        is_india_trading_day=lambda now=None: True,
+        is_market_open=lambda now=None: True,
+        is_trading_day=lambda now=None: True,
         market_closed_reason=lambda now=None: "market open",
     )
 
@@ -36,8 +36,8 @@ def _open_market_mocks():
 def _pre_open_mocks():
     return patch.multiple(
         MODULE,
-        is_india_market_open=lambda now=None: False,
-        is_india_trading_day=lambda now=None: True,
+        is_market_open=lambda now=None: False,
+        is_trading_day=lambda now=None: True,
         market_closed_reason=lambda now=None: "before market open (9:15 AM IST)",
     )
 
@@ -45,8 +45,8 @@ def _pre_open_mocks():
 def _weekend_mocks():
     return patch.multiple(
         MODULE,
-        is_india_market_open=lambda now=None: False,
-        is_india_trading_day=lambda now=None: False,
+        is_market_open=lambda now=None: False,
+        is_trading_day=lambda now=None: False,
         market_closed_reason=lambda now=None: "weekend",
     )
 
@@ -122,8 +122,8 @@ def test_non_trading_day_forces_zero():
 def test_post_close_same_day_computes_normally():
     with patch.multiple(
         MODULE,
-        is_india_market_open=lambda now=None: False,
-        is_india_trading_day=lambda now=None: True,
+        is_market_open=lambda now=None: False,
+        is_trading_day=lambda now=None: True,
         market_closed_reason=lambda now=None: "after market close (3:30 PM IST)",
     ):
         with patch(f"{MODULE}._lookup_bhav_row", return_value={"ltp": "110.0"}):

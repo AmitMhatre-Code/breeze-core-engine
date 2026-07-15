@@ -12,8 +12,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from icici_breeze_backend.app.services.market_calendar import (
-    is_market_open as is_user_market_open,
-    market_closed_reason as user_market_closed_reason,
+    is_market_open,
+    market_closed_reason,
 )
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.auth.context import get_request_context, RequestContext
@@ -82,7 +82,7 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
     ingest_exchange_baseline_upload,
     refresh_exchange_risk_baseline,
 )
-from icici_breeze_backend.app.repositories import user_exchange_calendar as uec_repo
+from icici_breeze_backend.app.repositories import exchange_calendar as ec_repo
 from icici_breeze_backend.app.services.portal_exchange_calendar import (
     fetch_console_exchange_calendar,
     portal_exchange_calendar_configured,
@@ -539,14 +539,13 @@ async def settings_pnl_engine_preferences_put(
 
 
 
-def _exchange_calendar_response(user_id: str) -> ExchangeCalendarStateResponse:
-    row = uec_repo.get_user_calendar(user_id)
+def _exchange_calendar_response() -> ExchangeCalendarStateResponse:
+    row = ec_repo.get_calendar()
     holidays_list = [
         ExchangeCalendarHolidayItem(date=k, name=v)
         for k, v in sorted(row.holidays.items())
     ]
     return ExchangeCalendarStateResponse(
-        user_id=user_id,
         source=row.source,
         working_hours=ExchangeCalendarWorkingHours(
             open_hour=row.open_hour,
@@ -557,7 +556,7 @@ def _exchange_calendar_response(user_id: str) -> ExchangeCalendarStateResponse:
         holidays=dict(row.holidays),
         holidays_list=holidays_list,
         portal_configured=portal_exchange_calendar_configured(),
-        has_local_edits=uec_repo.has_local_edits(row),
+        has_local_edits=ec_repo.has_local_edits(row),
         console_updated_at=row.console_updated_at,
         local_updated_at=row.local_updated_at,
         updated_at=row.updated_at,
@@ -572,7 +571,6 @@ def _console_payload_to_state(payload: dict) -> ExchangeCalendarStateResponse:
         ExchangeCalendarHolidayItem(date=k, name=v) for k, v in sorted(holidays.items())
     ]
     return ExchangeCalendarStateResponse(
-        user_id="",
         source="console_sync",
         working_hours=ExchangeCalendarWorkingHours(
             open_hour=int(wh.get("open_hour", 9)),
@@ -595,8 +593,8 @@ async def settings_market_status(
     ctx: RequestContext = Depends(get_request_context),
 ):
     return MarketStatusResponse(
-        is_open=is_user_market_open(ctx.user_id),
-        closed_reason=user_market_closed_reason(ctx.user_id),
+        is_open=is_market_open(),
+        closed_reason=market_closed_reason(),
     )
 
 
@@ -604,7 +602,7 @@ async def settings_market_status(
 async def settings_exchange_calendar_data(
     ctx: RequestContext = Depends(get_request_context),
 ):
-    return _exchange_calendar_response(ctx.user_id)
+    return _exchange_calendar_response()
 
 
 @router.put("/exchange-calendar", response_model=ExchangeCalendarStateResponse)
@@ -613,8 +611,7 @@ async def settings_exchange_calendar_put(
     ctx: RequestContext = Depends(get_request_context),
 ):
     holidays = {h.date.strip()[:10]: h.name.strip() for h in body.holidays}
-    uec_repo.save_user_calendar(
-        ctx.user_id,
+    ec_repo.save_calendar(
         open_hour=body.working_hours.open_hour,
         open_minute=body.working_hours.open_minute,
         close_hour=body.working_hours.close_hour,
@@ -622,7 +619,7 @@ async def settings_exchange_calendar_put(
         holidays=holidays,
         source="local",
     )
-    return _exchange_calendar_response(ctx.user_id)
+    return _exchange_calendar_response()
 
 
 @router.post("/exchange-calendar/holidays", response_model=ExchangeCalendarStateResponse)
@@ -631,8 +628,8 @@ async def settings_exchange_calendar_add_holiday(
     ctx: RequestContext = Depends(get_request_context),
 ):
     iso = body.date.strip()[:10]
-    uec_repo.add_holiday(ctx.user_id, iso, body.name.strip())
-    return _exchange_calendar_response(ctx.user_id)
+    ec_repo.add_holiday(iso, body.name.strip())
+    return _exchange_calendar_response()
 
 
 @router.delete("/exchange-calendar/holidays/{iso_date}", response_model=ExchangeCalendarStateResponse)
@@ -640,17 +637,17 @@ async def settings_exchange_calendar_delete_holiday(
     iso_date: str,
     ctx: RequestContext = Depends(get_request_context),
 ):
-    row = uec_repo.delete_holiday(ctx.user_id, iso_date.strip()[:10])
+    row = ec_repo.delete_holiday(iso_date.strip()[:10])
     if row is None:
         raise HTTPException(status_code=404, detail="Holiday not found")
-    return _exchange_calendar_response(ctx.user_id)
+    return _exchange_calendar_response()
 
 
 @router.get("/exchange-calendar/sync-preview", response_model=ExchangeCalendarSyncPreviewResponse)
 async def settings_exchange_calendar_sync_preview(
     ctx: RequestContext = Depends(get_request_context),
 ):
-    local = _exchange_calendar_response(ctx.user_id)
+    local = _exchange_calendar_response()
     if not portal_exchange_calendar_configured():
         return ExchangeCalendarSyncPreviewResponse(
             portal_configured=False,
@@ -691,7 +688,7 @@ async def settings_exchange_calendar_sync(
             status_code=503,
             detail="Breeze Console is not configured (PORTAL_API_BASE_URL).",
         )
-    local = _exchange_calendar_response(ctx.user_id)
+    local = _exchange_calendar_response()
     if local.has_local_edits and not body.confirm_override:
         raise HTTPException(
             status_code=409,
@@ -708,8 +705,7 @@ async def settings_exchange_calendar_sync(
         )
     wh = payload.get("working_hours") or {}
     holidays_raw = payload.get("holidays") or {}
-    uec_repo.apply_console_sync(
-        ctx.user_id,
+    ec_repo.apply_console_sync(
         open_hour=int(wh.get("open_hour", 9)),
         open_minute=int(wh.get("open_minute", 15)),
         close_hour=int(wh.get("close_hour", 15)),
@@ -717,7 +713,7 @@ async def settings_exchange_calendar_sync(
         holidays={str(k): str(v) for k, v in holidays_raw.items()},
         console_updated_at=payload.get("updated_at"),
     )
-    return _exchange_calendar_response(ctx.user_id)
+    return _exchange_calendar_response()
 
 
 @router.get("/breeze-api-tester/catalog", response_model=BreezeApiTesterCatalogResponse)

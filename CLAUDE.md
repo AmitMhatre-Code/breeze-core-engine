@@ -96,7 +96,7 @@ Redis is optional: `app/db/redis_client.py` falls back to an in-process `_Memory
 
 ### Persistence
 
-- `backend/data/users.sqlite3` — accounts, encrypted broker credential metadata, parked orders, AI provider keys, outlook preferences, user exchange calendar, and the reference-data schedule/progress/history tables (migration-backed schema).
+- `backend/data/users.sqlite3` — accounts, encrypted broker credential metadata, parked orders, AI provider keys, outlook preferences, the global (deployment-wide, not per-user) exchange calendar, and the reference-data schedule/progress/history tables (migration-backed schema).
 - `backend/data/scrips.sqlite3` — scrip master cache.
 - `backend/db-templates/` — seed copies of empty DBs/limit files, used because Docker bind mounts can hide image-baked files on first boot.
 - SQLite is intentionally single-instance — the app is designed around one backend process per deployment, not horizontal scale of writers. On the CFN deployment, `backend/data`'s equivalent is a small (2 GiB) EBS volume with no CloudFormation retention policy — it's deleted along with the stack on destroy.

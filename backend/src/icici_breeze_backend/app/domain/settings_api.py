@@ -298,7 +298,6 @@ class ExchangeCalendarAddHolidayBody(BaseModel):
 
 
 class ExchangeCalendarStateResponse(BaseModel):
-    user_id: str = ""
     source: str = "local"
     working_hours: ExchangeCalendarWorkingHours
     holidays: dict[str, str] = Field(default_factory=dict)

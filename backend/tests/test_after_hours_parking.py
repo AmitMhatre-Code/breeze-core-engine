@@ -34,11 +34,11 @@ def proc(monkeypatch):
 def test_break_order_place_chunk_parks_when_market_closed(proc, monkeypatch):
     p, mock_breeze = proc
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.processor.is_user_market_open",
+        "icici_breeze_backend.app.services.processor.is_market_open",
         lambda *_a, **_k: False,
     )
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.processor.user_market_closed_reason",
+        "icici_breeze_backend.app.services.processor.market_closed_reason",
         lambda *_a, **_k: "after market close (3:30 PM IST)",
     )
     parked = [
@@ -80,11 +80,11 @@ def test_break_order_place_chunk_parks_when_market_closed(proc, monkeypatch):
 def test_break_order_place_chunk_from_parked_no_duplicate(proc, monkeypatch):
     p, mock_breeze = proc
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.processor.is_user_market_open",
+        "icici_breeze_backend.app.services.processor.is_market_open",
         lambda *_a, **_k: False,
     )
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.processor.user_market_closed_reason",
+        "icici_breeze_backend.app.services.processor.market_closed_reason",
         lambda *_a, **_k: "after market close (3:30 PM IST)",
     )
     create = MagicMock()
@@ -114,11 +114,11 @@ def test_break_order_place_chunk_from_parked_no_duplicate(proc, monkeypatch):
 def test_break_order_parks_when_market_closed(proc, monkeypatch):
     p, mock_breeze = proc
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.processor.is_user_market_open",
+        "icici_breeze_backend.app.services.processor.is_market_open",
         lambda *_a, **_k: False,
     )
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.processor.user_market_closed_reason",
+        "icici_breeze_backend.app.services.processor.market_closed_reason",
         lambda *_a, **_k: "weekend",
     )
     monkeypatch.setattr(p, "_park_placement_for_execution", lambda *_a, **_k: ["park-2"])
@@ -144,7 +144,7 @@ def test_break_order_parks_when_market_closed(proc, monkeypatch):
 def test_break_order_place_chunk_calls_broker_when_open(proc, monkeypatch):
     p, mock_breeze = proc
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.processor.is_user_market_open",
+        "icici_breeze_backend.app.services.processor.is_market_open",
         lambda *_a, **_k: True,
     )
 

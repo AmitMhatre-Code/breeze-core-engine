@@ -12,9 +12,9 @@ import logging
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.core.market_hours import (
-    is_india_market_open,
-    is_india_trading_day,
+from icici_breeze_backend.app.services.market_calendar import (
+    is_market_open,
+    is_trading_day,
     market_closed_reason,
 )
 from icici_breeze_backend.app.core.strike import parse_strike
@@ -28,9 +28,9 @@ _logger = logging.getLogger(__name__)
 def _day_pnl_session_state(now: datetime.datetime | None = None) -> str:
     """One of: 'open', 'post_close', 'pre_open', 'closed_non_trading_day'."""
     dt = now or datetime.datetime.now(IST)
-    if is_india_market_open(dt):
+    if is_market_open(dt):
         return "open"
-    if not is_india_trading_day(dt):
+    if not is_trading_day(dt):
         return "closed_non_trading_day"
     reason = market_closed_reason(dt)
     return "pre_open" if "before market open" in reason else "post_close"

@@ -13,7 +13,6 @@ export type ExchangeCalendarHolidayItem = {
 };
 
 export type ExchangeCalendarState = {
-  user_id: string;
   source: "local" | "console_sync" | string;
   working_hours: ExchangeCalendarWorkingHours;
   holidays: Record<string, string>;

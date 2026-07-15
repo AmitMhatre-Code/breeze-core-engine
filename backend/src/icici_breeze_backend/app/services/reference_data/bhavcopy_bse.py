@@ -10,7 +10,7 @@ from typing import Callable
 import requests
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.core.market_hours import is_india_trading_day
+from icici_breeze_backend.app.services.market_calendar import is_trading_day
 from icici_breeze_backend.app.core.timezone import IST, today_ist_date
 from icici_breeze_backend.app.services.reference_data.bhavcopy_common import (
     BSE_HTTP_HEADERS,
@@ -55,7 +55,7 @@ def fetch_latest_bse_fo_bhavcopy(
     today = today_ist_date()
     for i in range(lookback):
         day = today - dt.timedelta(days=i)
-        if not is_india_trading_day(dt.datetime(day.year, day.month, day.day, 12, 0, tzinfo=IST)):
+        if not is_trading_day(dt.datetime(day.year, day.month, day.day, 12, 0, tzinfo=IST)):
             continue
         if progress_cb:
             progress_cb(i + 1, lookback, f"Downloading BSE FO BhavCopy for {day.isoformat()}")

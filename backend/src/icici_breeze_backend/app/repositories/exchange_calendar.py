@@ -1,4 +1,10 @@
-"""Per-user exchange calendar in users.sqlite3."""
+"""Global (single, not per-user) exchange calendar in users.sqlite3.
+
+Market operating hours and the holiday list are a physical fact about the
+exchange, not a per-user preference — this table has exactly one row
+(id = 1). See docs/design-decisions.md for why this replaced a per-user
+table.
+"""
 from __future__ import annotations
 
 import json
@@ -13,10 +19,15 @@ from icici_breeze_backend.app.core.exchange_calendar import (
 )
 from icici_breeze_backend.app.core.timezone import now_ist
 
+_ROW_ID = 1
+DEFAULT_OPEN_HOUR = 9
+DEFAULT_OPEN_MINUTE = 15
+DEFAULT_CLOSE_HOUR = 15
+DEFAULT_CLOSE_MINUTE = 30
+
 
 @dataclass(frozen=True)
-class UserExchangeCalendarRow:
-    user_id: str
+class ExchangeCalendarRow:
     source: str
     open_hour: int
     open_minute: int
@@ -38,7 +49,7 @@ def _default_holidays() -> dict[str, str]:
     return dict(_load_holidays())
 
 
-def _row_from_sqlite(row: sqlite3.Row) -> UserExchangeCalendarRow:
+def _row_from_sqlite(row: sqlite3.Row) -> ExchangeCalendarRow:
     raw = row["holidays_json"] or "{}"
     try:
         holidays = json.loads(raw)
@@ -46,8 +57,7 @@ def _row_from_sqlite(row: sqlite3.Row) -> UserExchangeCalendarRow:
             holidays = {}
     except (json.JSONDecodeError, TypeError):
         holidays = {}
-    return UserExchangeCalendarRow(
-        user_id=str(row["user_id"]),
+    return ExchangeCalendarRow(
         source=str(row["source"] or "local"),
         open_hour=int(row["open_hour"]),
         open_minute=int(row["open_minute"]),
@@ -60,14 +70,35 @@ def _row_from_sqlite(row: sqlite3.Row) -> UserExchangeCalendarRow:
     )
 
 
-def _ensure_row(user_id: str) -> UserExchangeCalendarRow:
+def _is_customized(
+    *,
+    open_hour: int,
+    open_minute: int,
+    close_hour: int,
+    close_minute: int,
+    holidays: Mapping[str, str],
+) -> bool:
+    """True if hours/holidays diverge from the bundled defaults.
+
+    Shared by `has_local_edits` and the legacy per-user backfill (which
+    needs the same "did this row actually change anything" predicate to
+    pick a winner among old per-user rows).
+    """
+    if dict(holidays) != _default_holidays():
+        return True
+    return (
+        open_hour != DEFAULT_OPEN_HOUR
+        or open_minute != DEFAULT_OPEN_MINUTE
+        or close_hour != DEFAULT_CLOSE_HOUR
+        or close_minute != DEFAULT_CLOSE_MINUTE
+    )
+
+
+def _ensure_row() -> ExchangeCalendarRow:
     db_path = _db_path()
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        cur = conn.execute(
-            "SELECT * FROM user_exchange_calendar WHERE user_id = ?",
-            (user_id,),
-        )
+        cur = conn.execute("SELECT * FROM exchange_calendar WHERE id = ?", (_ROW_ID,))
         row = cur.fetchone()
         if row:
             return _row_from_sqlite(row)
@@ -75,27 +106,32 @@ def _ensure_row(user_id: str) -> UserExchangeCalendarRow:
         now = now_ist().isoformat()
         conn.execute(
             """
-            INSERT INTO user_exchange_calendar (
-                user_id, source, open_hour, open_minute, close_hour, close_minute,
+            INSERT INTO exchange_calendar (
+                id, source, open_hour, open_minute, close_hour, close_minute,
                 holidays_json, local_updated_at, updated_at
-            ) VALUES (?, 'local', 9, 15, 15, 30, ?, ?, ?)
+            ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?)
             """,
-            (user_id, json.dumps(holidays), now, now),
+            (
+                _ROW_ID,
+                DEFAULT_OPEN_HOUR,
+                DEFAULT_OPEN_MINUTE,
+                DEFAULT_CLOSE_HOUR,
+                DEFAULT_CLOSE_MINUTE,
+                json.dumps(holidays),
+                now,
+                now,
+            ),
         )
         conn.commit()
-        cur = conn.execute(
-            "SELECT * FROM user_exchange_calendar WHERE user_id = ?",
-            (user_id,),
-        )
+        cur = conn.execute("SELECT * FROM exchange_calendar WHERE id = ?", (_ROW_ID,))
         return _row_from_sqlite(cur.fetchone())
 
 
-def get_user_calendar(user_id: str) -> UserExchangeCalendarRow:
-    return _ensure_row(user_id)
+def get_calendar() -> ExchangeCalendarRow:
+    return _ensure_row()
 
 
-def save_user_calendar(
-    user_id: str,
+def save_calendar(
     *,
     open_hour: int,
     open_minute: int,
@@ -104,18 +140,18 @@ def save_user_calendar(
     holidays: Mapping[str, str],
     source: str = "local",
     console_updated_at: str | None = None,
-) -> UserExchangeCalendarRow:
+) -> ExchangeCalendarRow:
     now = now_ist().isoformat()
     db_path = _db_path()
-    _ensure_row(user_id)
+    _ensure_row()
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
-            UPDATE user_exchange_calendar
+            UPDATE exchange_calendar
             SET source = ?, open_hour = ?, open_minute = ?, close_hour = ?, close_minute = ?,
                 holidays_json = ?, console_updated_at = COALESCE(?, console_updated_at),
                 local_updated_at = ?, updated_at = ?
-            WHERE user_id = ?
+            WHERE id = ?
             """,
             (
                 source,
@@ -127,25 +163,20 @@ def save_user_calendar(
                 console_updated_at,
                 now if source == "local" else None,
                 now,
-                user_id,
+                _ROW_ID,
             ),
         )
         if source == "console_sync" and console_updated_at:
             conn.execute(
-                """
-                UPDATE user_exchange_calendar
-                SET local_updated_at = NULL
-                WHERE user_id = ?
-                """,
-                (user_id,),
+                "UPDATE exchange_calendar SET local_updated_at = NULL WHERE id = ?",
+                (_ROW_ID,),
             )
         conn.commit()
     clear_holiday_cache()
-    return get_user_calendar(user_id)
+    return get_calendar()
 
 
 def apply_console_sync(
-    user_id: str,
     *,
     open_hour: int,
     open_minute: int,
@@ -153,9 +184,8 @@ def apply_console_sync(
     close_minute: int,
     holidays: Mapping[str, str],
     console_updated_at: str | None,
-) -> UserExchangeCalendarRow:
-    return save_user_calendar(
-        user_id,
+) -> ExchangeCalendarRow:
+    return save_calendar(
         open_hour=open_hour,
         open_minute=open_minute,
         close_hour=close_hour,
@@ -166,12 +196,11 @@ def apply_console_sync(
     )
 
 
-def add_holiday(user_id: str, iso_date: str, name: str) -> UserExchangeCalendarRow:
-    row = _ensure_row(user_id)
+def add_holiday(iso_date: str, name: str) -> ExchangeCalendarRow:
+    row = _ensure_row()
     holidays = dict(row.holidays)
     holidays[iso_date] = name.strip()
-    return save_user_calendar(
-        user_id,
+    return save_calendar(
         open_hour=row.open_hour,
         open_minute=row.open_minute,
         close_hour=row.close_hour,
@@ -181,14 +210,13 @@ def add_holiday(user_id: str, iso_date: str, name: str) -> UserExchangeCalendarR
     )
 
 
-def delete_holiday(user_id: str, iso_date: str) -> UserExchangeCalendarRow | None:
-    row = _ensure_row(user_id)
+def delete_holiday(iso_date: str) -> ExchangeCalendarRow | None:
+    row = _ensure_row()
     holidays = dict(row.holidays)
     if iso_date not in holidays:
         return None
     del holidays[iso_date]
-    return save_user_calendar(
-        user_id,
+    return save_calendar(
         open_hour=row.open_hour,
         open_minute=row.open_minute,
         close_hour=row.close_hour,
@@ -198,7 +226,7 @@ def delete_holiday(user_id: str, iso_date: str) -> UserExchangeCalendarRow | Non
     )
 
 
-def has_local_edits(row: UserExchangeCalendarRow) -> bool:
+def has_local_edits(row: ExchangeCalendarRow) -> bool:
     if row.source == "console_sync" and not row.local_updated_at:
         return False
     if row.source == "local":
@@ -210,14 +238,12 @@ def has_local_edits(row: UserExchangeCalendarRow) -> bool:
                     return True
             except ValueError:
                 return True
-        defaults = _default_holidays()
-        if row.holidays != defaults:
-            return True
-        if (
-            row.open_hour != 9
-            or row.open_minute != 15
-            or row.close_hour != 15
-            or row.close_minute != 30
+        if _is_customized(
+            open_hour=row.open_hour,
+            open_minute=row.open_minute,
+            close_hour=row.close_hour,
+            close_minute=row.close_minute,
+            holidays=row.holidays,
         ):
             return True
     return row.source == "local" and bool(row.local_updated_at)

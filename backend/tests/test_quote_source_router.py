@@ -25,18 +25,18 @@ from icici_breeze_backend.app.services.reference_data.bhavcopy_store import publ
 from icici_breeze_backend.app.services.reference_data.keys import icici_rest_chain_key
 
 
-@patch("icici_breeze_backend.app.services.quote_source_router.is_india_market_open", return_value=True)
+@patch("icici_breeze_backend.app.services.quote_source_router.is_market_open", return_value=True)
 def test_resolve_quote_source_market_open(_mock_open):
     assert resolve_quote_source("NFO") == "websocket"
 
 
-@patch("icici_breeze_backend.app.services.quote_source_router.is_india_market_open", return_value=False)
+@patch("icici_breeze_backend.app.services.quote_source_router.is_market_open", return_value=False)
 @patch("icici_breeze_backend.app.services.quote_source_router.bhavcopy_is_fresh", return_value=True)
 def test_resolve_quote_source_bhavcopy(_fresh, _open):
     assert resolve_quote_source("NFO") == "bhavcopy"
 
 
-@patch("icici_breeze_backend.app.services.quote_source_router.is_india_market_open", return_value=False)
+@patch("icici_breeze_backend.app.services.quote_source_router.is_market_open", return_value=False)
 @patch("icici_breeze_backend.app.services.quote_source_router.bhavcopy_is_fresh", return_value=False)
 def test_resolve_quote_source_api_fallback(_fresh, _open):
     assert resolve_quote_source("NFO") == "icici_api"
@@ -434,7 +434,7 @@ def test_fetch_chain_payload_routed_uses_icici_rest_fallback(
     "icici_breeze_backend.app.services.quote_source_router.list_tradeable_strikes_memory",
     return_value=[24000],
 )
-@patch("icici_breeze_backend.app.services.quote_source_router.is_india_market_open", return_value=False)
+@patch("icici_breeze_backend.app.services.quote_source_router.is_market_open", return_value=False)
 @patch("icici_breeze_backend.app.services.quote_source_router.bhavcopy_is_fresh", return_value=False)
 def test_chain_fetch_error_response_reports_rest_gap(_bhav, _open, _strikes):
     """When source is icici_api and the REST attempt itself failed, the error

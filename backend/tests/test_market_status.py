@@ -32,11 +32,11 @@ def market_status_client():
 def test_market_status_open(market_status_client):
     with (
         patch(
-            "icici_breeze_backend.app.api.v1.route_settings.is_user_market_open",
+            "icici_breeze_backend.app.api.v1.route_settings.is_market_open",
             return_value=True,
         ),
         patch(
-            "icici_breeze_backend.app.api.v1.route_settings.user_market_closed_reason",
+            "icici_breeze_backend.app.api.v1.route_settings.market_closed_reason",
             return_value="market open",
         ),
     ):
@@ -49,11 +49,11 @@ def test_market_status_open(market_status_client):
 def test_market_status_closed(market_status_client):
     with (
         patch(
-            "icici_breeze_backend.app.api.v1.route_settings.is_user_market_open",
+            "icici_breeze_backend.app.api.v1.route_settings.is_market_open",
             return_value=False,
         ),
         patch(
-            "icici_breeze_backend.app.api.v1.route_settings.user_market_closed_reason",
+            "icici_breeze_backend.app.api.v1.route_settings.market_closed_reason",
             return_value="weekend",
         ),
     ):

@@ -27,8 +27,8 @@ from icici_breeze_backend.app.repositories import parked_orders as parked_orders
 if TYPE_CHECKING:
     from icici_breeze_backend.audit.strategy_builder_audit import StrategyBuilderAuditSession
 from icici_breeze_backend.app.services.market_calendar import (
-    is_market_open as is_user_market_open,
-    market_closed_reason as user_market_closed_reason,
+    is_market_open,
+    market_closed_reason,
 )
 from icici_breeze_backend.app.domain.order import ParkedOrderItem, ParkedOrderListItem
 
@@ -2595,7 +2595,7 @@ class processor():
 
     @staticmethod
     def _market_closed_park_message(reason: str | None = None) -> str:
-        r = reason or user_market_closed_reason(user_id)
+        r = reason or market_closed_reason()
         return (
             f"Market is closed ({r}). Order parked for execution — "
             "execute it from Parked Execution when the market opens."
@@ -2679,8 +2679,8 @@ class processor():
                 "danger_line": None,
             }
 
-        if chunk_index == 0 and not is_user_market_open(user_id):
-            closed_reason = user_market_closed_reason(user_id)
+        if chunk_index == 0 and not is_market_open():
+            closed_reason = market_closed_reason()
             if from_parked_execution:
                 return _terminal(
                     f"Market is still closed ({closed_reason}). Your order remains parked."
@@ -2833,8 +2833,8 @@ class processor():
                     + " in the Options Quantity Limits file",
                 }
             )
-        elif not is_user_market_open(user_id):
-            closed_reason = user_market_closed_reason(user_id)
+        elif not is_market_open():
+            closed_reason = market_closed_reason()
             self._park_placement_for_execution(
                 user_id,
                 product_type=product_type,

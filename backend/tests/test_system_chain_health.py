@@ -94,14 +94,14 @@ class TestMaybeTriggerSystemPrefetch:
 
     def test_noop_when_market_closed(self, monkeypatch):
         calls = self._stub_subscribe(monkeypatch)
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: False)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: False)
         sch.maybe_trigger_system_prefetch("u1")
         assert calls == []
         assert sch.prefetch_state()["date"] is None
 
     def test_subscribes_both_scrips_once(self, monkeypatch):
         calls = self._stub_subscribe(monkeypatch)
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
         sch.maybe_trigger_system_prefetch("u1")
         assert sorted(calls) == ["system:health:nifty", "system:health:sensex"]
         state = sch.prefetch_state()
@@ -110,14 +110,14 @@ class TestMaybeTriggerSystemPrefetch:
 
     def test_idempotent_same_day(self, monkeypatch):
         calls = self._stub_subscribe(monkeypatch)
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
         sch.maybe_trigger_system_prefetch("u1")
         sch.maybe_trigger_system_prefetch("u1")
         assert len(calls) == 2  # not 4 -- second call was a no-op
 
     def test_retries_after_cooldown_on_failure(self, monkeypatch):
         calls = self._stub_subscribe(monkeypatch, fail_once=True)
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
 
         fake_now = {"t": 1000.0}
         monkeypatch.setattr(time, "monotonic", lambda: fake_now["t"])
@@ -143,7 +143,7 @@ class TestMaybeTriggerSystemPrefetch:
         failed (`sync_index_spot_subscriptions` returning False), so a session
         that recovered later in the day never got retried until midnight IST."""
         calls = self._stub_subscribe(monkeypatch, index_spot_ok=False)
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
 
         fake_now = {"t": 1000.0}
         monkeypatch.setattr(time, "monotonic", lambda: fake_now["t"])
@@ -184,7 +184,7 @@ class TestGetSystemHealthStatus:
         )
 
     def test_market_closed_is_gray(self, monkeypatch):
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: False)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: False)
         monkeypatch.setattr(sch, "market_closed_reason", lambda *a, **k: "weekend")
         result = sch.get_system_health_status()
         assert result["status"] == "gray"
@@ -192,14 +192,14 @@ class TestGetSystemHealthStatus:
         assert result["market_open"] is False
 
     def test_market_open_waiting_for_login_is_gray(self, monkeypatch):
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
         result = sch.get_system_health_status()
         assert result["status"] == "gray"
         assert "waiting for first login" in result["reason"]
         assert result["prefetch_done"] is False
 
     def test_disconnected_is_red(self, monkeypatch):
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
         self._base_prefetch(monkeypatch)
         monkeypatch.setattr(bwm, "get_playground_status", lambda: {"connected": False, "last_error": "boom"})
         result = sch.get_system_health_status()
@@ -207,7 +207,7 @@ class TestGetSystemHealthStatus:
         assert "disconnected" in result["reason"]
 
     def test_fresh_ticks_both_scrips_is_green(self, monkeypatch):
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
         self._base_prefetch(monkeypatch)
         monkeypatch.setattr(bwm, "get_playground_status", lambda: {"connected": True, "last_error": None})
         monkeypatch.setattr(sch, "cache_get_json", lambda key: {"received_at": time.time()})
@@ -217,7 +217,7 @@ class TestGetSystemHealthStatus:
         assert result["detail"]["sensex"]["stale"] is False
 
     def test_one_scrip_stale_is_red_naming_it(self, monkeypatch):
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
         self._base_prefetch(monkeypatch)
         monkeypatch.setattr(bwm, "get_playground_status", lambda: {"connected": True, "last_error": None})
 
@@ -235,7 +235,7 @@ class TestGetSystemHealthStatus:
         assert result["detail"]["sensex"]["stale"] is False
 
     def test_no_ticks_yet_within_warmup_is_gray(self, monkeypatch):
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
         self._base_prefetch(monkeypatch, subscribed_seconds_ago=1.0)
         monkeypatch.setattr(bwm, "get_playground_status", lambda: {"connected": True, "last_error": None})
         monkeypatch.setattr(sch, "cache_get_json", lambda key: None)
@@ -244,7 +244,7 @@ class TestGetSystemHealthStatus:
         assert "subscribing" in result["reason"]
 
     def test_no_ticks_past_warmup_is_red(self, monkeypatch):
-        monkeypatch.setattr(sch, "is_india_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
         self._base_prefetch(monkeypatch, subscribed_seconds_ago=999.0)
         monkeypatch.setattr(bwm, "get_playground_status", lambda: {"connected": True, "last_error": None})
         monkeypatch.setattr(sch, "cache_get_json", lambda key: None)

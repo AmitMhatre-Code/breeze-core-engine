@@ -116,7 +116,7 @@ export function ExchangeCalendarScreen() {
       if (preview.would_overwrite_local) {
         setSyncPreviewMsg(
           preview.message ??
-            "Your local holiday calendar and working hours will be replaced by Breeze Console Admin Settings.",
+            "The local holiday calendar and working hours will be replaced by Breeze Console Admin Settings.",
         );
         setShowSyncConfirm(true);
         return;
@@ -278,7 +278,7 @@ export function ExchangeCalendarScreen() {
         <div className="space-y-3 rounded-[10px] border border-accent/30 bg-accent-tint p-4">
           <h3 className="text-heading font-bold text-foreground">Breeze Console Admin Settings</h3>
           <p className="text-xs text-muted">
-            Replace your local calendar with the operator-maintained calendar from breeze-ui.com Console.
+            Replace the shared exchange calendar with the operator-maintained calendar from breeze-ui.com Console.
           </p>
           {!portalConfigured ? (
             <p className="text-xs text-amber-accent">
@@ -304,7 +304,7 @@ export function ExchangeCalendarScreen() {
           </h3>
           <p className="text-sm text-muted">
             {syncPreviewMsg ??
-              "Your local holiday calendar and working hours will be replaced by Breeze Console Admin Settings."}
+              "The local holiday calendar and working hours will be replaced by Breeze Console Admin Settings."}
           </p>
           <div className="flex justify-end gap-2">
             <button type="button" className="app-btn-outline" onClick={() => setShowSyncConfirm(false)}>

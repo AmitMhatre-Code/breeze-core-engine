@@ -6,7 +6,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.core.market_hours import get_reference_time_for_iv_ist, is_india_market_open
+from icici_breeze_backend.app.services.market_calendar import get_reference_time_for_iv_ist, is_market_open
 from icici_breeze_backend.app.core.timezone import IST, now_ist_naive, today_ist_date
 from icici_breeze_backend.app.services.iv_compute import DEFAULT_R, DEFAULT_Q, expected_range_from_atm_iv, implied_volatility
 
@@ -554,7 +554,7 @@ def _log_atm_iv_trace(
 
     # Step 2: Expiry and time to expiry (LTT = expiry date 3:30 PM IST)
     ref_ist = get_reference_time_for_iv_ist()
-    ref_label = "now (market open)" if is_india_market_open(ref_ist) else "previous market close (market closed)"
+    ref_label = "now (market open)" if is_market_open(ref_ist) else "previous market close (market closed)"
     _logger.info(
         "%s Step 2 - Reference time for T: %s (%s)",
         ATM_IV_TRACE_PREFIX, ref_ist.strftime("%Y-%m-%d %H:%M:%S %Z"), ref_label,

@@ -8,7 +8,12 @@ from typing import Any, TYPE_CHECKING
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_key
-from icici_breeze_backend.app.core.market_hours import bhavcopy_is_stale, is_india_market_open
+from icici_breeze_backend.app.services.market_calendar import (
+    bhavcopy_is_stale,
+    get_calendar_config,
+    is_market_open,
+    is_trading_day,
+)
 from icici_breeze_backend.app.core.timezone import IST, now_ist
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.core.icici_client import icici_client
@@ -38,10 +43,8 @@ _logger = logging.getLogger(__name__)
 
 
 def _previous_trading_day(d: dt.date) -> dt.date:
-    from icici_breeze_backend.app.core.market_hours import is_india_trading_day
-
     prev = d - dt.timedelta(days=1)
-    while not is_india_trading_day(dt.datetime(prev.year, prev.month, prev.day, 12, 0, tzinfo=IST)):
+    while not is_trading_day(dt.datetime(prev.year, prev.month, prev.day, 12, 0, tzinfo=IST)):
         prev -= dt.timedelta(days=1)
     return prev
 
@@ -49,10 +52,8 @@ def _previous_trading_day(d: dt.date) -> dt.date:
 def latest_concluded_trading_day(now: dt.datetime | None = None) -> dt.date:
     """Last trading day whose session has fully ended (for bhavcopy freshness)."""
     dt_ist = (now or now_ist()).astimezone(IST)
-    from icici_breeze_backend.app.core.market_hours import is_india_trading_day
-
-    close = dt_ist.replace(hour=15, minute=30, second=0, microsecond=0)
-    if is_india_trading_day(dt_ist) and dt_ist >= close:
+    close = get_calendar_config().close_time(dt_ist)
+    if is_trading_day(dt_ist) and dt_ist >= close:
         return dt_ist.date()
     return _previous_trading_day(dt_ist.date())
 
@@ -65,7 +66,7 @@ def bhavcopy_is_fresh(exchange_code: str, now: dt.datetime | None = None) -> boo
 
 
 def resolve_quote_source(exchange_code: str, now: dt.datetime | None = None) -> str:
-    if is_india_market_open(now):
+    if is_market_open(now):
         return "websocket"
     if bhavcopy_is_fresh(exchange_code, now):
         return "bhavcopy"
@@ -672,7 +673,7 @@ def chain_fetch_error_response(
             "Error": "No tradeable contracts for this expiry.",
             "Success": None,
         }
-    if is_india_market_open():
+    if is_market_open():
         return {
             "Status": 400,
             "Error": "Live option chain not ready; try again in a moment.",

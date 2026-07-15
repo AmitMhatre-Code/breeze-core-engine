@@ -180,13 +180,13 @@ def _ensure_app_database() -> None:
         try:
             from icici_breeze_backend.app.db.user_account_migrate import migrate_user_account_if_needed
             from icici_breeze_backend.app.db.parked_orders_migrate import ensure_parked_orders_table
-            from icici_breeze_backend.app.db.user_exchange_calendar_migrate import (
-                ensure_user_exchange_calendar_table,
+            from icici_breeze_backend.app.db.exchange_calendar_migrate import (
+                ensure_exchange_calendar_table,
             )
 
             migrate_user_account_if_needed(db_path)
             ensure_parked_orders_table(db_path)
-            ensure_user_exchange_calendar_table(db_path)
+            ensure_exchange_calendar_table(db_path)
             from icici_breeze_backend.app.db.user_telegram_migrate import (
                 ensure_user_telegram_table,
             )

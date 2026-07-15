@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.core.market_hours import is_india_market_open
+from icici_breeze_backend.app.services.market_calendar import is_market_open
 from icici_breeze_backend.app.auth.context import (
     ACCESS_TOKEN_COOKIE,
     CREDENTIAL_FULL_SECRET_COOKIE,
@@ -129,10 +129,10 @@ async def run_tests(
     run_mode = request.query_params.get("run_mode", "plain")
 
     # All tests restricted to non-market hours unless override (same as Playwright)
-    if is_india_market_open() and not override:
+    if is_market_open() and not override:
         raise HTTPException(
             status_code=403,
-            detail="Integration tests blocked during market hours (9:15 AM - 3:30 PM IST). "
+            detail="Integration tests blocked during market hours. "
             "Use override_market_hours=1 or set INTEGRATION_SKIP_MARKET_HOURS=1 to override.",
         )
 

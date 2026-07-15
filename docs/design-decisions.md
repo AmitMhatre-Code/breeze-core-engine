@@ -241,3 +241,19 @@ This document records **why** the modern stack is shaped the way it is. It is no
 - Local development and constrained environments shouldn't hard-fail just because Redis isn't running.
 
 **Note**: On the customer CloudFormation deployment, Redis is present by default as a sibling `breeze-redis` Docker container (not a managed cloud service), so this fallback mainly matters for local dev, degraded states, and the brief window during an in-place upgrade (decision #17) where the sidecar might be recreated.
+
+---
+
+## 21. Market operating hours are a single global, DB-backed value — not a hardcoded constant, not per-user
+
+**Decision**: NSE/BSE market hours and the exchange holiday calendar are stored in one singleton `exchange_calendar` row (`app/repositories/exchange_calendar.py`), editable only from Settings → Exchange Calendar, and every backend code path — dashboards, chain health, quote routing, the bhavcopy background scheduler, admin routes, IV reference-time math — reads it through `app/services/market_calendar.py`. There is exactly one calendar per deployment, not one per user.
+
+**Rationale**:
+
+- No exchange publishes an API for one-off special sessions (e.g. Muhurat trading on Diwali) or ad-hoc holiday changes. The only way to represent these is an operator hand-editing a value — which means it has to live in a database, not a hardcoded constant, or every special session would require a code change and redeploy.
+- Market hours are a physical fact about the exchange, not a per-user preference. An earlier version of this table was keyed per-`user_id`, but that was already inconsistent with the portal-console sync (`app/services/portal_exchange_calendar.py`), which has only ever fetched one shared payload for the whole deployment — there was never a real per-user dimension to preserve.
+- Before this decision, `app/core/market_hours.py` hardcoded 9:15–15:30 IST and read a static bundled JSON file, while a *separate*, parallel per-user-aware module (`market_calendar.py`) existed but only two call sites actually used it. Nearly every system-wide caller silently ignored anything an operator configured in Settings — editing the Exchange Calendar page had no effect on the dashboard, chain health, or order-parking logic. This decision collapses both into the one module so that can't happen again.
+
+**Migration**: `app/db/exchange_calendar_migrate.py` backfills the old per-user table on first startup after upgrade — it picks the customized row (if any; most-recently-updated wins ties) as the new global default, and renames the legacy table to `_legacy_user_exchange_calendar_backup` rather than dropping it.
+
+**Trade-off**: In a deployment shared by more than one user (uncommon but possible — see `app/services/squareoff_watch.py`'s handling of multi-user deployments), any authenticated user editing the Exchange Calendar changes it for everyone. This is accepted because the alternative (per-user calendars) doesn't correspond to anything real — the exchange only has one set of hours.
