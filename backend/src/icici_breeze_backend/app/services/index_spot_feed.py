@@ -261,7 +261,7 @@ def get_index_quotes_status(proc: "Processor", user_id: str) -> dict[str, Any]:
     open, so there's no separate cleanup step)."""
     from icici_breeze_backend.app.services.market_calendar import is_market_open
 
-    market_open = is_market_open(user_id)
+    market_open = is_market_open()
     quotes: dict[str, Any] = {}
     for cash_exchange, cash_stock_code, _opt_ex, _opt_stock, label in _INDEX_SCRIPS:
         payload = cache_get_json(index_spot_key(label))
