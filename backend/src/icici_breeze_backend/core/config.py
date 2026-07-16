@@ -315,6 +315,13 @@ PNL_ENGINE_ENABLED = str(os.environ.get("PNL_ENGINE_ENABLED", "true")).strip().l
     "0", "false", "no",
 )
 
+# ICICI has not yet implemented native aggressive-limit order support (a real order_type=limit
+# submission that reprices aggressively); until they do, this app-side workaround is deactivated
+# by default. Flip to true once ICICI confirms support, without deleting the workaround itself.
+AGGRESSIVE_LIMIT_ORDER_ENABLED = str(
+    os.environ.get("AGGRESSIVE_LIMIT_ORDER_ENABLED", "false")
+).strip().lower() in ("1", "true", "yes")
+
 
 def redis_connection_url() -> str:
     if REDIS_URL:

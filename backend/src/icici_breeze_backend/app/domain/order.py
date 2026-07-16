@@ -204,7 +204,7 @@ class LegModifyResponse(BaseModel):
     placed: List[LegModifyOrderOutcome] = Field(default_factory=list)
     failures: List[LegModifyFailure] = Field(default_factory=list)
     rate_limited: bool = False
-    rate_limit_pause_seconds: Optional[int] = None
+    rate_limit_pause_seconds: Optional[float] = None
 
 
 class BookGroupLtpItem(BaseModel):

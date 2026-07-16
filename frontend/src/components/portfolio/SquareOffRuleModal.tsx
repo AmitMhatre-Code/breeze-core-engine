@@ -77,9 +77,11 @@ const statusCopy: Record<SquareOffRuleRecord["status"], { label: string; classNa
  * (a focused confirm modal) rather than an inline panel, so an armed group
  * costs nothing on the row until it's reopened or fires.
  *
- * When a rule already exists for this group, the modal is view-only: the
- * target/stop values can't be edited here (disarm then re-arm fresh instead),
- * and the primary button becomes "Disarm".
+ * A still-`armed` rule's target/stop values are directly editable — submitting
+ * calls the same arm endpoint, which upserts the existing row rather than
+ * inserting a duplicate (see `repositories/squareoff_rules.arm_rule`). Once a
+ * rule has moved past `armed` (triggered/fired/fire_failed) there's nothing
+ * left to update, so the modal falls back to view-only + "Disarm" only.
  */
 export function SquareOffRuleModal({
   open,
@@ -125,9 +127,11 @@ export function SquareOffRuleModal({
   }, [open]);
 
   const pnl = formatSignedRupees(currentPnl);
+  const editable = !existingRule || existingRule.status === "armed";
   const target = Number(profitTarget.replace(/,/g, ""));
   const stop = Number(lossLimit.replace(/,/g, ""));
   const canSubmit =
+    editable &&
     Number.isFinite(target) &&
     target > 0 &&
     Number.isFinite(stop) &&
@@ -264,7 +268,7 @@ export function SquareOffRuleModal({
               value={profitTarget}
               onChange={(e) => handleAmountInput(e, setProfitTarget)}
               placeholder="1,00,000"
-              disabled={!!existingRule}
+              disabled={!editable}
             />
           </div>
         </label>
@@ -281,7 +285,7 @@ export function SquareOffRuleModal({
               value={lossLimit}
               onChange={(e) => handleAmountInput(e, setLossLimit)}
               placeholder="20,000"
-              disabled={!!existingRule}
+              disabled={!editable}
             />
           </div>
         </label>
@@ -297,7 +301,7 @@ export function SquareOffRuleModal({
               value={targetPremiumPct}
               onChange={(e) => handlePctInput(e, setTargetPremiumPct)}
               placeholder="10"
-              disabled={!!existingRule}
+              disabled={!editable}
             />
             <span className="text-sm text-faint">%</span>
           </div>
@@ -314,7 +318,7 @@ export function SquareOffRuleModal({
               value={stopLossPremiumPct}
               onChange={(e) => handlePctInput(e, setStopLossPremiumPct)}
               placeholder="5"
-              disabled={!!existingRule}
+              disabled={!editable}
             />
             <span className="text-sm text-faint">%</span>
           </div>
@@ -343,7 +347,11 @@ export function SquareOffRuleModal({
         </p>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2 sm:gap-3">
+      <div
+        className={`grid grid-cols-1 gap-2 pt-1 sm:gap-3 ${
+          existingRule && editable ? "sm:grid-cols-3" : "sm:grid-cols-2"
+        }`}
+      >
         <button type="button" className={sb.btnSecondary} onClick={onClose}>
           Cancel
         </button>
@@ -356,16 +364,17 @@ export function SquareOffRuleModal({
           >
             {disarming ? "Disarming…" : "Disarm"}
           </button>
-        ) : (
+        ) : null}
+        {editable ? (
           <button
             type="button"
             className={sb.btnPrimary}
             disabled={!canSubmit || submitting}
             onClick={handleSubmit}
           >
-            {submitting ? "Arming…" : "Arm rule"}
+            {submitting ? (existingRule ? "Updating…" : "Arming…") : existingRule ? "Update rule" : "Arm rule"}
           </button>
-        )}
+        ) : null}
       </div>
     </Modal>
   );

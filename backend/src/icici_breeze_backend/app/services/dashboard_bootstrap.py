@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.api.v1.route_portfolio import _normalize_portfolio_success_for_ui
 from icici_breeze_backend.app.domain.responses import HomeDataResponse
 from icici_breeze_backend.app.services.broker_snapshot_cache import get_snapshot
@@ -63,6 +64,7 @@ def build_home_data_fields(user_id: str, processor, *, broker_token: str) -> dic
         "api_usage_band": usage["api_usage_band"],
         "api_usage_warning": get_usage_warning(user_id),
         "api_usage_blocked": is_daily_limit_reached(user_id),
+        "aggressive_limit_order_enabled": cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED,
         **license_fields,
     }
 

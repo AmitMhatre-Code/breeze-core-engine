@@ -195,8 +195,10 @@ def _ensure_app_database() -> None:
             from icici_breeze_backend.app.services.user_rate_limit_prefs import (
                 migrate_legacy_rate_limit_pause_default,
                 migrate_rate_limit_pause_bounds,
+                rebuild_rate_limit_pause_column_default,
             )
 
+            rebuild_rate_limit_pause_column_default()
             migrate_legacy_rate_limit_pause_default()
             migrate_rate_limit_pause_bounds()
             from icici_breeze_backend.app.services.reference_data.state import ensure_reference_data_tables

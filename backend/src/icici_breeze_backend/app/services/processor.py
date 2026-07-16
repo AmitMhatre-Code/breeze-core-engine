@@ -204,6 +204,12 @@ def _icici_error(error_msg: str, status: int = 400) -> dict:
     return {"Status": status, "Error": error_msg}
 
 
+AGGRESSIVE_LIMIT_DISABLED_MESSAGE = (
+    "Aggressive limit orders are temporarily disabled until ICICI implements native support. "
+    "Place the order with an explicit limit price instead."
+)
+
+
 def _single_line_preview(text: str, max_len: int = 400) -> str:
     """Collapse whitespace for compact log lines."""
     one = " ".join(str(text).split())
@@ -1794,6 +1800,18 @@ class processor():
                     quote_rows = _quote_success_rows(quote)
                     if quote.get("Status") == 200 and quote_rows:
                         i["spot_price"] = quote_rows[0].get("spot_price", "Err")
+                        # ICICI's own get_portfolio_positions() ltp can be stale/wrong for
+                        # illiquid contracts (observed post-close for BFO index options) --
+                        # prefer the router's cache-first (WS -> bhavcopy -> REST) option ltp,
+                        # the same source already trusted for spot_price above and for the
+                        # frontend's live overlay. Fall back to the broker's raw ltp only when
+                        # the router has no usable quote for this contract.
+                        try:
+                            router_ltp = float(quote_rows[0].get("ltp"))
+                        except (TypeError, ValueError):
+                            router_ltp = None
+                        if router_ltp is not None and router_ltp > 0:
+                            i["ltp"] = router_ltp
                     else:
                         i["spot_price"] = "Err"
 
@@ -2305,6 +2323,8 @@ class processor():
         }
 
     def place_order(self,user_id,product_type,stock_code,action,strike_price,right,price,expiry_date,quantity, exchange_code: str = cfg.NFO, aggressive_limit: bool = False):
+        if aggressive_limit and not cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED:
+            return _icici_error(AGGRESSIVE_LIMIT_DISABLED_MESSAGE)
         breeze = self.get_session_breeze(user_id)
         if breeze is None:
             return _icici_error(
@@ -2520,6 +2540,8 @@ class processor():
         aggressive_limit: bool = False,
     ) -> list[dict]:
         """Success + failure toasts matching break_order (used by /order/break-finalize)."""
+        if aggressive_limit and not cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED:
+            aggressive_limit = False
         messages: list[dict] = []
         if success_qty_chunks:
             n_orders = len(success_qty_chunks)
@@ -2679,6 +2701,9 @@ class processor():
                 "danger_line": None,
             }
 
+        if aggressive_limit and not cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED:
+            return _terminal(AGGRESSIVE_LIMIT_DISABLED_MESSAGE)
+
         if chunk_index == 0 and not is_market_open():
             closed_reason = market_closed_reason()
             if from_parked_execution:
@@ -2816,6 +2841,8 @@ class processor():
         }
 
     def break_order(self,user_id,stock_code,expiry_date,product_type,right,strike_price,total_qty,price,action, exchange_code: str = cfg.NFO, aggressive_limit: bool = False):
+        if aggressive_limit and not cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED:
+            return [{"type": cfg.DANGER, "message": AGGRESSIVE_LIMIT_DISABLED_MESSAGE}]
         messages: list[dict] = []
         contract_label = f"{stock_code}-{expiry_date}-{strike_price}-{right}"
         try:

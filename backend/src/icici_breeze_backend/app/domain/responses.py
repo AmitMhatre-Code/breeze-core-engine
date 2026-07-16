@@ -138,6 +138,10 @@ class HomeDataResponse(BaseModel):
         None,
         description="License/deployment snapshot for Contact Sales when status is expired, revoked, or unlicensed",
     )
+    aggressive_limit_order_enabled: bool = Field(
+        False,
+        description="False while ICICI has no native aggressive-limit order support (AGGRESSIVE_LIMIT_ORDER_ENABLED)",
+    )
 
 
 class DeploymentLicenseStatusResponse(BaseModel):

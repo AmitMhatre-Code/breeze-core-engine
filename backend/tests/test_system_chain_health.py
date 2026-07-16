@@ -92,16 +92,26 @@ class TestMaybeTriggerSystemPrefetch:
         )
         return calls
 
-    def test_noop_when_market_closed(self, monkeypatch):
+    def test_noop_on_non_trading_day(self, monkeypatch):
         calls = self._stub_subscribe(monkeypatch)
-        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: False)
+        monkeypatch.setattr(sch, "is_trading_day", lambda *a, **k: False)
         sch.maybe_trigger_system_prefetch("u1")
         assert calls == []
         assert sch.prefetch_state()["date"] is None
 
+    def test_fires_pre_market_when_market_not_yet_open(self, monkeypatch):
+        """Deliberate: the trigger is gated on `is_trading_day()`, not
+        `is_market_open()` -- a pre-market login should still subscribe
+        immediately so chains are already warm by the time the market opens."""
+        calls = self._stub_subscribe(monkeypatch)
+        monkeypatch.setattr(sch, "is_trading_day", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: False)
+        sch.maybe_trigger_system_prefetch("u1")
+        assert sorted(calls) == ["system:health:nifty", "system:health:sensex"]
+
     def test_subscribes_both_scrips_once(self, monkeypatch):
         calls = self._stub_subscribe(monkeypatch)
-        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_trading_day", lambda *a, **k: True)
         sch.maybe_trigger_system_prefetch("u1")
         assert sorted(calls) == ["system:health:nifty", "system:health:sensex"]
         state = sch.prefetch_state()
@@ -110,14 +120,14 @@ class TestMaybeTriggerSystemPrefetch:
 
     def test_idempotent_same_day(self, monkeypatch):
         calls = self._stub_subscribe(monkeypatch)
-        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_trading_day", lambda *a, **k: True)
         sch.maybe_trigger_system_prefetch("u1")
         sch.maybe_trigger_system_prefetch("u1")
         assert len(calls) == 2  # not 4 -- second call was a no-op
 
     def test_retries_after_cooldown_on_failure(self, monkeypatch):
         calls = self._stub_subscribe(monkeypatch, fail_once=True)
-        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_trading_day", lambda *a, **k: True)
 
         fake_now = {"t": 1000.0}
         monkeypatch.setattr(time, "monotonic", lambda: fake_now["t"])
@@ -143,7 +153,7 @@ class TestMaybeTriggerSystemPrefetch:
         failed (`sync_index_spot_subscriptions` returning False), so a session
         that recovered later in the day never got retried until midnight IST."""
         calls = self._stub_subscribe(monkeypatch, index_spot_ok=False)
-        monkeypatch.setattr(sch, "is_market_open", lambda *a, **k: True)
+        monkeypatch.setattr(sch, "is_trading_day", lambda *a, **k: True)
 
         fake_now = {"t": 1000.0}
         monkeypatch.setattr(time, "monotonic", lambda: fake_now["t"])

@@ -19,7 +19,7 @@ from datetime import date, datetime
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.services.market_calendar import is_market_open, market_closed_reason
+from icici_breeze_backend.app.services.market_calendar import is_market_open, is_trading_day, market_closed_reason
 from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.db.redis_client import cache_get_json
 from icici_breeze_backend.app.services.reference_data.keys import ws_raw_quote_key
@@ -112,8 +112,14 @@ def maybe_trigger_system_prefetch(user_id: str) -> None:
     """Fire-and-forget. Call from an authenticated request (needs the
     broker-token contextvar already set for this request). Safe to call on
     every request; near-zero cost once today's prefetch has already run.
+
+    Gated on `is_trading_day()`, not `is_market_open()` -- deliberately allows
+    pre-market logins to subscribe immediately (WS tokens subscribe fine before
+    the open, they just won't tick until 9:15) so chains are already warm the
+    moment the market opens, instead of waiting for the first post-open
+    authenticated request to discover the gate has lifted.
     """
-    if not is_market_open():
+    if not is_trading_day():
         return
     today = datetime.now(IST).date()
     with _lock:

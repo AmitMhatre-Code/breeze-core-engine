@@ -608,6 +608,7 @@ async def get_home_api(ctx: RequestContext = Depends(get_request_context)):
         api_usage_band=usage["api_usage_band"],
         api_usage_warning=get_usage_warning(user_id),
         api_usage_blocked=is_daily_limit_reached(user_id),
+        aggressive_limit_order_enabled=cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED,
         **license_fields,
     )
 
