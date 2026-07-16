@@ -174,9 +174,50 @@ def _stock_token_sdk_args(tokens: list[str]) -> dict[str, Any]:
     return {"stock_token": list(tokens)}
 
 
+
+# Runtime override for tick debug logging, set via the /admin/ws-tick-debug
+# endpoints -- lets an admin turn capture on/off on a running deployment
+# without editing the env file or restarting the container (e.g. on a
+# customer EC2 instance where BWS_TICK_DEBUG_LOG_PATH isn't reachable).
+# Takes precedence over the env var when set.
+_tick_debug_log_path: str | None = None
+_tick_debug_count = 0
+
+
+def set_tick_debug_log_path(path: str | None) -> None:
+    global _tick_debug_log_path, _tick_debug_count
+    normalized = path or None
+    if normalized is not None:
+        # Only reset on a fresh start, not on stop -- so a status check right
+        # after stopping still reports how many ticks this session captured.
+        _tick_debug_count = 0
+    _tick_debug_log_path = normalized
+
+
+def get_tick_debug_status() -> dict[str, Any]:
+    path = _tick_debug_log_path or (getattr(cfg, "BWS_TICK_DEBUG_LOG_PATH", "") or None)
+    return {"active": bool(path), "path": path, "ticks_written": _tick_debug_count}
+
+
+def _debug_log_tick(ticks: Any) -> None:
+    global _tick_debug_count
+    path = _tick_debug_log_path or getattr(cfg, "BWS_TICK_DEBUG_LOG_PATH", "")
+    if not path:
+        return
+    try:
+        import json
+
+        with open(path, "a") as f:
+            f.write(json.dumps({"ts": time.time(), "tick": ticks}, default=str) + "\n")
+        _tick_debug_count += 1
+    except Exception:
+        _logger.exception("tick debug log write failed for %s", path)
+
+
 def _on_ticks(ticks: Any) -> None:
     from icici_breeze_backend.app.services.ws_tick_pipeline import ingest_tick
 
+    _debug_log_tick(ticks)
     ingest_tick(ticks)
 
 

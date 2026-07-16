@@ -127,6 +127,27 @@ function formatTickForDisplay(rawJson: string): string {
   }
 }
 
+type TickShape = {
+  signature: string;
+  keys: string[];
+  count: number;
+  example: string;
+  firstTs: number;
+};
+
+/** Distinguishes tick "types" (quote tick vs order notification vs OHLC tick, …) by their key set. */
+function tickShapeKeys(rawJson: string): string[] | null {
+  try {
+    const parsed = JSON.parse(rawJson) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return Object.keys(parsed as Record<string, unknown>).sort();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function ApiPlaygroundScreen() {
   const subscriptionHolder = useWsSubscriptionHolder();
   const qc = useQueryClient();
@@ -136,6 +157,9 @@ export function ApiPlaygroundScreen() {
   const [lastResponse, setLastResponse] = useState<BreezeApiInvokeResponse | null>(null);
   const [invokeError, setInvokeError] = useState<string | null>(null);
   const [wsTicks, setWsTicks] = useState<string[]>([]);
+  const [wsTickShapes, setWsTickShapes] = useState<TickShape[]>([]);
+  const [wsPaused, setWsPaused] = useState(false);
+  const wsPausedRef = useRef(false);
   const [wsCommandLog, setWsCommandLog] = useState<BreezeApiWsEventLogEntry[]>([]);
   const [wsLastResponse, setWsLastResponse] = useState<BreezeApiWsStatus | null>(null);
   const [wsStatusHint, setWsStatusHint] = useState(
@@ -384,9 +408,21 @@ export function ApiPlaygroundScreen() {
     },
   });
 
+  const toggleWsPause = () => {
+    setWsPaused((prev) => {
+      wsPausedRef.current = !prev;
+      return !prev;
+    });
+  };
+
+  const clearWsTickShapes = () => setWsTickShapes([]);
+
   const startWsStream = () => {
     wsStreamRef.current?.close();
     setWsTicks([]);
+    setWsTickShapes([]);
+    setWsPaused(false);
+    wsPausedRef.current = false;
     tickLogSeqRef.current = 0;
     setWsStatusHint("Opening tick stream…");
     const es = new EventSource(wsStreamUrl(), { withCredentials: true });
@@ -435,9 +471,24 @@ export function ApiPlaygroundScreen() {
     });
     es.addEventListener("ws_tick", (event) => {
       const data = (event as MessageEvent).data;
+      if (wsPausedRef.current) return;
       setWsTicks((prev) => [data, ...prev].slice(0, 40));
       tickLogSeqRef.current += 1;
       appendWsLog(tickPayloadToLogEntry(data, tickLogSeqRef.current));
+
+      const keys = tickShapeKeys(data);
+      if (keys) {
+        const signature = keys.join("|");
+        setWsTickShapes((prev) => {
+          const idx = prev.findIndex((s) => s.signature === signature);
+          if (idx === -1) {
+            return [...prev, { signature, keys, count: 1, example: data, firstTs: Date.now() / 1000 }];
+          }
+          const next = [...prev];
+          next[idx] = { ...next[idx], count: next[idx].count + 1 };
+          return next;
+        });
+      }
     });
     es.addEventListener("ws_ping", (event) => {
       try {
@@ -671,6 +722,14 @@ export function ApiPlaygroundScreen() {
             <button type="button" className="app-btn-outline" onClick={() => startWsStream()}>
               Start tick stream
             </button>
+            <button
+              type="button"
+              className="app-btn-outline"
+              disabled={!wsStreamOpen && !wsPaused}
+              onClick={toggleWsPause}
+            >
+              {wsPaused ? "Resume capture" : "Pause capture"}
+            </button>
           </div>
           <p className="text-xs text-amber-accent">
             Frequent connect/disconnect cycles may be treated as connection thrashing by ICICI.
@@ -775,12 +834,49 @@ export function ApiPlaygroundScreen() {
             </div>
           </div>
           <div className="min-w-0">
-            <h4 className="app-text-heading">Ticks</h4>
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="app-text-heading">Ticks {wsPaused ? "(paused)" : ""}</h4>
+            </div>
             <pre className="app-pre mt-2 max-h-48 min-w-0 text-xs">
               {wsTicks.length
                 ? wsTicks.map((tick) => formatTickForDisplay(tick)).join("\n\n")
                 : "Ticks appear after connect, subscribe, and start stream (during market hours)."}
             </pre>
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="app-text-heading">
+                Unique tick shapes {wsTickShapes.length ? `(${wsTickShapes.length})` : ""}
+              </h4>
+              {wsTickShapes.length ? (
+                <button type="button" className="app-btn-outline text-xs" onClick={clearWsTickShapes}>
+                  Clear
+                </button>
+              ) : null}
+            </div>
+            <p className="app-text-muted mt-1 text-xs">
+              One entry per distinct key set seen since Start/Clear — e.g. quote ticks vs order
+              notifications land as separate shapes here even though both arrive as
+              &quot;ws_tick&quot;.
+            </p>
+            {wsTickShapes.length ? (
+              <div className="mt-2 space-y-1.5">
+                {[...wsTickShapes]
+                  .sort((a, b) => b.count - a.count)
+                  .map((shape) => (
+                    <details key={shape.signature} className="app-card-muted rounded-[8px] px-3 py-2">
+                      <summary className="cursor-pointer text-xs font-medium">
+                        {shape.count}× · {shape.keys.length} keys · {shape.keys.slice(0, 6).join(", ")}
+                        {shape.keys.length > 6 ? ", …" : ""}
+                      </summary>
+                      <pre className="app-pre mt-2 max-h-56 min-w-0 text-xs">
+                        {formatTickForDisplay(shape.example)}
+                      </pre>
+                    </details>
+                  ))}
+              </div>
+            ) : null}
           </div>
         </section>
       </div>

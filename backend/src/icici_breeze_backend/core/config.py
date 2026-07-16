@@ -272,6 +272,12 @@ try:
     BWS_SUBSCRIBE_BATCH_SIZE = int(os.environ.get("BWS_SUBSCRIBE_BATCH_SIZE", "50") or "50")
 except ValueError:
     BWS_SUBSCRIBE_BATCH_SIZE = 50
+
+# Debug-only: when set, every raw tick from the ICICI socket (quote ticks,
+# order notifications, OHLC ticks -- breeze_connect funnels all of them
+# through the same on_ticks callback) is appended as a JSON line to this
+# path. Unset by default; only enable for a short troubleshooting session.
+BWS_TICK_DEBUG_LOG_PATH = (os.environ.get("BWS_TICK_DEBUG_LOG_PATH") or "").strip()
 try:
     CHAIN_WS_WAIT_TIMEOUT_MS = int(os.environ.get("CHAIN_WS_WAIT_TIMEOUT_MS", "8000") or "8000")
 except ValueError:

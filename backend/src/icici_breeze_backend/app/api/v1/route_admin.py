@@ -2,6 +2,7 @@
 import asyncio
 import os
 import sqlite3
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -342,3 +343,44 @@ async def get_tests_status(
         output = output_path.read_text(encoding="utf-8", errors="replace")
 
     return JSONResponse(content={"status": status, "output": output, "exit_code": exit_code})
+
+
+@router.post("/ws-tick-debug/start")
+async def start_ws_tick_debug(
+    request: Request,
+    _: RequestContext = Depends(require_admin),
+):
+    """Turn on raw WS tick capture without an env var or restart -- see
+    _debug_log_tick in breeze_websocket_manager.py. Defaults to a path under
+    cfg.DATA_PATH, which on the CFN deployment is the host-mounted EBS
+    volume (/opt/breeze-core-engine/data), so the file is retrievable via
+    scp without a docker exec."""
+    from icici_breeze_backend.app.services.breeze_websocket_manager import set_tick_debug_log_path
+
+    body: dict = {}
+    if await request.body():
+        body = await request.json()
+    path = (body.get("path") or "").strip() or os.path.join(
+        cfg.DATA_PATH, f"ws_tick_debug_{int(time.time())}.jsonl"
+    )
+    set_tick_debug_log_path(path)
+    return JSONResponse({"active": True, "path": path})
+
+
+@router.post("/ws-tick-debug/stop")
+async def stop_ws_tick_debug(
+    _: RequestContext = Depends(require_admin),
+):
+    from icici_breeze_backend.app.services.breeze_websocket_manager import set_tick_debug_log_path
+
+    set_tick_debug_log_path(None)
+    return JSONResponse({"active": False})
+
+
+@router.get("/ws-tick-debug/status")
+async def ws_tick_debug_status(
+    _: RequestContext = Depends(require_admin),
+):
+    from icici_breeze_backend.app.services.breeze_websocket_manager import get_tick_debug_status
+
+    return JSONResponse(get_tick_debug_status())
