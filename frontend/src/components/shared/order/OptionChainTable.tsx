@@ -89,7 +89,7 @@ const bsBtnClass =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border bg-panel text-heading font-bold text-foreground transition hover:bg-panel2 hover:border-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
 
 const bsTickClass =
-  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-up/30 bg-up-tint text-sm font-semibold text-up";
+  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-up/30 bg-up-tint text-sm font-semibold text-up-on-tint";
 
 function StrategyBuySellPair({
   strike,

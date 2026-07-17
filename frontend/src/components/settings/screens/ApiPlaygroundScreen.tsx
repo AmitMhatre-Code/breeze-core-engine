@@ -568,7 +568,7 @@ export function ApiPlaygroundScreen() {
                   <p className="text-xs text-muted">{selected.description}</p>
                 ) : null}
                 {selected.notes ? (
-                  <p className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-2.5 py-1.5 text-xs text-amber-accent">
+                  <p className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-2.5 py-1.5 text-xs text-amber-on-tint">
                     {selected.notes}
                   </p>
                 ) : null}
@@ -576,7 +576,7 @@ export function ApiPlaygroundScreen() {
                 {(selected.risk_level === "trade" ||
                   selected.risk_level === "funds" ||
                   selected.risk_level === "gtt") && (
-                  <p className="rounded-[8px] border border-down/40 bg-down-tint px-2.5 py-1.5 text-xs text-down">
+                  <p className="rounded-[8px] border border-down/40 bg-down-tint px-2.5 py-1.5 text-xs text-down-on-tint">
                     This API can modify live orders, funds, or GTT triggers. Double-check every
                     parameter before firing.
                   </p>
@@ -584,7 +584,7 @@ export function ApiPlaygroundScreen() {
 
                 <div className="app-card-muted space-y-3 p-4">
                   <h4 className="app-text-heading">Parameters</h4>
-                  <p className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-2.5 py-1.5 text-xs text-amber-accent">
+                  <p className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-2.5 py-1.5 text-xs text-amber-on-tint">
                     Values are interpreted as Python/JSON literals where possible (lists,
                     booleans, numbers). Be careful with quotes — for multiple stock tokens use{" "}
                     <code className="font-mono">[&apos;4.1!44684&apos;,&apos;4.1!44734&apos;]</code>{" "}
@@ -703,7 +703,7 @@ export function ApiPlaygroundScreen() {
           </header>
           <p
             className={`rounded-[8px] border px-3 py-2 text-xs ${
-              wsStreamOpen ? "border-up/35 bg-up-tint text-up" : "border-border bg-panel2 text-muted"
+              wsStreamOpen ? "border-up/35 bg-up-tint text-up-on-tint" : "border-border bg-panel2 text-muted"
             }`}
           >
             {wsStatusHint}
@@ -748,7 +748,7 @@ export function ApiPlaygroundScreen() {
           </p>
           <p className="text-xs app-text-muted">WebSocket ticks only arrive during NSE/BSE market hours.</p>
           <WsSubscribeModePicker value={wsSubscribeMode} onChange={setWsSubscribeMode} />
-          <p className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-2.5 py-1.5 text-xs text-amber-accent">
+          <p className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-2.5 py-1.5 text-xs text-amber-on-tint">
             Values are interpreted as Python/JSON literals where possible (lists, booleans,
             numbers). Be careful with quotes — for multiple stock tokens use{" "}
             <code className="font-mono">[&apos;4.1!44684&apos;,&apos;4.1!44734&apos;]</code> or{" "}
@@ -835,7 +835,7 @@ export function ApiPlaygroundScreen() {
               <pre
                 className={[
                   "app-pre mt-2 max-h-56 min-h-[140px] min-w-0 flex-1 text-xs",
-                  wsResponseIsError ? "border-down/40 bg-down-tint text-down" : "",
+                  wsResponseIsError ? "border-down/40 bg-down-tint text-down-on-tint" : "",
                 ].join(" ")}
               >
                 {wsResponseText || "ICICI response will appear here after Connect, Subscribe, or Disconnect."}

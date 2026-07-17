@@ -29,7 +29,7 @@ export function TelegramNudgeBanner() {
     <>
       <button
         type="button"
-        className="w-full rounded-md border border-amber-accent/40 bg-amber-tint px-3 py-2 text-left text-xs leading-relaxed text-amber-accent transition hover:brightness-[1.03]"
+        className="w-full rounded-md border border-amber-accent/40 bg-amber-tint px-3 py-2 text-left text-xs leading-relaxed text-amber-on-tint transition hover:brightness-[1.03]"
         onClick={() => setModalOpen(true)}
       >
         ⚠️ You won&rsquo;t receive real-time alerts for this order.{" "}

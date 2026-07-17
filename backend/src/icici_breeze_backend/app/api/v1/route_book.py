@@ -101,8 +101,13 @@ async def get_book_data(
         if gtt_raw_rows is None:
             gtt_raw_rows = fetch_all_gtt_raw_rows(breeze, user_id)
             gtt_order_book_cache.set_rows(user_id, gtt_raw_rows)
+        # `rules_owning_orders`, not the exit-board list: a `reset` SG's orders must revert
+        # to displaying as independent individual orders in the main Order Book (spec
+        # section 12) -- that is exactly how the user sees and cancels the orphans. The row
+        # still keeps its order_ids; "association removed" is a display rule, not a data
+        # rule, and that stored set still powers the orphan warning and bulk-cancel.
         kept_orders, rule_spawned_orders = split_rule_spawned_orders(
-            squareoff_repo.list_all_rules_for_exit_board(user_id),
+            squareoff_repo.rules_owning_orders(user_id),
             map_gtt_order_book_rows(gtt_raw_rows),
             orders["Success"],
         )

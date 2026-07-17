@@ -172,8 +172,52 @@ class MockBreezeSdk:
         return [str(stock_token)] if stock_token else []
 
     def subscribe_feeds(self, stock_token: str | list[str] = "", **kwargs):
+        if kwargs.get("get_order_notification"):
+            # Real ICICI opens a separate socket.io channel that still dispatches through
+            # on_ticks. Nothing to poll here -- events are injected via
+            # emit_order_notification() below.
+            self._order_notifications_on = True
+            return {"message": "Order notification subscribed successfully"}
         self._ws_tokens.update(self._normalize_tokens(stock_token))
         return {"message": f"Stock {stock_token} subscribed successfully"}
+
+    def emit_order_notification(self, **overrides) -> dict:
+        """Push a synthetic order-notification tick through the real `on_ticks` path.
+
+        Exists because live-mode broker calls only work from the production static IP, so
+        the Strategy Group lifecycle (Fired -> Completed/Reset, manual-intervention
+        detection) cannot otherwise be exercised locally at all. The payload mirrors a real
+        capture (docs/Temp/order_placed), including the quirks the parser has to survive:
+        prices scaled x100, and `averageExecutedRate` carrying junk while nothing has
+        filled.
+        """
+        payload = {
+            "userId": getattr(self, "_user_id", "MOCKUSER"),
+            "messageType": "6",
+            "messageSequence": str(int(time.time() * 1000)),
+            "orderExchangeCode": "NFO",
+            "stockCode": "NIFTY",
+            "productType": "Options",
+            "optionType": "Call",
+            "strikePrice": "2600000",  # x100 -> 26000
+            "expiryDate": "21-Jul-2026",
+            "orderFlow": "Sell",
+            "limitMarketFlag": "Limit",
+            "orderType": "Day",
+            "limitRate": "300",  # x100 -> Rs 3.00
+            "orderStatus": "Ordered",
+            "orderReference": "MOCK-ORDER-1",
+            "orderTotalQuantity": "130",
+            "executedQuantity": "0",
+            "cancelledQuantity": "0",
+            "expiredQuantity": "0",
+            "averageExecutedRate": "1550900.000000",  # garbage, as in the real capture
+            "channel": "WEB",
+            **overrides,
+        }
+        if self.on_ticks:
+            self.on_ticks(payload)
+        return payload
 
     def unsubscribe_feeds(self, stock_token: str | list[str] = "", **kwargs):
         for token in self._normalize_tokens(stock_token):

@@ -69,7 +69,10 @@ class TestRepository:
         active_ids = {r.id for r in repo.list_active_rules("u1")}
         assert active_ids == {armed.id, fired.id}
 
-    def test_list_active_rules_includes_fire_failed(self, db_path):
+    def test_placement_failure_becomes_a_reset_carrying_a_reason(self, db_path):
+        """`fire_failed` folded into `reset`: a placement failure means monitoring has
+        stopped and the user must re-arm. The reason is mandatory — a Reset the user
+        can't explain is the failure mode the SG model exists to prevent."""
         rule = _arm()
         leg_result = {
             "scrip_key": "x",
@@ -80,10 +83,12 @@ class TestRepository:
             "status": "failed",
             "error": "RMS:Margin Exceeds",
         }
-        repo.mark_fire_failed(rule.id, [leg_result])
+        repo.mark_fire_failed(rule.id, [leg_result], "1 of 1 exit orders could not be placed.")
         active = repo.list_active_rules("u1")
         assert len(active) == 1
-        assert active[0].status == "fire_failed"
+        assert active[0].status == "reset"
+        assert active[0].reset_reason
+        assert active[0].resolved_at
         assert active[0].leg_results[0].status == "failed"
 
     def test_disarm_succeeds_from_fired_too(self, db_path):
@@ -102,11 +107,22 @@ class TestRepository:
         assert repo.disarm_rule("someone-else", rule.id) is False
         assert repo.get_rule(rule.id).status == "armed"
 
-    def test_list_all_armed_rules_spans_users(self, db_path):
+    def test_list_all_live_rules_spans_users(self, db_path):
         _arm(user_id="u1", stock_code="NIFTY")
         _arm(user_id="u2", stock_code="BANKNIFTY")
-        rows = repo.list_all_armed_rules()
+        rows = repo.list_all_live_rules()
         assert {r["user_id"] for r in rows} == {"u1", "u2"}
+
+    def test_list_all_live_rules_includes_fired_not_just_armed(self, db_path):
+        """Startup hydration and the broker-session watch both need FIRED SGs too: a fired
+        SG is still live (waiting on its exits) and still needs its WS pin restored."""
+        armed = _arm(user_id="u1", stock_code="NIFTY")
+        fired = _arm(user_id="u1", stock_code="BANKNIFTY")
+        repo.mark_fired(fired.id, [])
+        disarmed = _arm(user_id="u1", stock_code="FINNIFTY")
+        repo.disarm_rule("u1", disarmed.id)
+
+        assert {r["id"] for r in repo.list_all_live_rules()} == {armed.id, fired.id}
 
 
 def _ctx(user_id="u1"):
@@ -116,7 +132,28 @@ def _ctx(user_id="u1"):
 
 
 class TestRoutes:
-    def test_arm_route_persists_and_registers_with_engine(self, db_path, monkeypatch):
+    @pytest.fixture
+    def armable(self, monkeypatch):
+        """Satisfy the arm-time preconditions: an open leg to protect, and no orders still
+        working at the exchange for the group (which would risk stacking a duplicate exit
+        order on a live one). Also stubs the WS pin, which needs a real broker session."""
+        from icici_breeze_backend.app.api.v1 import route_squareoff_rules as route
+        from icici_breeze_backend.app.services import strategy_group_arm_guard as guard
+
+        class _Leg:
+            scrip_key = "NFO|NIFTY|30-Jun-2026|25000|call"
+            quantity = 50
+
+        monkeypatch.setattr(guard, "live_orders_for_group", lambda *a, **k: [])
+        monkeypatch.setattr(route, "processor", lambda: object())
+        monkeypatch.setattr(
+            route.portfolio_pnl_engine, "group_legs_for_user", lambda *a, **k: [_Leg()]
+        )
+        monkeypatch.setattr(
+            route.strategy_group_lifecycle, "pin_subscription", lambda *a, **k: None
+        )
+
+    def test_arm_route_persists_and_registers_with_engine(self, db_path, armable, monkeypatch):
         from icici_breeze_backend.app.services import portfolio_pnl_engine as engine
         from icici_breeze_backend.app.api.v1 import route_squareoff_rules as route
 
@@ -168,6 +205,13 @@ class TestRoutes:
 
 
 class TestDispatcher:
+    @pytest.fixture(autouse=True)
+    def _isolated_rules_db(self, db_path):
+        """These tests only stub *some* repo calls, so the rest (mark_triggered,
+        mark_fire_failed) write for real. Point the repo at a migrated temp DB rather than
+        the developer's actual users.sqlite3."""
+        return db_path
+
     @pytest.fixture(autouse=True)
     def _stub_telegram_alert(self, monkeypatch):
         # Real telegram_alerts.notify_squareoff_fired would hit the real users DB
@@ -226,7 +270,7 @@ class TestDispatcher:
         monkeypatch.setattr(
             squareoff_dispatcher.repo,
             "mark_fire_failed",
-            lambda rid, results: (_ for _ in ()).throw(AssertionError("should not fail")),
+            lambda rid, results, reason=None: (_ for _ in ()).throw(AssertionError("should not fail")),
         )
 
         class _FakeBreeze:
@@ -249,7 +293,7 @@ class TestDispatcher:
         monkeypatch.setattr(
             squareoff_dispatcher.repo,
             "mark_fire_failed",
-            lambda rid, results: (_ for _ in ()).throw(AssertionError("should not fail")),
+            lambda rid, results, reason=None: (_ for _ in ()).throw(AssertionError("should not fail")),
         )
 
         placed_quantities: list[str] = []
@@ -281,8 +325,8 @@ class TestDispatcher:
     def test_one_leg_fails_marks_fire_failed_with_per_leg_detail(self, monkeypatch):
         monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
         failed_calls = []
-        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: (_ for _ in ()).throw(AssertionError))
-        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results: failed_calls.append((rid, results)))
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results, reason=None: (_ for _ in ()).throw(AssertionError))
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results, reason: failed_calls.append((rid, results, reason)))
 
         responses = iter([{"Status": 200, "Success": {"order_id": "abc"}}, {"Status": 400, "Error": "RMS:Margin Exceeds"}])
 
@@ -296,7 +340,8 @@ class TestDispatcher:
         squareoff_dispatcher._handle_group_rule_hit(self._payload(legs=legs))
 
         assert len(failed_calls) == 1
-        _, results = failed_calls[0]
+        _, results, reason = failed_calls[0]
+        assert reason
         assert results[0]["status"] == "success"
         assert results[1]["status"] == "failed"
         assert "Margin Exceeds" in results[1]["error"]
@@ -304,7 +349,7 @@ class TestDispatcher:
     def test_one_leg_raising_does_not_abort_the_remaining_legs(self, monkeypatch):
         monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
         failed_calls = []
-        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results: failed_calls.append((rid, results)))
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results, reason: failed_calls.append((rid, results, reason)))
 
         class _FakeBreeze:
             def place_order(self, **kwargs):
@@ -318,7 +363,8 @@ class TestDispatcher:
         squareoff_dispatcher._handle_group_rule_hit(self._payload(legs=legs))
 
         assert len(failed_calls) == 1
-        _, results = failed_calls[0]
+        _, results, reason = failed_calls[0]
+        assert reason
         assert len(results) == 2  # both legs attempted despite the first raising
         assert results[0]["status"] == "failed"
         assert results[1]["status"] == "success"
@@ -326,7 +372,7 @@ class TestDispatcher:
     def test_read_only_license_skips_order_placement_entirely(self, monkeypatch):
         monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: False)
         failed_calls = []
-        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results: failed_calls.append((rid, results)))
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results, reason: failed_calls.append((rid, results, reason)))
 
         def _unexpected_processor():
             raise AssertionError("place_order must not be reached when trading is read-only")
@@ -340,7 +386,7 @@ class TestDispatcher:
 
     def test_target_hit_prices_buy_leg_at_a_premium_to_ltp(self, monkeypatch):
         monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
-        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: None)
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results, reason=None: None)
 
         captured = {}
 
@@ -361,7 +407,7 @@ class TestDispatcher:
 
     def test_stop_loss_hit_prices_sell_leg_at_a_discount_to_ltp(self, monkeypatch):
         monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
-        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: None)
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results, reason=None: None)
 
         captured = {}
 
@@ -390,7 +436,7 @@ class TestDispatcher:
 
     def test_all_legs_succeed_sends_telegram_alert_not_marked_failed(self, monkeypatch):
         monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
-        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: None)
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results, reason=None: None)
         calls = []
         monkeypatch.setattr(
             squareoff_dispatcher, "notify_squareoff_fired", lambda user_id, **kw: calls.append((user_id, kw))
@@ -412,7 +458,7 @@ class TestDispatcher:
 
     def test_read_only_license_still_sends_telegram_alert_marked_failed(self, monkeypatch):
         monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: False)
-        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results: None)
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results, reason=None: None)
         calls = []
         monkeypatch.setattr(
             squareoff_dispatcher, "notify_squareoff_fired", lambda user_id, **kw: calls.append((user_id, kw))
@@ -425,7 +471,7 @@ class TestDispatcher:
 
     def test_one_leg_failing_still_sends_telegram_alert_marked_failed(self, monkeypatch):
         monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
-        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results: None)
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results, reason=None: None)
         calls = []
         monkeypatch.setattr(
             squareoff_dispatcher, "notify_squareoff_fired", lambda user_id, **kw: calls.append((user_id, kw))

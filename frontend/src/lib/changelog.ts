@@ -20,7 +20,7 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "2.1.0-w",
+    version: "2.1.0-x",
     date: "26-Jun-2026",
     releaseKind: "prerelease",
     summary: "Websocket for live quotes, After Market-hours Orders (AMO) improvements, Basket Order and Trigger based exits",
@@ -85,7 +85,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.6.0",
     date: "1-Jun-2026",
-    releaseKind: "prerelease",
+    releaseKind: "minor",
     summary: "DRM Hardening",
     changes: [
       "DRM Hardening: Improved DRM by adding a new layer of security to the application.",
@@ -130,7 +130,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.3.2",
     date: "10-Jun-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "Strategy Builder (New)",
     changes: [
       "New Strategy Builder (New) page generates all options strategies from range, margin, and risk parameters",

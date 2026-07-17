@@ -155,7 +155,7 @@ export function AdvancedPnlEngineScreen() {
       />
 
       <div className="space-y-4">
-        <div className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-3 py-2.5 text-xs leading-relaxed text-amber-accent">
+        <div className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-3 py-2.5 text-xs leading-relaxed text-amber-on-tint">
           <strong className="font-semibold">Read before changing these.</strong> This app runs on a small,
           burst-credit-limited server. Lower values recompute more often — more responsive exit triggers, but
           more CPU and Redis load per second. Set either value too low and you risk exhausting the

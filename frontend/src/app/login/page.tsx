@@ -119,9 +119,9 @@ function LoginContent() {
           <div
             className={[
               "mb-4 rounded-lg border px-3 py-2 text-xs",
-              tone === "ok" && "border-up/30 bg-up-tint text-up",
-              tone === "warn" && "border-amber-accent/30 bg-amber-tint text-amber-accent",
-              tone === "err" && "border-down/30 bg-down-tint text-down",
+              tone === "ok" && "border-up/30 bg-up-tint text-up-on-tint",
+              tone === "warn" && "border-amber-accent/30 bg-amber-tint text-amber-on-tint",
+              tone === "err" && "border-down/30 bg-down-tint text-down-on-tint",
             ]
               .filter(Boolean)
               .join(" ")}
@@ -160,7 +160,7 @@ function LoginContent() {
         </div>
 
         {directErr && (
-          <p className="mb-3 rounded-lg border border-down/30 bg-down-tint px-3 py-2 text-xs text-down">
+          <p className="mb-3 rounded-lg border border-down/30 bg-down-tint px-3 py-2 text-xs text-down-on-tint">
             {directErr}
           </p>
         )}

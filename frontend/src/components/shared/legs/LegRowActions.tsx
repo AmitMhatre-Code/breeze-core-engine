@@ -78,7 +78,7 @@ export function LegRowActions({
       </button>
       <button
         type="button"
-        className="rounded p-1 text-muted transition hover:bg-down-tint hover:text-down"
+        className="rounded p-1 text-muted transition hover:bg-down-tint hover:text-down-on-tint"
         aria-label={legDeleteLabel(leg)}
         onClick={onDelete}
       >

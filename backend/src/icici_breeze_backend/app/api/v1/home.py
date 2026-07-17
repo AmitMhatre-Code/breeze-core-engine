@@ -216,6 +216,9 @@ async def logout(request: Request):
                     from icici_breeze_backend.app.services.broker_snapshot_cache import evict as evict_snapshot
 
                     evict_snapshot(payload.user_id, broker_token)
+                    from icici_breeze_backend.app.services.customer_details_cache import evict as evict_customer_details
+
+                    evict_customer_details(payload.user_id, broker_token)
                     clear_broker_session_token(payload.user_id)
         except Exception:
             pass
@@ -501,6 +504,11 @@ async def _complete_icici_session(
 
     from icici_breeze_backend.app.services.broker_snapshot_cache import set_snapshot
     from icici_breeze_backend.app.services.processor import build_margin_situation_from_raw
+
+    if customer_check and customer_check.get("Status") == 200:
+        from icici_breeze_backend.app.services.customer_details_cache import set as set_customer_details_cache
+
+        set_customer_details_cache(form.user_id, icici_token, customer_check)
 
     set_snapshot(
         form.user_id,

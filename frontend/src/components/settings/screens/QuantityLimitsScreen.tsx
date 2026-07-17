@@ -99,7 +99,7 @@ export function QuantityLimitsScreen() {
       ) : (
         <section className="app-card space-y-4 p-5">
           {q.data.message ? (
-            <p className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-3 py-2 text-heading leading-relaxed text-amber-accent">
+            <p className="rounded-[8px] border border-amber-accent/40 bg-amber-tint px-3 py-2 text-heading leading-relaxed text-amber-on-tint">
               {q.data.message}
             </p>
           ) : null}

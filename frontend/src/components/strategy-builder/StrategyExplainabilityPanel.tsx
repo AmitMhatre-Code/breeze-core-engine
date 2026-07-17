@@ -341,7 +341,7 @@ export function ExplainabilityLevel3View({ insights }: { insights: WhatIfInsight
       {insights.map((insight, idx) => (
         <li
           key={`${insight.constraint}-${idx}`}
-          className="rounded-md border border-amber-accent/40 bg-amber-tint px-3 py-2 text-xs leading-snug text-amber-accent"
+          className="rounded-md border border-amber-accent/40 bg-amber-tint px-3 py-2 text-xs leading-snug text-amber-on-tint"
         >
           {insight.message}
         </li>

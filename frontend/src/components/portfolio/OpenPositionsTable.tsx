@@ -29,6 +29,13 @@ import {
   type SquareOffRuleRecord,
 } from "@/lib/portfolio/squareoff-rules";
 import {
+  resetChipClassName,
+  resetChipLabel,
+  resetHazardTier,
+  resetMessage,
+  resetNoteClassName,
+} from "@/lib/portfolio/reset-warning";
+import {
   useInvalidateSquareOffRules,
   useSquareOffRulesByGroup,
 } from "@/lib/portfolio/useSquareOffRules";
@@ -359,35 +366,40 @@ function legToExitRuleTarget(row: PortfolioPositionRecord): LegExitRuleTarget {
 const LEG_TABLE_COL_COUNT = 13;
 
 /**
- * Compact status chip for a group's profit/loss exit rule — shown next to the
- * group title whether the group is collapsed or expanded (unlike Hedge,
- * which only surfaces once you expand the row). Purely a status indicator,
- * not clickable — editing or disarming the rule happens via the "Edit Exit
- * Rule" pill button and its modal.
+ * Compact status chip for a Strategy Group's PB/SL rule — shown next to the group title
+ * whether the group is collapsed or expanded (unlike Hedge, which only surfaces once you
+ * expand the row). Purely a status indicator; editing/disarming happens via the "Edit
+ * Exit Rule" pill and its modal.
+ *
+ * A Reset chip is tiered by hazard (see `lib/portfolio/reset-warning`) rather than being
+ * one uniform red — a benign Reset shouldn't shout, and a contra-risk one must.
  */
 function ExitRuleBadge({ rule }: { rule: SquareOffRuleRecord }) {
-  const failed = rule.status === "fire_failed";
-  const fired = rule.status === "fired";
-  const label = failed ? "Fire failed" : fired ? "Fired" : "Armed";
-  const colorClassName = failed
-    ? "bg-down-btn text-white"
-    : "bg-accent-strong text-accent-ink";
-  const failureErrors = failed
-    ? Array.from(
-        new Set(
-          (rule.leg_results ?? [])
-            .map((leg) => leg.error?.trim())
-            .filter((err): err is string => !!err),
-        ),
-      )
-    : [];
-  const title = failed
-    ? failureErrors.length
-      ? `${failureErrors.join(" ")} — edit the Profit Booking / Stop Loss rule to dismiss`
-      : "One or more legs failed to square off — edit the Profit Booking / Stop Loss rule to dismiss"
-    : fired
-      ? "Profit Booking / Stop Loss rule fired — edit the rule to dismiss"
-      : "Profit Booking / Stop Loss rule armed";
+  if (rule.status === "reset") {
+    return (
+      <span
+        className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${resetChipClassName(rule)}`}
+      >
+        {resetChipLabel(rule)}
+      </span>
+    );
+  }
+  const label =
+    rule.status === "completed"
+      ? "Completed"
+      : rule.status === "fired"
+        ? "Fired"
+        : "Armed";
+  const colorClassName =
+    rule.status === "completed"
+      ? "bg-up-tint text-up-on-tint"
+      : "bg-accent-strong text-accent-ink";
+  const title =
+    rule.status === "completed"
+      ? "Profit Booking / Stop Loss completed — every exit order filled"
+      : rule.status === "fired"
+        ? "Profit Booking / Stop Loss fired — waiting for the exit orders to fill"
+        : "Profit Booking / Stop Loss armed";
   return (
     <span
       className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${colorClassName}`}
@@ -396,6 +408,45 @@ function ExitRuleBadge({ rule }: { rule: SquareOffRuleRecord }) {
       {label}
     </span>
   );
+}
+
+/**
+ * The Reset explanation, as VISIBLE text under the group title.
+ *
+ * Deliberately not a `title` tooltip, which is what this used to be: tooltips are
+ * invisible on touch, unannounced by screen readers, and trivially missed. That is
+ * disqualifying for a message that may be saying "a live order will open a position you
+ * didn't ask for".
+ */
+function ExitRuleResetNote({ rule }: { rule: SquareOffRuleRecord }) {
+  if (rule.status !== "reset") return null;
+  return (
+    <p
+      className={`max-w-[46ch] rounded-md border px-2 py-1.5 text-hint leading-relaxed ${resetNoteClassName(rule)}`}
+      role={resetHazardTier(rule) === "contra_risk" ? "alert" : undefined}
+    >
+      {resetMessage(rule)}
+    </p>
+  );
+}
+
+/**
+ * The second line under a group title. A Reset shows its explanation instead of the
+ * stop→target gauge — monitoring has stopped, so a gauge tracking MTM between thresholds
+ * would be describing a rule that is no longer watching anything.
+ */
+function ExitRuleSummaryLine({
+  rule,
+  currentMtm,
+  onOpenExitRuleModal,
+}: {
+  rule: SquareOffRuleRecord | null;
+  currentMtm: number | null;
+  onOpenExitRuleModal: (e: MouseEvent) => void;
+}) {
+  if (!rule) return <PnlTargetCta onClick={onOpenExitRuleModal} />;
+  if (rule.status === "reset") return <ExitRuleResetNote rule={rule} />;
+  return <PnlTargetGauge rule={rule} currentMtm={currentMtm} />;
 }
 
 const gaugeLineClass =
@@ -662,11 +713,11 @@ function PortfolioGroupTableBlock({
                 <ExitRuleBadge rule={squareOffRule} />
               ) : null}
             </span>
-            {squareOffRule ? (
-              <PnlTargetGauge rule={squareOffRule} currentMtm={mtmSum} />
-            ) : (
-              <PnlTargetCta onClick={onOpenExitRuleModal} />
-            )}
+            <ExitRuleSummaryLine
+              rule={squareOffRule}
+              currentMtm={mtmSum}
+              onOpenExitRuleModal={onOpenExitRuleModal}
+            />
           </div>
         </td>
         <td className={tdSummaryBase}>—</td>
@@ -863,11 +914,11 @@ function PortfolioGroupCardBlock({
               <ExitRuleBadge rule={squareOffRule} />
             ) : null}
           </h3>
-          {squareOffRule ? (
-            <PnlTargetGauge rule={squareOffRule} currentMtm={mtmSum} />
-          ) : (
-            <PnlTargetCta onClick={onOpenExitRuleModal} />
-          )}
+          <ExitRuleSummaryLine
+            rule={squareOffRule}
+            currentMtm={mtmSum}
+            onOpenExitRuleModal={onOpenExitRuleModal}
+          />
           <p>
             <span className="app-text-muted">Spot:</span>{" "}
             <span className={spotAgg.className}>{spotAgg.text}</span>

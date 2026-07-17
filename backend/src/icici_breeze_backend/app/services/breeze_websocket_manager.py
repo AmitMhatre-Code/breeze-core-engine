@@ -228,6 +228,26 @@ def _attach_sdk_ticks_handler(sdk: Any) -> None:
     start_tick_pipeline()
 
 
+def _subscribe_order_notifications(sdk: Any) -> None:
+    """Subscribe to account-wide order notifications.
+
+    Must run on every (re)connect, not once per process: the SDK guards its order socket
+    behind `if self.orderconnect == 0`, and `unsubscribe_feeds`/a dropped connection
+    resets that — so a reconnect without re-subscribing would leave the SG lifecycle
+    permanently deaf to fills with no error anywhere.
+
+    Account-wide, not per-order: every order on the account arrives here, including ones
+    placed from the ICICI website/app. That is a feature — it is how manual intervention
+    is detected — but it means the lifecycle must filter by order identity, not assume
+    everything it sees is ours.
+    """
+    try:
+        sdk.subscribe_feeds(get_order_notification=True)
+        _logger.info("Subscribed to ICICI order notifications")
+    except Exception as exc:  # noqa: BLE001 — price ticks must still work without this
+        _note_error("subscribe_feeds(get_order_notification=True) failed: %s", exc)
+
+
 def _ensure_ws(proc: "Processor", user_id: str) -> Any | None:
     global _sdk, _sdk_user_id, _connected
     with _lock:
@@ -240,6 +260,7 @@ def _ensure_ws(proc: "Processor", user_id: str) -> Any | None:
         try:
             sdk.ws_connect()
             _attach_sdk_ticks_handler(sdk)
+            _subscribe_order_notifications(sdk)
             _sdk = sdk
             _sdk_user_id = user_id
             _connected = True

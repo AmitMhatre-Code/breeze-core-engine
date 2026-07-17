@@ -8,9 +8,15 @@ import { sb } from "@/lib/strategy-builder/ui";
 import { formatSignedRupees } from "@/lib/portfolio/totals";
 import {
   armSquareOffRule,
+  cancelSquareOffOrphanOrders,
   disarmSquareOffRule,
   type SquareOffRuleRecord,
 } from "@/lib/portfolio/squareoff-rules";
+import {
+  resetHazardTier,
+  resetMessage,
+  resetNoteClassName,
+} from "@/lib/portfolio/reset-warning";
 import { fetchTelegramStatus, TELEGRAM_STATUS_QUERY_KEY } from "@/lib/telegram/telegram-alerts";
 
 /** Indian-grouped digits only (no decimals — thresholds are whole rupees). */
@@ -66,11 +72,65 @@ function handleAmountInput(
 
 const statusCopy: Record<SquareOffRuleRecord["status"], { label: string; className: string }> = {
   armed: { label: "Armed", className: "bg-accent-strong text-accent-ink" },
-  triggered: { label: "Triggered", className: "bg-accent-strong text-accent-ink" },
+  triggered: { label: "Armed", className: "bg-accent-strong text-accent-ink" },
   fired: { label: "Fired", className: "bg-accent-strong text-accent-ink" },
-  fire_failed: { label: "Fire failed", className: "bg-down-btn text-white" },
-  disarmed: { label: "Disarmed", className: "bg-down-btn text-white" },
+  completed: { label: "Completed", className: "bg-up-tint text-up-on-tint" },
+  reset: { label: "Reset", className: "bg-panel2 text-faint" },
+  disarmed: { label: "Disarmed", className: "bg-panel2 text-faint" },
 };
+
+/** The Reset detail block: what happened, and — crucially — what is still live.
+ *
+ * This is the one surface with room for the whole picture, so it carries the orphan list
+ * with their `orderReference`s. Reset withdraws future automation but does not retract
+ * orders already placed, so "monitoring stopped" alone would be actively misleading. */
+function ResetDetail({ rule }: { rule: SquareOffRuleRecord }) {
+  const orphans = rule.orphan_orders ?? [];
+  const tier = resetHazardTier(rule);
+  return (
+    <>
+      <p
+        className={`rounded-md border px-3 py-2 text-sm leading-relaxed ${resetNoteClassName(rule)}`}
+        role={tier === "contra_risk" ? "alert" : undefined}
+      >
+        {resetMessage(rule)}
+      </p>
+      {orphans.length > 0 ? (
+        <div>
+          <div className={sb.fieldLabel}>Still live</div>
+          <div className="overflow-hidden rounded-md border border-border">
+            <table className="w-full border-collapse">
+              <tbody>
+                {orphans.map((o) => (
+                  <tr key={o.order_id} className="border-t border-border-soft first:border-t-0">
+                    <td className="px-2.5 py-2">
+                      <div className="font-mono text-xs text-foreground">
+                        {o.stock_code} {o.strike_price}{" "}
+                        {o.right.toLowerCase().startsWith("c") ? "CE" : "PE"}
+                      </div>
+                      <div className="font-mono text-micro text-faint">{o.order_id}</div>
+                    </td>
+                    <td className="px-2.5 py-2 font-mono text-xs text-muted">{o.action}</td>
+                    <td className="px-2.5 py-2 text-right font-mono text-xs text-muted">
+                      {o.quantity}
+                    </td>
+                    <td className="px-2.5 py-2 text-right font-mono text-xs text-muted">
+                      {o.price ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-1.5 text-hint leading-relaxed text-faint">
+            Reset stops future automation — it doesn&rsquo;t retract orders already placed.
+            You can&rsquo;t set a new rule until these fill, expire, or you cancel them.
+          </p>
+        </div>
+      ) : null}
+    </>
+  );
+}
 
 /**
  * Group-level profit/loss exit rule — mirrors `SquareOffLegsModal`'s shape
@@ -110,6 +170,7 @@ export function SquareOffRuleModal({
   const [stopLossPremiumPct, setStopLossPremiumPct] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [disarming, setDisarming] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -127,7 +188,16 @@ export function SquareOffRuleModal({
   }, [open]);
 
   const pnl = formatSignedRupees(currentPnl);
-  const editable = !existingRule || existingRule.status === "armed";
+  const isReset = existingRule?.status === "reset";
+  // A Reset SG is re-armable only once its own exit orders are terminal. Otherwise a
+  // re-fire would stack a SECOND exit order on top of each live one — double-exiting the
+  // leg and potentially flipping the position net-contra. Same condition blocks dismissal:
+  // hiding the card would hide live risk.
+  const rearmBlocked = Boolean(existingRule?.rearm_blocked);
+  const editable =
+    !existingRule ||
+    existingRule.status === "armed" ||
+    (isReset && !rearmBlocked);
   const target = Number(profitTarget.replace(/,/g, ""));
   const stop = Number(lossLimit.replace(/,/g, ""));
   const canSubmit =
@@ -166,6 +236,31 @@ export function SquareOffRuleModal({
     }
   };
 
+  const handleCancelOrphans = async () => {
+    if (!existingRule || cancelling) return;
+    setCancelling(true);
+    setError(null);
+    try {
+      const result = await cancelSquareOffOrphanOrders(existingRule.id);
+      if (result.failed.length > 0) {
+        setError(
+          `${result.failed.length} order(s) couldn't be cancelled: ` +
+            `${result.failed.map((f) => f.error).join("; ")}`,
+        );
+      }
+      // Always refresh: even a partial success changes what's still live, and the caller
+      // re-reads the rule to recompute the hazard tier.
+      onDisarmed();
+      if (result.failed.length === 0) onClose();
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Failed to cancel the remaining exit orders",
+      );
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const handleDisarm = async () => {
     if (!existingRule || disarming) return;
     setDisarming(true);
@@ -186,16 +281,6 @@ export function SquareOffRuleModal({
   };
 
   const status = existingRule ? statusCopy[existingRule.status] : null;
-  const fireFailureReason =
-    existingRule?.status === "fire_failed"
-      ? Array.from(
-          new Set(
-            (existingRule.leg_results ?? [])
-              .map((leg) => leg.error?.trim())
-              .filter((err): err is string => !!err),
-          ),
-        ).join(" ")
-      : null;
 
   const telegramStatusQ = useQuery({
     queryKey: TELEGRAM_STATUS_QUERY_KEY,
@@ -233,9 +318,6 @@ export function SquareOffRuleModal({
           <p className="mt-1 text-sm leading-relaxed text-muted">
             {stockCode} &middot; {expiryDisplay}
           </p>
-          {fireFailureReason ? (
-            <p className="mt-1.5 text-sm leading-relaxed text-down">{fireFailureReason}</p>
-          ) : null}
         </div>
         <button
           type="button"
@@ -246,6 +328,8 @@ export function SquareOffRuleModal({
           &times;
         </button>
       </div>
+
+      {existingRule && isReset ? <ResetDetail rule={existingRule} /> : null}
 
       <div className="flex items-center justify-between rounded-md border border-border-soft bg-panel2 px-3.5 py-2.5 text-sm">
         <span className="text-muted">Current group P&amp;L</span>
@@ -347,6 +431,25 @@ export function SquareOffRuleModal({
         </p>
       ) : null}
 
+      {rearmBlocked ? (
+        <>
+          <button
+            type="button"
+            // Accent-primary, not danger-red: in the contra case this is the *recommended*
+            // safe action. Colouring it red would read as "this is the dangerous thing to
+            // click" — the red is spent on the warning above, where the hazard actually is.
+            className={sb.btnPrimary}
+            disabled={cancelling}
+            onClick={handleCancelOrphans}
+          >
+            {cancelling ? "Cancelling…" : "Cancel remaining exit orders"}
+          </button>
+          <p className="text-center text-hint leading-relaxed text-faint">
+            This can&rsquo;t be dismissed or re-armed while an exit order is still live.
+          </p>
+        </>
+      ) : null}
+
       <div
         className={`grid grid-cols-1 gap-2 pt-1 sm:gap-3 ${
           existingRule && editable ? "sm:grid-cols-3" : "sm:grid-cols-2"
@@ -359,10 +462,13 @@ export function SquareOffRuleModal({
           <button
             type="button"
             className={sb.btnDanger}
-            disabled={disarming}
+            // Dismissing a Reset while its orders are still working would erase the hazard
+            // from the UI while the orders keep going — one of them may open a contra
+            // position. The UI must not be able to lie about live risk.
+            disabled={disarming || rearmBlocked}
             onClick={handleDisarm}
           >
-            {disarming ? "Disarming…" : "Disarm"}
+            {disarming ? "Dismissing…" : isReset ? "Dismiss" : "Disarm"}
           </button>
         ) : null}
         {editable ? (
@@ -372,7 +478,13 @@ export function SquareOffRuleModal({
             disabled={!canSubmit || submitting}
             onClick={handleSubmit}
           >
-            {submitting ? (existingRule ? "Updating…" : "Arming…") : existingRule ? "Update rule" : "Arm rule"}
+            {submitting
+              ? existingRule && !isReset
+                ? "Updating…"
+                : "Arming…"
+              : existingRule && !isReset
+                ? "Update rule"
+                : "Arm rule"}
           </button>
         ) : null}
       </div>

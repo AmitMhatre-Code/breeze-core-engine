@@ -584,7 +584,7 @@ export function ReferenceDataLoadsScreen() {
                           <div className="space-y-1">
                             <span
                               className={`inline-flex rounded-full px-2 py-0.5 text-micro font-semibold ${
-                                row.ok ? "bg-up-tint text-up" : "bg-down-tint text-down"
+                                row.ok ? "bg-up-tint text-up-on-tint" : "bg-down-tint text-down-on-tint"
                               }`}
                             >
                               {row.ok ? "OK" : "Failed"}

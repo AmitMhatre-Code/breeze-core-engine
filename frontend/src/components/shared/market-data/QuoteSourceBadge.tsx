@@ -30,9 +30,9 @@ function variantClasses(
       return `${base} border-transparent bg-transparent px-0 py-0 text-heading text-down`;
     }
     if (variant === "compact") {
-      return `${base} border-down/40 bg-down-tint px-2 py-0.5 text-body text-down`;
+      return `${base} border-down/40 bg-down-tint px-2 py-0.5 text-body text-down-on-tint`;
     }
-    return `${base} border-down/40 bg-down-tint px-2.5 py-1 text-micro text-down`;
+    return `${base} border-down/40 bg-down-tint px-2.5 py-1 text-micro text-down-on-tint`;
   }
   if (variant === "compact") {
     return `${base} border-border bg-panel2 px-2 py-0.5 text-body text-muted`;
@@ -41,7 +41,7 @@ function variantClasses(
     return `${base} border-transparent bg-transparent px-0 py-0 text-heading text-muted`;
   }
   if (live) {
-    return `${base} border-up/35 bg-up-tint px-2.5 py-1 text-micro text-up`;
+    return `${base} border-up/35 bg-up-tint px-2.5 py-1 text-micro text-up-on-tint`;
   }
   return `${base} border-border bg-panel2 px-2.5 py-1 text-micro text-muted`;
 }

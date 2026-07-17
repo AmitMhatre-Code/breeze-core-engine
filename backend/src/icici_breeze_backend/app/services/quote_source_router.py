@@ -723,7 +723,7 @@ def _find_chain_row(payload: dict[str, Any] | None, strike: Strike) -> dict[str,
     return None
 
 
-def fetch_payoff_quote_routed(
+def _fetch_chain_payload_atm_gated(
     proc: "Processor",
     user_id: str,
     stock_code: str,
@@ -732,13 +732,14 @@ def fetch_payoff_quote_routed(
     *,
     holder_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Minimal chain fetch for the portfolio payoff panel: spot + the ATM
-    strike's own quote + lot size. Unlike `fetch_chain_payload_routed`, this
-    never waits on strikes other than ATM — the payoff panel only ever reads
-    chain_rows[0] (for lot size) and the ATM row (for a flat IV estimate); each
-    leg is priced from the position's own average price/LTP, not a chain quote
-    at that strike, so the rest of the chain is never actually consulted."""
-    expiry_display = _normalize_expiry_display(expiry_display)
+    """Full routed chain payload gated on the ATM strike's quote only, not every
+    strike. Returns the complete canonical `chain_rows` (so callers can still read
+    OI across every strike that has ticked), with `spot_price`/`atm_strike` filled
+    in. The ATM strike ticks far more reliably than deep OTM/ITM strikes, so this
+    resolves well inside the wait window even when `fetch_chain_payload_routed`'s
+    fuller gate would still be waiting on the illiquid wings. Callers that only
+    need the ATM row (payoff panel) and callers that sum OI across the chain
+    (dashboard PCR) share this."""
     source = resolve_quote_source(exchange_code)
     lot_size, freeze_quantity, strikes = _resolve_chain_metadata(
         proc, stock_code, exchange_code, expiry_display
@@ -813,6 +814,61 @@ def fetch_payoff_quote_routed(
             return _enrich_quote_metadata(payload)
         _logger.warning("ICICI REST ATM quote unavailable for %s %s", stock_code, expiry_display)
     return None
+
+
+def fetch_payoff_quote_routed(
+    proc: "Processor",
+    user_id: str,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    *,
+    holder_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Minimal chain fetch for the portfolio payoff panel: spot + the ATM
+    strike's own quote + lot size. Unlike `fetch_chain_payload_routed`, this
+    never waits on strikes other than ATM — the payoff panel only ever reads
+    chain_rows[0] (for lot size) and the ATM row (for a flat IV estimate); each
+    leg is priced from the position's own average price/LTP, not a chain quote
+    at that strike, so the rest of the chain is never actually consulted."""
+    expiry_display = _normalize_expiry_display(expiry_display)
+    return _fetch_chain_payload_atm_gated(
+        proc, user_id, stock_code, exchange_code, expiry_display, holder_id=holder_id
+    )
+
+
+def cached_chain_spot(exchange_code: str, stock_code: str) -> float | None:
+    """Live spot from the WS index-tick-fed cache (seeded by `index_spot_feed`
+    via `remember_chain_spot`), or None. No bhavcopy/REST fallback — callers that
+    want those use `_resolve_chain_spot`. Lets the dashboard show NIFTY spot with
+    no ICICI REST round-trip."""
+    return _cached_chain_spot(exchange_code, stock_code)
+
+
+def fetch_chain_sides_atm_gated(
+    proc: "Processor",
+    user_id: str,
+    stock_code: str,
+    exchange_code: str,
+    expiry_raw: str,
+    *,
+    holder_id: str | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float | None]:
+    """`(call_rows, put_rows, spot)` from ONE ATM-gated routed chain build, in the
+    same ICICI row shape as `fetch_chain_side_icici_response`. For the dashboard
+    ATM IV + PCR/OI tiles: IV needs only the ATM strike quoted, and PCR/OI sums
+    whatever strikes have ticked — so this never waits on the illiquid wings the
+    full-chain gate requires, and builds the chain once instead of once per side."""
+    expiry_display = _normalize_expiry_display(expiry_raw)
+    payload = _fetch_chain_payload_atm_gated(
+        proc, user_id, stock_code, exchange_code, expiry_display, holder_id=holder_id
+    )
+    if not payload:
+        return [], [], None
+    spot = _parse_positive_spot(payload.get("spot_price"))
+    calls = _flatten_chain_side_rows(payload, cfg.CALL)
+    puts = _flatten_chain_side_rows(payload, cfg.PUT)
+    return calls, puts, spot
 
 
 def assemble_payoff_quote_with_router(

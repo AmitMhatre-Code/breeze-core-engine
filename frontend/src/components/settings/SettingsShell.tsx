@@ -102,7 +102,7 @@ function navItemClass(active: boolean, danger: boolean): string {
       : `${base} bg-accent-tint font-semibold text-foreground`;
   }
   return danger
-    ? `${base} text-down/80 hover:bg-down-tint hover:text-down`
+    ? `${base} text-down/80 hover:bg-down-tint hover:text-down-on-tint`
     : `${base} text-muted hover:bg-panel2 hover:text-foreground`;
 }
 
@@ -111,7 +111,7 @@ function pillItemClass(active: boolean, danger: boolean): string {
     "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition";
   if (active) {
     return danger
-      ? `${base} border-down bg-down-tint text-down`
+      ? `${base} border-down bg-down-tint text-down-on-tint`
       : `${base} border-accent-strong bg-accent-tint text-accent-strong`;
   }
   return danger

@@ -57,6 +57,13 @@ import {
 } from "@/lib/orders/exit-rules";
 import { legOpenQuantity, parseNonNegativeInt } from "@/lib/orders/leg-modify";
 import { fetchSquareOffRulesForExitBoard } from "@/lib/portfolio/squareoff-rules";
+import {
+  resetChipClassName,
+  resetChipLabel,
+  resetHazardTier,
+  resetMessage,
+  resetNoteClassName,
+} from "@/lib/portfolio/reset-warning";
 import { fetchAllGttExitOrders } from "@/lib/portfolio/gtt-exit-orders";
 import { useGroupSubscriptionHolders } from "@/lib/portfolio/useGroupSubscriptionHolders";
 import {
@@ -306,13 +313,13 @@ const ordersCancelBarClass =
   "flex flex-wrap items-center justify-end gap-3 border-t border-border-soft bg-panel2 px-[18px] py-3";
 
 const cancelOutlineBtnClass =
-  "inline-flex h-[34px] items-center justify-center rounded-lg border border-down/40 bg-transparent px-3.5 py-1.5 text-xs font-semibold text-down transition hover:bg-down-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-down/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-[34px] items-center justify-center rounded-lg border border-down/40 bg-transparent px-3.5 py-1.5 text-xs font-semibold text-down transition hover:bg-down-tint hover:text-down-on-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-down/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
 
 const fetchOrdersBtnClass =
   "inline-flex items-center justify-center rounded-lg border border-accent/40 bg-transparent px-3.5 py-1.5 text-xs font-semibold text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
 
 const cancelOutlineBtnSmallClass =
-  "inline-flex items-center justify-center rounded-md border border-down/40 bg-transparent px-2.5 py-1 text-hint font-semibold text-down transition hover:bg-down-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-down/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-md border border-down/40 bg-transparent px-2.5 py-1 text-hint font-semibold text-down transition hover:bg-down-tint hover:text-down-on-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-down/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
 
 const modifyOutlineBtnSmallClass =
   "inline-flex items-center justify-center rounded-md border border-accent/40 bg-transparent px-2.5 py-1 text-hint font-semibold text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
@@ -343,12 +350,12 @@ function statusChipClass(status: string | undefined): string {
     .trim()
     .toLowerCase();
   const base = "inline-flex max-w-[11rem] truncate rounded-full px-2.5 py-0.5 text-micro font-bold uppercase tracking-[.05em] ";
-  if (s.includes("execut")) return `${base} bg-up-tint text-up`;
-  if (s.includes("reject")) return `${base} bg-down-tint text-down`;
+  if (s.includes("execut")) return `${base} bg-up-tint text-up-on-tint`;
+  if (s.includes("reject")) return `${base} bg-down-tint text-down-on-tint`;
   if (s.includes("cancel")) return `${base} bg-panel2 text-faint`;
   if (s.includes("partial") || s.includes("open") || s.includes("request"))
     return `${base} bg-accent-tint text-accent-strong`;
-  if (s.includes("expir")) return `${base} bg-amber-tint text-amber-accent`;
+  if (s.includes("expir")) return `${base} bg-amber-tint text-amber-on-tint`;
   return `${base} bg-panel2 text-faint`;
 }
 
@@ -357,36 +364,88 @@ const exitRuleScopeGroupClass =
 const exitRuleScopeLegClass =
   "inline-flex rounded-full bg-gtt-tint px-2.5 py-0.5 text-micro font-bold uppercase tracking-[.05em] text-gtt";
 
+const EXIT_RULE_CHIP_BASE =
+  "inline-flex rounded-full px-2.5 py-0.5 text-micro font-bold uppercase tracking-[.05em] ";
+
+/** A Reset chip is tiered by hazard (see `lib/portfolio/reset-warning`), so this handles
+ * every other status; `row`-aware rendering picks the tiered class for Reset. */
 function exitRuleStatusChipClass(status: ExitRuleEffectiveStatus): string {
-  const base =
-    "inline-flex rounded-full px-2.5 py-0.5 text-micro font-bold uppercase tracking-[.05em] ";
+  const base = EXIT_RULE_CHIP_BASE;
   switch (status) {
     case "armed":
       return `${base} bg-accent-tint text-accent-strong`;
     case "triggered":
-      return `${base} bg-amber-tint text-amber-accent`;
+      return `${base} bg-accent-tint text-accent-strong`;
     case "fired":
       return `${base} border border-amber-accent/45 bg-transparent text-amber-accent`;
     case "exited":
-      return `${base} bg-up-tint text-up`;
-    case "fire_failed":
-      return `${base} bg-down-tint text-down`;
+    case "completed":
+      return `${base} bg-up-tint text-up-on-tint`;
+    case "reset":
+      // Fallback only — a real Reset row goes through exitRuleChipClassFor().
+      return `${base} bg-panel2 text-faint`;
   }
+}
+
+/** Tier-aware chip class: neutral → amber → red by what's actually at stake. */
+function exitRuleChipClassFor(row: ExitRuleRow): string {
+  if (row.effectiveStatus === "reset" && row.rule) {
+    return EXIT_RULE_CHIP_BASE + resetChipClassName(row.rule);
+  }
+  return exitRuleStatusChipClass(row.effectiveStatus);
 }
 
 function exitRuleStatusLabel(status: ExitRuleEffectiveStatus): string {
   switch (status) {
     case "armed":
+      // 'triggered' is a sub-second internal transient; showing it would flicker a state
+      // the user can't act on.
       return "Armed";
     case "triggered":
-      return "Triggered";
+      return "Armed";
     case "fired":
       return "Fired";
     case "exited":
       return "Exited";
-    case "fire_failed":
-      return "Fire Failed";
+    case "completed":
+      return "Completed";
+    case "reset":
+      return "Reset";
   }
+}
+
+function exitRuleChipLabelFor(row: ExitRuleRow): string {
+  if (row.effectiveStatus === "reset" && row.rule) return resetChipLabel(row.rule);
+  return exitRuleStatusLabel(row.effectiveStatus);
+}
+
+/**
+ * The text under a status chip. For a Reset this is the tiered warning — visible, not a
+ * tooltip: it may be saying "a live order will open a position you didn't ask for", and
+ * tooltips are invisible on touch and unannounced by screen readers.
+ *
+ * `failureReason` (raw broker text) sits *underneath* the reason rather than replacing it
+ * — the reason says what happened in the user's terms, the broker text is diagnostics.
+ */
+function ExitRuleStatusDetail({ row }: { row: ExitRuleRow }) {
+  if (row.effectiveStatus !== "reset" || !row.rule) return null;
+  const tier = resetHazardTier(row.rule);
+  return (
+    <div className="mt-1.5 max-w-[240px] space-y-1">
+      <p
+        className={`rounded-md border px-2 py-1 text-hint leading-relaxed ${resetNoteClassName(row.rule)}`}
+        role={tier === "contra_risk" ? "alert" : undefined}
+      >
+        {resetMessage(row.rule)}
+      </p>
+      {row.failureReason ? (
+        <p className="text-hint text-faint">{row.failureReason}</p>
+      ) : null}
+      {row.rule.rearm_blocked ? (
+        <p className="text-hint text-faint">Re-arm blocked</p>
+      ) : null}
+    </div>
+  );
 }
 
 /** Canonical title for a rule row, mirroring `bookGroupTitle`'s "stock · expiry · N
@@ -528,10 +587,10 @@ function ChevronGlyph({
 }
 
 function messageClass(type: string | undefined): string {
-  if (type === "alert-success") return "border-up/30 bg-up-tint text-up";
-  if (type === "alert-danger") return "border-down/30 bg-down-tint text-down";
+  if (type === "alert-success") return "border-up/30 bg-up-tint text-up-on-tint";
+  if (type === "alert-danger") return "border-down/30 bg-down-tint text-down-on-tint";
   if (type === "alert-warning")
-    return "border-amber-accent/30 bg-amber-tint text-amber-accent";
+    return "border-amber-accent/30 bg-amber-tint text-amber-on-tint";
   return "border-border bg-panel2 text-foreground";
 }
 
@@ -2461,17 +2520,10 @@ function OrdersBody() {
                             </td>
                           ) : null}
                           <td className="px-4 py-3.5 align-middle">
-                            <span
-                              className={exitRuleStatusChipClass(row.effectiveStatus)}
-                              title={row.failureReason ?? undefined}
-                            >
-                              {exitRuleStatusLabel(row.effectiveStatus)}
+                            <span className={exitRuleChipClassFor(row)}>
+                              {exitRuleChipLabelFor(row)}
                             </span>
-                            {row.failureReason ? (
-                              <div className="mt-1 max-w-[220px] text-hint text-down">
-                                {row.failureReason}
-                              </div>
-                            ) : null}
+                            <ExitRuleStatusDetail row={row} />
                           </td>
                           <td className="px-4 py-3.5 align-middle font-mono text-xs text-muted">
                             <div>{row.placedAt || "—"}</div>
@@ -2695,15 +2747,13 @@ function OrdersBody() {
                           >
                             {row.kind === "group" ? "Group" : "Leg · GTT"}
                           </span>
-                          <span className={exitRuleStatusChipClass(row.effectiveStatus)}>
-                            {exitRuleStatusLabel(row.effectiveStatus)}
+                          <span className={exitRuleChipClassFor(row)}>
+                            {exitRuleChipLabelFor(row)}
                           </span>
                         </span>
                       </summary>
                       <div className="space-y-2 border-t border-border-soft px-3 py-2.5 text-sm text-muted">
-                        {row.failureReason ? (
-                          <p className="text-hint text-down">{row.failureReason}</p>
-                        ) : null}
+                        <ExitRuleStatusDetail row={row} />
                         <div className="flex items-center justify-between">
                           <span>
                             Target: {formatExitRuleAmount(row.targetValue, row.kind)} · Stop:{" "}

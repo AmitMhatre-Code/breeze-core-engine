@@ -776,6 +776,11 @@ def fetch_vix_options(
     """
     Payload: nifty_spot, atm_iv, expected_range, expected_move_pct, put_call_ratio, strike_highest_*. First expiry only.
     """
+    from icici_breeze_backend.app.services.quote_source_router import (
+        cached_chain_spot,
+        fetch_chain_sides_atm_gated,
+    )
+
     result = {
         "nifty_spot": None,
         "next_expiry": None,
@@ -793,18 +798,43 @@ def fetch_vix_options(
         result["error"] = "Session unavailable. Please log in again."
         return result
 
-    if nifty_quote is None:
-        nifty_quote = _quote_nse_cash(breeze, NIFTY_SYMBOL)
+    # Display spot: prefer a caller-supplied live quote (headline path), else the
+    # WS index-tick-fed cache seeded by `index_spot_feed`. No ICICI REST round-trip
+    # here -- NIFTY spot already streams over the websocket the chain subscribes to.
     spot = None
     if nifty_quote:
         try:
             spot = float(nifty_quote.get("ltp") or nifty_quote.get("last") or nifty_quote.get("spot_price") or 0)
-            result["nifty_spot"] = round(spot, 2)
         except (TypeError, ValueError):
-            pass
+            spot = None
+    if spot is None or spot <= 0:
+        spot = cached_chain_spot(NFO, NIFTY_SYMBOL)
+
+    expiries_display = _get_nifty_expiries(processor)
+    picked = _pick_nifty_expiry_for_iv(expiries_display) if expiries_display else None
+    if picked is None:
+        # No usable expiry: still surface spot if we have one, otherwise nothing to do.
+        if spot is not None and spot > 0:
+            result["nifty_spot"] = round(spot, 2)
+        return result
+
+    exp, t_years = picked
+    result["next_expiry"] = exp
+    expiry_api = _expiry_display_to_api(exp)
+
+    # One ATM-gated chain build serves both sides: IV needs only the ATM strike
+    # quoted, PCR/OI sums whatever has ticked. `chain_spot` is the chain's own
+    # resolved spot (same WS-fed cache), used as a final fallback for display/IV.
+    calls, puts, chain_spot = fetch_chain_sides_atm_gated(
+        processor, user_id, NIFTY_SYMBOL, NFO, expiry_api
+    )
+    if spot is None or spot <= 0:
+        spot = chain_spot
+    if spot is not None and spot > 0:
+        result["nifty_spot"] = round(spot, 2)
 
     if spot is None or spot <= 0:
-        # Fallback: reuse the last successful options payload while upstream quote recovers.
+        # Fallback: reuse the last successful options payload while spot recovers.
         cached_opts = _cache_get(_OPTIONS_PAYLOAD_CACHE, user_id)
         if cached_opts:
             result.update(
@@ -821,23 +851,6 @@ def fetch_vix_options(
             )
         return result
 
-    expiries_display = _get_nifty_expiries(processor)
-    if not expiries_display:
-        return result
-
-    picked = _pick_nifty_expiry_for_iv(expiries_display)
-    if picked is None:
-        return result
-
-    exp, t_years = picked
-    result["next_expiry"] = exp
-    expiry_api = _expiry_display_to_api(exp)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        fut_call = executor.submit(_option_chain, processor, user_id, expiry_api, "call")
-        fut_put = executor.submit(_option_chain, processor, user_id, expiry_api, "put")
-        calls = fut_call.result()
-        puts = fut_put.result()
     pcr, strike_call_oi, strike_put_oi = _option_chain_oi_metrics(calls, puts)
     if pcr is not None:
         result["put_call_ratio"] = round(pcr, 2)

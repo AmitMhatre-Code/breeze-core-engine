@@ -15,6 +15,19 @@
  * `--faint` was originally lighter than `--muted` for both themes, but that landed well under
  * WCAG AA (2.4–3.3:1 against panel/panel2) since it's used for real label/caption text, not just
  * decoration — it's now tuned to clear ~4.5:1 against panel/panel2 in both themes instead.
+ *
+ * `--*-on-tint` are the text/icon colours to use when the background is the matching `-tint` wash.
+ * A `-tint` is not the same lightness as `--panel`, so a base colour that clears AA as bare text on
+ * a panel can still fail on its own tint — in light theme every pair did (--up 3.11:1,
+ * --accent 3.25:1, --down 4.05:1, --amber 4.45:1, all under the 4.5:1 small-text floor; only --gtt
+ * passed at 4.87:1). Darkening the *base* tokens instead would have been wrong: they already clear
+ * AA on --panel (--down 4.63:1, --amber 5.02:1), so it would recolour every P&L figure to fix a
+ * problem those call sites don't have. Dark theme clears every pair already, so there `-on-tint`
+ * equals the base — they're still defined so components can follow ONE rule ("on a tint → use
+ * -on-tint") that is correct in both themes. See docs/ui-revamp/DESIGN_LANGUAGE.md §2.4.
+ *
+ * NB `-ink` and `-on-tint` are different: `-ink` is text on a solid *fill* (--accent-ink is white
+ * on the teal button); `-on-tint` is text on a *wash*. Not interchangeable.
  */
 :root {
   --background: #eef1f5;
@@ -42,6 +55,16 @@
   --amber-ink: #ffffff;
   --gtt: #7c3aed;
   --gtt-tint: #f1eafe;
+  /* Text on a -tint wash. Light theme REQUIRES these — the base tokens fail AA on their own tints. */
+  --up-on-tint: #0c7a53; /* 4.80:1 on --up-tint (--up itself was 3.11:1) */
+  --down-on-tint: #c62a3d; /* 4.84:1 on --down-tint (--down itself was 4.05:1) */
+  --amber-on-tint: #ab4f09; /* 4.83:1 on --amber-tint (--amber itself was 4.45:1) */
+  /* Deliberately == --accent-strong, not a new darker value: every accent-tint call site in the
+     app already uses text-accent-strong, which clears AA at 4.73:1. Inventing a darker accent
+     would shift pixels for no accessibility gain. (Bare --accent on --accent-tint would fail at
+     3.25:1 — but nothing pairs those, and this token is what stops anyone starting.) */
+  --accent-on-tint: #0e7490; /* 4.73:1 on --accent-tint */
+  --gtt-on-tint: #7c3aed; /* 4.87:1 — == --gtt, already passes */
   --track: #e3e8ee;
   --call-tint: #eaf7f0;
   --call-head: #0f9d6b;
@@ -77,6 +100,13 @@
   --amber-ink: #241d0e;
   --gtt: #a78bfa;
   --gtt-tint: #221e33;
+  /* Dark clears AA on every base/tint pair, so these equal the base tokens — defined anyway so
+     components can use one rule that is correct in both themes (see the header comment). */
+  --up-on-tint: #34d399; /* 8.87:1 */
+  --down-on-tint: #f87171; /* 6.37:1 */
+  --amber-on-tint: #fbbf24; /* 10.01:1 */
+  --accent-on-tint: #22d3ee; /* 9.10:1 */
+  --gtt-on-tint: #a78bfa; /* 5.93:1 */
   --track: #1a2330;
   --call-tint: #0e1d18;
   --call-head: #123322;
@@ -113,6 +143,12 @@
   --color-amber-ink: var(--amber-ink);
   --color-gtt: var(--gtt);
   --color-gtt-tint: var(--gtt-tint);
+  /* Text on a -tint wash: `text-down-on-tint` etc. Never `text-down` on `bg-down-tint`. */
+  --color-up-on-tint: var(--up-on-tint);
+  --color-down-on-tint: var(--down-on-tint);
+  --color-amber-on-tint: var(--amber-on-tint);
+  --color-accent-on-tint: var(--accent-on-tint);
+  --color-gtt-on-tint: var(--gtt-on-tint);
   --color-track: var(--track);
   --color-call-tint: var(--call-tint);
   --color-call-head: var(--call-head);
@@ -434,7 +470,7 @@
   }
 
   .app-alert-error {
-    @apply rounded-md border border-down/40 bg-down-tint p-3 text-sm text-down;
+    @apply rounded-md border border-down/40 bg-down-tint p-3 text-sm text-down-on-tint;
   }
   /** Log / response / <pre> blocks — always wrap, never overflow (Terminal Pro §5.14 / §9 don't #8). */
   .app-pre {

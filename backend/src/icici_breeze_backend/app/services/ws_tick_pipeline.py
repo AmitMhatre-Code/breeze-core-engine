@@ -181,10 +181,51 @@ def _stage_pnl_quote(raw: dict[str, Any]) -> None:
     _last_tick_monotonic = time.monotonic()
 
 
+def _route_order_notification(payload: Any) -> bool:
+    """Split order-notification events off the shared tick callback. Returns True when the
+    payload was an order event and has been handled (so it must NOT be treated as a quote).
+
+    Discriminator is `orderReference`, which price ticks never carry. Never raises: this
+    runs on the SDK's WS thread, where an exception would take out tick ingestion for
+    every other consumer too.
+    """
+    try:
+        from icici_breeze_backend.app.services.order_notifications import (
+            is_order_notification,
+            parse_order_notification,
+        )
+
+        if not is_order_notification(payload):
+            return False
+        parsed = parse_order_notification(payload)
+        if parsed is not None:
+            from icici_breeze_backend.app.services.strategy_group_lifecycle import (
+                on_order_notification,
+            )
+
+            on_order_notification(parsed)
+        # Consumed either way: an order event is never a price tick, even if the parse
+        # rejected it (e.g. a cash-shape payload).
+        return True
+    except Exception:
+        _logger.exception("Order-notification routing failed")
+        return False
+
+
 def ingest_tick(raw: Any) -> None:
-    """Called from SDK on_ticks — notify raw listeners, then enqueue for raw cache pipeline."""
+    """Called from SDK on_ticks — notify raw listeners, then enqueue for raw cache pipeline.
+
+    Order notifications arrive on this SAME callback: `subscribe_feeds(
+    get_order_notification=True)` opens a separate socket.io client, but the SDK's
+    `on_message` dispatches both it and price ticks to `breeze.on_ticks`. So they must be
+    split off here, before anything downstream tries to read them as quotes.
+    """
     global _dropped_ticks
     payload = _raw_tick_payload(raw)
+
+    if _route_order_notification(payload):
+        return
+
     for listener in list(_raw_listeners):
         try:
             listener(payload)

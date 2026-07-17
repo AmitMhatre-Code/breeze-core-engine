@@ -356,7 +356,7 @@ export function OrderExecutionConfirmDialog({
                   </span>
                   <span className="shrink-0 whitespace-nowrap text-muted">
                     {l.aggressiveLimit ? (
-                      <span className="rounded-full bg-amber-tint px-2 py-0.5 font-sans text-xs font-medium text-amber-accent">
+                      <span className="rounded-full bg-amber-tint px-2 py-0.5 font-sans text-xs font-medium text-amber-on-tint">
                         Aggressive limit
                       </span>
                     ) : (
@@ -445,7 +445,7 @@ export function OrderExecutionConfirmDialog({
         {marketClosed ? (
           <div
             role="status"
-            className="mt-3 rounded-md border border-amber-accent/40 bg-amber-tint px-3 py-2.5 text-sm text-amber-accent"
+            className="mt-3 rounded-md border border-amber-accent/40 bg-amber-tint px-3 py-2.5 text-sm text-amber-on-tint"
           >
             The market is currently closed ({marketStatus.closed_reason}). Orders
             can only be{" "}

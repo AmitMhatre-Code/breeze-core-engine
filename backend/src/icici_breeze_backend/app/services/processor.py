@@ -728,15 +728,24 @@ class processor():
     def _maybe_evict_session(self, user_id: str, response: dict | None) -> None:
         """If ICICI response indicates auth/session failure, evict session cache so next request creates fresh session."""
         try:
-            from icici_breeze_backend.app.services.breeze_session_cache import evict_if_icici_auth_failure
+            from icici_breeze_backend.app.services.breeze_session_cache import evict_if_icici_auth_failure, is_icici_auth_failure
             broker_token = self._resolve_broker_token(user_id)
             evict_if_icici_auth_failure(user_id, broker_token, response)
+            if is_icici_auth_failure(response):
+                from icici_breeze_backend.app.services.customer_details_cache import evict as evict_customer_details
+                evict_customer_details(user_id, broker_token)
         except Exception:
             pass
 
     def get_customer_details(self, user_id):
-        breeze = self.get_session_breeze(user_id)
+        from icici_breeze_backend.app.services import customer_details_cache
+
         session_token = self.get_session_token(user_id)
+        cached = customer_details_cache.get(user_id, session_token or "")
+        if cached is not None:
+            return cached
+
+        breeze = self.get_session_breeze(user_id)
         if breeze is None:
             return None
         max_retries = getattr(cfg, "ICICI_MAX_RETRIES", 3) or 3
@@ -755,6 +764,8 @@ class processor():
                 if _s != 200:
                     _logger.warning("get_customer_details: API returned status=%s error=%r user_id=%s", _s, _e, user_id)
                 self._maybe_evict_session(user_id, customer)
+                if _s == 200:
+                    customer_details_cache.set(user_id, session_token or "", customer)
                 return customer
             except Exception as e:
                 if _is_transient(e) and attempt < max_retries - 1:

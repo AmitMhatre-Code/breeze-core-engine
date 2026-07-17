@@ -50,9 +50,9 @@ export function outlookIconFillClass(o: Outlook): string {
 export function outlookPillClassName(o: Outlook): string {
   switch (o) {
     case "bullish":
-      return "bg-up-tint text-up";
+      return "bg-up-tint text-up-on-tint";
     case "bearish":
-      return "bg-down-tint text-down";
+      return "bg-down-tint text-down-on-tint";
     case "neutral":
       return "bg-accent-tint text-accent-strong";
     case "volatile":

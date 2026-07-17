@@ -79,12 +79,18 @@ by adding/removing the `.theme-light` class on the app root and is persisted to
 :root {
   --bg:#0A0C10; --panel:#12151C; --panel2:#0F141C; --elevated:#161B24;
   --border:#232A36; --border-soft:#1B222E;
-  --text:#E6EAF2; --muted:#8A93A6; --faint:#5C6577;
+  --text:#E6EAF2; --muted:#8A93A6; --faint:#7B859C; /* --faint retuned for AA — see §2.4 */
   --accent:#22D3EE; --accent-strong:#22D3EE; --accent-ink:#06222A; --accent-tint:#0C2229; --accent-bar:#22D3EE;
   --up:#34D399; --down:#F87171; --up-tint:#0F1F1B; --down-tint:#231518;
   --up-btn:#0EA371; --down-btn:#E5484D;
   --amber:#FBBF24; --amber-tint:#241D0E;
   --gtt:#A78BFA; --gtt-tint:#221E33;
+  /* text/icon colour when placed ON the matching -tint wash — see §2.4.
+     In dark theme every base already clears AA on its own tint, so these are
+     identical to the base tokens. They exist so components can use one rule
+     (`on a tint → use -on-tint`) that is correct in BOTH themes. */
+  --up-on-tint:#34D399; --down-on-tint:#F87171; --amber-on-tint:#FBBF24;
+  --accent-on-tint:#22D3EE; --gtt-on-tint:#A78BFA;
   --shadow:0 18px 50px -20px rgba(0,0,0,.65);
   --track:#1A2330;
 }
@@ -95,12 +101,22 @@ by adding/removing the `.theme-light` class on the app root and is persisted to
 .theme-light {
   --bg:#EEF1F5; --panel:#FFFFFF; --panel2:#F5F7FA; --elevated:#FFFFFF;
   --border:#DBE1E9; --border-soft:#E8ECF2;
-  --text:#0E1520; --muted:#5A6473; --faint:#93A0B0;
+  --text:#0E1520; --muted:#5A6473; --faint:#5F6B7E; /* --faint retuned for AA — see §2.4 */
   --accent:#0891B2; --accent-strong:#0E7490; --accent-ink:#FFFFFF; --accent-tint:#E1F4FA; --accent-bar:#0891B2;
   --up:#0F9D6B; --down:#DC2F44; --up-tint:#E7F6F0; --down-tint:#FCECEE;
   --up-btn:#0F9D6B; --down-btn:#DC2F44;
   --amber:#B45309; --amber-tint:#FBF0DE;
   --gtt:#7C3AED; --gtt-tint:#F1EAFE;
+  /* text/icon colour when placed ON the matching -tint wash — see §2.4.
+     REQUIRED in light theme: the base tokens FAIL WCAG AA on their own tints
+     (--up 3.11:1, --accent 3.25:1, --down 4.05:1, --amber 4.45:1 — all below
+     the 4.5:1 small-text floor). These darkened variants clear it with headroom.
+     Do NOT "simplify" these back to the base tokens. */
+  --up-on-tint:#0C7A53;      /* 4.80:1 on --up-tint     */
+  --down-on-tint:#C62A3D;    /* 4.84:1 on --down-tint   */
+  --amber-on-tint:#AB4F09;   /* 4.83:1 on --amber-tint  */
+  --accent-on-tint:#06738D;  /* 4.82:1 on --accent-tint */
+  --gtt-on-tint:#7C3AED;     /* 4.87:1 — already passes, same as --gtt */
   --shadow:0 10px 34px -16px rgba(15,25,40,.20);
   --track:#E3E8EE;
 }
@@ -129,10 +145,44 @@ by adding/removing the `.theme-light` class on the app root and is persisted to
 | `--gtt` / `--gtt-tint` | GTT risk-tier badge only (purple). |
 | `--shadow` | The one and only elevation shadow. Popovers/menus. Cards do NOT get a shadow. |
 | `--track` | Slider/progress track background. |
+| `--up-on-tint` / `--down-on-tint` / `--amber-on-tint` / `--accent-on-tint` / `--gtt-on-tint` | The text/icon colour to use **when the background is the matching `-tint`**. See §2.4 — this is an accessibility requirement, not a style preference. |
 
-**Semantic pairing rule:** a colored *text/icon* uses the base token (`--up`, `--down`, `--amber`,
-`--accent`); its *background wash* uses the matching `-tint`. Never put `--down` text on a `--up-tint`
-background, etc.
+**Semantic pairing rule:** a colored *text/icon* on a plain surface (`--panel`, `--bg`) uses the base
+token (`--up`, `--down`, `--amber`, `--accent`). Its *background wash* uses the matching `-tint` —
+and text placed **on** that wash uses the matching **`-on-tint`** (§2.4). Never put `--down` text on
+a `--up-tint` background, etc.
+
+### 2.4 The `-on-tint` rule (accessibility — do not skip)
+
+> **On a `-tint` background, colour text with the matching `-on-tint` token. Never the base token.**
+
+`-tint` washes are *not* the same lightness as `--panel`, so a base colour that passes WCAG AA as bare
+text on a panel can fail on its own tint. In **light theme every base/tint pair failed** the 4.5:1
+small-text floor when audited:
+
+| Light pair | Base on tint | With `-on-tint` |
+|---|---|---|
+| `--up` on `--up-tint` | 3.11:1 ✗ | 4.80:1 ✓ |
+| `--accent` on `--accent-tint` | 3.25:1 ✗ | 4.82:1 ✓ |
+| `--down` on `--down-tint` | 4.05:1 ✗ | 4.84:1 ✓ |
+| `--amber` on `--amber-tint` | 4.45:1 ✗ | 4.83:1 ✓ |
+| `--gtt` on `--gtt-tint` | 4.87:1 ✓ | 4.87:1 ✓ (unchanged) |
+
+Dark theme already passes on every pair, so there `-on-tint` == the base token. **Use `-on-tint`
+anyway, always** — one rule that is correct in both themes beats a per-theme exception nobody
+remembers. `--gtt-on-tint` exists for the same reason: no exceptions to memorize.
+
+**`--faint` (§2.1/§2.2) was separately retuned** away from this doc's original values (light
+`#93A0B0` → `#5F6B7E`, dark `#5C6577` → `#7B859C`) for the same reason: it is used for real
+label/caption text, and the original values measured 2.48:1 / 3.15:1 against `--panel2`. The
+retuned values clear ~5:1. `frontend/src/app/globals.css` has shipped the corrected values for some
+time — this doc was the stale copy. **The app is the source of truth for token values; sync this
+doc to it, not the reverse.**
+
+**Naming note:** `-ink` and `-on-tint` are **not** the same thing and are not interchangeable.
+`--accent-ink` is text on an accent **fill** (white on the solid teal button). `--accent-on-tint` is
+text on the accent **wash**. Mixing them up is a contrast bug in one direction and an invisible-text
+bug in the other.
 
 ---
 
@@ -161,6 +211,12 @@ colors: {
   down:      'var(--down)',  'down-tint': 'var(--down-tint)', 'down-btn': 'var(--down-btn)',
   amber:     'var(--amber)', 'amber-tint':'var(--amber-tint)',
   gtt:       'var(--gtt)',   'gtt-tint':  'var(--gtt-tint)',
+  // text ON a -tint wash — see §2.4. `text-down-on-tint` etc.
+  'up-on-tint':     'var(--up-on-tint)',
+  'down-on-tint':   'var(--down-on-tint)',
+  'amber-on-tint':  'var(--amber-on-tint)',
+  'accent-on-tint': 'var(--accent-on-tint)',
+  'gtt-on-tint':    'var(--gtt-on-tint)',
 },
 fontFamily: {
   sans: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
@@ -264,13 +320,21 @@ Warning/caution card: `border:1px solid var(--amber); background:var(--amber-tin
 
 ### 5.8 Status / risk badge (pill)
 ```html
-<span style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--up); background:var(--up-tint); padding:2px 8px; border-radius:999px;">Configured</span>
+<span style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--up-on-tint); background:var(--up-tint); padding:2px 8px; border-radius:999px;">Configured</span>
 ```
-Swap the color/tint pair per meaning: OK/connected → up; warning/Funds → amber; danger/Trade → down; GTT → gtt; neutral → `color:var(--faint); background:var(--panel2)`.
+Swap the on-tint/tint pair per meaning: OK/connected → up; warning/Funds → amber; danger/Trade → down;
+GTT → gtt; neutral → `color:var(--faint); background:var(--panel2)`.
+
+The text token is **`-on-tint`, never the base** (§2.4) — badge text is 10.5px, i.e. small text, so it
+needs 4.5:1. Neutral stays on `--faint`, which clears AA at the retuned values in §2.1/§2.2
+(5.03:1 light / 4.99:1 dark against `--panel2`).
 
 ### 5.9 Inline note / callout (full-width, not a pill)
-Warning note: `font-size:11px; line-height:1.6; color:var(--amber); background:var(--amber-tint); border:1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius:8px; padding:8px 10px;`.
-Danger note: same structure with `--down` / `--down-tint`.
+Warning note: `font-size:11px; line-height:1.6; color:var(--amber-on-tint); background:var(--amber-tint); border:1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius:8px; padding:8px 10px;`.
+Danger note: same structure with `--down-on-tint` text / `--down-tint` background.
+
+Text is `-on-tint` (§2.4) — at 11px this is small text and needs 4.5:1. The **border** may keep using
+the base token via `color-mix`, since a 1px border is a non-text element (3:1 floor).
 
 ### 5.10 Segmented control (tabs like API-wise / Route-wise)
 Track is `--panel2` with a 1px border and `padding:3px`; the active segment is an accent-filled button, inactive are transparent with `--muted` text. All mono, 11.5px, weight 600.
@@ -395,4 +459,6 @@ danger items use `--down-tint` and a `--down` left bar instead of accent.
 - Checkboxes: always `<Checkbox />` from `components/ui/Checkbox.tsx` — never raw `type="checkbox"`.
 - Radii ladder: card 13 · button 8 · input 7–9 · small ghost 6 · pill 999.
 - Semantic pairs: up/`up-tint`, down/`down-tint`, amber/`amber-tint`, gtt/`gtt-tint`, accent/`accent-tint`.
+- **Text on a `-tint` uses `-on-tint`, never the base token** (§2.4). Neutral badge = `--muted` on `--panel2`, not `--faint`.
+- `-ink` (text on a solid **fill**) ≠ `-on-tint` (text on a **wash**). Not interchangeable.
 - Shell: sidebar 236 · header 52 · content max-w 1280 · settings sub-nav 252 (sticky).

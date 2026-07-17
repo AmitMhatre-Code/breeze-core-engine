@@ -16,7 +16,7 @@ export function SettingsScreenHeader({
       <span
         className={[
           "flex size-[38px] shrink-0 items-center justify-center rounded-[10px]",
-          danger ? "bg-down-tint text-down" : "bg-accent-tint text-accent-strong",
+          danger ? "bg-down-tint text-down-on-tint" : "bg-accent-tint text-accent-strong",
         ].join(" ")}
         aria-hidden
       >

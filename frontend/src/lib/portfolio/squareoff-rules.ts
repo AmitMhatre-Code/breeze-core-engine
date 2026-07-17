@@ -1,11 +1,42 @@
 import { apiClient } from "@/lib/api-client";
 
+/** Strategy Group lifecycle. `triggered` is an internal sub-second transient (guards
+ * double-fire) and renders as Armed. `fire_failed` is retired — a placement failure is
+ * one flavour of `reset`, which always carries a `reset_reason`. */
 export type SquareOffRuleStatus =
   | "armed"
   | "triggered"
   | "fired"
-  | "fire_failed"
+  | "completed"
+  | "reset"
   | "disarmed";
+
+/**
+ * How dangerous a Reset actually is, derived server-side from the live order book +
+ * positions (never stored, and never recomputed here — the backend owns the join).
+ *
+ *   settled     — no live orphaned exit orders; nothing at stake
+ *   orders_live — live orphans that still correctly close open legs: automation the
+ *                 user thinks is off will still act, but in the direction they intended
+ *   contra_risk — an orphan whose leg is already closed: filling OPENS a new position
+ *
+ * Tier 3 is not a louder tier 2 — different verb, different stake.
+ */
+export type ResetHazardTier = "settled" | "orders_live" | "contra_risk";
+
+/** One of a Reset SG's exit orders still working at the exchange. Reset withdraws future
+ * automation; it does not retract orders already placed, so these keep going. */
+export type SquareOffRuleOrphanOrder = {
+  order_id: string;
+  stock_code: string;
+  strike_price: string;
+  right: string;
+  action: string;
+  quantity: string;
+  price?: string | null;
+  /** The leg is already closed — if this fills it will OPEN a new position. */
+  opens_contra_position: boolean;
+};
 
 export type SquareOffRuleLegResult = {
   scrip_key: string;
@@ -49,6 +80,16 @@ export type SquareOffRuleRecord = {
   live_legs?: SquareOffRuleLiveLeg[] | null;
   created_at?: string | null;
   fired_at?: string | null;
+  resolved_at?: string | null;
+  /** Why monitoring stopped, in the user's own terms. Always set on a Reset. */
+  reset_reason?: string | null;
+  /** Reset rows only — derived server-side. */
+  hazard_tier?: ResetHazardTier | null;
+  orphan_orders?: SquareOffRuleOrphanOrder[] | null;
+  /** True while any orphan is live. Blocks BOTH re-arming (a new fire would stack a
+   * duplicate exit on a resting one) and dismissal (the UI must not be able to hide
+   * live risk). */
+  rearm_blocked?: boolean;
 };
 
 export type ArmSquareOffRuleRequest = {
@@ -88,6 +129,24 @@ export async function armSquareOffRule(
 export async function disarmSquareOffRule(ruleId: string): Promise<void> {
   await apiClient.delete<{ ok: boolean }>(
     `/portfolio/squareoff-rules/${encodeURIComponent(ruleId)}`,
+  );
+}
+
+export type CancelOrphanOrdersResult = {
+  ok: boolean;
+  cancelled: string[];
+  failed: { order_id: string; error: string }[];
+};
+
+/** Cancel a Reset SG's still-live exit orders. User-initiated only — Reset itself never
+ * retracts orders already placed (cancelling a working stop-loss exit because an
+ * unrelated leg failed would leave the user unprotected mid-move). */
+export async function cancelSquareOffOrphanOrders(
+  ruleId: string,
+): Promise<CancelOrphanOrdersResult> {
+  return apiClient.post<CancelOrphanOrdersResult>(
+    `/portfolio/squareoff-rules/${encodeURIComponent(ruleId)}/cancel-orphan-orders`,
+    {},
   );
 }
 

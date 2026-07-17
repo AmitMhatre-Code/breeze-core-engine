@@ -18,6 +18,7 @@ import { ApiUsageWarningDialog } from "@/components/api-usage/ApiUsageWarningDia
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
+import { ContraOrphanBanner } from "@/components/portfolio/ContraOrphanBanner";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
 import { Modal } from "@/components/ui/Modal";
@@ -424,6 +425,10 @@ export function AppShell({
           contactSalesMailto={contactSalesMailto}
         />
         <ApiLimitExhaustedBanner blocked={apiUsageBlocked} />
+        {/* Scoped to one Strategy Group rather than deployment-wide like the two above —
+            a deliberate exception, because a resting contra order can put on risk the
+            user never asked for and doesn't care which page they're on. Tier 3 only. */}
+        <ContraOrphanBanner />
         <main
           id="main-content"
           tabIndex={-1}

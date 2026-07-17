@@ -1,24 +1,14 @@
-Order Details:
-Scrip = NIFTY 50
-Expiry = 21-Jul
-Strike = 26000
-Right = Call
-Action = Sell
-Qty = 65
-Price = 2.2
-
-Tick Received:
-
+keys: ["acknowledgeNumber","averageExecutedRate","cancelFlag","cancelledQuantity","channel","conversionImprovementFlag","executedQuantity","exerciseType","expiredQuantity","expiryDate","group","key","limitMarketFlag","limitRate","messageCategory","messageDate","messageLength","messagePriority","messageSequence","messageTime","messageType","modificationOrCancelFlag","optionType","orderExchangeCode","orderFlow","orderMatchAccount","orderReference","orderStatus","orderTotalQuantity","orderType","orderValidDate","pipeId","priceImprovementFlag","productType","quickExitFlag","requestType","sourceNumber","specialFlag","squareOffMarket","stockCode","stopLossOrderReference","stopLossTrigger","stopValidTillDateFlag","strikePrice","systemPartnerCode","totalAmountBlocked","tradeDate","trailUpdateCondition","userId"]
 {
   "sourceNumber": "1",
   "group": "*",
   "userId": "VIKRAMMH",
   "key": "*",
-  "messageLength": "\u0019260",
+  "messageLength": "\u0019267",
   "requestType": "5",
-  "messageSequence": "2026071701016148",
+  "messageSequence": "2026071701788212",
   "messageDate": "17-07-2026",
-  "messageTime": "10:29:21",
+  "messageTime": "12:45:30",
   "messageCategory": "Intraday Calls",
   "messagePriority": "N",
   "messageType": "6",
@@ -34,10 +24,10 @@ Tick Received:
   "orderFlow": "Sell",
   "limitMarketFlag": "Limit",
   "orderType": "Day",
-  "limitRate": "200",
+  "limitRate": "300",
   "orderStatus": "Ordered",
-  "orderReference": "202607173800009502",
-  "orderTotalQuantity": "65",
+  "orderReference": "202607173800017846",
+  "orderTotalQuantity": "130",
   "executedQuantity": "0",
   "cancelledQuantity": "0",
   "expiredQuantity": "0",
@@ -47,14 +37,14 @@ Tick Received:
   "channel": "WEB",
   "modificationOrCancelFlag": "Y",
   "tradeDate": "17-Jul-2026",
-  "acknowledgeNumber": "1200000045056868    ",
-  "stopLossOrderReference": "1200000045056868    ",
+  "acknowledgeNumber": "1200000100947912    ",
+  "stopLossOrderReference": "1200000100947912    ",
   "totalAmountBlocked": "*",
-  "averageExecutedRate": "0.000000",
+  "averageExecutedRate": "1550900.000000",
   "cancelFlag": "0.000000",
   "squareOffMarket": "N",
   "quickExitFlag": "N",
-  "stopValidTillDateFlag": "N",
+  "stopValidTillDateFlag": "Y",
   "priceImprovementFlag": "N",
   "conversionImprovementFlag": "N",
   "trailUpdateCondition": "N",

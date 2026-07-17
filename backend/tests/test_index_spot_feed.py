@@ -108,7 +108,7 @@ def test_get_index_quotes_status_reads_cache(monkeypatch):
 
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_market_open",
-        lambda user_id, now=None: True,
+        lambda now=None: True,
     )
     cache_set_json(index_spot_key("nifty"), {"ltp": 24800.5}, ex=15)
     proc = MagicMock()
@@ -123,7 +123,7 @@ def test_get_index_quotes_status_market_open_empty_cache_stays_null(monkeypatch)
     trigger the REST fallback, which is reserved for closed-market reads."""
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_market_open",
-        lambda user_id, now=None: True,
+        lambda now=None: True,
     )
     proc = MagicMock()
     status = isf.get_index_quotes_status(proc, "u1")
@@ -137,7 +137,7 @@ def test_get_index_quotes_status_market_closed_fetches_rest_fallback(monkeypatch
 
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_market_open",
-        lambda user_id, now=None: False,
+        lambda now=None: False,
     )
     fake_sdk = MagicMock()
     fake_sdk.get_quotes.return_value = {
@@ -167,7 +167,7 @@ def test_get_index_quotes_status_market_closed_fetches_rest_fallback(monkeypatch
 def test_get_index_quotes_status_market_closed_no_session_returns_null(monkeypatch):
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_market_open",
-        lambda user_id, now=None: False,
+        lambda now=None: False,
     )
     proc = MagicMock()
     proc.get_session_breeze.return_value = None

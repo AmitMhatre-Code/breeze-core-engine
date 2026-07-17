@@ -436,6 +436,35 @@ def _dispatch_rule_hit(payload: dict[str, Any]) -> None:
             _logger.exception("PNL rule-hit listener failed for payload=%s", payload)
 
 
+def _check_group_drift(user_id: str, group_rule: "GroupRule") -> bool:
+    """True if this ARMED group's composition drifted from its arm-time snapshot, in which
+    case it has been Reset and must not be evaluated.
+
+    Only armed SGs are drift-checked. A *fired* SG's own exit orders legitimately change
+    its legs, and a position diff cannot tell whose fill caused it — that case is handled
+    by order-identity matching in `strategy_group_lifecycle` instead.
+    """
+    try:
+        from icici_breeze_backend.app.repositories import squareoff_rules as repo
+        from icici_breeze_backend.app.services import strategy_group_lifecycle as sg
+
+        rule = repo.get_rule(group_rule.rule_id)
+        if rule is None or rule.status not in ("armed", "triggered"):
+            return False
+        drift = sg.check_armed_drift(user_id, rule)
+        if not drift:
+            return False
+        with _registry_lock:
+            _group_rules.get(user_id, {}).pop(
+                _group_key(group_rule.stock_code, group_rule.expiry_display), None
+            )
+        sg.reset_rule(user_id, rule, sg.reason_composition_changed(drift))
+        return True
+    except Exception:
+        _logger.exception("Group drift check failed for rule_id=%s", group_rule.rule_id)
+        return False
+
+
 def _evaluate_rules(snapshot: dict[str, Any], legs_by_key: dict[str, PositionLeg]) -> None:
     user_id = snapshot["user_id"]
     for leg_result in snapshot["legs"]:
@@ -476,6 +505,10 @@ def _evaluate_rules(snapshot: dict[str, Any], legs_by_key: dict[str, PositionLeg
             if _group_key(r["stock_code"], r["expiry_display"]) == key
         ]
         if not matching:
+            continue
+        if _check_group_drift(user_id, group_rule):
+            # Composition changed since it was armed -> the thresholds no longer describe
+            # what the user agreed to. Reset instead of evaluating them.
             continue
         group_total = sum(r["pnl"] for r in matching)
         reason: str | None = None

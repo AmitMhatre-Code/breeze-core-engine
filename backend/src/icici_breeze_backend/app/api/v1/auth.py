@@ -130,9 +130,11 @@ async def logout_endpoint(ctx: RequestContext = Depends(get_current_user), reque
     from icici_breeze_backend.app.repositories.broker_session import clear_broker_session_token
     from icici_breeze_backend.app.services.breeze_session_cache import evict
     from icici_breeze_backend.app.services.broker_snapshot_cache import evict as evict_snapshot
+    from icici_breeze_backend.app.services.customer_details_cache import evict as evict_customer_details
 
     evict(user_id, ctx.broker_token or "")
     evict_snapshot(user_id, ctx.broker_token or "")
+    evict_customer_details(user_id, ctx.broker_token or "")
     clear_broker_session_token(user_id)
 
     response = JSONResponse(content=LogoutResponse().model_dump())

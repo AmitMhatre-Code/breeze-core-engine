@@ -20,7 +20,7 @@ from icici_breeze_backend.app.repositories.user_telegram import get_status
 
 
 def build_squareoff_watch() -> list[dict[str, Any]]:
-    user_ids = {str(row["user_id"]) for row in squareoff_repo.list_all_armed_rules()}
+    user_ids = {str(row["user_id"]) for row in squareoff_repo.list_all_live_rules()}
     watch: list[dict[str, Any]] = []
     for user_id in sorted(user_ids):
         try:

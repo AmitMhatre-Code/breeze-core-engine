@@ -264,6 +264,9 @@ export default function DashboardPage() {
     enabled: false,
   });
 
+  // Fire on mount, in parallel with the bootstrap query -- it shares no data with
+  // bootstrap, and the options endpoint resolves its own broker session, so gating
+  // it behind bootstrap only serialized two independent waits back-to-back.
   const optsQ = useQuery({
     queryKey: ["dashboard", "vix-options"],
     queryFn: async () => {
@@ -280,7 +283,6 @@ export default function DashboardPage() {
       }
     },
     staleTime: 30_000,
-    enabled: Boolean(bootstrapQ.data),
   });
 
   const historyQ = useQuery({
@@ -544,7 +546,7 @@ export default function DashboardPage() {
 
         {dashboardWarnings.length > 0 ? (
           <div
-            className="app-card border-amber-accent/40 bg-amber-tint p-3 text-sm text-amber-accent"
+            className="app-card border-amber-accent/40 bg-amber-tint p-3 text-sm text-amber-on-tint"
             role="alert"
           >
             <strong className="font-medium">
@@ -1065,7 +1067,7 @@ function MarketOutlookConnectionBadge({
       : phase === "updated"
         ? {
             label: time ? `updated · ${time}` : "updated",
-            cls: "border-up/40 bg-up-tint text-up",
+            cls: "border-up/40 bg-up-tint text-up-on-tint",
           }
         : phase === "cached"
           ? {
@@ -1173,8 +1175,8 @@ function renderOutlookText(text: string): ReactNode[] {
 
 const OUTLOOK_CONFIDENCE_BADGE_CLS: Record<string, string> = {
   low: "border-border bg-panel2 text-faint",
-  medium: "border-amber-accent/40 bg-amber-tint text-amber-accent",
-  high: "border-up/40 bg-up-tint text-up",
+  medium: "border-amber-accent/40 bg-amber-tint text-amber-on-tint",
+  high: "border-up/40 bg-up-tint text-up-on-tint",
 };
 
 function OutlookConfidenceBadge({ confidence }: { confidence?: string }) {

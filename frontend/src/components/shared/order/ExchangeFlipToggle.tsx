@@ -3,7 +3,7 @@
 export type ExchangeSegment = "NFO" | "BFO";
 
 const NSE_CLASSES = "border-accent/60 bg-accent-tint text-accent-strong";
-const BSE_CLASSES = "border-amber-accent/60 bg-amber-tint text-amber-accent";
+const BSE_CLASSES = "border-amber-accent/60 bg-amber-tint text-amber-on-tint";
 
 function ExchangeFlipIcon() {
   return (

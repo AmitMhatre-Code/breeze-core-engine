@@ -33,11 +33,15 @@ export type RuleSpawnedOrderRow = {
   exit_rule_scrip_key?: string;
 };
 
+/** `completed`/`reset` come straight from the backend for Group rules (the SG lifecycle
+ * owns them). `exited` is a Leg·GTT-only derivation — GTT has no server-side lifecycle,
+ * so the frontend still infers it from the orders. */
 export type ExitRuleEffectiveStatus =
   | "armed"
   | "triggered"
   | "fired"
-  | "fire_failed"
+  | "completed"
+  | "reset"
   | "exited";
 
 /** One currently-open leg of a group rule's bucket, for the live-MTM overlay —
@@ -83,9 +87,13 @@ export type ExitRuleRow = {
   placedAt: string | null;
   resolvedAt: string | null;
   orders: RuleSpawnedOrderRow[];
-  /** Group rules only — per-leg error text from the broker/dispatch attempt, joined,
-   * populated when effectiveStatus is 'fire_failed'. */
+  /** Group rules only — per-leg error text from the broker/dispatch attempt, joined.
+   * Diagnostic detail *underneath* the Reset reason, not a replacement for it: the
+   * reason says what happened in the user's terms, this says what the broker said. */
   failureReason: string | null;
+  /** Group rules only — the full SG record, so the shared Reset-warning copy/tiering
+   * (`lib/portfolio/reset-warning`) can render without a second source of truth. */
+  rule: SquareOffRuleRecord | null;
 };
 
 /** Joins the per-leg error strings captured when a group rule's fire attempt fails
@@ -102,14 +110,19 @@ function isExecuted(row: RuleSpawnedOrderRow): boolean {
   return String(row.status ?? "").trim().toLowerCase().includes("execut");
 }
 
-/** `SquareOffRuleStatus` includes 'disarmed', which `fetchSquareOffRulesForExitBoard`
- * never actually returns (the repo query excludes it) — exhaustive switch documents
- * that branch as unreachable rather than silently casting past it. */
-function groupEffectiveStatus(
-  status: SquareOffRuleStatus,
-  orders: RuleSpawnedOrderRow[],
-): ExitRuleEffectiveStatus {
-  if (orders.length > 0 && orders.every(isExecuted)) return "exited";
+/**
+ * For a Group rule the backend's status IS the answer — the SG lifecycle owns
+ * Fired→Completed/Reset and decides it from order identity, which the frontend cannot
+ * reproduce (it can't tell our own exit filling from the user squaring off manually).
+ *
+ * So there is deliberately no "all orders executed → exited" derivation here any more:
+ * that guess would contradict the server the moment a manual fill was involved.
+ *
+ * `SquareOffRuleStatus` includes 'disarmed', which `fetchSquareOffRulesForExitBoard`
+ * never returns (the repo query excludes it) — the exhaustive switch documents that
+ * branch as unreachable rather than silently casting past it.
+ */
+function groupEffectiveStatus(status: SquareOffRuleStatus): ExitRuleEffectiveStatus {
   switch (status) {
     case "armed":
       return "armed";
@@ -117,10 +130,12 @@ function groupEffectiveStatus(
       return "triggered";
     case "fired":
       return "fired";
-    case "fire_failed":
-      return "fire_failed";
+    case "completed":
+      return "completed";
+    case "reset":
+      return "reset";
     case "disarmed":
-      return "fire_failed";
+      return "reset";
   }
 }
 
@@ -158,7 +173,7 @@ export function buildExitRuleRows(
 
   for (const rule of squareOffRules) {
     const orders = ordersByRule.get(`squareoff_rule:${rule.id}`) ?? [];
-    const effectiveStatus = groupEffectiveStatus(rule.status, orders);
+    const effectiveStatus = groupEffectiveStatus(rule.status);
     rows.push({
       kind: "group",
       id: rule.id,
@@ -187,9 +202,10 @@ export function buildExitRuleRows(
       targetPct: rule.target_premium_pct,
       stopPct: rule.stop_loss_premium_pct,
       placedAt: rule.created_at ?? null,
-      resolvedAt: rule.fired_at ?? null,
+      resolvedAt: rule.resolved_at ?? rule.fired_at ?? null,
       orders,
-      failureReason: effectiveStatus === "fire_failed" ? buildFailureReason(rule) : null,
+      failureReason: effectiveStatus === "reset" ? buildFailureReason(rule) : null,
+      rule,
     });
   }
 
@@ -224,19 +240,21 @@ export function buildExitRuleRows(
       resolvedAt: null,
       orders,
       failureReason: null,
+      rule: null,
     });
   }
 
   return rows;
 }
 
-/** 'fire_failed' counts as active (not History) -- it needs the user's attention to
- * retry or clean up, not a status they'd only think to look for after the fact. */
+/** 'reset' counts as active (not History): it needs the user's attention to re-arm or
+ * clean up leftover exit orders, not a status they'd only think to look for after the
+ * fact. 'completed' and 'exited' are genuinely done, so they fall through to History. */
 export function isExitRuleActive(status: ExitRuleEffectiveStatus): boolean {
   return (
     status === "armed" ||
     status === "triggered" ||
     status === "fired" ||
-    status === "fire_failed"
+    status === "reset"
   );
 }

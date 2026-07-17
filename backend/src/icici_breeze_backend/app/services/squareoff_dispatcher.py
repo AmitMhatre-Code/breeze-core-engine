@@ -83,20 +83,33 @@ def _leg_limit_price(leg: dict[str, Any], *, reason: str, payload: dict[str, Any
 
 
 def hydrate_group_rules_on_startup() -> None:
-    """Re-arm every persisted 'armed' rule into the in-memory engine so a
-    restart doesn't silently drop a user's live protection."""
-    for row in repo.list_all_armed_rules():
-        set_group_rule(
-            str(row["user_id"]),
-            str(row["id"]),
-            stock_code=str(row["stock_code"]),
-            expiry_display=str(row["expiry_display"]),
-            exchange_code=str(row.get("exchange_code") or "NFO"),
-            target_pnl=float(row["profit_target_pnl"]),
-            stop_loss_pnl=float(row["loss_limit_pnl"]),
-            target_premium_pct=int(row["target_premium_pct"]),
-            stop_loss_premium_pct=int(row["stop_loss_premium_pct"]),
-        )
+    """Re-arm every persisted live SG into the in-memory engine, and re-pin its WS chain
+    subscription, so a restart doesn't silently drop a user's protection.
+
+    The re-pin matters as much as the re-arm: nothing else in the app creates a
+    server-side subscription holder (every other one comes from a browser request), so
+    without it a restarted instance would hold armed SGs that can never fire — their
+    quotes would go stale and the engine would never see a breach.
+    """
+    from icici_breeze_backend.app.services import strategy_group_lifecycle as sg
+
+    for row in repo.list_all_live_rules():
+        user_id = str(row["user_id"])
+        if row["status"] == "armed":
+            set_group_rule(
+                user_id,
+                str(row["id"]),
+                stock_code=str(row["stock_code"]),
+                expiry_display=str(row["expiry_display"]),
+                exchange_code=str(row.get("exchange_code") or "NFO"),
+                target_pnl=float(row["profit_target_pnl"]),
+                stop_loss_pnl=float(row["loss_limit_pnl"]),
+                target_premium_pct=int(row["target_premium_pct"]),
+                stop_loss_premium_pct=int(row["stop_loss_premium_pct"]),
+            )
+        rule = repo.get_rule(str(row["id"]))
+        if rule is not None:
+            sg.pin_subscription(user_id, rule)
 
 
 def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
@@ -125,7 +138,12 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
             }
             for leg in legs
         ]
-        repo.mark_fire_failed(rule_id, leg_results)
+        repo.mark_fire_failed(
+            rule_id,
+            leg_results,
+            "trading is in read-only mode (licence not active), so no exit orders "
+            "could be placed.",
+        )
         AuditLogger(None).log_operation(
             user_id,
             OperationType.SQUAREOFF_RULE_FIRE_FAILED,
@@ -211,8 +229,17 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
         )
         notify_squareoff_fired(user_id, reason=reason, payload=payload, leg_results=leg_results, failed=False)
     else:
-        repo.mark_fire_failed(rule_id, leg_results)
         failed = [r for r in leg_results if r["status"] == "failed"]
+        # A placement failure is one flavour of Reset: monitoring has stopped and the user
+        # must re-arm. Any legs that DID get an order placed before the failure are now
+        # live orphans -- they are NOT cancelled here (Reset withdraws future automation,
+        # it does not retract orders already placed), so they surface in the Order Book
+        # and in the SG's orphan warning.
+        repo.mark_fire_failed(
+            rule_id,
+            leg_results,
+            f"{len(failed)} of {len(leg_results)} exit orders could not be placed.",
+        )
         AuditLogger(None).log_operation(
             user_id,
             OperationType.SQUAREOFF_RULE_FIRE_FAILED,
