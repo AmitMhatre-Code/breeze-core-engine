@@ -30,6 +30,7 @@ from icici_breeze_backend.app.domain.order import (
 from icici_breeze_backend.app.services.leg_order_redistribution import (
     LegModifyValidationError,
     LegOrderState,
+    filled_floor,
     plan_leg_redistribution,
 )
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
@@ -246,17 +247,22 @@ async def post_modify_leg(
         )
         for o in body.orders
     ]
+    # new_quantity is the desired OPEN quantity (already-filled quantity is untouched and is
+    # added back here so the pure planner, which reasons in terms of the leg's new total, gets
+    # the number it expects).
     new_quantity = int(body.new_quantity)
+    floor = filled_floor(leg_orders)
+    new_total_qty = floor + new_quantity
     qty_limits = breeze.fetch_qty_limits(body.stock_code, exchange_code=body.exchange_code)
     lot_size = breeze.fetch_lot_size(body.stock_code, body.expiry_date, exchange_code=body.exchange_code)
-    qty_per_order = new_quantity
+    qty_per_order = new_total_qty
     if qty_limits and lot_size:
         aligned = (max(1, int(qty_limits)) // int(lot_size)) * int(lot_size)
         if aligned > 0:
             qty_per_order = aligned
 
     current_price = next((o.price for o in body.orders if o.price), None)
-    old_quantity = sum(o.quantity for o in body.orders)
+    old_quantity = sum(o.pending_quantity for o in leg_orders if o.is_open)
     price_changed = (
         body.new_price is not None
         and str(body.new_price).strip() != ""
@@ -265,7 +271,7 @@ async def post_modify_leg(
 
     try:
         plan = plan_leg_redistribution(
-            leg_orders, qty_per_order, new_quantity, price_changed=price_changed
+            leg_orders, qty_per_order, new_total_qty, price_changed=price_changed
         )
     except LegModifyValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))

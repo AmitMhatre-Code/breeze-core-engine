@@ -1,0 +1,62 @@
+Order Details:
+Scrip = NIFTY 50
+Expiry = 21-Jul
+Strike = 26000
+Right = Call
+Action = Sell
+Qty = 65
+Price = 2.2
+
+Tick Received:
+
+{
+  "sourceNumber": "1",
+  "group": "*",
+  "userId": "VIKRAMMH",
+  "key": "*",
+  "messageLength": "\u0019260",
+  "requestType": "5",
+  "messageSequence": "2026071701016148",
+  "messageDate": "17-07-2026",
+  "messageTime": "10:29:21",
+  "messageCategory": "Intraday Calls",
+  "messagePriority": "N",
+  "messageType": "6",
+  "orderMatchAccount": "8500284443",
+  "orderExchangeCode": "NFO",
+  "stockCode": "NIFTY",
+  "productType": "Options",
+  "optionType": "Call",
+  "exerciseType": "E",
+  "strikePrice": "2600000",
+  "expiryDate": "21-Jul-2026",
+  "orderValidDate": "17-Jul-2026",
+  "orderFlow": "Sell",
+  "limitMarketFlag": "Limit",
+  "orderType": "Day",
+  "limitRate": "200",
+  "orderStatus": "Ordered",
+  "orderReference": "202607173800009502",
+  "orderTotalQuantity": "65",
+  "executedQuantity": "0",
+  "cancelledQuantity": "0",
+  "expiredQuantity": "0",
+  "stopLossTrigger": "0",
+  "specialFlag": "N",
+  "pipeId": "38",
+  "channel": "WEB",
+  "modificationOrCancelFlag": "Y",
+  "tradeDate": "17-Jul-2026",
+  "acknowledgeNumber": "1200000045056868    ",
+  "stopLossOrderReference": "1200000045056868    ",
+  "totalAmountBlocked": "*",
+  "averageExecutedRate": "0.000000",
+  "cancelFlag": "0.000000",
+  "squareOffMarket": "N",
+  "quickExitFlag": "N",
+  "stopValidTillDateFlag": "N",
+  "priceImprovementFlag": "N",
+  "conversionImprovementFlag": "N",
+  "trailUpdateCondition": "N",
+  "systemPartnerCode": "N"
+}

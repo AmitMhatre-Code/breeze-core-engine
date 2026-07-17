@@ -162,7 +162,12 @@ class LegModifyOrderRef(BaseModel):
 
 
 class LegModifyRequest(BaseModel):
-    """Change the total quantity/price of a leg (1..N underlying chunk orders)."""
+    """Change the open (not-yet-filled) quantity/price of a leg (1..N underlying chunk orders).
+
+    `new_quantity` is the desired OPEN quantity, not the leg's total size — already-filled
+    quantity is never affected and is added back server-side before planning. 0 is valid and
+    cancels all remaining open orders for the leg while leaving filled quantity untouched.
+    """
 
     stock_code: str
     expiry_date: str
@@ -178,11 +183,11 @@ class LegModifyRequest(BaseModel):
     scrip_key: Optional[str] = None
 
     @model_validator(mode="after")
-    def require_orders_and_positive_quantity(self):
+    def require_orders_and_nonnegative_quantity(self):
         if not self.orders:
             raise ValueError("orders must not be empty")
-        if int(self.new_quantity) <= 0:
-            raise ValueError("new_quantity must be positive")
+        if int(self.new_quantity) < 0:
+            raise ValueError("new_quantity must not be negative")
         return self
 
 

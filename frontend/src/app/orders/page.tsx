@@ -55,6 +55,7 @@ import {
   type ExitRuleRow,
   type RuleSpawnedOrderRow,
 } from "@/lib/orders/exit-rules";
+import { legOpenQuantity, parseNonNegativeInt } from "@/lib/orders/leg-modify";
 import { fetchSquareOffRulesForExitBoard } from "@/lib/portfolio/squareoff-rules";
 import { fetchAllGttExitOrders } from "@/lib/portfolio/gtt-exit-orders";
 import { useGroupSubscriptionHolders } from "@/lib/portfolio/useGroupSubscriptionHolders";
@@ -750,8 +751,8 @@ function ModifyLegDialog({
   }
 
   const floor = target ? legFilledFloor(target.orders) : 0;
-  const parsedQty = parsePositiveInt(quantity);
-  const qtyValid = parsedQty != null && parsedQty >= floor;
+  const parsedQty = parseNonNegativeInt(quantity);
+  const qtyValid = parsedQty != null;
   const qtyChanged = target ? String(parsedQty ?? "") !== String(target.currentQuantity) : false;
   const priceChanged = target ? price.trim() !== "" && price.trim() !== (target.currentPrice ?? "") : false;
   const canConfirm = !!target && qtyValid && (qtyChanged || priceChanged) && !pending;
@@ -771,23 +772,21 @@ function ModifyLegDialog({
         </span>
       </div>
       <p className="mb-3 text-heading leading-relaxed text-muted">
-        Changes apply to the whole leg — the app will cancel, resize, or add
-        orders as needed to reach the new total. Already-filled quantity
-        ({formatQtyIndian(floor)}) can&apos;t be reduced.
+        {`Changes apply to the open (not-yet-filled) quantity of this leg — the app will cancel, resize, or add orders as needed to reach the new open quantity. ${formatQtyIndian(floor)} already filled and won't be affected; enter 0 to cancel all remaining open quantity.`}
       </p>
       <div className="mb-3 space-y-3">
         <label className="block text-sm">
           <span className="mb-1 block font-medium text-foreground">Quantity</span>
           <input
             type="number"
-            min={floor}
+            min={0}
             className="app-input w-full"
             value={quantity}
             onChange={(e) => setQuantity(e.target.value)}
             onBlur={() => {
               if (!lotSize || lotSize <= 0) return;
-              const n = parsePositiveInt(quantity);
-              if (n == null) return;
+              const n = parseNonNegativeInt(quantity);
+              if (n == null || n === 0) return;
               const snapped = String(snapQuantityToLotMultiple(n, lotSize));
               if (snapped === quantity) return;
               setQuantity(snapped);
@@ -801,7 +800,7 @@ function ModifyLegDialog({
           ) : null}
           {!qtyValid && quantity.trim() !== "" ? (
             <span className="mt-1 block text-xs text-down">
-              Cannot be less than the filled quantity ({formatQtyIndian(floor)}).
+              Enter a valid quantity (0 or more).
             </span>
           ) : null}
         </label>
@@ -1187,7 +1186,7 @@ function OrdersBody() {
       if (!first) return;
       const legOrders = buildLegModifyOrders(leg.orders);
       if (!legOrders.length) return;
-      const legQty = leg.orders.reduce((sum, o) => sum + toIntOrZero(o.quantity), 0);
+      const legQty = legOpenQuantity(leg.orders);
       const firstWithPrice = leg.orders.find((o) => o.price != null);
       const sameRuleScrip =
         row.kind === "group" &&
@@ -1267,7 +1266,7 @@ function OrdersBody() {
       },
       contractLabel: bookGroupTitle(g),
       orders: legOrders,
-      currentQuantity: g.group_ordered ?? 0,
+      currentQuantity: g.group_open ?? 0,
       currentPrice: first.price != null ? String(first.price) : null,
     });
   }, []);
@@ -2515,10 +2514,7 @@ function OrdersBody() {
                                   </p>
                                   {groupRuleOrdersByLeg(row.orders).map((leg) => {
                                     if (!legHasModifiable(leg.orders)) return null;
-                                    const legQty = leg.orders.reduce(
-                                      (sum, o) => sum + toIntOrZero(o.quantity),
-                                      0,
-                                    );
+                                    const legQty = legOpenQuantity(leg.orders);
                                     return (
                                       <div
                                         key={leg.key}
@@ -2739,10 +2735,7 @@ function OrdersBody() {
                             </p>
                             {groupRuleOrdersByLeg(row.orders).map((leg) => {
                               if (!legHasModifiable(leg.orders)) return null;
-                              const legQty = leg.orders.reduce(
-                                (sum, o) => sum + toIntOrZero(o.quantity),
-                                0,
-                              );
+                              const legQty = legOpenQuantity(leg.orders);
                               return (
                                 <div
                                   key={leg.key}

@@ -173,6 +173,7 @@ export function ApiPlaygroundScreen() {
   const [responseCopyState, setResponseCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [wsResponseCopyState, setWsResponseCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [wsLogCopyState, setWsLogCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [wsShapesCopyState, setWsShapesCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const appendWsLog = useCallback((entry: BreezeApiWsEventLogEntry | null) => {
@@ -293,6 +294,16 @@ export function ApiPlaygroundScreen() {
   const wsResponseText = formatWsApiResponse(wsLastResponse);
   const wsResponseIsError = wsLastResponse?.ok === false;
   const wsCommandLogText = wsCommandLog.map(formatCommandLogEntry).join("\n\n---\n\n");
+  const sortedTickShapes = useMemo(
+    () => [...wsTickShapes].sort((a, b) => b.count - a.count),
+    [wsTickShapes],
+  );
+  const wsTickShapesText = sortedTickShapes
+    .map(
+      (shape) =>
+        `--- ${shape.count}x · ${shape.keys.length} keys ---\nkeys: ${JSON.stringify(shape.keys)}\n${formatTickForDisplay(shape.example)}`,
+    )
+    .join("\n\n---\n\n");
   const showGate = riskQ.isSuccess && !riskQ.data?.accepted;
 
   useEffect(() => {
@@ -301,24 +312,18 @@ export function ApiPlaygroundScreen() {
   }, [riskQ.data?.accepted, refreshEventLog]);
 
   const flashCopyState = useCallback(
-    (target: "response" | "ws" | "wsLog", result: ReturnType<typeof copyTextToClipboard>) => {
+    (target: "response" | "ws" | "wsLog" | "wsShapes", result: ReturnType<typeof copyTextToClipboard>) => {
       const next = result.ok ? "copied" : "failed";
-      if (target === "response") {
-        setResponseCopyState(next);
-      } else if (target === "ws") {
-        setWsResponseCopyState(next);
-      } else {
-        setWsLogCopyState(next);
-      }
+      const setters = {
+        response: setResponseCopyState,
+        ws: setWsResponseCopyState,
+        wsLog: setWsLogCopyState,
+        wsShapes: setWsShapesCopyState,
+      } as const;
+      setters[target](next);
       if (copyResetRef.current) clearTimeout(copyResetRef.current);
       copyResetRef.current = setTimeout(() => {
-        if (target === "response") {
-          setResponseCopyState("idle");
-        } else if (target === "ws") {
-          setWsResponseCopyState("idle");
-        } else {
-          setWsLogCopyState("idle");
-        }
+        setters[target]("idle");
         copyResetRef.current = null;
       }, 2000);
     },
@@ -335,6 +340,10 @@ export function ApiPlaygroundScreen() {
 
   const copyWsLog = () => {
     flashCopyState("wsLog", copyTextToClipboard(wsCommandLogText));
+  };
+
+  const copyWsTickShapes = () => {
+    flashCopyState("wsShapes", copyTextToClipboard(wsTickShapesText));
   };
 
   const closeWsStream = useCallback(() => {
@@ -850,9 +859,27 @@ export function ApiPlaygroundScreen() {
                 Unique tick shapes {wsTickShapes.length ? `(${wsTickShapes.length})` : ""}
               </h4>
               {wsTickShapes.length ? (
-                <button type="button" className="app-btn-outline text-xs" onClick={clearWsTickShapes}>
-                  Clear
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="app-btn-outline text-xs"
+                    onClick={copyWsTickShapes}
+                    title={
+                      wsShapesCopyState === "failed"
+                        ? "Copy failed — select the text and copy manually"
+                        : undefined
+                    }
+                  >
+                    {wsShapesCopyState === "copied"
+                      ? "Copied!"
+                      : wsShapesCopyState === "failed"
+                        ? "Copy failed"
+                        : "Copy"}
+                  </button>
+                  <button type="button" className="app-btn-outline text-xs" onClick={clearWsTickShapes}>
+                    Clear
+                  </button>
+                </div>
               ) : null}
             </div>
             <p className="app-text-muted mt-1 text-xs">
@@ -862,19 +889,17 @@ export function ApiPlaygroundScreen() {
             </p>
             {wsTickShapes.length ? (
               <div className="mt-2 space-y-1.5">
-                {[...wsTickShapes]
-                  .sort((a, b) => b.count - a.count)
-                  .map((shape) => (
-                    <details key={shape.signature} className="app-card-muted rounded-[8px] px-3 py-2">
-                      <summary className="cursor-pointer text-xs font-medium">
-                        {shape.count}× · {shape.keys.length} keys · {shape.keys.slice(0, 6).join(", ")}
-                        {shape.keys.length > 6 ? ", …" : ""}
-                      </summary>
-                      <pre className="app-pre mt-2 max-h-56 min-w-0 text-xs">
-                        {formatTickForDisplay(shape.example)}
-                      </pre>
-                    </details>
-                  ))}
+                {sortedTickShapes.map((shape) => (
+                  <details key={shape.signature} className="app-card-muted rounded-[8px] px-3 py-2">
+                    <summary className="cursor-pointer text-xs font-medium">
+                      {shape.count}× · {shape.keys.length} keys · {shape.keys.slice(0, 6).join(", ")}
+                      {shape.keys.length > 6 ? ", …" : ""}
+                    </summary>
+                    <pre className="app-pre mt-2 max-h-56 min-w-0 text-xs">
+                      {formatTickForDisplay(shape.example)}
+                    </pre>
+                  </details>
+                ))}
               </div>
             ) : null}
           </div>
