@@ -1799,7 +1799,7 @@ class processor():
                         quote = _icici_error(f"Error resolving quote via router({stock_code},{exchange_code},{expiry_date},{product_type},{right},{strike_price}): {e}")
                     quote_rows = _quote_success_rows(quote)
                     if quote.get("Status") == 200 and quote_rows:
-                        i["spot_price"] = quote_rows[0].get("spot_price", "Err")
+                        i["spot_price"] = quote_rows[0].get("spot_price") or "Err"
                         # ICICI's own get_portfolio_positions() ltp can be stale/wrong for
                         # illiquid contracts (observed post-close for BFO index options) --
                         # prefer the router's cache-first (WS -> bhavcopy -> REST) option ltp,
@@ -1863,7 +1863,7 @@ class processor():
                                 # Extreme Loss Margin (ELM) calculations applicable for Index shorts only.
                                 # ELM is waived on the option's own expiry date (no overnight risk to cover).
                                 if (i['stock_index_indicator'] == cfg.INDEX and i['action'] == cfg.SELL):
-                                    if i['spot_price'] == "Err":
+                                    if i['spot_price'] in (None, "Err"):
                                         i['elm_margin_required'] = None
                                     elif _parse_option_expiry_date(i['expiry_date']) == today_ist_date():
                                         i['elm_margin_required'] = 0.0
