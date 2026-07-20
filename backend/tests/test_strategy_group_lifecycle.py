@@ -155,6 +155,82 @@ class TestOwnExitOrders:
         assert repo.get_rule(rule.id).status == "fired"
 
 
+class TestFiredReconcile:
+    """The REST backstop: `reconcile_fired_rules_from_orders` completes a fired SG off an
+    already-fetched order book when a live WS fill event was missed."""
+
+    def test_completes_when_book_shows_all_executed(self, db_path, monkeypatch):
+        rule = _fire(_arm())
+        _no_open_legs(monkeypatch)
+        sg.reconcile_fired_rules_from_orders(
+            "VIKRAMMH", [{"order_id": "202607173800017846", "status": "Executed"}]
+        )
+        assert repo.get_rule(rule.id).status == "completed"
+
+    def test_stays_fired_when_an_order_is_not_executed(self, db_path, monkeypatch):
+        rule = _fire(_arm())
+        _no_open_legs(monkeypatch)
+        sg.reconcile_fired_rules_from_orders(
+            "VIKRAMMH", [{"order_id": "202607173800017846", "status": "Ordered"}]
+        )
+        assert repo.get_rule(rule.id).status == "fired"
+
+    def test_stays_fired_when_legs_remain_open(self, db_path, monkeypatch):
+        """The open-leg guard is what keeps a missed foreign-fill (leftover leg) from
+        producing a false Completed — the fail-safe is to stay Fired, never guess Reset."""
+        rule = _fire(_arm())
+
+        class _Leg:
+            scrip_key = SCRIP
+            quantity = 130
+
+        monkeypatch.setattr(
+            sg.portfolio_pnl_engine, "group_legs_for_user", lambda *a, **k: [_Leg()]
+        )
+        sg.reconcile_fired_rules_from_orders(
+            "VIKRAMMH", [{"order_id": "202607173800017846", "status": "Executed"}]
+        )
+        assert repo.get_rule(rule.id).status == "fired"
+
+    def test_stays_fired_when_order_absent_from_book(self, db_path, monkeypatch):
+        """An order_id missing from the fetched book must not complete — same fail-safe as
+        a fresh fetch that couldn't confirm every order."""
+        rule = _fire(_arm())
+        _no_open_legs(monkeypatch)
+        sg.reconcile_fired_rules_from_orders(
+            "VIKRAMMH", [{"order_id": "SOMETHING-ELSE", "status": "Executed"}]
+        )
+        assert repo.get_rule(rule.id).status == "fired"
+
+    def test_does_not_touch_non_fired_rules(self, db_path, monkeypatch):
+        rule = _arm()  # armed, not fired
+        _no_open_legs(monkeypatch)
+        sg.reconcile_fired_rules_from_orders(
+            "VIKRAMMH", [{"order_id": "202607173800017846", "status": "Executed"}]
+        )
+        assert repo.get_rule(rule.id).status == "armed"
+
+    def test_reuses_the_supplied_book_without_a_second_get_orders(self, db_path, monkeypatch):
+        """Reconcile off the caller's book must not issue its own ICICI round-trip."""
+        rule = _fire(_arm())
+        _no_open_legs(monkeypatch)
+        calls = {"n": 0}
+
+        class _Breeze:
+            def get_orders(self, *a, **k):
+                calls["n"] += 1
+                return {"Status": 200, "Success": []}
+
+        import icici_breeze_backend.app.services.processor as proc_mod
+
+        monkeypatch.setattr(proc_mod, "processor", lambda: _Breeze())
+        sg.reconcile_fired_rules_from_orders(
+            "VIKRAMMH", [{"order_id": "202607173800017846", "status": "Executed"}]
+        )
+        assert calls["n"] == 0
+        assert repo.get_rule(rule.id).status == "completed"
+
+
 class TestForeignOrders:
     def test_a_manual_fill_resets_the_sg(self, db_path, monkeypatch):
         """Spec section 10 — an order we did not place moved the position."""

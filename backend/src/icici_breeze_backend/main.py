@@ -405,7 +405,20 @@ def start_application():
             hydrate_group_rules_on_startup()
             register_squareoff_dispatcher()
 
+        from icici_breeze_backend.app.services.breeze_websocket_manager import (
+            run_order_feed_watchdog_loop,
+        )
+
+        order_feed_watchdog_task: asyncio.Task = asyncio.create_task(
+            run_order_feed_watchdog_loop()
+        )
+
         yield
+        order_feed_watchdog_task.cancel()
+        try:
+            await order_feed_watchdog_task
+        except asyncio.CancelledError:
+            pass
         if task is not None:
             task.cancel()
             try:

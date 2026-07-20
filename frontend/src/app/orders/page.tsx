@@ -345,6 +345,18 @@ function bookGroupTitle(g: BookGroup): string {
   return `${bookGroupLegLabel(g)} · ${count} order${count === 1 ? "" : "s"}`;
 }
 
+/** Canonical "STOCK.DD-Mon-YYYY.STRIKE" label for a PB/SL rule leg — Call/Put and
+ * Buy/Sell are rendered separately as badges (a straddle would otherwise collide). */
+function ruleLegLabel(first: RuleSpawnedOrderRow | undefined): string {
+  const stock = String(first?.stock_code ?? "").trim();
+  const expiry = String(first?.expiry_date ?? "").trim();
+  const strike = Number(first?.strike_price);
+  if (!stock || !expiry || !Number.isFinite(strike)) {
+    return String(first?.option ?? "Leg");
+  }
+  return formatOptionSymbolLabel(stock, expiry, strike);
+}
+
 function statusChipClass(status: string | undefined): string {
   const s = String(status ?? "")
     .trim()
@@ -2557,37 +2569,6 @@ function OrdersBody() {
                               colSpan={exitRuleTab === "active" ? 8 : 7}
                               className="px-[18px] pt-3"
                             >
-                              {groupRuleOrdersByLeg(row.orders).some((leg) =>
-                                legHasModifiable(leg.orders),
-                              ) ? (
-                                <div className="mb-3 space-y-1.5 rounded-lg border border-border-soft bg-panel p-2.5">
-                                  <p className="text-hint font-semibold uppercase tracking-wider text-faint">
-                                    Legs
-                                  </p>
-                                  {groupRuleOrdersByLeg(row.orders).map((leg) => {
-                                    if (!legHasModifiable(leg.orders)) return null;
-                                    const legQty = legOpenQuantity(leg.orders);
-                                    return (
-                                      <div
-                                        key={leg.key}
-                                        className="flex items-center justify-between gap-2 text-sm"
-                                      >
-                                        <span className="font-mono text-muted">
-                                          {leg.contractLabel} · {leg.orders[0]?.action} · Qty{" "}
-                                          {formatQtyIndian(legQty)}
-                                        </span>
-                                        <button
-                                          type="button"
-                                          className={modifyOutlineBtnSmallClass}
-                                          onClick={() => openModifyForRuleLeg(row, leg)}
-                                        >
-                                          Modify
-                                        </button>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : null}
                               <table className="min-w-full text-left text-sm">
                                 <thead>
                                   <tr className="border-b border-border-soft">
@@ -2630,69 +2611,142 @@ function OrdersBody() {
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border-soft">
-                                  {row.orders.map((o, j) => {
-                                    const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
-                                    const canCancel = o.cancelable && !!o.order_id;
+                                  {groupRuleOrdersByLeg(row.orders).map((leg) => {
+                                    const legFirst = leg.orders[0];
+                                    const legQty = legOpenQuantity(leg.orders);
+                                    const legCanModify = legHasModifiable(
+                                      leg.orders,
+                                    );
                                     return (
-                                      <tr
-                                        key={key || j}
-                                        className="transition-colors hover:bg-accent-tint"
-                                      >
-                                        <td className="px-4 py-2.5 text-center align-middle">
-                                          {canCancel ? (
-                                            <Checkbox
-                                              checked={exitRuleSelected.has(key)}
-                                              onChange={(checked) =>
-                                                toggleExitRuleOne(key, checked)
-                                              }
-                                              aria-label={`Select order ${o.order_id}`}
-                                            />
-                                          ) : null}
-                                        </td>
-                                        <td className="py-2.5 pl-10 pr-4 align-middle font-mono text-muted">
-                                          #{o.order_id ?? "—"}
-                                        </td>
-                                        <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums">
-                                          {formatQtyIndian(o.quantity)}
-                                        </td>
-                                        <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums">
-                                          {formatQtyIndian(o.open_quantity)}
-                                        </td>
-                                        <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums text-muted">
-                                          {o.price != null ? `₹${o.price}` : "—"}
-                                        </td>
-                                        <td className="px-4 py-2.5 align-middle">
-                                          <span className={statusChipClass(o.status)}>
-                                            {o.status}
-                                          </span>
-                                        </td>
-                                        <td className="px-1 py-2.5 align-middle text-center">
-                                          <button
-                                            type="button"
-                                            className={cloneToPlaceBtnClass}
-                                            aria-label="Clone order to Place Order"
-                                            onClick={(e) => cloneExitRuleOrderToPlace(o, e)}
+                                      <Fragment key={leg.key}>
+                                        <tr className="bg-panel">
+                                          <td className="px-4 py-2" />
+                                          <td
+                                            colSpan={7}
+                                            className="py-2 pr-4 align-middle"
                                           >
-                                            <CloneOrderGlyph />
-                                          </button>
-                                        </td>
-                                        <td className="px-2 py-2.5 text-right align-middle">
-                                          {canCancel ? (
-                                            <button
-                                              type="button"
-                                              className={cancelOutlineBtnSmallClass}
-                                              onClick={() =>
-                                                setCancelPrompt({
-                                                  kind: "exitrule-single",
-                                                  key,
-                                                })
-                                              }
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <span className="font-mono text-sm font-medium text-foreground">
+                                                  {ruleLegLabel(legFirst)}
+                                                </span>
+                                                <OptionTypeBadge
+                                                  right={legFirst?.right}
+                                                />
+                                                <OrderSideBadge
+                                                  side={legFirst?.action}
+                                                />
+                                                <span className="text-hint text-faint">
+                                                  {leg.orders.length} order
+                                                  {leg.orders.length === 1
+                                                    ? ""
+                                                    : "s"}{" "}
+                                                  · Qty {formatQtyIndian(legQty)}
+                                                </span>
+                                              </div>
+                                              {legCanModify ? (
+                                                <button
+                                                  type="button"
+                                                  className={
+                                                    modifyOutlineBtnSmallClass
+                                                  }
+                                                  onClick={() =>
+                                                    openModifyForRuleLeg(row, leg)
+                                                  }
+                                                >
+                                                  Modify
+                                                </button>
+                                              ) : null}
+                                            </div>
+                                          </td>
+                                        </tr>
+                                        {leg.orders.map((o, j) => {
+                                          const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
+                                          const canCancel =
+                                            o.cancelable && !!o.order_id;
+                                          return (
+                                            <tr
+                                              key={key || j}
+                                              className="transition-colors hover:bg-accent-tint"
                                             >
-                                              Cancel
-                                            </button>
-                                          ) : null}
-                                        </td>
-                                      </tr>
+                                              <td className="px-4 py-2.5 text-center align-middle">
+                                                {canCancel ? (
+                                                  <Checkbox
+                                                    checked={exitRuleSelected.has(
+                                                      key,
+                                                    )}
+                                                    onChange={(checked) =>
+                                                      toggleExitRuleOne(
+                                                        key,
+                                                        checked,
+                                                      )
+                                                    }
+                                                    aria-label={`Select order ${o.order_id}`}
+                                                  />
+                                                ) : null}
+                                              </td>
+                                              <td className="py-2.5 pl-14 pr-4 align-middle font-mono text-muted">
+                                                #{o.order_id ?? "—"}
+                                              </td>
+                                              <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums">
+                                                {formatQtyIndian(o.quantity)}
+                                              </td>
+                                              <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums">
+                                                {formatQtyIndian(
+                                                  o.open_quantity,
+                                                )}
+                                              </td>
+                                              <td className="px-4 py-2.5 align-middle text-center font-mono tabular-nums text-muted">
+                                                {o.price != null
+                                                  ? `₹${o.price}`
+                                                  : "—"}
+                                              </td>
+                                              <td className="px-4 py-2.5 align-middle">
+                                                <span
+                                                  className={statusChipClass(
+                                                    o.status,
+                                                  )}
+                                                >
+                                                  {o.status}
+                                                </span>
+                                              </td>
+                                              <td className="px-1 py-2.5 align-middle text-center">
+                                                <button
+                                                  type="button"
+                                                  className={cloneToPlaceBtnClass}
+                                                  aria-label="Clone order to Place Order"
+                                                  onClick={(e) =>
+                                                    cloneExitRuleOrderToPlace(
+                                                      o,
+                                                      e,
+                                                    )
+                                                  }
+                                                >
+                                                  <CloneOrderGlyph />
+                                                </button>
+                                              </td>
+                                              <td className="px-2 py-2.5 text-right align-middle">
+                                                {canCancel ? (
+                                                  <button
+                                                    type="button"
+                                                    className={
+                                                      cancelOutlineBtnSmallClass
+                                                    }
+                                                    onClick={() =>
+                                                      setCancelPrompt({
+                                                        kind: "exitrule-single",
+                                                        key,
+                                                      })
+                                                    }
+                                                  >
+                                                    Cancel
+                                                  </button>
+                                                ) : null}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </Fragment>
                                     );
                                   })}
                                 </tbody>
@@ -2776,25 +2830,26 @@ function OrdersBody() {
                             />
                           </p>
                         ) : null}
-                        {groupRuleOrdersByLeg(row.orders).some((leg) =>
-                          legHasModifiable(leg.orders),
-                        ) ? (
-                          <div className="space-y-1.5 rounded-lg border border-border-soft bg-panel2 p-2.5">
-                            <p className="text-hint font-semibold uppercase tracking-wider text-faint">
-                              Legs
-                            </p>
-                            {groupRuleOrdersByLeg(row.orders).map((leg) => {
-                              if (!legHasModifiable(leg.orders)) return null;
-                              const legQty = legOpenQuantity(leg.orders);
-                              return (
-                                <div
-                                  key={leg.key}
-                                  className="flex items-center justify-between gap-2 text-sm"
-                                >
-                                  <span className="font-mono text-muted">
-                                    {leg.contractLabel} · {leg.orders[0]?.action} · Qty{" "}
+                        {groupRuleOrdersByLeg(row.orders).map((leg) => {
+                          const legFirst = leg.orders[0];
+                          const legQty = legOpenQuantity(leg.orders);
+                          const legCanModify = legHasModifiable(leg.orders);
+                          return (
+                            <div key={leg.key} className="space-y-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border-soft bg-panel px-2.5 py-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-mono text-sm font-medium text-foreground">
+                                    {ruleLegLabel(legFirst)}
+                                  </span>
+                                  <OptionTypeBadge right={legFirst?.right} />
+                                  <OrderSideBadge side={legFirst?.action} />
+                                  <span className="text-hint text-faint">
+                                    {leg.orders.length} order
+                                    {leg.orders.length === 1 ? "" : "s"} · Qty{" "}
                                     {formatQtyIndian(legQty)}
                                   </span>
+                                </div>
+                                {legCanModify ? (
                                   <button
                                     type="button"
                                     className={modifyOutlineBtnSmallClass}
@@ -2802,41 +2857,46 @@ function OrdersBody() {
                                   >
                                     Modify
                                   </button>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                        {row.orders.map((o, j) => {
-                          const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
-                          const canCancel = o.cancelable && !!o.order_id;
-                          return (
-                            <div
-                              key={key || j}
-                              className="rounded-lg border border-border bg-panel2 p-3 text-sm"
-                            >
-                              <p className="font-mono text-base font-medium text-foreground">
-                                #{o.order_id ?? "—"}
-                              </p>
-                              <p>
-                                Qty: {formatQtyIndian(o.quantity)} · Open:{" "}
-                                {formatQtyIndian(o.open_quantity)}
-                              </p>
-                              <p>Price: {o.price != null ? `₹${o.price}` : "—"}</p>
-                              <p>Status: {o.status}</p>
-                              {canCancel ? (
-                                <div className="mt-1 flex justify-end">
-                                  <button
-                                    type="button"
-                                    className={cancelOutlineBtnSmallClass}
-                                    onClick={() =>
-                                      setCancelPrompt({ kind: "exitrule-single", key })
-                                    }
+                                ) : null}
+                              </div>
+                              {leg.orders.map((o, j) => {
+                                const key = `${o.order_id ?? ""}|${o.exchange_code ?? ""}`;
+                                const canCancel = o.cancelable && !!o.order_id;
+                                return (
+                                  <div
+                                    key={key || j}
+                                    className="ml-2 rounded-lg border border-border bg-panel2 p-3 text-sm"
                                   >
-                                    Cancel
-                                  </button>
-                                </div>
-                              ) : null}
+                                    <p className="font-mono text-base font-medium text-foreground">
+                                      #{o.order_id ?? "—"}
+                                    </p>
+                                    <p>
+                                      Qty: {formatQtyIndian(o.quantity)} · Open:{" "}
+                                      {formatQtyIndian(o.open_quantity)}
+                                    </p>
+                                    <p>
+                                      Price: {o.price != null ? `₹${o.price}` : "—"}
+                                    </p>
+                                    <p>Status: {o.status}</p>
+                                    {canCancel ? (
+                                      <div className="mt-1 flex justify-end">
+                                        <button
+                                          type="button"
+                                          className={cancelOutlineBtnSmallClass}
+                                          onClick={() =>
+                                            setCancelPrompt({
+                                              kind: "exitrule-single",
+                                              key,
+                                            })
+                                          }
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
                             </div>
                           );
                         })}

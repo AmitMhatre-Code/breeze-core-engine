@@ -86,12 +86,22 @@ export function useGroupLiveOverlay(
   const rows = useMemo(() => {
     if (!chainSuccess) return group.rows;
     const lookup = chainLtpLookup(chainSuccess.chain_rows);
+    // Live underlying spot rides the same WS chain payload the LTP overlay
+    // already polls (`chainSuccess.spot_price`) — overlay it onto every leg so
+    // the SPOT column updates at the WS cadence and a stale/`Err` snapshot spot
+    // is replaced whenever the chain carries a live spot. Falls back to the
+    // `/portfolio/data` snapshot's `spot_price` when the chain has none.
+    const liveSpot =
+      chainSuccess.spot_price != null && Number.isFinite(chainSuccess.spot_price)
+        ? chainSuccess.spot_price
+        : null;
     return group.rows.map((row) => {
+      const base = liveSpot != null ? { ...row, spot_price: liveSpot } : row;
       const right = normRight(String(row.right ?? ""));
       const strike = parseNum(row.strike_price);
-      if (!right || strike == null) return row;
+      if (!right || strike == null) return base;
       const liveLtp = lookup.get(`${right}|${strike}`);
-      return liveLtp == null ? row : overlayRowWithLiveLtp(row, liveLtp);
+      return liveLtp == null ? base : overlayRowWithLiveLtp(base, liveLtp);
     });
   }, [group.rows, chainSuccess]);
 

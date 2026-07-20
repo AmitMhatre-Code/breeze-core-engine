@@ -93,8 +93,23 @@ def hydrate_group_rules_on_startup() -> None:
     """
     from icici_breeze_backend.app.services import strategy_group_lifecycle as sg
 
+    armed_order_feed: set[str] = set()
     for row in repo.list_all_live_rules():
         user_id = str(row["user_id"])
+        # Arm the account-wide order feed once per user with a live SG, independent of the
+        # per-rule chain pins below — the SG lifecycle can't reach Completed / Reset without
+        # it, and it must not hinge on a chain subscription happening to bring the WS up.
+        if user_id not in armed_order_feed:
+            armed_order_feed.add(user_id)
+            try:
+                from icici_breeze_backend.app.services.breeze_websocket_manager import (
+                    ensure_order_feed,
+                )
+                from icici_breeze_backend.app.services.processor import processor
+
+                ensure_order_feed(processor(), user_id)
+            except Exception:  # noqa: BLE001 — never block hydration on a WS hiccup
+                _logger.exception("Could not arm order feed for user_id=%s", user_id)
         if row["status"] == "armed":
             set_group_rule(
                 user_id,

@@ -111,6 +111,24 @@ def list_all_rules_for_exit_board(user_id: str) -> list[SquareOffRuleRecord]:
         return [_row_to_record(r) for r in cur.fetchall()]
 
 
+def list_fired_rules_for_user(user_id: str) -> list[SquareOffRuleRecord]:
+    """Every SG currently parked in `fired` for this user — the REST reconcile backstop's
+    work list. Completion is normally driven live off the WS order feed, but a dropped
+    notification would strand a fully-exited SG on `fired`; re-checking these against the
+    authoritative order book on each book fetch lets that self-heal."""
+    with sqlite3.connect(_db_path()) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            f"""
+            SELECT {_SELECT_COLUMNS} FROM portfolio_squareoff_rules
+            WHERE user_id = ? AND status = 'fired'
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        )
+        return [_row_to_record(r) for r in cur.fetchall()]
+
+
 def rules_owning_orders(user_id: str) -> list[SquareOffRuleRecord]:
     """SGs whose orders should be pulled OUT of the main Order Book and shown under
     their SG instead.

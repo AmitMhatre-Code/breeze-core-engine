@@ -50,6 +50,20 @@ def _subscribe_batch_size() -> int:
         return 50
 
 
+def _order_feed_watchdog_interval_seconds() -> float:
+    """How often the watchdog re-arms the order-notification feed. Floored so a
+    misconfiguration can't turn it into a hot loop."""
+    try:
+        return max(15.0, float(getattr(cfg, "ORDER_FEED_WATCHDOG_INTERVAL_SECONDS", 60.0)))
+    except (TypeError, ValueError):
+        return 60.0
+
+
+# During market hours, ticks arriving this many seconds apart means the whole feed has
+# likely gone silent (not just the order socket) — worth surfacing as an error.
+_ORDER_FEED_STALE_WARN_SECONDS = 120.0
+
+
 def _note_error(message: str, *args: Any) -> str:
     global _last_error
     text = message % args if args else message
@@ -271,6 +285,72 @@ def _ensure_ws(proc: "Processor", user_id: str) -> Any | None:
             _connected = False
             _note_error("WebSocket connect failed for user_id=%s: %s", user_id, exc)
             return None
+
+
+def ensure_order_feed(proc: "Processor", user_id: str) -> bool:
+    """Bring up the account-wide order-notification feed for this user, independent of any
+    option-chain subscription.
+
+    Order notifications are what drive the SG lifecycle (fills -> Completed / Reset). They
+    used to be armed *only* as a side effect of subscribing an option chain through
+    `_ensure_ws` — so a live SG's completion silently depended on some unrelated chain
+    being hot. This makes the dependency explicit: connect the WS if needed and arm the
+    order feed, whether or not any chain is subscribed. Re-arming is a safe no-op when the
+    SDK already has the order socket up (it guards on `orderconnect == 0`)."""
+    sdk = _ensure_ws(proc, user_id)
+    if sdk is None:
+        return False
+    _subscribe_order_notifications(sdk)
+    return True
+
+
+def order_feed_watchdog_tick() -> None:
+    """Re-arm the order-notification subscription if a silent reconnect may have dropped it.
+
+    The SDK opens the order socket behind `if self.orderconnect == 0`, and a dropped
+    connection resets that flag — but nothing re-subscribes on the SDK's own socket.io
+    reconnect. So after any silent blip the SG lifecycle goes permanently deaf to fills
+    while price ticks (which the SDK re-subscribes itself) keep flowing, hiding the
+    failure. Re-calling `subscribe_feeds(get_order_notification=True)` is a no-op when the
+    order socket is already up and re-arms it when it isn't, so this is safe on a timer."""
+    with _lock:
+        sdk = _sdk
+        connected = _connected
+    if sdk is None or not connected:
+        return  # nothing connected -> nothing to keep alive
+    _subscribe_order_notifications(sdk)
+    # Observability only: if the *whole* feed (price ticks included) has gone silent during
+    # market hours, the order re-arm above won't help — surface it so it isn't invisible.
+    try:
+        from icici_breeze_backend.app.services.market_calendar import is_market_open
+        from icici_breeze_backend.app.services.ws_tick_pipeline import last_tick_age_seconds
+
+        age = last_tick_age_seconds()
+        if age is not None and age > _ORDER_FEED_STALE_WARN_SECONDS and is_market_open():
+            _note_error("WS feed silent for %.0fs during market hours", age)
+    except Exception:  # noqa: BLE001 — observability must never break the watchdog
+        _logger.debug("watchdog staleness check failed", exc_info=True)
+
+
+async def run_order_feed_watchdog_loop() -> None:
+    """Periodically re-arm the order feed so a silent socket reconnect can't leave the SG
+    lifecycle permanently deaf to fills.
+
+    Mirrors the heartbeat / pnl-flush loop idiom: an infinite loop cancelled only via the
+    FastAPI lifespan's `task.cancel()`, with `CancelledError` re-raised and every other
+    error logged and swallowed so one bad tick never kills the task."""
+    import asyncio
+
+    interval = _order_feed_watchdog_interval_seconds()
+    _logger.info("Order-feed watchdog started (interval=%.0fs)", interval)
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            await asyncio.to_thread(order_feed_watchdog_tick)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            _logger.exception("Order-feed watchdog tick failed")
 
 
 def _icici_unsubscribe_stock_token(stock_token: str, meta: dict[str, Any]) -> bool:

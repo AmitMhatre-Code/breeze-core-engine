@@ -1789,7 +1789,10 @@ class processor():
                     d for d in (success_data if isinstance(success_data, list) else [])
                     if (d.get("product_type") == cfg.OPTIONS and d.get("exchange_code") in (cfg.NFO, cfg.BFO))
                 ]
-                from icici_breeze_backend.app.services.quote_source_router import fetch_quote_icici_response
+                from icici_breeze_backend.app.services.quote_source_router import (
+                    cached_chain_spot,
+                    fetch_quote_icici_response,
+                )
 
                 for i in positions["Success"]:
                     stock_code = i['stock_code']
@@ -1809,8 +1812,14 @@ class processor():
                     except Exception as e:
                         quote = _icici_error(f"Error resolving quote via router({stock_code},{exchange_code},{expiry_date},{product_type},{right},{strike_price}): {e}")
                     quote_rows = _quote_success_rows(quote)
+                    resolved_spot: float | None = None
                     if quote.get("Status") == 200 and quote_rows:
-                        i["spot_price"] = quote_rows[0].get("spot_price") or "Err"
+                        try:
+                            row_spot = float(quote_rows[0].get("spot_price"))
+                        except (TypeError, ValueError):
+                            row_spot = None
+                        if row_spot is not None and row_spot > 0:
+                            resolved_spot = row_spot
                         # ICICI's own get_portfolio_positions() ltp can be stale/wrong for
                         # illiquid contracts (observed post-close for BFO index options) --
                         # prefer the router's cache-first (WS -> bhavcopy -> REST) option ltp,
@@ -1823,8 +1832,16 @@ class processor():
                             router_ltp = None
                         if router_ltp is not None and router_ltp > 0:
                             i["ltp"] = router_ltp
-                    else:
-                        i["spot_price"] = "Err"
+
+                    # The per-option quote can miss (deep OTM/ITM strike with no cached
+                    # cell, bhavcopy row, or REST quote) even while the underlying's spot
+                    # is live -- index_spot_feed keeps NIFTY/SENSEX index ticks warm in
+                    # the same cache `cached_chain_spot` reads. Use that before surfacing
+                    # "Err", so a healthy WS spot isn't hidden by an unrelated option-quote
+                    # miss. Only truly-unavailable spot falls through to "Err".
+                    if resolved_spot is None:
+                        resolved_spot = cached_chain_spot(exchange_code, stock_code)
+                    i["spot_price"] = resolved_spot if resolved_spot is not None else "Err"
 
                     if i['product_type'] == cfg.OPTIONS:
                         i['option'] = i['stock_code']+"-"+i['expiry_date']+"-"+i['strike_price']+"-"+i['right']

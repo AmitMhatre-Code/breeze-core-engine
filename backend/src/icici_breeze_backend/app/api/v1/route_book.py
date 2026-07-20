@@ -97,6 +97,17 @@ async def get_book_data(
     elif orders.get("Success") is None:
         grouped_orders = None
     else:
+        # REST backstop for the fired→Completed transition: the live WS order feed
+        # normally drives it, but a dropped fill notification would strand a fully-exited
+        # SG on `fired` (every order shows Executed, badge stays Fired). Reconcile off the
+        # book we just fetched — no extra ICICI call — before splitting, so a just-completed
+        # SG's orders are attributed and displayed correctly this same response.
+        from icici_breeze_backend.app.services.strategy_group_lifecycle import (
+            reconcile_fired_rules_from_orders,
+        )
+
+        reconcile_fired_rules_from_orders(user_id, orders["Success"])
+
         gtt_raw_rows = gtt_order_book_cache.get(user_id)
         if gtt_raw_rows is None:
             gtt_raw_rows = fetch_all_gtt_raw_rows(breeze, user_id)

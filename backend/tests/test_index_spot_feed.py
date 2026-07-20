@@ -164,6 +164,92 @@ def test_get_index_quotes_status_market_closed_fetches_rest_fallback(monkeypatch
     fake_sdk.get_quotes.assert_not_called()
 
 
+def test_on_raw_tick_seeds_chain_spot_for_dynamic_underlying(monkeypatch):
+    """A non-index underlying (registered via `_underlying_targets`) seeds the
+    chain-spot cache but gets no navbar index_spot_key/change%."""
+    isf._underlying_targets["4.1!2885"] = (cfg.NFO, "RELIND")
+    seen = {}
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.quote_source_router.remember_chain_spot",
+        lambda ex, sc, spot: seen.setdefault("args", (ex, sc, spot)),
+    )
+    isf._on_raw_tick({"symbol": "4.1!2885", "last": "1402.5"})
+    assert seen["args"] == (cfg.NFO, "RELIND", 1402.5)
+    assert cache_get_json(index_spot_key("nifty")) is None
+
+
+def test_sync_underlying_spot_subscriptions_subscribes_and_dedups(monkeypatch):
+    fake_sdk = MagicMock()
+    fake_sdk.get_stock_token_value.return_value = ("4.1!2885", False)
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.breeze_websocket_manager._ensure_ws",
+        lambda proc, user_id: fake_sdk,
+    )
+    proc = MagicMock()
+    underlyings = [("NSE", "RELIND", cfg.NFO, "RELIND")]
+
+    assert isf.sync_underlying_spot_subscriptions(proc, "u1", underlyings) is True
+    assert fake_sdk.subscribe_feeds.call_count == 1
+    assert isf._underlying_targets["4.1!2885"] == (cfg.NFO, "RELIND")
+
+    # Second call: scrip already synced -> hot-path no-op, no token/SDK work.
+    fake_sdk.get_stock_token_value.reset_mock()
+    assert isf.sync_underlying_spot_subscriptions(proc, "u1", underlyings) is True
+    assert fake_sdk.subscribe_feeds.call_count == 1
+    fake_sdk.get_stock_token_value.assert_not_called()
+
+
+def test_sync_underlying_skips_token_already_subscribed_by_index(monkeypatch):
+    """A portfolio holding NIFTY must not double-subscribe the cash scrip the
+    index feed already owns, nor shadow its navbar mapping."""
+    isf._symbol_to_label["4.1!4963"] = "nifty"
+    isf._subscribed_cash_tokens.add("4.1!4963")
+    fake_sdk = MagicMock()
+    fake_sdk.get_stock_token_value.return_value = ("4.1!4963", False)
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.breeze_websocket_manager._ensure_ws",
+        lambda proc, user_id: fake_sdk,
+    )
+    proc = MagicMock()
+    assert isf.sync_underlying_spot_subscriptions(
+        proc, "u1", [("NSE", "NIFTY", cfg.NFO, "NIFTY")]
+    ) is True
+    fake_sdk.subscribe_feeds.assert_not_called()
+    assert "4.1!4963" not in isf._underlying_targets
+
+
+def test_sync_underlying_noop_without_session(monkeypatch):
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.breeze_websocket_manager._ensure_ws",
+        lambda proc, user_id: None,
+    )
+    proc = MagicMock()
+    assert isf.sync_underlying_spot_subscriptions(
+        proc, "u1", [("NSE", "RELIND", cfg.NFO, "RELIND")]
+    ) is False
+    assert isf._underlying_targets == {}
+    assert isf._synced_underlying_scrips == set()
+
+
+def test_cash_exchange_for_options_mapping():
+    assert isf._cash_exchange_for_options(cfg.NFO) == "NSE"
+    assert isf._cash_exchange_for_options(cfg.BFO) == "BSE"
+    assert isf._cash_exchange_for_options("NSE") is None
+
+
+def test_ensure_underlying_spot_subscription_unknown_exchange_noop(monkeypatch):
+    called = {}
+    monkeypatch.setattr(
+        isf,
+        "sync_underlying_spot_subscriptions",
+        lambda *a, **k: called.setdefault("hit", True),
+    )
+    proc = MagicMock()
+    # Cash exchange (not an options exchange) -> no spot feed, no subscribe attempt.
+    isf.ensure_underlying_spot_subscription(proc, "u1", "NSE", "RELIND")
+    assert "hit" not in called
+
+
 def test_get_index_quotes_status_market_closed_no_session_returns_null(monkeypatch):
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_market_open",

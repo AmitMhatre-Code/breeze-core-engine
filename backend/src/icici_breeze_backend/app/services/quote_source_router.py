@@ -556,6 +556,15 @@ def fetch_chain_payload_routed(
 
     if source == "websocket":
         from icici_breeze_backend.app.services.breeze_websocket_manager import ensure_chain_subscriptions
+        from icici_breeze_backend.app.services.index_spot_feed import (
+            ensure_underlying_spot_subscription,
+        )
+
+        # Keep this underlying's cash spot warm from live ticks so `spot`
+        # (resolved above / on the next poll) reflects the real intraday spot
+        # rather than a stale bhavcopy close -- demand-driven, deduped, and a
+        # no-op for indices already covered by the session-start index feed.
+        ensure_underlying_spot_subscription(proc, user_id, exchange_code, stock_code)
 
         ws_payload = ensure_chain_subscriptions(
             proc,
@@ -754,6 +763,11 @@ def _fetch_chain_payload_atm_gated(
 
     if source == "websocket":
         from icici_breeze_backend.app.services.breeze_websocket_manager import ensure_atm_quote_subscription
+        from icici_breeze_backend.app.services.index_spot_feed import (
+            ensure_underlying_spot_subscription,
+        )
+
+        ensure_underlying_spot_subscription(proc, user_id, exchange_code, stock_code)
 
         ws_payload = ensure_atm_quote_subscription(
             proc,

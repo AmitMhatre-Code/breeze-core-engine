@@ -176,23 +176,71 @@ def _handle_own_exit_order(
     _maybe_complete(user_id, rule)
 
 
-def _maybe_complete(user_id: str, rule: SquareOffRuleRecord) -> None:
+def _maybe_complete(
+    user_id: str,
+    rule: SquareOffRuleRecord,
+    *,
+    status_by_id: dict[str, str] | None = None,
+) -> None:
     """Completed requires BOTH conditions of spec section 7: every exit order executed,
-    and no open positions left in the group."""
+    and no open positions left in the group.
+
+    `status_by_id` lets a caller that already holds the order book (order_id -> lowercased
+    status) pass it in so this doesn't issue a second `get_orders` round-trip — used by the
+    REST reconcile path, which reconciles many fired SGs off one already-fetched book. When
+    omitted, the status is read fresh from the book (the live WS-callback path)."""
     if _open_leg_count(user_id, rule) > 0:
         return
-    from icici_breeze_backend.app.services.processor import processor
-
     order_ids = repo.order_ids_for_rule(rule)
     if not order_ids:
         return
-    statuses = _order_statuses(processor(), user_id, order_ids)
+    if status_by_id is not None:
+        # Mirror `_order_statuses`: only include order_ids actually present in the book, so
+        # `all(...)` has identical semantics on both paths.
+        statuses = {oid: status_by_id[oid] for oid in order_ids if oid in status_by_id}
+    else:
+        from icici_breeze_backend.app.services.processor import processor
+
+        statuses = _order_statuses(processor(), user_id, order_ids)
     if not statuses:
         return  # couldn't read the book — leave Fired; reconcile will retry
     if all(s == "executed" for s in statuses.values()):
         if repo.mark_completed(rule.id):
             _release_subscription(rule.id)
             _logger.info("SG %s completed", rule.id)
+
+
+def reconcile_fired_rules_from_orders(
+    user_id: str, raw_orders: Iterable[dict[str, Any]]
+) -> None:
+    """REST backstop for the fired→Completed transition, driven from an order book the
+    caller already fetched (no extra ICICI round-trip).
+
+    The WS order feed drives Completed in real time (`on_order_notification`), but a
+    dropped or late notification would strand a fully-exited SG on `fired` forever — the
+    Orders page would show every exit order Executed while the SG badge stayed Fired. This
+    re-runs the same guarded completion check from authoritative REST state, so a missed
+    event self-heals on the next book fetch.
+
+    Deliberately completion-only. A `fired` SG must NEVER be Reset from a position diff
+    (see module docstring): its own exits legitimately change legs, so a REST snapshot
+    cannot attribute a change. `_maybe_complete`'s open-leg guard already keeps a leftover
+    leg (e.g. a manual add whose foreign-fill WS event was itself missed) from producing a
+    *false* Completed — the fail-safe outcome there is to stay Fired, not to guess Reset.
+    Best-effort: never raises, so it can't break the book fetch it hangs off.
+    """
+    try:
+        status_by_id = {
+            oid: str(o.get("status") or "").strip().lower()
+            for o in raw_orders
+            if isinstance(o, dict)
+            for oid in (str(o.get("order_id") or ""),)
+            if oid
+        }
+        for rule in repo.list_fired_rules_for_user(user_id):
+            _maybe_complete(user_id, rule, status_by_id=status_by_id)
+    except Exception:  # noqa: BLE001 — reconcile is best-effort; never break the book fetch
+        _logger.exception("Fired-SG reconcile failed for user_id=%s", user_id)
 
 
 def _handle_foreign_order(
