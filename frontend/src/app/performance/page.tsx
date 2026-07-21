@@ -13,7 +13,9 @@ import {
   buildPerformanceDataPath,
   iciciSuccess,
   padMonthlyToFinancialYear,
+  padWeeklyToFinancialYear,
   parseMonthlyPerformance,
+  parseWeeklyPerformance,
   type FinancialYearOption,
   type PerformanceDataPayload,
 } from "@/lib/performance-data";
@@ -39,10 +41,10 @@ function moneyTone(amount: number): string {
   return "text-foreground";
 }
 
-const PerformanceMonthlyChart = dynamic(
+const PerformancePeriodChart = dynamic(
   () =>
-    import("@/components/performance/PerformanceMonthlyChart").then(
-      (m) => m.PerformanceMonthlyChart,
+    import("@/components/performance/PerformancePeriodChart").then(
+      (m) => m.PerformancePeriodChart,
     ),
   {
     ssr: false,
@@ -135,6 +137,7 @@ function PerformancePageInner() {
   const [chartViewMode, setChartViewMode] = useState<"chart" | "table">(
     "chart",
   );
+  const [granularity, setGranularity] = useState<"month" | "week">("month");
   const [exportOpen, setExportOpen] = useState(false);
   const path = useMemo(
     () => buildPerformanceDataPath(searchParams),
@@ -178,6 +181,16 @@ function PerformancePageInner() {
     () => padMonthlyToFinancialYear(monthlyActual, data?.start),
     [monthlyActual, data],
   );
+  const weekly = useMemo(
+    () =>
+      padWeeklyToFinancialYear(
+        data ? parseWeeklyPerformance(data.performance) : [],
+        data?.start,
+        data?.end,
+      ),
+    [data],
+  );
+  const periodRows = granularity === "week" ? weekly : monthly;
 
   const years = useMemo(() => {
     const y = data?.years;
@@ -445,8 +458,33 @@ function PerformancePageInner() {
           <section className="app-card min-w-0">
             <div className="flex flex-col gap-3 border-b border-border-soft px-4 pb-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-heading font-bold uppercase tracking-[.07em] text-faint">
-                Monthly financial overview
+                {granularity === "week" ? "Weekly" : "Monthly"} financial
+                overview
               </h2>
+              <div className="flex items-center gap-2.5">
+              <div className="inline-flex rounded-[9px] border border-border bg-panel2 p-[3px]">
+                {(
+                  [
+                    ["month", "Monthly"],
+                    ["week", "Weekly"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={[
+                      "rounded-[6px] px-3.5 py-1.5 font-mono text-table font-semibold transition",
+                      granularity === value
+                        ? "bg-accent-strong text-accent-ink"
+                        : "text-muted hover:text-foreground",
+                    ].join(" ")}
+                    aria-pressed={granularity === value}
+                    onClick={() => setGranularity(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <div className="inline-flex rounded-[9px] border border-border bg-panel2 p-[3px]">
                 <button
                   type="button"
@@ -475,9 +513,14 @@ function PerformancePageInner() {
                   Table
                 </button>
               </div>
+              </div>
             </div>
             <div className="p-4">
-              <PerformanceMonthlyChart monthly={monthly} viewMode={chartViewMode} />
+              <PerformancePeriodChart
+                rows={periodRows}
+                viewMode={chartViewMode}
+                periodLabel={granularity === "week" ? "Week" : "Month"}
+              />
             </div>
           </section>
 

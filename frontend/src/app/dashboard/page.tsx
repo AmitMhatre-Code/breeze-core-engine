@@ -1030,16 +1030,23 @@ function OutlookRefreshIcon({ spinning }: { spinning: boolean }) {
   );
 }
 
-function formatTimeOnly(iso: string | null | undefined): string | null {
+/** "DD Mon, HH:MM" in IST — used for the outlook "as of" badge. */
+function formatOutlookAsOf(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString("en-IN", {
+  const datePart = d.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    timeZone: "Asia/Kolkata",
+  });
+  const timePart = d.toLocaleTimeString("en-IN", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
     timeZone: "Asia/Kolkata",
   });
+  return `${datePart}, ${timePart}`;
 }
 
 function MarketOutlookConnectionBadge({
@@ -1057,7 +1064,7 @@ function MarketOutlookConnectionBadge({
     );
   }
 
-  const time = formatTimeOnly(asOf);
+  const time = formatOutlookAsOf(asOf);
   const cfg =
     phase === "loading"
       ? {

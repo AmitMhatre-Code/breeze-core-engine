@@ -3342,29 +3342,37 @@ class processor():
             performance['Success']['net_pnl'] = 0
 
             per_month = defaultdict(lambda: {"pnl": 0.0, "brokerage": 0.0, "taxes": 0.0})
+            # Weekly buckets are a strictly finer partition of the monthly ones — same
+            # trades, same arithmetic, keyed by the Monday of the trade's week instead.
+            per_week = defaultdict(lambda: {"pnl": 0.0, "brokerage": 0.0, "taxes": 0.0})
 
             for trade in trades['Success']:
                 trade_date = trade['trade_date']
                 trade_date = datetime.datetime.strptime(trade_date, "%d-%b-%Y")
                 trade_month_name = trade_date.strftime("%b-%y")
+                trade_week_start = (trade_date - datetime.timedelta(days=trade_date.weekday())).strftime("%Y-%m-%d")
+                buckets = (per_month[trade_month_name], per_week[trade_week_start])
                 premium = float(trade['quantity']) * float(trade['average_cost'])
                 action = str(trade.get("action", "")).strip()
                 if action == cfg.SELL:
                     performance['Success']['premium_earned'] += premium
                     performance['Success']['net_pnl'] += premium
-                    per_month[trade_month_name]['pnl'] += premium
+                    for bucket in buckets:
+                        bucket['pnl'] += premium
 
                 if action == cfg.BUY:
                     performance['Success']['premium_paid'] += premium
                     performance['Success']['net_pnl'] -= premium
-                    per_month[trade_month_name]['pnl'] -= premium
+                    for bucket in buckets:
+                        bucket['pnl'] -= premium
 
                 performance['Success']['brokerage'] += float(trade['brokerage_amount'])
                 performance['Success']['taxes'] += float(trade['total_taxes'])
                 performance['Success']['net_pnl'] = performance['Success']['net_pnl'] - float(trade['brokerage_amount']) - float(trade['total_taxes'])
-                per_month[trade_month_name]['brokerage'] += float(trade['brokerage_amount'])
-                per_month[trade_month_name]['taxes'] += float(trade['total_taxes'])
-                per_month[trade_month_name]['pnl'] = per_month[trade_month_name]['pnl'] - float(trade['brokerage_amount']) - float(trade['total_taxes'])
+                for bucket in buckets:
+                    bucket['brokerage'] += float(trade['brokerage_amount'])
+                    bucket['taxes'] += float(trade['total_taxes'])
+                    bucket['pnl'] = bucket['pnl'] - float(trade['brokerage_amount']) - float(trade['total_taxes'])
 
             net_pnl = float(performance["Success"]["net_pnl"])
             margin_denom = margin if margin and float(margin) > 0 else None
@@ -3388,6 +3396,11 @@ class processor():
             monthly = [{"month": month, "pnl": values["pnl"], "brokerage": values["brokerage"], "taxes": values["taxes"]}for month, values in per_month.items()]
             monthly.sort(key=lambda x: datetime.datetime.strptime(x["month"], "%b-%y"))
             performance['Success']['monthly'] = monthly
+            # `week` is the ISO date of that week's Monday — the frontend needs real
+            # dates (not a display label) to pad out the FY's full week grid.
+            weekly = [{"week": week, "pnl": values["pnl"], "brokerage": values["brokerage"], "taxes": values["taxes"]}for week, values in per_week.items()]
+            weekly.sort(key=lambda x: x["week"])
+            performance['Success']['weekly'] = weekly
 
         else:
             performance['Success'] = None

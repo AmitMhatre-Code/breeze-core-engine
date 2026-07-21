@@ -11,7 +11,7 @@ import {
   type ChartOptions,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
-import type { MonthlyChartRow } from "@/lib/performance-data";
+import type { PeriodChartRow } from "@/lib/performance-data";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 
 ChartJS.register(BarElement, CategoryScale, Legend, LinearScale, Tooltip);
@@ -78,12 +78,15 @@ const BAR_RADIUS = 4;
 const FONT_STACK =
   '"IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 
-export function PerformanceMonthlyChart({
-  monthly,
+export function PerformancePeriodChart({
+  rows,
   viewMode,
+  periodLabel,
 }: {
-  monthly: MonthlyChartRow[];
+  rows: PeriodChartRow[];
   viewMode: "chart" | "table";
+  /** Column heading for the table view, e.g. "Month" or "Week". */
+  periodLabel: string;
 }) {
   const isDark = useSyncExternalStore(
     subscribeDarkClass,
@@ -107,15 +110,15 @@ export function PerformanceMonthlyChart({
   const c = useMemo(() => chartPalette(isDark), [isDark]);
 
   const data = useMemo(() => {
-    const labels = monthly.map((m) => m.month);
-    const pnl = monthly.map((m) => m.pnl);
+    const labels = rows.map((m) => m.label);
+    const pnl = rows.map((m) => m.pnl);
     // Brokerage/taxes are costs — anchor them below the zero line regardless
-    // of whether the month's net P&L was a gain or a loss (matches the
+    // of whether the period's net P&L was a gain or a loss (matches the
     // Terminal Pro reference: costs always read as a downward strip at zero).
-    // `null` means "no trade data this month" — leave it null so Chart.js
+    // `null` means "no trade data this period" — leave it null so Chart.js
     // skips the bar entirely instead of drawing a zero-height one.
-    const brokerage = monthly.map((m) => (m.brokerage == null ? null : -Math.abs(m.brokerage)));
-    const taxes = monthly.map((m) => (m.taxes == null ? null : -Math.abs(m.taxes)));
+    const brokerage = rows.map((m) => (m.brokerage == null ? null : -Math.abs(m.brokerage)));
+    const taxes = rows.map((m) => (m.taxes == null ? null : -Math.abs(m.taxes)));
     const bg = pnl.map((v) => (v == null ? c.pos : v >= 0 ? c.pos : c.neg));
     return {
       labels,
@@ -149,7 +152,7 @@ export function PerformanceMonthlyChart({
         },
       ],
     };
-  }, [monthly, c]);
+  }, [rows, c]);
 
   const options: ChartOptions<"bar"> = useMemo(
     () => ({
@@ -232,10 +235,11 @@ export function PerformanceMonthlyChart({
     [c],
   );
 
-  if (monthly.length === 0) {
+  if (rows.length === 0) {
     return (
       <div className="app-card-muted flex min-h-[280px] items-center justify-center p-8 text-sm text-muted">
-        No monthly breakdown for this period (no trades in range).
+        No {periodLabel.toLowerCase()}-by-{periodLabel.toLowerCase()} breakdown
+        for this financial year (no trades in range).
       </div>
     );
   }
@@ -276,7 +280,7 @@ export function PerformanceMonthlyChart({
           <thead className="border-b border-border-soft text-micro font-bold uppercase tracking-wide text-faint">
             <tr>
               <th scope="col" className="px-3 py-2">
-                Month
+                {periodLabel}
               </th>
               <th scope="col" className="px-3 py-2">
                 P &amp; L
@@ -290,9 +294,9 @@ export function PerformanceMonthlyChart({
             </tr>
           </thead>
           <tbody className="divide-y divide-border-soft">
-            {monthly.map((row) => (
-              <tr key={row.month}>
-                <td className="px-3 py-1.5 text-foreground">{row.month}</td>
+            {rows.map((row) => (
+              <tr key={row.label}>
+                <td className="px-3 py-1.5 text-foreground">{row.label}</td>
                 {row.pnl == null ? (
                   <>
                     <td className="px-3 py-1.5 font-mono tabular-nums text-muted">—</td>
