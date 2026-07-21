@@ -38,16 +38,25 @@ def _cell_has_quote(cell: Any, *, exchange_code: str) -> bool:
             return True
     except (TypeError, ValueError):
         pass
-    if exchange_code == cfg.BFO:
-        for key in ("best_bid_price", "best_offer_price"):
-            try:
-                if cell.get(key) is not None and float(cell[key]) > 0:
-                    return True
-            except (TypeError, ValueError):
-                pass
-    buy = int(cell.get("total_buy_qty") or 0)
-    sell = int(cell.get("total_sell_qty") or 0)
-    return buy > 0 or sell > 0
+    # Bid/ask counts as a quote on every exchange, not just BFO: with bhavcopy no
+    # longer inventing depth, a contract can legitimately have a real quoted price
+    # and unknown book size.
+    for key in ("best_bid_price", "best_offer_price"):
+        try:
+            if cell.get(key) is not None and float(cell[key]) > 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+    buy = cell.get("total_buy_qty")
+    sell = cell.get("total_sell_qty")
+    if buy is None and sell is None:
+        # Unknown depth is not evidence of absence -- but with no ltp and no
+        # bid/ask either (both checked above), there is nothing to show.
+        return False
+    try:
+        return int(buy or 0) > 0 or int(sell or 0) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def _atm_window_strikes(tradeable_strikes: list[Strike], spot: float) -> set[Strike]:

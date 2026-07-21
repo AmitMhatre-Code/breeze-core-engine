@@ -39,10 +39,24 @@ async def list_rules(ctx: RequestContext = Depends(get_request_context)):
 async def list_rules_for_exit_board(ctx: RequestContext = Depends(get_request_context)):
     """Orders page > Profit Booking / Stop Loss table — includes completed/reset history
     alongside the live SGs, unlike Portfolio's own badge query above."""
+    _reconcile_fired_rules(ctx.user_id)
     rules = repo.list_all_rules_for_exit_board(ctx.user_id)
     _attach_live_legs(ctx.user_id, rules)
     _attach_reset_details(ctx.user_id, rules)
     return SquareOffRuleListResponse(rules=rules)
+
+
+def _reconcile_fired_rules(user_id: str) -> None:
+    """Heal any SG stranded on `fired` by a dropped WS fill event, BEFORE reading the
+    rules we are about to return.
+
+    Ordering is the point: this endpoint is what renders the status badge, so
+    reconciling here means the badge is post-reconcile by construction. Hanging it off
+    the order-book fetch instead (where it used to live) left the flip invisible until an
+    unrelated refetch, because the exit board is a separate query that had already
+    returned.
+    """
+    strategy_group_lifecycle.reconcile_fired_rules_for_user(user_id, processor())
 
 
 def _attach_reset_details(user_id: str, rules: list[SquareOffRuleRecord]) -> None:

@@ -260,6 +260,21 @@ try:
     WS_RAW_QUOTE_TTL_SECONDS = int(os.environ.get("WS_RAW_QUOTE_TTL_SECONDS", "120") or "120")
 except ValueError:
     WS_RAW_QUOTE_TTL_SECONDS = 120
+WS_QUOTE_SNAPSHOT_ENABLED = (
+    os.environ.get("WS_QUOTE_SNAPSHOT_ENABLED", "true") or "true"
+).strip().lower() not in ("0", "false", "no")
+try:
+    WS_QUOTE_SNAPSHOT_FLUSH_SECONDS = int(
+        os.environ.get("WS_QUOTE_SNAPSHOT_FLUSH_SECONDS", "300") or "300"
+    )
+except ValueError:
+    WS_QUOTE_SNAPSHOT_FLUSH_SECONDS = 300
+try:
+    WS_QUOTE_SNAPSHOT_RETENTION_DAYS = int(
+        os.environ.get("WS_QUOTE_SNAPSHOT_RETENTION_DAYS", "5") or "5"
+    )
+except ValueError:
+    WS_QUOTE_SNAPSHOT_RETENTION_DAYS = 5
 try:
     CANONICAL_CHAIN_TTL_SECONDS = int(os.environ.get("CANONICAL_CHAIN_TTL_SECONDS", "5") or "5")
 except ValueError:

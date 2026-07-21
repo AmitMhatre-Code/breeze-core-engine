@@ -17,8 +17,8 @@ def ensure_user_telegram_table(db_path: str) -> None:
                 link_token TEXT,
                 link_token_expires_at TIMESTAMP,
                 linked_at TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+                updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
             )
             """
         )

@@ -13,6 +13,8 @@ import json
 import logging
 import sqlite3
 
+from icici_breeze_backend.app.core.timezone import ist_timestamp
+
 _logger = logging.getLogger(__name__)
 
 _LEGACY_TABLE = "user_exchange_calendar"
@@ -42,8 +44,8 @@ def ensure_exchange_calendar_table(db_path: str) -> None:
                 holidays_json TEXT NOT NULL DEFAULT '{}',
                 console_updated_at TEXT,
                 local_updated_at TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+                updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
             )
             """
         )
@@ -65,7 +67,7 @@ def ensure_exchange_calendar_table(db_path: str) -> None:
 def _seed_defaults(conn: sqlite3.Connection) -> None:
     from icici_breeze_backend.app.core.exchange_calendar import _load_holidays
 
-    now_row = conn.execute("SELECT CURRENT_TIMESTAMP").fetchone()[0]
+    now_row = ist_timestamp()
     conn.execute(
         """
         INSERT OR IGNORE INTO exchange_calendar (

@@ -32,7 +32,16 @@ from icici_breeze_backend.app.services.reference_data.scrip_index import (
     list_tradeable_strikes_memory,
 )
 from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
+    is_tradeable_contract,
     list_tradeable_strikes,
+)
+from icici_breeze_backend.app.services.ws_quote_snapshot import (
+    SNAPSHOT_SOURCE,
+    build_chain_from_snapshot,
+    cell_depth_as_of,
+    contract_field,
+    snapshot_cell,
+    snapshot_is_fresh,
 )
 
 if TYPE_CHECKING:
@@ -66,11 +75,43 @@ def bhavcopy_is_fresh(exchange_code: str, now: dt.datetime | None = None) -> boo
 
 
 def resolve_quote_source(exchange_code: str, now: dt.datetime | None = None) -> str:
+    """Chain-level *primary* source. Post-close chains are actually assembled
+    per-cell by `_build_offline_chain`, which walks `offline_source_order` for
+    every contract; this returns the tier that leads that walk."""
     if is_market_open(now):
         return "websocket"
+    if snapshot_is_fresh(exchange_code, now):
+        return SNAPSHOT_SOURCE
     if bhavcopy_is_fresh(exchange_code, now):
         return "bhavcopy"
     return "icici_api"
+
+
+def offline_source_order(exchange_code: str, now: dt.datetime | None = None) -> list[str]:
+    """Per-cell fallback order once the market is closed.
+
+    The snapshot always leads: it is the only source carrying real market depth,
+    since BSE wipes its book at close and bhavcopy has no depth columns at all.
+
+    A *fresh* bhavcopy ends the walk -- REST is not consulted to patch individual
+    holes in it. A missing bhavcopy row means the contract did not trade that
+    session, and REST would neither know better (it covers only a limited strike
+    band) nor be worth an ICICI call per untraded strike. REST exists here purely
+    as the remedy for a *stale* bhavcopy, where it at least reflects the session
+    that just concluded rather than a previous one.
+
+    Derived from `resolve_quote_source` rather than calling `bhavcopy_is_fresh`
+    directly, so the primary tier and the fallback walk can never disagree.
+    """
+    primary = resolve_quote_source(exchange_code, now)
+    if primary == "bhavcopy":
+        return [SNAPSHOT_SOURCE, "bhavcopy"]
+    if primary == "icici_api":
+        return [SNAPSHOT_SOURCE, "icici_api", "bhavcopy"]
+    # Snapshot primary, or a websocket miss falling through mid-session.
+    if bhavcopy_is_fresh(exchange_code, now):
+        return [SNAPSHOT_SOURCE, "bhavcopy"]
+    return [SNAPSHOT_SOURCE, "icici_api", "bhavcopy"]
 
 
 def _cell_updated_at(cell: Any) -> float | None:
@@ -113,10 +154,16 @@ def _enrich_quote_metadata(payload: dict[str, Any]) -> dict[str, Any]:
             payload["bhavcopy_stale"] = bhavcopy_is_stale(bhav_date)
     elif source == "icici_api":
         payload["quote_as_of"] = now_ist().isoformat()
+    elif source == SNAPSHOT_SOURCE:
+        payload["quote_as_of"] = payload.get("depth_as_of") or now_ist().isoformat()
     return payload
 
 
 def _rest_fallback_allowed(exchange_code: str) -> bool:
+    """Governs the *spot* lookup only. Deliberately still allows REST when the
+    snapshot is the primary source: real WS option ticks carry no `spot_price`
+    (see `chain_readiness.is_chain_complete`), so a snapshot can never answer a
+    spot query and blocking REST here would leave the chain without an ATM."""
     return resolve_quote_source(exchange_code) != "bhavcopy"
 
 
@@ -314,10 +361,15 @@ def _is_spot_strike(strike_price: Any) -> bool:
 
 
 def _cell_to_icici_row(cell: dict[str, Any]) -> dict[str, Any]:
-    total_buy = int(cell.get("total_buy_qty") or 0)
-    total_sell = int(cell.get("total_sell_qty") or 0)
+    # Preserve unknown depth as None rather than folding it into 0 -- see
+    # `bhavcopy_store._row_to_chain_cell`.
+    raw_buy = cell.get("total_buy_qty")
+    raw_sell = cell.get("total_sell_qty")
+    depth_known = raw_buy is not None or raw_sell is not None
+    total_buy = int(raw_buy or 0) if depth_known else None
+    total_sell = int(raw_sell or 0) if depth_known else None
     ratio = cell.get("buy_sell_ratio")
-    if ratio is None:
+    if ratio is None and total_buy is not None and total_sell is not None:
         if total_sell > 0:
             ratio = total_buy / total_sell
         elif total_buy == 0:
@@ -333,6 +385,8 @@ def _cell_to_icici_row(cell: dict[str, Any]) -> dict[str, Any]:
         "open_interest": int(cell.get("open_interest") or 0),
         "total_buy_qty": total_buy,
         "total_sell_qty": total_sell,
+        "depth_as_of": cell.get("depth_as_of"),
+        "quote_source": cell.get("quote_source"),
         "buy_sell_ratio": ratio,
         "best_bid_price": cell.get("best_bid_price"),
         "best_offer_price": cell.get("best_offer_price"),
@@ -342,6 +396,9 @@ def _cell_to_icici_row(cell: dict[str, Any]) -> dict[str, Any]:
 
 
 def _apply_buy_sell_ratio(row: dict[str, Any]) -> None:
+    if row.get("total_buy_qty") is None or row.get("total_sell_qty") is None:
+        row["buy_sell_ratio"] = None
+        return
     try:
         if int(row["total_sell_qty"]) > 0:
             row["buy_sell_ratio"] = int(row["total_buy_qty"]) / int(row["total_sell_qty"])
@@ -393,43 +450,48 @@ def _fetch_cell_from_cache(
             if lot_val:
                 cell["lot_size"] = lot_val
             return cell, "websocket"
-        if bhavcopy_is_fresh(exchange_code):
-            source = "bhavcopy"
-        else:
-            return None, None
 
-    if source == "bhavcopy":
-        right_label = cfg.CALL if right_key == "call" else cfg.PUT
-        bhav_row = _lookup_bhav_row(stock_code, expiry_display, right_label, strike, exchange_code)
-        if bhav_row:
-            cell = _row_to_chain_cell(
-                bhav_row, stock_code, expiry_display, exchange_code, right_label, lot_val
+    # Closed market (or a websocket miss): walk the same per-cell fallback order
+    # the chain builder uses, so a single-contract lookup and a full chain build
+    # can never disagree about which source owns a contract.
+    for candidate in offline_source_order(exchange_code):
+        cell = None
+        if candidate == SNAPSHOT_SOURCE:
+            cell = snapshot_cell(exchange_code, stock_code, expiry_display, strike, right_key)
+        elif candidate == "bhavcopy":
+            right_label = cfg.CALL if right_key == "call" else cfg.PUT
+            bhav_row = _lookup_bhav_row(
+                stock_code, expiry_display, right_label, strike, exchange_code
             )
-            return cell, "bhavcopy"
-
-    if source == "icici_api":
-        chain_strikes = list_tradeable_strikes(stock_code, expiry_display, exchange_code=exchange_code)
-        rest_payload = _get_or_build_icici_rest_chain(
-            proc,
-            user_id,
-            stock_code,
-            exchange_code,
-            expiry_display,
-            chain_strikes,
-            lot_size=lot_val or None,
-            freeze_quantity=None,
-        )
-        if rest_payload:
-            side = "call" if right_key == "call" else "put"
-            for row in rest_payload.get("chain_rows") or []:
-                if isinstance(row, dict) and parse_strike(row.get("strike_price")) == strike:
-                    cell = row.get(side)
-                    if cell:
-                        if lot_val:
-                            cell = dict(cell)
-                            cell["lot_size"] = lot_val
-                        return cell, "icici_api"
-                    break
+            if bhav_row:
+                cell = _row_to_chain_cell(
+                    bhav_row, stock_code, expiry_display, exchange_code, right_label, lot_val
+                )
+        else:
+            chain_strikes = list_tradeable_strikes(
+                stock_code, expiry_display, exchange_code=exchange_code
+            )
+            rest_payload = _get_or_build_icici_rest_chain(
+                proc,
+                user_id,
+                stock_code,
+                exchange_code,
+                expiry_display,
+                chain_strikes,
+                lot_size=lot_val or None,
+                freeze_quantity=None,
+            )
+            cell = _index_rest_chain(rest_payload).get(contract_field(strike, right_key))
+        if not cell:
+            continue
+        cell = dict(cell)
+        if lot_val:
+            cell["lot_size"] = lot_val
+        if candidate == SNAPSHOT_SOURCE:
+            as_of = cell_depth_as_of(cell)
+            if as_of:
+                cell["depth_as_of"] = as_of
+        return cell, candidate
 
     return None, None
 
@@ -528,6 +590,163 @@ def _get_or_build_icici_rest_chain(
         return payload
 
 
+def _index_rest_chain(payload: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """REST chain rows -> {contract_field: cell} for the per-cell merge."""
+    if not isinstance(payload, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for row in payload.get("chain_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        strike = parse_strike(row.get("strike_price"))
+        if strike is None:
+            continue
+        for right_key in ("call", "put"):
+            cell = row.get(right_key)
+            if isinstance(cell, dict):
+                out[contract_field(strike, right_key)] = cell
+    return out
+
+
+def _build_offline_chain(
+    proc: "Processor",
+    user_id: str,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    strikes: list[Strike],
+    *,
+    lot_size: int | None,
+    freeze_quantity: int | None,
+) -> dict[str, Any] | None:
+    """Assemble a closed-market chain per contract, so each strike independently
+    takes the best source available to it.
+
+    This matters because the sources have complementary coverage: the snapshot
+    holds real depth but only for chains someone subscribed to during the
+    session; bhavcopy covers every strike but carries no depth; REST covers only
+    a limited strike band. Merging per cell means a subscribed chain keeps its
+    real close-time book while unsubscribed strikes in the same chain still fill
+    in, instead of one missing strike discarding the whole snapshot.
+    """
+    order = offline_source_order(exchange_code)
+    lot_val = int(lot_size or 0)
+    snapshot_cells = build_chain_from_snapshot(
+        stock_code,
+        expiry_display,
+        exchange_code,
+        lot_size=lot_val or None,
+        strikes=strikes,
+    )
+    rest_index: dict[str, dict[str, Any]] | None = None
+
+    def _rest_cells() -> dict[str, dict[str, Any]]:
+        # Built at most once, and only if some contract actually falls through to
+        # REST -- a fully snapshot/bhavcopy-covered chain never spends the call.
+        nonlocal rest_index
+        if rest_index is None:
+            rest_index = _index_rest_chain(
+                _get_or_build_icici_rest_chain(
+                    proc,
+                    user_id,
+                    stock_code,
+                    exchange_code,
+                    expiry_display,
+                    strikes,
+                    lot_size=lot_val or None,
+                    freeze_quantity=freeze_quantity,
+                )
+            )
+        return rest_index
+
+    calls: list[dict[str, Any]] = []
+    puts: list[dict[str, Any]] = []
+    source_counts: dict[str, int] = {}
+    spot_price: float | None = None
+    depth_as_of: str | None = None
+
+    for strike in strikes:
+        for right in (cfg.CALL, cfg.PUT):
+            if not is_tradeable_contract(
+                stock_code, expiry_display, strike, right, exchange_code=exchange_code
+            ):
+                continue
+            right_key = "call" if right == cfg.CALL else "put"
+            field = contract_field(strike, right_key)
+            cell: dict[str, Any] | None = None
+            resolved_source: str | None = None
+            for candidate in order:
+                if candidate == SNAPSHOT_SOURCE:
+                    cell = snapshot_cells.get(field)
+                elif candidate == "bhavcopy":
+                    row = _lookup_bhav_row(
+                        stock_code, expiry_display, right, strike, exchange_code
+                    )
+                    cell = (
+                        _row_to_chain_cell(
+                            row, stock_code, expiry_display, exchange_code, right, lot_val
+                        )
+                        if row
+                        else None
+                    )
+                else:
+                    cell = _rest_cells().get(field)
+                if cell:
+                    resolved_source = candidate
+                    break
+            if not cell or resolved_source is None:
+                continue
+
+            cell = dict(cell)
+            cell["quote_source"] = resolved_source
+            if lot_val:
+                cell["lot_size"] = lot_val
+            if resolved_source == SNAPSHOT_SOURCE:
+                as_of = cell_depth_as_of(cell)
+                if as_of:
+                    cell["depth_as_of"] = as_of
+                    if depth_as_of is None or as_of > depth_as_of:
+                        depth_as_of = as_of
+            source_counts[resolved_source] = source_counts.get(resolved_source, 0) + 1
+            if spot_price is None:
+                spot_price = _parse_positive_spot(cell.get("spot_price"))
+            (calls if right == cfg.CALL else puts).append(cell)
+
+    if not calls and not puts:
+        return None
+
+    call_by = {parse_strike(c.get("strike_price")): c for c in calls}
+    put_by = {parse_strike(p.get("strike_price")): p for p in puts}
+    chain_strikes = sorted(
+        {k for k in (set(call_by) | set(put_by)) if k is not None}
+    )
+    chain_rows = [
+        {"strike_price": k, "call": call_by.get(k), "put": put_by.get(k)}
+        for k in chain_strikes
+    ]
+    atm_strike = None
+    if spot_price is not None and chain_strikes:
+        atm_strike = min(chain_strikes, key=lambda s: abs(s - spot_price))
+    bhav_date = get_bhavcopy_source_date(exchange_code)
+    dominant = max(source_counts, key=lambda s: source_counts[s]) if source_counts else "icici_api"
+    return {
+        "chain_rows": chain_rows,
+        "max_call_oi": max((int(c.get("open_interest") or 0) for c in calls), default=0),
+        "max_put_oi": max((int(p.get("open_interest") or 0) for p in puts), default=0),
+        "expiry_display": expiry_display,
+        "stock_code": stock_code,
+        "exchange_code": exchange_code,
+        "spot_price": spot_price,
+        "atm_strike": atm_strike,
+        "lot_size": lot_val or None,
+        "freeze_quantity": freeze_quantity,
+        "quote_source": dominant,
+        "quote_source_counts": source_counts,
+        "depth_as_of": depth_as_of,
+        "bhavcopy_date": bhav_date.isoformat() if bhav_date else None,
+    }
+
+
 def fetch_chain_payload_routed(
     proc: "Processor",
     user_id: str,
@@ -598,74 +817,51 @@ def fetch_chain_payload_routed(
         ):
             return _enrich_quote_metadata(ws_payload)
 
-        _logger.warning("WebSocket chain incomplete for %s %s; trying bhavcopy", stock_code, expiry_display)
-        if bhavcopy_is_fresh(exchange_code):
-            source = "bhavcopy"
-        else:
-            return None
-
-    if source == "bhavcopy":
-        payload = build_chain_from_bhavcopy(
+        _logger.warning(
+            "WebSocket chain incomplete for %s %s; falling back to offline sources",
             stock_code,
             expiry_display,
-            exchange_code,
-            lot_size=int(lot_size) if lot_size else None,
-            freeze_quantity=freeze_quantity,
-            strikes=strikes,
         )
-        if payload and is_chain_complete(
-            payload,
-            stock_code=stock_code,
-            exchange_code=exchange_code,
-            expiry_display=expiry_display,
-            spot=spot,
-        ):
-            return _enrich_quote_metadata(
-                _apply_chain_spot(
-                    payload,
-                    proc=proc,
-                    user_id=user_id,
-                    stock_code=stock_code,
-                    exchange_code=exchange_code,
-                    expiry_display=expiry_display,
-                    strikes=strikes,
-                    spot=spot,
-                )
-            )
-        _logger.warning("Bhavcopy chain incomplete for %s %s", stock_code, expiry_display)
+
+    payload = _build_offline_chain(
+        proc,
+        user_id,
+        stock_code,
+        exchange_code,
+        expiry_display,
+        strikes,
+        lot_size=int(lot_size) if lot_size else None,
+        freeze_quantity=freeze_quantity,
+    )
+    if not payload:
+        _logger.warning("Offline chain unavailable for %s %s", stock_code, expiry_display)
         return None
 
-    if source == "icici_api":
-        payload = _get_or_build_icici_rest_chain(
-            proc,
-            user_id,
-            stock_code,
-            exchange_code,
-            expiry_display,
-            strikes,
-            lot_size=int(lot_size) if lot_size else None,
-            freeze_quantity=freeze_quantity,
-        )
-        if payload and is_chain_complete(
-            payload,
-            stock_code=stock_code,
-            exchange_code=exchange_code,
-            expiry_display=expiry_display,
-            spot=spot,
-        ):
-            return _enrich_quote_metadata(
-                _apply_chain_spot(
-                    payload,
-                    proc=proc,
-                    user_id=user_id,
-                    stock_code=stock_code,
-                    exchange_code=exchange_code,
-                    expiry_display=expiry_display,
-                    strikes=strikes,
-                    spot=spot,
-                )
+    # The readiness gate exists to wait for live WS ticks still arriving. A chain
+    # that drew on the snapshot is final -- nothing further will ever fill in --
+    # so gating it would only burn CHAIN_WS_WAIT_TIMEOUT_MS before returning the
+    # same rows. Pure bhavcopy/REST chains keep the original completeness check.
+    used_snapshot = bool((payload.get("quote_source_counts") or {}).get(SNAPSHOT_SOURCE))
+    if used_snapshot or is_chain_complete(
+        payload,
+        stock_code=stock_code,
+        exchange_code=exchange_code,
+        expiry_display=expiry_display,
+        spot=spot,
+    ):
+        return _enrich_quote_metadata(
+            _apply_chain_spot(
+                payload,
+                proc=proc,
+                user_id=user_id,
+                stock_code=stock_code,
+                exchange_code=exchange_code,
+                expiry_display=expiry_display,
+                strikes=strikes,
+                spot=spot,
             )
-        _logger.warning("ICICI REST chain incomplete for %s %s", stock_code, expiry_display)
+        )
+    _logger.warning("Offline chain incomplete for %s %s", stock_code, expiry_display)
     return None
 
 

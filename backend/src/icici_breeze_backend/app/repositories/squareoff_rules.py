@@ -16,6 +16,7 @@ import sqlite3
 import uuid
 from typing import Any, Optional
 
+from icici_breeze_backend.app.core.timezone import ist_timestamp
 from icici_breeze_backend.app.domain.squareoff_rule import SquareOffRuleRecord
 
 # Non-terminal: the SG is live and occupies its (user, stock, expiry) key.
@@ -244,8 +245,8 @@ def arm_rule(
                 INSERT INTO portfolio_squareoff_rules (
                     id, user_id, stock_code, expiry_display, exchange_code,
                     profit_target_pnl, loss_limit_pnl, target_premium_pct,
-                    stop_loss_premium_pct, status, legs_snapshot
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'armed', ?)
+                    stop_loss_premium_pct, status, legs_snapshot, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'armed', ?, ?)
                 """,
                 (
                     rule_id,
@@ -258,6 +259,10 @@ def arm_rule(
                     target_premium_pct,
                     stop_loss_premium_pct,
                     snapshot_json,
+                    # Bound rather than left to the column DEFAULT: databases created
+                    # before the IST switch still carry `DEFAULT CURRENT_TIMESTAMP`
+                    # (UTC), and SQLite has no ALTER COLUMN to correct it in place.
+                    ist_timestamp(),
                 ),
             )
         conn.commit()
@@ -274,9 +279,9 @@ def mark_completed(rule_id: str) -> bool:
     with sqlite3.connect(_db_path()) as conn:
         cur = conn.execute(
             "UPDATE portfolio_squareoff_rules "
-            "SET status = 'completed', resolved_at = CURRENT_TIMESTAMP "
+            "SET status = 'completed', resolved_at = ? "
             "WHERE id = ? AND status = 'fired'",
-            (rule_id,),
+            (ist_timestamp(), rule_id),
         )
         conn.commit()
         return cur.rowcount > 0
@@ -294,9 +299,9 @@ def mark_reset(rule_id: str, reason: str) -> bool:
     with sqlite3.connect(_db_path()) as conn:
         cur = conn.execute(
             f"UPDATE portfolio_squareoff_rules "
-            f"SET status = 'reset', resolved_at = CURRENT_TIMESTAMP, reset_reason = ? "
+            f"SET status = 'reset', resolved_at = ?, reset_reason = ? "
             f"WHERE id = ? AND status IN {ACTIVE_STATUSES}",
-            (reason, rule_id),
+            (ist_timestamp(), reason, rule_id),
         )
         conn.commit()
         return cur.rowcount > 0
@@ -340,10 +345,10 @@ def mark_fired(rule_id: str, leg_results: list[dict[str, Any]]) -> None:
         conn.execute(
             """
             UPDATE portfolio_squareoff_rules
-            SET status = 'fired', fired_at = CURRENT_TIMESTAMP, leg_results = ?
+            SET status = 'fired', fired_at = ?, leg_results = ?
             WHERE id = ?
             """,
-            (json.dumps(leg_results), rule_id),
+            (ist_timestamp(), json.dumps(leg_results), rule_id),
         )
         conn.commit()
 
@@ -353,15 +358,16 @@ def mark_fire_failed(rule_id: str, leg_results: list[dict[str, Any]], reason: st
     the user must re-arm. `leg_results` is still stored: any legs that DID get an order
     placed before the failure are live orphans, and that stored set is what the orphan
     warning and bulk-cancel act on."""
+    fired = ist_timestamp()
     with sqlite3.connect(_db_path()) as conn:
         conn.execute(
             """
             UPDATE portfolio_squareoff_rules
-            SET status = 'reset', fired_at = CURRENT_TIMESTAMP,
-                resolved_at = CURRENT_TIMESTAMP, leg_results = ?, reset_reason = ?
+            SET status = 'reset', fired_at = ?,
+                resolved_at = ?, leg_results = ?, reset_reason = ?
             WHERE id = ?
             """,
-            (json.dumps(leg_results), reason, rule_id),
+            (fired, fired, json.dumps(leg_results), reason, rule_id),
         )
         conn.commit()
 

@@ -186,6 +186,9 @@ Customer deployments (the current, active path) get their `.env` written by bree
 | `BSE_FO_BHAVCOPY_URL_TEMPLATE` | BSE derivative CSV URL | `{yyyymmdd}` placeholder. |
 | `WEBSOCKET_QUOTE_TTL_SECONDS` | `120` | Redis TTL for normalized WebSocket quote cells. |
 | `WS_RAW_QUOTE_TTL_SECONDS` | `120` | Redis TTL for raw WebSocket tick payloads. |
+| `WS_QUOTE_SNAPSHOT_ENABLED` | `true` | Capture the last live tick per contract to a durable snapshot, used as the first post-close quote source. Disable and BFO chains fall back to bhavcopy/REST, which carry no market depth after close. |
+| `WS_QUOTE_SNAPSHOT_FLUSH_SECONDS` | `300` | How often the in-Redis snapshot is flushed to `scrips.sqlite3`. Lower = less captured depth lost to an unclean shutdown. |
+| `WS_QUOTE_SNAPSHOT_RETENTION_DAYS` | `5` | Sessions of snapshot history kept in SQLite before pruning. Only the latest concluded session is ever served. |
 | `WS_TICK_INGEST_QUEUE_SIZE` | `2000` | Max in-process WS tick ingest queue depth before coalescing drops oldest. |
 | `WS_TICK_COALESCE_MS` | `100` | Coalesce window (ms) before writing latest tick per token to Redis. |
 | `CHAIN_BUILDER_POLL_MS` | `250` | chain-builder worker poll interval when rebuilding active chains. |

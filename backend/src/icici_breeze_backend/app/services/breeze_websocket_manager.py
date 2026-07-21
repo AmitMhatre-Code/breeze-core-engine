@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
     sdk_args_from_user_params,
@@ -412,39 +412,19 @@ def release_holder(holder_id: str) -> dict[str, Any]:
     return {"released": len(tokens), "holder_id": hid}
 
 
-def _subscribe_stock_token_batch(
-    proc: "Processor",
-    user_id: str,
+def _subscribe_token_batches(
+    sdk: Any,
     tokens: list[str],
     *,
-    holder_id: str,
+    on_batch_ok: "Callable[[list[str]], None] | None" = None,
 ) -> bool:
-    if not tokens:
-        return True
-    hid = _effective_holder(holder_id)
-    to_subscribe: list[str] = []
-    with _lock:
-        for token in tokens:
-            if token in _holders.get(hid, set()):
-                continue
-            is_new = token not in _sub_holders or len(_sub_holders[token]) == 0
-            if not is_new:
-                _holders.setdefault(hid, set()).add(token)
-                _sub_holders.setdefault(token, set()).add(hid)
-            else:
-                to_subscribe.append(token)
-
-    if not to_subscribe:
-        return True
-
-    sdk = _ensure_ws(proc, user_id)
-    if sdk is None:
-        return False
-
+    """Issue `subscribe_feeds` for `tokens` in batches. Shared by the normal
+    (bookkeeping-tracked) subscribe path and the watchdog's forced re-subscribe,
+    so both handle ICICI's non-200-in-a-200 error shape identically."""
     batch_size = _subscribe_batch_size()
     ok_all = True
-    for i in range(0, len(to_subscribe), batch_size):
-        chunk = to_subscribe[i : i + batch_size]
+    for i in range(0, len(tokens), batch_size):
+        chunk = tokens[i : i + batch_size]
         sdk_args = _stock_token_sdk_args(chunk)
         try:
             result = sdk.subscribe_feeds(**sdk_args)
@@ -460,21 +440,90 @@ def _subscribe_stock_token_batch(
                     _note_error("subscribe_feeds ICICI error batch %s: %s", chunk[:3], err)
                     ok_all = False
                     continue
-            with _lock:
-                for token in chunk:
-                    _holders.setdefault(hid, set()).add(token)
-                    _sub_holders.setdefault(token, set()).add(hid)
-                    _sub_meta[token] = {"stock_token": [token]}
-            _logger.info(
-                "subscribe_feeds batch ok user_id=%s holder=%s count=%s",
-                user_id,
-                hid,
-                len(chunk),
-            )
+            if on_batch_ok is not None:
+                on_batch_ok(chunk)
         except Exception as exc:
             _note_error("subscribe_feeds batch failed: %s", exc)
             ok_all = False
     return ok_all
+
+
+def _subscribe_stock_token_batch(
+    proc: "Processor",
+    user_id: str,
+    tokens: list[str],
+    *,
+    holder_id: str,
+    force: bool = False,
+) -> bool:
+    """`force=True` re-issues `subscribe_feeds` for tokens this process already
+    believes are subscribed, instead of short-circuiting on the holder
+    bookkeeping. The bookkeeping only records what we *asked* ICICI for -- it is
+    never reconciled against ticks actually arriving -- so without this the very
+    first subscribe of the day is the only one that ever reaches ICICI, and a
+    subscribe that silently produced no feed stays broken until the process
+    restarts. See `ws_price_feed_watchdog`."""
+    if not tokens:
+        return True
+    hid = _effective_holder(holder_id)
+    to_subscribe: list[str] = []
+    with _lock:
+        for token in tokens:
+            if not force and token in _holders.get(hid, set()):
+                continue
+            is_new = token not in _sub_holders or len(_sub_holders[token]) == 0
+            if not is_new and not force:
+                _holders.setdefault(hid, set()).add(token)
+                _sub_holders.setdefault(token, set()).add(hid)
+            else:
+                to_subscribe.append(token)
+
+    if not to_subscribe:
+        return True
+
+    sdk = _ensure_ws(proc, user_id)
+    if sdk is None:
+        return False
+
+    def _record(chunk: list[str]) -> None:
+        with _lock:
+            for token in chunk:
+                _holders.setdefault(hid, set()).add(token)
+                _sub_holders.setdefault(token, set()).add(hid)
+                _sub_meta[token] = {"stock_token": [token]}
+        _logger.info(
+            "subscribe_feeds batch ok user_id=%s holder=%s count=%s force=%s",
+            user_id,
+            hid,
+            len(chunk),
+            force,
+        )
+
+    return _subscribe_token_batches(sdk, to_subscribe, on_batch_ok=_record)
+
+
+def current_ws_user_id() -> str | None:
+    """user_id of the broker session backing the live socket, or None when nothing
+    is connected. Lets background loops (which have no request context and no
+    stored service credential) reuse whoever is logged in."""
+    with _lock:
+        return _sdk_user_id if _connected else None
+
+
+def force_resubscribe_tokens(tokens: list[str]) -> bool:
+    """Re-issue `subscribe_feeds` for tokens already held, without touching holder
+    bookkeeping (their refcounts are already correct -- what's in doubt is whether
+    ICICI is actually feeding them). No unsubscribe first: a duplicate subscribe is
+    treated as idempotent, the same assumption `_subscribe_order_notifications`
+    already relies on. Returns False when there's no live socket to subscribe on."""
+    if not tokens:
+        return False
+    with _lock:
+        sdk = _sdk
+        connected = _connected
+    if sdk is None or not connected:
+        return False
+    return _subscribe_token_batches(sdk, sorted(set(tokens)))
 
 
 def _unsubscribe_stock_token_batch(tokens: list[str]) -> None:
@@ -531,10 +580,16 @@ def sync_holder_chain_subscriptions(
     exchange_code: str,
     expiry_display: str,
     strikes: list[Strike] | None = None,
+    *,
+    force: bool = False,
 ) -> bool:
     """Returns False if new tokens needed subscribing but the batch subscribe
     failed (e.g. no live broker session) -- callers that gate a daily retry
-    guard on this must not treat a False return as done-for-today."""
+    guard on this must not treat a False return as done-for-today.
+
+    `force=True` re-issues the subscribe for every desired token, not just the
+    ones this holder doesn't already have -- used on a fresh broker session so a
+    login always re-arms the feed rather than trusting stale bookkeeping."""
     del strikes  # liquid tokens resolved from scrip master
     hid = _effective_holder(holder_id)
     desired = set(
@@ -544,10 +599,10 @@ def sync_holder_chain_subscriptions(
         current = set(_holders.get(hid, set()))
     for token in sorted(current - desired):
         _detach_holder_from_token(hid, token)
-    new_tokens = sorted(desired - current)
+    new_tokens = sorted(desired) if force else sorted(desired - current)
     ok = True
     if new_tokens:
-        ok = _subscribe_stock_token_batch(proc, user_id, new_tokens, holder_id=hid)
+        ok = _subscribe_stock_token_batch(proc, user_id, new_tokens, holder_id=hid, force=force)
     register_holder_chain(hid, exchange_code, stock_code, expiry_display)
     return ok
 

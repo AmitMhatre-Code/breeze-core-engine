@@ -2,7 +2,12 @@ import type { ChainSuccess, QuoteMeta, QuoteSource } from "@/lib/strategy-builde
 import { quoteSourceDetailLine } from "@/lib/help/topic-content";
 import { formatIsoDateDdMmmYyyy } from "@/lib/format-iso-date";
 
-const VALID_SOURCES: QuoteSource[] = ["websocket", "bhavcopy", "icici_api"];
+const VALID_SOURCES: QuoteSource[] = [
+  "websocket",
+  "bhavcopy",
+  "icici_api",
+  "snapshot",
+];
 
 function isQuoteSource(raw: unknown): raw is QuoteSource {
   return typeof raw === "string" && VALID_SOURCES.includes(raw as QuoteSource);
@@ -18,6 +23,7 @@ export function quoteMetaFromChain(
     bhavcopy_date: success.bhavcopy_date ?? null,
     quote_as_of: success.quote_as_of ?? null,
     bhavcopy_stale: success.bhavcopy_stale ?? false,
+    depth_as_of: success.depth_as_of ?? null,
   };
 }
 
@@ -40,9 +46,25 @@ export function formatQuoteSourceLabel(meta: QuoteMeta): string {
         : "Bhavcopy";
     case "icici_api":
       return "ICICI API";
+    case "snapshot":
+      return "Session close (captured)";
     default:
       return "Quote source unknown";
   }
+}
+
+/** Human label for when the depth in a snapshot chain was actually captured. */
+export function formatDepthAsOf(meta: QuoteMeta | null | undefined): string | null {
+  const raw = meta?.depth_as_of?.trim();
+  if (!raw) return null;
+  const d = new Date(raw);
+  if (!Number.isFinite(d.getTime())) return null;
+  const time = d.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  });
+  return `Depth as of ${time}`;
 }
 
 export function formatQuoteSourceDetail(meta: QuoteMeta): string {
@@ -53,6 +75,8 @@ export function formatQuoteSourceDetail(meta: QuoteMeta): string {
       return quoteSourceDetailLine("bhavcopy", meta.bhavcopy_date, meta.bhavcopy_stale);
     case "icici_api":
       return quoteSourceDetailLine("icici_api");
+    case "snapshot":
+      return quoteSourceDetailLine("snapshot");
     default:
       return "Quote source could not be determined.";
   }
@@ -95,6 +119,9 @@ export function formatQuoteAsOf(
   }
   if (meta.quote_source === "icici_api") {
     return `Fetched ${formatRelativeAge(nowMs - asOfMs)}`;
+  }
+  if (meta.quote_source === "snapshot") {
+    return formatDepthAsOf(meta);
   }
   return null;
 }

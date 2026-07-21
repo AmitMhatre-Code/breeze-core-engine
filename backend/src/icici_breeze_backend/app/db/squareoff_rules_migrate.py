@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from icici_breeze_backend.app.core.timezone import ist_timestamp
+
 
 def ensure_squareoff_rules_table(db_path: str) -> None:
     with sqlite3.connect(db_path) as conn:
@@ -33,7 +35,7 @@ def ensure_squareoff_rules_table(db_path: str) -> None:
                 stop_loss_premium_pct INTEGER NOT NULL DEFAULT 1,
                 status TEXT NOT NULL DEFAULT 'armed',
                 leg_results TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
                 fired_at TIMESTAMP
             )
             """
@@ -92,7 +94,7 @@ def ensure_squareoff_rules_table(db_path: str) -> None:
             """
             UPDATE portfolio_squareoff_rules SET
                 status = 'reset',
-                resolved_at = COALESCE(resolved_at, CURRENT_TIMESTAMP),
+                resolved_at = COALESCE(resolved_at, ?),
                 reset_reason = COALESCE(reset_reason, ?)
             WHERE status IN ('armed', 'triggered', 'fired')
               AND id NOT IN (
@@ -106,7 +108,7 @@ def ensure_squareoff_rules_table(db_path: str) -> None:
                 ) WHERE rn = 1
               )
             """,
-            (superseded_reason,),
+            (ist_timestamp(), superseded_reason),
         )
 
         # Spec section 1 as a DB invariant, not a convention. This is what structurally

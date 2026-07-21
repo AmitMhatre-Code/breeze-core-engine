@@ -26,7 +26,10 @@ export function inferChainBuildPhase(args: {
   if (!args.isInitialLoad && args.quoteMeta?.quote_source === "websocket") {
     return "refreshing";
   }
-  if (args.quoteMeta?.quote_source === "bhavcopy") {
+  if (
+    args.quoteMeta?.quote_source === "bhavcopy" ||
+    args.quoteMeta?.quote_source === "snapshot"
+  ) {
     return "bhavcopy";
   }
   if (args.marketLikelyOpen !== false) {

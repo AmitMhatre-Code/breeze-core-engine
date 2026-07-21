@@ -89,8 +89,15 @@ class _MemoryStore:
         removed = 0
         with _memory_lock:
             for key in keys:
-                if key in _memory:
-                    del _memory[key]
+                # Hashes and sets live in their own dicts; deleting only `_memory`
+                # silently left them behind (real Redis DEL drops any type).
+                found = False
+                for bucket in (_memory, _memory_hashes, _memory_sets):
+                    if key in bucket:
+                        del bucket[key]
+                        found = True
+                _memory_hash_expires.pop(key, None)
+                if found:
                     removed += 1
         return removed
 

@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Optional, Any
 import json
 
+from icici_breeze_backend.app.core.timezone import SQLITE_NOW_IST
+
 _logger = logging.getLogger(__name__)
 
 
@@ -104,7 +106,7 @@ class AuditLogger:
             conn = get_sync_connection()
             try:
                 conn.execute(
-                    "INSERT INTO audit_log (user_id, operation_type, resource_type, resource_id, action_status, request_id, ip_address, error_details, metadata, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                    f"INSERT INTO audit_log (user_id, operation_type, resource_type, resource_id, action_status, request_id, ip_address, error_details, metadata, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {SQLITE_NOW_IST})",
                     (
                         user_id,
                         operation_type.value if isinstance(operation_type, OperationType) else str(operation_type),

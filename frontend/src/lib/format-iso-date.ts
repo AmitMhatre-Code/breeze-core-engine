@@ -68,16 +68,46 @@ export function formatSourceFileDate(input: string | null | undefined): string {
 const IST_TIME_ZONE = "Asia/Kolkata";
 const IST_LOCALE = "en-IN";
 
+/** `YYYY-MM-DD HH:MM:SS` (or the `T` variant) with no zone marker. */
+const NAIVE_STAMP_RE = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/;
+
+/**
+ * A zoneless stamp is IST wall-clock already — the backend writes it with
+ * `core.timezone.ist_timestamp()` — so it must be formatted as-is, never re-zoned.
+ *
+ * This is the whole reason `Date` is bypassed here. `new Date("2026-07-21 13:07:54")`
+ * has no zone to go on, so JS reads it as *browser-local*; feeding that through
+ * `toLocaleString({timeZone: 'Asia/Kolkata'})` then shifts it by the viewer's offset
+ * from IST. The value displayed changed with where the viewer was sitting, which is
+ * exactly what a trading log must never do.
+ */
+function formatNaiveIstStamp(raw: string): string | null {
+  const m = NAIVE_STAMP_RE.exec(raw.trim());
+  if (!m) return null;
+  const [, y, mo, d, hh, mm] = m;
+  const month = MONTH_SHORT[Number(mo) - 1];
+  if (!month) return null;
+  const hour24 = Number(hh);
+  const period = hour24 < 12 ? "am" : "pm";
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return `${Number(d)} ${month} ${y}, ${hour12}:${mm} ${period} IST`;
+}
+
 function parseApiDateTime(raw: string): Date | null {
-  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
-  const d = new Date(normalized);
+  const d = new Date(raw);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** API ISO datetime → `29 Jun 2026, 8:52 pm IST`. */
+/** API datetime → `29 Jun 2026, 8:52 pm IST`.
+ *
+ * Handles both stored shapes: a zoneless IST wall-clock stamp (rendered verbatim) and
+ * an instant that carries its own offset, e.g. `reference_data_ingest_history.ingested_at`
+ * (`...+05:30`) — those are real instants, so they are converted into IST. */
 export function formatApiDateTime(raw: string | null | undefined): string {
   if (!raw) return "—";
   try {
+    const naive = formatNaiveIstStamp(raw);
+    if (naive) return naive;
     const d = parseApiDateTime(raw);
     if (!d) return raw;
     return `${d.toLocaleString(IST_LOCALE, {

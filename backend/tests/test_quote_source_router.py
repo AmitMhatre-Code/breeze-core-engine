@@ -19,6 +19,7 @@ from icici_breeze_backend.app.services.quote_source_router import (
     fetch_chain_side_icici_response,
     fetch_quote_icici_response,
     latest_concluded_trading_day,
+    offline_source_order,
     resolve_quote_source,
 )
 from icici_breeze_backend.app.services.reference_data.bhavcopy_store import publish_bhavcopy_rows
@@ -30,16 +31,41 @@ def test_resolve_quote_source_market_open(_mock_open):
     assert resolve_quote_source("NFO") == "websocket"
 
 
+@patch("icici_breeze_backend.app.services.quote_source_router.snapshot_is_fresh", return_value=False)
 @patch("icici_breeze_backend.app.services.quote_source_router.is_market_open", return_value=False)
 @patch("icici_breeze_backend.app.services.quote_source_router.bhavcopy_is_fresh", return_value=True)
-def test_resolve_quote_source_bhavcopy(_fresh, _open):
+def test_resolve_quote_source_bhavcopy(_fresh, _open, _snap):
     assert resolve_quote_source("NFO") == "bhavcopy"
 
 
+@patch("icici_breeze_backend.app.services.quote_source_router.snapshot_is_fresh", return_value=False)
 @patch("icici_breeze_backend.app.services.quote_source_router.is_market_open", return_value=False)
 @patch("icici_breeze_backend.app.services.quote_source_router.bhavcopy_is_fresh", return_value=False)
-def test_resolve_quote_source_api_fallback(_fresh, _open):
+def test_resolve_quote_source_api_fallback(_fresh, _open, _snap):
     assert resolve_quote_source("NFO") == "icici_api"
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.snapshot_is_fresh", return_value=True)
+@patch("icici_breeze_backend.app.services.quote_source_router.is_market_open", return_value=False)
+@patch("icici_breeze_backend.app.services.quote_source_router.bhavcopy_is_fresh", return_value=True)
+def test_resolve_quote_source_snapshot_outranks_bhavcopy(_fresh, _open, _snap):
+    """The snapshot is the only closed-market source carrying real depth."""
+    assert resolve_quote_source("BFO") == "snapshot"
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.snapshot_is_fresh", return_value=False)
+@patch("icici_breeze_backend.app.services.quote_source_router.is_market_open", return_value=False)
+@patch("icici_breeze_backend.app.services.quote_source_router.bhavcopy_is_fresh", return_value=True)
+def test_offline_order_fresh_bhavcopy_never_calls_rest(_fresh, _open, _snap):
+    assert offline_source_order("NFO") == ["snapshot", "bhavcopy"]
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.snapshot_is_fresh", return_value=False)
+@patch("icici_breeze_backend.app.services.quote_source_router.is_market_open", return_value=False)
+@patch("icici_breeze_backend.app.services.quote_source_router.bhavcopy_is_fresh", return_value=False)
+def test_offline_order_stale_bhavcopy_prefers_rest(_fresh, _open, _snap):
+    """A stale bhavcopy is last-session data; REST at least covers this one."""
+    assert offline_source_order("BFO") == ["snapshot", "icici_api", "bhavcopy"]
 
 
 def test_latest_concluded_trading_day_after_close():

@@ -155,30 +155,104 @@ class TestOwnExitOrders:
         assert repo.get_rule(rule.id).status == "fired"
 
 
+class _RecordingBreeze:
+    """Order book stub that records the (start, end) window it was asked for — the window
+    is the whole point of the fired-SG reconcile, so tests assert on it directly."""
+
+    def __init__(self, rows_by_window: dict[tuple[str, str], dict[str, str]]):
+        self._rows_by_window = rows_by_window
+        self.windows: list[tuple[str, str]] = []
+
+    def get_orders(self, user_id, start=None, end=None):
+        self.windows.append((start, end))
+        statuses = self._rows_by_window.get((start, end), {})
+        return {
+            "Status": 200,
+            "Success": [{"order_id": oid, "status": st} for oid, st in statuses.items()],
+        }
+
+
+def _set_fired_at(rule_id: str, timestamp: str) -> None:
+    """Backdate a fired SG. `fired_at` is what the reconcile window is anchored to, so
+    an SG that fired on an earlier day is only reachable by rewriting it."""
+    import sqlite3
+
+    with sqlite3.connect(repo._db_path()) as conn:
+        conn.execute(
+            "UPDATE portfolio_squareoff_rules SET fired_at = ? WHERE id = ?",
+            (timestamp, rule_id),
+        )
+        conn.commit()
+
+
 class TestFiredReconcile:
-    """The REST backstop: `reconcile_fired_rules_from_orders` completes a fired SG off an
-    already-fetched order book when a live WS fill event was missed."""
+    """The REST backstop: `reconcile_fired_rules_for_user` completes a fired SG from the
+    authoritative order book when a live WS fill event was missed."""
 
     def test_completes_when_book_shows_all_executed(self, db_path, monkeypatch):
         rule = _fire(_arm())
         _no_open_legs(monkeypatch)
-        sg.reconcile_fired_rules_from_orders(
-            "VIKRAMMH", [{"order_id": "202607173800017846", "status": "Executed"}]
+        _set_fired_at(rule.id, "2026-07-16 07:58:16")
+        breeze = _RecordingBreeze(
+            {("2026-07-16", "2026-07-17"): {"202607173800017846": "Executed"}}
         )
+
+        sg.reconcile_fired_rules_for_user("VIKRAMMH", breeze)
+
+        assert repo.get_rule(rule.id).status == "completed"
+
+    def test_heals_an_sg_that_fired_on_an_earlier_day(self, db_path, monkeypatch):
+        """The regression this whole path exists for: an SG stranded on `fired` days ago.
+        Its exits only appear in the book for the day it FIRED, so a today-anchored window
+        would return nothing and leave it Fired forever."""
+        rule = _fire(_arm())
+        _no_open_legs(monkeypatch)
+        _set_fired_at(rule.id, "2026-07-16 07:58:16")
+        breeze = _RecordingBreeze(
+            {
+                # Today's book: the exit is long gone from it.
+                ("2026-07-21", "2026-07-22"): {},
+                ("2026-07-16", "2026-07-17"): {"202607173800017846": "Executed"},
+            }
+        )
+
+        sg.reconcile_fired_rules_for_user("VIKRAMMH", breeze)
+
+        assert breeze.windows == [("2026-07-16", "2026-07-17")]
+        assert repo.get_rule(rule.id).status == "completed"
+
+    def test_window_skips_the_weekend(self, db_path, monkeypatch):
+        """Fri 17-Jul-2026 -> Mon 20-Jul. A Sat end date would be a range ICICI has no
+        rows for on its second day; the next *weekday* keeps it meaningful."""
+        rule = _fire(_arm())
+        _no_open_legs(monkeypatch)
+        _set_fired_at(rule.id, "2026-07-17 09:20:00")
+        breeze = _RecordingBreeze(
+            {("2026-07-17", "2026-07-20"): {"202607173800017846": "Executed"}}
+        )
+
+        sg.reconcile_fired_rules_for_user("VIKRAMMH", breeze)
+
+        assert breeze.windows == [("2026-07-17", "2026-07-20")]
         assert repo.get_rule(rule.id).status == "completed"
 
     def test_stays_fired_when_an_order_is_not_executed(self, db_path, monkeypatch):
         rule = _fire(_arm())
         _no_open_legs(monkeypatch)
-        sg.reconcile_fired_rules_from_orders(
-            "VIKRAMMH", [{"order_id": "202607173800017846", "status": "Ordered"}]
+        _set_fired_at(rule.id, "2026-07-16 07:58:16")
+        breeze = _RecordingBreeze(
+            {("2026-07-16", "2026-07-17"): {"202607173800017846": "Ordered"}}
         )
+
+        sg.reconcile_fired_rules_for_user("VIKRAMMH", breeze)
+
         assert repo.get_rule(rule.id).status == "fired"
 
     def test_stays_fired_when_legs_remain_open(self, db_path, monkeypatch):
         """The open-leg guard is what keeps a missed foreign-fill (leftover leg) from
         producing a false Completed — the fail-safe is to stay Fired, never guess Reset."""
         rule = _fire(_arm())
+        _set_fired_at(rule.id, "2026-07-16 07:58:16")
 
         class _Leg:
             scrip_key = SCRIP
@@ -187,48 +261,81 @@ class TestFiredReconcile:
         monkeypatch.setattr(
             sg.portfolio_pnl_engine, "group_legs_for_user", lambda *a, **k: [_Leg()]
         )
-        sg.reconcile_fired_rules_from_orders(
-            "VIKRAMMH", [{"order_id": "202607173800017846", "status": "Executed"}]
+        breeze = _RecordingBreeze(
+            {("2026-07-16", "2026-07-17"): {"202607173800017846": "Executed"}}
         )
+
+        sg.reconcile_fired_rules_for_user("VIKRAMMH", breeze)
+
         assert repo.get_rule(rule.id).status == "fired"
 
-    def test_stays_fired_when_order_absent_from_book(self, db_path, monkeypatch):
-        """An order_id missing from the fetched book must not complete — same fail-safe as
-        a fresh fetch that couldn't confirm every order."""
+    def test_stays_fired_when_order_absent_from_its_own_window(self, db_path, monkeypatch):
+        """Now that the window is anchored to the fire date, an order still missing from
+        it is a real anomaly — never complete on it."""
         rule = _fire(_arm())
         _no_open_legs(monkeypatch)
-        sg.reconcile_fired_rules_from_orders(
-            "VIKRAMMH", [{"order_id": "SOMETHING-ELSE", "status": "Executed"}]
+        _set_fired_at(rule.id, "2026-07-16 07:58:16")
+        breeze = _RecordingBreeze(
+            {("2026-07-16", "2026-07-17"): {"SOMETHING-ELSE": "Executed"}}
         )
+
+        sg.reconcile_fired_rules_for_user("VIKRAMMH", breeze)
+
         assert repo.get_rule(rule.id).status == "fired"
 
     def test_does_not_touch_non_fired_rules(self, db_path, monkeypatch):
         rule = _arm()  # armed, not fired
         _no_open_legs(monkeypatch)
-        sg.reconcile_fired_rules_from_orders(
-            "VIKRAMMH", [{"order_id": "202607173800017846", "status": "Executed"}]
-        )
-        assert repo.get_rule(rule.id).status == "armed"
+        breeze = _RecordingBreeze({})
 
-    def test_reuses_the_supplied_book_without_a_second_get_orders(self, db_path, monkeypatch):
-        """Reconcile off the caller's book must not issue its own ICICI round-trip."""
+        sg.reconcile_fired_rules_for_user("VIKRAMMH", breeze)
+
+        assert repo.get_rule(rule.id).status == "armed"
+        assert breeze.windows == []  # and costs no broker call at all
+
+    def test_no_broker_call_when_the_user_has_no_fired_sgs(self, db_path, monkeypatch):
+        """The common case must stay free — this runs on every exit-board load."""
+        _no_open_legs(monkeypatch)
+        breeze = _RecordingBreeze({})
+
+        sg.reconcile_fired_rules_for_user("VIKRAMMH", breeze)
+
+        assert breeze.windows == []
+
+    def test_two_sgs_from_the_same_day_share_one_get_orders(self, db_path, monkeypatch):
+        """Windows are grouped, so a day's worth of stranded SGs costs one book fetch."""
+        first = _fire(_arm(stock="NIFTY"))
+        second = _fire(_arm(stock="BSESEN"), order_id="OTHER-ORDER")
+        _no_open_legs(monkeypatch)
+        _set_fired_at(first.id, "2026-07-16 07:58:16")
+        _set_fired_at(second.id, "2026-07-16 08:01:00")
+        breeze = _RecordingBreeze(
+            {
+                ("2026-07-16", "2026-07-17"): {
+                    "202607173800017846": "Executed",
+                    "OTHER-ORDER": "Executed",
+                }
+            }
+        )
+
+        sg.reconcile_fired_rules_for_user("VIKRAMMH", breeze)
+
+        assert breeze.windows == [("2026-07-16", "2026-07-17")]
+        assert repo.get_rule(first.id).status == "completed"
+        assert repo.get_rule(second.id).status == "completed"
+
+    def test_a_broker_failure_leaves_the_sg_fired(self, db_path, monkeypatch):
         rule = _fire(_arm())
         _no_open_legs(monkeypatch)
-        calls = {"n": 0}
+        _set_fired_at(rule.id, "2026-07-16 07:58:16")
 
-        class _Breeze:
+        class _Failing:
             def get_orders(self, *a, **k):
-                calls["n"] += 1
-                return {"Status": 200, "Success": []}
+                raise RuntimeError("broker down")
 
-        import icici_breeze_backend.app.services.processor as proc_mod
+        sg.reconcile_fired_rules_for_user("VIKRAMMH", _Failing())
 
-        monkeypatch.setattr(proc_mod, "processor", lambda: _Breeze())
-        sg.reconcile_fired_rules_from_orders(
-            "VIKRAMMH", [{"order_id": "202607173800017846", "status": "Executed"}]
-        )
-        assert calls["n"] == 0
-        assert repo.get_rule(rule.id).status == "completed"
+        assert repo.get_rule(rule.id).status == "fired"
 
 
 class TestForeignOrders:

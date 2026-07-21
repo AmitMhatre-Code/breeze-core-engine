@@ -247,6 +247,43 @@ export function buildExitRuleRows(
   return rows;
 }
 
+/** The calendar date a row resolved on as `YYYY-MM-DD`, or null when it has none.
+ *
+ * `resolvedAt` is a `YYYY-MM-DD HH:MM:SS` stamp straight out of SQLite, so the date is
+ * simply its first ten characters. Sliced rather than parsed through `Date`, so the
+ * value filtered on is character-for-character the one rendered in the Placed /
+ * Resolved column — a filter that disagreed with the visible timestamp would read as a
+ * bug no matter which of the two was "right". */
+export function exitRuleResolvedDate(row: ExitRuleRow): string | null {
+  const raw = row.resolvedAt?.trim();
+  if (!raw) return null;
+  const date = raw.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+}
+
+/**
+ * Scopes History rows to the Order Book's date range (inclusive) on resolved date, so
+ * both tables on the Orders page describe the same window.
+ *
+ * Rows with no resolved timestamp are kept, not dropped. Only Leg·GTT rows lack one,
+ * and they reach History solely by having all their spawned orders executed — those
+ * orders arrive on `/book/data`'s `rule_spawned_orders`, i.e. from this very date
+ * range, so such rows are already scoped by construction. Falling back to `placedAt`
+ * for them would be worse than keeping them: it would hide a GTT placed weeks ago that
+ * exited inside the range, which is exactly the row the user is looking for.
+ */
+export function filterExitRuleRowsByResolvedDate(
+  rows: ExitRuleRow[],
+  start: string,
+  end: string,
+): ExitRuleRow[] {
+  return rows.filter((row) => {
+    const date = exitRuleResolvedDate(row);
+    if (!date) return true;
+    return date >= start && date <= end;
+  });
+}
+
 /** 'reset' counts as active (not History): it needs the user's attention to re-arm or
  * clean up leftover exit orders, not a status they'd only think to look for after the
  * fact. 'completed' and 'exited' are genuinely done, so they fall through to History. */

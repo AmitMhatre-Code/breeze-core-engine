@@ -71,7 +71,7 @@ class TestMaybeTriggerSystemPrefetch:
         calls: list[str] = []
         state = {"failed": False}
 
-        def _sync(proc, user_id, holder_id, stock_code, exchange_code, expiry_display, strikes=None):
+        def _sync(proc, user_id, holder_id, stock_code, exchange_code, expiry_display, strikes=None, *, force=False):
             if fail_once and not state["failed"]:
                 state["failed"] = True
                 raise RuntimeError("boom")
@@ -82,7 +82,11 @@ class TestMaybeTriggerSystemPrefetch:
         monkeypatch.setattr(bwm, "release_holder", lambda holder_id: {"released": 0, "holder_id": holder_id})
         # `_run_system_prefetch_blocking` imports this via a local `from ... import`,
         # so it must be patched on the real module, not on `sch`.
-        monkeypatch.setattr(isf, "sync_index_spot_subscriptions", lambda proc, user_id: index_spot_ok)
+        monkeypatch.setattr(
+            isf,
+            "sync_index_spot_subscriptions",
+            lambda proc, user_id, *, force=False: index_spot_ok,
+        )
         monkeypatch.setattr(
             sch,
             "get_underlyings",
@@ -168,7 +172,9 @@ class TestMaybeTriggerSystemPrefetch:
         assert len(calls) == 2
 
         # Session recovers; past cooldown, the whole prefetch retries and clears.
-        monkeypatch.setattr(isf, "sync_index_spot_subscriptions", lambda proc, user_id: True)
+        monkeypatch.setattr(
+            isf, "sync_index_spot_subscriptions", lambda proc, user_id, *, force=False: True
+        )
         fake_now["t"] += sch._RETRY_COOLDOWN_SECONDS + 1
         sch.maybe_trigger_system_prefetch("u1")
         assert sch.prefetch_state()["last_error"] is None
@@ -270,16 +276,32 @@ class TestStartPrefetchForNewBrokerSession:
     def test_sets_broker_token_contextvar_before_triggering(self, monkeypatch):
         seen_token = {}
 
-        def _fake_trigger(user_id):
+        def _fake_trigger(user_id, *, force=False):
             seen_token["value"] = get_broker_token_for_request()
             seen_token["user_id"] = user_id
+            seen_token["force"] = force
 
         monkeypatch.setattr(sch, "maybe_trigger_system_prefetch", _fake_trigger)
         sch.start_prefetch_for_new_broker_session("user1", "broker-tok-123")
-        assert seen_token == {"value": "broker-tok-123", "user_id": "user1"}
+        assert seen_token == {"value": "broker-tok-123", "user_id": "user1", "force": True}
+
+    def test_login_forces_resubscribe_ignoring_daily_guard(self, monkeypatch):
+        """A fresh broker session must re-arm the feed even when today's prefetch is
+        already marked done. The daily guard records what we asked ICICI for, never
+        whether ticks arrived -- so trusting it made a process restart the only way
+        to recover a feed that came up dead."""
+        calls: list[bool] = []
+
+        def _fake_trigger(user_id, *, force=False):
+            calls.append(force)
+
+        monkeypatch.setattr(sch, "maybe_trigger_system_prefetch", _fake_trigger)
+        sch.start_prefetch_for_new_broker_session("user1", "tok")
+        sch.start_prefetch_for_new_broker_session("user1", "tok")
+        assert calls == [True, True]
 
     def test_exception_from_trigger_does_not_propagate(self, monkeypatch):
-        def _raise(user_id):
+        def _raise(user_id, *, force=False):
             raise RuntimeError("boom")
 
         monkeypatch.setattr(sch, "maybe_trigger_system_prefetch", _raise)

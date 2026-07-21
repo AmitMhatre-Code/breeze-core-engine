@@ -30,7 +30,10 @@ from icici_breeze_backend.app.services.reference_data.ws_token_index import (
     exchange_from_ws_prefix,
     parse_ws_symbol,
 )
-from icici_breeze_backend.app.services.ws_tick_normalize import parse_icici_tick
+from icici_breeze_backend.app.services.ws_tick_normalize import (
+    normalize_icici_tick,
+    parse_icici_tick,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -303,6 +306,52 @@ def _drain_loop() -> None:
                 _logger.warning("WS tick process queue full; dropping batch of %s", len(batch))
 
 
+def _stage_snapshot_cell(
+    raw: Any,
+    out: list[tuple[str, str, str, Any, str, dict[str, Any]]],
+) -> None:
+    """Stage one coalesced tick for the durable last-known-good quote snapshot.
+
+    Runs on the cache thread against already-coalesced batches, so this normalizes
+    at most once per contract per `WS_TICK_COALESCE_MS` -- strictly cheaper than
+    `_stage_pnl_quote`, which already parses every raw tick on the hotter ingest
+    thread. Never raises: this thread also owns the raw quote cache the chain
+    builder reads.
+    """
+    if not isinstance(raw, dict):
+        return
+    try:
+        result = normalize_icici_tick(raw)
+        if result is None:
+            return
+        parsed, cell = result
+        out.append(
+            (
+                parsed.exchange_code,
+                parsed.stock_code,
+                parsed.expiry_display,
+                parsed.strike,
+                parsed.right,
+                cell,
+            )
+        )
+    except Exception:
+        _logger.debug("Snapshot staging failed for tick", exc_info=True)
+
+
+def _record_snapshot_cells(
+    entries: list[tuple[str, str, str, Any, str, dict[str, Any]]],
+) -> None:
+    if not entries:
+        return
+    try:
+        from icici_breeze_backend.app.services.ws_quote_snapshot import record_cells
+
+        record_cells(entries)
+    except Exception:
+        _logger.debug("Snapshot record failed", exc_info=True)
+
+
 def _cache_loop() -> None:
     assert _process_queue is not None
     ttl = int(getattr(cfg, "WS_RAW_QUOTE_TTL_SECONDS", 300) or 300)
@@ -312,6 +361,7 @@ def _cache_loop() -> None:
         except queue.Empty:
             continue
         dirty_keys: list[str] = []
+        snapshot_entries: list[tuple[str, str, str, Any, str, dict[str, Any]]] = []
         for storage_key, raw in batch:
             payload = {
                 "received_at": time.time(),
@@ -319,11 +369,13 @@ def _cache_loop() -> None:
             }
             cache_set_json(storage_key, payload, ex=ttl)
             dirty_keys.append(storage_key)
+            _stage_snapshot_cell(raw, snapshot_entries)
             for listener in list(_listeners):
                 try:
                     listener({"storage_key": storage_key, "raw": raw})
                 except Exception:
                     pass
+        _record_snapshot_cells(snapshot_entries)
         for storage_key in dirty_keys:
             cache_publish(WS_TICK_DIRTY_CHANNEL, storage_key)
         _process_queue.task_done()

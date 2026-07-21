@@ -219,6 +219,12 @@ def _ensure_app_database() -> None:
             )
 
             ensure_broker_session_table(db_path)
+            # Last: every table above must exist before their stamps can be shifted.
+            from icici_breeze_backend.app.db.ist_timestamp_backfill import (
+                backfill_ist_timestamps_if_needed,
+            )
+
+            backfill_ist_timestamps_if_needed(db_path)
         except Exception:
             _logger.exception("user_account schema migration failed")
 
@@ -297,6 +303,22 @@ def _ensure_scrips_database() -> None:
         )
 
 
+def _ensure_quote_snapshot_schema() -> None:
+    """Snapshot cells are regenerable cache, so they live in scrips.sqlite3 next to
+    the scrip master rather than in the user DB. Must run after
+    `_ensure_scrips_database`, which may re-seed that file from a template."""
+    from icici_breeze_backend.core import config as cfg
+
+    try:
+        from icici_breeze_backend.app.db.quote_snapshot_migrate import (
+            ensure_quote_snapshot_table,
+        )
+
+        ensure_quote_snapshot_table(cfg.DATA_PATH + cfg.SCRIP_DB)
+    except Exception:
+        _logger.exception("quote snapshot schema migration failed")
+
+
 def _enable_wal_mode() -> None:
     """One-time PRAGMA journal_mode=WAL per DB file.
 
@@ -322,6 +344,7 @@ def _enable_wal_mode() -> None:
 def start_application():
     _ensure_app_database()
     _ensure_scrips_database()
+    _ensure_quote_snapshot_schema()
     _enable_wal_mode()
     _ensure_freeze_limit_files()
     import icici_breeze_backend.app.core.config as cfg
@@ -385,6 +408,22 @@ def start_application():
         reset_active_chains_registry()
         bootstrap_reference_data_on_startup()
 
+        from icici_breeze_backend.app.services.ws_quote_snapshot import (
+            load_snapshot_from_sqlite,
+            run_snapshot_flush_loop,
+            snapshot_enabled,
+        )
+
+        snapshot_flush_task: asyncio.Task | None = None
+        if snapshot_enabled():
+            # Rehydrate before serving: a restart (portal upgrade, crash) must not
+            # cost the session's captured depth, and Redis may have been wiped.
+            try:
+                load_snapshot_from_sqlite()
+            except Exception:
+                _logger.exception("Quote snapshot reload failed")
+            snapshot_flush_task = asyncio.create_task(run_snapshot_flush_loop())
+
         from icici_breeze_backend.app.services.ws_tick_pipeline import run_pnl_quote_flush_loop
         from icici_breeze_backend.app.services.portfolio_pnl_engine import (
             pnl_engine_enabled,
@@ -413,12 +452,21 @@ def start_application():
             run_order_feed_watchdog_loop()
         )
 
+        from icici_breeze_backend.app.services.ws_price_feed_watchdog import (
+            run_price_feed_watchdog_loop,
+        )
+
+        price_feed_watchdog_task: asyncio.Task = asyncio.create_task(
+            run_price_feed_watchdog_loop()
+        )
+
         yield
-        order_feed_watchdog_task.cancel()
-        try:
-            await order_feed_watchdog_task
-        except asyncio.CancelledError:
-            pass
+        for watchdog_task in (order_feed_watchdog_task, price_feed_watchdog_task):
+            watchdog_task.cancel()
+            try:
+                await watchdog_task
+            except asyncio.CancelledError:
+                pass
         if task is not None:
             task.cancel()
             try:
@@ -444,6 +492,14 @@ def start_application():
                     await pnl_task
                 except asyncio.CancelledError:
                     pass
+        if snapshot_flush_task is not None:
+            # Cancelling triggers a final flush inside the loop's handler, so an
+            # orderly shutdown persists everything captured since the last tick.
+            snapshot_flush_task.cancel()
+            try:
+                await snapshot_flush_task
+            except asyncio.CancelledError:
+                pass
         from icici_breeze_backend.app.services.breeze_websocket_manager import shutdown_websocket
 
         shutdown_websocket()

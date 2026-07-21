@@ -117,27 +117,27 @@ def normalize_nse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
     cls = safe_float(raw_row.get("ClsPric") or bhav_row_get(raw_row, "ClsPric", "CLSPRIC"), 0.0)
     if cls <= 0:
         return None
-    bid = safe_float(raw_row.get("BidPric") or bhav_row_get(raw_row, "BidPric", "BIDPRIC"), cls)
-    ask = safe_float(raw_row.get("AskPric") or bhav_row_get(raw_row, "AskPric", "ASKPRIC"), cls)
-    vol = max(0, safe_int(raw_row.get("TtlTradgVol") or bhav_row_get(raw_row, "TtlTradgVol"), 0))
-    buy_qty = max(1, vol // 2) if vol > 0 else 0
-    sell_qty = max(0, vol - buy_qty)
+    # Depth is deliberately NOT synthesized. Bhavcopy is an EOD price file with no
+    # order-book columns; the previous `buy_qty = vol // 2` split invented a book
+    # out of traded volume, and defaulting bid/ask to the close invented a
+    # zero-width spread. Both read as real data downstream. Absent keys mean
+    # "unknown", which consumers must treat differently from "no interest".
+    bid_raw = raw_row.get("BidPric") or bhav_row_get(raw_row, "BidPric", "BIDPRIC")
+    ask_raw = raw_row.get("AskPric") or bhav_row_get(raw_row, "AskPric", "ASKPRIC")
+    bid = safe_float(bid_raw, 0.0) if bid_raw else 0.0
+    ask = safe_float(ask_raw, 0.0) if ask_raw else 0.0
     oi = max(0, safe_int(raw_row.get("OpnIntrst") or bhav_row_get(raw_row, "OpnIntrst"), 0))
     spot = safe_float(raw_row.get("UndrlygPric") or bhav_row_get(raw_row, "UndrlygPric"), 0.0)
     prev_close = safe_float(
         raw_row.get("PrvsClsgPric") or bhav_row_get(raw_row, "PrvsClsgPric"), cls
     )
-    return {
+    row = {
         "stock_code": symbol,
         "expiry_display": display_from_iso_date(expiry_key),
         "expiry_date": expiry_key,
         "right": right,
         "strike_price": strike_key(strike),
         "ltp": fmt2(cls),
-        "best_bid_price": fmt2(bid if bid > 0 else cls),
-        "best_offer_price": fmt2(ask if ask > 0 else cls),
-        "total_buy_qty": str(buy_qty),
-        "total_sell_qty": str(sell_qty),
         "open_interest": str(oi),
         "spot_price": fmt2(spot if spot > 0 else cls),
         "open": fmt2(safe_float(raw_row.get("OpnPric"), cls)),
@@ -146,6 +146,12 @@ def normalize_nse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
         "previous_close": fmt2(prev_close if prev_close > 0 else cls),
         "segment": cfg.NFO,
     }
+    # Quoted prices only when the file actually carried them.
+    if bid > 0:
+        row["best_bid_price"] = fmt2(bid)
+    if ask > 0:
+        row["best_offer_price"] = fmt2(ask)
+    return row
 
 
 def normalize_bse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | None:
@@ -185,11 +191,12 @@ def normalize_bse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
     cls = safe_float(bhav_row_get(raw_row, "CLSPRIC", "CLS_PRIC", "CLOSE", "CLOSE_PR"), 0.0)
     if cls <= 0:
         return None
-    bid = safe_float(bhav_row_get(raw_row, "BIDPRIC", "BID_PR", "BID_PRICE"), cls)
-    ask = safe_float(bhav_row_get(raw_row, "ASKPRIC", "ASK_PR", "ASK_PRICE"), cls)
+    # BSE wipes its order book at close, so these columns are routinely absent or
+    # zero in the published file -- pass them through only when genuinely present
+    # rather than defaulting them to the close price.
+    bid_raw = bhav_row_get(raw_row, "BIDPRIC", "BID_PR", "BID_PRICE")
+    ask_raw = bhav_row_get(raw_row, "ASKPRIC", "ASK_PR", "ASK_PRICE")
     vol = max(0, safe_int(bhav_row_get(raw_row, "TTL_TRADG_VOL", "TtlTradgVol", "VOLUME"), 0))
-    buy_qty = max(1, vol // 2) if vol > 0 else 0
-    sell_qty = max(0, vol - buy_qty)
     oi = max(0, safe_int(bhav_row_get(raw_row, "OPN_INTRST", "OpnIntrst", "OPEN_INT"), 0))
     spot = safe_float(bhav_row_get(raw_row, "UNDRLYGPRIC", "UndrlygPric", "UNDERLYING_VAL"), 0.0)
     prev_close = safe_float(bhav_row_get(raw_row, "PRVSCLSNGPRIC", "PrvsClsgPric", "PREV_CLOSE"), cls)
@@ -200,8 +207,8 @@ def normalize_bse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
             "OptnTp": right,
             "StrkPric": strike_raw or strike_key(strike),
             "ClsPric": str(cls),
-            "BidPric": str(bid),
-            "AskPric": str(ask),
+            "BidPric": bid_raw or "",
+            "AskPric": ask_raw or "",
             "TtlTradgVol": str(vol),
             "OpnIntrst": str(oi),
             "UndrlygPric": str(spot),

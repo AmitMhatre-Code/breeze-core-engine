@@ -510,6 +510,25 @@ def has_bhavcopy_quote(
     return _lookup_bhav_row(stock_code, expiry_display, right, strike, exchange_code) is not None
 
 
+def _optional_int(raw: Any) -> int | None:
+    """Distinguish "unknown" (absent/blank) from a real zero."""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(raw: Any) -> float | None:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _row_to_chain_cell(
     row: dict[str, str],
     stock_code: str,
@@ -518,10 +537,16 @@ def _row_to_chain_cell(
     right: str,
     lot_val: int,
 ) -> dict[str, Any]:
-    total_buy = safe_int(row.get("total_buy_qty"), 0)
-    total_sell = safe_int(row.get("total_sell_qty"), 0)
-    if total_sell > 0:
-        ratio: float | str = total_buy / total_sell
+    # None (not 0) when bhavcopy carried no order-book columns -- see
+    # `bhavcopy_common.normalize_nse_fo_bhavcopy_row`. Coercing unknown depth to
+    # zero makes every EOD contract look like it has no bids.
+    total_buy = _optional_int(row.get("total_buy_qty"))
+    total_sell = _optional_int(row.get("total_sell_qty"))
+    ratio: float | str | None
+    if total_buy is None or total_sell is None:
+        ratio = None
+    elif total_sell > 0:
+        ratio = total_buy / total_sell
     else:
         ratio = 0.0 if total_buy == 0 else "NA"
     strike_val = parse_strike(row.get("strike_price"))
@@ -535,8 +560,8 @@ def _row_to_chain_cell(
         "total_buy_qty": total_buy,
         "total_sell_qty": total_sell,
         "buy_sell_ratio": ratio,
-        "best_bid_price": safe_float(row.get("best_bid_price")),
-        "best_offer_price": safe_float(row.get("best_offer_price")),
+        "best_bid_price": _optional_float(row.get("best_bid_price")),
+        "best_offer_price": _optional_float(row.get("best_offer_price")),
         "spot_price": safe_float(row.get("spot_price")),
         "lot_size": lot_val,
     }

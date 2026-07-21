@@ -108,27 +108,35 @@ def resolve_nearest_expiry(exchange_code: str, stock_code: str, *, today: date |
     return None
 
 
-def maybe_trigger_system_prefetch(user_id: str) -> None:
+def maybe_trigger_system_prefetch(user_id: str, *, force: bool = False) -> None:
     """Fire-and-forget. Call from an authenticated request (needs the
     broker-token contextvar already set for this request). Safe to call on
     every request; near-zero cost once today's prefetch has already run.
 
     Gated on `is_trading_day()`, not `is_market_open()` -- deliberately allows
-    pre-market logins to subscribe immediately (WS tokens subscribe fine before
-    the open, they just won't tick until 9:15) so chains are already warm the
+    pre-market logins to subscribe immediately so chains are already warm the
     moment the market opens, instead of waiting for the first post-open
-    authenticated request to discover the gate has lifted.
+    authenticated request to discover the gate has lifted. Whether ICICI
+    actually honours a pre-open subscription is *not* something this code
+    assumes any more: `ws_price_feed_watchdog` re-subscribes unconditionally at
+    the open, so a subscription that didn't survive the bell self-heals.
+
+    `force=True` ignores the once-per-day guard and re-issues every subscribe.
+    That guard is set from what we *asked* ICICI for, never from ticks actually
+    arriving, so a day marked done can still be a day with a dead feed -- which
+    is why a fresh broker session always forces (a restart used to be the only
+    way out of that state).
     """
     if not is_trading_day():
         return
     today = datetime.now(IST).date()
     with _lock:
         global _prefetch_in_progress, _prefetch_last_attempt_monotonic
-        if _prefetch_date == today and not _prefetch_last_error:
+        if _prefetch_date == today and not _prefetch_last_error and not force:
             return
         if _prefetch_in_progress:
             return
-        if _prefetch_date == today and _prefetch_last_error:
+        if _prefetch_date == today and _prefetch_last_error and not force:
             last = _prefetch_last_attempt_monotonic
             if last is not None and (time.monotonic() - last) < _RETRY_COOLDOWN_SECONDS:
                 return
@@ -139,10 +147,12 @@ def maybe_trigger_system_prefetch(user_id: str) -> None:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         # No running event loop (e.g. a sync test call) -- run inline rather than dropping it.
-        _run_system_prefetch_blocking(user_id, today)
+        _run_system_prefetch_blocking(user_id, today, force=force)
         return
 
-    task = loop.create_task(asyncio.to_thread(_run_system_prefetch_blocking, user_id, today))
+    task = loop.create_task(
+        asyncio.to_thread(_run_system_prefetch_blocking, user_id, today, force=force)
+    )
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
@@ -163,13 +173,14 @@ def start_prefetch_for_new_broker_session(user_id: str, broker_token: str) -> No
         from icici_breeze_backend.app.auth.context import set_broker_token_for_request
 
         set_broker_token_for_request(broker_token)
-        maybe_trigger_system_prefetch(user_id)
+        maybe_trigger_system_prefetch(user_id, force=True)
     except Exception:
         _logger.debug("system prefetch trigger (login path) failed", exc_info=True)
 
 
-def _run_system_prefetch_blocking(user_id: str, today: date) -> None:
+def _run_system_prefetch_blocking(user_id: str, today: date, *, force: bool = False) -> None:
     from icici_breeze_backend.app.services.breeze_websocket_manager import (
+        ensure_order_feed,
         release_holder,
         sync_holder_chain_subscriptions,
     )
@@ -181,11 +192,18 @@ def _run_system_prefetch_blocking(user_id: str, today: date) -> None:
     proc = Processor()
     errors: list[str] = []
     try:
-        if not sync_index_spot_subscriptions(proc, user_id):
+        if not sync_index_spot_subscriptions(proc, user_id, force=force):
             errors.append("index-spot: no live broker session")
     except Exception:
         errors.append("index-spot: subscribe raised an exception")
         _logger.warning("index spot subscription sync failed", exc_info=True)
+    if force:
+        # Arm the order feed on the same trigger. Cheap: re-arming is a no-op when
+        # the SDK's order socket is already up (it guards on `orderconnect == 0`).
+        try:
+            ensure_order_feed(proc, user_id)
+        except Exception:
+            _logger.warning("order feed arm during prefetch failed", exc_info=True)
     expiries: dict[str, str] = {}
     subscribed_at: dict[str, float] = {}
     for exchange_code, stock_code, label in _SCRIPS:
@@ -202,7 +220,9 @@ def _run_system_prefetch_blocking(user_id: str, today: date) -> None:
             # forever, so it must self-clean before each day's subscribe or a weekly
             # expiry rollover leaks a permanently-stale chain into `chain:active`.
             release_holder(holder_id)
-            ok = sync_holder_chain_subscriptions(proc, user_id, holder_id, stock_code, exchange_code, expiry)
+            ok = sync_holder_chain_subscriptions(
+                proc, user_id, holder_id, stock_code, exchange_code, expiry, force=force
+            )
             if not ok:
                 errors.append(f"{label}: chain subscribe failed (no live broker session)")
                 continue

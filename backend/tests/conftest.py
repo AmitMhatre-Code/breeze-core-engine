@@ -40,3 +40,19 @@ def exchange_calendar_db(tmp_path, monkeypatch):
     db_path = str(tmp_path / "exchange_calendar_default.sqlite3")
     ensure_exchange_calendar_table(db_path)
     monkeypatch.setattr(ec_repo, "_db_path", lambda: db_path)
+
+
+@pytest.fixture(autouse=True)
+def isolate_quote_snapshot_keys():
+    """Purge the durable quote-snapshot keys around every test.
+
+    Unlike every other quote cache these are written with NO TTL (that is the
+    whole point -- they must outlive the session), so on a dev machine with a
+    real Redis they otherwise survive across test runs and leak into unrelated
+    tests' view of `snapshot_is_fresh`.
+    """
+    from icici_breeze_backend.app.db.redis_client import cache_delete_pattern
+
+    cache_delete_pattern("quotes:snapshot:*")
+    yield
+    cache_delete_pattern("quotes:snapshot:*")

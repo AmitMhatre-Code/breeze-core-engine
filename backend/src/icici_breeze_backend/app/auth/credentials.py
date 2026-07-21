@@ -7,6 +7,7 @@ from base64 import urlsafe_b64encode
 import hashlib
 
 from icici_breeze_backend.app.core.config import JWT_SECRET, DATA_PATH, USERS_DB
+from icici_breeze_backend.app.core.timezone import SQLITE_NOW_IST, ist_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,7 @@ class CredentialManager:
             user_id=user_id, broker_api_key=broker_api_key,
             secret_fragment=encrypted_fragment, encryption_salt=b"",
             fragment_position=fragment_position,
-            created_at=datetime.utcnow().isoformat(), is_active=True
+            created_at=ist_timestamp(), is_active=True
         )
 
     def reconstruct_full_api_secret(self, user_id: str, user_provided_fragment: str) -> Optional[str]:
@@ -274,8 +275,8 @@ class CredentialManager:
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    "UPDATE user_credentials SET is_active = 0, rotated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1",
-                    (user_id,)
+                    "UPDATE user_credentials SET is_active = 0, rotated_at = ? WHERE user_id = ? AND is_active = 1",
+                    (ist_timestamp(), user_id)
                 )
                 try:
                     cipher = Fernet(self.encryption_key.encode() if isinstance(self.encryption_key, str) else self.encryption_key)
@@ -289,7 +290,7 @@ class CredentialManager:
                 encrypted = cipher.encrypt(new_secret_fragment.encode())
                 credential_id = str(uuid.uuid4())
                 cur.execute(
-                    "INSERT INTO user_credentials (credential_id, user_id, broker_api_key, secret_fragment, encryption_salt, fragment_position, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), 1)",
+                    f"INSERT INTO user_credentials (credential_id, user_id, broker_api_key, secret_fragment, encryption_salt, fragment_position, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, {SQLITE_NOW_IST}, 1)",
                     (credential_id, user_id, '', encrypted, b'', 'first_half'),
                 )
                 conn.commit()
@@ -308,8 +309,8 @@ class CredentialManager:
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    "UPDATE user_credentials SET is_active = 0, rotated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1",
-                    (user_id,),
+                    "UPDATE user_credentials SET is_active = 0, rotated_at = ? WHERE user_id = ? AND is_active = 1",
+                    (ist_timestamp(), user_id),
                 )
                 try:
                     cipher = Fernet(self.encryption_key.encode() if isinstance(self.encryption_key, str) else self.encryption_key)
@@ -323,7 +324,7 @@ class CredentialManager:
                 encrypted = cipher.encrypt(secret_fragment.encode())
                 credential_id = str(uuid.uuid4())
                 cur.execute(
-                    "INSERT INTO user_credentials (credential_id, user_id, broker_api_key, secret_fragment, encryption_salt, fragment_position, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), 1)",
+                    f"INSERT INTO user_credentials (credential_id, user_id, broker_api_key, secret_fragment, encryption_salt, fragment_position, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, {SQLITE_NOW_IST}, 1)",
                     (credential_id, user_id, broker_api_key, encrypted, b"", "first_half"),
                 )
                 conn.commit()
@@ -340,8 +341,8 @@ class CredentialManager:
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    "UPDATE user_credentials SET is_active = 0, rotated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1",
-                    (user_id,)
+                    "UPDATE user_credentials SET is_active = 0, rotated_at = ? WHERE user_id = ? AND is_active = 1",
+                    (ist_timestamp(), user_id)
                 )
                 affected = cur.rowcount
                 conn.commit()

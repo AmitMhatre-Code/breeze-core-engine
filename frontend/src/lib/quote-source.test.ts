@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatDepthAsOf,
   formatQuoteAsOf,
   formatQuoteSourceDetail,
   formatQuoteSourceLabel,
@@ -31,6 +32,7 @@ describe("quoteMetaFromChain", () => {
     });
     expect(meta).toEqual({
       quote_source: "websocket",
+      depth_as_of: null,
       bhavcopy_date: null,
       quote_as_of: "2026-06-27T10:15:00+05:30",
       bhavcopy_stale: false,
@@ -117,5 +119,43 @@ describe("isBhavcopyStale", () => {
       isBhavcopyStale({ quote_source: "websocket", bhavcopy_stale: true }),
     ).toBe(false);
     expect(isBhavcopyStale(null)).toBe(false);
+  });
+});
+
+describe("snapshot quote source", () => {
+  const snapshotMeta: QuoteMeta = {
+    quote_source: "snapshot",
+    depth_as_of: "2026-06-27T15:29:41+05:30",
+    quote_as_of: "2026-06-27T15:29:41+05:30",
+  };
+
+  it("is recognised as a valid source on the chain payload", () => {
+    expect(
+      quoteMetaFromChain({ ...baseChain, quote_source: "snapshot" })
+        ?.quote_source,
+    ).toBe("snapshot");
+  });
+
+  it("is never treated as live", () => {
+    expect(isLiveQuoteSource(snapshotMeta)).toBe(false);
+  });
+
+  it("labels itself as captured session-close data", () => {
+    expect(formatQuoteSourceLabel(snapshotMeta)).toBe("Session close (captured)");
+  });
+
+  it("explains that BSE clears its book at close", () => {
+    expect(formatQuoteSourceDetail(snapshotMeta)).toContain("order book");
+  });
+
+  it("surfaces when the depth was actually captured", () => {
+    expect(formatDepthAsOf(snapshotMeta)).toBe("Depth as of 03:29 pm");
+    expect(formatQuoteAsOf(snapshotMeta)).toBe("Depth as of 03:29 pm");
+  });
+
+  it("has no depth line when the chain carried no capture time", () => {
+    expect(formatDepthAsOf({ quote_source: "snapshot" })).toBeNull();
+    expect(formatDepthAsOf({ quote_source: "bhavcopy" })).toBeNull();
+    expect(formatDepthAsOf(null)).toBeNull();
   });
 });

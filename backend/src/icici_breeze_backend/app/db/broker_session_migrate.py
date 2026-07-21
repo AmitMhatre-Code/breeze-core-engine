@@ -18,7 +18,7 @@ def ensure_broker_session_table(db_path: str) -> None:
                 user_id TEXT PRIMARY KEY NOT NULL,
                 encrypted_token TEXT NOT NULL,
                 expires_at TIMESTAMP NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
             )
             """
         )

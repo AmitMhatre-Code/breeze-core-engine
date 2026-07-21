@@ -49,7 +49,7 @@ export const POP_HELP_DISCLAIMER = popTopic?.body[3] ?? "";
 
 /** Quote source detail lines — kept in sync with quote-sources help topic */
 export function quoteSourceDetailLine(
-  source: "websocket" | "bhavcopy" | "icici_api",
+  source: "websocket" | "bhavcopy" | "icici_api" | "snapshot",
   bhavcopyDate?: string | null,
   bhavcopyStale?: boolean,
 ): string {
@@ -67,6 +67,8 @@ export function quoteSourceDetailLine(
     }
     case "icici_api":
       return "Quotes were fetched via the ICICI Breeze REST API because live WebSocket or Bhavcopy data was unavailable.";
+    case "snapshot":
+      return "Prices and market depth captured from the live feed during the last session, held after close. BSE clears its order book the moment the market closes, so this is the only post-close source that still shows a real bid/offer book — it will not change until the next session opens.";
     default:
       return "Quote source could not be determined.";
   }

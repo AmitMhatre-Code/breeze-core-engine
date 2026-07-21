@@ -33,6 +33,7 @@ Consequences that follow, and are easy to get wrong later:
 """
 from __future__ import annotations
 
+import datetime
 import logging
 from typing import Any, Iterable
 
@@ -210,36 +211,79 @@ def _maybe_complete(
             _logger.info("SG %s completed", rule.id)
 
 
-def reconcile_fired_rules_from_orders(
-    user_id: str, raw_orders: Iterable[dict[str, Any]]
-) -> None:
-    """REST backstop for the fired→Completed transition, driven from an order book the
-    caller already fetched (no extra ICICI round-trip).
+def order_window_for_fired_rule(rule: SquareOffRuleRecord) -> tuple[str, str] | None:
+    """The `get_orders` range that contains this SG's own exit orders: the day it fired
+    through the next weekday, or None if `fired_at` is missing/unparseable.
+
+    Anchored to `fired_at`, NOT to today, and that is the whole point. The exits were
+    placed the moment the SG fired, so an SG stranded on `fired` last Thursday is only
+    confirmable against last Thursday's book — a "today" window returns rows that simply
+    do not contain its order_ids, which is indistinguishable from "not executed yet" and
+    strands it permanently. It also keeps the range inside ICICI's 10-day `get_orders`
+    cap no matter how old the SG is.
+
+    `fired_at` is now IST (`core.timezone.ist_timestamp`), so its date matches the one
+    ICICI dates the orders by and no longer needs correcting — this used to be a UTC
+    stamp that could lag the IST date around midnight. The window still runs through to
+    the next weekday, but now purely to cover an exit that fills the following session,
+    not to absorb a timezone skew.
+    """
+    raw = (rule.fired_at or "").strip()
+    if not raw:
+        return None
+    try:
+        start = datetime.date.fromisoformat(raw[:10])
+    except ValueError:
+        _logger.warning("SG %s has unparseable fired_at=%r", rule.id, raw)
+        return None
+    end = start
+    while True:
+        end += datetime.timedelta(days=1)
+        if end.weekday() < 5:
+            break
+    return start.isoformat(), end.isoformat()
+
+
+def reconcile_fired_rules_for_user(user_id: str, breeze) -> None:
+    """REST backstop for the fired→Completed transition, over a window derived from each
+    SG's own fire date.
 
     The WS order feed drives Completed in real time (`on_order_notification`), but a
     dropped or late notification would strand a fully-exited SG on `fired` forever — the
     Orders page would show every exit order Executed while the SG badge stayed Fired. This
     re-runs the same guarded completion check from authoritative REST state, so a missed
-    event self-heals on the next book fetch.
+    event self-heals the next time the exit board is loaded.
 
     Deliberately completion-only. A `fired` SG must NEVER be Reset from a position diff
     (see module docstring): its own exits legitimately change legs, so a REST snapshot
     cannot attribute a change. `_maybe_complete`'s open-leg guard already keeps a leftover
     leg (e.g. a manual add whose foreign-fill WS event was itself missed) from producing a
     *false* Completed — the fail-safe outcome there is to stay Fired, not to guess Reset.
-    Best-effort: never raises, so it can't break the book fetch it hangs off.
+
+    Costs one `get_orders` per distinct fire-date, and only when the user actually has a
+    fired SG — the common case (none) issues no broker call at all. Best-effort: never
+    raises, so it can't break the response it hangs off.
     """
     try:
-        status_by_id = {
-            oid: str(o.get("status") or "").strip().lower()
-            for o in raw_orders
-            if isinstance(o, dict)
-            for oid in (str(o.get("order_id") or ""),)
-            if oid
-        }
-        for rule in repo.list_fired_rules_for_user(user_id):
-            _maybe_complete(user_id, rule, status_by_id=status_by_id)
-    except Exception:  # noqa: BLE001 — reconcile is best-effort; never break the book fetch
+        rules = repo.list_fired_rules_for_user(user_id)
+        if not rules:
+            return
+        by_window: dict[tuple[str, str], list[SquareOffRuleRecord]] = {}
+        for rule in rules:
+            window = order_window_for_fired_rule(rule)
+            if window is None:
+                continue  # no fire date to anchor to; the WS path is all that can resolve it
+            by_window.setdefault(window, []).append(rule)
+        for window, group in by_window.items():
+            order_ids = {oid for rule in group for oid in repo.order_ids_for_rule(rule)}
+            if not order_ids:
+                continue
+            statuses = _order_statuses(breeze, user_id, order_ids, window=window)
+            if not statuses:
+                continue  # couldn't read the book — leave Fired; the next load retries
+            for rule in group:
+                _maybe_complete(user_id, rule, status_by_id=statuses)
+    except Exception:  # noqa: BLE001 — reconcile is best-effort; never break the response
         _logger.exception("Fired-SG reconcile failed for user_id=%s", user_id)
 
 
@@ -333,17 +377,28 @@ def _open_leg_count(user_id: str, rule: SquareOffRuleRecord) -> int:
     )
 
 
-def _order_statuses(breeze, user_id: str, order_ids: set[str]) -> dict[str, str]:
+def _order_statuses(
+    breeze,
+    user_id: str,
+    order_ids: set[str],
+    *,
+    window: tuple[str, str] | None = None,
+) -> dict[str, str]:
     """order_id -> lowercased broker status, read from the REST order book.
 
     REST-authoritative on purpose: a dropped WS notification must never be able to make
     an orphaned order *look* terminal, because that would unblock re-arming and let a
     second exit order stack on top of a live one.
+
+    `window` overrides the default today-through-next-weekday range. Callers reasoning
+    about orders from an earlier session (the fired-SG reconcile) must pass one — today's
+    book cannot confirm an order placed last week, and an absent row reads exactly like
+    an unfilled one.
     """
     from icici_breeze_backend.app.services.strategy_group_arm_guard import today_order_window
 
     try:
-        start, end = today_order_window()
+        start, end = window if window is not None else today_order_window()
         resp = breeze.get_orders(user_id, start=start, end=end)
     except Exception:  # noqa: BLE001
         _logger.exception("Could not read order book for user_id=%s", user_id)

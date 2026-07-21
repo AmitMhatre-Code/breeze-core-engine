@@ -71,8 +71,11 @@ def annualized_carry_percent_on_span(
 
 
 def quote_from_api(strike: Strike, right: Right, payload: dict) -> QuoteRow:
-    tb = int(payload.get("total_buy_qty") or 0)
-    ts = int(payload.get("total_sell_qty") or 0)
+    raw_tb = payload.get("total_buy_qty")
+    raw_ts = payload.get("total_sell_qty")
+    depth_known = raw_tb is not None or raw_ts is not None
+    tb = int(raw_tb or 0)
+    ts = int(raw_ts or 0)
     ratio: float | str = 0.0
     if ts > 0:
         ratio = round(tb / ts, 4)
@@ -89,6 +92,7 @@ def quote_from_api(strike: Strike, right: Right, payload: dict) -> QuoteRow:
         buy_sell_ratio=ratio,
         spot_price=parse_float(payload.get("spot_price")) if payload.get("spot_price") is not None else None,
         oi=int(payload.get("open_interest") or payload.get("oi") or 0),
+        depth_known=depth_known,
     )
 
 

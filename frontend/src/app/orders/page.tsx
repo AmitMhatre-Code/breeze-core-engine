@@ -28,6 +28,7 @@ import { Checkbox } from "@/components/ui/Checkbox";
 import { Modal } from "@/components/ui/Modal";
 import { apiClient } from "@/lib/api-client";
 import { fetchBreakChunkDefaults } from "@/lib/break-chunk-defaults";
+import { formatIsoDateDdMmmYyyy } from "@/lib/format-iso-date";
 import {
   formatOptionSymbolLabel,
   snapQuantityToLotMultiple,
@@ -50,6 +51,7 @@ import {
 } from "@/lib/parked-orders";
 import {
   buildExitRuleRows,
+  filterExitRuleRowsByResolvedDate,
   isExitRuleActive,
   type ExitRuleEffectiveStatus,
   type ExitRuleRow,
@@ -323,6 +325,9 @@ const cancelOutlineBtnSmallClass =
 
 const modifyOutlineBtnSmallClass =
   "inline-flex items-center justify-center rounded-md border border-accent/40 bg-transparent px-2.5 py-1 text-hint font-semibold text-accent-strong transition hover:bg-accent-tint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50";
+
+const exitRuleScopeLinkClass =
+  "rounded-sm font-semibold text-accent-strong underline decoration-dotted underline-offset-2 transition hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
 
 const cloneToPlaceBtnClass =
   "inline-flex rounded-md p-1.5 text-faint transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40";
@@ -1113,6 +1118,9 @@ function OrdersBody() {
   const [exitRuleTab, setExitRuleTab] = useState<"active" | "history">(
     "active",
   );
+  /** History tab only — whether resolved rules are clipped to the Order Book's range.
+   * On by default so the two tables agree; the caption below offers the way out. */
+  const [historyScopedToRange, setHistoryScopedToRange] = useState(true);
 
   const squareOffExitBoardQuery = useQuery({
     queryKey: ["exit-rules", "squareoff"],
@@ -1134,7 +1142,7 @@ function OrdersBody() {
       ),
     [squareOffExitBoardQuery.data, gttExitBoardQuery.data, data?.rule_spawned_orders],
   );
-  const exitRuleRowsForTab = useMemo(
+  const exitRuleRowsForTabUnscoped = useMemo(
     () =>
       exitRuleRows.filter((row) =>
         exitRuleTab === "active"
@@ -1143,6 +1151,33 @@ function OrdersBody() {
       ),
     [exitRuleRows, exitRuleTab],
   );
+  /** The range actually in effect for the order book: `appliedRange` once the user has
+   * fetched, otherwise the backend-resolved default it echoes back on `/book/data`. */
+  const effectiveRange = useMemo(() => {
+    const start = appliedRange?.start ?? data?.start ?? "";
+    const end = appliedRange?.end ?? data?.end ?? "";
+    return start && end ? { start, end } : null;
+  }, [appliedRange, data?.start, data?.end]);
+  /** Non-null only while the History tab is showing and clipping is on — Active rules
+   * have no resolved date to scope by, so the range is meaningless there. */
+  const historyRangeScope = useMemo(
+    () =>
+      exitRuleTab === "history" && historyScopedToRange ? effectiveRange : null,
+    [exitRuleTab, historyScopedToRange, effectiveRange],
+  );
+  const exitRuleRowsForTab = useMemo(
+    () =>
+      historyRangeScope
+        ? filterExitRuleRowsByResolvedDate(
+            exitRuleRowsForTabUnscoped,
+            historyRangeScope.start,
+            historyRangeScope.end,
+          )
+        : exitRuleRowsForTabUnscoped,
+    [exitRuleRowsForTabUnscoped, historyRangeScope],
+  );
+  const historyHiddenCount =
+    exitRuleRowsForTabUnscoped.length - exitRuleRowsForTab.length;
   const allExitRuleOrders = useMemo(
     () => exitRuleRows.flatMap((row) => row.orders),
     [exitRuleRows],
@@ -2423,6 +2458,40 @@ function OrdersBody() {
             Rules armed from Portfolio, and the broker orders they&apos;ve placed.
             Orders here are excluded from Order Book above.
           </p>
+          {exitRuleTab === "history" && effectiveRange ? (
+            <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-faint">
+              {historyScopedToRange ? (
+                <>
+                  <span>
+                    Resolved {formatIsoDateDdMmmYyyy(effectiveRange.start)} to{" "}
+                    {formatIsoDateDdMmmYyyy(effectiveRange.end)}, matching Order
+                    Book
+                    {historyHiddenCount > 0
+                      ? ` · ${historyHiddenCount} outside this range hidden`
+                      : ""}
+                  </span>
+                  <button
+                    type="button"
+                    className={exitRuleScopeLinkClass}
+                    onClick={() => setHistoryScopedToRange(false)}
+                  >
+                    Show all
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span>Showing every resolved rule, ignoring the date range.</span>
+                  <button
+                    type="button"
+                    className={exitRuleScopeLinkClass}
+                    onClick={() => setHistoryScopedToRange(true)}
+                  >
+                    Limit to Order Book range
+                  </button>
+                </>
+              )}
+            </p>
+          ) : null}
         </div>
 
         {squareOffExitBoardQuery.isLoading || gttExitBoardQuery.isLoading ? (
@@ -2435,7 +2504,9 @@ function OrdersBody() {
           <div className="app-card-muted mx-[18px] mb-4 border-dashed p-8 text-center text-sm app-text-muted">
             {exitRuleTab === "active"
               ? "No active Profit Booking / Stop Loss rules."
-              : "No resolved Profit Booking / Stop Loss rules yet."}
+              : historyHiddenCount > 0
+                ? "No rules resolved in this date range."
+                : "No resolved Profit Booking / Stop Loss rules yet."}
           </div>
         ) : (
           <div className="px-[18px] pb-4">

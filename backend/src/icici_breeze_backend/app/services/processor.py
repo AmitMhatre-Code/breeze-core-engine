@@ -72,6 +72,13 @@ def _icici_option_chain_enums(product_type: str, right: str) -> tuple[str, str]:
     return pt, rt
 
 
+def _positive_number(raw: Any) -> bool:
+    try:
+        return float(raw) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _uncovered_scan_row_has_bid_side(i: dict, exchange_code: str) -> bool:
     """Selling needs bid-side interest; BFO often returns total_buy_qty=0 in chain while LTP/bid exist (see get_full_option_chain BFO note)."""
     try:
@@ -79,7 +86,10 @@ def _uncovered_scan_row_has_bid_side(i: dict, exchange_code: str) -> bool:
             return True
     except (TypeError, ValueError):
         pass
-    if exchange_code != cfg.BFO:
+    # `None` means the source carried no order book (bhavcopy, or BSE post-close),
+    # which is not evidence that nobody is bidding -- fall through to price
+    # evidence on every exchange rather than declaring the strike unsellable.
+    if i.get("total_buy_qty") is not None and exchange_code != cfg.BFO:
         return False
     try:
         if float(i.get("best_bid_price") or 0) > 0:
@@ -871,7 +881,11 @@ class processor():
                     strike_f = parse_strike(i["strike_price"])
                     if strike_f is None:
                         continue
-                    if int(i["total_buy_qty"]) > 0 and ((right == cfg.CALL and strike_f < range_lower and strike_f > float(i['spot_price'])) or (right == cfg.PUT and strike_f > range_upper and strike_f < float(i['spot_price'])) ):
+                    # None = unknown book (bhavcopy / BSE post-close), which must not
+                    # exclude the strike the way a confirmed zero does.
+                    _buy_qty = i.get("total_buy_qty")
+                    _has_bid_side = _buy_qty is None or int(_buy_qty or 0) > 0
+                    if _has_bid_side and ((right == cfg.CALL and strike_f < range_lower and strike_f > float(i['spot_price'])) or (right == cfg.PUT and strike_f > range_upper and strike_f < float(i['spot_price'])) ):
                         temp = {}
                         temp['stock_code'] = stock_code
                         temp['sell_leg'] = sell_leg
@@ -884,12 +898,17 @@ class processor():
                         temp['buy_leg']['total_sell_qty'] = i['total_sell_qty']
                         temp['buy_leg']['spot_price'] = i['spot_price']
                         temp['buy_leg']['spot_distance'] = abs(float(i['spot_price']) - float(i["strike_price"])) / float(i["strike_price"])
-                        temp['buy_leg']['buy_sell_ratio'] = int(i['total_buy_qty'])/int(i['total_sell_qty'])
+                        _sell_qty = i.get('total_sell_qty')
+                        temp['buy_leg']['buy_sell_ratio'] = (
+                            int(_buy_qty) / int(_sell_qty)
+                            if _buy_qty is not None and _sell_qty not in (None, 0)
+                            else None
+                        )
                         temp['expiry_date'] = _expiry_api_to_display(expiry_date)
                         temp['right'] = right
 
                         temp['buy_leg']['quantity'] = math.floor(sell_leg['premium'] / temp['buy_leg']['best_offer_price'] / lot_size) * lot_size
-                        if temp['buy_leg']['quantity'] <= int(i['total_sell_qty']):
+                        if _sell_qty is None or temp['buy_leg']['quantity'] <= int(_sell_qty):
                             temp['buy_leg']['best_offer_price'] = i["best_offer_price"]
                             if right == cfg.CALL:
                                 temp['profit'] = temp['buy_leg']['quantity'] * (range_lower - strike_f)
@@ -1073,13 +1092,18 @@ class processor():
                         if elm == cfg.CHECKED:
                             margin = margin + (float(temp['spot_price']) * float(lot_size) * cfg.ELM)
                         temp['quantity'] = math.floor(limits * 100000 / margin) * lot_size
+                        depth_known = i.get("total_buy_qty") is not None
                         buy_cap = int(i.get("total_buy_qty") or 0)
                         book_ok = buy_cap > 0 and temp["quantity"] <= buy_cap
-                        if exchange_code == cfg.BFO and buy_cap == 0 and temp["quantity"] > 0:
+                        # Can't size against a book we don't have: an unknown or
+                        # BSE-wiped book must not cap the line to zero.
+                        if not depth_known and temp["quantity"] > 0:
+                            book_ok = True
+                        elif exchange_code == cfg.BFO and buy_cap == 0 and temp["quantity"] > 0:
                             book_ok = True
                         if book_ok:
                             bid_for_prem = float(i.get("best_bid_price") or 0)
-                            if bid_for_prem <= 0 and exchange_code == cfg.BFO:
+                            if bid_for_prem <= 0:
                                 bid_for_prem = float(i.get("ltp") or 0)
                             temp['best_bid_price'] = i["best_bid_price"]
                             temp['premium'] = temp['quantity'] * bid_for_prem
@@ -1152,7 +1176,9 @@ class processor():
                         sorted_options['Status'] = 400
                         sorted_options['Error'] = f"Error calling ICICI Breeze API get_quote({stock_code},{expiry_date},{product_type},{right},{strike_price}): {e}"
                 else:
-                    if int(option['total_sell_qty']) > 0:
+                    if option.get('total_sell_qty') is None or option.get('total_buy_qty') is None:
+                        option['buy_sell_ratio'] = None
+                    elif int(option['total_sell_qty']) > 0:
                         option['buy_sell_ratio'] = int(option['total_buy_qty'])/int(option['total_sell_qty'])
                     else:
                         option['buy_sell_ratio'] = "NA"
@@ -1946,8 +1972,10 @@ class processor():
         if option['ltp'] == 0:
             valid_hedge = False
         
-        # Can't buy as hedge if there are no sellers!
-        if int(option['total_sell_qty']) == 0:
+        # Can't buy as hedge if there are no sellers -- but an unknown book (None:
+        # bhavcopy has no depth, BSE wipes its book at close) is not the same as a
+        # confirmed empty one, so only disqualify on a real zero.
+        if option.get('total_sell_qty') is not None and int(option['total_sell_qty']) == 0:
             valid_hedge = False
         
         # Can't buy hedge if option is not liquid on the day. This also means you can't be the first buyer in the market for the hedge
@@ -2103,11 +2131,31 @@ class processor():
         lot_size = self.fetch_lot_size(stock_code, expiry_display, exchange_code=exchange_code)
         lot_val = lot_size if lot_size is not None else 0
         rows: list[dict[str, Any]] = []
+        market_closed = not is_market_open()
         for i in raw_rows:
             try:
-                total_buy = int(i.get("total_buy_qty") or 0)
-                total_sell = int(i.get("total_sell_qty") or 0)
-                if total_sell > 0:
+                total_buy: int | None = int(i.get("total_buy_qty") or 0)
+                total_sell: int | None = int(i.get("total_sell_qty") or 0)
+                # BSE resets its entire market-depth block the moment the session
+                # closes, so a post-close REST quote reports a zero book for every
+                # BFO contract regardless of how liquid it actually was. Report
+                # that as unknown rather than as "nobody is trading this".
+                if (
+                    market_closed
+                    and exchange_code == cfg.BFO
+                    and total_buy == 0
+                    and total_sell == 0
+                ):
+                    total_buy = None
+                    total_sell = None
+                    # The same reset zeroes the quoted prices, not just the sizes.
+                    if not _positive_number(i.get("best_bid_price")):
+                        i = {**i, "best_bid_price": None}
+                    if not _positive_number(i.get("best_offer_price")):
+                        i = {**i, "best_offer_price": None}
+                if total_buy is None or total_sell is None:
+                    ratio = None
+                elif total_sell > 0:
                     ratio = total_buy / total_sell
                 else:
                     ratio = 0.0 if total_buy == 0 else None
@@ -2126,7 +2174,13 @@ class processor():
                         "open_interest": oi_val,
                         "total_buy_qty": total_buy,
                         "total_sell_qty": total_sell,
-                        "buy_sell_ratio": ratio if ratio is not None else "NA",
+                        # None only when depth is unknown; "NA" still means the real
+                        # "bids exist, no offers" case the frontend already renders.
+                        "buy_sell_ratio": (
+                            None
+                            if total_buy is None or total_sell is None
+                            else (ratio if ratio is not None else "NA")
+                        ),
                         "best_bid_price": i.get("best_bid_price"),
                         "best_offer_price": i.get("best_offer_price"),
                         "spot_price": i.get("spot_price"),

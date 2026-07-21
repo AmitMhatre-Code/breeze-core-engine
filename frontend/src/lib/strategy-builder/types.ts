@@ -28,7 +28,7 @@ export type ChainRow = {
   put?: Record<string, unknown> | null;
 };
 
-export type QuoteSource = "websocket" | "bhavcopy" | "icici_api";
+export type QuoteSource = "websocket" | "bhavcopy" | "icici_api" | "snapshot";
 
 export type QuoteMeta = {
   quote_source: QuoteSource;
@@ -36,6 +36,12 @@ export type QuoteMeta = {
   quote_as_of?: string | null;
   /** True once a trading session has opened after `bhavcopy_date` — EOD prices are known stale. */
   bhavcopy_stale?: boolean;
+  /**
+   * When the market depth in this chain was actually captured (last live tick
+   * before close). Only set for `snapshot`-sourced chains — bhavcopy carries no
+   * depth at all, and BSE wipes its book the moment the session ends.
+   */
+  depth_as_of?: string | null;
 };
 
 export type ChainSuccess = {
@@ -55,6 +61,7 @@ export type ChainSuccess = {
   bhavcopy_date?: string | null;
   quote_as_of?: string | null;
   bhavcopy_stale?: boolean;
+  depth_as_of?: string | null;
 };
 
 export type ChainApiResponse = {

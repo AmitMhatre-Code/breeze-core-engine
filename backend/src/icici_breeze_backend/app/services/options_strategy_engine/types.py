@@ -57,9 +57,20 @@ class QuoteRow:
     iv: float | None = None
     delta: float | None = None
     liquidity_score: float = 0.0
+    # False when the source carried no order book at all (bhavcopy has no depth
+    # columns; BSE zeroes its book at close). The numeric fields stay non-optional
+    # so every strategy module keeps its existing arithmetic -- only the gates
+    # that would otherwise read "unknown" as "no interest" consult this.
+    depth_known: bool = True
 
     @property
     def liquid(self) -> bool:
+        if not self.depth_known:
+            # Fall back to price evidence: a contract quoting a two-sided market
+            # or printing a trade is tradeable regardless of a missing book.
+            return (
+                self.best_bid_price > 0 or self.best_offer_price > 0 or self.ltp > 0
+            )
         return self.total_buy_qty > 0 and self.total_sell_qty > 0
 
     @property

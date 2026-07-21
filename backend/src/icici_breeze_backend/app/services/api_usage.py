@@ -10,7 +10,7 @@ from datetime import timedelta
 from urllib.parse import urlparse
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.core.timezone import today_ist_date
+from icici_breeze_backend.app.core.timezone import SQLITE_NOW_IST, today_ist_date
 
 API_CALLS_LIMIT_PER_DAY = 5000
 GREEN_MAX = 4000
@@ -195,7 +195,7 @@ def _ensure_usage_tables(conn: sqlite3.Connection) -> None:
             user_id TEXT NOT NULL,
             usage_date TEXT NOT NULL,
             call_count INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
             PRIMARY KEY(user_id, usage_date)
         );
         CREATE INDEX IF NOT EXISTS idx_api_usage_date ON api_usage_daily(usage_date);
@@ -205,7 +205,7 @@ def _ensure_usage_tables(conn: sqlite3.Connection) -> None:
             usage_date TEXT NOT NULL,
             api_name TEXT NOT NULL,
             call_count INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
             PRIMARY KEY(user_id, usage_date, api_name)
         );
         CREATE INDEX IF NOT EXISTS idx_api_usage_by_api_user_date
@@ -216,7 +216,7 @@ def _ensure_usage_tables(conn: sqlite3.Connection) -> None:
             usage_date TEXT NOT NULL,
             route_id TEXT NOT NULL,
             call_count INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
             PRIMARY KEY(user_id, usage_date, route_id)
         );
         CREATE INDEX IF NOT EXISTS idx_api_usage_by_route_user_date
@@ -245,32 +245,32 @@ def record_breeze_call(
             with sqlite3.connect(_DB_PATH) as conn:
                 _ensure_usage_tables(conn)
                 conn.execute(
-                    """
+                    f"""
                     INSERT INTO api_usage_daily (user_id, usage_date, call_count, updated_at)
-                    VALUES (?, ?, 1, datetime('now'))
+                    VALUES (?, ?, 1, {SQLITE_NOW_IST})
                     ON CONFLICT(user_id, usage_date) DO UPDATE SET
                         call_count = call_count + 1,
-                        updated_at = datetime('now')
+                        updated_at = {SQLITE_NOW_IST}
                     """,
                     (uid, usage_date),
                 )
                 conn.execute(
-                    """
+                    f"""
                     INSERT INTO api_usage_daily_by_api (user_id, usage_date, api_name, call_count, updated_at)
-                    VALUES (?, ?, ?, 1, datetime('now'))
+                    VALUES (?, ?, ?, 1, {SQLITE_NOW_IST})
                     ON CONFLICT(user_id, usage_date, api_name) DO UPDATE SET
                         call_count = call_count + 1,
-                        updated_at = datetime('now')
+                        updated_at = {SQLITE_NOW_IST}
                     """,
                     (uid, usage_date, api_name),
                 )
                 conn.execute(
-                    """
+                    f"""
                     INSERT INTO api_usage_daily_by_route (user_id, usage_date, route_id, call_count, updated_at)
-                    VALUES (?, ?, ?, 1, datetime('now'))
+                    VALUES (?, ?, ?, 1, {SQLITE_NOW_IST})
                     ON CONFLICT(user_id, usage_date, route_id) DO UPDATE SET
                         call_count = call_count + 1,
-                        updated_at = datetime('now')
+                        updated_at = {SQLITE_NOW_IST}
                     """,
                     (uid, usage_date, route),
                 )

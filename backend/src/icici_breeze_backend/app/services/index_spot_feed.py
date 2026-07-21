@@ -189,7 +189,7 @@ def _fetch_previous_close(sdk: Any, cash_exchange: str, cash_stock_code: str) ->
     return pc if pc > 0 else None
 
 
-def sync_index_spot_subscriptions(proc: "Processor", user_id: str) -> bool:
+def sync_index_spot_subscriptions(proc: "Processor", user_id: str, *, force: bool = False) -> bool:
     """Idempotent per IST trading day. Call from the same daily trigger as
     `system_chain_health.maybe_trigger_system_prefetch` -- safe to call on every
     request once today's subscriptions are already in place.
@@ -197,11 +197,17 @@ def sync_index_spot_subscriptions(proc: "Processor", user_id: str) -> bool:
     Returns False when the subscribe attempt didn't happen because there's no
     live broker session -- the caller must not treat that as a permanent
     daily "done" state, or a session that was dead on the first trigger of
-    the day will never get retried (see `system_chain_health._prefetch_last_error`)."""
+    the day will never get retried (see `system_chain_health._prefetch_last_error`).
+
+    `force=True` bypasses both the once-per-day latch and the per-token
+    already-subscribed guard, re-issuing `subscribe_feeds` outright. The latch
+    records what we asked for, never whether ticks arrived, so a login or the
+    market-open pass must be able to re-arm a feed the latch believes is fine
+    (see `ws_price_feed_watchdog`)."""
     global _subscribed_date
     today = datetime.now(IST).date()
     with _lock:
-        if _subscribed_date == today:
+        if _subscribed_date == today and not force:
             return True
 
     from icici_breeze_backend.app.services.breeze_websocket_manager import _ensure_ws
@@ -233,17 +239,23 @@ def sync_index_spot_subscriptions(proc: "Processor", user_id: str) -> bool:
                 _symbol_to_label[token] = label
                 already_subscribed = token in _subscribed_cash_tokens
                 _subscribed_cash_tokens.add(token)
-            if not already_subscribed:
+            if force or not already_subscribed:
                 sdk.subscribe_feeds(
                     exchange_code=cash_exchange,
                     stock_code=cash_stock_code,
                     get_exchange_quotes=True,
                     get_market_depth=False,
                 )
-            prev_close = _fetch_previous_close(sdk, cash_exchange, cash_stock_code)
-            if prev_close is not None:
-                with _lock:
-                    _previous_close[label] = prev_close
+            # Only a REST call's worth of value once per day -- skip it when we
+            # already have today's close, so a forced re-subscribe (which can
+            # repeat on the watchdog's throttle) doesn't re-hit `get_quotes`.
+            with _lock:
+                have_prev_close = _previous_close.get(label) is not None
+            if not have_prev_close:
+                prev_close = _fetch_previous_close(sdk, cash_exchange, cash_stock_code)
+                if prev_close is not None:
+                    with _lock:
+                        _previous_close[label] = prev_close
         except Exception:
             _logger.warning("index spot subscribe failed for %s", label, exc_info=True)
 
