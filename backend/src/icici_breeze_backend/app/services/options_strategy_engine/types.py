@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from icici_breeze_backend.app.core.strike import Strike
+
 Right = Literal["Call", "Put"]
 Side = Literal["Buy", "Sell"]
 StrategyCategory = Literal["income", "bullish", "bearish", "volatility"]
@@ -37,11 +39,12 @@ TOP_K_SHORT_STRIKES = 8
 TOP_M_WING_STRIKES = 3
 MAX_CANDIDATES_PER_STRATEGY = 30
 POP_TOLERANCE_PCT = 7.0
+POP_PRE_FILTER_TOLERANCE = 2.0
 
 
-@dataclass
+@dataclass(slots=True)
 class QuoteRow:
-    strike: int
+    strike: Strike
     right: Right
     ltp: float
     best_bid_price: float
@@ -54,9 +57,20 @@ class QuoteRow:
     iv: float | None = None
     delta: float | None = None
     liquidity_score: float = 0.0
+    # False when the source carried no order book at all (bhavcopy has no depth
+    # columns; BSE zeroes its book at close). The numeric fields stay non-optional
+    # so every strategy module keeps its existing arithmetic -- only the gates
+    # that would otherwise read "unknown" as "no interest" consult this.
+    depth_known: bool = True
 
     @property
     def liquid(self) -> bool:
+        if not self.depth_known:
+            # Fall back to price evidence: a contract quoting a two-sided market
+            # or printing a trade is tradeable regardless of a missing book.
+            return (
+                self.best_bid_price > 0 or self.best_offer_price > 0 or self.ltp > 0
+            )
         return self.total_buy_qty > 0 and self.total_sell_qty > 0
 
     @property
@@ -72,15 +86,15 @@ class QuoteRow:
         return 0.0
 
 
-@dataclass
+@dataclass(slots=True)
 class TradeLeg:
     right: Right
     side: Side
-    strike: int
+    strike: Strike
     quantity: int
     premium_per_unit: float
 
-    def to_out(self, cache: dict[tuple[int, Right], QuoteRow]) -> dict[str, Any]:
+    def to_out(self, cache: dict[tuple[Strike, Right], QuoteRow]) -> dict[str, Any]:
         q = cache.get((self.strike, self.right))
         return {
             "right": self.right,
@@ -97,7 +111,7 @@ class TradeLeg:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class TileMetric:
     label: str
     value: str
@@ -112,6 +126,7 @@ class StrategyResult:
     structure_modified: bool = False
     net_premium: float | None = None
     max_loss: float | None = None
+    max_profit: float | None = None
     annualized_return_pct: float | None = None
     risk_reward_ratio: str | None = None
     pop_pct: float | None = None
@@ -127,6 +142,8 @@ class StrategyResult:
     hero_metric: TileMetric | None = None
     secondary_metrics: list[TileMetric] = field(default_factory=list)
     badges: list[str] = field(default_factory=list)
+    compliance: Literal["recommended", "relaxed"] = "recommended"
+    constraint_violations: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -137,20 +154,24 @@ class EngineContext:
     exchange_code: str
     expiry_display: str
     margin_rupees: float
-    max_loss_rupees: float
+    max_loss_rupees: float | None
     min_pop_pct: float
     provision_elm: bool
     strategy_category: StrategyCategory
     lot_size: int
-    strikes: list[int]
-    strike_step: int
-    search_interval: int
+    strikes: list[Strike]
+    strike_step: float
+    search_interval: float
     spot: float
-    atm_strike: int
+    atm_strike: Strike
+    allow_infinite_loss: bool = False
     risk_reward_profile: RiskRewardProfile = "moderate"
     min_ann_return_pct: float = 5.0
     atm_iv: float | None = None
-    cache: dict[tuple[int, Right], QuoteRow] = field(default_factory=dict)
+    is_index: bool = False
+    previous_close: float | None = None
+    same_day_expiry: bool = False
+    cache: dict[tuple[Strike, Right], QuoteRow] = field(default_factory=dict)
     structure_modified: bool = False
     halted: bool = False
     halt_reason: str | None = None
@@ -161,15 +182,26 @@ class EngineContext:
     range_upper: float = 0.0
     unit_span_by_structure: dict[tuple, float] = field(default_factory=dict)
     progress: Any | None = None
+    iv_smile_cache: dict[Right, list[tuple[float, float]]] | None = field(default=None, repr=False)
+
+    def effective_max_loss_budget(self) -> float | None:
+        if self.allow_infinite_loss or self.max_loss_rupees is None:
+            return None
+        return self.max_loss_rupees
+
+    def effective_loss_sizing_budget(self) -> float:
+        if self.max_loss_rupees is None:
+            return self.margin_rupees
+        return min(self.margin_rupees, self.max_loss_rupees)
 
     @property
-    def liquid_ce_strikes(self) -> list[int]:
+    def liquid_ce_strikes(self) -> list[Strike]:
         return sorted(
             s for s in self.strikes if (s, "Call") in self.cache and self.cache[(s, "Call")].liquid
         )
 
     @property
-    def liquid_pe_strikes(self) -> list[int]:
+    def liquid_pe_strikes(self) -> list[Strike]:
         return sorted(
             s for s in self.strikes if (s, "Put") in self.cache and self.cache[(s, "Put")].liquid
         )

@@ -3,16 +3,21 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import json
 import logging
 import math
 import re
 import sqlite3
 import urllib.error
 import urllib.request
+import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike
+from icici_breeze_backend.app.core.timezone import now_ist
+from icici_breeze_backend.app.services.reference_data.state import append_ingest_history
 
 _logger = logging.getLogger(__name__)
 
@@ -25,31 +30,107 @@ BSE_SPAN_PF_CODE_TO_SHORT_NAME = {"BSXOPT": "BSESEN", "BKXOPT": "BANKEX"}
 
 _MAX_BASELINE_UPLOAD_BYTES = 120 * 1024 * 1024
 
+_BASELINE_DB_COLUMNS = (
+    "exchange_code",
+    "short_name",
+    "expiry_date",
+    "strike_price",
+    "option_type",
+    "margin_per_lot",
+    "lot_size",
+    "risk_array",
+    "source_file",
+    "source_date",
+    "source_version",
+    "refreshed_at",
+)
 
-def _scrip_conn() -> sqlite3.Connection:
-    return sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB)
+_EXCHANGE_MARGIN_BASELINE_DDL = """
+CREATE TABLE {name} (
+    exchange_code TEXT NOT NULL,
+    short_name TEXT NOT NULL,
+    expiry_date TEXT NOT NULL,
+    strike_price REAL NOT NULL,
+    option_type TEXT NOT NULL,
+    margin_per_lot REAL NOT NULL,
+    lot_size INTEGER,
+    risk_array TEXT,
+    source_file TEXT NOT NULL,
+    source_date TEXT NOT NULL,
+    source_version INTEGER NOT NULL,
+    refreshed_at TEXT NOT NULL,
+    PRIMARY KEY (exchange_code, short_name, expiry_date, strike_price, option_type)
+)
+"""
+
+
+def _baseline_strike_column_is_integer(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute("PRAGMA table_info(exchange_margin_baseline)").fetchall()
+    if not rows:
+        return False
+    for _cid, name, col_type, *_rest in rows:
+        if str(name) == "strike_price":
+            return str(col_type or "").upper() == "INTEGER"
+    return False
+
+
+_LEGACY_BASELINE_DB_COLUMNS = (
+    "exchange_code",
+    "short_name",
+    "expiry_date",
+    "strike_price",
+    "option_type",
+    "margin_per_lot",
+    "lot_size",
+    "source_file",
+    "source_date",
+    "source_version",
+    "refreshed_at",
+)
+
+
+def _migrate_exchange_margin_baseline_strike_to_real(conn: sqlite3.Connection) -> None:
+    if not _baseline_strike_column_is_integer(conn):
+        return
+    _logger.info("Migrating exchange_margin_baseline.strike_price from INTEGER to REAL")
+    conn.execute("ALTER TABLE exchange_margin_baseline RENAME TO exchange_margin_baseline_legacy")
+    conn.execute(_EXCHANGE_MARGIN_BASELINE_DDL.format(name="exchange_margin_baseline"))
+    legacy_cols = ", ".join(_LEGACY_BASELINE_DB_COLUMNS)
+    new_cols = ", ".join(_LEGACY_BASELINE_DB_COLUMNS + ("risk_array",))
+    conn.execute(
+        f"""
+        INSERT INTO exchange_margin_baseline ({new_cols})
+        SELECT {legacy_cols}, NULL
+        FROM exchange_margin_baseline_legacy
+        """
+    )
+    conn.execute("DROP TABLE exchange_margin_baseline_legacy")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_exchange_margin_baseline_source
+        ON exchange_margin_baseline(source_date, source_version)
+        """
+    )
+    conn.commit()
+    _logger.info("exchange_margin_baseline strike_price migration complete")
+
+
+def _baseline_has_risk_array_column(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute("PRAGMA table_info(exchange_margin_baseline)").fetchall()
+    return any(str(name) == "risk_array" for _cid, name, *_rest in rows)
+
+
+def _migrate_exchange_margin_baseline_add_risk_array(conn: sqlite3.Connection) -> None:
+    if _baseline_has_risk_array_column(conn):
+        return
+    _logger.info("Adding exchange_margin_baseline.risk_array column")
+    conn.execute("ALTER TABLE exchange_margin_baseline ADD COLUMN risk_array TEXT")
+    conn.commit()
 
 
 def ensure_exchange_margin_baseline_table() -> None:
     with _scrip_conn() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS exchange_margin_baseline (
-                exchange_code TEXT NOT NULL,
-                short_name TEXT NOT NULL,
-                expiry_date TEXT NOT NULL,
-                strike_price INTEGER NOT NULL,
-                option_type TEXT NOT NULL,
-                margin_per_lot REAL NOT NULL,
-                lot_size INTEGER,
-                source_file TEXT NOT NULL,
-                source_date TEXT NOT NULL,
-                source_version INTEGER NOT NULL,
-                refreshed_at TEXT NOT NULL,
-                PRIMARY KEY (exchange_code, short_name, expiry_date, strike_price, option_type)
-            )
-            """
-        )
+        conn.execute(_EXCHANGE_MARGIN_BASELINE_DDL.format(name="IF NOT EXISTS exchange_margin_baseline"))
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_exchange_margin_baseline_source
@@ -57,6 +138,12 @@ def ensure_exchange_margin_baseline_table() -> None:
             """
         )
         conn.commit()
+        _migrate_exchange_margin_baseline_strike_to_real(conn)
+        _migrate_exchange_margin_baseline_add_risk_array(conn)
+
+
+def _scrip_conn() -> sqlite3.Connection:
+    return sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB)
 
 
 def _ymd_to_display(ymd: str) -> str:
@@ -173,10 +260,13 @@ def _ingest_span_xml_stream(
         FROM scrip_master
         """
     ).fetchall()
-    lot_by_contract: dict[tuple[str, str, int, str], int] = {}
+    lot_by_contract: dict[tuple[str, str, Strike, str], int] = {}
     for sn, ed, sp, ot, ls in lot_rows:
         try:
-            key = (str(sn).strip().upper(), str(ed).strip(), int(sp), str(ot).strip().upper())
+            strike_f = parse_strike(sp)
+            if strike_f is None:
+                continue
+            key = (str(sn).strip().upper(), str(ed).strip(), strike_f, str(ot).strip().upper())
             lot_by_contract[key] = int(ls)
         except Exception:
             continue
@@ -223,7 +313,11 @@ def _ingest_span_xml_stream(
                     elem.clear()
                     continue
                 strike_raw = (elem.findtext("k") or "").strip()
-                strike_price = int(round(float(strike_raw)))
+                strike_price = parse_strike(strike_raw)
+                if strike_price is None:
+                    skipped += 1
+                    elem.clear()
+                    continue
                 ra = elem.find("ra")
                 if ra is None:
                     skipped += 1
@@ -248,6 +342,7 @@ def _ingest_span_xml_stream(
                 else:
                     missing_lot += 1
                 margin_per_lot = per_unit * (lot_size if lot_size and lot_size > 0 else 1)
+                risk_array_json = json.dumps(a_vals)
                 batch_rows.append(
                     (
                         exchange_code,
@@ -257,6 +352,7 @@ def _ingest_span_xml_stream(
                         option_type,
                         float(margin_per_lot),
                         lot_size,
+                        risk_array_json,
                         source_file,
                         source_date,
                         int(source_version),
@@ -269,8 +365,8 @@ def _ingest_span_xml_stream(
                         """
                         INSERT OR REPLACE INTO exchange_margin_baseline (
                             exchange_code, short_name, expiry_date, strike_price, option_type, margin_per_lot,
-                            lot_size, source_file, source_date, source_version, refreshed_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            lot_size, risk_array, source_file, source_date, source_version, refreshed_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         batch_rows,
                     )
@@ -295,8 +391,8 @@ def _ingest_span_xml_stream(
             """
             INSERT OR REPLACE INTO exchange_margin_baseline (
                 exchange_code, short_name, expiry_date, strike_price, option_type, margin_per_lot,
-                lot_size, source_file, source_date, source_version, refreshed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                lot_size, risk_array, source_file, source_date, source_version, refreshed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             batch_rows,
         )
@@ -373,6 +469,22 @@ def ingest_exchange_baseline_upload(
             "Error": "No option margin rows were ingested. Check file format and (for BSE) that BSXOPT/BKXOPT portfolios are present.",
             "Success": None,
         }
+
+    _publish_span_baseline_to_redis()
+
+    append_ingest_history(
+        {
+            "id": str(uuid.uuid4()),
+            "kind": "bse_span_baseline_upload" if market_l == "bse" else "nse_span_baseline_upload",
+            "display_name": "BSE SPAN Baseline" if market_l == "bse" else "NSE SPAN Baseline",
+            "source_file_date": source_date,
+            "row_count": inserted,
+            "ingested_at": now_ist().isoformat(timespec="seconds"),
+            "ok": True,
+            "notes": f"Manual upload: {source_file}" + (f" ({skipped} skipped)" if skipped else ""),
+            "source_url": None,
+        }
+    )
 
     return {
         "Status": 200,
@@ -455,6 +567,7 @@ def refresh_exchange_risk_baseline() -> dict:
         inserted,
         skipped,
     )
+    _publish_span_baseline_to_redis()
     return {
         "Status": 200,
         "Error": "",
@@ -468,14 +581,43 @@ def refresh_exchange_risk_baseline() -> dict:
     }
 
 
+def _publish_span_baseline_to_redis() -> None:
+    try:
+        from icici_breeze_backend.app.services.reference_data.span_baseline_store import (
+            publish_span_baseline_from_db,
+        )
+
+        publish_span_baseline_from_db()
+    except Exception as exc:
+        _logger.warning("SPAN baseline Redis publish failed: %s", exc)
+
+
 def resolve_exchange_baseline_margin(
     exchange_code: str,
     stock_code: str,
     expiry_display: str,
-    strike_price: int,
+    strike_price: Strike,
     right: str,
     quantity: int,
 ) -> dict:
+    try:
+        from icici_breeze_backend.app.services.reference_data.span_baseline_store import (
+            resolve_margin_from_store,
+        )
+
+        out = resolve_margin_from_store(
+            exchange_code=exchange_code,
+            stock_code=stock_code,
+            expiry_display=expiry_display,
+            strike_price=strike_price,
+            right=right,
+            quantity=quantity,
+        )
+        if out.get("found"):
+            return out
+    except Exception:
+        _logger.debug("SPAN baseline store lookup failed; falling back to SQLite", exc_info=True)
+
     option_type = "CE" if right == cfg.CALL else "PE"
     with _scrip_conn() as conn:
         row = conn.execute(
@@ -486,7 +628,7 @@ def resolve_exchange_baseline_margin(
               AND strike_price = ? AND option_type = ?
             LIMIT 1
             """,
-            (exchange_code, stock_code, expiry_display, int(strike_price), option_type),
+            (exchange_code, stock_code, expiry_display, parse_strike(strike_price), option_type),
         ).fetchone()
     if not row:
         return {"found": False}

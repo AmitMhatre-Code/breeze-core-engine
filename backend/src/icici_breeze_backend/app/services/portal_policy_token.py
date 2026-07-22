@@ -28,9 +28,18 @@ _POLICY_CLAIM_KEYS = (
     "upgrade_allowed_now",
     "heartbeat_interval_sec",
     "latest_version",
+    "env_overrides",
+    "env_overrides_version",
 )
 
 _TARGET_TAG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
+
+# Defense in depth beyond the JWT signature: even this trusted, signed channel
+# must not be able to introduce env vars outside a known-safe allowlist (e.g.
+# never JWT_SECRET). Extend this set when a new operator-wide setting needs to
+# reach the deployment's actual environment (see Settings > Console > Fleet).
+_ALLOWED_ENV_OVERRIDE_KEYS = frozenset({"TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_USERNAME"})
+_ENV_OVERRIDE_VALUE_MAX_LEN = 512
 
 
 def _load_public_key_pem() -> str | None:
@@ -90,6 +99,18 @@ def _validate_target_tag(tag: Any) -> None:
         raise ValueError("invalid target_tag in policy token")
 
 
+def _validate_env_overrides(value: Any) -> None:
+    if not isinstance(value, dict):
+        raise ValueError("env_overrides in policy token must be an object")
+    for key, val in value.items():
+        if key not in _ALLOWED_ENV_OVERRIDE_KEYS:
+            raise ValueError(f"env_overrides key not allowed: {key!r}")
+        if not isinstance(val, str):
+            raise ValueError(f"env_overrides value for {key!r} must be a string")
+        if len(val) > _ENV_OVERRIDE_VALUE_MAX_LEN:
+            raise ValueError(f"env_overrides value for {key!r} exceeds max length")
+
+
 def parse_verified_portal_body(body: dict[str, Any] | None, *, public_ip: str) -> dict[str, Any] | None:
     """Verify ``policy_token`` in a portal JSON body; return trusted policy or None."""
     if not isinstance(body, dict):
@@ -128,4 +149,6 @@ def verify_policy_token(token: str, *, public_ip: str) -> dict[str, Any]:
     policy = _policy_from_claims(claims)
     if policy.get("trigger_upgrade"):
         _validate_target_tag(policy.get("target_tag"))
+    if policy.get("env_overrides"):
+        _validate_env_overrides(policy.get("env_overrides"))
     return policy

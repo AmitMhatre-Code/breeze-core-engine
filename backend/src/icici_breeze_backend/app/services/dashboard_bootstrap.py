@@ -4,9 +4,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.api.v1.route_portfolio import _normalize_portfolio_success_for_ui
 from icici_breeze_backend.app.domain.responses import HomeDataResponse
 from icici_breeze_backend.app.services.broker_snapshot_cache import get_snapshot
+from icici_breeze_backend.app.services.dashboard_days_pnl import compute_days_pnl
 from icici_breeze_backend.app.services.dashboard_vix import fetch_vix_headline
 from icici_breeze_backend.audit.logger import AuditLogger
 
@@ -62,6 +64,7 @@ def build_home_data_fields(user_id: str, processor, *, broker_token: str) -> dic
         "api_usage_band": usage["api_usage_band"],
         "api_usage_warning": get_usage_warning(user_id),
         "api_usage_blocked": is_daily_limit_reached(user_id),
+        "aggressive_limit_order_enabled": cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED,
         **license_fields,
     }
 
@@ -137,8 +140,16 @@ def build_dashboard_bootstrap(user_id: str, processor, *, broker_token: str) -> 
     else:
         vix, _nifty_quote = fetch_vix_headline(user_id, processor, breeze=breeze)
 
+    positions = []
+    if isinstance(portfolio, dict):
+        success = portfolio.get("Success")
+        if isinstance(success, dict) and isinstance(success.get("positions"), list):
+            positions = success["positions"]
+    days_pnl = compute_days_pnl(positions)
+
     return {
         "home": home.model_dump(),
         "portfolio": portfolio,
         "vix": vix,
+        "days_pnl": days_pnl,
     }

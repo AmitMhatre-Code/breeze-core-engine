@@ -20,6 +20,21 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.1.0-b",
+    date: "26-Jun-2026",
+    releaseKind: "prerelease",
+    summary: "Websocket for live quotes, After Market-hours Orders (AMO) improvements, Basket Order and Trigger based exits",
+    changes: [
+      "New Basket Order page: build multi-leg option baskets, view payoff and PoP, and execute all legs at once.",
+      "Place Order and Strategy Builder support aggressive limit orders (ICICI derives price from LTP; no manual limit price required).",
+      "Infinite Loss strategies and strategies that were missed out because of user provided constraints are shown separately in the Strategy Builder.",
+      "After Market-hours Orders (AMO) now parked for execution. User has to manually trigger them when market opens.",
+      "Order placement modal (Place Order, Basket Order, Strategy Builder) disables live execution when the market is closed and shows a reminder to fire parked orders from the Orders page after open.",
+      "Instead of get_option_chain_quotes API, we now use websocket during market hours and NSE/BSE Bhavopy data after market hours.",
+      "Strategy Builder propose-trades, legacy scans, and single-strike quotes now share the same cache-first quote path (REST only on cache miss).",
+    ],
+  },  
+  {
     version: "2.0.1",
     date: "16-Jun-2026",
     releaseKind: "patch",
@@ -70,7 +85,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.6.0",
     date: "1-Jun-2026",
-    releaseKind: "prerelease",
+    releaseKind: "minor",
     summary: "DRM Hardening",
     changes: [
       "DRM Hardening: Improved DRM by adding a new layer of security to the application.",
@@ -115,7 +130,7 @@ export const changelogReleases: ChangelogRelease[] = [
   {
     version: "1.3.2",
     date: "10-Jun-2026",
-    releaseKind: "minor",
+    releaseKind: "patch",
     summary: "Strategy Builder (New)",
     changes: [
       "New Strategy Builder (New) page generates all options strategies from range, margin, and risk parameters",

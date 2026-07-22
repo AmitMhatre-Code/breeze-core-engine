@@ -4,11 +4,11 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
+import { Modal } from "@/components/ui/Modal";
 import {
   LICENSE_CONSOLE_URL,
   licenseBannerMessage,
@@ -53,26 +53,6 @@ function RevokedLicenseDialog({
   contactSalesMailto: string | null;
   licenseStatus: DeploymentLicenseStatus | null;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
-  if (!open) return null;
-
   const banner =
     licenseBannerMessage(licenseStatus) ??
     licenseBannerMessage("revoked") ??
@@ -82,57 +62,53 @@ function RevokedLicenseDialog({
     licenseStatus === "unlicensed" ? "No deployment license" : "License revoked";
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
-      role="presentation"
-      onClick={onClose}
+    <Modal
+      open={open}
+      onClose={onClose}
+      role="alertdialog"
+      dismissible={false}
+      titleId="license-revoked-title"
+      zIndexClass="z-[100]"
+      panelClassName="max-w-lg rounded-lg border border-red-200 bg-white p-5 shadow-xl dark:border-red-500/35 dark:bg-zinc-900"
     >
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="license-revoked-title"
-        className="max-w-lg rounded-lg border border-red-200 bg-white p-5 shadow-xl dark:border-red-500/35 dark:bg-zinc-900"
-        onClick={(e) => e.stopPropagation()}
+      <h2
+        id="license-revoked-title"
+        className="text-base font-semibold text-zinc-900 dark:text-zinc-100"
       >
-        <h2
-          id="license-revoked-title"
-          className="text-base font-semibold text-zinc-900 dark:text-zinc-100"
+        {title}
+      </h2>
+      <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
+        {before}
+        <a
+          href={LICENSE_CONSOLE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-red-800 underline underline-offset-2 dark:text-red-200"
         >
-          {title}
-        </h2>
-        <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
-          {before}
+          breeze-ui.com
+        </a>
+        {after}
+      </p>
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
+        {contactSalesMailto ? (
           <a
-            href={LICENSE_CONSOLE_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium text-red-800 underline underline-offset-2 dark:text-red-200"
-          >
-            breeze-ui.com
-          </a>
-          {after}
-        </p>
-        <div className="mt-4 flex flex-wrap justify-end gap-2">
-          {contactSalesMailto ? (
-            <a
-              href={contactSalesMailto}
-              data-license-allow
-              className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-900 hover:bg-red-50 dark:border-red-500/40 dark:text-red-100 dark:hover:bg-red-950/40"
-            >
-              Contact Sales
-            </a>
-          ) : null}
-          <button
-            type="button"
+            href={contactSalesMailto}
             data-license-allow
-            className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
-            onClick={onClose}
+            className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-900 hover:bg-red-50 dark:border-red-500/40 dark:text-red-100 dark:hover:bg-red-950/40"
           >
-            OK
-          </button>
-        </div>
+            Contact Sales
+          </a>
+        ) : null}
+        <button
+          type="button"
+          data-license-allow
+          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+          onClick={onClose}
+        >
+          OK
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
 

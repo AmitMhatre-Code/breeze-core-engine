@@ -3,18 +3,80 @@
 from __future__ import annotations
 
 import datetime
+import logging
 import re
+import threading
 
 from icici_breeze_backend.dev.fixtures import responses as fx
+from icici_breeze_backend.dev.mock_market_data import (
+    enrich_contract_fields,
+    resolve_underlying_spot,
+    seed_running_state,
+    step_live_tick_fields,
+)
+
+_logger = logging.getLogger(__name__)
+
+_VIX_LIKE_SYMBOLS = {"INDVIX", "INDIA VIX", "VIX"}
+
+
+def _bhavcopy_option_chain_rows(
+    stock_code: str, expiry_date: str, exchange_code: str, right: str
+) -> list[dict]:
+    """Real strikes/premiums/OI for this contract from the local bhavcopy store, if any.
+
+    Empty list (not an exception) when there's no bhavcopy coverage for this
+    stock/expiry -- e.g. an expiry the bhavcopy snapshot doesn't include --
+    so callers can fall through to a synthetic response.
+    """
+    try:
+        from icici_breeze_backend.app.services.reference_data.bhavcopy_store import (
+            build_chain_from_bhavcopy,
+        )
+        from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
+            list_tradeable_strikes,
+        )
+
+        strikes = list_tradeable_strikes(stock_code, expiry_date, exchange_code=exchange_code)
+        if not strikes:
+            return []
+        payload = build_chain_from_bhavcopy(stock_code, expiry_date, exchange_code, strikes=strikes)
+        if not payload:
+            return []
+        side = "put" if (right or "").lower().startswith("p") else "call"
+        rows = []
+        for row in payload.get("chain_rows") or []:
+            cell = row.get(side)
+            if not cell:
+                continue
+            strike_val = row.get("strike_price")
+            spot_val = cell.get("spot_price")
+            rows.append(
+                {
+                    "strike_price": str(int(strike_val)) if float(strike_val).is_integer() else str(strike_val),
+                    "ltp": f"{float(cell.get('ltp') or 0):.2f}",
+                    "best_bid_price": f"{float(cell.get('best_bid_price') or 0):.2f}",
+                    "best_offer_price": f"{float(cell.get('best_offer_price') or 0):.2f}",
+                    "total_buy_qty": str(cell.get("total_buy_qty") or 0),
+                    "total_sell_qty": str(cell.get("total_sell_qty") or 0),
+                    "open_interest": str(cell.get("open_interest") or 0),
+                    "spot_price": f"{float(spot_val):.2f}" if spot_val else "",
+                    "right": right or "Call",
+                }
+            )
+        return rows
+    except Exception:
+        _logger.debug("bhavcopy option chain lookup failed for %s %s", stock_code, expiry_date, exc_info=True)
+        return []
 
 
 def _mock_option_chain_rows(stock_code: str, expiry_date: str, right: str):
-    """Several strikes so strategy-builder / full chain UIs have data."""
-    spot = "25000"
-    strikes = [24600, 24750, 24900, 25000, 25150, 25300]
+    """Purely synthetic fallback when bhavcopy has no data for this contract."""
+    spot = resolve_underlying_spot(stock_code) or 25000.0
+    strikes = [round(spot * f / 100) for f in (98, 99, 100, 101, 102, 103)]
     rows = []
     for k in strikes:
-        base = 45.0 + abs(k - 25000) * 0.12
+        base = 45.0 + abs(k - spot) * 0.12
         if (right or "").lower() == "put":
             base += 8.0
         rows.append(
@@ -26,7 +88,7 @@ def _mock_option_chain_rows(stock_code: str, expiry_date: str, right: str):
                 "total_buy_qty": "800",
                 "total_sell_qty": "750",
                 "open_interest": str(120_000 + k % 10000),
-                "spot_price": spot,
+                "spot_price": f"{spot:.2f}",
                 "right": right or "Call",
             }
         )
@@ -64,8 +126,118 @@ class MockBreezeSdk:
 
     user_id: str | None = None
 
+    def __init__(self) -> None:
+        self.on_ticks = None
+        self.on_ticks2 = None  # matches real SDK's attribute name; unused here
+        self._ws_tokens: set[str] = set()
+        self._ws_stop: threading.Event | None = None
+        self._ws_thread: threading.Thread | None = None
+        self._gtt_orders: dict[str, dict] = {}
+        self._gtt_seq = 0
+
     def generate_session(self, **kwargs):
         return None
+
+    def ws_connect(self, **kwargs):
+        """Start a background thread streaming random-walk ticks for subscribed tokens.
+
+        Mirrors the real SDK's `on_ticks` callback contract exactly (see
+        `breeze_websocket_manager._attach_sdk_ticks_handler`), so the rest of the
+        chain-quote pipeline (ws_tick_pipeline, the chain_builder worker,
+        canonical chain assembly, chain_readiness) runs completely unmodified
+        against this mock data -- only the tick *source* is fake.
+
+        Ticks carry only `symbol` + price/quote fields, not contract identity
+        (stock_code/expiry_date/strike/right): identity resolution goes through
+        `ws_token_index.lookup_contract_by_ws_symbol()` against the real local
+        scrip-master DB, which already works for real tokens regardless of
+        broker mode.
+        """
+        if self._ws_thread is not None and self._ws_thread.is_alive():
+            return
+        self._ws_stop = threading.Event()
+        self._ws_thread = threading.Thread(target=self._ws_tick_loop, daemon=True)
+        self._ws_thread.start()
+
+    def ws_disconnect(self, **kwargs):
+        if self._ws_stop is not None:
+            self._ws_stop.set()
+        self._ws_tokens.clear()
+        return [{"message": "socket server for rate refresh  has been disconnected."}]
+
+    @staticmethod
+    def _normalize_tokens(stock_token) -> list[str]:
+        if isinstance(stock_token, list):
+            return [str(t) for t in stock_token if t]
+        return [str(stock_token)] if stock_token else []
+
+    def subscribe_feeds(self, stock_token: str | list[str] = "", **kwargs):
+        if kwargs.get("get_order_notification"):
+            # Real ICICI opens a separate socket.io channel that still dispatches through
+            # on_ticks. Nothing to poll here -- events are injected via
+            # emit_order_notification() below.
+            self._order_notifications_on = True
+            return {"message": "Order notification subscribed successfully"}
+        self._ws_tokens.update(self._normalize_tokens(stock_token))
+        return {"message": f"Stock {stock_token} subscribed successfully"}
+
+    def emit_order_notification(self, **overrides) -> dict:
+        """Push a synthetic order-notification tick through the real `on_ticks` path.
+
+        Exists because live-mode broker calls only work from the production static IP, so
+        the Strategy Group lifecycle (Fired -> Completed/Reset, manual-intervention
+        detection) cannot otherwise be exercised locally at all. The payload mirrors a real
+        capture (docs/Temp/order_placed), including the quirks the parser has to survive:
+        prices scaled x100, and `averageExecutedRate` carrying junk while nothing has
+        filled.
+        """
+        payload = {
+            "userId": getattr(self, "_user_id", "MOCKUSER"),
+            "messageType": "6",
+            "messageSequence": str(int(time.time() * 1000)),
+            "orderExchangeCode": "NFO",
+            "stockCode": "NIFTY",
+            "productType": "Options",
+            "optionType": "Call",
+            "strikePrice": "2600000",  # x100 -> 26000
+            "expiryDate": "21-Jul-2026",
+            "orderFlow": "Sell",
+            "limitMarketFlag": "Limit",
+            "orderType": "Day",
+            "limitRate": "300",  # x100 -> Rs 3.00
+            "orderStatus": "Ordered",
+            "orderReference": "MOCK-ORDER-1",
+            "orderTotalQuantity": "130",
+            "executedQuantity": "0",
+            "cancelledQuantity": "0",
+            "expiredQuantity": "0",
+            "averageExecutedRate": "1550900.000000",  # garbage, as in the real capture
+            "channel": "WEB",
+            **overrides,
+        }
+        if self.on_ticks:
+            self.on_ticks(payload)
+        return payload
+
+    def unsubscribe_feeds(self, stock_token: str | list[str] = "", **kwargs):
+        for token in self._normalize_tokens(stock_token):
+            self._ws_tokens.discard(token)
+        return {"message": f"Stock {stock_token} unsubscribed successfully"}
+
+    def _ws_tick_loop(self) -> None:
+        running_state: dict[str, dict] = {}
+        stop = self._ws_stop
+        while stop is not None and not stop.is_set():
+            for token in list(self._ws_tokens):
+                state = running_state.setdefault(token, seed_running_state(token))
+                tick = step_live_tick_fields(token, state)
+                tick.update(enrich_contract_fields(token))
+                if self.on_ticks is not None:
+                    try:
+                        self.on_ticks(tick)
+                    except Exception:
+                        _logger.exception("mock_ws_on_ticks_handler_failed token=%s", token)
+            stop.wait(0.5)
 
     def get_customer_details(self, *args, **kwargs):
         return {
@@ -82,7 +254,7 @@ class MockBreezeSdk:
     def get_portfolio_positions(self, **kwargs):
         return {
             "Status": 200,
-            "Success": [dict(r) for r in fx.MOCK_PORTFOLIO_POSITION_ROWS],
+            "Success": fx.mock_portfolio_position_rows(),
             "Error": None,
         }
 
@@ -108,7 +280,7 @@ class MockBreezeSdk:
         to_date: str = "",
         **kwargs,
     ):
-        rows = [dict(o) for o in fx.MOCK_ORDER_LIST_SAMPLE if (o.get("exchange_code") or "NFO") == (exchange_code or "NFO")]
+        rows = [dict(o) for o in fx.mock_order_list_rows() if (o.get("exchange_code") or "NFO") == (exchange_code or "NFO")]
         return {"Status": 200, "Success": rows, "Error": None}
 
     def get_trade_list(self, **kwargs):
@@ -143,20 +315,31 @@ class MockBreezeSdk:
         ex = (kwargs.get("exchange_code") or exchange_code or "").strip()
         pt = (kwargs.get("product_type") or product_type or "").strip()
         if ex.upper() == "NSE" and pt.lower() == "cash":
+            spot = resolve_underlying_spot(sc) if sc else None
+            if spot is None:
+                # No F&O bhavcopy row exists for this symbol at all (e.g. INDVIX
+                # isn't itself F&O-traded): a stable, plausible synthetic value
+                # instead of one canned constant shared by every stock_code.
+                spot = 15.85 if (not sc or sc.upper() in _VIX_LIKE_SYMBOLS) else seed_running_state(sc)["last"]
+            jitter = max(0.05, spot * 0.003)
             return {
                 "Status": 200,
                 "Success": [
                     {
-                        "ltp": "15.85",
-                        "previous_close": "15.60",
-                        "open": "15.72",
-                        "high": "16.05",
-                        "low": "15.58",
+                        "ltp": f"{spot:.2f}",
+                        "previous_close": f"{max(0.01, spot - jitter):.2f}",
+                        "open": f"{max(0.01, spot - jitter * 0.6):.2f}",
+                        "high": f"{spot + jitter:.2f}",
+                        "low": f"{max(0.01, spot - jitter):.2f}",
                         "stock_code": sc or "INDVIX",
                     }
                 ],
                 "Error": None,
             }
+        rows = _bhavcopy_option_chain_rows(sc, expiry_date, ex or "NFO", right)
+        row = next((r for r in rows if not strike_price or r["strike_price"] == str(strike_price)), None)
+        if row:
+            return {"Status": 200, "Success": [row], "Error": None}
         return {
             "Status": 200,
             "Success": [
@@ -175,27 +358,16 @@ class MockBreezeSdk:
     def get_option_chain_quotes(self, **kwargs):
         strike = str(kwargs.get("strike_price") or "")
         stock_code = str(kwargs.get("stock_code") or "NIFTY")
+        exchange_code = str(kwargs.get("exchange_code") or "NFO")
         expiry_date = str(kwargs.get("expiry_date") or "")
         right = str(kwargs.get("right") or "Call")
+
+        rows = _bhavcopy_option_chain_rows(stock_code, expiry_date, exchange_code, right)
+        if not rows:
+            rows = _mock_option_chain_rows(stock_code, expiry_date, right)
         if strike and strike not in ("0", "None"):
-            return {
-                "Status": 200,
-                "Success": [
-                    {
-                        "strike_price": strike,
-                        "ltp": "50",
-                        "best_bid_price": "49",
-                        "best_offer_price": "51",
-                        "total_buy_qty": "100",
-                        "total_sell_qty": "100",
-                        "spot_price": "25000",
-                        "open_interest": "88000",
-                        "right": right,
-                    }
-                ],
-                "Error": None,
-            }
-        rows = _mock_option_chain_rows(stock_code, expiry_date, right)
+            match = next((r for r in rows if r["strike_price"] == strike), None)
+            rows = [match] if match else rows[:1]
         return {"Status": 200, "Success": rows, "Error": None}
 
     def get_historical_data_v2(self, **kwargs):
@@ -212,9 +384,10 @@ class MockBreezeSdk:
         }
 
     def get_order_detail(self, exchange_code: str = "", order_id: str = "", **kwargs):
-        rows = [dict(o) for o in fx.MOCK_ORDER_LIST_SAMPLE if str(o.get("order_id")) == str(order_id)]
-        if not rows and fx.MOCK_ORDER_LIST_SAMPLE:
-            rows = [dict(fx.MOCK_ORDER_LIST_SAMPLE[0])]
+        order_rows = fx.mock_order_list_rows()
+        rows = [dict(o) for o in order_rows if str(o.get("order_id")) == str(order_id)]
+        if not rows and order_rows:
+            rows = [dict(order_rows[0])]
         return {"Status": 200, "Success": rows, "Error": None}
 
     def get_demat_holdings(self, **kwargs):
@@ -279,23 +452,58 @@ class MockBreezeSdk:
         }
 
     def gtt_three_leg_place_order(self, **kwargs):
+        """Tracks placed GTT orders in-memory (keyed on the mock session) so `gtt_order_book`
+        reflects what was actually placed/cancelled during a mock-mode dev session, letting the
+        per-leg Exit Rule modal's "existing GTT status" display be exercised locally."""
+        self._gtt_seq += 1
+        gtt_order_id = f"MOCK-GTT-{self._gtt_seq}"
+        order_details = [
+            {**leg, "gtt_order_id": gtt_order_id, "status": "Pending"}
+            for leg in kwargs.get("order_details") or []
+        ]
+        self._gtt_orders[gtt_order_id] = {
+            "exchange_code": kwargs.get("exchange_code"),
+            "product_type": kwargs.get("product"),
+            "stock_code": kwargs.get("stock_code"),
+            "expiry_date": kwargs.get("expiry_date"),
+            "strike_price": kwargs.get("strike_price"),
+            "right": kwargs.get("right"),
+            "quantity": kwargs.get("quantity"),
+            "index_or_stock": kwargs.get("index_or_stock"),
+            "gtt_type": kwargs.get("gtt_type"),
+            "fresh_order_id": None,
+            "order_datetime": datetime.datetime.now().strftime("%d-%b-%Y %H:%M:%S"),
+            "order_details": order_details,
+        }
         return {
             "Status": 200,
-            "Success": {"gtt_order_id": "MOCK-GTT-1", "message": "Mock GTT placed"},
+            "Success": {"gtt_order_id": gtt_order_id, "message": "Mock GTT Order Request Placed Successfully"},
             "Error": None,
         }
 
     def gtt_three_leg_modify_order(self, **kwargs):
+        gtt_order_id = kwargs.get("gtt_order_id", "MOCK-GTT-1")
+        record = self._gtt_orders.get(gtt_order_id)
+        if record is not None:
+            record["order_details"] = [
+                {**leg, "gtt_order_id": gtt_order_id, "status": "Pending"}
+                for leg in kwargs.get("order_details") or []
+            ]
         return {
             "Status": 200,
-            "Success": {"gtt_order_id": kwargs.get("gtt_order_id", "MOCK-GTT-1"), "message": "Mock GTT modified"},
+            "Success": {"gtt_order_id": gtt_order_id, "message": "Mock GTT modified"},
             "Error": None,
         }
 
     def gtt_three_leg_cancel_order(self, **kwargs):
+        gtt_order_id = kwargs.get("gtt_order_id", "MOCK-GTT-1")
+        record = self._gtt_orders.get(gtt_order_id)
+        if record is not None:
+            for leg in record["order_details"]:
+                leg["status"] = "Cancelled"
         return {
             "Status": 200,
-            "Success": {"gtt_order_id": kwargs.get("gtt_order_id", "MOCK-GTT-1"), "message": "Mock GTT cancelled"},
+            "Success": {"gtt_order_id": gtt_order_id, "message": "Your request for order cancellation successfully submitted !"},
             "Error": None,
         }
 
@@ -309,7 +517,7 @@ class MockBreezeSdk:
         return self.gtt_three_leg_cancel_order(**kwargs)
 
     def gtt_order_book(self, **kwargs):
-        return {"Status": 200, "Success": [], "Error": None}
+        return {"Status": 200, "Success": list(self._gtt_orders.values()), "Error": None}
 
     def get_trade_detail(self, exchange_code: str = "", order_id: str = "", **kwargs):
         return {"Status": 200, "Success": [], "Error": None}

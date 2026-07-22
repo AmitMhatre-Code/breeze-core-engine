@@ -176,7 +176,7 @@ def _classify_requests_response(raw) -> tuple[int, dict | None, str | None]:
     return http_status, body, err_text
 
 
-def _run_breeze_request(method: str, url: str, perform_http):
+def _run_breeze_request(method: str, url: str, perform_http, request_body: str | bytes | None = None):
     from icici_breeze_backend.app.services.icici_api_pacing import GlobalIciciApiLimiter
 
     m = method.upper()
@@ -189,6 +189,8 @@ def _run_breeze_request(method: str, url: str, perform_http):
     out = GlobalIciciApiLimiter.request_breeze_http(
         perform_http,
         record_url=u,
+        record_method=m,
+        record_body=request_body,
         classify_response=_classify_requests_response,
         build_result=build_result,
     )
@@ -215,7 +217,7 @@ def _patched_request(method, url, **kwargs):
 
         if _is_breeze_url(u):
             try:
-                return _run_breeze_request(m, u, perform)
+                return _run_breeze_request(m, u, perform, request_body=d)
             except Exception as e:
                 _logger.warning(
                     "breeze_http_transport_error method=%s url=%s err=%s",
@@ -238,12 +240,15 @@ def _patched_request(method, url, **kwargs):
             raise
 
     if _is_breeze_url(u):
+        req_body = kwargs.get("data") or kwargs.get("json")
+        if req_body is not None and not isinstance(req_body, (str, bytes)):
+            req_body = json.dumps(req_body, separators=(",", ":"))
 
         def perform():
             return _orig_request(method, url, **kwargs)
 
         try:
-            return _run_breeze_request(m, u, perform)
+            return _run_breeze_request(m, u, perform, request_body=req_body)
         except Exception as e:
             _logger.warning(
                 "breeze_http_transport_error method=%s url=%s err=%s",

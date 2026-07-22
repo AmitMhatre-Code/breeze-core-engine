@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  :root {
+    --bg:#0A0C10; --panel:#12151C; --panel2:#0F141C; --elevated:#161B24;
+    --border:#232A36; --border-soft:#1B222E;
+    --text:#E6EAF2; --muted:#8A93A6; --faint:#5C6577;
+    --accent:#22D3EE; --accent-strong:#22D3EE; --accent-ink:#06222A; --accent-tint:#0C2229; --accent-bar:#22D3EE;
+    --up:#34D399; --down:#F87171; --up-tint:#0F1F1B; --down-tint:#231518;
+    --up-btn:#0EA371; --down-btn:#E5484D;
+    --amber:#FBBF24; --amber-tint:#241D0E;
+    --shadow:0 18px 50px -20px rgba(0,0,0,.65);
+    --track:#1A2330;
+  }
+  .theme-light {
+    --bg:#EEF1F5; --panel:#FFFFFF; --panel2:#F5F7FA; --elevated:#FFFFFF;
+    --border:#DBE1E9; --border-soft:#E8ECF2;
+    --text:#0E1520; --muted:#5A6473; --faint:#93A0B0;
+    --accent:#0891B2; --accent-strong:#0E7490; --accent-ink:#FFFFFF; --accent-tint:#E1F4FA; --accent-bar:#0891B2;
+    --up:#0F9D6B; --down:#DC2F44; --up-tint:#E7F6F0; --down-tint:#FCECEE;
+    --up-btn:#0F9D6B; --down-btn:#DC2F44;
+    --amber:#B45309; --amber-tint:#FBF0DE;
+    --shadow:0 10px 34px -16px rgba(15,25,40,.20);
+    --track:#E3E8EE;
+  }
+  body { background: var(--bg); }
+  .navlink:hover { background: var(--panel2); color: var(--text) !important; }
+  .iconbtn { transition: background .15s ease, color .15s ease; }
+  .iconbtn:hover { background: var(--border-soft); color: var(--text) !important; }
+  .iconbtn:hover .rot { transform: rotate(-25deg); }
+  .rot { transition: transform .2s ease; }
+  .tbtn-ghost:hover { background: var(--accent-tint); }
+  .tbtn-outline:hover { background: var(--border-soft); }
+  .fysel:hover { background: var(--border-soft); }
+  .viewbtn:hover { color: var(--text); }
+  .bar:hover { filter: brightness(1.15); }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+</style>
+</helmet>
+
+<div class="breeze {{ themeClass }}" style="display:flex; min-height:100vh; background:var(--bg); color:var(--text); font-family:'IBM Plex Sans',system-ui,sans-serif; font-size:14px;">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside style="width:236px; flex:0 0 auto; border-right:1px solid var(--border); background:var(--panel); display:flex; flex-direction:column; padding:16px 12px;">
+    <div style="display:flex; align-items:center; gap:11px; padding:2px 6px 18px;">
+      <img src="assets/breeze-logo.png" alt="Breeze" style="width:34px; height:34px; border-radius:8px; flex:0 0 auto; display:block;">
+      <div style="line-height:1.15;">
+        <div style="font-size:16px; font-weight:700; letter-spacing:-.01em;">Breeze</div>
+        <div style="font-size:10px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--faint);">Terminal</div>
+      </div>
+    </div>
+
+    <nav style="display:flex; flex-direction:column; gap:2px;">
+      <a class="navlink" href="Breeze Dashboard - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="9" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span style="font-size:13.5px;">Dashboard</span>
+      </a>
+      <a class="navlink" href="Breeze Portfolio - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="13" width="16" height="8" rx="1"/><path d="M8 6H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-1"/><path d="M8 6V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1"/></svg>
+        <span style="font-size:13.5px;">Portfolio</span>
+      </a>
+      <a class="navlink" href="#" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; position:relative; background:var(--accent-tint); color:var(--text); font-weight:600;">
+        <span style="position:absolute; left:0; top:9px; bottom:9px; width:2.5px; border-radius:999px; background:var(--accent-bar);"></span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 2 4-6"/></svg>
+        <span style="font-size:13.5px;">Performance</span>
+      </a>
+      <a class="navlink" href="Breeze Order Book - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+        <span style="font-size:13.5px;">Order Book</span>
+      </a>
+      <a class="navlink" href="Breeze Place Order - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+        <span style="font-size:13.5px;">Place Order</span>
+      </a>
+      <a class="navlink" href="Breeze Basket Order - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="18" rx="1.5"/><rect x="14" y="3" width="7" height="10" rx="1.5"/><rect x="14" y="16" width="7" height="5" rx="1.5"/></svg>
+        <span style="font-size:13.5px; display:flex; align-items:center; gap:6px;">Basket Order <span style="font-size:9px; font-weight:700; letter-spacing:.06em; color:var(--accent-ink); background:var(--accent); padding:1.5px 5px; border-radius:4px;">NEW</span></span>
+      </a>
+      <a class="navlink" href="Breeze Strategy Builder - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M8 8l4 8"/><path d="M16 8l-4 8"/></svg>
+        <span style="font-size:13.5px;">Strategy Builder</span>
+      </a>
+      <a class="navlink" href="Breeze Settings - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span style="font-size:13.5px;">Settings</span>
+      </a>
+    </nav>
+
+    <div style="margin-top:auto; padding:12px 11px 4px; border-top:1px solid var(--border-soft);">
+      <div style="font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin-bottom:4px;">Session</div>
+      <div style="display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted);">
+        <span style="width:7px; height:7px; border-radius:999px; background:var(--up); box-shadow:0 0 8px var(--up);"></span>
+        ICICI Breeze · active
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN COLUMN ============ -->
+  <div style="flex:1 1 auto; min-width:0; display:flex; flex-direction:column;">
+
+    <!-- header -->
+    <header style="height:52px; flex:0 0 auto; border-bottom:1px solid var(--border); background:var(--panel); display:flex; align-items:center; justify-content:space-between; gap:16px; padding:0 20px;">
+      <div style="display:flex; align-items:center; gap:18px; min-width:0;">
+        <span style="font-size:10.5px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);">Trading</span>
+        <span style="font-size:14px; font-weight:600; color:var(--text);">Amit Mhatre</span>
+        <span style="display:flex; align-items:baseline; gap:7px;">
+          <span style="font-size:11.5px; color:var(--muted);">Free margin</span>
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:14px; font-weight:600; color:var(--up);">₹4.86L</span>
+        </span>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted);"><span style="color:var(--faint);">API</span> 1,284 / 5,000</span>
+        <span style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted);"><span style="width:7px; height:7px; border-radius:999px; background:var(--accent); box-shadow:0 0 8px var(--accent);"></span>ICICI</span>
+        <span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--accent-strong);">v4.2.0</span>
+        <button class="iconbtn" onClick="{{ toggleTheme }}" title="Toggle theme" style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:8px; border:none; background:transparent; color:var(--muted); cursor:pointer;">
+          <sc-if value="{{ showSun }}" hint-placeholder-val="{{ true }}">
+            <svg class="rot" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </sc-if>
+          <sc-if value="{{ showMoon }}" hint-placeholder-val="{{ false }}">
+            <svg class="rot" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          </sc-if>
+        </button>
+        <a class="iconbtn" href="#" title="Log out" style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:8px; border:none; background:transparent; color:var(--muted); text-decoration:none; cursor:pointer;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </a>
+      </div>
+    </header>
+
+    <!-- content -->
+    <main style="flex:1 1 auto; overflow:auto; padding:22px 24px 44px; background:var(--bg);">
+      <div style="max-width:1280px; margin:0 auto; display:flex; flex-direction:column; gap:14px;">
+
+        <!-- page title -->
+        <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+          <div>
+            <h1 style="margin:0; font-size:22px; font-weight:700; letter-spacing:-.015em;">Performance</h1>
+            <div style="margin-top:3px; font-size:12.5px; color:var(--muted);">Bank balance, margins, and options P&amp;L</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <!-- financial year selector -->
+            <div style="position:relative;">
+              <div class="fysel" onClick="{{ toggleFySel }}" style="display:flex; align-items:center; gap:8px; background:var(--panel); border:1px solid var(--border); border-radius:9px; padding:0 12px; height:36px; cursor:pointer;">
+                <span style="font-size:11.5px; color:var(--muted);">Financial year</span>
+                <span style="font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:600; color:var(--text);">{{ selectedFy }}</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </div>
+              <sc-if value="{{ fySelOpen }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute; top:calc(100% + 6px); right:0; z-index:40; width:160px; background:var(--panel); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); overflow:hidden;">
+                  <sc-for list="{{ fyOptions }}" as="fy" hint-placeholder-count="3">
+                    <button onClick="{{ fy.onSelect }}" style="width:100%; text-align:left; font-family:'IBM Plex Mono',monospace; font-size:12.5px; font-weight:600; color:{{ fy.color }}; background:{{ fy.bg }}; border:none; padding:9px 13px; cursor:pointer;">{{ fy.label }}</button>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+            <button class="tbtn-ghost" onClick="{{ openExport }}" style="display:flex; align-items:center; gap:7px; font-size:12px; font-weight:600; color:var(--accent-strong); background:transparent; border:1px solid var(--border); border-radius:9px; padding:0 13px; height:36px; cursor:pointer;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export
+            </button>
+          </div>
+        </div>
+
+        <!-- 3 independent data-domain cards: funds / margin / P&L -->
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:14px;">
+
+          <!-- bank balance -->
+          <section style="background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px 18px; display:flex; flex-direction:column;">
+            <span style="font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:var(--faint);">Bank balance</span>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:26px; font-weight:600; color:var(--text); margin-top:8px;">₹8.42L</div>
+            <div style="border-top:1px solid var(--border-soft); margin-top:13px; padding-top:12px; display:flex; flex-direction:column; gap:8px;">
+              <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Equity</span><span style="font-family:'IBM Plex Mono',monospace; color:var(--text);">₹1.20L</span></div>
+              <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">F&amp;O</span><span style="font-family:'IBM Plex Mono',monospace; color:var(--text);">₹2.64L</span></div>
+              <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Commodity</span><span style="font-family:'IBM Plex Mono',monospace; color:var(--muted);">₹0</span></div>
+              <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Currency</span><span style="font-family:'IBM Plex Mono',monospace; color:var(--muted);">₹0</span></div>
+              <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Unallocated</span><span style="font-family:'IBM Plex Mono',monospace; color:var(--up);">₹4.58L</span></div>
+            </div>
+          </section>
+
+          <!-- margins -->
+          <section style="background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px 18px; display:flex; flex-direction:column;">
+            <span style="font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:var(--faint);">Margins</span>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:26px; font-weight:600; color:var(--text); margin-top:8px;">₹7.50L</div>
+            <div style="border-top:1px solid var(--border-soft); margin-top:13px; padding-top:12px; display:flex; flex-direction:column; gap:8px;">
+              <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Utilised</span><span style="font-family:'IBM Plex Mono',monospace; color:var(--down);">−₹2.64L</span></div>
+              <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Available</span><span style="font-family:'IBM Plex Mono',monospace; color:var(--up);">₹4.86L</span></div>
+            </div>
+            <div style="margin-top:auto; padding-top:12px; font-size:11px; font-style:italic; color:var(--faint); line-height:1.5;">*Margin may be under-calculated (ICICI API does not return upstreamed amount)</div>
+          </section>
+
+          <!-- FY P&L statement -->
+          <section style="background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px 18px; display:flex; flex-direction:column;">
+            <span style="font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:var(--faint);">FY 2025–26 P&amp;L statement</span>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:26px; font-weight:600; color:var(--up); margin-top:8px;">+₹1.86L</div>
+            <div style="border-top:1px solid var(--border-soft); margin-top:13px; padding-top:12px; display:flex; flex-direction:column; gap:8px;">
+              <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Premium earned</span><span style="font-family:'IBM Plex Mono',monospace; color:var(--up);">₹4.12L</span></div>
+              <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Premium paid</span><span style="font-family:'IBM Plex Mono',monospace; color:var(--down);">−₹1.94L</span></div>
+              <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Brokerage</span><span style="font-family:'IBM Plex Mono',monospace; color:var(--down);">−₹18,400</span></div>
+              <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Taxes</span><span style="font-family:'IBM Plex Mono',monospace; color:var(--down);">−₹13,600</span></div>
+              <div style="display:flex; justify-content:space-between; font-size:12.5px; padding-top:2px; border-top:1px dashed var(--border-soft);"><span style="color:var(--text); font-weight:600;">Annualised ROI</span><span style="font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--up);">24.8%</span></div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Monthly financial overview: chart widget -->
+        <section style="background:var(--panel); border:1px solid var(--border); border-radius:14px; overflow:hidden;">
+          <div style="padding:14px 18px; border-bottom:1px solid var(--border-soft); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+            <span style="font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:var(--faint);">Monthly financial overview</span>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <div style="display:inline-flex; padding:3px; gap:2px; background:var(--panel2); border:1px solid var(--border); border-radius:8px;">
+                <button class="viewbtn" style="font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; color:var(--accent-ink); background:var(--accent-strong); border:none; border-radius:5px; padding:5px 11px; cursor:pointer;">Chart</button>
+                <button class="viewbtn" style="font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; color:var(--muted); background:transparent; border:none; border-radius:5px; padding:5px 11px; cursor:pointer;">Table</button>
+              </div>
+            </div>
+          </div>
+
+          <div style="padding:20px 22px 8px;">
+            <!-- legend -->
+            <div style="display:flex; gap:18px; margin-bottom:16px; flex-wrap:wrap; font-size:11.5px; color:var(--muted);">
+              <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-flex; width:16px; height:10px; border-radius:0;"><span style="flex:1; background:var(--up);"></span><span style="flex:1; background:var(--down);"></span></span>P&amp;L <span style="color:var(--faint);">(green profit / red loss)</span></span>
+              <span style="display:flex; align-items:center; gap:6px;"><span style="width:10px; height:10px; background:var(--amber); display:inline-block;"></span>Brokerage</span>
+              <span style="display:flex; align-items:center; gap:6px;"><span style="width:10px; height:10px; background:#818CF8; display:inline-block;"></span>Taxes</span>
+            </div>
+
+            <!-- bar chart -->
+            <svg viewBox="0 0 970 260" preserveAspectRatio="none" style="width:100%; height:260px; display:block; overflow:visible;">
+              <!-- horizontal gridlines + axis labels -->
+              <line x1="46" y1="40" x2="970" y2="40" stroke="var(--border-soft)" stroke-width="1"/>
+              <line x1="46" y1="80" x2="970" y2="80" stroke="var(--border-soft)" stroke-width="1"/>
+              <line x1="46" y1="120" x2="970" y2="120" stroke="var(--border-soft)" stroke-width="1"/>
+              <line x1="46" y1="160" x2="970" y2="160" stroke="var(--border-soft)" stroke-width="1"/>
+              <line x1="46" y1="200" x2="970" y2="200" stroke="var(--border-soft)" stroke-width="1"/>
+              <line x1="46" y1="240" x2="970" y2="240" stroke="var(--border-soft)" stroke-width="1"/>
+              <line x1="46" y1="190" x2="970" y2="190" stroke="var(--faint)" stroke-width="1.4"/>
+              <text x="40" y="44" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--faint)">₹1.5L</text>
+              <text x="40" y="84" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--faint)">₹1.0L</text>
+              <text x="40" y="124" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--faint)">₹50k</text>
+              <text x="40" y="194" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--faint)">₹0</text>
+              <text x="40" y="244" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--faint)">−₹50k</text>
+
+              <!-- Apr -->
+              <g>
+                <rect class="bar" x="60" y="140" width="34" height="50" fill="var(--up)"/>
+                <rect class="bar" x="60" y="190" width="34" height="10" fill="var(--amber)"/>
+                <rect class="bar" x="60" y="200" width="34" height="7" fill="#818CF8"/>
+              </g>
+              <!-- May -->
+              <g>
+                <rect class="bar" x="135" y="110" width="34" height="80" fill="var(--up)"/>
+                <rect class="bar" x="135" y="190" width="34" height="9" fill="var(--amber)"/>
+                <rect class="bar" x="135" y="199" width="34" height="6" fill="#818CF8"/>
+              </g>
+              <!-- Jun -->
+              <g>
+                <rect class="bar" x="210" y="190" width="34" height="42" fill="var(--down)"/>
+                <rect class="bar" x="210" y="232" width="34" height="8" fill="var(--amber)"/>
+                <rect class="bar" x="210" y="240" width="34" height="6" fill="#818CF8"/>
+              </g>
+              <!-- Jul -->
+              <g>
+                <rect class="bar" x="285" y="150" width="34" height="40" fill="var(--up)"/>
+                <rect class="bar" x="285" y="190" width="34" height="8" fill="var(--amber)"/>
+                <rect class="bar" x="285" y="198" width="34" height="5" fill="#818CF8"/>
+              </g>
+              <!-- Aug -->
+              <g>
+                <rect class="bar" x="360" y="95" width="34" height="95" fill="var(--up)"/>
+                <rect class="bar" x="360" y="190" width="34" height="10" fill="var(--amber)"/>
+                <rect class="bar" x="360" y="200" width="34" height="7" fill="#818CF8"/>
+              </g>
+              <!-- Sep -->
+              <g>
+                <rect class="bar" x="435" y="190" width="34" height="28" fill="var(--down)"/>
+                <rect class="bar" x="435" y="218" width="34" height="7" fill="var(--amber)"/>
+                <rect class="bar" x="435" y="225" width="34" height="5" fill="#818CF8"/>
+              </g>
+              <!-- Oct -->
+              <g>
+                <rect class="bar" x="510" y="120" width="34" height="70" fill="var(--up)"/>
+                <rect class="bar" x="510" y="190" width="34" height="9" fill="var(--amber)"/>
+                <rect class="bar" x="510" y="199" width="34" height="6" fill="#818CF8"/>
+              </g>
+              <!-- Nov -->
+              <g>
+                <rect class="bar" x="585" y="160" width="34" height="30" fill="var(--up)"/>
+                <rect class="bar" x="585" y="190" width="34" height="7" fill="var(--amber)"/>
+                <rect class="bar" x="585" y="197" width="34" height="5" fill="#818CF8"/>
+              </g>
+              <!-- Dec -->
+              <g>
+                <rect class="bar" x="660" y="105" width="34" height="85" fill="var(--up)"/>
+                <rect class="bar" x="660" y="190" width="34" height="10" fill="var(--amber)"/>
+                <rect class="bar" x="660" y="200" width="34" height="7" fill="#818CF8"/>
+              </g>
+              <!-- Jan -->
+              <g>
+                <rect class="bar" x="735" y="190" width="34" height="20" fill="var(--down)"/>
+                <rect class="bar" x="735" y="210" width="34" height="6" fill="var(--amber)"/>
+                <rect class="bar" x="735" y="216" width="34" height="4" fill="#818CF8"/>
+              </g>
+              <!-- Feb -->
+              <g>
+                <rect class="bar" x="810" y="130" width="34" height="60" fill="var(--up)"/>
+                <rect class="bar" x="810" y="190" width="34" height="8" fill="var(--amber)"/>
+                <rect class="bar" x="810" y="198" width="34" height="6" fill="#818CF8"/>
+              </g>
+              <!-- Mar -->
+              <g>
+                <rect class="bar" x="885" y="85" width="34" height="105" fill="var(--up)"/>
+                <rect class="bar" x="885" y="190" width="34" height="11" fill="var(--amber)"/>
+                <rect class="bar" x="885" y="201" width="34" height="8" fill="#818CF8"/>
+              </g>
+            </svg>
+            <div style="display:grid; grid-template-columns:46px repeat(12,1fr); font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--faint); text-align:center; margin-top:6px; padding-bottom:12px;">
+              <span></span><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span><span>Sep</span><span>Oct</span><span>Nov</span><span>Dec</span><span>Jan</span><span>Feb</span><span>Mar</span>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- ===== EXPORT MODAL ===== -->
+  <sc-if value="{{ exportOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeOverlay }}" style="position:fixed; inset:0; z-index:60; background:rgba(6,9,14,.6); display:flex; align-items:center; justify-content:center; padding:24px;">
+      <div onClick="{{ stopProp }}" style="width:100%; max-width:380px; background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); padding:22px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+          <span style="font-size:14.5px; font-weight:700;">Export P&amp;L statement</span>
+          <button class="iconbtn" onClick="{{ closeOverlay }}" style="width:28px; height:28px; display:flex; align-items:center; justify-content:center; border-radius:7px; border:none; background:transparent; color:var(--muted); cursor:pointer;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div style="font-size:12.5px; color:var(--muted); margin-bottom:14px;">{{ selectedFy }} · Apr–Mar</div>
+        <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;">
+          <button class="tbtn-outline" style="display:flex; align-items:center; gap:10px; font-size:13px; font-weight:600; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:11px 13px; cursor:pointer; text-align:left;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            PDF · formatted statement
+          </button>
+          <button class="tbtn-outline" style="display:flex; align-items:center; gap:10px; font-size:13px; font-weight:600; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:11px 13px; cursor:pointer; text-align:left;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13h2M8 17h2M14 13h2M14 17h2M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            CSV · raw transaction data
+          </button>
+        </div>
+        <button onClick="{{ closeOverlay }}" style="width:100%; font-size:12.5px; font-weight:600; color:var(--muted); background:transparent; border:none; cursor:pointer;">Cancel</button>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  fyList = ["FY 2025–26", "FY 2024–25", "FY 2023–24"];
+  state = { theme: "dark", overlay: null, fySelOpen: false, selectedFy: "FY 2025–26" };
+
+  componentDidMount() {
+    try {
+      const saved = localStorage.getItem("breeze-tp-theme");
+      if (saved === "light" || saved === "dark") {
+        this.setState({ theme: saved });
+      }
+    } catch (e) {}
+  }
+
+  toggleTheme = () => {
+    this.setState((s) => {
+      const next = s.theme === "light" ? "dark" : "light";
+      try { localStorage.setItem("breeze-tp-theme", next); } catch (e) {}
+      return { theme: next };
+    });
+  };
+
+  toggleFySel = () => this.setState((s) => ({ fySelOpen: !s.fySelOpen }));
+  selectFy = (fy) => this.setState({ selectedFy: fy, fySelOpen: false });
+  openExport = () => this.setState({ overlay: "export" });
+  closeOverlay = () => this.setState({ overlay: null });
+  stopProp = (e) => e.stopPropagation();
+
+  renderVals() {
+    const isLight = this.state.theme === "light";
+    return {
+      themeClass: isLight ? "theme-light" : "",
+      showSun: !isLight,
+      showMoon: isLight,
+      toggleTheme: this.toggleTheme,
+      selectedFy: this.state.selectedFy,
+      fySelOpen: this.state.fySelOpen,
+      toggleFySel: this.toggleFySel,
+      fyOptions: this.fyList.map((fy) => ({
+        label: fy,
+        color: fy === this.state.selectedFy ? "var(--accent-strong)" : "var(--text)",
+        bg: fy === this.state.selectedFy ? "var(--accent-tint)" : "transparent",
+        onSelect: () => this.selectFy(fy),
+      })),
+      exportOpen: this.state.overlay === "export",
+      openExport: this.openExport,
+      closeOverlay: this.closeOverlay,
+      stopProp: this.stopProp,
+    };
+  }
+}
+</script>
+</body>
+</html>

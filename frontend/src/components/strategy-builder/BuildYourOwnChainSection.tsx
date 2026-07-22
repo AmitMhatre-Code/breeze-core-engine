@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import {
   OptionChainTable,
   scrollOptionChainAtmIntoView,
-} from "@/components/order/OptionChainTable";
+} from "@/components/shared/order/OptionChainTable";
 import type {
   ChainRow,
   ChainSuccess,
@@ -42,18 +42,25 @@ export function BuildYourOwnChainSection({
   isStrategySlotAdded,
 }: BuildYourOwnChainSectionProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** Only auto-scroll once per distinct contract — `chainSuccess` gets a new
+   * reference on every live-quote poll, which would otherwise re-center the
+   * ATM row and fight the user's manual scrolling every refresh. */
+  const scrolledKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!chainSuccess?.chain_rows?.length) return;
+    const key = `${stockCode}|${expiryDate}`;
+    if (scrolledKeyRef.current === key) return;
+    scrolledKeyRef.current = key;
     const t = requestAnimationFrame(() => {
       scrollOptionChainAtmIntoView(scrollRef.current);
     });
     return () => cancelAnimationFrame(t);
-  }, [chainSuccess]);
+  }, [chainSuccess, stockCode, expiryDate]);
 
   if (isFetching && !chainSuccess) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="text-sm text-muted">
         Loading option chain…
       </p>
     );
@@ -87,7 +94,7 @@ export function BuildYourOwnChainSection({
 
   if (!isFetching && stockCode.trim() && expiryDate.trim() && chainStatus === 200) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="text-sm text-muted">
         No option chain rows for this expiry.
       </p>
     );
@@ -95,7 +102,7 @@ export function BuildYourOwnChainSection({
 
   if (!stockCode.trim() || !expiryDate.trim()) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="text-sm text-muted">
         Set underlying and expiry in section 1 to load the chain.
       </p>
     );

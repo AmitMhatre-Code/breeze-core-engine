@@ -16,12 +16,12 @@ export default function TermsAndConditionsPage() {
     <div className="min-h-screen bg-zinc-950 text-zinc-50">
       <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
         <header className="mb-8 space-y-3 border-b border-zinc-800 pb-6">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-blue-400">
+          <p className="text-body font-semibold uppercase tracking-[0.2em] text-blue-400">
             Legal
           </p>
           <h1 className="text-2xl font-bold tracking-tight">Breeze Modern Terms &amp; Conditions</h1>
           {termsQ.data ? (
-            <p className="text-sm text-zinc-500">
+            <p className="text-sm text-zinc-400">
               Version {termsQ.data.version} · Effective {termsQ.data.effective_date}
             </p>
           ) : null}

@@ -6,7 +6,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.core.market_hours import get_reference_time_for_iv_ist, is_india_market_open
+from icici_breeze_backend.app.services.market_calendar import get_reference_time_for_iv_ist, is_market_open
 from icici_breeze_backend.app.core.timezone import IST, now_ist_naive, today_ist_date
 from icici_breeze_backend.app.services.iv_compute import DEFAULT_R, DEFAULT_Q, expected_range_from_atm_iv, implied_volatility
 
@@ -315,28 +315,25 @@ def _historical_vix_range(
     return [{"date": d, "value": by_date[d]} for d in sorted(by_date.keys())]
 
 
-def _option_chain(breeze, expiry_api: str, right: str) -> List[Dict]:
-    """Get NIFTY option chain for one expiry and right. Returns list of strike info with ltp. Retries on transient failure."""
-    if breeze is None:
-        return []
+def _option_chain(processor, user_id: str, expiry_api: str, right: str) -> List[Dict]:
+    """Get NIFTY option chain for one expiry and right. Cache-first with REST fallback."""
+    from icici_breeze_backend.app.services.quote_source_router import fetch_chain_side_icici_response
 
-    def _get() -> List[Dict]:
-        r = breeze.get_option_chain_quotes(
-            stock_code=NIFTY_SYMBOL,
-            exchange_code=NFO,
-            product_type=PRODUCT_OPTIONS,
-            right=right,
-            expiry_date=expiry_api,
+    try:
+        r = fetch_chain_side_icici_response(
+            processor,
+            user_id,
+            NIFTY_SYMBOL,
+            NFO,
+            expiry_api,
+            right,
         )
         if not isinstance(r, dict) or (r.get("Status") or r.get("status")) != 200:
             return []
         succ = r.get("Success") or r.get("success")
         return list(succ) if isinstance(succ, list) else []
-
-    try:
-        return _retry_breeze(lambda: _get(), f"get_option_chain_quotes NIFTY {expiry_api} {right}")
     except Exception as e:
-        _logger.warning("get_option_chain_quotes NIFTY %s %s failed after retries: %s", expiry_api, right, e)
+        _logger.warning("option chain NIFTY %s %s failed: %s", expiry_api, right, e)
         return []
 
 
@@ -557,7 +554,7 @@ def _log_atm_iv_trace(
 
     # Step 2: Expiry and time to expiry (LTT = expiry date 3:30 PM IST)
     ref_ist = get_reference_time_for_iv_ist()
-    ref_label = "now (market open)" if is_india_market_open(ref_ist) else "previous market close (market closed)"
+    ref_label = "now (market open)" if is_market_open(ref_ist) else "previous market close (market closed)"
     _logger.info(
         "%s Step 2 - Reference time for T: %s (%s)",
         ATM_IV_TRACE_PREFIX, ref_ist.strftime("%Y-%m-%d %H:%M:%S %Z"), ref_label,
@@ -779,6 +776,11 @@ def fetch_vix_options(
     """
     Payload: nifty_spot, atm_iv, expected_range, expected_move_pct, put_call_ratio, strike_highest_*. First expiry only.
     """
+    from icici_breeze_backend.app.services.quote_source_router import (
+        cached_chain_spot,
+        fetch_chain_sides_atm_gated,
+    )
+
     result = {
         "nifty_spot": None,
         "next_expiry": None,
@@ -796,18 +798,43 @@ def fetch_vix_options(
         result["error"] = "Session unavailable. Please log in again."
         return result
 
-    if nifty_quote is None:
-        nifty_quote = _quote_nse_cash(breeze, NIFTY_SYMBOL)
+    # Display spot: prefer a caller-supplied live quote (headline path), else the
+    # WS index-tick-fed cache seeded by `index_spot_feed`. No ICICI REST round-trip
+    # here -- NIFTY spot already streams over the websocket the chain subscribes to.
     spot = None
     if nifty_quote:
         try:
             spot = float(nifty_quote.get("ltp") or nifty_quote.get("last") or nifty_quote.get("spot_price") or 0)
-            result["nifty_spot"] = round(spot, 2)
         except (TypeError, ValueError):
-            pass
+            spot = None
+    if spot is None or spot <= 0:
+        spot = cached_chain_spot(NFO, NIFTY_SYMBOL)
+
+    expiries_display = _get_nifty_expiries(processor)
+    picked = _pick_nifty_expiry_for_iv(expiries_display) if expiries_display else None
+    if picked is None:
+        # No usable expiry: still surface spot if we have one, otherwise nothing to do.
+        if spot is not None and spot > 0:
+            result["nifty_spot"] = round(spot, 2)
+        return result
+
+    exp, t_years = picked
+    result["next_expiry"] = exp
+    expiry_api = _expiry_display_to_api(exp)
+
+    # One ATM-gated chain build serves both sides: IV needs only the ATM strike
+    # quoted, PCR/OI sums whatever has ticked. `chain_spot` is the chain's own
+    # resolved spot (same WS-fed cache), used as a final fallback for display/IV.
+    calls, puts, chain_spot = fetch_chain_sides_atm_gated(
+        processor, user_id, NIFTY_SYMBOL, NFO, expiry_api
+    )
+    if spot is None or spot <= 0:
+        spot = chain_spot
+    if spot is not None and spot > 0:
+        result["nifty_spot"] = round(spot, 2)
 
     if spot is None or spot <= 0:
-        # Fallback: reuse the last successful options payload while upstream quote recovers.
+        # Fallback: reuse the last successful options payload while spot recovers.
         cached_opts = _cache_get(_OPTIONS_PAYLOAD_CACHE, user_id)
         if cached_opts:
             result.update(
@@ -824,23 +851,6 @@ def fetch_vix_options(
             )
         return result
 
-    expiries_display = _get_nifty_expiries(processor)
-    if not expiries_display:
-        return result
-
-    picked = _pick_nifty_expiry_for_iv(expiries_display)
-    if picked is None:
-        return result
-
-    exp, t_years = picked
-    result["next_expiry"] = exp
-    expiry_api = _expiry_display_to_api(exp)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        fut_call = executor.submit(_option_chain, breeze, expiry_api, "call")
-        fut_put = executor.submit(_option_chain, breeze, expiry_api, "put")
-        calls = fut_call.result()
-        puts = fut_put.result()
     pcr, strike_call_oi, strike_put_oi = _option_chain_oi_metrics(calls, puts)
     if pcr is not None:
         result["put_call_ratio"] = round(pcr, 2)
@@ -932,8 +942,8 @@ def fetch_vix_options_atm_skew(user_id: str, processor) -> Dict[str, Any]:
     try:
         t2 = time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            fut_call = executor.submit(_option_chain, breeze, expiry_api, "call")
-            fut_put = executor.submit(_option_chain, breeze, expiry_api, "put")
+            fut_call = executor.submit(_option_chain, processor, user_id, expiry_api, "call")
+            fut_put = executor.submit(_option_chain, processor, user_id, expiry_api, "put")
             calls = fut_call.result()
             puts = fut_put.result()
         _log_timing("atm_skew.option_chain_parallel", (time.perf_counter() - t2) * 1000, f"call={len(calls)} put={len(puts)}")

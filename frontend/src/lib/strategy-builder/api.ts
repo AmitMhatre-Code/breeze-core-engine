@@ -14,6 +14,7 @@ export async function fetchStrategyBuilderChain(
     stock_code: string;
     expiry_date: string;
     exchange_code: string;
+    subscription_holder?: string;
   },
   signal?: AbortSignal,
 ): Promise<ChainApiResponse> {
@@ -22,8 +23,44 @@ export async function fetchStrategyBuilderChain(
     expiry_date: params.expiry_date,
     exchange_code: params.exchange_code,
   });
+  const holder = params.subscription_holder?.trim();
+  if (holder) {
+    q.set("subscription_holder", holder);
+  }
   return apiClient.get<ChainApiResponse>(
     `/strategy-builder/chain?${q.toString()}`,
+    signal,
+  );
+}
+
+/**
+ * Same response shape as fetchStrategyBuilderChain (a chain_rows list plus
+ * spot_price/atm_strike/lot_size), but chain_rows only ever contains the ATM
+ * strike's row. Use this instead of the full chain for consumers — like the
+ * portfolio payoff panel — that only read chain_rows[0] and the ATM row and
+ * price every leg from position data rather than a live chain quote: it
+ * resolves without waiting for every other strike in the chain to tick.
+ */
+export async function fetchPortfolioPayoffQuote(
+  params: {
+    stock_code: string;
+    expiry_date: string;
+    exchange_code: string;
+    subscription_holder?: string;
+  },
+  signal?: AbortSignal,
+): Promise<ChainApiResponse> {
+  const q = new URLSearchParams({
+    stock_code: params.stock_code,
+    expiry_date: params.expiry_date,
+    exchange_code: params.exchange_code,
+  });
+  const holder = params.subscription_holder?.trim();
+  if (holder) {
+    q.set("subscription_holder", holder);
+  }
+  return apiClient.get<ChainApiResponse>(
+    `/strategy-builder/payoff-quote?${q.toString()}`,
     signal,
   );
 }
@@ -33,7 +70,8 @@ export type ProposeTradesParams = {
   stock_code: string;
   expiry_date: string;
   margin_lacs: number;
-  max_loss_lacs: number;
+  max_loss_lacs?: number;
+  allow_infinite_loss?: boolean;
   min_pop_pct: number;
   min_ann_return_pct?: number;
   provision_elm: boolean;
@@ -71,7 +109,7 @@ export async function proposeTrades(
   );
 }
 
-/** Download the audit JSON for a completed Strategy Builder (New) session. */
+/** Download the audit JSON for a completed Strategy Builder session. */
 export async function downloadStrategyBuilderAudit(
   sessionId: string,
 ): Promise<void> {

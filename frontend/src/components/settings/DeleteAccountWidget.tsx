@@ -43,73 +43,75 @@ export function DeleteAccountWidget({ variant, initialDirectUserId }: DeleteAcco
     }
   }
 
-  const shell =
-    variant === "standalone"
-      ? "flex min-h-screen items-center justify-center bg-zinc-950 px-4 py-10 text-zinc-50"
-      : "";
-  const card =
-    variant === "standalone"
-      ? "rounded-lg border border-zinc-800 bg-zinc-900/80 p-8"
-      : "rounded-md border border-red-200 bg-red-50/40 p-5 dark:border-red-900/50 dark:bg-red-950/20";
-  const titleCls =
-    variant === "standalone"
-      ? "text-xl font-semibold text-red-300"
-      : "text-lg font-semibold text-red-800 dark:text-red-300";
-  const mutedCls =
-    variant === "standalone" ? "text-xs text-zinc-400" : "text-xs text-zinc-600 dark:text-zinc-400";
-  const inputCls =
-    variant === "standalone"
-      ? "w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
-      : "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
+  const isStandalone = variant === "standalone";
 
-  const cancelHref = variant === "settings" ? "/settings" : "/settings";
+  const shell = isStandalone ? "flex min-h-screen items-center justify-center bg-zinc-950 px-4 py-10 text-zinc-50" : "";
+  const card = isStandalone
+    ? "rounded-lg border border-zinc-800 bg-zinc-900/80 p-8"
+    : "app-card max-w-[480px] space-y-3.5 border-down/35 p-5";
+  const mutedCls = isStandalone ? "text-xs text-zinc-400" : "text-xs leading-relaxed text-muted";
+  const inputCls = isStandalone
+    ? "w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
+    : "app-input h-10 w-full";
+  const labelCls = "block text-micro font-semibold tracking-wide text-faint uppercase";
+
+  const cancelHref = "/settings";
 
   return (
     <div className={shell || undefined}>
-      <div className={variant === "standalone" ? "w-full max-w-md space-y-8" : "space-y-6"}>
+      <div className={isStandalone ? "w-full max-w-md space-y-8" : "space-y-3"}>
         <div className={card}>
-          <h2 className={titleCls}>Delete account</h2>
-          <p className={`mt-2 ${mutedCls}`}>
-            Enter your ICICI user id and app password to permanently remove your account and stored
-            broker credentials.
-          </p>
-          {err && (
-            <p
-              className={
-                variant === "standalone"
-                  ? "mt-4 text-sm text-red-300"
-                  : "mt-4 text-sm text-red-700 dark:text-red-300"
-              }
-            >
-              {err}
+          {isStandalone ? (
+            <>
+              <h2 className="text-xl font-semibold text-red-300">Delete account</h2>
+              <p className={`mt-2 ${mutedCls}`}>
+                Enter your ICICI user id and app password to permanently remove your account and stored
+                broker credentials.
+              </p>
+            </>
+          ) : (
+            <p className={mutedCls}>
+              Remove your Breeze Modern account and stored broker API credentials. This removes your
+              account from Breeze Modern only — it does not affect your ICICI account or release AWS
+              resources. To release AWS resources, log in to breeze-ui.com and follow the license
+              console instructions. This cannot be undone.
             </p>
           )}
-          <form onSubmit={onDeleteDirect} className="mt-6 space-y-3">
-            <input
-              required
-              className={inputCls}
-              placeholder="ICICI user id"
-              value={directUserId}
-              onChange={(e) => setDirectUserId(e.target.value)}
-              autoComplete="username"
-            />
-            <input
-              required
-              type="password"
-              className={inputCls}
-              placeholder="App password"
-              value={directPassword}
-              onChange={(e) => setDirectPassword(e.target.value)}
-              autoComplete="current-password"
-            />
+          {err && (
+            <p className={isStandalone ? "mt-4 text-sm text-red-300" : "app-alert-error text-xs"}>{err}</p>
+          )}
+          <form onSubmit={onDeleteDirect} className={isStandalone ? "mt-6 space-y-3" : "space-y-3.5"}>
+            <label className={isStandalone ? "block space-y-1.5" : "block space-y-1"}>
+              {!isStandalone ? <span className={labelCls}>ICICI User ID</span> : null}
+              <input
+                required
+                className={inputCls}
+                placeholder="ICICI user id"
+                value={directUserId}
+                onChange={(e) => setDirectUserId(e.target.value)}
+                autoComplete="username"
+              />
+            </label>
+            <label className={isStandalone ? "block space-y-1.5" : "block space-y-1"}>
+              {!isStandalone ? <span className={labelCls}>Confirm with app password</span> : null}
+              <input
+                required
+                type="password"
+                className={inputCls}
+                placeholder="App password"
+                value={directPassword}
+                onChange={(e) => setDirectPassword(e.target.value)}
+                autoComplete="current-password"
+              />
+            </label>
             <button
               type="submit"
               disabled={busy}
               aria-busy={busy}
               className={
-                variant === "standalone"
+                isStandalone
                   ? "w-full rounded-md border border-red-800 bg-red-950/40 py-2 text-sm font-medium text-red-200 hover:bg-red-950/60 disabled:cursor-not-allowed disabled:border-red-900 disabled:bg-red-900 disabled:text-red-400"
-                  : "w-full rounded-lg border border-red-800 bg-red-600 py-2.5 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-800 disabled:text-white dark:border-red-700 dark:bg-red-900 dark:hover:bg-red-800 dark:disabled:bg-red-950"
+                  : "inline-flex items-center justify-center self-start rounded-lg bg-down-btn px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
               }
             >
               <AsyncLabelSpan busy={busy} idleLabel="Delete account" busyLabel="Working…" />
@@ -120,9 +122,9 @@ export function DeleteAccountWidget({ variant, initialDirectUserId }: DeleteAcco
         <Link
           href={cancelHref}
           className={
-            variant === "standalone"
-              ? "block text-center text-xs text-zinc-500"
-              : "inline-block text-sm text-zinc-600 underline-offset-2 hover:underline dark:text-zinc-400"
+            isStandalone
+              ? "block text-center text-xs text-zinc-400"
+              : "inline-block text-sm text-muted underline-offset-2 hover:underline"
           }
         >
           Cancel

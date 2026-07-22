@@ -1,21 +1,7 @@
-"""Trading form schemas (hedge, uncovered shorts, vertical spread)."""
-from typing import Literal, Optional
+"""Trading form schemas (uncovered shorts, vertical spread)."""
+from typing import Optional
 
 from pydantic import BaseModel
-
-
-class HedgeFormRequest(BaseModel):
-    """Hedge form request."""
-    product_type: Optional[str] = None
-    position_action: Optional[str] = None
-    stock_code: Optional[str] = None
-    exchange_code: Optional[str] = None
-    right: Optional[str] = None
-    strike_price: Optional[str] = None
-    quantity: Optional[str] = None
-    expiry_date: Optional[str] = None
-    top: Optional[int] = None
-    action: Optional[str] = None  # CLEAR | HEDGE | BUY
 
 
 class UncoveredShortsFormRequest(BaseModel):

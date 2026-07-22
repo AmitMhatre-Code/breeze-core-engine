@@ -12,5 +12,8 @@ export function proposedLegsToStrategyLegs(
     strike: leg.strike,
     lots: Math.max(0, Math.round(leg.quantity / ls)),
     premiumPerUnit: leg.premium_per_unit,
+    aggressiveLimit: false,
+    buySellRatio: leg.buy_sell_ratio,
+    ltp: leg.ltp,
   }));
 }

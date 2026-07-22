@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
@@ -436,6 +437,37 @@ _CATALOG: tuple[BreezeApiCatalogEntry, ...] = (
             _s("to_date", required=True, placeholder="2025-02-05T06:00:00.00Z"),
         ),
     ),
+    BreezeApiCatalogEntry(
+        method="ws_connect",
+        title="WebSocket Connect",
+        risk_level="read",
+        description="Open Breeze tick-by-tick WebSocket (market hours).",
+        notes="Use Settings playground WebSocket tab for live SSE stream after connect.",
+    ),
+    BreezeApiCatalogEntry(
+        method="ws_disconnect",
+        title="WebSocket Disconnect",
+        risk_level="read",
+    ),
+    BreezeApiCatalogEntry(
+        method="subscribe_feeds",
+        title="Subscribe Feeds (WebSocket)",
+        risk_level="read",
+        params=(
+            _s("stock_token", placeholder="4.1!2885 or ['4.1!3499','4.1!2885']"),
+            _s("exchange_code", placeholder="NFO"),
+            _s("stock_code", placeholder="NIFTY"),
+            _s("product_type", placeholder="options"),
+            _s("expiry_date", placeholder="27-Feb-2025"),
+            _s("strike_price", placeholder="24000"),
+            _s("right", placeholder="call"),
+            _s("get_market_depth", placeholder="true"),
+            _s("get_exchange_quotes", placeholder="true"),
+            _s("interval", placeholder="1minute"),
+            _s("get_order_notification", placeholder="true"),
+        ),
+        notes="Use one subscription pattern at a time (token, contract quotes, contract OHLCV, or order notifications). WebSocket tab uses a mode selector.",
+    ),
 )
 
 _METHOD_INDEX: dict[str, BreezeApiCatalogEntry] = {e.method: e for e in _CATALOG}
@@ -470,6 +502,44 @@ def _parse_json_field(name: str, raw: str) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON for {name}: {exc}") from exc
+
+
+def _looks_like_playground_literal(stripped: str) -> bool:
+    if not stripped:
+        return False
+    if stripped[0] in "[{('\"'":
+        return True
+    if stripped in ("True", "False", "None"):
+        return True
+    return stripped.lower() in ("true", "false", "null")
+
+
+def _try_parse_literal(stripped: str) -> Any | None:
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+    try:
+        return ast.literal_eval(stripped)
+    except (ValueError, SyntaxError):
+        return None
+
+
+def parse_playground_literal(raw: str) -> Any:
+    """Parse user text as JSON/Python literal when possible; otherwise return stripped string."""
+    stripped = raw.strip()
+    if not stripped:
+        return ""
+    if not _looks_like_playground_literal(stripped):
+        return stripped
+    parsed = _try_parse_literal(stripped)
+    if parsed is None:
+        return stripped
+    if isinstance(parsed, str) and parsed != stripped:
+        inner = _try_parse_literal(parsed.strip())
+        if inner is not None:
+            return inner
+    return parsed
 
 
 def build_invoke_args(method: str, params: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]]:
@@ -513,3 +583,102 @@ def build_invoke_args(method: str, params: dict[str, Any]) -> tuple[tuple[Any, .
         raise ValueError("margin_list is required for margin_calculator")
 
     return tuple(positional), kwargs
+
+
+def _coerce_param_value_permissive(pdef: Any, raw: Any) -> Any:
+    if pdef.type == "json":
+        if raw is None:
+            return ""
+        if not isinstance(raw, str):
+            return raw
+        stripped = raw.strip()
+        if not stripped:
+            return ""
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return raw
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return parse_playground_literal(raw)
+    return str(raw)
+
+
+PLAYGROUND_INTERNAL_PARAM_NAMES = frozenset({"holder_id"})
+BOOL_PARAM_NAMES = frozenset({"get_market_depth", "get_exchange_quotes", "get_order_notification"})
+
+
+def _should_omit_playground_param(raw: Any) -> bool:
+    if raw is None:
+        return True
+    if isinstance(raw, str) and not raw.strip():
+        return True
+    return False
+
+
+def coerce_playground_bool(raw: Any) -> Any:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        lowered = raw.strip().lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+    return raw
+
+
+def sdk_args_from_user_params(
+    params: dict[str, Any],
+    *,
+    param_types: dict[str, BreezeApiParamDef] | None = None,
+) -> dict[str, Any]:
+    """Build SDK kwargs from user-supplied playground params only (no defaults)."""
+    out: dict[str, Any] = {}
+    for pname, raw in (params or {}).items():
+        if pname in PLAYGROUND_INTERNAL_PARAM_NAMES:
+            continue
+        if _should_omit_playground_param(raw):
+            continue
+        pdef = param_types.get(pname) if param_types else None
+        if pdef is not None:
+            val = _coerce_param_value_permissive(pdef, raw)
+        elif isinstance(raw, str):
+            val = parse_playground_literal(raw)
+        else:
+            val = raw
+        if pname in BOOL_PARAM_NAMES:
+            val = coerce_playground_bool(val)
+        out[pname] = val
+    return out
+
+
+def build_invoke_args_permissive(
+    method: str, params: dict[str, Any]
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Playground-only: pass only user-supplied params to SDK (extras allowed)."""
+    entry = get_catalog_entry(method)
+    if entry is None:
+        raise ValueError(f"Unknown method: {method}")
+
+    param_types = {p.name: p for p in entry.params}
+    sdk_args = sdk_args_from_user_params(params, param_types=param_types)
+    positional: list[Any] = []
+    kwargs: dict[str, Any] = {}
+    for pname, val in sdk_args.items():
+        if method == "margin_calculator" and pname == "margin_list":
+            positional.append(val)
+        else:
+            kwargs[pname] = val
+    return tuple(positional), kwargs
+
+
+def is_breeze_invoke_response_ok(result: Any) -> bool:
+    if isinstance(result, str):
+        return "exception" not in result.lower()
+    if isinstance(result, dict):
+        st = result.get("Status") or result.get("status")
+        if st not in (200, None):
+            return False
+    return True

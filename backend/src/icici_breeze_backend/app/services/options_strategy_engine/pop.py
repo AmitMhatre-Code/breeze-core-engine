@@ -4,18 +4,33 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from icici_breeze_backend.app.services.options_strategy_engine.greeks import (
-    bs_delta,
     prob_above_strike,
     prob_below_strike,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.helpers import sigma_for_pop
+from icici_breeze_backend.app.services.options_strategy_engine.iv_smile import resolve_leg_sigma
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, Right, TradeLeg
 
 
-def pop_short_otm(delta: float | None) -> float:
-    if delta is None:
-        return 0.0
-    return max(0.0, min(100.0, (1.0 - abs(delta)) * 100.0))
+def pop_short_otm_expiry(
+    spot: float,
+    strike: float,
+    right: Right,
+    t: float,
+    sigma: float,
+) -> float:
+    """P(short option expires OTM) — the probability the seller keeps the *full* premium.
+
+    Boundary is the STRIKE, with no premium cushion, to match ICICI's PoP convention
+    (which reports probability-of-OTM-expiry, not probability-of-net-profit-at-breakeven).
+    A short call keeps full premium when S_T < K; a short put when S_T > K. This is the
+    closed-form counterpart of the `1-|delta|` heuristic the engine's delta-anchored strike
+    search already assumes (`delta_anchor.pop_to_short_delta`), so search and scoring agree.
+    """
+    if right == "Call":
+        p = prob_below_strike(spot, strike, t, sigma)
+    else:
+        p = prob_above_strike(spot, strike, t, sigma)
+    return max(0.0, min(100.0, p * 100.0))
 
 
 def pop_long_otm(
@@ -40,12 +55,16 @@ def pop_between_breakevens(
     lower: float,
     upper: float,
     t: float,
-    sigma: float,
+    sigma_lower: float,
+    sigma_upper: float,
 ) -> float:
+    """`sigma_lower`/`sigma_upper` are independent: this is two closed-form N(d2) evaluations,
+    not a shared-path simulation, so each breakeven can (and should) use its own side's
+    smile-resolved sigma rather than one blended value."""
     if lower >= upper:
         return 0.0
-    p_above_lower = prob_above_strike(spot, lower, t, sigma)
-    p_above_upper = prob_above_strike(spot, upper, t, sigma)
+    p_above_lower = prob_above_strike(spot, lower, t, sigma_lower)
+    p_above_upper = prob_above_strike(spot, upper, t, sigma_upper)
     p = max(0.0, p_above_lower - p_above_upper)
     return max(0.0, min(100.0, p * 100.0))
 
@@ -86,24 +105,22 @@ class PopDetail:
         }
 
 
-def breakevens_from_legs(legs: list[TradeLeg], lot_size: int) -> tuple[float | None, float | None]:
-    """Approximate lower/upper breakevens for banded short-premium structures."""
+def otm_band_from_legs(legs: list[TradeLeg]) -> tuple[float | None, float | None]:
+    """Approximate P(OTM) band edges for unrecognized banded short-premium structures.
+
+    Edges are the innermost short strikes (the max-profit plateau), with no premium cushion,
+    matching ICICI's probability-of-OTM-expiry convention. Falls back to the outermost strikes
+    when a side has no short leg so the band never degenerates to empty."""
     if not legs:
         return None, None
-    net_credit = 0.0
-    for leg in legs:
-        units = leg.quantity / lot_size if lot_size > 0 else leg.quantity
-        prem = leg.premium_per_unit
-        if leg.side == "Sell":
-            net_credit += prem * units
-        else:
-            net_credit -= prem * units
-    strikes_call = [leg.strike for leg in legs if leg.right == "Call"]
+    short_puts = [leg.strike for leg in legs if leg.right == "Put" and leg.side == "Sell"]
+    short_calls = [leg.strike for leg in legs if leg.right == "Call" and leg.side == "Sell"]
     strikes_put = [leg.strike for leg in legs if leg.right == "Put"]
+    strikes_call = [leg.strike for leg in legs if leg.right == "Call"]
     if not strikes_call or not strikes_put:
         return None, None
-    lower = min(strikes_put) - net_credit
-    upper = max(strikes_call) + net_credit
+    lower = max(short_puts) if short_puts else min(strikes_put)
+    upper = min(short_calls) if short_calls else max(strikes_call)
     return lower, upper
 
 
@@ -112,25 +129,28 @@ def pop_detail_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> PopDetail:
         return PopDetail(0.0, "unavailable")
 
     t = ctx.t_years
-    sigma = sigma_for_pop(ctx)
 
     if len(legs) == 1:
         leg = legs[0]
-        q = ctx.cache.get((leg.strike, leg.right))
-        delta = q.delta if q and q.delta is not None else bs_delta(
-            ctx.spot, float(leg.strike), t, sigma, leg.right
-        )
-        if leg.side == "Sell":
-            return PopDetail(pop_short_otm(delta), "short_strike_delta")
         prem = leg.premium_per_unit
+        if leg.side == "Sell":
+            sigma_leg = resolve_leg_sigma(ctx, float(leg.strike), leg.right)
+            return PopDetail(
+                pop_short_otm_expiry(ctx.spot, float(leg.strike), leg.right, t, sigma_leg),
+                "short_strike_otm",
+                lower_breakeven=float(leg.strike) if leg.right == "Put" else None,
+                upper_breakeven=float(leg.strike) if leg.right == "Call" else None,
+            )
         if leg.right == "Call":
             lower = leg.strike + prem
             upper = None
+            sigma_be = resolve_leg_sigma(ctx, lower, leg.right)
         else:
             lower = None
             upper = leg.strike - prem
+            sigma_be = resolve_leg_sigma(ctx, upper, leg.right)
         return PopDetail(
-            pop_long_otm(ctx.spot, float(leg.strike), prem, leg.right, t, sigma),
+            pop_long_otm(ctx.spot, float(leg.strike), prem, leg.right, t, sigma_be),
             "long_strike_breakeven",
             lower_breakeven=lower,
             upper_breakeven=upper,
@@ -143,25 +163,64 @@ def pop_detail_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> PopDetail:
             net_credit = sum(l.premium_per_unit for l in sells)
             strikes = {l.right: l.strike for l in sells}
             if "Call" in strikes and "Put" in strikes:
-                lower = strikes["Put"] - net_credit
-                upper = strikes["Call"] + net_credit
+                kp, kc = strikes["Put"], strikes["Call"]
+                if kp < kc:
+                    # Short strangle: both legs expire OTM (seller keeps full premium) when
+                    # the underlying lands strictly between the short strikes. Boundaries are
+                    # the STRIKES, no premium cushion — ICICI's P(OTM) convention.
+                    lower, upper = kp, kc
+                    basis = "otm_between_short_strikes"
+                else:
+                    # Short straddle (coincident strikes): the P(OTM) plateau collapses to a
+                    # single point, so fall back to the premium-inclusive breakeven band, which
+                    # is the meaningful "probability of net profit" for this shape.
+                    lower = kp - net_credit
+                    upper = kc + net_credit
+                    basis = "breakevens_from_short_strikes"
+                sigma_lower = resolve_leg_sigma(ctx, lower, "Put")
+                sigma_upper = resolve_leg_sigma(ctx, upper, "Call")
                 return PopDetail(
-                    pop_between_breakevens(ctx.spot, lower, upper, t, sigma),
-                    "breakevens_from_short_strikes",
+                    pop_between_breakevens(ctx.spot, lower, upper, t, sigma_lower, sigma_upper),
+                    basis,
                     lower_breakeven=lower,
                     upper_breakeven=upper,
-                    short_put=strikes["Put"],
-                    short_call=strikes["Call"],
+                    short_put=kp,
+                    short_call=kc,
                     net_credit_per_unit=net_credit,
                 )
         if len(sells) == 1 and len(buys) == 1 and sells[0].right == buys[0].right:
             short_leg = sells[0]
-            q = ctx.cache.get((short_leg.strike, short_leg.right))
-            delta = q.delta if q and q.delta is not None else bs_delta(
-                ctx.spot, float(short_leg.strike), t, sigma, short_leg.right
+            buy_leg = buys[0]
+            right = short_leg.right
+            net_credit = short_leg.premium_per_unit - buy_leg.premium_per_unit
+            if net_credit >= 0:
+                # Credit vertical (bull put / bear call): profit is capped and the short leg
+                # expiring OTM secures max profit — P(OTM) boundary is the SHORT strike.
+                sigma_leg = resolve_leg_sigma(ctx, float(short_leg.strike), right)
+                return PopDetail(
+                    pop_short_otm_expiry(ctx.spot, float(short_leg.strike), right, t, sigma_leg),
+                    "short_strike_otm",
+                    lower_breakeven=float(short_leg.strike) if right == "Put" else None,
+                    upper_breakeven=float(short_leg.strike) if right == "Call" else None,
+                    net_credit_per_unit=net_credit,
+                )
+            # Debit vertical (net premium paid): profit needs the underlying past the breakeven
+            # measured from the long strike, so keep the premium-inclusive breakeven.
+            debit = -net_credit
+            if right == "Call":
+                be = buy_leg.strike + debit
+                p = prob_above_strike(ctx.spot, be, t, resolve_leg_sigma(ctx, be, right))
+                bounds = {"upper_breakeven": be}
+            else:
+                be = buy_leg.strike - debit
+                p = prob_below_strike(ctx.spot, be, t, resolve_leg_sigma(ctx, be, right))
+                bounds = {"lower_breakeven": be}
+            return PopDetail(
+                max(0.0, min(100.0, p * 100.0)),
+                "long_strike_breakeven",
+                net_credit_per_unit=net_credit,
+                **bounds,
             )
-            if short_leg.side == "Sell":
-                return PopDetail(pop_short_otm(delta), "short_strike_delta")
 
     if len(legs) == 4:
         sells = [l for l in legs if l.side == "Sell"]
@@ -176,11 +235,15 @@ def pop_detail_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> PopDetail:
                 + sell_call.premium_per_unit
                 - sum(l.premium_per_unit for l in buys)
             )
-            lower = sell_put.strike - net_credit
-            upper = sell_call.strike + net_credit
+            # Iron condor keeps max profit when both short legs expire OTM — the underlying
+            # finishing between the short strikes. P(OTM) boundaries are the SHORT strikes.
+            lower = sell_put.strike
+            upper = sell_call.strike
+            sigma_lower = resolve_leg_sigma(ctx, lower, "Put")
+            sigma_upper = resolve_leg_sigma(ctx, upper, "Call")
             return PopDetail(
-                pop_between_breakevens(ctx.spot, lower, upper, t, sigma),
-                "breakevens_from_short_strikes",
+                pop_between_breakevens(ctx.spot, lower, upper, t, sigma_lower, sigma_upper),
+                "otm_between_short_strikes",
                 lower_breakeven=lower,
                 upper_breakeven=upper,
                 short_put=sell_put.strike,
@@ -190,16 +253,18 @@ def pop_detail_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> PopDetail:
                 net_credit_per_unit=net_credit,
             )
 
-    lower, upper = breakevens_from_legs(legs, ctx.lot_size)
+    lower, upper = otm_band_from_legs(legs)
     if lower is not None and upper is not None and lower < upper:
         puts = [l.strike for l in legs if l.right == "Put"]
         calls = [l.strike for l in legs if l.right == "Call"]
         net_credit = sum(
             l.premium_per_unit if l.side == "Sell" else -l.premium_per_unit for l in legs
         )
+        sigma_lower = resolve_leg_sigma(ctx, lower, "Put")
+        sigma_upper = resolve_leg_sigma(ctx, upper, "Call")
         return PopDetail(
-            pop_between_breakevens(ctx.spot, lower, upper, t, sigma),
-            "breakevens_from_long_strikes",
+            pop_between_breakevens(ctx.spot, lower, upper, t, sigma_lower, sigma_upper),
+            "otm_between_strikes",
             lower_breakeven=lower,
             upper_breakeven=upper,
             long_put=min(puts) if puts else None,

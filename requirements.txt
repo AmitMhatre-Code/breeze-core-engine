@@ -33,6 +33,8 @@ feedparser>=6.0.0
 python-json-logger==2.0.7
 pytz==2023.3
 
+redis>=5.0.0,<6
+
 # Important for Python 3.13: allow pip to pick pydantic/pydantic-core versions
 # that have prebuilt wheels for your platform (avoids native build failures).
 #

@@ -1,14 +1,7 @@
 "use client";
 
-import type { PointerEvent } from "react";
-import {
-  useCallback,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import type { KeyboardEvent, PointerEvent } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { DashboardChartSkeleton } from "@/components/dashboard/DashboardLoading";
 
 type Point = { date: string; value: number };
@@ -20,11 +13,10 @@ const PAD_R = 0;
 const PAD_T = 8;
 const PAD_B = 28;
 
-const LINE_BLUE = "#3b82f6";
+const LINE_BLUE = "var(--accent)";
 const LINE_WIDTH = 1.25;
-/** Target on-screen px for axis text (matches ~`text-[10px]` / small widget copy; SVG viewBox scaling otherwise blows it up). */
-const AXIS_LABEL_SCREEN_PX = 10;
-const HOVER_LABEL_SCREEN_PX = 10;
+const HOVER_BOX_W = 100;
+const HOVER_BOX_H = 38;
 const AREA_TOP_OPACITY = 0.38;
 const AREA_BOTTOM_OPACITY = 0.03;
 
@@ -90,47 +82,6 @@ const MONTHS = [
   "Dec",
 ] as const;
 
-/**
- * WebKit/Safari often reports `getBoundingClientRect().width === 0` on `<svg>` on the
- * first layout pass even when the chart paints. Prefer the block wrapper’s
- * `clientWidth` / `offsetWidth`, then SVG rect, then parent.
- */
-function readChartLayoutWidthPx(
-  container: HTMLElement | null,
-  svg: SVGSVGElement | null,
-): number {
-  let w = 0;
-  if (container) {
-    w = Math.max(
-      w,
-      container.clientWidth,
-      container.offsetWidth,
-      container.getBoundingClientRect().width,
-    );
-  }
-  if (svg) {
-    w = Math.max(w, svg.getBoundingClientRect().width);
-    const sw = svg.width?.baseVal?.value;
-    if (typeof sw === "number" && sw > 0) w = Math.max(w, sw);
-  }
-  const parent = container?.parentElement;
-  if (parent) {
-    w = Math.max(
-      w,
-      parent.clientWidth,
-      (parent as HTMLElement).offsetWidth,
-      parent.getBoundingClientRect().width,
-    );
-  }
-  return w;
-}
-
-/** When layout width is still 0 (Safari first paint), cap by viewport so label font is never oversized. */
-function viewportWidthFallbackPx(): number {
-  if (typeof window === "undefined") return W;
-  return Math.min(window.innerWidth, 2000);
-}
-
 function monthStartTickIndices(series: Point[]): { i: number; label: string }[] {
   const out: { i: number; label: string }[] = [];
   let prevKey = "";
@@ -148,92 +99,45 @@ function monthStartTickIndices(series: Point[]): { i: number; label: string }[] 
   return out;
 }
 
+/** First/middle/last point labels ("DD Mon") — used for short windows (e.g. a 30-day slice)
+ * where month-start boundaries rarely fall inside the range. */
+function evenTickIndices(
+  series: Point[],
+  count = 3,
+): { i: number; label: string }[] {
+  if (series.length === 0) return [];
+  const dedupedIndices = new Set<number>();
+  const last = series.length - 1;
+  for (let k = 0; k < count; k++) {
+    const i = count === 1 ? 0 : Math.round((k * last) / (count - 1));
+    dedupedIndices.add(i);
+  }
+  return [...dedupedIndices]
+    .sort((a, b) => a - b)
+    .map((i) => {
+      const d = series[i].date.slice(0, 10);
+      const [, m, day] = d.split("-");
+      const mi = parseInt(m, 10) - 1;
+      const mon = MONTHS[mi] ?? m;
+      return { i, label: `${day} ${mon}` };
+    });
+}
+
 export function Vix30dChart({
   series,
   loading = false,
+  compact = false,
 }: {
   series: Point[];
   loading?: boolean;
+  /** Minimal presentation: no Chart/Table toggle, no y-axis ticks, no caption line. */
+  compact?: boolean;
 }) {
   const [hoverI, setHoverI] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<"chart" | "table">("chart");
+  const [keyboardI, setKeyboardI] = useState<number | null>(null);
   const gradId = useId().replace(/:/g, "");
-  const containerRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
-  /**
-   * CSS width for scaling SVG label font. Starts at `W` for stable SSR/hydration;
-   * refined from layout, with `innerWidth` fallback when Safari reports 0 until
-   * a later pass (avoids invisible labels and avoids oversized text).
-   */
-  const [svgClientW, setSvgClientW] = useState(W);
-
-  useLayoutEffect(() => {
-    const applyWidth = () => {
-      const m = readChartLayoutWidthPx(containerRef.current, svgRef.current);
-      const cap = viewportWidthFallbackPx();
-      const next = m > 0 ? m : cap;
-      setSvgClientW((prev) =>
-        Math.abs(prev - next) < 0.25 ? prev : next,
-      );
-    };
-
-    applyWidth();
-    const t0 = window.setTimeout(applyWidth, 0);
-    const t1 = window.setTimeout(applyWidth, 50);
-    const t2 = window.setTimeout(applyWidth, 150);
-
-    let raf = 0;
-    let n = 0;
-    const retry = () => {
-      applyWidth();
-      if (readChartLayoutWidthPx(containerRef.current, svgRef.current) > 0)
-        return;
-      if (n++ < 48) raf = requestAnimationFrame(retry);
-    };
-    if (readChartLayoutWidthPx(containerRef.current, svgRef.current) <= 0) {
-      raf = requestAnimationFrame(retry);
-    }
-
-    const onWinResize = () => applyWidth();
-    window.addEventListener("resize", onWinResize);
-
-    let io: IntersectionObserver | undefined;
-    const wrap = containerRef.current;
-    if (wrap && typeof IntersectionObserver !== "undefined") {
-      io = new IntersectionObserver(
-        (entries) => {
-          if (entries.some((e) => e.isIntersecting)) applyWidth();
-        },
-        { rootMargin: "80px", threshold: 0 },
-      );
-      io.observe(wrap);
-    }
-
-    const targets: Element[] = [];
-    if (wrap) targets.push(wrap);
-    const svg = svgRef.current;
-    if (svg) targets.push(svg);
-
-    const ros: ResizeObserver[] = [];
-    if (typeof ResizeObserver !== "undefined" && targets.length) {
-      const ro = new ResizeObserver(applyWidth);
-      for (const t of targets) ro.observe(t);
-      ros.push(ro);
-    }
-
-    return () => {
-      window.removeEventListener("resize", onWinResize);
-      window.clearTimeout(t0);
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-      cancelAnimationFrame(raf);
-      io?.disconnect();
-      for (const ro of ros) ro.disconnect();
-    };
-  }, []);
-
-  const pxPerViewUnit = Math.max(svgClientW, 1) / W;
-  const axisFontUser = AXIS_LABEL_SCREEN_PX / pxPerViewUnit;
-  const hoverFontUser = HOVER_LABEL_SCREEN_PX / pxPerViewUnit;
+  const padL = compact ? 4 : PAD_L;
 
   const layout = useMemo(() => {
     if (!series?.length) return null;
@@ -242,11 +146,11 @@ export function Vix30dChart({
     const maxV = Math.max(...vals);
     const spread = maxV - minV || 1;
     const n = series.length;
-    const innerW = W - PAD_L - PAD_R;
+    const innerW = W - padL - PAD_R;
     const innerH = H - PAD_T - PAD_B;
     const yBase = PAD_T + innerH;
     const pts = series.map((p, i) => {
-      const x = PAD_L + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
+      const x = padL + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
       const y = PAD_T + innerH - ((p.value - minV) / spread) * innerH;
       return [x, y] as const;
     });
@@ -266,7 +170,13 @@ export function Vix30dChart({
       cornerR,
     );
     const yTicks = [maxV, minV].map((v) => Math.round(v * 100) / 100);
-    const xTicks = monthStartTickIndices(series).map(({ i, label }) => ({
+    const monthTicks = monthStartTickIndices(series);
+    const tickIndices = compact
+      ? evenTickIndices(series, 3)
+      : monthTicks.length >= 2
+        ? monthTicks
+        : evenTickIndices(series, 3);
+    const xTicks = tickIndices.map(({ i, label }) => ({
       label,
       x: pts[i][0],
     }));
@@ -281,7 +191,7 @@ export function Vix30dChart({
       yTicks,
       xTicks,
     };
-  }, [series]);
+  }, [series, padL, compact]);
 
   const pickIndex = useCallback(
     (svgX: number, l: NonNullable<typeof layout>) => {
@@ -305,16 +215,42 @@ export function Vix30dChart({
       const rect = e.currentTarget.getBoundingClientRect();
       const svgX = ((e.clientX - rect.left) / rect.width) * W;
       const svgY = ((e.clientY - rect.top) / rect.height) * H;
-      if (svgX < PAD_L || svgX > W - PAD_R || svgY < PAD_T || svgY > H - PAD_B) {
+      if (svgX < padL || svgX > W - PAD_R || svgY < PAD_T || svgY > H - PAD_B) {
         setHoverI(null);
         return;
       }
       setHoverI(pickIndex(svgX, layout));
     },
-    [layout, pickIndex],
+    [layout, pickIndex, padL],
   );
 
   const onPointerLeave = useCallback(() => setHoverI(null), []);
+
+  const activeI = hoverI ?? keyboardI;
+
+  const onChartKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      if (!series?.length) return;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        setKeyboardI((prev) => {
+          const start = prev ?? 0;
+          if (e.key === "ArrowLeft") {
+            return Math.max(0, start - 1);
+          }
+          return Math.min(series.length - 1, start + 1);
+        });
+      }
+    },
+    [series],
+  );
+
+  // Adjust state during render (React-recommended alternative to an effect
+  // here): self-guards via `keyboardI == null`, which flips permanently once
+  // set, so this can't loop.
+  if (viewMode === "chart" && keyboardI == null && series?.length) {
+    setKeyboardI(series.length - 1);
+  }
 
   if (loading) {
     return (
@@ -333,7 +269,7 @@ export function Vix30dChart({
 
   const { minV, spread, innerH, pts, smoothTop, areaD, yTicks, yBase, xTicks } =
     layout;
-  const hi = hoverI;
+  const hi = activeI;
 
   let hoverLabel: { x: number; y: number; date: string; val: string } | null =
     null;
@@ -341,26 +277,98 @@ export function Vix30dChart({
     const [px, py] = pts[hi];
     const date = formatChartDate(series[hi].date);
     const val = series[hi].value.toFixed(2);
-    const boxW = 92;
-    const boxH = 36;
+    const boxW = HOVER_BOX_W;
+    const boxH = HOVER_BOX_H;
     let lx = px - boxW / 2;
     let ly = py - boxH - 6;
-    lx = Math.min(Math.max(lx, PAD_L + 2), W - PAD_R - boxW - 2);
+    lx = Math.min(Math.max(lx, padL + 2), W - PAD_R - boxW - 2);
     if (ly < PAD_T + 2) ly = py + 8;
     ly = Math.min(ly, H - PAD_B - boxH - 2);
     hoverLabel = { x: lx, y: ly, date, val };
   }
 
+  const liveAnnouncement =
+    hi != null && series[hi]
+      ? `${formatChartDate(series[hi].date)}, VIX ${series[hi].value.toFixed(2)}`
+      : "";
+
   return (
     <div className="space-y-2">
-      <div ref={containerRef} className="w-full min-w-0">
+      {!compact ? (
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            className={[
+              "rounded-md px-2.5 py-1 text-xs font-medium transition",
+              viewMode === "chart"
+                ? "bg-sky-100 text-sky-900 dark:bg-sky-950/60 dark:text-sky-100"
+                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
+            ].join(" ")}
+            aria-pressed={viewMode === "chart"}
+            onClick={() => setViewMode("chart")}
+          >
+            Chart
+          </button>
+          <button
+            type="button"
+            className={[
+              "rounded-md px-2.5 py-1 text-xs font-medium transition",
+              viewMode === "table"
+                ? "bg-sky-100 text-sky-900 dark:bg-sky-950/60 dark:text-sky-100"
+                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
+            ].join(" ")}
+            aria-pressed={viewMode === "table"}
+            onClick={() => setViewMode("table")}
+          >
+            Table
+          </button>
+        </div>
+      ) : null}
+
+      {viewMode === "table" ? (
+        <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-400">
+              <tr>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  Date
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  VIX
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              {series.map((row) => (
+                <tr key={row.date}>
+                  <td className="px-3 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                    {formatChartDate(row.date)}
+                  </td>
+                  <td className="px-3 py-1.5 tabular-nums text-zinc-800 dark:text-zinc-200">
+                    {row.value.toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+      <div
+        className="relative w-full min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40"
+        tabIndex={0}
+        role="group"
+        aria-label="India VIX last three months. Use left and right arrow keys to move through dates."
+        onKeyDown={onChartKeyDown}
+      >
+        <p className="sr-only" aria-live="polite">
+          {liveAnnouncement}
+        </p>
         <svg
-          ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}
           className="block w-full min-w-0 cursor-crosshair touch-none overflow-visible"
           style={{ aspectRatio: `${W} / ${H}` }}
           role="img"
-          aria-label="India VIX last three months; hover for date and value"
+          aria-label="India VIX line chart"
           onPointerMove={onPointerMove}
           onPointerLeave={onPointerLeave}
           onPointerCancel={onPointerLeave}
@@ -386,31 +394,22 @@ export function Vix30dChart({
               />
             </linearGradient>
           </defs>
-          {yTicks.map((tick) => {
+          {!compact
+            ? yTicks.map((tick) => {
             const y = PAD_T + innerH - ((tick - minV) / spread) * innerH;
             return (
-              <g key={tick}>
-                <line
-                  x1={PAD_L}
-                  y1={y}
-                  x2={W - PAD_R}
-                  y2={y}
-                  className="stroke-zinc-200 dark:stroke-zinc-700/90"
-                  strokeWidth={0.45}
-                />
-                <text
-                  x={PAD_L - 5}
-                  y={y}
-                  textAnchor="end"
-                  dominantBaseline="middle"
-                  className="fill-zinc-500 font-sans dark:fill-zinc-500"
-                  fontSize={axisFontUser}
-                >
-                  {tick.toFixed(1)}
-                </text>
-              </g>
+              <line
+                key={tick}
+                x1={padL}
+                y1={y}
+                x2={W - PAD_R}
+                y2={y}
+                className="stroke-zinc-200 dark:stroke-zinc-700/90"
+                strokeWidth={0.45}
+              />
             );
-          })}
+          })
+            : null}
           <path
             d={areaD}
             fill={`url(#vix-area-${gradId})`}
@@ -448,62 +447,63 @@ export function Vix30dChart({
               />
             </>
           ) : null}
-          {hoverLabel ? (
-            <g pointerEvents="none">
-              <rect
-                x={hoverLabel.x}
-                y={hoverLabel.y}
-                width={92}
-                height={36}
-                rx={4}
-                className="fill-zinc-900/90 stroke-zinc-600/35 dark:fill-zinc-950/94 dark:stroke-zinc-500/35"
-                strokeWidth={0.5}
-              />
-              <text
-                x={hoverLabel.x + 46}
-                y={hoverLabel.y + 15}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fill="rgb(244 244 245)"
-                className="font-sans"
-                fontSize={hoverFontUser}
-                fontWeight={500}
-              >
-                {hoverLabel.date}
-              </text>
-              <text
-                x={hoverLabel.x + 46}
-                y={hoverLabel.y + 29}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fill={LINE_BLUE}
-                className="font-mono"
-                fontSize={hoverFontUser}
-                fontWeight={600}
-              >
-                {`VIX ${hoverLabel.val}`}
-              </text>
-            </g>
-          ) : null}
-          {xTicks.map(({ x, label }) => (
-            <text
-              key={label + x}
-              x={Math.min(Math.max(x, PAD_L + 14), W - 14)}
-              y={H - 6}
-              textAnchor="middle"
-              dominantBaseline="auto"
-              className="fill-zinc-600 font-sans dark:fill-zinc-500"
-              fontSize={axisFontUser}
-            >
-              {label}
-            </text>
-          ))}
         </svg>
+        {!compact
+          ? yTicks.map((tick) => {
+              const y = PAD_T + innerH - ((tick - minV) / spread) * innerH;
+              return (
+                <span
+                  key={tick}
+                  className="pointer-events-none absolute -translate-y-1/2 text-right font-sans text-xs text-zinc-600 dark:text-zinc-400"
+                  style={{ left: 0, width: `${((padL - 5) / W) * 100}%`, top: `${(y / H) * 100}%` }}
+                >
+                  {tick.toFixed(1)}
+                </span>
+              );
+            })
+          : null}
+        {xTicks.map(({ x, label }) => (
+          <span
+            key={label + x}
+            className="pointer-events-none absolute -translate-x-1/2 -translate-y-full font-mono text-xs text-zinc-600 dark:text-zinc-400"
+            style={{
+              left: `${(Math.min(Math.max(x, padL + 14), W - 14) / W) * 100}%`,
+              top: `${((H - 6) / H) * 100}%`,
+            }}
+          >
+            {label}
+          </span>
+        ))}
+        {hoverLabel ? (
+          <div
+            className="pointer-events-none absolute flex flex-col items-center justify-center gap-0.5 rounded-md border border-zinc-600/70 bg-zinc-900 font-mono dark:border-[var(--border)] dark:bg-[var(--elevated)]"
+            style={{
+              left: `${(hoverLabel.x / W) * 100}%`,
+              top: `${(hoverLabel.y / H) * 100}%`,
+              width: `${(HOVER_BOX_W / W) * 100}%`,
+              height: `${(HOVER_BOX_H / H) * 100}%`,
+              boxShadow: "0 2px 6px rgba(0, 0, 0, 0.45)",
+            }}
+          >
+            <span className="text-xs font-semibold" style={{ color: "rgb(244 244 245)" }}>
+              {hoverLabel.date}
+            </span>
+            <span className="text-xs font-bold" style={{ color: LINE_BLUE }}>
+              {`VIX ${hoverLabel.val}`}
+            </span>
+          </div>
+        ) : null}
       </div>
-      <p className="app-text-muted">
-        India VIX (INDVIX), daily close — last ~3 months · hover for date
-        &amp; value on chart
-      </p>
+      )}
+
+      {!compact ? (
+        <p className="app-text-muted">
+          India VIX (INDVIX), daily close — last ~3 months
+          {viewMode === "chart"
+            ? " · use arrow keys on the chart or switch to Table view"
+            : null}
+        </p>
+      ) : null}
     </div>
   );
 }

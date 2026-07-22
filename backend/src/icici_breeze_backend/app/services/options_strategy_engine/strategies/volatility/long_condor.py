@@ -74,8 +74,9 @@ def _long_condor_wings(
                 wing_width=w,
             )
             continue
-        qty = size_quantity_loss_only(ctx.max_loss_rupees, max_loss_u * L, L)
-        if qty < L or max_loss_u * qty > ctx.max_loss_rupees:
+        loss_budget = ctx.effective_loss_sizing_budget()
+        qty = size_quantity_loss_only(loss_budget, max_loss_u * L, L)
+        if qty < L or (ctx.max_loss_rupees is not None and max_loss_u * qty > ctx.max_loss_rupees):
             record_simple_attempt(
                 collector,
                 reject_reason="budget",

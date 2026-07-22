@@ -6,7 +6,9 @@ import math
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_for_broker
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
+    POP_PRE_FILTER_TOLERANCE,
     EngineContext,
     QuoteRow,
     Right,
@@ -68,9 +70,12 @@ def annualized_carry_percent_on_span(
     return (pr / dte) * (365.0 / sm) * 100.0
 
 
-def quote_from_api(strike: int, right: Right, payload: dict) -> QuoteRow:
-    tb = int(payload.get("total_buy_qty") or 0)
-    ts = int(payload.get("total_sell_qty") or 0)
+def quote_from_api(strike: Strike, right: Right, payload: dict) -> QuoteRow:
+    raw_tb = payload.get("total_buy_qty")
+    raw_ts = payload.get("total_sell_qty")
+    depth_known = raw_tb is not None or raw_ts is not None
+    tb = int(raw_tb or 0)
+    ts = int(raw_ts or 0)
     ratio: float | str = 0.0
     if ts > 0:
         ratio = round(tb / ts, 4)
@@ -87,62 +92,34 @@ def quote_from_api(strike: int, right: Right, payload: dict) -> QuoteRow:
         buy_sell_ratio=ratio,
         spot_price=parse_float(payload.get("spot_price")) if payload.get("spot_price") is not None else None,
         oi=int(payload.get("open_interest") or payload.get("oi") or 0),
+        depth_known=depth_known,
     )
 
 
-def nearest_atm(strikes: list[int], spot: float) -> int:
+def nearest_atm(strikes: list[Strike], spot: float) -> Strike:
     return min(strikes, key=lambda s: abs(s - spot))
 
 
-def snap_user_range(strikes: list[int], range_lower: float, range_upper: float) -> tuple[float, float]:
+def snap_user_range(strikes: list[Strike], range_lower: float, range_upper: float) -> tuple[float, float]:
     lo_strike = min(strikes, key=lambda s: abs(s - range_lower))
     hi_strike = min(strikes, key=lambda s: abs(s - range_upper))
     return (float(min(lo_strike, hi_strike)), float(max(lo_strike, hi_strike)))
 
 
 def strike_window(
-    all_strikes: list[int],
+    all_strikes: list[Strike],
     range_lower: float,
     range_upper: float,
-    atm: int,
-    step: int,
+    atm: Strike,
+    step: float,
     pad_intervals: int = 3,
-) -> list[int]:
+) -> list[Strike]:
     lo = range_lower - pad_intervals * step
     hi = range_upper + pad_intervals * step
     window = [s for s in all_strikes if lo <= s <= hi]
     if atm not in window and atm in all_strikes:
         window.append(atm)
     return sorted(set(window))
-
-
-def strategy_boundary_strikes(
-    all_strikes: list[int],
-    range_lower: float,
-    range_upper: float,
-    spot: float,
-    atm: int,
-) -> set[int]:
-    needed: set[int] = set()
-    if atm in all_strikes:
-        needed.add(atm)
-    needed.add(min(all_strikes, key=lambda s: abs(s - spot)))
-    needed.add(min(all_strikes, key=lambda s: abs(s - range_lower)))
-    needed.add(min(all_strikes, key=lambda s: abs(s - range_upper)))
-    ce_above = [s for s in all_strikes if s > range_upper]
-    if ce_above:
-        needed.add(ce_above[0])
-    pe_below = [s for s in all_strikes if s < range_lower]
-    if pe_below:
-        needed.add(pe_below[-1])
-    return needed
-
-
-def tail_strikes_needed(needed_strikes: list[int], chain_strikes: set[int]) -> list[int]:
-    if not chain_strikes:
-        return list(needed_strikes)
-    lo, hi = min(chain_strikes), max(chain_strikes)
-    return [s for s in needed_strikes if s < lo or s > hi]
 
 
 def floor_lots(qty_rupees: float, per_lot_cost: float, lot_size: int) -> int:
@@ -177,7 +154,7 @@ def legs_to_margin_input(
                 "expiry_date": expiry_display,
                 "product_type": cfg.OPTIONS,
                 "right": leg.right,
-                "strike_price": str(leg.strike),
+                "strike_price": strike_for_broker(leg.strike),
                 "quantity": str(leg.quantity),
                 "price": str(leg.premium_per_unit),
                 "action": leg.side,
@@ -197,10 +174,71 @@ def net_premium(legs: list[TradeLeg]) -> float:
     return round(total, 2)
 
 
-def elm_addon(spot: float, lot_size: int, short_lots: int, provision_elm: bool) -> float:
-    if not provision_elm or short_lots <= 0:
+def is_same_day_expiry(expiry_str: str) -> bool:
+    """True if expiry_str resolves to today (IST). Mirrors processor._parse_option_expiry_date
+    without importing processor."""
+    s = expiry_str.strip().removesuffix("T06:00:00.000Z")
+    try:
+        if len(s.split("-")[0]) == 4:
+            expiry_d = datetime.datetime.strptime(s[:10], "%Y-%m-%d").date()
+        else:
+            expiry_d = datetime.datetime.strptime(s, "%d-%b-%Y").date()
+    except ValueError:
+        return False
+    from icici_breeze_backend.app.core.timezone import today_ist_date
+
+    return expiry_d == today_ist_date()
+
+
+def _otm_elm_rate(right: Right, strike: float, previous_close: float, is_index: bool) -> float:
+    """ICICI's ELM rate for one short leg: standard, or a deep-OTM step-up based on how far the
+    strike sits from the underlying's previous close. Stock's "standard" tier is a flat-rate
+    approximation of the true 5%-or-1.5x-6mo-volatility rule (no historical-price pipeline exists
+    in this codebase to compute the volatility alternative)."""
+    if previous_close <= 0:
+        return cfg.ELM_INDEX_STD if is_index else cfg.ELM_STOCK_STD
+    if right == "Call":
+        otm_frac = max(0.0, (strike - previous_close) / previous_close)
+    else:
+        otm_frac = max(0.0, (previous_close - strike) / previous_close)
+    if is_index:
+        return (
+            cfg.ELM_INDEX_DEEP_OTM
+            if otm_frac > cfg.ELM_INDEX_DEEP_OTM_THRESHOLD
+            else cfg.ELM_INDEX_STD
+        )
+    return (
+        cfg.ELM_STOCK_DEEP_OTM
+        if otm_frac > cfg.ELM_STOCK_DEEP_OTM_THRESHOLD
+        else cfg.ELM_STOCK_STD
+    )
+
+
+def elm_addon(
+    spot: float,
+    lot_size: int,
+    legs: list[TradeLeg],
+    *,
+    provision_elm: bool,
+    is_index: bool,
+    previous_close: float | None,
+    same_day_expiry: bool,
+) -> float:
+    """Sum of per-leg ELM across all short legs. ELM is waived on same-day expiry (ICICI folds it
+    into the SPAN margin for contracts expiring today)."""
+    if not provision_elm or lot_size <= 0 or same_day_expiry:
         return 0.0
-    return spot * lot_size * short_lots * 0.02
+    pc = previous_close if previous_close and previous_close > 0 else spot
+    total = 0.0
+    for leg in legs:
+        if leg.side != "Sell":
+            continue
+        lots = leg.quantity // lot_size
+        if lots <= 0:
+            continue
+        rate = _otm_elm_rate(leg.right, float(leg.strike), pc, is_index)
+        total += spot * lot_size * lots * rate
+    return total
 
 
 def short_lots_in_legs(legs: list[TradeLeg], lot_size: int) -> int:
@@ -216,7 +254,16 @@ def elm_for_legs(ctx: EngineContext, legs: list[TradeLeg]) -> float | None:
     short_lots = short_lots_in_legs(legs, ctx.lot_size)
     if short_lots <= 0:
         return None
-    return round(elm_addon(ctx.spot, ctx.lot_size, short_lots, True), 2)
+    total = elm_addon(
+        ctx.spot,
+        ctx.lot_size,
+        legs,
+        provision_elm=True,
+        is_index=ctx.is_index,
+        previous_close=ctx.previous_close,
+        same_day_expiry=ctx.same_day_expiry,
+    )
+    return round(total, 2)
 
 
 def skip(strategy_id: str, name: str, reason: str, modified: bool = False) -> StrategyResult:
@@ -231,6 +278,11 @@ def sigma_for_pop(ctx: EngineContext) -> float:
 
 def requires_pop_gate(ctx: EngineContext) -> bool:
     return ctx.strategy_category == "income"
+
+
+def pre_filter_pop_floor(min_pop_pct: float) -> float:
+    """Soft PoP floor for strike/pair search only; never used as a hard reject gate."""
+    return max(0.0, min_pop_pct - POP_PRE_FILTER_TOLERANCE)
 
 
 def meets_pop_floor(ctx: EngineContext, pop: float) -> bool:

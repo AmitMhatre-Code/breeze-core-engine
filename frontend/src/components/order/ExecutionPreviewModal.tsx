@@ -2,4 +2,4 @@
 export {
   OrderExecutionConfirmDialog as ExecutionPreviewModal,
   type ExecutionPreviewLeg,
-} from "./OrderExecutionConfirmDialog";
+} from "@/components/shared/order/OrderExecutionConfirmDialog";

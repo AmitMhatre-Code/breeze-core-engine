@@ -204,7 +204,7 @@ class TestCalcBullPutSpread(unittest.TestCase):
         self.assertEqual(ok[0].variant_rank, 1)
         self.assertTrue(ok[0].badges)
 
-    def test_skips_when_annualized_return_below_minimum(self):
+    def test_flags_relaxed_when_annualized_return_below_minimum(self):
         strikes = list(range(22500, 23700, 50))
         cache = _fill_pe_strikes(
             strikes,
@@ -222,8 +222,9 @@ class TestCalcBullPutSpread(unittest.TestCase):
         )
         results = asyncio.run(calc_bull_put_spread(ctx))
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].status, "skipped")
-        self.assertIn("annualized return", (results[0].skip_reason or "").lower())
+        self.assertEqual(results[0].status, "ok")
+        self.assertEqual(results[0].compliance, "relaxed")
+        self.assertIn("min_ann_return", results[0].constraint_violations)
 
     def test_span_shortlist_margins_only_top_n(self):
         proc = MagicMock()

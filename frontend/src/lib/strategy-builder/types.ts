@@ -14,12 +14,34 @@ export type StrategyLeg = {
   lots: number;
   /** Entry premium per unit (same units as chain LTP). */
   premiumPerUnit?: number;
+  /** When true, broker derives limit price from LTP (no user price). */
+  aggressiveLimit?: boolean;
+  /** Order-book buy:sell ratio at the time this leg was proposed/added, if known. */
+  buySellRatio?: number | string | null;
+  /** Live LTP at the time this leg was proposed/added, if known. */
+  ltp?: number | null;
 };
 
 export type ChainRow = {
   strike_price: number;
   call?: Record<string, unknown> | null;
   put?: Record<string, unknown> | null;
+};
+
+export type QuoteSource = "websocket" | "bhavcopy" | "icici_api" | "snapshot";
+
+export type QuoteMeta = {
+  quote_source: QuoteSource;
+  bhavcopy_date?: string | null;
+  quote_as_of?: string | null;
+  /** True once a trading session has opened after `bhavcopy_date` — EOD prices are known stale. */
+  bhavcopy_stale?: boolean;
+  /**
+   * When the market depth in this chain was actually captured (last live tick
+   * before close). Only set for `snapshot`-sourced chains — bhavcopy carries no
+   * depth at all, and BSE wipes its book the moment the session ends.
+   */
+  depth_as_of?: string | null;
 };
 
 export type ChainSuccess = {
@@ -35,6 +57,11 @@ export type ChainSuccess = {
   lot_size?: number | null;
   /** Max order quantity per exchange freeze rule (multiple of lot size). */
   freeze_quantity?: number | null;
+  quote_source?: QuoteSource;
+  bhavcopy_date?: string | null;
+  quote_as_of?: string | null;
+  bhavcopy_stale?: boolean;
+  depth_as_of?: string | null;
 };
 
 export type ChainApiResponse = {
@@ -57,6 +84,66 @@ export type MarginApiResponse = {
   Status: number;
   Error?: string | null;
   Success?: Record<string, unknown> | null;
+};
+
+export type MarginApiRequest = {
+  legs: {
+    stock_code: string;
+    exchange_code: string;
+    expiry_date: string;
+    product_type: string;
+    right: OptionRight;
+    strike_price: string;
+    quantity: string;
+    price: string;
+    action: OrderSide;
+    aggressive_limit?: boolean;
+  }[];
+  margin_source?: "breeze_api" | "exchange_baseline";
+  baseline_only?: boolean;
+  /** Live spot for the underlying; only needed to compute the basket-level ELM figure. */
+  spot?: number;
+};
+
+export type BasketLegMarginEntry = {
+  lots: number;
+  span: number | null;
+  loading?: boolean;
+};
+
+export type BasketElmInfo = {
+  /** Whole-basket ELM (Extreme Loss Margin); null until computed or when not computable (e.g. no spot). */
+  elmRequirement: number | null;
+  elmIsIndex: boolean;
+  /** True when the ELM figure is a flat-rate approximation (always true for stock underlyings). */
+  elmApproximate: boolean;
+};
+
+export type SpanBaselineContract = {
+  margin_per_lot: number;
+  lot_size: number;
+};
+
+export type SpanBaselineSheet = {
+  found: boolean;
+  contracts: Record<string, SpanBaselineContract>;
+  source_date?: string | null;
+  source_file?: string | null;
+};
+
+export type SpanPortfolioMarginSuccess = {
+  span_margin_required?: number | null;
+  scanning_risk?: number | null;
+  net_option_value?: number | null;
+  margin_benefit?: number | null;
+  per_leg_standalone: Record<string, number>;
+  warnings: string[];
+};
+
+export type SpanPortfolioMarginResponse = {
+  Status: number;
+  Error?: string | null;
+  Success?: SpanPortfolioMarginSuccess | null;
 };
 
 export type ExecuteLegResult = {
@@ -89,7 +176,7 @@ export type ProposedTradeLeg = {
 
 export type StrategyCategory = "income" | "bullish" | "bearish";
 
-export type BuilderMode = StrategyCategory | "build_your_own" | null;
+export type BuilderMode = StrategyCategory | null;
 
 export type RiskRewardProfile = "conservative" | "moderate" | "aggressive";
 
@@ -106,6 +193,7 @@ export type ProposedTrade = {
   structure_modified?: boolean;
   net_premium?: number | null;
   max_loss?: number | null;
+  max_profit?: number | null;
   annualized_return_pct?: number | null;
   risk_reward_ratio?: string | null;
   span_margin?: number | null;
@@ -120,6 +208,8 @@ export type ProposedTrade = {
   hero_metric?: TileMetric | null;
   secondary_metrics?: TileMetric[];
   badges?: string[];
+  compliance?: "recommended" | "relaxed";
+  constraint_violations?: string[];
 };
 
 /** Unique key for trade card selection (supports conviction variants). */
@@ -140,6 +230,7 @@ export type ProposeTradesSuccess = {
   atm_iv?: number | null;
   structure_modified?: boolean;
   trades: ProposedTrade[];
+  relaxed_trades?: ProposedTrade[];
   /** Server-side audit session id for downloading the build audit JSON. */
   audit_session_id?: string | null;
   user_report?: UserExplainabilityReport | null;
@@ -148,7 +239,8 @@ export type ProposeTradesSuccess = {
 export type UserInputsSummary = {
   strategy_category: string;
   margin_lacs: number;
-  max_loss_lacs: number;
+  max_loss_lacs?: number | null;
+  allow_infinite_loss?: boolean;
   min_pop_pct?: number;
   min_ann_return_pct?: number;
 };

@@ -33,6 +33,12 @@ _heartbeat_interval_sec: int = 300
 _startup_at: datetime = datetime.now(timezone.utc)
 
 
+def _status_override() -> LicenseStatus | None:
+    """Dev-only override (`LICENSE_STATUS_OVERRIDE`) to simulate a license state without a portal."""
+    raw = (cfg.LICENSE_STATUS_OVERRIDE or "").strip()
+    return raw if raw else None  # type: ignore[return-value]
+
+
 def _portal_configured() -> bool:
     return bool((cfg.PORTAL_API_BASE_URL or "").strip())
 
@@ -101,6 +107,9 @@ def record_portal_verify_failure() -> None:
 
 
 def get_license_status() -> LicenseStatus | None:
+    override = _status_override()
+    if override is not None:
+        return override
     if not _portal_configured():
         return None
     if not _has_license_key():
@@ -113,6 +122,9 @@ def get_license_status() -> LicenseStatus | None:
 
 def trading_mutations_allowed() -> bool:
     """True when deployment has a valid active license for trading mutations."""
+    override = _status_override()
+    if override is not None:
+        return override not in ("revoked", "unlicensed", "pending_activation", "trial_denied")
     if not _portal_configured():
         return True
     if not _has_license_key():
@@ -144,6 +156,15 @@ def _read_only_for_status(status: LicenseStatus) -> bool:
 
 def get_license_status_for_api() -> dict[str, Any] | None:
     """Payload fields for HomeDataResponse; None when portal is not configured."""
+    override = _status_override()
+    if override is not None:
+        payload: dict[str, Any] = {
+            "deployment_license_status": override,
+            "deployment_license_read_only": _read_only_for_status(override),
+        }
+        if override in ("expired", "revoked", "unlicensed", "trial_denied"):
+            payload["contact_sales"] = _contact_sales_context()
+        return payload
     if not _portal_configured():
         return None
     if not _has_license_key():

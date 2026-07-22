@@ -29,6 +29,7 @@ class PlaceOrderRequest(BaseModel):
     price: str = "0"
     expiry_date: str
     quantity: str
+    aggressive_limit: bool = False
 
     @field_validator("quantity")
     @classmethod
@@ -48,6 +49,7 @@ class BreakOrderRequest(BaseModel):
     total_qty: str
     price: str = "0"
     action: Literal["Buy", "Sell"]
+    aggressive_limit: bool = False
 
 
 class CancelOrderDetail(BaseModel):
@@ -92,6 +94,15 @@ class BreakOrderChunkRequest(BaseModel):
         default=None,
         description="Optional max units per child order; lot-rounded, capped at exchange freeze.",
     )
+    aggressive_limit: bool = False
+    from_parked_execution: bool = Field(
+        default=False,
+        description="True when executing an existing parked row; avoids duplicate auto-park.",
+    )
+    batch_group_id: Optional[str] = Field(
+        default=None,
+        description="Correlate multi-leg orders parked together after hours.",
+    )
 
 
 class BreakChunkDefaultsRequest(BaseModel):
@@ -115,6 +126,9 @@ class BreakOrderFinalizeRequest(BaseModel):
     action: Literal["Buy", "Sell"]
     success_quantities: list[int] = Field(default_factory=list)
     danger_lines: list[str] = Field(default_factory=list)
+    aggressive_limit: bool = False
+    parked_only: bool = False
+    market_closed_reason: Optional[str] = None
 
 
 class BookCancelOneRequest(BaseModel):
@@ -134,6 +148,68 @@ class BookCancelCommitRequest(BaseModel):
 
     results: list[BookCancelResultItem]
     cancel_details: Optional[List[CancelOrderDetail]] = None
+
+
+class LegModifyOrderRef(BaseModel):
+    """One constituent order in a leg, as currently displayed in Order Book."""
+
+    order_id: str
+    exchange_code: str = "NFO"
+    quantity: int
+    pending_quantity: int = 0
+    status: str
+    price: Optional[str] = None
+
+
+class LegModifyRequest(BaseModel):
+    """Change the open (not-yet-filled) quantity/price of a leg (1..N underlying chunk orders).
+
+    `new_quantity` is the desired OPEN quantity, not the leg's total size — already-filled
+    quantity is never affected and is added back server-side before planning. 0 is valid and
+    cancels all remaining open orders for the leg while leaving filled quantity untouched.
+    """
+
+    stock_code: str
+    expiry_date: str
+    strike_price: str
+    right: str
+    product_type: str = "Options"
+    exchange_code: str = "NFO"
+    action: Literal["Buy", "Sell"]
+    orders: List[LegModifyOrderRef]
+    new_quantity: str
+    new_price: Optional[str] = None
+    rule_id: Optional[str] = None
+    scrip_key: Optional[str] = None
+
+    @model_validator(mode="after")
+    def require_orders_and_nonnegative_quantity(self):
+        if not self.orders:
+            raise ValueError("orders must not be empty")
+        if int(self.new_quantity) < 0:
+            raise ValueError("new_quantity must not be negative")
+        return self
+
+
+class LegModifyOrderOutcome(BaseModel):
+    order_id: str
+    quantity: int
+    price: Optional[str] = None
+
+
+class LegModifyFailure(BaseModel):
+    ref: str
+    error: str
+
+
+class LegModifyResponse(BaseModel):
+    success: bool
+    cancelled_order_ids: List[str] = Field(default_factory=list)
+    modified: List[LegModifyOrderOutcome] = Field(default_factory=list)
+    placed: List[LegModifyOrderOutcome] = Field(default_factory=list)
+    failures: List[LegModifyFailure] = Field(default_factory=list)
+    rate_limited: bool = False
+    rate_limit_pause_seconds: Optional[float] = None
 
 
 class BookGroupLtpItem(BaseModel):
@@ -166,6 +242,7 @@ class OrderFormRequest(BaseModel):
     quantity: Optional[str] = None
     price: Optional[str] = None
     action: Literal["Buy", "Sell", "Quote", "Clear"]
+    aggressive_limit: bool = False
     buy_button_state: Optional[str] = None
     sell_button_state: Optional[str] = None
 
@@ -190,6 +267,7 @@ class OrderFormRequest(BaseModel):
             price=self.price or "0",
             expiry_date=self.expiry_date or "",
             quantity=self.quantity or "0",
+            aggressive_limit=self.aggressive_limit,
         )
 
 
@@ -205,6 +283,7 @@ class ParkedOrderItem(BaseModel):
     quantity: str
     price: str = "0"
     action: Literal["Buy", "Sell"]
+    aggressive_limit: bool = False
     chunk_qty: Optional[str] = Field(
         default=None,
         description="Optional max units per child order when executing later.",

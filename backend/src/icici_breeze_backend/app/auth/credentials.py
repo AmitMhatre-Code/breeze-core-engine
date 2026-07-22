@@ -7,6 +7,7 @@ from base64 import urlsafe_b64encode
 import hashlib
 
 from icici_breeze_backend.app.core.config import JWT_SECRET, DATA_PATH, USERS_DB
+from icici_breeze_backend.app.core.timezone import SQLITE_NOW_IST, ist_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,32 @@ def decrypt_from_session_cookie(encrypted: str, encryption_key: str) -> Optional
         return None
     try:
         return _cookie_cipher(encryption_key).decrypt(encrypted.encode()).decode()
+    except Exception:
+        return None
+
+
+def _broker_session_store_cipher(encryption_key: str):
+    """Fernet for the persisted broker session token store (distinct key from the
+    session cookie cipher, even though both protect the same underlying ICICI
+    session token) -- see app/repositories/broker_session.py."""
+    key_material = hashlib.sha256(((encryption_key or "") + "broker_session_token_store_v1").encode()).digest()
+    return Fernet(urlsafe_b64encode(key_material[:32]))
+
+
+def encrypt_broker_session_token(token: str, encryption_key: str) -> str:
+    if not token or not encryption_key:
+        return ""
+    try:
+        return _broker_session_store_cipher(encryption_key).encrypt(token.encode()).decode("ascii")
+    except Exception:
+        return ""
+
+
+def decrypt_broker_session_token(encrypted: str, encryption_key: str) -> Optional[str]:
+    if not encrypted or not encryption_key:
+        return None
+    try:
+        return _broker_session_store_cipher(encryption_key).decrypt(encrypted.encode()).decode()
     except Exception:
         return None
 
@@ -190,7 +217,7 @@ class CredentialManager:
             user_id=user_id, broker_api_key=broker_api_key,
             secret_fragment=encrypted_fragment, encryption_salt=b"",
             fragment_position=fragment_position,
-            created_at=datetime.utcnow().isoformat(), is_active=True
+            created_at=ist_timestamp(), is_active=True
         )
 
     def reconstruct_full_api_secret(self, user_id: str, user_provided_fragment: str) -> Optional[str]:
@@ -248,8 +275,8 @@ class CredentialManager:
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    "UPDATE user_credentials SET is_active = 0, rotated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1",
-                    (user_id,)
+                    "UPDATE user_credentials SET is_active = 0, rotated_at = ? WHERE user_id = ? AND is_active = 1",
+                    (ist_timestamp(), user_id)
                 )
                 try:
                     cipher = Fernet(self.encryption_key.encode() if isinstance(self.encryption_key, str) else self.encryption_key)
@@ -263,7 +290,7 @@ class CredentialManager:
                 encrypted = cipher.encrypt(new_secret_fragment.encode())
                 credential_id = str(uuid.uuid4())
                 cur.execute(
-                    "INSERT INTO user_credentials (credential_id, user_id, broker_api_key, secret_fragment, encryption_salt, fragment_position, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), 1)",
+                    f"INSERT INTO user_credentials (credential_id, user_id, broker_api_key, secret_fragment, encryption_salt, fragment_position, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, {SQLITE_NOW_IST}, 1)",
                     (credential_id, user_id, '', encrypted, b'', 'first_half'),
                 )
                 conn.commit()
@@ -282,8 +309,8 @@ class CredentialManager:
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    "UPDATE user_credentials SET is_active = 0, rotated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1",
-                    (user_id,),
+                    "UPDATE user_credentials SET is_active = 0, rotated_at = ? WHERE user_id = ? AND is_active = 1",
+                    (ist_timestamp(), user_id),
                 )
                 try:
                     cipher = Fernet(self.encryption_key.encode() if isinstance(self.encryption_key, str) else self.encryption_key)
@@ -297,7 +324,7 @@ class CredentialManager:
                 encrypted = cipher.encrypt(secret_fragment.encode())
                 credential_id = str(uuid.uuid4())
                 cur.execute(
-                    "INSERT INTO user_credentials (credential_id, user_id, broker_api_key, secret_fragment, encryption_salt, fragment_position, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), 1)",
+                    f"INSERT INTO user_credentials (credential_id, user_id, broker_api_key, secret_fragment, encryption_salt, fragment_position, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, {SQLITE_NOW_IST}, 1)",
                     (credential_id, user_id, broker_api_key, encrypted, b"", "first_half"),
                 )
                 conn.commit()
@@ -314,8 +341,8 @@ class CredentialManager:
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    "UPDATE user_credentials SET is_active = 0, rotated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1",
-                    (user_id,)
+                    "UPDATE user_credentials SET is_active = 0, rotated_at = ? WHERE user_id = ? AND is_active = 1",
+                    (ist_timestamp(), user_id)
                 )
                 affected = cur.rowcount
                 conn.commit()

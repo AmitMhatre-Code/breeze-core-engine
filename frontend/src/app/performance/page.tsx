@@ -1,25 +1,50 @@
 "use client";
 
-import { Suspense, useCallback, useId, useMemo } from "react";
+import { Suspense, useCallback, useId, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { FinancialYearDropdown } from "@/components/performance/FinancialYearDropdown";
+import { PerformanceExportDialog } from "@/components/performance/PerformanceExportDialog";
 import { apiClient } from "@/lib/api-client";
-import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import {
   buildPerformanceDataPath,
   iciciSuccess,
+  padMonthlyToFinancialYear,
+  padWeeklyToFinancialYear,
   parseMonthlyPerformance,
+  parseWeeklyPerformance,
   type FinancialYearOption,
   type PerformanceDataPayload,
 } from "@/lib/performance-data";
 
-const PerformanceMonthlyChart = dynamic(
+/** Compact ₹, explicit sign (unicode minus, no parens) — Terminal Pro money convention.
+ * `sign: "always"` also prefixes a "+" for positive (headline P&L totals only). */
+function formatMoneyCompact(
+  amount: number,
+  opts?: { sign?: "always" | "negative-only" },
+): string {
+  const magnitude = formatIndianMoneyCompact(Math.abs(amount), {
+    shortSuffix: true,
+    skipK: true,
+  });
+  if (amount < 0) return `−${magnitude}`;
+  if (amount > 0 && opts?.sign === "always") return `+${magnitude}`;
+  return magnitude;
+}
+
+function moneyTone(amount: number): string {
+  if (amount > 0) return "text-up";
+  if (amount < 0) return "text-down";
+  return "text-foreground";
+}
+
+const PerformancePeriodChart = dynamic(
   () =>
-    import("@/components/performance/PerformanceMonthlyChart").then(
-      (m) => m.PerformanceMonthlyChart,
+    import("@/components/performance/PerformancePeriodChart").then(
+      (m) => m.PerformancePeriodChart,
     ),
   {
     ssr: false,
@@ -109,6 +134,11 @@ function PerformancePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const fyLabelId = useId();
+  const [chartViewMode, setChartViewMode] = useState<"chart" | "table">(
+    "chart",
+  );
+  const [granularity, setGranularity] = useState<"month" | "week">("month");
+  const [exportOpen, setExportOpen] = useState(false);
   const path = useMemo(
     () => buildPerformanceDataPath(searchParams),
     [searchParams],
@@ -143,10 +173,24 @@ function PerformancePageInner() {
       ? (perfBlock as { Error?: string }).Error
       : undefined;
 
-  const monthly = useMemo(
+  const monthlyActual = useMemo(
     () => (data ? parseMonthlyPerformance(data.performance) : []),
     [data],
   );
+  const monthly = useMemo(
+    () => padMonthlyToFinancialYear(monthlyActual, data?.start),
+    [monthlyActual, data],
+  );
+  const weekly = useMemo(
+    () =>
+      padWeeklyToFinancialYear(
+        data ? parseWeeklyPerformance(data.performance) : [],
+        data?.start,
+        data?.end,
+      ),
+    [data],
+  );
+  const periodRows = granularity === "week" ? weekly : monthly;
 
   const years = useMemo(() => {
     const y = data?.years;
@@ -174,7 +218,8 @@ function PerformancePageInner() {
   }, [data, urlFy, years]);
 
   return (
-    <AppShell contentWidth="wide">
+    <AppShell>
+      <div className="mx-auto max-w-[1200px]">
       {q.isPending ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2].map((i) => (
@@ -191,148 +236,141 @@ function PerformancePageInner() {
         <div className="app-alert-error">No data returned.</div>
       ) : (
         <div className="grid min-w-0 gap-4">
-          <header className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h1 className="app-text-title">Performance</h1>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              <p className="text-xs text-muted">
                 Bank balance, margins, and options P&amp;L
               </p>
+            </div>
+            <div className="flex items-center gap-2.5">
+              {years.length > 0 ? (
+                <FinancialYearDropdown
+                  labelId={fyLabelId}
+                  years={years}
+                  selectedYear={selectedFy}
+                  onSelect={selectFiscalYear}
+                />
+              ) : null}
+              <button
+                type="button"
+                className="flex h-9 items-center gap-1.5 rounded-[9px] border border-border bg-transparent px-3.5 text-xs font-semibold text-accent-strong transition hover:bg-accent-tint"
+                onClick={() => setExportOpen(true)}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Export
+              </button>
             </div>
           </header>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <section className="app-card flex flex-col p-4">
-              <h2 className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <h2 className="text-heading font-bold uppercase tracking-[.07em] text-faint">
                 Bank balance
               </h2>
               {funds ? (
                 <>
-                  <p className="mt-2 text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
-                    {formatIndianMoneyCompact(
-                      num(funds.total_bank_balance),
-                    )}
+                  <p className="mt-2 font-mono text-[25px] font-semibold tabular-nums text-foreground">
+                    {formatMoneyCompact(num(funds.total_bank_balance))}
                   </p>
-                  <hr className="my-3 border-zinc-200 dark:border-zinc-800" />
-                  <dl className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
-                    <div className="flex justify-between gap-2">
-                      <dt>Equity</dt>
-                      <dd
-                        className={`tabular-nums ${moneyToneClass(
+                  <hr className="my-3 border-border-soft" />
+                  <dl className="space-y-1.5 text-xs text-muted">
+                    {(
+                      [
+                        [
+                          "Equity",
                           num(funds.allocated_equity) +
                             num(funds.block_by_trade_equity),
-                        )}`}
-                      >
-                        {formatIndianMoneyCompact(
-                          num(funds.allocated_equity) +
-                            num(funds.block_by_trade_equity),
-                        )}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between gap-2">
-                      <dt>F&amp;O</dt>
-                      <dd
-                        className={`tabular-nums ${moneyToneClass(
+                        ],
+                        [
+                          "F&O",
                           num(funds.allocated_fno) +
                             num(funds.block_by_trade_fno),
-                        )}`}
-                      >
-                        {formatIndianMoneyCompact(
-                          num(funds.allocated_fno) +
-                            num(funds.block_by_trade_fno),
-                        )}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between gap-2">
-                      <dt>Commodity</dt>
-                      <dd
-                        className={`tabular-nums ${moneyToneClass(
+                        ],
+                        [
+                          "Commodity",
                           num(funds.allocated_commodity) +
                             num(funds.block_by_trade_commodity),
-                        )}`}
-                      >
-                        {formatIndianMoneyCompact(
-                          num(funds.allocated_commodity) +
-                            num(funds.block_by_trade_commodity),
-                        )}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between gap-2">
-                      <dt>Currency</dt>
-                      <dd
-                        className={`tabular-nums ${moneyToneClass(
+                        ],
+                        [
+                          "Currency",
                           num(funds.allocated_currency) +
                             num(funds.block_by_trade_currency),
-                        )}`}
-                      >
-                        {formatIndianMoneyCompact(
-                          num(funds.allocated_currency) +
-                            num(funds.block_by_trade_currency),
-                        )}
-                      </dd>
-                    </div>
+                        ],
+                      ] as const
+                    ).map(([label, amount]) => (
+                      <div className="flex justify-between gap-2" key={label}>
+                        <dt>{label}</dt>
+                        <dd
+                          className={`font-mono tabular-nums ${amount === 0 ? "text-muted" : "text-foreground"}`}
+                        >
+                          {formatMoneyCompact(amount)}
+                        </dd>
+                      </div>
+                    ))}
                     <div className="flex justify-between gap-2">
                       <dt>Unallocated</dt>
                       <dd
-                        className={`tabular-nums ${moneyToneClass(
-                          num(funds.unallocated_balance),
-                        )}`}
+                        className={`font-mono tabular-nums ${moneyTone(num(funds.unallocated_balance))}`}
                       >
-                        {formatIndianMoneyCompact(
-                          num(funds.unallocated_balance),
-                        )}
+                        {formatMoneyCompact(num(funds.unallocated_balance))}
                       </dd>
                     </div>
                   </dl>
                 </>
               ) : (
-                <p className="mt-2 text-sm text-amber-800 dark:text-amber-200/90">
+                <p className="mt-2 text-sm text-amber-accent">
                   Funds could not be loaded (broker response not OK).
                 </p>
               )}
             </section>
 
             <section className="app-card flex flex-col p-4">
-              <h2 className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <h2 className="text-heading font-bold uppercase tracking-[.07em] text-faint">
                 Margins
               </h2>
               {margin ? (
                 <>
-                  <p className="mt-2 text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
-                    {formatIndianMoneyCompact(num(margin.cash_limit))}
+                  <p className="mt-2 font-mono text-[25px] font-semibold tabular-nums text-foreground">
+                    {formatMoneyCompact(num(margin.cash_limit))}
                   </p>
-                  <hr className="my-3 border-zinc-200 dark:border-zinc-800" />
-                  <dl className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                  <hr className="my-3 border-border-soft" />
+                  <dl className="space-y-1.5 text-xs text-muted">
                     <div className="flex justify-between gap-2">
                       <dt>Utilised</dt>
-                      <dd
-                        className={`tabular-nums ${moneyToneClass(
-                          -num(margin.actual_margin_ute),
-                        )}`}
-                      >
-                        {formatIndianMoneyCompact(
-                          -num(margin.actual_margin_ute),
-                        )}
+                      <dd className="font-mono tabular-nums text-down">
+                        {formatMoneyCompact(-num(margin.actual_margin_ute))}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>Available</dt>
                       <dd
-                        className={`tabular-nums ${moneyToneClass(
-                          num(margin.actual_margin_avl),
-                        )}`}
+                        className={`font-mono tabular-nums ${moneyTone(num(margin.actual_margin_avl))}`}
                       >
-                        {formatIndianMoneyCompact(
-                          num(margin.actual_margin_avl),
-                        )}
+                        {formatMoneyCompact(num(margin.actual_margin_avl))}
                       </dd>
                     </div>
                   </dl>
-                  <p className="mt-3 text-[11px] italic text-zinc-500 dark:text-zinc-500">
+                  <p className="mt-3 text-heading italic text-faint">
                     *Margin may be under-calculated (ICICI API does not return upstreamed amount)
                   </p>
                 </>
               ) : (
-                <p className="mt-2 text-sm text-amber-800 dark:text-amber-200/90">
+                <p className="mt-2 text-sm text-amber-accent">
                   Margin could not be loaded. Realised P&amp;L for the year is
                   unavailable until margin loads.
                 </p>
@@ -340,79 +378,60 @@ function PerformancePageInner() {
             </section>
 
             <section className="app-card flex flex-col p-4 md:col-span-2 xl:col-span-1">
-              <h2 className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <h2 className="text-heading font-bold uppercase tracking-[.07em] text-faint">
                 FY {data.fy || selectedFy || "—"}{" "}P&amp;L statement
               </h2>
               {performance ? (
                 <>
                   <p
-                    className={[
-                      "mt-2 text-2xl font-semibold tabular-nums",
-                      num(performance.net_pnl) >= 0
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-red-600 dark:text-red-400",
-                    ].join(" ")}
+                    className={`mt-2 font-mono text-2xl font-semibold tabular-nums ${moneyTone(num(performance.net_pnl))}`}
                   >
-                    {formatIndianMoneyCompact(num(performance.net_pnl))}
+                    {formatMoneyCompact(num(performance.net_pnl), {
+                      sign: "always",
+                    })}
                   </p>
-                  <hr className="my-3 border-zinc-200 dark:border-zinc-800" />
-                  <dl className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                  <hr className="my-3 border-border-soft" />
+                  <dl className="space-y-1.5 text-xs text-muted">
                     <div className="flex justify-between gap-2">
                       <dt>Premium earned</dt>
                       <dd
-                        className={`tabular-nums ${moneyToneClass(
-                          num(performance.premium_earned),
-                        )}`}
+                        className={`font-mono tabular-nums ${moneyTone(num(performance.premium_earned))}`}
                       >
-                        {formatIndianMoneyCompact(
-                          num(performance.premium_earned),
-                        )}
+                        {formatMoneyCompact(num(performance.premium_earned))}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>Premium paid</dt>
-                      <dd
-                        className={`tabular-nums ${moneyToneClass(
-                          num(performance.premium_paid),
-                        )}`}
-                      >
-                        {formatIndianMoneyCompact(
-                          num(performance.premium_paid),
-                        )}
+                      <dd className="font-mono tabular-nums text-down">
+                        {formatMoneyCompact(-num(performance.premium_paid))}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>Brokerage</dt>
-                      <dd
-                        className={`tabular-nums ${moneyToneClass(
-                          num(performance.brokerage),
-                        )}`}
-                      >
-                        {formatIndianMoneyCompact(
-                          num(performance.brokerage),
-                        )}
+                      <dd className="font-mono tabular-nums text-down">
+                        {formatMoneyCompact(-num(performance.brokerage))}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-2">
                       <dt>Taxes</dt>
-                      <dd
-                        className={`tabular-nums ${moneyToneClass(
-                          num(performance.taxes),
-                        )}`}
-                      >
-                        {formatIndianMoneyCompact(num(performance.taxes))}
+                      <dd className="font-mono tabular-nums text-down">
+                        {formatMoneyCompact(-num(performance.taxes))}
                       </dd>
                     </div>
-                    <div className="flex justify-between gap-2">
-                      <dt title={performanceRoiTooltip}>Annualised ROI</dt>
+                    <div className="flex justify-between gap-2 border-t border-dashed border-border-soft pt-[3px]">
+                      <dt
+                        title={performanceRoiTooltip}
+                        className="font-semibold text-foreground"
+                      >
+                        Annualised ROI
+                      </dt>
                       <dd
                         title={performanceRoiTooltip}
-                        className={[
-                          "tabular-nums font-medium",
+                        className={`font-mono tabular-nums font-semibold ${
                           num(performance.annualised_roi) >= 0
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-red-600 dark:text-red-400",
-                        ].join(" ")}
+                            ? "text-up"
+                            : "text-down"
+                        }`}
                       >
                         {(num(performance.annualised_roi) * 100).toLocaleString(
                           "en-IN",
@@ -427,7 +446,7 @@ function PerformancePageInner() {
                   </dl>
                 </>
               ) : (
-                <p className="mt-2 text-sm text-amber-800 dark:text-amber-200/90">
+                <p className="mt-2 text-sm text-amber-accent">
                   {perfStatus != null && perfStatus !== 200
                     ? `Performance unavailable (${perfStatus}${perfError ? `: ${perfError}` : ""}).`
                     : "Performance data not available."}
@@ -436,24 +455,94 @@ function PerformancePageInner() {
             </section>
           </div>
 
-          <section className="app-card min-w-0 p-4">
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="app-text-heading">Monthly financial overview</h2>
-              {years.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 sm:justify-end">
-                  <FinancialYearDropdown
-                    labelId={fyLabelId}
-                    years={years}
-                    selectedYear={selectedFy}
-                    onSelect={selectFiscalYear}
-                  />
-                </div>
-              ) : null}
+          <section className="app-card min-w-0">
+            <div className="flex flex-col gap-3 border-b border-border-soft px-4 pb-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="text-heading font-bold uppercase tracking-[.07em] text-faint">
+                {granularity === "week" ? "Weekly" : "Monthly"} financial
+                overview
+              </h2>
+              <div className="flex items-center gap-2.5">
+              <div className="inline-flex rounded-[9px] border border-border bg-panel2 p-[3px]">
+                {(
+                  [
+                    ["month", "Monthly"],
+                    ["week", "Weekly"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={[
+                      "rounded-[6px] px-3.5 py-1.5 font-mono text-table font-semibold transition",
+                      granularity === value
+                        ? "bg-accent-strong text-accent-ink"
+                        : "text-muted hover:text-foreground",
+                    ].join(" ")}
+                    aria-pressed={granularity === value}
+                    onClick={() => setGranularity(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="inline-flex rounded-[9px] border border-border bg-panel2 p-[3px]">
+                <button
+                  type="button"
+                  className={[
+                    "rounded-[6px] px-3.5 py-1.5 font-mono text-table font-semibold transition",
+                    chartViewMode === "chart"
+                      ? "bg-accent-strong text-accent-ink"
+                      : "text-muted hover:text-foreground",
+                  ].join(" ")}
+                  aria-pressed={chartViewMode === "chart"}
+                  onClick={() => setChartViewMode("chart")}
+                >
+                  Chart
+                </button>
+                <button
+                  type="button"
+                  className={[
+                    "rounded-[6px] px-3.5 py-1.5 font-mono text-table font-semibold transition",
+                    chartViewMode === "table"
+                      ? "bg-accent-strong text-accent-ink"
+                      : "text-muted hover:text-foreground",
+                  ].join(" ")}
+                  aria-pressed={chartViewMode === "table"}
+                  onClick={() => setChartViewMode("table")}
+                >
+                  Table
+                </button>
+              </div>
+              </div>
             </div>
-            <PerformanceMonthlyChart monthly={monthly} />
+            <div className="p-4">
+              <PerformancePeriodChart
+                rows={periodRows}
+                viewMode={chartViewMode}
+                periodLabel={granularity === "week" ? "Week" : "Month"}
+              />
+            </div>
           </section>
+
+          <PerformanceExportDialog
+            open={exportOpen}
+            onClose={() => setExportOpen(false)}
+            monthly={monthlyActual}
+            summary={{
+              fyLabel: `FY ${data.fy || selectedFy || "—"}`,
+              totalBankBalance: num(funds?.total_bank_balance),
+              cashLimit: num(margin?.cash_limit),
+              netPnl: num(performance?.net_pnl),
+              premiumEarned: num(performance?.premium_earned),
+              premiumPaid: num(performance?.premium_paid),
+              brokerage: num(performance?.brokerage),
+              taxes: num(performance?.taxes),
+              annualisedRoiPct: num(performance?.annualised_roi) * 100,
+            }}
+          />
         </div>
       )}
+      </div>
     </AppShell>
   );
 }
@@ -462,8 +551,8 @@ export default function PerformancePage() {
   return (
     <Suspense
       fallback={
-        <AppShell contentWidth="wide">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <AppShell>
+          <div className="mx-auto max-w-[1200px] grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {[0, 1, 2].map((i) => (
               <div key={i} className="app-card min-h-[180px] p-4">
               <div className="h-full min-h-[140px] w-full app-skeleton rounded-sm border-0" />

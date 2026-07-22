@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Optional, Any
 import json
 
+from icici_breeze_backend.app.core.timezone import SQLITE_NOW_IST
+
 _logger = logging.getLogger(__name__)
 
 
@@ -26,7 +28,18 @@ class OperationType(str, Enum):
     # Portfolio operations
     PORTFOLIO_VIEW = "portfolio_view"
     PORTFOLIO_UPDATE = "portfolio_update"
-    
+
+    # Profit/loss triggered square-off rules (Portfolio > group Exit Rule)
+    SQUAREOFF_RULE_ARMED = "squareoff_rule_armed"
+    SQUAREOFF_RULE_DISARMED = "squareoff_rule_disarmed"
+    SQUAREOFF_RULE_FIRED = "squareoff_rule_fired"
+    SQUAREOFF_RULE_FIRE_FAILED = "squareoff_rule_fire_failed"
+
+    # Per-leg GTT OCO exit orders (Portfolio > individual leg > Exit Rule)
+    GTT_EXIT_ORDER_PLACED = "gtt_exit_order_placed"
+    GTT_EXIT_ORDER_PLACE_FAILED = "gtt_exit_order_place_failed"
+    GTT_EXIT_ORDER_CANCELLED = "gtt_exit_order_cancelled"
+
     # Credential operations
     CREDENTIAL_ROTATION = "credential_rotation"
     CREDENTIAL_REVOCATION = "credential_revocation"
@@ -88,14 +101,12 @@ class AuditLogger:
 
         # Persist audit entry into the audit_log table.
         try:
-            import sqlite3
-            import icici_breeze_backend.app.core.config as cfg
+            from icici_breeze_backend.app.repositories.base import get_sync_connection
 
-            db_path = cfg.DATA_PATH + cfg.USERS_DB
-            with sqlite3.connect(db_path) as conn:
-                cur = conn.cursor()
-                cur.execute(
-                    "INSERT INTO audit_log (user_id, operation_type, resource_type, resource_id, action_status, request_id, ip_address, error_details, metadata, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+            conn = get_sync_connection()
+            try:
+                conn.execute(
+                    f"INSERT INTO audit_log (user_id, operation_type, resource_type, resource_id, action_status, request_id, ip_address, error_details, metadata, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {SQLITE_NOW_IST})",
                     (
                         user_id,
                         operation_type.value if isinstance(operation_type, OperationType) else str(operation_type),
@@ -109,6 +120,8 @@ class AuditLogger:
                     ),
                 )
                 conn.commit()
+            finally:
+                conn.close()
             return True
         except Exception as e:
             _logger.warning("Audit log write failed: user_id=%s op=%s: %s", user_id, operation_type, e)

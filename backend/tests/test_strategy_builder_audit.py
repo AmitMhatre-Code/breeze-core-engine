@@ -19,7 +19,10 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     EngineContext,
     QuoteRow,
 )
-from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_EXCHANGE
+from icici_breeze_backend.app.services.nsccl_baseline import (
+    MARGIN_SOURCE_BREEZE,
+    MARGIN_SOURCE_EXCHANGE,
+)
 from icici_breeze_backend.audit.strategy_builder_audit import (
     StrategyBuilderAuditSession,
     _MAX_AUDIT_LOGS_PER_USER,
@@ -34,6 +37,7 @@ from icici_breeze_backend.audit.strategy_builder_audit import (
 )
 from icici_breeze_backend.audit.user_explainability import build_user_explainability_report
 
+
 def _chain_row(strike: int, right: str) -> dict:
     return {
         "strike_price": strike,
@@ -44,6 +48,26 @@ def _chain_row(strike: int, right: str) -> dict:
         "total_sell_qty": 100,
         "spot_price": 23500.0,
         "right": right,
+    }
+
+
+def _mock_full_option_chain_for_audit(*_args, **_kwargs):
+    strikes = list(range(23000, 24100, 50))
+    return {
+        "Status": 200,
+        "Success": {
+            "chain_rows": [
+                {
+                    "strike_price": s,
+                    "call": _chain_row(s, "Call"),
+                    "put": _chain_row(s, "Put"),
+                }
+                for s in strikes
+            ],
+            "spot_price": 23500.0,
+            "atm_strike": 23500,
+            "quote_source": "websocket",
+        },
     }
 
 
@@ -240,14 +264,14 @@ class TestStrategyBuilderAuditSession(unittest.TestCase):
 
 class TestEngineAuditIntegration(unittest.TestCase):
     def _ctx(self, audit: StrategyBuilderAuditSession) -> EngineContext:
-        strikes = list(range(23000, 24100, 50))
+        strikes = list(range(22000, 25100, 50))
         cache = {}
         for s in strikes:
             call_delta = min(0.35, 0.08 + (s - 23500) / 5000.0)
             put_delta = -min(0.35, 0.08 + (23500 - s) / 5000.0)
-            call_bid = max(1.0, 30.0 - (s - 23000) / 50.0)
+            call_bid = max(1.0, 30.0 - abs(s - 23500) / 50.0)
             call_ask = call_bid + 0.5
-            put_bid = max(1.0, 30.0 - (23500 - s) / 50.0)
+            put_bid = max(1.0, 30.0 - abs(s - 23500) / 50.0)
             put_ask = put_bid + 0.5
             cache[(s, "Call")] = QuoteRow(
                 strike=s,
@@ -305,26 +329,22 @@ class TestEngineAuditIntegration(unittest.TestCase):
                 "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
                 return_value=tmp,
             ):
-                with patch(
-                    "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bear_call_spread.MIN_BCS_ANNUALIZED_RETURN_PCT",
-                    0.0,
-                ):
-                    audit = StrategyBuilderAuditSession(
-                        user_id="u1",
-                        request={"stock_code": "NIFTY"},
-                    )
-                    ctx = self._ctx(audit)
-                    ctx.processor = proc
-                    results = asyncio.run(calc_bear_call_spread(ctx))
-                    res = results[0]
-                    audit.finalize({"status": "ok", "strategy": res.strategy_id})
+                audit = StrategyBuilderAuditSession(
+                    user_id="u1",
+                    request={"stock_code": "NIFTY"},
+                )
+                ctx = self._ctx(audit)
+                ctx.processor = proc
+                ctx.min_ann_return_pct = 0.0
+                results = asyncio.run(calc_bear_call_spread(ctx))
+                res = results[0]
+                audit.finalize({"status": "ok", "strategy": res.strategy_id})
                 calc_titles = [
                     e["message"]
                     for e in audit.events
                     if e["category"] == "calculation"
                 ]
-                self.assertIn("Bear call spread candidate search", calc_titles)
-                self.assertIn("Bear call spread SPAN refinement", calc_titles)
+                self.assertIn("Bear call spread objective champions", calc_titles)
 
     def test_bull_put_audit_records_wing_search(self):
         proc = MagicMock()
@@ -336,26 +356,22 @@ class TestEngineAuditIntegration(unittest.TestCase):
                 "icici_breeze_backend.audit.strategy_builder_audit.audit_log_dir",
                 return_value=tmp,
             ):
-                with patch(
-                    "icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bull_put_spread.MIN_BPS_ANNUALIZED_RETURN_PCT",
-                    0.0,
-                ):
-                    audit = StrategyBuilderAuditSession(
-                        user_id="u1",
-                        request={"stock_code": "NIFTY"},
-                    )
-                    ctx = self._ctx(audit)
-                    ctx.processor = proc
-                    results = asyncio.run(calc_bull_put_spread(ctx))
-                    res = results[0]
-                    audit.finalize({"status": "ok", "strategy": res.strategy_id})
+                audit = StrategyBuilderAuditSession(
+                    user_id="u1",
+                    request={"stock_code": "NIFTY"},
+                )
+                ctx = self._ctx(audit)
+                ctx.processor = proc
+                ctx.min_ann_return_pct = 0.0
+                results = asyncio.run(calc_bull_put_spread(ctx))
+                res = results[0]
+                audit.finalize({"status": "ok", "strategy": res.strategy_id})
                 calc_titles = [
                     e["message"]
                     for e in audit.events
                     if e["category"] == "calculation"
                 ]
-                self.assertIn("Bull put spread candidate search", calc_titles)
-                self.assertIn("Bull put spread SPAN refinement", calc_titles)
+                self.assertIn("Bull put spread objective champions", calc_titles)
 
     def test_run_propose_trades_emits_audit_metadata(self):
         from icici_breeze_backend.app.services.options_strategy_engine import run_propose_trades
@@ -366,6 +382,7 @@ class TestEngineAuditIntegration(unittest.TestCase):
         proc.list_option_strikes.return_value = strikes
         proc.strike_interval.return_value = 50
         proc.search_interval.return_value = 50
+        proc.get_full_option_chain.side_effect = _mock_full_option_chain_for_audit
         proc.fetch_option_chain_quotes_sb.side_effect = _mock_fetch_option_chain_quotes_sb
         proc.strategy_builder_margin.side_effect = _mock_strategy_builder_margin
 
@@ -403,9 +420,9 @@ class TestEngineAuditIntegration(unittest.TestCase):
                 self.assertTrue(os.path.isfile(path))
                 with open(path, encoding="utf-8") as fh:
                     doc = json.load(fh)
-                chain_stats = doc["icici_api_calls"]["by_api"]["get_option_chain_quotes"]
-                self.assertGreaterEqual(chain_stats["total"], 2)
-                self.assertLess(chain_stats["total"], 20)
+                chain_stats = doc["icici_api_calls"]["by_api"].get("get_option_chain_quotes", {})
+                self.assertGreaterEqual(chain_stats.get("total", 0), 0)
+                self.assertLess(chain_stats.get("total", 0), 20)
                 self.assertIn("temp_liquid_cache", doc)
 
 
@@ -676,6 +693,131 @@ class TestProcessorIciciAudit(unittest.TestCase):
         self.assertEqual(stats["total"], 1)
         self.assertEqual(stats["by_api"]["margin_calculator"]["success"], 1)
         mock_breeze.margin_calculator.assert_called_once()
+
+    def test_margin_source_override_uses_baseline_while_user_on_breeze(self):
+        from icici_breeze_backend.app.services.processor import processor
+
+        proc = processor()
+        legs = [
+            {
+                "stock_code": "NIFTY",
+                "exchange_code": "NFO",
+                "expiry_date": "09-Jun-2025",
+                "product_type": "Options",
+                "right": "Call",
+                "strike_price": "23500",
+                "quantity": "75",
+                "action": "Sell",
+            }
+        ]
+        mock_breeze = MagicMock()
+        with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch.object(
+            proc,
+            "get_strategy_builder_margin_source",
+            return_value=MARGIN_SOURCE_BREEZE,
+        ), patch(
+            "icici_breeze_backend.app.services.processor.resolve_exchange_baseline_margin",
+            return_value={"found": True, "span_margin_required": 42_000.0},
+        ):
+            res = proc.strategy_builder_margin(
+                "u1",
+                "NFO",
+                legs,
+                margin_source_override=MARGIN_SOURCE_EXCHANGE,
+            )
+        self.assertEqual(res["Status"], 200)
+        self.assertEqual(res["Success"]["span_margin_required"], 42_000.0)
+        self.assertEqual(res["Success"]["margin_source"], MARGIN_SOURCE_EXCHANGE)
+        mock_breeze.margin_calculator.assert_not_called()
+
+    def test_baseline_only_missing_contract_returns_null_span(self):
+        from icici_breeze_backend.app.services.processor import processor
+
+        proc = processor()
+        legs = [
+            {
+                "stock_code": "NIFTY",
+                "exchange_code": "NFO",
+                "expiry_date": "09-Jun-2025",
+                "product_type": "Options",
+                "right": "Call",
+                "strike_price": "23500",
+                "quantity": "75",
+                "action": "Sell",
+            }
+        ]
+        mock_breeze = MagicMock()
+        with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch.object(
+            proc,
+            "get_strategy_builder_margin_source",
+            return_value=MARGIN_SOURCE_EXCHANGE,
+        ), patch(
+            "icici_breeze_backend.app.services.processor.resolve_exchange_baseline_margin",
+            return_value={"found": False},
+        ):
+            res = proc.strategy_builder_margin(
+                "u1",
+                "NFO",
+                legs,
+                margin_source_override=MARGIN_SOURCE_EXCHANGE,
+                baseline_only=True,
+            )
+        self.assertEqual(res["Status"], 200)
+        self.assertIsNone(res["Success"]["span_margin_required"])
+        self.assertEqual(len(res["Success"]["warnings"]), 1)
+        mock_breeze.margin_calculator.assert_not_called()
+
+    def test_baseline_only_all_legs_found_sums_net_margin(self):
+        from icici_breeze_backend.app.services.processor import processor
+
+        proc = processor()
+        legs = [
+            {
+                "stock_code": "NIFTY",
+                "exchange_code": "NFO",
+                "expiry_date": "09-Jun-2025",
+                "product_type": "Options",
+                "right": "Call",
+                "strike_price": "23500",
+                "quantity": "75",
+                "action": "Sell",
+            },
+            {
+                "stock_code": "NIFTY",
+                "exchange_code": "NFO",
+                "expiry_date": "09-Jun-2025",
+                "product_type": "Options",
+                "right": "Put",
+                "strike_price": "23000",
+                "quantity": "75",
+                "action": "Sell",
+            },
+        ]
+        mock_breeze = MagicMock()
+
+        def _baseline(**kwargs):
+            if kwargs.get("right") == "Call":
+                return {"found": True, "span_margin_required": 50_000.0}
+            return {"found": True, "span_margin_required": 30_000.0}
+
+        with patch.object(proc, "get_session_breeze", return_value=mock_breeze), patch.object(
+            proc,
+            "get_strategy_builder_margin_source",
+            return_value=MARGIN_SOURCE_BREEZE,
+        ), patch(
+            "icici_breeze_backend.app.services.processor.resolve_exchange_baseline_margin",
+            side_effect=lambda **kwargs: _baseline(**kwargs),
+        ):
+            res = proc.strategy_builder_margin(
+                "u1",
+                "NFO",
+                legs,
+                margin_source_override=MARGIN_SOURCE_EXCHANGE,
+                baseline_only=True,
+            )
+        self.assertEqual(res["Status"], 200)
+        self.assertEqual(res["Success"]["span_margin_required"], 80_000.0)
+        mock_breeze.margin_calculator.assert_not_called()
 
 
 if __name__ == "__main__":

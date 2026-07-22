@@ -3,47 +3,29 @@ from __future__ import annotations
 
 from typing import Any
 
-import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike
 from icici_breeze_backend.audit.strategy_builder_audit import quote_row_to_audit
-from icici_breeze_backend.app.services.processor import OptionChainBackoff, _expiry_display_to_api, processor
-from icici_breeze_backend.app.services.user_rate_limit_prefs import get_icici_rate_limit_pause_seconds
 from icici_breeze_backend.app.services.options_strategy_engine.audit_helpers import audit_calc
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     nearest_atm,
     quote_from_api,
-    tail_strikes_needed,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.types import EngineContext, QuoteRow, Right
 
 
-def ingest_chain_rows(rows: list[Any], right: Right) -> dict[tuple[int, Right], QuoteRow]:
-    cache: dict[tuple[int, Right], QuoteRow] = {}
+def ingest_chain_rows(rows: list[Any], right: Right) -> dict[tuple[Strike, Right], QuoteRow]:
+    cache: dict[tuple[Strike, Right], QuoteRow] = {}
     for row in rows:
-        try:
-            strike = int(float(row.get("strike_price", 0)))
-        except (TypeError, ValueError):
+        strike = parse_strike(row.get("strike_price"))
+        if strike is None:
             continue
         cache[(strike, right)] = quote_from_api(strike, right, row)
     return cache
 
 
-def chain_strikes_for_right(cache: dict[tuple[int, Right], QuoteRow], right: Right) -> set[int]:
-    return {s for (s, r) in cache if r == right}
-
-
-def missing_tail_pairs(ctx: EngineContext, needed_strikes: list[int]) -> set[tuple[int, Right]]:
-    pairs: set[tuple[int, Right]] = set()
-    for right in ("Call", "Put"):
-        chain = chain_strikes_for_right(ctx.cache, right)
-        for s in tail_strikes_needed(needed_strikes, chain):
-            if (s, right) not in ctx.cache:
-                pairs.add((s, right))
-    return pairs
-
-
 def record_ingested_strikes(
     audit: Any | None,
-    ingested: dict[tuple[int, Right], QuoteRow],
+    ingested: dict[tuple[Strike, Right], QuoteRow],
     *,
     context: str | None = None,
 ) -> None:
@@ -60,218 +42,7 @@ def record_ingested_strikes(
         )
 
 
-def fetch_quotes(
-    proc: processor,
-    user_id: str,
-    stock_code: str,
-    exchange_code: str,
-    expiry_display: str,
-    pairs: set[tuple[int, Right]],
-    audit: Any | None = None,
-    *,
-    fetch_reason: str | None = None,
-    backoff: OptionChainBackoff | None = None,
-) -> dict[tuple[int, Right], QuoteRow]:
-    cache: dict[tuple[int, Right], QuoteRow] = {}
-    expiry_api = _expiry_display_to_api(expiry_display)
-    if audit and pairs:
-        audit.record(
-            "quote_fetch_batch",
-            f"Fetching {len(pairs)} option quote(s)",
-            {
-                "reason": fetch_reason,
-                "pairs": [{"strike": s, "right": r} for s, r in sorted(pairs)],
-            },
-            rationale=fetch_reason or "Populate quote cache for strike selection.",
-        )
-    for strike, right in sorted(pairs):
-        if backoff is not None:
-            quote = proc.fetch_option_chain_quotes_sb(
-                user_id,
-                stock_code,
-                exchange_code,
-                expiry_api,
-                right,
-                strike_price=str(strike),
-                audit=audit,
-                audit_rationale=fetch_reason or "Live option quote for liquidity and premium.",
-                backoff=backoff,
-            )
-        else:
-            quote = proc.get_quote(
-                user_id,
-                stock_code,
-                expiry_api,
-                cfg.OPTIONS,
-                right,
-                str(strike),
-                exchange_code=exchange_code,
-                audit=audit,
-                audit_rationale=fetch_reason or "Live option quote for liquidity and premium.",
-            )
-        if audit:
-            row = (quote.get("Success") or [None])[0]
-            parsed = quote_from_api(strike, right, row) if row else None
-            if parsed:
-                audit.record_strike(
-                    strike,
-                    right,
-                    included=parsed.liquid,
-                    reason="Two-sided depth (buy_qty>0 and sell_qty>0)" if parsed.liquid else "Missing bid or ask quantity",
-                    quote=quote_row_to_audit(parsed),
-                    context=fetch_reason,
-                )
-        if quote.get("Status") != 200:
-            continue
-        rows = quote.get("Success") or []
-        if not rows:
-            continue
-        cache[(strike, right)] = quote_from_api(strike, right, rows[0])
-    return cache
-
-
-def fetch_full_chain_side(
-    ctx: EngineContext,
-    right: Right,
-    *,
-    fetch_reason: str,
-) -> None:
-    if ctx.chain_backoff is None:
-        return
-    expiry_api = _expiry_display_to_api(ctx.expiry_display)
-    quote = ctx.processor.fetch_option_chain_quotes_sb(
-        ctx.user_id,
-        ctx.stock_code,
-        ctx.exchange_code,
-        expiry_api,
-        right,
-        audit=ctx.audit,
-        audit_rationale=fetch_reason,
-        backoff=ctx.chain_backoff,
-    )
-    if quote.get("Status") != 200:
-        return
-    raw_rows = quote.get("Success") or []
-    ingested = ingest_chain_rows(raw_rows, right)
-    ctx.cache.update(ingested)
-    record_ingested_strikes(ctx.audit, ingested, context=fetch_reason)
-    if ctx.progress is not None:
-        label = "call" if right == "Call" else "put"
-        ctx.progress.tick(
-            phase="fetch_chain",
-            message=f"Fetching {label} option chain…",
-        )
-
-
-def fetch_missing_tails(ctx: EngineContext, needed_strikes: list[int], *, fetch_reason: str) -> None:
-    pairs = missing_tail_pairs(ctx, needed_strikes)
-    if not pairs:
-        return
-    if ctx.audit:
-        ctx.audit.record(
-            "liquidity_protocol",
-            "Fetch missing tail strikes",
-            {
-                "needed_strikes": needed_strikes,
-                "tail_pairs": [{"strike": s, "right": r} for s, r in sorted(pairs)],
-            },
-            rationale=fetch_reason,
-        )
-    ctx.cache.update(
-        fetch_quotes(
-            ctx.processor,
-            ctx.user_id,
-            ctx.stock_code,
-            ctx.exchange_code,
-            ctx.expiry_display,
-            pairs,
-            ctx.audit,
-            fetch_reason=fetch_reason,
-            backoff=ctx.chain_backoff,
-        )
-    )
-
-
-def fetch_pairs_for_strikes(
-    ctx: EngineContext,
-    strikes: set[int] | list[int],
-    *,
-    fetch_reason: str | None = None,
-) -> None:
-    pairs: set[tuple[int, Right]] = set()
-    for s in strikes:
-        pairs.add((s, "Call"))
-        pairs.add((s, "Put"))
-    new_pairs = pairs - set(ctx.cache.keys())
-    if new_pairs:
-        ctx.cache.update(
-            fetch_quotes(
-                ctx.processor,
-                ctx.user_id,
-                ctx.stock_code,
-                ctx.exchange_code,
-                ctx.expiry_display,
-                new_pairs,
-                ctx.audit,
-                fetch_reason=fetch_reason,
-                backoff=ctx.chain_backoff,
-            )
-        )
-
-
-def ensure_quote(ctx: EngineContext, strike: int, right: Right, *, fetch_reason: str) -> QuoteRow | None:
-    key = (strike, right)
-    if key not in ctx.cache:
-        ctx.cache.update(
-            fetch_quotes(
-                ctx.processor,
-                ctx.user_id,
-                ctx.stock_code,
-                ctx.exchange_code,
-                ctx.expiry_display,
-                {key},
-                ctx.audit,
-                fetch_reason=fetch_reason,
-                backoff=ctx.chain_backoff,
-            )
-        )
-    return ctx.cache.get(key)
-
-
-def expand_chain_to_liquidity_boundary(ctx: EngineContext) -> None:
-    step = ctx.search_interval
-    for right in ("Call", "Put"):
-        chain_strikes = sorted(chain_strikes_for_right(ctx.cache, right))
-        if not chain_strikes:
-            continue
-        for start, direction in ((max(chain_strikes), 1), (min(chain_strikes), -1)):
-            s = start
-            while True:
-                next_s = s + direction * step
-                if next_s not in ctx.strikes:
-                    break
-                q = ensure_quote(
-                    ctx,
-                    next_s,
-                    right,
-                    fetch_reason=f"Expand {right} chain {'up' if direction > 0 else 'down'} from {s}",
-                )
-                if q is None or not q.liquid:
-                    break
-                s = next_s
-    if ctx.audit:
-        ctx.audit.record(
-            "liquidity_protocol",
-            "Chain expanded to liquidity boundaries",
-            {
-                "liquid_ce_strikes": ctx.liquid_ce_strikes,
-                "liquid_pe_strikes": ctx.liquid_pe_strikes,
-            },
-            rationale="Incremental per-strike fetches until first illiquid strike on each side.",
-        )
-
-
-def _resolve_spot_and_atm(ctx: EngineContext, all_strikes: list[int], mid: float) -> None:
+def _resolve_spot_and_atm(ctx: EngineContext, all_strikes: list[Strike], mid: float) -> None:
     spot = ctx.spot
     for q in ctx.cache.values():
         if q.spot_price and q.spot_price > 0:
@@ -290,36 +61,107 @@ def _resolve_spot_and_atm(ctx: EngineContext, all_strikes: list[int], mid: float
     )
 
 
+def strikes_from_chain_payload(success: dict[str, Any]) -> list[Strike]:
+    """Strike prices present in a built option chain with at least one quoted side."""
+    out: list[Strike] = []
+    for row in success.get("chain_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        strike = parse_strike(row.get("strike_price"))
+        if strike is None:
+            continue
+        call = row.get("call")
+        put = row.get("put")
+        if call or put:
+            out.append(strike)
+    return sorted(set(out))
+
+
 def build_bulk_chain_cache(ctx: EngineContext) -> None:
-    """Primary core fetch: two chain-wide quotes (CE + PE) without strike_price."""
-    all_strikes = ctx.strikes
-    if not all_strikes:
-        ctx.halted = True
-        ctx.halt_reason = "No strikes found in scrip master for this expiry."
-        if ctx.audit:
-            ctx.audit.record("halt", ctx.halt_reason, {"phase": "liquidity_cache"})
-        return
-
-    mid = float(all_strikes[len(all_strikes) // 2])
-    ctx.chain_backoff = OptionChainBackoff(
-        pause_seconds=get_icici_rate_limit_pause_seconds(ctx.user_id),
-    )
-
+    """Primary fetch: routed full chain (websocket / bhavcopy only)."""
     if ctx.audit:
         ctx.audit.record(
             "liquidity_protocol",
             "Fetch full CE and PE option chains",
-            {"strike_count_master": len(all_strikes), "initial_spot_guess": mid},
-            rationale="Two chain-wide quotes populate the bulk strike cache (~60 strikes per side).",
+            {"initial_spot_guess": ctx.spot},
+            rationale="Cache-first routed chain populates the bulk strike cache.",
         )
 
-    fetch_full_chain_side(ctx, "Call", fetch_reason="Fetch full CE chain")
-    fetch_full_chain_side(ctx, "Put", fetch_reason="Fetch full PE chain")
-    _resolve_spot_and_atm(ctx, all_strikes, mid)
+    chain = ctx.processor.get_full_option_chain(
+        ctx.user_id,
+        ctx.stock_code,
+        ctx.exchange_code,
+        ctx.expiry_display,
+    )
+    if chain.get("Status") != 200:
+        ctx.halted = True
+        ctx.halt_reason = chain.get("Error") or "Unable to fetch option chain."
+        if ctx.audit:
+            ctx.audit.record("halt", ctx.halt_reason, {"phase": "liquidity_cache"})
+        return
+
+    success = chain.get("Success") or {}
+    quote_source = success.get("quote_source", "unknown")
+    if ctx.audit:
+        ctx.audit.record(
+            "liquidity_protocol",
+            "Ingest routed option chain",
+            {
+                "quote_source": quote_source,
+                "chain_row_count": len(success.get("chain_rows") or []),
+            },
+            rationale="Bulk cache from websocket or bhavcopy.",
+        )
+
+    call_rows: list[Any] = []
+    put_rows: list[Any] = []
+    for row in success.get("chain_rows") or []:
+        strike = row.get("strike_price")
+        if row.get("call"):
+            call_rows.append({**row["call"], "strike_price": strike})
+        if row.get("put"):
+            put_rows.append({**row["put"], "strike_price": strike})
+
+    ingested_ce = ingest_chain_rows(call_rows, "Call")
+    ingested_pe = ingest_chain_rows(put_rows, "Put")
+    ctx.cache.update(ingested_ce)
+    ctx.cache.update(ingested_pe)
+    record_ingested_strikes(ctx.audit, ingested_ce, context="Fetch full CE chain")
+    record_ingested_strikes(ctx.audit, ingested_pe, context="Fetch full PE chain")
+    if ctx.progress is not None:
+        ctx.progress.tick(phase="fetch_chain", message="Fetching option chain…")
+
+    chain_strikes = strikes_from_chain_payload(success)
+    if not chain_strikes:
+        ctx.halted = True
+        ctx.halt_reason = "No strikes available in the built option chain."
+        if ctx.audit:
+            ctx.audit.record("halt", ctx.halt_reason, {"phase": "liquidity_cache"})
+        return
+
+    ctx.strikes = chain_strikes
+    ctx.strike_step = ctx.processor.strike_interval(chain_strikes)
+    mid = float(chain_strikes[len(chain_strikes) // 2])
+    ctx.search_interval = ctx.processor.search_interval(chain_strikes, mid)
+
+    if success.get("spot_price") is not None:
+        try:
+            ctx.spot = float(success["spot_price"])
+        except (TypeError, ValueError):
+            pass
+    if success.get("atm_strike") is not None:
+        try:
+            ctx.atm_strike = parse_strike(success["atm_strike"]) or ctx.atm_strike
+        except (TypeError, ValueError):
+            pass
+    _resolve_spot_and_atm(ctx, chain_strikes, mid)
+    range_pad = 3 * ctx.search_interval
+    ctx.range_lower = float(ctx.atm_strike) - range_pad
+    ctx.range_upper = float(ctx.atm_strike) + range_pad
 
 
 def finalize_liquidity_cache(ctx: EngineContext) -> None:
-    """Halt when no liquid strikes remain after bulk + targeted ingestion."""
+    """Halt when no liquid strikes remain after bulk chain ingestion."""
     if not ctx.liquid_ce_strikes and not ctx.liquid_pe_strikes:
         ctx.halted = True
         ctx.halt_reason = "Insufficient market depth: no liquid strikes found."
@@ -339,7 +181,7 @@ def finalize_liquidity_cache(ctx: EngineContext) -> None:
                 "spot": ctx.spot,
                 "atm_strike": ctx.atm_strike,
             },
-            rationale="Bulk cache plus targeted wing fetches drive delta-anchored strategy picks.",
+            rationale="Bulk chain cache drives delta-anchored strategy picks.",
         )
 
 

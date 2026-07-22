@@ -5,6 +5,7 @@ import sqlite3
 import uuid
 from typing import Any, Optional
 
+from icici_breeze_backend.app.core.timezone import ist_timestamp
 from icici_breeze_backend.app.domain.order import ParkedOrderItem, ParkedOrderListItem
 
 
@@ -59,6 +60,9 @@ def create_parked_orders(
 ) -> list[ParkedOrderListItem]:
     db_path = _db_path()
     replace_ids = [x.strip() for x in (replace_ids or []) if x and str(x).strip()]
+    # One stamp for the whole batch: these rows are parked together, and reading back
+    # different created_at values within one basket would be noise, not information.
+    now = ist_timestamp()
     with sqlite3.connect(db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -75,8 +79,8 @@ def create_parked_orders(
                     INSERT INTO parked_orders (
                         id, user_id, product_type, stock_code, exchange_code,
                         expiry_date, right, strike_price, quantity, price, action,
-                        chunk_qty, batch_group_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        chunk_qty, batch_group_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         pid,
@@ -92,6 +96,11 @@ def create_parked_orders(
                         it.action,
                         it.chunk_qty.strip() if it.chunk_qty else None,
                         it.batch_group_id.strip() if it.batch_group_id else None,
+                        # Bound, not left to the column DEFAULT: pre-existing databases
+                        # still carry `DEFAULT CURRENT_TIMESTAMP` (UTC) and SQLite has no
+                        # ALTER COLUMN to correct it.
+                        now,
+                        now,
                     ),
                 )
             conn.commit()
@@ -128,7 +137,8 @@ def update_parked_order(
             args.append(chunk_qty.strip())
     if not sets:
         return None
-    sets.append("updated_at = CURRENT_TIMESTAMP")
+    sets.append("updated_at = ?")
+    args.append(ist_timestamp())
     args.extend([order_id.strip(), user_id])
     sql = f'UPDATE parked_orders SET {", ".join(sets)} WHERE id = ? AND user_id = ?'
     oid = order_id.strip()

@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Breeze Terminal Pro — PB/SL Reset Warning States</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  /* Tokens copied verbatim from DESIGN_LANGUAGE.md §2.1 / §2.2 — do not improvise. */
+  :root {
+    --bg:#0A0C10; --panel:#12151C; --panel2:#0F141C; --elevated:#161B24;
+    --border:#232A36; --border-soft:#1B222E;
+    --text:#E6EAF2; --muted:#8A93A6; --faint:#5C6577;
+    --accent:#22D3EE; --accent-strong:#22D3EE; --accent-ink:#06222A; --accent-tint:#0C2229; --accent-bar:#22D3EE;
+    --up:#34D399; --down:#F87171; --up-tint:#0F1F1B; --down-tint:#231518;
+    --up-btn:#0EA371; --down-btn:#E5484D;
+    --amber:#FBBF24; --amber-tint:#241D0E;
+    --gtt:#A78BFA; --gtt-tint:#221E33;
+    /* §2.4 — dark already clears AA on every tint, so these equal the base tokens. */
+    --up-on-tint:#34D399; --down-on-tint:#F87171; --amber-on-tint:#FBBF24;
+    --accent-on-tint:#22D3EE; --gtt-on-tint:#A78BFA;
+    --shadow:0 18px 50px -20px rgba(0,0,0,.65);
+    --track:#1A2330;
+  }
+  .theme-light {
+    --bg:#EEF1F5; --panel:#FFFFFF; --panel2:#F5F7FA; --elevated:#FFFFFF;
+    --border:#DBE1E9; --border-soft:#E8ECF2;
+    --text:#0E1520; --muted:#5A6473; --faint:#93A0B0;
+    --accent:#0891B2; --accent-strong:#0E7490; --accent-ink:#FFFFFF; --accent-tint:#E1F4FA; --accent-bar:#0891B2;
+    --up:#0F9D6B; --down:#DC2F44; --up-tint:#E7F6F0; --down-tint:#FCECEE;
+    --up-btn:#0F9D6B; --down-btn:#DC2F44;
+    --amber:#B45309; --amber-tint:#FBF0DE;
+    --gtt:#7C3AED; --gtt-tint:#F1EAFE;
+    /* §2.4 — REQUIRED: light-theme base tokens fail AA on their own tints. */
+    --up-on-tint:#0C7A53; --down-on-tint:#C62A3D; --amber-on-tint:#AB4F09;
+    --accent-on-tint:#06738D; --gtt-on-tint:#7C3AED;
+    --shadow:0 10px 34px -16px rgba(15,25,40,.20);
+    --track:#E3E8EE;
+  }
+  body { background: var(--bg); }
+  .iconbtn { transition: background .15s ease, color .15s ease; }
+  .iconbtn:hover { background: var(--border-soft); color: var(--text) !important; }
+  .grouprow:hover { background: var(--panel2); }
+  .execbtn:hover { filter: brightness(1.06); }
+  .tbtn-outline:hover { background: var(--border-soft); }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+
+  /* ---- recipe shorthands (values are from DESIGN_LANGUAGE, not invented) ---- */
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:20px; display:flex; flex-direction:column; gap:14px; }
+  .eyebrow { font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); }
+  .cardhead { font-size:13.5px; font-weight:700; }
+  .desc { font-size:12px; font-weight:400; color:var(--muted); line-height:1.6; }
+  .hint { font-size:11px; color:var(--faint); line-height:1.6; }
+  .mono { font-family:'IBM Plex Mono',monospace; }
+
+  /* §5.8 status/risk badge (pill) */
+  .badge { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; padding:2px 8px; border-radius:999px; display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+  /* §5.8 — text token is -on-tint, never the base. Neutral is --muted, not --faint. */
+  .badge-neutral { color:var(--muted);          background:var(--panel2); }
+  .badge-amber   { color:var(--amber-on-tint);  background:var(--amber-tint); }
+  .badge-down    { color:var(--down-on-tint);   background:var(--down-tint); }
+  .badge-accent  { color:var(--accent-on-tint); background:var(--accent-tint); }
+
+  /* §5.9 inline note / callout */
+  .note { font-size:11px; line-height:1.6; border-radius:8px; padding:8px 10px; display:flex; gap:8px; align-items:flex-start; }
+  /* §5.9 — text is -on-tint; the 1px border may keep the base token (non-text, 3:1 floor). */
+  .note-amber { color:var(--amber-on-tint); background:var(--amber-tint); border:1px solid color-mix(in srgb, var(--amber) 40%, transparent); }
+  .note-down  { color:var(--down-on-tint);  background:var(--down-tint);  border:1px solid color-mix(in srgb, var(--down) 40%, transparent); }
+  .note svg { flex:0 0 auto; margin-top:1px; }
+  .note b { font-weight:700; }
+
+  /* §5.1 / §5.2 buttons */
+  .btn-primary { font-size:12.5px; font-weight:700; color:var(--accent-ink); background:var(--accent-strong); border:none; border-radius:8px; padding:9px 16px; cursor:pointer; font-family:inherit; }
+  .btn-ghost   { font-size:12px; font-weight:600; color:var(--text); background:transparent; border:1px solid var(--border); border-radius:8px; padding:9px 14px; cursor:pointer; font-family:inherit; }
+  .btn-ghost:disabled { color:var(--faint); border-style:dashed; cursor:not-allowed; }
+  .btn-sm { font-size:11.5px; border-radius:7px; padding:6px 12px; }
+
+  /* §5.13 data table */
+  table.dt { width:100%; border-collapse:collapse; }
+  table.dt thead th { background:var(--panel2); font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); padding:9px 12px; text-align:left; }
+  table.dt tbody td { border-top:1px solid var(--border-soft); padding:10px 12px; font-size:11.5px; vertical-align:middle; }
+  .tblwrap { border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+</style>
+</head>
+<body>
+<div class="breeze" id="root" style="min-height:100vh; background:var(--bg); color:var(--text); font-family:'IBM Plex Sans',system-ui,sans-serif; font-size:14px;">
+
+  <!-- ===================== APP-LEVEL BANNER — TIER 3 ONLY ===================== -->
+  <!-- Deliberate deviation: role="alert" (assertive), not the house role="status" (polite).
+       This is a live financial risk, not a status note. -->
+  <div role="alert" style="background:var(--down-tint); border-bottom:1px solid color-mix(in srgb, var(--down) 40%, transparent); color:var(--down-on-tint); padding:9px 20px; font-size:12px; line-height:1.5;">
+    <div style="max-width:1280px; margin:0 auto; display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px; text-align:center;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+      <span>
+        A live exit order on <span class="mono" style="font-weight:600;">NIFTY 26000 CE</span> no longer has a position to close —
+        <b>if it fills it will open a new Buy position.</b>
+      </span>
+      <a href="#tier3" style="font-weight:600; color:var(--down-on-tint); text-decoration:underline; text-underline-offset:2px;">Review</a>
+    </div>
+  </div>
+
+  <div style="max-width:1280px; margin:0 auto; padding:22px 24px 44px; display:flex; flex-direction:column; gap:22px;">
+
+    <!-- page head -->
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="width:38px; height:38px; flex:0 0 auto; border-radius:10px; background:var(--down-tint); display:inline-flex; align-items:center; justify-content:center; color:var(--down);">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        </span>
+        <div>
+          <div style="font-size:21px; font-weight:700; letter-spacing:-.01em;">PB/SL — Reset warning states</div>
+          <div class="desc">Design mock for plan section 5.13. Hazard tiers, copy, and surfaces.</div>
+        </div>
+      </div>
+      <button class="iconbtn" id="themeToggle" aria-label="Toggle theme" style="width:34px; height:34px; flex:0 0 auto; border-radius:8px; border:none; background:transparent; color:var(--muted); cursor:pointer; display:inline-flex; align-items:center; justify-content:center;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </button>
+    </div>
+
+    <!-- ===================== 1. TIER REFERENCE ===================== -->
+    <section class="card">
+      <div>
+        <div class="eyebrow" style="margin-bottom:6px;">Reference</div>
+        <div class="cardhead">Hazard tiers</div>
+        <div class="desc" style="margin-top:4px;">
+          Derived server-side from the order book + live positions. Never stored — there is no sixth state to drift out of sync.
+          Tier 3 is not a louder tier 2: different verb, different stake.
+        </div>
+      </div>
+
+      <div class="tblwrap">
+        <table class="dt">
+          <thead>
+            <tr>
+              <th style="width:170px;">Chip</th>
+              <th style="width:300px;">Condition</th>
+              <th>What is actually at stake</th>
+              <th style="width:120px;">Escalation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-neutral">Reset</span></td>
+              <td style="font-family:'IBM Plex Sans',sans-serif; color:var(--muted);">No live orphans — all terminal</td>
+              <td style="font-family:'IBM Plex Sans',sans-serif; color:var(--muted);">Nothing. PB/SL simply stopped.</td>
+              <td style="color:var(--faint);">Card only</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-amber">Reset · 2 live</span></td>
+              <td style="font-family:'IBM Plex Sans',sans-serif; color:var(--muted);">Live orphans that still correctly close open legs</td>
+              <td style="font-family:'IBM Plex Sans',sans-serif; color:var(--muted);">Automation the user thinks is off will still act — but in the direction they originally intended.</td>
+              <td style="color:var(--faint);">Card only</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-down">Reset · action needed</span></td>
+              <td style="font-family:'IBM Plex Sans',sans-serif; color:var(--muted);">An orphan whose leg is already closed, or reduced below the order qty</td>
+              <td style="font-family:'IBM Plex Sans',sans-serif; color:var(--text);"><b style="font-weight:600;">Filling opens a brand-new position.</b></td>
+              <td style="color:var(--down); font-weight:600;">App banner</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note note-amber">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <span>Tier&nbsp;1 is <b>neutral, not amber</b> — nothing is at stake, and colouring a benign reset amber trains the user to ignore tier&nbsp;2 and&nbsp;3. The gradient is neutral&nbsp;→&nbsp;amber&nbsp;→&nbsp;red.</span>
+      </div>
+    </section>
+
+    <!-- ===================== 2. PORTFOLIO GROUP ROW ===================== -->
+    <section class="card">
+      <div>
+        <div class="eyebrow" style="margin-bottom:6px;">Surface 1</div>
+        <div class="cardhead">Portfolio — position group header</div>
+        <div class="desc" style="margin-top:4px;">
+          The reason is <b style="font-weight:600;">visible text, never a <span class="mono">title</span> tooltip</b>.
+          Today <span class="mono">OpenPositionsTable.tsx:384-390</span> puts it in a tooltip only — invisible on touch,
+          unannounced by screen readers. Disqualifying for a message about unrequested risk.
+        </div>
+      </div>
+
+      <!-- tier 1 -->
+      <div class="grouprow" style="border:1px solid var(--border); border-radius:10px; padding:12px 14px; display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:9px;">
+            <span style="font-size:12.5px; font-weight:600;">NIFTY</span>
+            <span class="mono" style="font-size:11.5px; color:var(--muted);">21-Jul-2026</span>
+            <span class="mono" style="font-size:11.5px; color:var(--faint);">· 3 legs</span>
+            <span class="badge badge-neutral">Reset</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="mono" style="font-size:12px; font-weight:600; color:var(--up);">+12,480</span>
+            <button class="btn-ghost btn-sm tbtn-outline">Set PB/SL</button>
+          </div>
+        </div>
+        <div class="hint" style="color:var(--muted);">
+          Profit Booking / Stop Loss stopped — you added <span class="mono">NIFTY 25800 PE</span> to this group.
+          No exit orders are outstanding. Set it again to resume.
+        </div>
+      </div>
+
+      <!-- tier 2 -->
+      <div class="grouprow" style="border:1px solid var(--border); border-radius:10px; padding:12px 14px; display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:9px;">
+            <span style="font-size:12.5px; font-weight:600;">BANKNIFTY</span>
+            <span class="mono" style="font-size:11.5px; color:var(--muted);">21-Jul-2026</span>
+            <span class="mono" style="font-size:11.5px; color:var(--faint);">· 4 legs</span>
+            <span class="badge badge-amber">Reset · 2 live</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="mono" style="font-size:12px; font-weight:600; color:var(--down);">−8,150</span>
+            <button class="btn-ghost btn-sm" disabled title="2 exit orders from a previous PB/SL attempt are still live">Set PB/SL</button>
+          </div>
+        </div>
+        <div class="note note-amber">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          <span>
+            Profit Booking / Stop Loss stopped — the exit order for <span class="mono">BANKNIFTY 57000 CE</span> was rejected by the broker.
+            <b>2 exit orders are still live and may still execute.</b>
+            You can&rsquo;t set a new rule until they fill, expire, or you cancel them.
+          </span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-ghost btn-sm tbtn-outline">Cancel remaining exit orders</button>
+        </div>
+      </div>
+
+      <!-- tier 3 -->
+      <div id="tier3" class="grouprow" style="border:1px solid color-mix(in srgb, var(--down) 35%, var(--border)); border-radius:10px; padding:12px 14px; display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:9px;">
+            <span style="font-size:12.5px; font-weight:600;">NIFTY</span>
+            <span class="mono" style="font-size:11.5px; color:var(--muted);">21-Jul-2026</span>
+            <span class="mono" style="font-size:11.5px; color:var(--faint);">· 1 leg</span>
+            <span class="badge badge-down">Reset · action needed</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="mono" style="font-size:12px; font-weight:600; color:var(--muted);">—</span>
+            <button class="btn-ghost btn-sm" disabled title="1 exit order from a previous PB/SL attempt is still live">Set PB/SL</button>
+          </div>
+        </div>
+        <div class="note note-down">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          <span>
+            Profit Booking / Stop Loss stopped — you closed <span class="mono">NIFTY 26000 CE</span> manually.
+            <b>Its exit order is still live: if it fills, it will open a new Buy position.</b>
+            Cancel it, or let it fill and accept the position.
+          </span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-primary execbtn" style="font-size:11.5px; padding:6px 12px; border-radius:7px;">Cancel remaining exit orders</button>
+        </div>
+      </div>
+
+      <div class="hint">
+        Tier&nbsp;2 uses a ghost button (an <i>available</i> action); tier&nbsp;3 promotes it to accent-primary
+        (the <i>recommended</i> action). The red is spent on the note, not the button — colouring the safe action
+        red would read as &ldquo;this is the dangerous thing to click&rdquo;.
+      </div>
+    </section>
+
+    <!-- ===================== 3. ORDERS PAGE ROW ===================== -->
+    <section class="card">
+      <div>
+        <div class="eyebrow" style="margin-bottom:6px;">Surface 2</div>
+        <div class="cardhead">Orders — Profit Booking / Stop Loss table</div>
+        <div class="desc" style="margin-top:4px;">
+          Extends the existing visible-text-under-chip treatment (<span class="mono">app/orders/page.tsx:2470-2474</span>),
+          which is already the right pattern — it just needs the tier and the action.
+        </div>
+      </div>
+
+      <div class="tblwrap">
+        <table class="dt">
+          <thead>
+            <tr>
+              <th>Strategy Group</th>
+              <th style="width:150px;">Target / Stop</th>
+              <th style="width:110px; text-align:right;">MTM</th>
+              <th style="width:170px;">Status</th>
+              <th style="width:210px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <div style="font-weight:600; font-size:12px;">NIFTY <span class="mono" style="font-weight:400; color:var(--muted);">21-Jul-2026</span></div>
+                <div class="mono" style="font-size:10.5px; color:var(--faint); margin-top:2px;">3 legs</div>
+              </td>
+              <td class="mono" style="color:var(--muted);">+1,00,000 / −20,000</td>
+              <td class="mono" style="text-align:right; color:var(--up); font-weight:600;">+12,480</td>
+              <td>
+                <span class="badge badge-neutral">Reset</span>
+                <div class="hint" style="margin-top:5px; max-width:220px;">You added <span class="mono">NIFTY 25800 PE</span> to this group. No exit orders outstanding.</div>
+              </td>
+              <td><button class="btn-ghost btn-sm tbtn-outline">Set PB/SL</button></td>
+            </tr>
+            <tr>
+              <td>
+                <div style="font-weight:600; font-size:12px;">BANKNIFTY <span class="mono" style="font-weight:400; color:var(--muted);">21-Jul-2026</span></div>
+                <div class="mono" style="font-size:10.5px; color:var(--faint); margin-top:2px;">4 legs</div>
+              </td>
+              <td class="mono" style="color:var(--muted);">+80,000 / −25,000</td>
+              <td class="mono" style="text-align:right; color:var(--down); font-weight:600;">−8,150</td>
+              <td>
+                <span class="badge badge-amber">Reset · 2 live</span>
+                <div class="hint" style="margin-top:5px; max-width:220px; color:var(--amber);">Exit order for <span class="mono">57000 CE</span> rejected. 2 orders still live and may execute.</div>
+              </td>
+              <td style="display:flex; flex-direction:column; gap:6px; align-items:flex-start;">
+                <button class="btn-ghost btn-sm tbtn-outline">Cancel remaining</button>
+                <span class="hint" style="color:var(--faint);">Re-arm blocked</span>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <div style="font-weight:600; font-size:12px;">NIFTY <span class="mono" style="font-weight:400; color:var(--muted);">21-Jul-2026</span></div>
+                <div class="mono" style="font-size:10.5px; color:var(--faint); margin-top:2px;">1 leg</div>
+              </td>
+              <td class="mono" style="color:var(--muted);">+50,000 / −15,000</td>
+              <td class="mono" style="text-align:right; color:var(--muted);">—</td>
+              <td>
+                <span class="badge badge-down">Reset · action needed</span>
+                <div class="hint" style="margin-top:5px; max-width:220px; color:var(--down);">Position already closed — a live exit order would <b>open a new Buy</b>.</div>
+              </td>
+              <td style="display:flex; flex-direction:column; gap:6px; align-items:flex-start;">
+                <button class="btn-primary execbtn" style="font-size:11.5px; padding:6px 12px; border-radius:7px;">Cancel remaining</button>
+                <span class="hint" style="color:var(--faint);">Re-arm blocked</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===================== 4. MODAL ===================== -->
+    <section class="card">
+      <div>
+        <div class="eyebrow" style="margin-bottom:6px;">Surface 3</div>
+        <div class="cardhead">SquareOffRuleModal — Reset state</div>
+        <div class="desc" style="margin-top:4px;">
+          The only surface with room for the full picture: cause, the orphan list with its
+          <span class="mono">orderReference</span>s, and the escape hatch. Dismissal is blocked while orphans are live —
+          the UI must not be able to lie about live risk.
+        </div>
+      </div>
+
+      <!-- modal panel mock (rendered inline, not floating) -->
+      <div style="max-width:430px; background:var(--elevated); border:1px solid var(--border); border-radius:13px; padding:20px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+          <div style="min-width:0;">
+            <div style="font-size:16px; font-weight:700; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              Profit Booking / Stop Loss
+              <span class="badge badge-down">Reset · action needed</span>
+            </div>
+            <div class="mono" style="font-size:12px; color:var(--muted); margin-top:4px;">NIFTY · 21-Jul-2026</div>
+          </div>
+          <button class="iconbtn" aria-label="Close" style="width:30px; height:30px; border-radius:7px; border:none; background:transparent; color:var(--muted); cursor:pointer; font-size:18px; line-height:1;">&times;</button>
+        </div>
+
+        <div class="note note-down">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          <span>
+            Monitoring stopped — you closed <span class="mono">NIFTY 26000 CE</span> manually at 12:47.
+            <b>Its exit order is still live: if it fills, it will open a new Buy position.</b>
+          </span>
+        </div>
+
+        <div>
+          <div class="eyebrow" style="margin-bottom:7px;">Still live</div>
+          <div class="tblwrap">
+            <table class="dt">
+              <thead>
+                <tr><th>Order</th><th style="width:70px;">Side</th><th style="width:70px; text-align:right;">Qty</th><th style="width:70px; text-align:right;">Limit</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <div class="mono" style="font-size:11px;">NIFTY 26000 CE</div>
+                    <div class="mono" style="font-size:10px; color:var(--faint); margin-top:2px;">202607173800017846</div>
+                  </td>
+                  <td class="mono" style="color:var(--up); font-weight:600;">Buy</td>
+                  <td class="mono" style="text-align:right;">130</td>
+                  <td class="mono" style="text-align:right;">2.80</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="hint" style="margin-top:7px;">
+            Placed by the Stop Loss that fired at 12:46. Reset does not retract orders already placed —
+            it only stops future automation.
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; padding-top:2px;">
+          <button class="btn-ghost tbtn-outline">Leave it working</button>
+          <button class="btn-primary execbtn">Cancel exit order</button>
+        </div>
+        <div class="hint" style="text-align:center; color:var(--faint);">
+          This card can&rsquo;t be dismissed while an exit order is still live.
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== 5. TELEGRAM ===================== -->
+    <section class="card">
+      <div>
+        <div class="eyebrow" style="margin-bottom:6px;">Surface 4</div>
+        <div class="cardhead">Telegram — all Resets</div>
+        <div class="desc" style="margin-top:4px;">
+          Not optional. Once arming pins a WS subscription (plan 5.8), PB/SL runs headless — so a Reset can happen
+          with nobody watching, which is exactly when it is most likely (EOD expiry, an overnight-adjacent broker
+          rejection, a manual trade from the ICICI app). In that window every surface above is decorative.
+        </div>
+      </div>
+      <div style="background:var(--panel2); border:1px solid var(--border); border-radius:9px; padding:12px; font-family:'IBM Plex Mono',monospace; font-size:11px; line-height:1.7; color:var(--muted); white-space:pre-wrap; word-break:break-word;">Breeze · PB/SL RESET · action needed
+
+NIFTY 21-Jul-2026
+Monitoring stopped: you closed NIFTY 26000 CE manually.
+
+Its exit order is STILL LIVE (Buy 130 @ 2.80).
+The position is already closed — if this fills it
+will OPEN a new Buy position.
+
+Cancel it in the app, or let it fill and accept
+the position.</div>
+    </section>
+
+    <div class="hint" style="text-align:center; padding-top:4px;">
+      Standalone mock — no <span class="mono">support.js</span> runtime required. Tokens copied verbatim from
+      <span class="mono">DESIGN_LANGUAGE.md</span> §2. Sun icon top-right toggles the theme.
+    </div>
+
+  </div>
+</div>
+
+<script>
+  (function () {
+    var root = document.getElementById('root');
+    var key = 'breeze-tp-theme';
+    function apply(t) { root.classList.toggle('theme-light', t === 'light'); }
+    var saved = null;
+    try { saved = localStorage.getItem(key); } catch (e) {}
+    apply(saved || 'dark');
+    document.getElementById('themeToggle').addEventListener('click', function () {
+      var next = root.classList.contains('theme-light') ? 'dark' : 'light';
+      apply(next);
+      try { localStorage.setItem(key, next); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>

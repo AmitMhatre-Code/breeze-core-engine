@@ -159,6 +159,7 @@ async def process_post(
                 req.price,
                 req.action,
                 exchange_code=body.exchange_code or cfg.NFO,
+                aggressive_limit=req.aggressive_limit,
             )
             breeze.store_messages(user_id, messages)
             redirect_url = "/book"
@@ -209,6 +210,9 @@ async def post_break_chunk(
         body.exchange_code or cfg.NFO,
         body.chunk_index,
         body.chunk_qty,
+        aggressive_limit=body.aggressive_limit,
+        from_parked_execution=body.from_parked_execution,
+        batch_group_id=body.batch_group_id,
     )
     out["rate_limit_pause_seconds"] = pause
     if out.get("success") and int(out.get("placed_quantity") or 0) > 0:
@@ -226,6 +230,16 @@ async def post_break_finalize(
 ):
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    if body.parked_only:
+        reason = (body.market_closed_reason or "").strip() or "market closed"
+        messages = [
+            {
+                "type": cfg.INFO,
+                "message": breeze._market_closed_park_message(reason),
+            }
+        ]
+        breeze.store_messages(context.user_id, messages)
+        return json_redirect("/orders")
     try:
         price_f = float(str(body.price).strip() or 0)
     except (TypeError, ValueError):
@@ -238,6 +252,7 @@ async def post_break_finalize(
         price_f,
         list(body.success_quantities),
         list(body.danger_lines),
+        aggressive_limit=body.aggressive_limit,
     )
     breeze.store_messages(context.user_id, messages)
     return json_redirect("/book")

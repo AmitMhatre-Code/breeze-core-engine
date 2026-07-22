@@ -8,12 +8,22 @@ import {
   bsVega,
   bsCallTheta,
   bsPutTheta,
+  normCdf,
   DEFAULT_Q,
   DEFAULT_R,
 } from "@/lib/strategy-builder/blackScholes";
 
 function intrinsic(S: number, K: number, right: "Call" | "Put"): number {
   return right === "Call" ? Math.max(0, S - K) : Math.max(0, K - S);
+}
+
+/** A flat number applies to every leg; a function resolves each leg's own sigma (e.g. from a
+ * per-strike IV smile) — used by the deterministic (non-Monte-Carlo) pricing/greeks functions
+ * below, which price each leg independently and so have no shared-path constraint. */
+export type SigmaInput = number | ((leg: StrategyLeg) => number);
+
+function resolveSigma(sigma: SigmaInput, leg: StrategyLeg): number {
+  return typeof sigma === "function" ? sigma(leg) : sigma;
 }
 
 /** Strike from a leg (chain / UI may surface strings — must not be dropped from exact payoff breakpoints). */
@@ -231,7 +241,7 @@ export function portfolioMarkToModel(
   legs: StrategyLeg[],
   lotSize: number,
   T: number,
-  sigma: number,
+  sigma: SigmaInput,
   r: number = DEFAULT_R,
   q: number = DEFAULT_Q,
 ): number {
@@ -239,10 +249,11 @@ export function portfolioMarkToModel(
   for (const leg of legs) {
     const units = Math.max(0, leg.lots) * lotSize;
     const prem = leg.premiumPerUnit ?? 0;
+    const legSigma = resolveSigma(sigma, leg);
     const model =
       leg.right === "Call"
-        ? bsCallPrice(S, leg.strike, T, sigma, r, q)
-        : bsPutPrice(S, leg.strike, T, sigma, r, q);
+        ? bsCallPrice(S, leg.strike, T, legSigma, r, q)
+        : bsPutPrice(S, leg.strike, T, legSigma, r, q);
     if (leg.side === "Buy") {
       total += units * (model - prem);
     } else {
@@ -259,7 +270,7 @@ export function scanMarkToModelCurve(
   legs: StrategyLeg[],
   lotSize: number,
   T: number,
-  sigma: number,
+  sigma: SigmaInput,
   r: number = DEFAULT_R,
   q: number = DEFAULT_Q,
 ): { xs: number[]; ys: number[] } {
@@ -287,7 +298,7 @@ export function portfolioGreeks(
   legs: StrategyLeg[],
   lotSize: number,
   T: number,
-  sigma: number,
+  sigma: SigmaInput,
   r: number = DEFAULT_R,
   q: number = DEFAULT_Q,
 ): PortfolioGreeks {
@@ -298,16 +309,17 @@ export function portfolioGreeks(
   for (const leg of legs) {
     const units = Math.max(0, leg.lots) * lotSize;
     const sign = leg.side === "Buy" ? 1 : -1;
+    const legSigma = resolveSigma(sigma, leg);
     if (leg.right === "Call") {
-      delta += sign * units * bsCallDelta(S, leg.strike, T, sigma, r, q);
-      gamma += sign * units * bsGamma(S, leg.strike, T, sigma, r, q);
-      vega += sign * units * bsVega(S, leg.strike, T, sigma, r, q);
-      theta += sign * units * bsCallTheta(S, leg.strike, T, sigma, r, q);
+      delta += sign * units * bsCallDelta(S, leg.strike, T, legSigma, r, q);
+      gamma += sign * units * bsGamma(S, leg.strike, T, legSigma, r, q);
+      vega += sign * units * bsVega(S, leg.strike, T, legSigma, r, q);
+      theta += sign * units * bsCallTheta(S, leg.strike, T, legSigma, r, q);
     } else {
-      delta += sign * units * bsPutDelta(S, leg.strike, T, sigma, r, q);
-      gamma += sign * units * bsGamma(S, leg.strike, T, sigma, r, q);
-      vega += sign * units * bsVega(S, leg.strike, T, sigma, r, q);
-      theta += sign * units * bsPutTheta(S, leg.strike, T, sigma, r, q);
+      delta += sign * units * bsPutDelta(S, leg.strike, T, legSigma, r, q);
+      gamma += sign * units * bsGamma(S, leg.strike, T, legSigma, r, q);
+      vega += sign * units * bsVega(S, leg.strike, T, legSigma, r, q);
+      theta += sign * units * bsPutTheta(S, leg.strike, T, legSigma, r, q);
     }
   }
   return {
@@ -318,7 +330,77 @@ export function portfolioGreeks(
   };
 }
 
-/** Model-based POP: Monte Carlo terminal spot ~ lognormal; share of paths with positive expiry P&amp;L. */
+/** Risk-neutral GBM terminal-spot CDF: P(S_T <= x). */
+function terminalSpotCdf(
+  x: number,
+  spot: number,
+  T: number,
+  sigma: number,
+  r: number,
+  q: number,
+): number {
+  if (x <= 0) return 0;
+  if (T <= 0 || sigma <= 0) return spot <= x ? 1 : 0;
+  const d2 =
+    (Math.log(spot / x) + (r - q - 0.5 * sigma * sigma) * T) /
+    (sigma * Math.sqrt(T));
+  return normCdf(-d2);
+}
+
+/** Net long put exposure (lots × lotSize, signed): > 0 means payoff → +∞ as spot → 0. */
+function netPutExposureUnits(legs: StrategyLeg[], lotSize: number): number {
+  const ls =
+    typeof lotSize === "number" && Number.isFinite(lotSize) && lotSize > 0
+      ? lotSize
+      : 0;
+  let net = 0;
+  for (const leg of legs) {
+    if (leg.right !== "Put") continue;
+    const units = finiteLots(leg) * ls;
+    net += leg.side === "Buy" ? units : -units;
+  }
+  return net;
+}
+
+/**
+ * Probability mass of terminal spot over the region where a piecewise-linear payoff
+ * (sampled at `nodes`, linear between them) is >= `threshold`. Each segment contributes its
+ * whole CDF span, a partial span up to its single zero-crossing, or nothing.
+ */
+function probPayoffAtLeast(
+  nodes: number[],
+  ys: number[],
+  threshold: number,
+  cdf: (x: number) => number,
+): number {
+  let p = 0;
+  for (let i = 1; i < nodes.length; i++) {
+    const a = nodes[i - 1];
+    const b = nodes[i];
+    const ya = ys[i - 1] - threshold;
+    const yb = ys[i] - threshold;
+    if (ya >= 0 && yb >= 0) {
+      p += cdf(b) - cdf(a);
+    } else if (ya >= 0 || yb >= 0) {
+      const t = ya / (ya - yb); // single crossing within (a, b)
+      const root = a + t * (b - a);
+      p += ya >= 0 ? cdf(root) - cdf(a) : cdf(b) - cdf(root);
+    }
+  }
+  return p;
+}
+
+/**
+ * Probability of profit, ICICI convention — deterministic closed form (no Monte Carlo, so
+ * identical inputs always yield an identical result).
+ *
+ * For a net-credit (short-premium) position this is the probability the option(s) expire OTM
+ * and the position keeps its *maximum* profit: the probability the underlying lands in the
+ * max-profit plateau, whose edges are the short STRIKES — no premium cushion, matching ICICI
+ * (which reports probability-of-OTM-expiry, not probability-of-net-profit-at-breakeven). For a
+ * net-debit position, or when that plateau collapses to a point (e.g. a short straddle), it
+ * falls back to the probability of net profit at expiry, P(payoff > 0).
+ */
 export function estimateProbabilityOfProfit(
   spot: number,
   T: number,
@@ -327,22 +409,48 @@ export function estimateProbabilityOfProfit(
   lotSize: number,
   r: number = DEFAULT_R,
   q: number = DEFAULT_Q,
-  samples: number = 8000,
 ): number {
-  if (T <= 0 || sigma <= 0 || spot <= 0 || samples < 1) return 0;
-  const drift = (r - q - 0.5 * sigma * sigma) * T;
-  const vol = sigma * Math.sqrt(T);
-  let wins = 0;
-  for (let i = 0; i < samples; i++) {
-    const z = randomNormal();
-    const ST = spot * Math.exp(drift + vol * z);
-    if (portfolioPayoffAtExpiry(ST, legs, lotSize) > 0) wins++;
-  }
-  return (100 * wins) / samples;
-}
+  if (T <= 0 || sigma <= 0 || spot <= 0 || !legs.length) return 0;
+  const strikes = uniqueSorted(
+    legs.flatMap((l) => {
+      const k = finiteStrikeFromLeg(l);
+      return k == null ? [] : [k];
+    }),
+  );
+  if (!strikes.length) return 0;
 
-function randomNormal(): number {
-  const u = 1 - Math.random();
-  const v = 1 - Math.random();
-  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  const cdf = (x: number) => terminalSpotCdf(x, spot, T, sigma, r, q);
+  const hi = Math.max(strikes[strikes.length - 1], spot) * 100;
+  const nodes = uniqueSorted([spot * 1e-6, ...strikes, hi]);
+  const clamp = (v: number) => Math.max(0, Math.min(100, v));
+
+  const ls =
+    typeof lotSize === "number" && Number.isFinite(lotSize) && lotSize > 0
+      ? lotSize
+      : 0;
+  let netPremium = 0;
+  for (const leg of legs) {
+    const units = finiteLots(leg) * ls;
+    const prem =
+      typeof leg.premiumPerUnit === "number" && Number.isFinite(leg.premiumPerUnit)
+        ? leg.premiumPerUnit
+        : 0;
+    netPremium += (leg.side === "Sell" ? prem : -prem) * units;
+  }
+  const unboundedProfit =
+    netCallExposureUnits(legs, lotSize) > 0 ||
+    netPutExposureUnits(legs, lotSize) > 0;
+
+  if (netPremium > 0 && !unboundedProfit) {
+    // Max-profit plateau of the intrinsic-only (premium-zeroed) payoff = P(all shorts OTM).
+    const intrinsicOnly = legs.map((l) => ({ ...l, premiumPerUnit: 0 }));
+    const ys = nodes.map((s) => portfolioPayoffAtExpiry(s, intrinsicOnly, lotSize));
+    const maxProfit = Math.max(...ys);
+    const p = probPayoffAtLeast(nodes, ys, maxProfit, cdf);
+    if (p > 1e-6) return clamp(p * 100); // non-degenerate plateau
+    // else: plateau collapsed to a point (e.g. short straddle) → fall through to P(net profit)
+  }
+
+  const ys = nodes.map((s) => portfolioPayoffAtExpiry(s, legs, lotSize));
+  return clamp(probPayoffAtLeast(nodes, ys, 0, cdf) * 100);
 }

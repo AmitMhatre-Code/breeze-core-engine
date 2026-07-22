@@ -62,8 +62,9 @@ def calc_long_butterfly(ctx: EngineContext) -> StrategyResult:
                     wing_width=mult * ctx.strike_step,
                 )
                 continue
+            loss_budget = ctx.effective_loss_sizing_budget()
             qty_m = size_quantity_loss_only(ctx.margin_rupees, net_per * L, L)
-            qty_l = size_quantity_loss_only(ctx.max_loss_rupees, max_loss_lot, L)
+            qty_l = size_quantity_loss_only(loss_budget, max_loss_lot, L)
             qty = min(qty_m, qty_l) if qty_m and qty_l else 0
             if qty < L:
                 record_simple_attempt(
@@ -81,7 +82,7 @@ def calc_long_butterfly(ctx: EngineContext) -> StrategyResult:
             ]
             max_loss = net_per * qty + extra_risk * (qty // L) * L
             max_profit = (left_w - net_per) * qty
-            if max_loss > ctx.max_loss_rupees:
+            if ctx.max_loss_rupees is not None and max_loss > ctx.max_loss_rupees:
                 record_simple_attempt(
                     collector,
                     reject_reason="budget",

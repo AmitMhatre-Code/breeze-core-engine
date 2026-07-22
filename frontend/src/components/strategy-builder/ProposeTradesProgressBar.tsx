@@ -23,17 +23,17 @@ export function ProposeTradesProgressBar({
       aria-busy="true"
     >
       <div className="flex items-center justify-between gap-3 text-xs">
-        <p className="font-medium text-zinc-800 dark:text-zinc-200">{message}</p>
-        <p className="shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400">
+        <p className="font-medium text-foreground">{message}</p>
+        <p className="shrink-0 tabular-nums text-muted">
           {progressCurrent}/{progressTotal} · {pct}%
         </p>
       </div>
       <div
-        className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
+        className="h-2 overflow-hidden rounded-full bg-track"
         aria-hidden
       >
         <div
-          className="h-full rounded-full bg-sky-600 transition-[width] duration-300 ease-out dark:bg-sky-500"
+          className="h-full rounded-full bg-accent-strong transition-[width] duration-300 ease-out"
           style={{ width: `${pct}%` }}
         />
       </div>

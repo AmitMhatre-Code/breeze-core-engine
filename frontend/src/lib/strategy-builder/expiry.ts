@@ -58,3 +58,16 @@ export function formatExpiryChipShort(display: string): string {
   if (!m) return display;
   return `${parseInt(m[1], 10)} ${m[2]}`;
 }
+
+/** Filter expiry dates by full date, chip label, or month abbreviation. */
+export function filterExpiryDates(dates: string[], query: string): string[] {
+  const qn = query.trim().toLowerCase();
+  if (!qn) return dates;
+  return dates.filter((d) => {
+    if (d.toLowerCase().includes(qn)) return true;
+    if (formatExpiryChipShort(d).toLowerCase().includes(qn)) return true;
+    const monthMatch = d.match(/^\d{2}-([A-Za-z]{3})-\d{4}$/);
+    if (monthMatch && monthMatch[1].toLowerCase().includes(qn)) return true;
+    return false;
+  });
+}

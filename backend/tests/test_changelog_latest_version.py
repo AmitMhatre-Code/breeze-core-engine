@@ -16,7 +16,7 @@ def test_changelog_latest_version_script():
         text=True,
         cwd=_REPO_ROOT,
     ).strip()
-    assert out == "1.4.2-a"
+    assert out == "2.1.0-b"
 
 
 def test_reported_version_reads_baked_file(monkeypatch, tmp_path):

@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Optional
 
 import bcrypt
 
+from icici_breeze_backend.app.core.timezone import SQLITE_NOW_IST, ist_timestamp
+
 if TYPE_CHECKING:
     from icici_breeze_backend.app.auth.credentials import CredentialManager
 
@@ -160,10 +162,10 @@ def revoke_credentials_for_user(conn: sqlite3.Connection, user_id: str) -> None:
     cur.execute(
         """
         UPDATE user_credentials
-        SET is_active = 0, rotated_at = CURRENT_TIMESTAMP
+        SET is_active = 0, rotated_at = ?
         WHERE user_id = ? AND is_active = 1
         """,
-        (user_id,),
+        (ist_timestamp(), user_id),
     )
 
 
@@ -199,8 +201,8 @@ def change_user_id(
 
     conn.execute("PRAGMA foreign_keys = OFF")
     cur.execute(
-        "UPDATE user_credentials SET is_active = 0, rotated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND is_active = 1",
-        (old_user_id,),
+        "UPDATE user_credentials SET is_active = 0, rotated_at = ? WHERE user_id = ? AND is_active = 1",
+        (ist_timestamp(), old_user_id),
     )
     import uuid
     from base64 import urlsafe_b64encode
@@ -224,7 +226,7 @@ def change_user_id(
     encrypted = cipher.encrypt(secret_fragment.encode())
     credential_id = str(uuid.uuid4())
     cur.execute(
-        "INSERT INTO user_credentials (credential_id, user_id, broker_api_key, secret_fragment, encryption_salt, fragment_position, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), 1)",
+        f"INSERT INTO user_credentials (credential_id, user_id, broker_api_key, secret_fragment, encryption_salt, fragment_position, created_at, is_active) VALUES (?, ?, ?, ?, ?, ?, {SQLITE_NOW_IST}, 1)",
         (credential_id, new_user_id, api_key, encrypted, b"", "first_half"),
     )
     cur.execute("UPDATE user_credentials SET user_id = ? WHERE user_id = ?", (new_user_id, old_user_id))

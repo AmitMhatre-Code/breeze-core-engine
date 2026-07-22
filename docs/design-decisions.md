@@ -177,3 +177,102 @@ This document records **why** the modern stack is shaped the way it is. It is no
 
 - Maintains same-origin behavior for browser clients.
 - Centralizes request shaping for streaming and future UI-specific headers without exposing backend topology details to clients.
+
+---
+
+## 16. Fail-closed license enforcement via cached, signed policy tokens
+
+**Decision**: The app trusts a short-TTL (~600s) ES256-signed `policy_token` from breeze-saas-portal, caches the resulting status in memory, and treats a **stale** cache (no verified token for longer than 2× the heartbeat interval) as `unlicensed` rather than continuing to trust the last known-good value indefinitely.
+
+**Rationale**:
+
+- The portal and this instance communicate over an unreliable link (customer network, portal downtime); the app must have a defined behavior for "I haven't heard from the portal in a while" rather than assuming the last good answer still holds.
+- Fail-closed (degrade to read-only) is the safer default for a licensing control — a network blip should not silently leave trading permanently enabled for a revoked or expired license.
+
+**Trade-off**: A sufficiently long portal outage puts a legitimately-licensed instance into read-only mode. Acceptable given the self-hosted, single-tenant deployment model and the 300–3600s heartbeat cadence (worst case: read-only after roughly 10–120 minutes of silence). See [breeze-saas-portal/docs/license-management.md](../../breeze-saas-portal/docs/license-management.md) for the signing side of this contract.
+
+---
+
+## 17. In-place self-upgrade via a sibling helper container
+
+**Decision**: When the portal approves an upgrade, the running app container pulls the new image itself but delegates the actual stop-and-recreate to a **sibling `docker:cli` helper container**, rather than restarting itself or relying on an external always-on upgrade daemon.
+
+**Rationale**:
+
+- A container cannot reliably stop and replace itself from the inside — the process performing the swap would be killed mid-operation.
+- Spinning up a short-lived helper container only when an upgrade is actually happening avoids running a second permanent daemon on a single-tenant customer instance just to handle the rare upgrade case.
+
+**Trade-off**: Requires mounting the Docker socket into the app container so it can launch the helper — a real privilege escalation surface, accepted here because the instance is single-tenant and already trusts the app process with the host's `.env` file and Docker environment. The helper preserves the host `.env`, data bind mount, and published port; no CloudFormation stack update or EIP change is involved, keeping the upgrade fast and low-risk to the instance's networking.
+
+---
+
+## 18. Scheduled, cache-first reference-data refresh instead of per-request fetching
+
+**Decision**: NSE/BSE bhavcopy, ICICI scrip master, and SPAN baselines are loaded on a startup bootstrap plus a daily IST-scheduled job, cached to SQLite and Redis, rather than fetched on demand per request. The startup bootstrap checks whether the cache is already complete before doing any network work.
+
+**Rationale**:
+
+- These sources are daily-batch by nature (bhavcopy files are published once per exchange session); there is nothing to gain from re-fetching them per request, only latency and load on NSE/BSE's servers.
+- Checking cache completeness before re-loading on startup means a quick container restart (e.g. during an in-place upgrade, decision #17) doesn't force a redundant multi-minute download.
+- `processor().update_ICICImaster()` (decision #5's `processor` singleton) remains callable from both the legacy manual-refresh admin action and the new scheduled orchestrator without conflicting — the orchestrator calls it with `publish_scrip_index=False` and handles scrip-index publishing itself as part of the broader coordinated load.
+
+---
+
+## 19. Active-chains registry bounds chain-builder work to what's actually subscribed
+
+**Decision**: The `chain_builder` worker only refreshes `(exchange, stock, expiry)` chains that have a live WS subscriber, tracked in an active-chains registry, instead of refreshing every possible chain on every tick.
+
+**Rationale**:
+
+- Ties to decision #7 (monolithic image on modest EC2 instance sizes) — CPU/memory for chain assembly is a real constraint, and most of the possible chain universe has no active viewer at any given moment.
+- The first subscriber to a chain pays a warm-up cost (the chain must be built before it's "ready"); this is made visible to the user via a loading state (`chain_readiness.py`'s `wait_for_canonical_chain`, surfaced in the frontend as `ChainBuildStatus`/`SectionGate`) rather than silently serving a stale or incomplete chain.
+
+**Trade-off**: Slightly higher latency for the first request against a chain nobody has viewed recently, in exchange for materially lower steady-state CPU/memory use.
+
+---
+
+## 20. Redis is optional, not required
+
+**Decision**: The app runs with an in-process, TTL-aware `_MemoryStore` fallback (`app/db/redis_client.py`) when Redis is unreachable, rather than treating Redis as a hard startup dependency — unless an operator explicitly opts into strict mode via `REDIS_REQUIRE_CONNECTED=true`.
+
+**Rationale**:
+
+- Consistent with decision #4 (SQLite, single-backend-instance deployment model): this app is designed to run as one process per deployment, so an in-process cache fallback is a coherent substitute for Redis rather than a correctness risk from multiple processes disagreeing.
+- Local development and constrained environments shouldn't hard-fail just because Redis isn't running.
+
+**Note**: On the customer CloudFormation deployment, Redis is present by default as a sibling `breeze-redis` Docker container (not a managed cloud service), so this fallback mainly matters for local dev, degraded states, and the brief window during an in-place upgrade (decision #17) where the sidecar might be recreated.
+
+---
+
+## 21. Market operating hours are a single global, DB-backed value — not a hardcoded constant, not per-user
+
+**Decision**: NSE/BSE market hours and the exchange holiday calendar are stored in one singleton `exchange_calendar` row (`app/repositories/exchange_calendar.py`), editable only from Settings → Exchange Calendar, and every backend code path — dashboards, chain health, quote routing, the bhavcopy background scheduler, admin routes, IV reference-time math — reads it through `app/services/market_calendar.py`. There is exactly one calendar per deployment, not one per user.
+
+**Rationale**:
+
+- No exchange publishes an API for one-off special sessions (e.g. Muhurat trading on Diwali) or ad-hoc holiday changes. The only way to represent these is an operator hand-editing a value — which means it has to live in a database, not a hardcoded constant, or every special session would require a code change and redeploy.
+- Market hours are a physical fact about the exchange, not a per-user preference. An earlier version of this table was keyed per-`user_id`, but that was already inconsistent with the portal-console sync (`app/services/portal_exchange_calendar.py`), which has only ever fetched one shared payload for the whole deployment — there was never a real per-user dimension to preserve.
+- Before this decision, `app/core/market_hours.py` hardcoded 9:15–15:30 IST and read a static bundled JSON file, while a *separate*, parallel per-user-aware module (`market_calendar.py`) existed but only two call sites actually used it. Nearly every system-wide caller silently ignored anything an operator configured in Settings — editing the Exchange Calendar page had no effect on the dashboard, chain health, or order-parking logic. This decision collapses both into the one module so that can't happen again.
+
+**Migration**: `app/db/exchange_calendar_migrate.py` backfills the old per-user table on first startup after upgrade — it picks the customized row (if any; most-recently-updated wins ties) as the new global default, and renames the legacy table to `_legacy_user_exchange_calendar_backup` rather than dropping it.
+
+**Trade-off**: In a deployment shared by more than one user (uncommon but possible — see `app/services/squareoff_watch.py`'s handling of multi-user deployments), any authenticated user editing the Exchange Calendar changes it for everyone. This is accepted because the alternative (per-user calendars) doesn't correspond to anything real — the exchange only has one set of hours.
+
+
+---
+
+## 22. Only a deliberate logout clears the broker session; an expired app session does not
+
+**Decision**: `/auth/logout` branches on `LogoutRequest.reason` (`app/services/session_teardown.py`). A deliberate logout clears the persisted broker session token and the warm Breeze/snapshot/customer caches, as before. The frontend's *automatic* 401 sign-out (`auth-session-expired.ts`, which POSTs `reason: "session_expired"`) clears browser cookies only — the server-side broker session survives until its own midnight-IST expiry.
+
+**Rationale**:
+
+- PB/SL square-off dispatch runs off the `portfolio_pnl_engine` poll loop with no HTTP request in scope, so it reaches the broker via the persisted token (`app/repositories/broker_session.py`). Clearing that token disarms every live Strategy Group.
+- Closing the browser has always left monitoring running; an app-JWT lapse in a background tab looked identical to the user but silently ended their protection, and the failure only surfaced *at the breach*, as a failed exit-order placement → Reset.
+- The retained token is server-side only and is never handed back to a caller. A signed-out browser still has to log in from scratch; all the retention buys is the background engine's ability to finish the trading day the user already armed.
+- A missing body (older client) is treated as deliberate, so the conservative behaviour is the default.
+
+**User-facing consequences**:
+
+- Logging out with live SGs shows a confirm dialog naming them (`components/layout/LogoutConfirmDialog.tsx`) and, on confirm, sends a Telegram alert that monitoring has stopped.
+- A session expiry with live SGs sends a Telegram alert saying the opposite — monitoring is *still running* until midnight IST. That reassurance is deliberate: told "monitoring stopped", a user might re-arm on top of rules that are still live, or manually close positions automation is also about to close. The alert is deduped per user (15 min) because every open tab's 401 handler POSTs its own logout.

@@ -1,6 +1,7 @@
 """Strategy engine orchestration and delivery."""
 from __future__ import annotations
 
+import asyncio
 import inspect
 import time
 from typing import Any
@@ -16,10 +17,13 @@ from icici_breeze_backend.app.services.options_strategy_engine.build_progress im
 from icici_breeze_backend.app.services.options_strategy_engine.greeks import compute_atm_iv, enrich_greeks
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     elm_for_legs,
+    is_same_day_expiry,
     legs_to_margin_input,
     margin_key,
     normalize_expiry_display,
 )
+from icici_breeze_backend.app.services.reference_data.bhavcopy_store import _lookup_bhav_row
+import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.services.options_strategy_engine.budget_resize import resize_results_to_budgets
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional._common import (
     refresh_directional_tile_metrics,
@@ -29,6 +33,9 @@ from icici_breeze_backend.app.services.options_strategy_engine.margin_async_fetc
     fetch_margins_concurrent,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.registry import CATEGORY_CALCULATORS
+from icici_breeze_backend.app.services.options_strategy_engine.compliance_split import (
+    split_and_segregate_results,
+)
 from icici_breeze_backend.app.services.options_strategy_engine.types import (
     STRATEGY_CATALOG,
     EngineContext,
@@ -37,8 +44,6 @@ from icici_breeze_backend.app.services.options_strategy_engine.types import (
     StrategyResult,
     TradeLeg,
 )
-from icici_breeze_backend.app.services.options_strategy_engine.icici_async_fetch import fetch_strike_pairs_async
-from icici_breeze_backend.app.services.options_strategy_engine.strike_planner import plan_targeted_fetches
 from icici_breeze_backend.app.services.options_strategy_engine.universe import (
     build_bulk_chain_cache,
     finalize_liquidity_cache,
@@ -168,6 +173,39 @@ async def attach_margins_and_returns(
                 )
 
 
+def _result_to_trade_dict(r: StrategyResult, ctx: EngineContext) -> dict[str, Any]:
+    hero = None
+    if r.hero_metric is not None:
+        hero = {"label": r.hero_metric.label, "value": r.hero_metric.value}
+    secondary = [{"label": m.label, "value": m.value} for m in (r.secondary_metrics or [])]
+    return {
+        "strategy_id": r.strategy_id,
+        "strategy_name": r.strategy_name,
+        "status": r.status,
+        "skip_reason": r.skip_reason,
+        "structure_modified": r.structure_modified or ctx.structure_modified,
+        "net_premium": r.net_premium,
+        "max_loss": r.max_loss,
+        "max_profit": r.max_profit,
+        "annualized_return_pct": r.annualized_return_pct,
+        "risk_reward_ratio": r.risk_reward_ratio,
+        "span_margin": getattr(r, "span_margin", None),
+        "elm_requirement": getattr(r, "elm_requirement", None),
+        "pop_pct": r.pop_pct,
+        "legs": [leg.to_out(ctx.cache) for leg in r.legs],
+        "variant_rank": r.variant_rank,
+        "engine_score": r.engine_score,
+        "ranking_summary": r.ranking_summary,
+        "score_breakdown": r.score_breakdown,
+        "conviction_profile": r.conviction_profile,
+        "hero_metric": hero,
+        "secondary_metrics": secondary,
+        "badges": r.badges or [],
+        "compliance": r.compliance,
+        "constraint_violations": list(r.constraint_violations or []),
+    }
+
+
 async def run_propose_trades(
     proc: processor,
     user_id: str,
@@ -176,7 +214,8 @@ async def run_propose_trades(
     stock_code: str,
     expiry_date: str,
     margin_lacs: float,
-    max_loss_lacs: float,
+    max_loss_lacs: float | None = None,
+    allow_infinite_loss: bool = False,
     min_pop_pct: float = 65.0,
     min_ann_return_pct: float = 5.0,
     provision_elm: bool,
@@ -203,6 +242,7 @@ async def run_propose_trades(
     if progress is not None:
         progress.register_base_units(strategy_count=len(calculators))
         progress.tick(phase="setup", message="Loading scrip master…")
+    max_loss_rupees = None if allow_infinite_loss else (max_loss_lacs or 0) * 100_000
     if enable_audit:
         audit = StrategyBuilderAuditSession(
             user_id=user_id,
@@ -215,6 +255,7 @@ async def run_propose_trades(
                 "expiry_date": expiry_date.strip(),
                 "margin_lacs": margin_lacs,
                 "max_loss_lacs": max_loss_lacs,
+                "allow_infinite_loss": allow_infinite_loss,
                 "min_pop_pct": min_pop_pct,
                 "min_ann_return_pct": min_ann_return_pct,
                 "provision_elm": provision_elm,
@@ -252,24 +293,60 @@ async def run_propose_trades(
     if not lot_size or lot_size <= 0:
         return _fail(400, "Could not resolve lot size from scrip master.")
 
-    strikes = proc.list_option_strikes(stock_code, expiry_display, exchange_code=exchange_code)
+    ctx = EngineContext(
+        processor=proc,
+        user_id=user_id,
+        stock_code=stock_code.strip(),
+        exchange_code=exchange_code,
+        expiry_display=expiry_display,
+        margin_rupees=margin_lacs * 100_000,
+        max_loss_rupees=max_loss_rupees,
+        allow_infinite_loss=allow_infinite_loss,
+        min_pop_pct=min_pop_pct,
+        min_ann_return_pct=min_ann_return_pct,
+        provision_elm=provision_elm,
+        strategy_category=strategy_category,
+        risk_reward_profile=risk_reward_profile or "moderate",
+        lot_size=int(lot_size),
+        strikes=[],
+        strike_step=50,
+        search_interval=50,
+        spot=0.0,
+        atm_strike=0.0,
+        range_lower=0.0,
+        range_upper=0.0,
+        is_index=cfg.is_index_symbol(stock_code),
+        same_day_expiry=is_same_day_expiry(expiry_display),
+        audit=audit,
+        progress=progress,
+    )
+
+    await asyncio.to_thread(build_bulk_chain_cache, ctx)
+    if ctx.halted:
+        return _fail(400, ctx.halt_reason or "Insufficient market depth.")
+
+    bhav_row = await asyncio.to_thread(
+        _lookup_bhav_row, ctx.stock_code, ctx.expiry_display, "Call", ctx.atm_strike, ctx.exchange_code
+    )
+    prev_close = float(bhav_row["spot_price"]) if bhav_row and bhav_row.get("spot_price") else 0.0
+    ctx.previous_close = prev_close if prev_close > 0 else ctx.spot
+
+    strikes = ctx.strikes
     if audit:
         audit.record(
             "scrip_master",
-            "list_option_strikes",
+            "chain_strikes",
             {
                 "strike_count": len(strikes) if strikes else 0,
                 "strike_min": strikes[0] if strikes else None,
                 "strike_max": strikes[-1] if strikes else None,
             },
-            rationale="Available strikes bound all strategy construction.",
+            rationale="Strikes derived from built option chain only.",
         )
-    if not strikes:
-        return _fail(400, "No strikes in scrip master for this expiry.")
 
-    step = proc.strike_interval(strikes)
-    mid = float(strikes[len(strikes) // 2])
-    search_step = proc.search_interval(strikes, mid)
+    step = ctx.strike_step
+    mid = float(strikes[len(strikes) // 2]) if strikes else 0.0
+    search_step = ctx.search_interval
     if audit:
         audit.record_calculation(
             "Engine parameters",
@@ -284,57 +361,15 @@ async def run_propose_trades(
                 "strike_step": step,
                 "search_interval": search_step,
                 "margin_rupees": margin_lacs * 100_000,
-                "max_loss_rupees": max_loss_lacs * 100_000,
+                "max_loss_rupees": max_loss_rupees,
+                "allow_infinite_loss": allow_infinite_loss,
                 "lot_size": int(lot_size),
             },
-            rationale="Delta-anchored template parameters (no user strike range).",
+            rationale="Delta-anchored template parameters from chain strikes.",
         )
 
-    atm_strike = min(strikes, key=lambda s: abs(s - mid))
-    range_pad = 3 * step
-    ctx = EngineContext(
-        processor=proc,
-        user_id=user_id,
-        stock_code=stock_code.strip(),
-        exchange_code=exchange_code,
-        expiry_display=expiry_display,
-        margin_rupees=margin_lacs * 100_000,
-        max_loss_rupees=max_loss_lacs * 100_000,
-        min_pop_pct=min_pop_pct,
-        min_ann_return_pct=min_ann_return_pct,
-        provision_elm=provision_elm,
-        strategy_category=strategy_category,
-        risk_reward_profile=risk_reward_profile or "moderate",
-        lot_size=int(lot_size),
-        strikes=strikes,
-        strike_step=step,
-        search_interval=search_step,
-        spot=mid,
-        atm_strike=atm_strike,
-        range_lower=float(atm_strike) - range_pad,
-        range_upper=float(atm_strike) + range_pad,
-        audit=audit,
-        progress=progress,
-    )
-
-    build_bulk_chain_cache(ctx)
-    if ctx.halted:
-        return _fail(400, ctx.halt_reason or "Insufficient market depth.")
-
-    ctx.atm_iv = compute_atm_iv(ctx)
-    enrich_greeks(ctx)
-
-    to_fetch = plan_targeted_fetches(ctx)
-    if to_fetch:
-        if progress is not None:
-            progress.add_units(
-                len(to_fetch),
-                phase="fetch_quotes",
-                message=f"Fetching targeted quotes (0/{len(to_fetch)})…",
-            )
-        ctx.cache.update(await fetch_strike_pairs_async(ctx, to_fetch))
-        ctx.atm_iv = compute_atm_iv(ctx) or ctx.atm_iv
-        enrich_greeks(ctx)
+    ctx.atm_iv = await asyncio.to_thread(compute_atm_iv, ctx)
+    await asyncio.to_thread(enrich_greeks, ctx)
 
     finalize_liquidity_cache(ctx)
     if ctx.halted:
@@ -376,17 +411,22 @@ async def run_propose_trades(
                     skip_reason=res.skip_reason,
                 )
 
+    recommended_results, relaxed_results = split_and_segregate_results(results, ctx)
+    all_ok = [
+        r for r in recommended_results + relaxed_results if r.status == "ok" and r.legs
+    ]
+
     await resize_results_to_budgets(
-        proc, user_id, exchange_code, ctx.stock_code, expiry_display, results, ctx, audit
+        proc, user_id, exchange_code, ctx.stock_code, expiry_display, all_ok, ctx, audit
     )
-    for res in results:
+    for res in recommended_results + relaxed_results:
         log_strategy_result(ctx, res)
 
     await attach_margins_and_returns(
-        proc, user_id, exchange_code, ctx.stock_code, expiry_display, results, ctx, audit
+        proc, user_id, exchange_code, ctx.stock_code, expiry_display, all_ok, ctx, audit
     )
 
-    for res in results:
+    for res in all_ok:
         refresh_directional_tile_metrics(res)
 
     atm_iv = compute_atm_iv(ctx)
@@ -398,39 +438,13 @@ async def run_propose_trades(
             rationale="Average IV from ATM call and put when both quoted.",
         )
 
-    trades_out = []
-    for r in results:
-        hero = None
-        if r.hero_metric is not None:
-            hero = {"label": r.hero_metric.label, "value": r.hero_metric.value}
-        secondary = [
-            {"label": m.label, "value": m.value} for m in (r.secondary_metrics or [])
-        ]
-        trades_out.append(
-            {
-                "strategy_id": r.strategy_id,
-                "strategy_name": r.strategy_name,
-                "status": r.status,
-                "skip_reason": r.skip_reason,
-                "structure_modified": r.structure_modified or ctx.structure_modified,
-                "net_premium": r.net_premium,
-                "max_loss": r.max_loss,
-                "annualized_return_pct": r.annualized_return_pct,
-                "risk_reward_ratio": r.risk_reward_ratio,
-                "span_margin": getattr(r, "span_margin", None),
-                "elm_requirement": getattr(r, "elm_requirement", None),
-                "pop_pct": r.pop_pct,
-                "legs": [leg.to_out(ctx.cache) for leg in r.legs],
-                "variant_rank": r.variant_rank,
-                "engine_score": r.engine_score,
-                "ranking_summary": r.ranking_summary,
-                "score_breakdown": r.score_breakdown,
-                "conviction_profile": r.conviction_profile,
-                "hero_metric": hero,
-                "secondary_metrics": secondary,
-                "badges": r.badges or [],
-            }
-        )
+    trades_out = [_result_to_trade_dict(r, ctx) for r in recommended_results]
+    relaxed_trades_out = [
+        _result_to_trade_dict(r, ctx)
+        for r in relaxed_results
+        if r.status == "ok" and r.legs
+    ]
+    all_trades_out = trades_out + relaxed_trades_out
 
     success_payload: dict[str, Any] = {
         "spot_price": round(ctx.spot, 2),
@@ -439,6 +453,7 @@ async def run_propose_trades(
         "atm_iv": atm_iv,
         "structure_modified": ctx.structure_modified,
         "trades": trades_out,
+        "relaxed_trades": relaxed_trades_out,
     }
 
     audit_summary = {
@@ -450,7 +465,8 @@ async def run_propose_trades(
         "liquid_ce_strikes": ctx.liquid_ce_strikes,
         "liquid_pe_strikes": ctx.liquid_pe_strikes,
         "icici_api_calls": audit.icici_api_call_stats if audit else {},
-        "strategies_ok": [t["strategy_id"] for t in trades_out if t["status"] == "ok"],
+        "strategies_ok": [t["strategy_id"] for t in all_trades_out if t["status"] == "ok"],
+        "strategies_relaxed": [t["strategy_id"] for t in relaxed_trades_out],
         "strategies_skipped": [
             {"strategy_id": t["strategy_id"], "skip_reason": t["skip_reason"]}
             for t in trades_out
@@ -466,12 +482,13 @@ async def run_propose_trades(
         request=audit.request if audit else {
             "margin_lacs": margin_lacs,
             "max_loss_lacs": max_loss_lacs,
+            "allow_infinite_loss": allow_infinite_loss,
             "min_pop_pct": min_pop_pct,
             "min_ann_return_pct": min_ann_return_pct,
             "strategy_category": strategy_category,
         },
         strategy_evaluations=audit.strategy_evaluations if audit else {},
-        trades=trades_out,
+        trades=all_trades_out,
         summary=audit_summary,
     )
     success_payload["user_report"] = user_report

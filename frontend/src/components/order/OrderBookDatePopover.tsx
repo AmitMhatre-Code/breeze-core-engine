@@ -9,22 +9,14 @@ import {
   useState,
 } from "react";
 
-const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
+import {
+  formatIsoDateDdMmmYyyy,
+  parseIsoDateParts,
+  toIsoDate,
+} from "@/lib/format-iso-date";
+import { useCalendarKeyboard } from "@/lib/ui/use-calendar-keyboard";
 
-const MONTH_SHORT = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const;
+const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
 const MONTH_LABELS = [
   "January",
@@ -40,32 +32,6 @@ const MONTH_LABELS = [
   "November",
   "December",
 ] as const;
-
-function parseIsoParts(iso: string): {
-  y: number;
-  m: number;
-  d: number;
-} | null {
-  const t = iso.trim();
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
-  if (!m) return null;
-  const y = Number(m[1]);
-  const mo = Number(m[2]);
-  const d = Number(m[3]);
-  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-  return { y, m: mo, d };
-}
-
-function toIso(y: number, m: number, d: number): string {
-  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-}
-
-function formatIsoDateDdMmmYyyy(iso: string): string {
-  const p = parseIsoParts(iso);
-  if (!p) return iso.trim();
-  const day = String(p.d).padStart(2, "0");
-  return `${day}-${MONTH_SHORT[p.m - 1]}-${p.y}`;
-}
 
 function monthMatrix(year: number, month: number): (number | null)[] {
   const dim = new Date(year, month, 0).getDate();
@@ -114,12 +80,13 @@ export function OrderBookDatePopover({
 }: OrderBookDatePopoverProps) {
   const listboxId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
 
-  const parsed = useMemo(() => parseIsoParts(value), [value]);
+  const parsed = useMemo(() => parseIsoDateParts(value), [value]);
 
   const [view, setView] = useState(() => {
-    const p = parseIsoParts(value);
+    const p = parseIsoDateParts(value);
     if (p) return { y: p.y, m: p.m };
     const d = new Date();
     return { y: d.getFullYear(), m: d.getMonth() + 1 };
@@ -128,7 +95,7 @@ export function OrderBookDatePopover({
   const { y: viewY, m: viewM } = view;
 
   const syncViewToValueOrToday = useCallback(() => {
-    const p = parseIsoParts(value);
+    const p = parseIsoDateParts(value);
     if (p) setView({ y: p.y, m: p.m });
     else {
       const d = new Date();
@@ -142,7 +109,7 @@ export function OrderBookDatePopover({
   );
 
   const t = new Date();
-  const todayIso = toIso(
+  const todayIso = toIsoDate(
     t.getFullYear(),
     t.getMonth() + 1,
     t.getDate(),
@@ -160,14 +127,27 @@ export function OrderBookDatePopover({
     );
   }, []);
 
+  const selectDay = useCallback(
+    (day: number) => {
+      onChange(toIsoDate(viewY, viewM, day));
+      setOpen(false);
+    },
+    [onChange, viewY, viewM],
+  );
+
+  const closeCalendar = useCallback(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
       const el = rootRef.current;
-      if (!el?.contains(e.target as Node)) setOpen(false);
+      if (!el?.contains(e.target as Node)) closeCalendar();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") closeCalendar();
     };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
@@ -175,22 +155,32 @@ export function OrderBookDatePopover({
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, closeCalendar]);
 
-  const selectDay = useCallback(
-    (day: number) => {
-      onChange(toIso(viewY, viewM, day));
-      setOpen(false);
-    },
-    [onChange, viewY, viewM],
-  );
+  const selectedDay =
+    parsed && parsed.y === viewY && parsed.m === viewM ? parsed.d : null;
+  const todayParts = parseIsoDateParts(todayIso);
+  const todayDay =
+    todayParts && todayParts.y === viewY && todayParts.m === viewM
+      ? todayParts.d
+      : null;
+
+  const { getDayButtonProps } = useCalendarKeyboard({
+    open,
+    cells,
+    selectedDay,
+    todayDay,
+    onSelectDay: selectDay,
+    onClose: closeCalendar,
+    triggerRef,
+  });
 
   const goToday = useCallback(() => {
     const d = new Date();
     const y = d.getFullYear();
     const m = d.getMonth() + 1;
     const day = d.getDate();
-    onChange(toIso(y, m, day));
+    onChange(toIsoDate(y, m, day));
     setView({ y, m });
     setOpen(false);
   }, [onChange]);
@@ -198,21 +188,20 @@ export function OrderBookDatePopover({
   const displayText = parsed ? formatIsoDateDdMmmYyyy(value) : null;
 
   return (
-    <div ref={rootRef} className="relative min-w-0 flex-1">
+    <div ref={rootRef} className="relative inline-block min-w-0 self-start sm:self-auto">
       <label htmlFor={id} className="sr-only">
         {label}
       </label>
-      <CalendarGlyph className="pointer-events-none absolute left-3 top-1/2 z-[2] size-4 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
       <button
+        ref={triggerRef}
         type="button"
         id={id}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={listboxId}
         className={[
-          "flex h-11 w-full min-w-[11rem] items-center rounded-md border border-zinc-200 bg-white py-0 pl-10 pr-3 text-left text-sm tabular-nums text-zinc-900 shadow-sm transition",
-          "hover:border-zinc-300 focus:outline-none focus-visible:border-sky-500 focus-visible:ring-2 focus-visible:ring-sky-500/25",
-          "dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:border-zinc-500 dark:focus-visible:border-sky-400 dark:focus-visible:ring-sky-400/25",
+          "flex h-[34px] items-center gap-2 rounded-[9px] border border-border bg-panel2 px-2.5 text-left font-mono text-heading tabular-nums text-foreground transition",
+          "hover:border-accent/60 focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/25",
         ].join(" ")}
         onClick={() => {
           if (open) setOpen(false);
@@ -222,10 +211,11 @@ export function OrderBookDatePopover({
           }
         }}
       >
+        <CalendarGlyph className="shrink-0 text-faint" />
         {displayText ? (
           <span>{displayText}</span>
         ) : (
-          <span className="text-zinc-400 dark:text-zinc-500">{placeholder}</span>
+          <span className="text-faint">{placeholder}</span>
         )}
       </button>
 
@@ -234,12 +224,12 @@ export function OrderBookDatePopover({
           id={listboxId}
           role="dialog"
           aria-label="Choose date"
-          className="absolute left-0 top-[calc(100%+0.25rem)] z-50 w-[min(100%,18rem)] rounded-md border border-zinc-200/90 bg-white p-3 shadow-lg ring-1 ring-zinc-950/[0.04] dark:border-zinc-700 dark:bg-zinc-900 dark:ring-white/[0.06]"
+          className="absolute left-0 top-[calc(100%+0.25rem)] z-50 w-72 rounded-[10px] border border-border bg-elevated p-3 shadow-pop"
         >
           <div className="mb-2 flex items-center justify-between gap-1">
             <button
               type="button"
-              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground"
               aria-label="Previous month"
               onClick={goPrevMonth}
             >
@@ -247,12 +237,12 @@ export function OrderBookDatePopover({
                 <path d="m15 18-6-6 6-6" />
               </svg>
             </button>
-            <span className="min-w-0 flex-1 text-center text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <span className="min-w-0 flex-1 text-center text-sm font-semibold text-foreground">
               {MONTH_LABELS[viewM - 1]} {viewY}
             </span>
             <button
               type="button"
-              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground"
               aria-label="Next month"
               onClick={goNextMonth}
             >
@@ -266,7 +256,7 @@ export function OrderBookDatePopover({
             {WEEKDAY_LABELS.map((w) => (
               <div
                 key={w}
-                className="py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500"
+                className="py-1 text-body font-semibold uppercase tracking-wide text-faint"
               >
                 {w}
               </div>
@@ -278,20 +268,22 @@ export function OrderBookDatePopover({
               if (day == null) {
                 return <div key={`e-${i}`} className="aspect-square" />;
               }
-              const iso = toIso(viewY, viewM, day);
+              const iso = toIsoDate(viewY, viewM, day);
               const isToday = iso === todayIso;
               const isSelected = parsed && iso === value.trim();
               return (
                 <button
                   key={`${viewY}-${viewM}-${day}`}
                   type="button"
+                  {...getDayButtonProps(i, day)}
+                  aria-label={formatIsoDateDdMmmYyyy(iso)}
                   className={[
                     "aspect-square rounded-lg text-sm font-medium tabular-nums transition",
                     isSelected
-                      ? "bg-sky-600 text-white shadow-sm dark:bg-sky-500"
-                      : "text-zinc-800 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800",
+                      ? "bg-accent-strong text-accent-ink"
+                      : "text-foreground hover:bg-panel2",
                     isToday && !isSelected
-                      ? "ring-1 ring-inset ring-sky-500/50 dark:ring-sky-400/40"
+                      ? "ring-1 ring-inset ring-accent/50"
                       : "",
                   ].join(" ")}
                   onClick={() => selectDay(day)}
@@ -302,10 +294,10 @@ export function OrderBookDatePopover({
             })}
           </div>
 
-          <div className="mt-3 border-t border-zinc-200/80 pt-2 dark:border-zinc-700/80">
+          <div className="mt-3 border-t border-border-soft pt-2">
             <button
               type="button"
-              className="w-full rounded-lg py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-950/50"
+              className="w-full rounded-lg py-1.5 text-xs font-medium text-accent-strong transition hover:bg-accent-tint"
               onClick={goToday}
             >
               Today

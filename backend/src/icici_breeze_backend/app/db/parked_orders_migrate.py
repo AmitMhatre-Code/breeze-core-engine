@@ -22,8 +22,8 @@ def ensure_parked_orders_table(db_path: str) -> None:
                 action TEXT NOT NULL,
                 chunk_qty TEXT,
                 batch_group_id TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+                updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
             )
             """
         )

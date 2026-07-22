@@ -62,3 +62,68 @@ export const RISK_GROUP_LABEL: Record<BreezeApiCatalogEntry["risk_level"], strin
   funds: "Funds",
   gtt: "GTT",
 };
+
+export type BreezeIciciCommand = {
+  sdk_method: string;
+  sdk_args: Record<string, unknown>;
+  side_effects?: string[];
+};
+
+export type BreezeApiWsEventLogEntry = {
+  id: number;
+  ts: number;
+  step: string;
+  icici_command: BreezeIciciCommand;
+  icici_response: unknown;
+  ok: boolean;
+  note?: string;
+};
+
+export type BreezeApiWsStatus = {
+  ok?: boolean;
+  response?: unknown;
+  connected?: boolean;
+  user_id?: string | null;
+  active_subscriptions?: number;
+  subscription_keys?: string[];
+  last_error?: string | null;
+  icici_command?: BreezeIciciCommand;
+  event_id?: number;
+  ts?: number;
+};
+
+export type BreezeApiWsEventLogResponse = {
+  events: BreezeApiWsEventLogEntry[];
+};
+
+export function wsConnectPlayground() {
+  return apiClient.post<BreezeApiWsStatus>(`${BASE}/ws/connect`, {});
+}
+
+export function wsDisconnectPlayground() {
+  return apiClient.post<BreezeApiWsStatus>(`${BASE}/ws/disconnect`, {});
+}
+
+export function wsReleasePlayground(holderId: string) {
+  return apiClient.post<BreezeApiWsStatus, { holder_id: string }>(`${BASE}/ws/release`, {
+    holder_id: holderId,
+  });
+}
+
+export function wsGetPlaygroundStatus() {
+  return apiClient.get<BreezeApiWsStatus>(`${BASE}/ws/status`);
+}
+
+export function wsGetPlaygroundEventLog() {
+  return apiClient.get<BreezeApiWsEventLogResponse>(`${BASE}/ws/event-log`);
+}
+
+export function wsSubscribePlayground(params: Record<string, string | boolean | undefined>) {
+  return apiClient.post<BreezeApiWsStatus, typeof params>(`${BASE}/ws/subscribe`, params);
+}
+
+export function wsStreamUrl(): string {
+  const base = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+  if (base) return `${base.replace(/\/$/, "")}${BASE}/ws/stream`;
+  return `${BASE}/ws/stream`;
+}

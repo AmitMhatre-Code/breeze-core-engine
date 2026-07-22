@@ -170,6 +170,7 @@ def refresh_directional_tile_metrics(result: StrategyResult) -> None:
         span = result.span_margin or 0.0
         elm = result.elm_requirement or 0.0
         capital_total = premium + span + elm
+        result.max_profit = max_gain
         result.hero_metric = TileMetric(
             label="Reward : Risk",
             value=f"1 : {max_gain / max(max_loss, 1):.2f}",
@@ -338,11 +339,14 @@ def evaluate_long_option(
                 debit_lot,
                 debit_lot,
                 margin_rupees=ctx.margin_rupees,
-                max_loss_rupees=ctx.max_loss_rupees,
+                max_loss_rupees=ctx.effective_loss_sizing_budget(),
                 lot_size=L,
-                unit_short_lots=0,
+                unit_legs=[],
                 spot=ctx.spot,
                 provision_elm=ctx.provision_elm,
+                is_index=ctx.is_index,
+                previous_close=ctx.previous_close,
+                same_day_expiry=ctx.same_day_expiry,
             )
             if qty < L:
                 _record_reject(
@@ -355,7 +359,7 @@ def evaluate_long_option(
                 continue
 
             max_loss = buy_prem * qty
-            if max_loss > ctx.max_loss_rupees:
+            if ctx.max_loss_rupees is not None and max_loss > ctx.max_loss_rupees:
                 _record_reject(
                     collector,
                     candidate_id=cid,
@@ -558,16 +562,20 @@ def evaluate_vertical_spread(
                 )
 
                 max_loss_lot = net_per * L
+                unit_legs = [TradeLeg(right, "Sell", stp_s, L, sell_prem)]
                 qty = size_quantity_from_budgets(
                     sid,
                     buy_prem * L,
                     max_loss_lot,
                     margin_rupees=ctx.margin_rupees,
-                    max_loss_rupees=ctx.max_loss_rupees,
+                    max_loss_rupees=ctx.effective_loss_sizing_budget(),
                     lot_size=L,
-                    unit_short_lots=1,
+                    unit_legs=unit_legs,
                     spot=ctx.spot,
                     provision_elm=ctx.provision_elm,
+                    is_index=ctx.is_index,
+                    previous_close=ctx.previous_close,
+                    same_day_expiry=ctx.same_day_expiry,
                 )
                 if qty < L:
                     _record_reject(
@@ -586,7 +594,7 @@ def evaluate_vertical_spread(
                     TradeLeg(right, "Sell", stp_s, qty, sell_prem),
                 ]
                 max_loss = net_per * qty
-                if max_loss > ctx.max_loss_rupees:
+                if ctx.max_loss_rupees is not None and max_loss > ctx.max_loss_rupees:
                     _record_reject(
                         collector,
                         candidate_id=cid,

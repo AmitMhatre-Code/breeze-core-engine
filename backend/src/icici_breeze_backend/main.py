@@ -107,6 +107,21 @@ if os.environ.get("ICICI_BREEZE_INSECURE_SSL", "").lower() in ("1", "true", "yes
 
     ssl._create_default_https_context = ssl._create_unverified_context
 
+# breeze_connect (vendored SDK) hardcodes its 'APILogger'/'WebsocketLogger' loggers to
+# DEBUG and attaches unrotated FileHandlers that dump every raw API request/response and
+# WS tick to disk (apiLogs_1305.log / websocketLogs_1305.log) with no size cap — a real
+# risk on a small EBS volume. Import it here (before anything else triggers the same
+# cached import) and strip those handlers immediately; our own app logging is unaffected.
+import breeze_connect  # noqa: F401
+
+for _bc_logger_name in ("APILogger", "WebsocketLogger"):
+    _bc_logger = logging.getLogger(_bc_logger_name)
+    for _bc_handler in list(_bc_logger.handlers):
+        _bc_logger.removeHandler(_bc_handler)
+        _bc_handler.close()
+    _bc_logger.addHandler(logging.NullHandler())
+    _bc_logger.propagate = False
+
 from icici_breeze_backend.app.api.router import app_router
 from fastapi import FastAPI, Request
 from fastapi.exceptions import HTTPException
@@ -114,7 +129,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from icici_breeze_backend.app.services.processor import processor
 from fastapi.responses import RedirectResponse
 from icici_breeze_backend.core.errors import ConflictError, UnauthorizedError, ForbiddenError
 from icici_breeze_backend.app.auth.context import RedirectToLogin
@@ -165,21 +179,52 @@ def _ensure_app_database() -> None:
     if os.path.isfile(db_path):
         try:
             from icici_breeze_backend.app.db.user_account_migrate import migrate_user_account_if_needed
-            from icici_breeze_backend.app.db.ai_provider_migrate import ensure_ai_provider_table
-            from icici_breeze_backend.app.db.outlook_preferences_migrate import ensure_outlook_preferences_table
             from icici_breeze_backend.app.db.parked_orders_migrate import ensure_parked_orders_table
+            from icici_breeze_backend.app.db.exchange_calendar_migrate import (
+                ensure_exchange_calendar_table,
+            )
 
             migrate_user_account_if_needed(db_path)
-            ensure_ai_provider_table(db_path)
-            ensure_outlook_preferences_table(db_path)
             ensure_parked_orders_table(db_path)
+            ensure_exchange_calendar_table(db_path)
+            from icici_breeze_backend.app.db.user_telegram_migrate import (
+                ensure_user_telegram_table,
+            )
+
+            ensure_user_telegram_table(db_path)
             from icici_breeze_backend.app.services.user_rate_limit_prefs import (
                 migrate_legacy_rate_limit_pause_default,
                 migrate_rate_limit_pause_bounds,
+                rebuild_rate_limit_pause_column_default,
             )
 
+            rebuild_rate_limit_pause_column_default()
             migrate_legacy_rate_limit_pause_default()
             migrate_rate_limit_pause_bounds()
+            from icici_breeze_backend.app.services.reference_data.state import ensure_reference_data_tables
+
+            ensure_reference_data_tables(db_path)
+            from icici_breeze_backend.app.services.pnl_engine_settings import (
+                ensure_pnl_engine_settings_table,
+            )
+
+            ensure_pnl_engine_settings_table(db_path)
+            from icici_breeze_backend.app.db.squareoff_rules_migrate import (
+                ensure_squareoff_rules_table,
+            )
+
+            ensure_squareoff_rules_table(db_path)
+            from icici_breeze_backend.app.db.broker_session_migrate import (
+                ensure_broker_session_table,
+            )
+
+            ensure_broker_session_table(db_path)
+            # Last: every table above must exist before their stamps can be shifted.
+            from icici_breeze_backend.app.db.ist_timestamp_backfill import (
+                backfill_ist_timestamps_if_needed,
+            )
+
+            backfill_ist_timestamps_if_needed(db_path)
         except Exception:
             _logger.exception("user_account schema migration failed")
 
@@ -197,7 +242,7 @@ def _ensure_freeze_limit_files() -> None:
     tpl = getattr(cfg, "DB_TEMPLATE_PATH", "") or ""
     if not tpl or not os.path.isdir(tpl.rstrip(os.sep)):
         return
-    for name in (cfg.LIMITS_MASTER_NSE, cfg.LIMITS_MASTER_BSE):
+    for name in (cfg.LIMITS_MASTER_NSE, cfg.LIMITS_MASTER_BSE, "exchange_holidays.json"):
         dest = cfg.DATA_PATH + name
         if os.path.isfile(dest):
             continue
@@ -258,9 +303,49 @@ def _ensure_scrips_database() -> None:
         )
 
 
+def _ensure_quote_snapshot_schema() -> None:
+    """Snapshot cells are regenerable cache, so they live in scrips.sqlite3 next to
+    the scrip master rather than in the user DB. Must run after
+    `_ensure_scrips_database`, which may re-seed that file from a template."""
+    from icici_breeze_backend.core import config as cfg
+
+    try:
+        from icici_breeze_backend.app.db.quote_snapshot_migrate import (
+            ensure_quote_snapshot_table,
+        )
+
+        ensure_quote_snapshot_table(cfg.DATA_PATH + cfg.SCRIP_DB)
+    except Exception:
+        _logger.exception("quote snapshot schema migration failed")
+
+
+def _enable_wal_mode() -> None:
+    """One-time PRAGMA journal_mode=WAL per DB file.
+
+    journal_mode is persisted in the SQLite file header, so setting it once here covers
+    every future connection regardless of call site (dozens of `sqlite3.connect(...)` sites
+    across the codebase don't need to opt in individually). Roughly halves fsyncs per write
+    versus the default rollback-journal mode and lets readers proceed during a writer.
+    """
+    import sqlite3
+
+    from icici_breeze_backend.core import config as cfg
+
+    for db_path in (cfg.DATA_PATH + cfg.USERS_DB, cfg.DATA_PATH + cfg.SCRIP_DB):
+        if not os.path.isfile(db_path):
+            continue
+        try:
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+        except Exception as e:
+            _logger.warning("Could not enable WAL mode for %s: %s", db_path, e)
+
+
 def start_application():
     _ensure_app_database()
     _ensure_scrips_database()
+    _ensure_quote_snapshot_schema()
+    _enable_wal_mode()
     _ensure_freeze_limit_files()
     import icici_breeze_backend.app.core.config as cfg
     from icici_breeze_backend.core import config as core_cfg
@@ -283,24 +368,12 @@ def start_application():
             "Set JWT_SECRET=... or ENCRYPTION_KEY=... in .env. Paths tried: %s",
             _env_paths_tried or "none",
         )
-    breeze = processor()
-    if getattr(core_cfg, "ICICI_BROKER_MODE", "live") != "mock":
-        try:
-            breeze.update_ICICImaster()
-        except Exception as e:
-            _logger.warning(
-                "ICICI master update failed at startup: %s",
-                e,
-                exc_info=_logger.isEnabledFor(logging.DEBUG),
-            )
-    else:
-        _logger.info("Skipping ICICI master download (ICICI_BROKER_MODE=mock).")
-
     from icici_breeze_backend.app.services.portal_deployment_heartbeat import (
         heartbeat_loop_enabled,
         run_heartbeat_loop,
         send_startup_heartbeat,
     )
+    from icici_breeze_backend.app.services import portal_market_outlook
 
     @asynccontextmanager
     async def _portal_heartbeat_lifespan(_app: FastAPI):
@@ -308,13 +381,137 @@ def start_application():
         if heartbeat_loop_enabled():
             await send_startup_heartbeat()
             task = asyncio.create_task(run_heartbeat_loop())
+
+        outlook_task: asyncio.Task | None = None
+        if portal_market_outlook.market_outlook_loop_enabled():
+            await portal_market_outlook.refresh_once()
+            outlook_task = asyncio.create_task(portal_market_outlook.run_market_outlook_refresh_loop())
+
+        from icici_breeze_backend.app.services.telegram_bot_poller import (
+            run_telegram_poll_loop,
+            telegram_bot_enabled,
+        )
+
+        telegram_task: asyncio.Task | None = None
+        if telegram_bot_enabled():
+            telegram_task = asyncio.create_task(run_telegram_poll_loop())
+
+        from icici_breeze_backend.app.services.reference_data.scheduler import (
+            bootstrap_reference_data_on_startup,
+        )
+        from icici_breeze_backend.app.db.redis_client import require_redis_connected
+        from icici_breeze_backend.app.services.reference_data.active_chains import (
+            reset_active_chains_registry,
+        )
+
+        # Instances upgraded from 2.0.x arrive with no Redis sidecar and no
+        # breeze-core-net (the old image wrote that recreate). Finish the install
+        # here, before anything depends on Redis. Off-thread: the Docker calls block.
+        from icici_breeze_backend.app.services.deployment_redis_selfheal import (
+            run_redis_self_heal_if_needed,
+        )
+
+        await asyncio.to_thread(run_redis_self_heal_if_needed)
+
+        require_redis_connected()
+        reset_active_chains_registry()
+        bootstrap_reference_data_on_startup()
+
+        from icici_breeze_backend.app.services.ws_quote_snapshot import (
+            load_snapshot_from_sqlite,
+            run_snapshot_flush_loop,
+            snapshot_enabled,
+        )
+
+        snapshot_flush_task: asyncio.Task | None = None
+        if snapshot_enabled():
+            # Rehydrate before serving: a restart (portal upgrade, crash) must not
+            # cost the session's captured depth, and Redis may have been wiped.
+            try:
+                load_snapshot_from_sqlite()
+            except Exception:
+                _logger.exception("Quote snapshot reload failed")
+            snapshot_flush_task = asyncio.create_task(run_snapshot_flush_loop())
+
+        from icici_breeze_backend.app.services.ws_tick_pipeline import run_pnl_quote_flush_loop
+        from icici_breeze_backend.app.services.portfolio_pnl_engine import (
+            pnl_engine_enabled,
+            run_pnl_loop,
+        )
+
+        pnl_flush_task: asyncio.Task | None = None
+        pnl_loop_task: asyncio.Task | None = None
+        if pnl_engine_enabled():
+            pnl_flush_task = asyncio.create_task(run_pnl_quote_flush_loop())
+            pnl_loop_task = asyncio.create_task(run_pnl_loop())
+
+            from icici_breeze_backend.app.services.squareoff_dispatcher import (
+                hydrate_group_rules_on_startup,
+                register_squareoff_dispatcher,
+            )
+
+            hydrate_group_rules_on_startup()
+            register_squareoff_dispatcher()
+
+        from icici_breeze_backend.app.services.breeze_websocket_manager import (
+            run_order_feed_watchdog_loop,
+        )
+
+        order_feed_watchdog_task: asyncio.Task = asyncio.create_task(
+            run_order_feed_watchdog_loop()
+        )
+
+        from icici_breeze_backend.app.services.ws_price_feed_watchdog import (
+            run_price_feed_watchdog_loop,
+        )
+
+        price_feed_watchdog_task: asyncio.Task = asyncio.create_task(
+            run_price_feed_watchdog_loop()
+        )
+
         yield
+        for watchdog_task in (order_feed_watchdog_task, price_feed_watchdog_task):
+            watchdog_task.cancel()
+            try:
+                await watchdog_task
+            except asyncio.CancelledError:
+                pass
         if task is not None:
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
+        if outlook_task is not None:
+            outlook_task.cancel()
+            try:
+                await outlook_task
+            except asyncio.CancelledError:
+                pass
+        if telegram_task is not None:
+            telegram_task.cancel()
+            try:
+                await telegram_task
+            except asyncio.CancelledError:
+                pass
+        for pnl_task in (pnl_flush_task, pnl_loop_task):
+            if pnl_task is not None:
+                pnl_task.cancel()
+                try:
+                    await pnl_task
+                except asyncio.CancelledError:
+                    pass
+        if snapshot_flush_task is not None:
+            # Cancelling triggers a final flush inside the loop's handler, so an
+            # orderly shutdown persists everything captured since the last tick.
+            snapshot_flush_task.cancel()
+            try:
+                await snapshot_flush_task
+            except asyncio.CancelledError:
+                pass
+        from icici_breeze_backend.app.services.breeze_websocket_manager import shutdown_websocket
+
+        shutdown_websocket()
 
     app = FastAPI(trust_env=True, lifespan=_portal_heartbeat_lifespan)
     # CORS: allow web UI. .env uses ALLOWED_ORIGINS; CORS_ORIGINS overrides if set.

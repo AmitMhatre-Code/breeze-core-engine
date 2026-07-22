@@ -4,21 +4,285 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/**
+ * "Terminal Pro" design tokens. Theme-swapping surfaces/text/semantic accents live here as plain
+ * CSS custom properties (swap value per :root vs .dark), then get mapped into Tailwind's
+ * --color-* namespace below via @theme inline — same pattern the app already used for
+ * --background/--foreground. Panel/elevated intentionally stay separate from the zinc scale
+ * (see globals.css palette override block) since the existing zinc usage only distinguishes
+ * ~2 surface levels but the new design wants 3.
+ *
+ * `--faint` was originally lighter than `--muted` for both themes, but that landed well under
+ * WCAG AA (2.4–3.3:1 against panel/panel2) since it's used for real label/caption text, not just
+ * decoration — it's now tuned to clear ~4.5:1 against panel/panel2 in both themes instead.
+ *
+ * `--*-on-tint` are the text/icon colours to use when the background is the matching `-tint` wash.
+ * A `-tint` is not the same lightness as `--panel`, so a base colour that clears AA as bare text on
+ * a panel can still fail on its own tint — in light theme every pair did (--up 3.11:1,
+ * --accent 3.25:1, --down 4.05:1, --amber 4.45:1, all under the 4.5:1 small-text floor; only --gtt
+ * passed at 4.87:1). Darkening the *base* tokens instead would have been wrong: they already clear
+ * AA on --panel (--down 4.63:1, --amber 5.02:1), so it would recolour every P&L figure to fix a
+ * problem those call sites don't have. Dark theme clears every pair already, so there `-on-tint`
+ * equals the base — they're still defined so components can follow ONE rule ("on a tint → use
+ * -on-tint") that is correct in both themes. See docs/ui-revamp/DESIGN_LANGUAGE.md §2.4.
+ *
+ * NB `-ink` and `-on-tint` are different: `-ink` is text on a solid *fill* (--accent-ink is white
+ * on the teal button); `-on-tint` is text on a *wash*. Not interchangeable.
+ */
 :root {
-  --background: #fafafa;
-  --foreground: #18181b;
+  --background: #eef1f5;
+  --foreground: #0e1520;
+  --panel: #ffffff;
+  --panel2: #f5f7fa;
+  --elevated: #ffffff;
+  --border: #dbe1e9;
+  --border-soft: #e8ecf2;
+  --muted: #5a6473;
+  --faint: #5f6b7e;
+  --accent: #0891b2;
+  --accent-strong: #0e7490;
+  --accent-ink: #ffffff;
+  --accent-tint: #e1f4fa;
+  --accent-bar: #0891b2;
+  --up: #0f9d6b;
+  --up-tint: #e7f6f0;
+  --up-btn: #0f9d6b;
+  --down: #dc2f44;
+  --down-tint: #fcecee;
+  --down-btn: #dc2f44;
+  --amber: #b45309;
+  --amber-tint: #fbf0de;
+  --amber-ink: #ffffff;
+  --gtt: #7c3aed;
+  --gtt-tint: #f1eafe;
+  /* Text on a -tint wash. Light theme REQUIRES these — the base tokens fail AA on their own tints. */
+  --up-on-tint: #0c7a53; /* 4.80:1 on --up-tint (--up itself was 3.11:1) */
+  --down-on-tint: #c62a3d; /* 4.84:1 on --down-tint (--down itself was 4.05:1) */
+  --amber-on-tint: #ab4f09; /* 4.83:1 on --amber-tint (--amber itself was 4.45:1) */
+  /* Deliberately == --accent-strong, not a new darker value: every accent-tint call site in the
+     app already uses text-accent-strong, which clears AA at 4.73:1. Inventing a darker accent
+     would shift pixels for no accessibility gain. (Bare --accent on --accent-tint would fail at
+     3.25:1 — but nothing pairs those, and this token is what stops anyone starting.) */
+  --accent-on-tint: #0e7490; /* 4.73:1 on --accent-tint */
+  --gtt-on-tint: #7c3aed; /* 4.87:1 — == --gtt, already passes */
+  --track: #e3e8ee;
+  --call-tint: #eaf7f0;
+  --call-head: #0f9d6b;
+  --put-tint: #fceef0;
+  --put-head: #dc2f44;
+  --atm-tint: #e1f4fa;
+  --shadow: 0 10px 34px -16px rgba(15, 25, 40, 0.2);
 }
 
 .dark {
-  --background: #09090b;
-  --foreground: #fafafa;
+  --background: #0a0c10;
+  --foreground: #e6eaf2;
+  --panel: #12151c;
+  --panel2: #0f141c;
+  --elevated: #161b24;
+  --border: #232a36;
+  --border-soft: #1b222e;
+  --muted: #8a93a6;
+  --faint: #7b859c;
+  --accent: #22d3ee;
+  --accent-strong: #22d3ee;
+  --accent-ink: #06222a;
+  --accent-tint: #0c2229;
+  --accent-bar: #22d3ee;
+  --up: #34d399;
+  --up-tint: #0f1f1b;
+  --up-btn: #0ea371;
+  --down: #f87171;
+  --down-tint: #231518;
+  --down-btn: #e5484d;
+  --amber: #fbbf24;
+  --amber-tint: #241d0e;
+  --amber-ink: #241d0e;
+  --gtt: #a78bfa;
+  --gtt-tint: #221e33;
+  /* Dark clears AA on every base/tint pair, so these equal the base tokens — defined anyway so
+     components can use one rule that is correct in both themes (see the header comment). */
+  --up-on-tint: #34d399; /* 8.87:1 */
+  --down-on-tint: #f87171; /* 6.37:1 */
+  --amber-on-tint: #fbbf24; /* 10.01:1 */
+  --accent-on-tint: #22d3ee; /* 9.10:1 */
+  --gtt-on-tint: #a78bfa; /* 5.93:1 */
+  --track: #1a2330;
+  --call-tint: #0e1d18;
+  --call-head: #123322;
+  --put-tint: #1f1417;
+  --put-head: #3a1620;
+  --atm-tint: #0c2229;
+  --shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.65);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-text: var(--foreground);
+  --color-panel: var(--panel);
+  --color-panel2: var(--panel2);
+  --color-elevated: var(--elevated);
+  --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-tint: var(--accent-tint);
+  --color-accent-bar: var(--accent-bar);
+  --color-up: var(--up);
+  --color-up-tint: var(--up-tint);
+  --color-up-btn: var(--up-btn);
+  --color-down: var(--down);
+  --color-down-tint: var(--down-tint);
+  --color-down-btn: var(--down-btn);
+  --color-amber-accent: var(--amber);
+  --color-amber-tint: var(--amber-tint);
+  --color-amber-ink: var(--amber-ink);
+  --color-gtt: var(--gtt);
+  --color-gtt-tint: var(--gtt-tint);
+  /* Text on a -tint wash: `text-down-on-tint` etc. Never `text-down` on `bg-down-tint`. */
+  --color-up-on-tint: var(--up-on-tint);
+  --color-down-on-tint: var(--down-on-tint);
+  --color-amber-on-tint: var(--amber-on-tint);
+  --color-accent-on-tint: var(--accent-on-tint);
+  --color-gtt-on-tint: var(--gtt-on-tint);
+  --color-track: var(--track);
+  --color-call-tint: var(--call-tint);
+  --color-call-head: var(--call-head);
+  --color-put-tint: var(--put-tint);
+  --color-put-head: var(--put-head);
+  --color-atm-tint: var(--atm-tint);
+  --shadow-pop: var(--shadow);
+  --font-sans: var(--font-ibm-plex-sans);
+  --font-mono: var(--font-ibm-plex-mono);
+}
+
+/**
+ * Palette overrides for Tailwind's built-in zinc/sky/emerald/red/rose/amber/violet scales.
+ * Unlike the tokens above, these are NOT theme-swapping values — every component in this app
+ * already hardcodes separate light-mode and dark: classes side by side (e.g.
+ * `text-zinc-900 dark:text-zinc-100`), so each shade name just needs to serve two disjoint
+ * half-scales: low steps (~50-400) resolve light tones picked by non-dark: classes, high steps
+ * (~600-950) resolve dark tones picked by dark: classes. This is what lets the whole app's
+ * existing `zinc-*`/`sky-*`/etc. usage (including ~90 files outside the shared .app-* classes)
+ * pick up the new Terminal Pro palette without per-file edits. Arbitrary-value utilities like
+ * `bg-[#1b1c1f]` read a literal and are unaffected by this block.
+ *
+ * `--color-zinc-500` was darkened from #7c8698 (a 3.2-3.7:1 fail against panel/panel2 as plain
+ * `text-zinc-500` — the most common raw-Tailwind "muted caption" class in the pre-redesign
+ * codebase) to clear ~4.5:1+ in its light-mode role. It's used almost exclusively as text (no
+ * bg-/border- usage), so this doesn't touch any fills. The handful of call sites that instead
+ * relied on zinc-500 as a *dark-mode* value (bare on a fixed-dark shell, or via `dark:text-zinc-500`)
+ * were repointed to zinc-400 individually rather than compromising this value both ways.
+ */
+@theme {
+  --color-zinc-50: #e6eaf2;
+  --color-zinc-100: #f5f7fa;
+  --color-zinc-200: #dbe1e9;
+  --color-zinc-300: #c3cbd6;
+  --color-zinc-400: #93a0b0;
+  --color-zinc-500: #60697c;
+  --color-zinc-600: #5c6577;
+  --color-zinc-700: #232a36;
+  --color-zinc-800: #12151c;
+  --color-zinc-900: #0a0c10;
+  --color-zinc-950: #07080a;
+
+  --color-sky-50: #f0fbfd;
+  --color-sky-100: #e1f4fa;
+  --color-sky-200: #b3f0fa;
+  --color-sky-300: #7ee6f5;
+  --color-sky-400: #4ddcf0;
+  --color-sky-500: #22d3ee;
+  --color-sky-600: #0891b2;
+  --color-sky-700: #0e7490;
+  --color-sky-800: #0c2229;
+  --color-sky-900: #0c2229;
+  --color-sky-950: #06222a;
+
+  --color-emerald-50: #f2fbf7;
+  --color-emerald-100: #e7f6f0;
+  --color-emerald-200: #c2f3e0;
+  --color-emerald-300: #8fe8c7;
+  --color-emerald-400: #5edcae;
+  --color-emerald-500: #34d399;
+  --color-emerald-600: #0f9d6b;
+  --color-emerald-700: #0ea371;
+  --color-emerald-800: #0c6b4a;
+  --color-emerald-900: #0f1f1b;
+  --color-emerald-950: #0a1512;
+
+  --color-red-50: #fef5f6;
+  --color-red-100: #fcecee;
+  --color-red-200: #fdd6d6;
+  --color-red-300: #fcb8b8;
+  --color-red-400: #fa9797;
+  --color-red-500: #f87171;
+  --color-red-600: #dc2f44;
+  --color-red-700: #b0212e;
+  --color-red-800: #7a1f28;
+  --color-red-900: #231518;
+  --color-red-950: #1a0c0d;
+
+  --color-rose-50: #fef5f6;
+  --color-rose-100: #fcecee;
+  --color-rose-200: #fdd6d6;
+  --color-rose-300: #fcb8b8;
+  --color-rose-400: #fa9797;
+  --color-rose-500: #f87171;
+  --color-rose-600: #dc2f44;
+  --color-rose-700: #b0212e;
+  --color-rose-800: #7a1f28;
+  --color-rose-900: #231518;
+  --color-rose-950: #1a0c0d;
+
+  --color-amber-50: #fefaf2;
+  --color-amber-100: #fbf0de;
+  --color-amber-200: #feeab3;
+  --color-amber-300: #fddb82;
+  --color-amber-400: #fccb52;
+  --color-amber-500: #fbbf24;
+  --color-amber-600: #d6790f;
+  --color-amber-700: #b45309;
+  --color-amber-800: #7a4d0a;
+  --color-amber-900: #241d0e;
+  --color-amber-950: #1a140a;
+
+  --color-violet-50: #f8f4fe;
+  --color-violet-100: #f1eafe;
+  --color-violet-200: #e4dafe;
+  --color-violet-300: #d2c3fd;
+  --color-violet-400: #bca6fb;
+  --color-violet-500: #a78bfa;
+  --color-violet-600: #8f5bf0;
+  --color-violet-700: #7c3aed;
+  --color-violet-800: #4c2e9e;
+  --color-violet-900: #221e33;
+  --color-violet-950: #14111f;
+
+  /**
+   * Terminal Pro type scale (docs/ui-revamp/DESIGN_LANGUAGE.md §1.3) — the single place to
+   * change font sizes app-wide. Each role below maps to a `text-*` Tailwind utility.
+   */
+  --text-micro: 0.625rem; /* 10px — eyebrows, uppercase micro-labels */
+  --text-micro--line-height: 0.875rem;
+  --text-hint: 0.6875rem; /* 11px — small helper / hint text */
+  --text-hint--line-height: 1rem;
+  --text-table: 0.71875rem; /* 11.5px — table cell data */
+  --text-table--line-height: 1rem;
+  --text-body: 0.75rem; /* 12px — body / description */
+  --text-body--line-height: 1.125rem;
+  --text-button: 0.78125rem; /* 12.5px — buttons */
+  --text-button--line-height: 1.125rem;
+  --text-heading: 0.84375rem; /* 13.5px — card/section heading, nav item */
+  --text-heading--line-height: 1.25rem;
+  --text-subtitle: 1.125rem; /* 18px — sub-screen title */
+  --text-subtitle--line-height: 1.5rem;
+  --text-title: 1.3125rem; /* 21px — screen title */
+  --text-title--line-height: 1.625rem;
 }
 
 @layer base {
@@ -28,7 +292,7 @@
   body {
     background: var(--background);
     color: var(--foreground);
-    font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-ibm-plex-sans), ui-sans-serif, system-ui, sans-serif;
     font-size: 0.875rem;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
@@ -37,57 +301,85 @@
 }
 
 @layer components {
-  /** Primary surface — tight radius, border-led (minimal shadow). */
+  /** Primary surface — border-led, no shadow (Terminal Pro §4: cards never get a drop shadow). */
   .app-card {
-    @apply rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900;
+    @apply rounded-[13px] border border-border bg-panel;
   }
   .app-card-muted {
-    @apply rounded-sm border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/60;
+    @apply rounded-lg border border-border-soft bg-panel2;
   }
   .app-table-wrap {
-    @apply overflow-x-auto rounded-md border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/40;
+    @apply overflow-x-auto rounded-[10px] border border-border bg-panel2;
     scrollbar-gutter: stable;
     scrollbar-width: thin;
-    scrollbar-color: rgb(113 113 122 / 0.45) transparent;
-  }
-  .dark .app-table-wrap {
-    scrollbar-color: rgb(161 161 170 / 0.35) transparent;
+    scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent;
   }
   .app-table-head {
-    @apply bg-zinc-100/95 text-zinc-600 dark:bg-zinc-900/80 dark:text-zinc-400;
+    @apply bg-panel2 text-faint;
   }
   .app-table-row {
-    @apply border-t border-zinc-200 dark:border-zinc-800/80;
+    @apply border-t border-border-soft;
   }
-  /** Primary actions (matches sidebar “Breeze Modern” sky brand). */
+  /** Primary actions — accent fill, accent-ink text, no border (Terminal Pro §5.1). */
   .app-btn-primary {
-    @apply inline-flex items-center justify-center rounded-sm border border-sky-600 bg-sky-600 px-3.5 py-1.5 text-sm font-medium text-white transition hover:border-sky-500 hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-sky-800 disabled:bg-sky-800 disabled:text-white dark:border-sky-500 dark:bg-sky-500 dark:hover:border-sky-400 dark:hover:bg-sky-400 dark:disabled:border-sky-800 dark:disabled:bg-sky-800;
+    @apply inline-flex items-center justify-center rounded-lg bg-accent-strong px-3.5 py-1.5 text-sm font-bold text-accent-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50;
   }
-  /** Secondary / navigation actions — sky outline. */
+  /** Secondary / ghost actions — transparent, 1px border, text color (Terminal Pro §5.2). */
   .app-btn-outline {
-    @apply inline-flex items-center justify-center rounded-sm border border-sky-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-800 transition hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400 dark:border-sky-800/70 dark:bg-zinc-900 dark:text-sky-200 dark:hover:border-sky-600 dark:hover:bg-sky-950/40 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500;
+    @apply inline-flex items-center justify-center rounded-lg border border-border bg-transparent px-3 py-1.5 text-xs font-semibold text-text transition hover:bg-border-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50;
   }
-  /** Inline & text links (same brand blue as Breeze Modern). */
+  /** Inline & text links — brand accent. */
   .app-link {
-    @apply font-medium text-sky-600 underline-offset-2 transition-colors hover:text-sky-500 hover:underline dark:text-sky-400 dark:hover:text-sky-300;
+    @apply text-accent-strong underline-offset-2 transition-colors hover:text-accent hover:underline;
   }
   button.app-link:disabled {
-    @apply cursor-not-allowed text-zinc-400 no-underline hover:text-zinc-400 dark:text-zinc-500 dark:hover:text-zinc-500;
+    @apply cursor-not-allowed text-faint no-underline hover:text-faint;
   }
   /** Neutral — Cancel / dismiss only. */
   .app-btn-secondary {
-    @apply inline-flex items-center justify-center rounded-sm border border-zinc-200 bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-200 disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-200 disabled:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500;
+    @apply inline-flex items-center justify-center rounded-lg border border-border bg-panel2 px-3 py-1.5 text-xs font-semibold text-text transition hover:bg-border-soft disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  /** Destructive confirm — solid red fill, white text (Terminal Pro §5.3). */
+  .app-btn-danger {
+    @apply inline-flex items-center justify-center rounded-lg bg-down-btn px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50;
   }
   /** Section titles inside cards */
   .app-text-heading {
-    @apply text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100;
+    @apply text-heading font-bold tracking-tight text-text;
   }
   /** Page title (H1-style) */
   .app-text-title {
-    @apply text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-50;
+    @apply text-title font-bold tracking-tight text-text;
   }
   .app-text-muted {
-    @apply text-xs leading-snug text-zinc-500 dark:text-zinc-400;
+    @apply text-body leading-snug text-muted;
+  }
+  .app-input {
+    @apply w-full rounded-t-[3px] border-0 border-b border-muted bg-background px-3 py-2 font-mono text-sm text-text placeholder:text-faint transition;
+    @apply hover:border-accent focus:border-accent-strong focus:bg-panel focus:outline-none;
+  }
+  .dark .app-input {
+    @apply bg-elevated;
+  }
+  input.app-input:is([type="date"], [type="time"], [type="datetime-local"]) {
+    @apply min-h-10 w-full min-w-0 tabular-nums;
+  }
+  input.app-input[type="number"] {
+    @apply [-moz-appearance:textfield] [appearance:textfield];
+  }
+  input.app-input[type="number"]::-webkit-inner-spin-button,
+  input.app-input[type="number"]::-webkit-outer-spin-button {
+    @apply m-0 appearance-none;
+  }
+  input.app-input:is([type="date"], [type="time"], [type="datetime-local"])::-webkit-calendar-picker-indicator {
+    @apply size-5 shrink-0 cursor-pointer rounded-md opacity-55 transition-opacity hover:opacity-90;
+  }
+  .dark input.app-input:is([type="date"], [type="time"], [type="datetime-local"]) {
+    color-scheme: dark;
+  }
+  .dark
+    input.app-input:is([type="date"], [type="time"], [type="datetime-local"])::-webkit-calendar-picker-indicator {
+    filter: invert(1) brightness(0.9);
   }
   /** Loading placeholders — contrasting fill + moving highlight (not nested app-card-muted). */
   @keyframes app-skeleton-shimmer {
@@ -105,10 +397,10 @@
     background-color: transparent;
     background-image: linear-gradient(
       90deg,
-      rgb(228 228 231) 0%,
-      rgb(244 244 245) 45%,
-      rgb(212 212 216) 55%,
-      rgb(228 228 231) 100%
+      rgb(219 225 233) 0%,
+      rgb(245 247 250) 45%,
+      rgb(195 203 214) 55%,
+      rgb(219 225 233) 100%
     );
     background-size: 200% 100%;
     background-repeat: no-repeat;
@@ -117,17 +409,12 @@
   html.dark .app-skeleton {
     background-image: linear-gradient(
       90deg,
-      rgb(39 39 42) 0%,
-      rgb(63 63 70) 45%,
-      rgb(82 82 91) 55%,
-      rgb(39 39 42) 100%
+      rgb(18 21 28) 0%,
+      rgb(35 42 54) 45%,
+      rgb(46 54 68) 55%,
+      rgb(18 21 28) 100%
     );
   }
-  /** Stronger dark-mode contrast when body text is near-white (subtitle chips, captions). */
-  html.dark .app-text-muted {
-    color: rgb(212 212 216);
-  }
-
   /** react-masonry-css gutters for strategy-builder trade tiles */
   .masonry-grid {
     display: flex;
@@ -182,97 +469,12 @@
     margin-bottom: 1.5rem;
   }
 
-  /**
-   * Order book date range surface + fetch button: html.dark descendants so styling
-   * survives if `dark:*` utilities are missed or variant ordering shifts.
-   */
-  .orders-date-surface {
-    border-radius: 0.375rem;
-    border: 1px solid rgb(228 228 231 / 0.9);
-    background-color: rgb(244 244 245 / 0.45);
-    padding: 0.75rem 1rem;
-  }
-  html.dark .orders-date-surface {
-    border-color: rgb(39 39 42);
-    background-color: rgb(9 9 11);
-  }
-  .orders-fetch-btn {
-    display: inline-flex;
-    width: 100%;
-    height: 2.5rem;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    border-radius: 0.25rem;
-    border: 1px solid rgb(2 132 199 / 0.45);
-    background-color: rgb(2 132 199);
-    padding: 0 1.25rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #fff;
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
-    transition: background-color 0.15s ease, border-color 0.15s ease;
-  }
-  .orders-fetch-btn:hover:not(:disabled) {
-    background-color: rgb(14 165 233);
-    border-color: rgb(14 165 233 / 0.5);
-  }
-  .orders-fetch-btn:focus-visible {
-    outline: none;
-    box-shadow:
-      0 0 0 2px rgb(255 255 255),
-      0 0 0 4px rgb(14 165 233 / 0.45);
-  }
-  html.dark .orders-fetch-btn:focus-visible {
-    box-shadow: 0 0 0 2px rgb(24 24 27 / 0.9), 0 0 0 4px rgb(56 189 248 / 0.35);
-  }
-  .orders-fetch-btn:disabled {
-    pointer-events: none;
-    cursor: not-allowed;
-    background-color: rgb(21 94 117);
-    border-color: rgb(21 94 117);
-    color: rgb(255 255 255 / 0.92);
-  }
-  html.dark .orders-fetch-btn:disabled {
-    background-color: rgb(12 74 110);
-    border-color: rgb(12 74 110);
-  }
-  @media (min-width: 640px) {
-    .orders-fetch-btn {
-      width: auto;
-    }
-  }
-  .orders-date-caption {
-    margin-bottom: 0.75rem;
-    font-size: 0.75rem;
-    line-height: 1.35;
-    color: rgb(113 113 122);
-  }
-  html.dark .orders-date-caption {
-    color: rgb(161 161 170);
-  }
-  .orders-date-sep {
-    flex-shrink: 0;
-    text-align: center;
-    font-size: 0.875rem;
-    color: rgb(113 113 122);
-  }
-  html.dark .orders-date-sep {
-    color: rgb(161 161 170);
-  }
-  .orders-page-desc {
-    font-size: 0.875rem;
-    line-height: 1.45;
-    color: rgb(82 82 91);
-  }
-  html.dark .orders-page-desc {
-    color: rgb(212 212 216);
-  }
   .app-alert-error {
-    @apply rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-200;
+    @apply rounded-md border border-down/40 bg-down-tint p-3 text-sm text-down-on-tint;
   }
+  /** Log / response / <pre> blocks — always wrap, never overflow (Terminal Pro §5.14 / §9 don't #8). */
   .app-pre {
-    @apply overflow-auto rounded-sm border border-zinc-200 bg-zinc-100 p-2.5 text-[11px] leading-relaxed text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400;
+    @apply overflow-auto whitespace-pre-wrap break-words rounded-[9px] border border-border bg-panel2 p-3 font-mono text-[11px] leading-relaxed text-muted;
   }
 
   /**
@@ -301,22 +503,22 @@
     height: 18px;
     margin-top: -6px;
     border-radius: 9999px;
-    border: 3px solid rgb(37 99 235);
+    border: 3px solid rgb(8 145 178);
     background: rgb(255 255 255);
     box-shadow:
-      0 0 0 1px rgb(37 99 235 / 0.12),
+      0 0 0 1px rgb(8 145 178 / 0.12),
       0 3px 8px rgb(15 23 42 / 0.16);
   }
   .dark .sb-range-slim::-webkit-slider-thumb {
-    border-color: rgb(59 130 246);
+    border-color: rgb(34 211 238);
     background: rgb(250 250 250);
     box-shadow:
-      0 0 0 1px rgb(59 130 246 / 0.2),
+      0 0 0 1px rgb(34 211 238 / 0.2),
       0 3px 8px rgb(0 0 0 / 0.35);
   }
   .sb-range-slim:focus-visible::-webkit-slider-thumb {
     box-shadow:
-      0 0 0 4px rgb(37 99 235 / 0.18),
+      0 0 0 4px rgb(8 145 178 / 0.18),
       0 3px 8px rgb(15 23 42 / 0.16);
   }
   .sb-range-slim::-moz-range-track {
@@ -328,20 +530,20 @@
   .sb-range-slim::-moz-range-thumb {
     width: 18px;
     height: 18px;
-    border: 3px solid rgb(37 99 235);
+    border: 3px solid rgb(8 145 178);
     border-radius: 9999px;
     background: rgb(255 255 255);
     box-shadow:
-      0 0 0 1px rgb(37 99 235 / 0.12),
+      0 0 0 1px rgb(8 145 178 / 0.12),
       0 3px 8px rgb(15 23 42 / 0.16);
   }
   .dark .sb-range-slim::-moz-range-thumb {
-    border-color: rgb(59 130 246);
+    border-color: rgb(34 211 238);
     background: rgb(250 250 250);
   }
   .sb-range-slim:focus-visible::-moz-range-thumb {
     box-shadow:
-      0 0 0 4px rgb(37 99 235 / 0.18),
+      0 0 0 4px rgb(8 145 178 / 0.18),
       0 3px 8px rgb(15 23 42 / 0.16);
   }
 
@@ -365,12 +567,12 @@
     box-shadow: none;
   }
   .sb-range-slim.sb-range-otm:focus-visible {
-    outline: 2px solid rgb(37 99 235);
+    outline: 2px solid rgb(8 145 178);
     outline-offset: 2px;
     border-radius: 6px;
   }
   .dark .sb-range-slim.sb-range-otm:focus-visible {
-    outline-color: rgb(96 165 250);
+    outline-color: rgb(34 211 238);
   }
   .sb-range-slim.sb-range-otm::-moz-range-thumb {
     width: 32px;
@@ -385,5 +587,31 @@
   }
   .sb-range-slim.sb-range-otm:focus-visible::-moz-range-thumb {
     box-shadow: none;
+  }
+
+  /**
+   * Slender variant for space-constrained sliders (Portfolio what-if scenario
+   * controls): thinner rail + smaller thumb than the default sb-range-slim sizing.
+   * Margin-top keeps the same centering formula as the base class: -(thumb - track) / 2.
+   */
+  .sb-range-slim.sb-range-xs {
+    height: 1rem;
+  }
+  .sb-range-slim.sb-range-xs::-webkit-slider-runnable-track {
+    height: 4px;
+  }
+  .sb-range-slim.sb-range-xs::-webkit-slider-thumb {
+    width: 13px;
+    height: 13px;
+    margin-top: -4.5px;
+    border-width: 2px;
+  }
+  .sb-range-slim.sb-range-xs::-moz-range-track {
+    height: 4px;
+  }
+  .sb-range-slim.sb-range-xs::-moz-range-thumb {
+    width: 13px;
+    height: 13px;
+    border-width: 2px;
   }
 }

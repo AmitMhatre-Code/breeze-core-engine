@@ -1,7 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { FinancialYearOption } from "@/lib/performance-data";
+import {
+  useListboxMenu,
+  useListboxOutsideClose,
+} from "@/lib/ui/use-listbox-menu";
 
 function ChevronDown({ open }: { open: boolean }) {
   return (
@@ -27,9 +31,26 @@ function ChevronDown({ open }: { open: boolean }) {
   );
 }
 
-const surface =
-  "rounded-lg border border-zinc-300/90 bg-zinc-100 text-zinc-900 shadow-sm " +
-  "dark:border-zinc-600/80 dark:bg-zinc-800 dark:text-zinc-50 dark:shadow-none";
+function CheckIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 12 12"
+      fill="none"
+      aria-hidden
+      className="shrink-0 text-accent-strong"
+    >
+      <path
+        d="M2.5 6.25L4.75 8.5L9.5 3.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 export function FinancialYearDropdown({
   years,
@@ -40,31 +61,35 @@ export function FinancialYearDropdown({
   years: FinancialYearOption[];
   selectedYear: string;
   onSelect: (y: FinancialYearOption) => void;
-  /** Visible label element id for aria-labelledby */
   labelId: string;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const listId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const listId = "financial-year-listbox";
 
   const close = useCallback(() => setOpen(false), []);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      const el = rootRef.current;
-      if (el && e.target instanceof Node && !el.contains(e.target)) close();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, close]);
+  useListboxOutsideClose(open, rootRef, close);
+
+  const { highlightIndex, handleTriggerKeyDown } = useListboxMenu({
+    open,
+    optionCount: years.length,
+    onOpen: () => setOpen(true),
+    onClose: () => {
+      close();
+      triggerRef.current?.focus();
+    },
+    onSelectIndex: (index) => {
+      const y = years[index];
+      if (y) onSelect(y);
+      close();
+      triggerRef.current?.focus();
+    },
+    triggerRef,
+    listRef,
+  });
 
   if (years.length === 0) return null;
 
@@ -72,49 +97,59 @@ export function FinancialYearDropdown({
   const display = current?.year ?? selectedYear;
 
   return (
-    <div ref={rootRef} className="relative inline-block min-w-[8.5rem] text-left">
+    <div ref={rootRef} className="relative inline-block text-left">
       <button
+        ref={triggerRef}
         type="button"
         className={[
-          "flex w-full items-center justify-between gap-3 px-4 py-2.5 text-sm font-normal transition-colors",
-          "hover:bg-zinc-200/80 dark:hover:bg-zinc-700/80",
-          "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500",
-          surface,
+          "flex h-9 w-full items-center gap-2 rounded-[9px] border px-3.5 font-mono text-sm text-foreground transition",
+          open
+            ? "border-accent bg-panel ring-2 ring-accent/25"
+            : "border-border bg-panel hover:border-accent/60",
         ].join(" ")}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
         aria-labelledby={labelId}
         onClick={() => setOpen((v) => !v)}
+        onKeyDown={handleTriggerKeyDown}
       >
-        <span className="truncate tabular-nums">{display}</span>
+        <span
+          id={labelId}
+          className="whitespace-nowrap font-sans text-table font-normal text-muted"
+        >
+          Financial year
+        </span>
+        <span className="truncate tabular-nums font-semibold">{display}</span>
         <ChevronDown open={open} />
       </button>
 
       {open ? (
         <ul
+          ref={listRef}
           id={listId}
           role="listbox"
           aria-labelledby={labelId}
-          className={[
-            "absolute right-0 top-[calc(100%+6px)] z-30 min-w-full overflow-hidden py-1",
-            surface,
-          ].join(" ")}
+          className="absolute right-0 top-[calc(100%+6px)] z-30 min-w-full overflow-hidden rounded-[10px] border border-border bg-elevated py-1 shadow-pop"
         >
-          {years.map((y) => {
+          {years.map((y, index) => {
             const selected = y.year === selectedYear;
+            const highlighted = index === highlightIndex;
             return (
               <li key={y.year} role="presentation">
                 <button
                   type="button"
                   role="option"
+                  tabIndex={-1}
+                  data-menu-index={index}
                   aria-selected={selected}
                   className={[
-                    "flex w-full items-center px-4 py-2.5 text-left text-sm font-normal transition-colors",
-                    "text-zinc-900 dark:text-zinc-50",
+                    "flex w-full items-center justify-between gap-2 px-3.5 py-2 text-left font-mono text-sm transition-colors",
                     selected
-                      ? "bg-zinc-200/90 dark:bg-zinc-700/60"
-                      : "hover:bg-zinc-200/70 dark:hover:bg-zinc-700/50",
+                      ? "bg-accent-tint font-semibold text-foreground"
+                      : highlighted
+                        ? "bg-panel2 text-foreground"
+                        : "text-muted hover:bg-panel2",
                   ].join(" ")}
                   onClick={() => {
                     onSelect(y);
@@ -122,6 +157,7 @@ export function FinancialYearDropdown({
                   }}
                 >
                   <span className="tabular-nums">{y.year}</span>
+                  {selected ? <CheckIcon /> : null}
                 </button>
               </li>
             );

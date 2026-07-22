@@ -16,6 +16,15 @@ const nextConfig = {
   experimental: {
     proxyClientMaxBodySize: "128mb",
   },
+  async redirects() {
+    return [
+      {
+        source: "/strategy-builder-new",
+        destination: "/strategy-builder",
+        permanent: true,
+      },
+    ];
+  },
   async rewrites() {
     const backendUpstream =
       process.env.BACKEND_UPSTREAM_URL ??
@@ -51,6 +60,10 @@ const nextConfig = {
         source: "/api/outlook/:path*",
         destination: `${backendUpstream}/api/outlook/:path*`,
       },
+      {
+        source: "/api/v1/hedge/strategy-options",
+        destination: `${backendUpstream}/api/v1/hedge/strategy-options`,
+      },
       { source: "/home/data", destination: `${backendUpstream}/home/data` },
       {
         source: "/deployment/license-status",
@@ -65,6 +78,14 @@ const nextConfig = {
         destination: `${backendUpstream}/dashboard/bootstrap`,
       },
       {
+        source: "/dashboard/ws-health",
+        destination: `${backendUpstream}/dashboard/ws-health`,
+      },
+      {
+        source: "/dashboard/index-quotes",
+        destination: `${backendUpstream}/dashboard/index-quotes`,
+      },
+      {
         source: "/dashboard/vix/:path*",
         destination: `${backendUpstream}/dashboard/vix/:path*`,
       },
@@ -73,8 +94,20 @@ const nextConfig = {
         destination: `${backendUpstream}/portfolio/data`,
       },
       {
-        source: "/portfolio/hedge-candidates",
-        destination: `${backendUpstream}/portfolio/hedge-candidates`,
+        source: "/portfolio/squareoff-rules",
+        destination: `${backendUpstream}/portfolio/squareoff-rules`,
+      },
+      {
+        source: "/portfolio/squareoff-rules/:path*",
+        destination: `${backendUpstream}/portfolio/squareoff-rules/:path*`,
+      },
+      {
+        source: "/portfolio/gtt-exit-orders",
+        destination: `${backendUpstream}/portfolio/gtt-exit-orders`,
+      },
+      {
+        source: "/portfolio/gtt-exit-orders/:path*",
+        destination: `${backendUpstream}/portfolio/gtt-exit-orders/:path*`,
       },
       // Do not rewrite GET /portfolio — backend returns 302 → /portfolio (same URL) and breaks
       // when proxied through Next. App Router serves `src/app/portfolio/page.tsx`.
@@ -119,10 +152,6 @@ const nextConfig = {
         destination: `${backendUpstream}/book`,
       },
       {
-        source: "/hedge/data",
-        destination: `${backendUpstream}/hedge/data`,
-      },
-      {
         source: "/vertical-spread/data",
         destination: `${backendUpstream}/vertical-spread/data`,
       },
@@ -151,6 +180,14 @@ const nextConfig = {
         destination: `${backendUpstream}/strategy-builder/chain`,
       },
       {
+        source: "/strategy-builder/payoff-quote",
+        destination: `${backendUpstream}/strategy-builder/payoff-quote`,
+      },
+      {
+        source: "/market-data/:path*",
+        destination: `${backendUpstream}/market-data/:path*`,
+      },
+      {
         source: "/strategy-builder/covered-shorts-scan",
         destination: `${backendUpstream}/strategy-builder/covered-shorts-scan`,
       },
@@ -161,6 +198,14 @@ const nextConfig = {
       {
         source: "/strategy-builder/propose-trades/jobs/:path*",
         destination: `${backendUpstream}/strategy-builder/propose-trades/jobs/:path*`,
+      },
+      {
+        source: "/strategy-builder/span-baseline",
+        destination: `${backendUpstream}/strategy-builder/span-baseline`,
+      },
+      {
+        source: "/strategy-builder/span-portfolio-margin",
+        destination: `${backendUpstream}/strategy-builder/span-portfolio-margin`,
       },
       {
         source: "/strategy-builder/margin",

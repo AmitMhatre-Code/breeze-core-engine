@@ -7,24 +7,29 @@ import time
 from breeze_connect import BreezeConnect
 import json
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_for_broker, strike_key, strikes_sorted
 from icici_breeze_backend.app.core.timezone import IST, now_ist, today_ist_date
 import requests
 import zipfile
 import os
 from pathlib import Path
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 import sqlite3
 import csv
 import re
 from markupsafe import Markup
 
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from icici_breeze_backend.app.repositories import parked_orders as parked_orders_repo
 if TYPE_CHECKING:
     from icici_breeze_backend.audit.strategy_builder_audit import StrategyBuilderAuditSession
+from icici_breeze_backend.app.services.market_calendar import (
+    is_market_open,
+    market_closed_reason,
+)
 from icici_breeze_backend.app.domain.order import ParkedOrderItem, ParkedOrderListItem
 
 # Import ICICI client for real-time portfolio/orders fetch (Phase 5 US3)
@@ -34,6 +39,10 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
     MARGIN_SOURCE_EXCHANGE,
     resolve_exchange_baseline_margin,
 )
+from icici_breeze_backend.app.services.options_strategy_engine.helpers import elm_addon
+from icici_breeze_backend.app.services.options_strategy_engine.types import TradeLeg
+from icici_breeze_backend.app.services.reference_data.bhavcopy_store import _lookup_bhav_row
+from icici_breeze_backend.app.services.leg_order_redistribution import LegRedistributionPlan
 
 _logger = logging.getLogger(__name__)
 
@@ -42,21 +51,6 @@ from icici_breeze_backend.app.services.icici_api_pacing import (
     is_breeze_rate_limited,
     is_icici_daily_limit_exceeded,
 )
-
-
-@dataclass
-class OptionChainBackoff:
-    """Legacy holder for per-run pause config; pacing uses GlobalIciciApiLimiter."""
-
-    pause_seconds: float = 0.5
-    consecutive_rate_limited: int = 0
-
-    def on_rate_limit(self) -> float:
-        self.consecutive_rate_limited += 1
-        return float(max(0.5, self.pause_seconds))
-
-    def on_success(self) -> None:
-        self.consecutive_rate_limited = 0
 
 
 def _scrip_master_connection():
@@ -78,6 +72,13 @@ def _icici_option_chain_enums(product_type: str, right: str) -> tuple[str, str]:
     return pt, rt
 
 
+def _positive_number(raw: Any) -> bool:
+    try:
+        return float(raw) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _uncovered_scan_row_has_bid_side(i: dict, exchange_code: str) -> bool:
     """Selling needs bid-side interest; BFO often returns total_buy_qty=0 in chain while LTP/bid exist (see get_full_option_chain BFO note)."""
     try:
@@ -85,7 +86,10 @@ def _uncovered_scan_row_has_bid_side(i: dict, exchange_code: str) -> bool:
             return True
     except (TypeError, ValueError):
         pass
-    if exchange_code != cfg.BFO:
+    # `None` means the source carried no order book (bhavcopy, or BSE post-close),
+    # which is not evidence that nobody is bidding -- fall through to price
+    # evidence on every exchange rather than declaring the strike unsellable.
+    if i.get("total_buy_qty") is not None and exchange_code != cfg.BFO:
         return False
     try:
         if float(i.get("best_bid_price") or 0) > 0:
@@ -105,6 +109,14 @@ def _expiry_api_to_display(expiry: str) -> str:
     s = expiry.removesuffix("T06:00:00.000Z")
     fmt = "%Y-%m-%d" if len(s.split("-")[0]) == 4 else "%d-%b-%Y"
     return datetime.datetime.strptime(s, fmt).strftime("%d-%b-%Y")
+
+
+def _scrip_master_expiry_sql_values(expiry: str) -> tuple[str, ...]:
+    from icici_breeze_backend.app.services.reference_data.scrip_master_sql import (
+        scrip_master_expiry_sql_values,
+    )
+
+    return scrip_master_expiry_sql_values(expiry)
 
 
 def _expiry_to_breeze_place_order(expiry_date) -> str:
@@ -202,6 +214,12 @@ def _icici_error(error_msg: str, status: int = 400) -> dict:
     return {"Status": status, "Error": error_msg}
 
 
+AGGRESSIVE_LIMIT_DISABLED_MESSAGE = (
+    "Aggressive limit orders are temporarily disabled until ICICI implements native support. "
+    "Place the order with an explicit limit price instead."
+)
+
+
 def _single_line_preview(text: str, max_len: int = 400) -> str:
     """Collapse whitespace for compact log lines."""
     one = " ".join(str(text).split())
@@ -240,6 +258,20 @@ def _format_inr_integer_indian(value) -> str:
     return "₹" + _format_indian_integer_digits(int(round(v)))
 
 
+def _format_inr_2dp_indian(value) -> str:
+    """Rupees with 2 decimal places and Indian-style commas on the integer part."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "₹0.00"
+    if math.isnan(v) or math.isinf(v):
+        return "₹0.00"
+    sign = "-" if v < 0 else ""
+    cents = round(abs(v) * 100)
+    rupees, paise = divmod(cents, 100)
+    return f"{sign}₹{_format_indian_integer_digits(rupees)}.{paise:02d}"
+
+
 def _normalize_icici_response(data: dict) -> tuple:
     """Extract status, success payload, and error message from ICICI response (handles Status/status, etc.)."""
     status = data.get("Status") or data.get("status")
@@ -271,6 +303,47 @@ def _empty_portfolio_positions_result() -> dict:
 def _quote_success_rows(quote: dict | None) -> list:
     rows = (quote or {}).get("Success")
     return rows if isinstance(rows, list) else []
+
+
+# Margin only needs recomputing when a leg's identity actually changes (new
+# contract, qty, or action) -- not on a timer. The cache key encodes that
+# identity, so an unchanged leg reuses the same span_margin_required across
+# repeated /portfolio/data refreshes instead of re-calling margin_calculator.
+_PORTFOLIO_MARGIN_CACHE_TTL_SECONDS = 24 * 60 * 60
+
+
+def _portfolio_margin_cache_key(
+    user_id: str, exchange_code: str, stock_code: str, expiry_date: str,
+    strike_price: str, right: str, action: str, quantity: str,
+) -> str:
+    return (
+        f"portfolio_margin:{user_id}:{exchange_code}:{stock_code}:{expiry_date}:"
+        f"{strike_price}:{right}:{action}:{quantity}"
+    )
+
+
+def _cached_span_margin_required(cache_key: str) -> float | None:
+    from icici_breeze_backend.app.db.redis_client import cache_get_json
+
+    try:
+        cached = cache_get_json(cache_key)
+    except Exception:
+        return None
+    if cached is None:
+        return None
+    try:
+        return float(cached)
+    except (TypeError, ValueError):
+        return None
+
+
+def _remember_span_margin_required(cache_key: str, span_margin_required: float) -> None:
+    from icici_breeze_backend.app.db.redis_client import cache_set_json
+
+    try:
+        cache_set_json(cache_key, span_margin_required, ex=_PORTFOLIO_MARGIN_CACHE_TTL_SECONDS)
+    except Exception:
+        pass
 
 
 def build_margin_situation_from_raw(margin: dict | None, *, target_margin_ute: float = 100) -> dict:
@@ -411,13 +484,60 @@ class processor():
         except Exception:
             return MARGIN_SOURCE_BREEZE
 
+    def _portfolio_baseline_span_margin(
+        self,
+        exchange_code: str,
+        legs: list,
+        *,
+        spot: float | None = None,
+        iv: float | None = None,
+        time_years: float | None = None,
+    ) -> dict[str, Any]:
+        """Portfolio SPAN from exchange baseline when every leg resolves with risk arrays."""
+        from icici_breeze_backend.app.services.reference_data.span_portfolio_scan import (
+            resolve_portfolio_span_margin,
+        )
+
+        if not legs:
+            return {"found": False}
+        stock_code = str(legs[0].get("stock_code") or "").strip()
+        expiry_raw = str(legs[0].get("expiry_date") or "").strip()
+        if not stock_code or not expiry_raw:
+            return {"found": False}
+        if "T" in expiry_raw:
+            expiry_display = _expiry_api_to_display(expiry_raw)
+        else:
+            expiry_display = expiry_raw
+        for leg in legs[1:]:
+            sc = str(leg.get("stock_code") or "").strip()
+            ed = str(leg.get("expiry_date") or "").strip()
+            if "T" in ed:
+                ed = _expiry_api_to_display(ed)
+            if sc != stock_code or ed != expiry_display:
+                return {"found": False}
+        if time_years is None and expiry_display:
+            from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
+                days_to_expiry,
+            )
+
+            time_years = max(1, days_to_expiry(expiry_display)) / 365.0
+        return resolve_portfolio_span_margin(
+            exchange_code,
+            stock_code,
+            expiry_display,
+            legs,
+            spot=spot,
+            time_years=time_years,
+            sigma=iv,
+        )
+
     def _resolve_leg_margin_with_source(
         self,
         user_id: str,
         exchange_code: str,
         stock_code: str,
         expiry_display: str,
-        strike_price: int,
+        strike_price: Strike,
         right: str,
         quantity: int,
         margin_source: str,
@@ -430,7 +550,7 @@ class processor():
                 exchange_code=exchange_code,
                 stock_code=stock_code,
                 expiry_display=expiry_display,
-                strike_price=int(strike_price),
+                strike_price=parse_strike(strike_price) or 0,
                 right=right,
                 quantity=int(quantity),
             )
@@ -448,7 +568,7 @@ class processor():
                     "type": "baseline_missing_contract",
                     "stock_code": stock_code,
                     "expiry_date": expiry_display,
-                    "strike_price": int(strike_price),
+                    "strike_price": parse_strike(strike_price) or 0,
                     "right": right,
                     "message": "Contract missing in Exchange Risk Baseline; Breeze fallback used.",
                 }
@@ -460,7 +580,7 @@ class processor():
             out = breeze.margin_calculator(
                 [
                     {
-                        "strike_price": int(strike_price),
+                        "strike_price": strike_for_broker(strike_price),
                         "quantity": int(quantity),
                         "product": product,
                         "action": action,
@@ -545,22 +665,35 @@ class processor():
         # Session retrieval removed. Callers should pass broker token per-request.
         return {'Status': 400, 'Error': 'Session persistence disabled; use per-request tokens'}
 
+    def _resolve_broker_token(self, user_id):
+        """Broker token for the current call: prefer the live request's cookie-derived
+        ContextVar; fall back to the persisted, encrypted per-user token (written once
+        at login, cleared on logout -- see app/repositories/broker_session.py) so
+        background work with no HTTP request in scope (e.g. PB/SL square-off dispatch)
+        can still get a session for the rest of the trading day. The persisted token
+        expires with the token's own end-of-day IST lifetime regardless of whether any
+        request has come in recently."""
+        from icici_breeze_backend.app.auth.context import get_broker_token_for_request
+        from icici_breeze_backend.app.repositories.broker_session import get_broker_session_token
+
+        return get_broker_token_for_request() or get_broker_session_token(user_id) or ""
+
     def get_session_breeze(self, user_id):
         """Create one BreezeConnect session per request and reuse it (ICICI Invalid Checksum if we call generate_session multiple times).
-        Uses broker token from HttpOnly cookie; fetches api_key and reconstructs secret from DB.
+        Uses broker token from HttpOnly cookie (or, absent a request, the persisted per-user token); fetches api_key and reconstructs secret from DB.
         Cross-request: consults breeze_session_cache (keyed by user_id + broker_token, TTL till midnight IST or config).
         """
         try:
-            from icici_breeze_backend.app.auth.context import get_broker_token_for_request, get_breeze_session_for_request, set_breeze_session_for_request
+            from icici_breeze_backend.app.auth.context import get_breeze_session_for_request, set_breeze_session_for_request
             from icici_breeze_backend.app.services.breeze_session_cache import get as cache_get, set as cache_set
 
             # Reuse session created earlier in this request
             cached = get_breeze_session_for_request()
             if cached is not None:
                 return cached
-            broker_token = get_broker_token_for_request() or ""
+            broker_token = self._resolve_broker_token(user_id)
             if not broker_token:
-                _logger.warning("get_session_breeze: no broker token in request (cookie missing or empty) user_id=%s", user_id)
+                _logger.warning("get_session_breeze: no broker token in request or persisted store user_id=%s", user_id)
                 return None
             if getattr(cfg, "ICICI_BROKER_MODE", "live") == "mock":
                 from icici_breeze_backend.dev.mock_broker import MockBreezeSdk
@@ -596,26 +729,33 @@ class processor():
             return None
 
     def get_session_token(self, user_id):
-        """Return broker token from request context (HttpOnly cookie)."""
+        """Return broker token from request context (HttpOnly cookie), or the last-seen token if none."""
         try:
-            from icici_breeze_backend.app.auth.context import get_broker_token_for_request
-            return get_broker_token_for_request()
+            return self._resolve_broker_token(user_id) or None
         except Exception:
             return None
 
     def _maybe_evict_session(self, user_id: str, response: dict | None) -> None:
         """If ICICI response indicates auth/session failure, evict session cache so next request creates fresh session."""
         try:
-            from icici_breeze_backend.app.auth.context import get_broker_token_for_request
-            from icici_breeze_backend.app.services.breeze_session_cache import evict_if_icici_auth_failure
-            broker_token = get_broker_token_for_request() or ""
+            from icici_breeze_backend.app.services.breeze_session_cache import evict_if_icici_auth_failure, is_icici_auth_failure
+            broker_token = self._resolve_broker_token(user_id)
             evict_if_icici_auth_failure(user_id, broker_token, response)
+            if is_icici_auth_failure(response):
+                from icici_breeze_backend.app.services.customer_details_cache import evict as evict_customer_details
+                evict_customer_details(user_id, broker_token)
         except Exception:
             pass
 
     def get_customer_details(self, user_id):
-        breeze = self.get_session_breeze(user_id)
+        from icici_breeze_backend.app.services import customer_details_cache
+
         session_token = self.get_session_token(user_id)
+        cached = customer_details_cache.get(user_id, session_token or "")
+        if cached is not None:
+            return cached
+
+        breeze = self.get_session_breeze(user_id)
         if breeze is None:
             return None
         max_retries = getattr(cfg, "ICICI_MAX_RETRIES", 3) or 3
@@ -634,6 +774,8 @@ class processor():
                 if _s != 200:
                     _logger.warning("get_customer_details: API returned status=%s error=%r user_id=%s", _s, _e, user_id)
                 self._maybe_evict_session(user_id, customer)
+                if _s == 200:
+                    customer_details_cache.set(user_id, session_token or "", customer)
                 return customer
             except Exception as e:
                 if _is_transient(e) and attempt < max_retries - 1:
@@ -727,22 +869,28 @@ class processor():
 
             if sell_options['Status'] == 200:
                 sell_leg = sell_options['Success'][0] # only one sell leg
-                breeze = self.get_session_breeze(user_id)
-                try:
-                    _pt, _rt = _icici_option_chain_enums(product_type, right)
-                    options_chain = breeze.get_option_chain_quotes(stock_code=stock_code,exchange_code=exchange_code,product_type=_pt,expiry_date=expiry_date,right=_rt)
-                except Exception as e:
-                    options_chain = _icici_error(f"Error calling ICICI Breeze API get_option_chain_quotes(stock_code={stock_code},exchange_code={exchange_code},product_type={product_type},expiry_date={expiry_date},right={right}): {e}")
+                from icici_breeze_backend.app.services.quote_source_router import fetch_chain_side_icici_response
+
+                options_chain = fetch_chain_side_icici_response(
+                    self, user_id, stock_code, exchange_code, expiry_date, right
+                )
 
                 # Identifying the best option to BUY inside the defined range
                 options = []
                 for i in options_chain.get('Success') or []:
-                    if int(i["total_buy_qty"]) > 0 and ((right == cfg.CALL and int(i["strike_price"]) < int(range_lower) and int(i["strike_price"]) > float(i['spot_price'])) or (right == cfg.PUT and int(i["strike_price"]) > int(range_upper) and int(i["strike_price"]) < float(i['spot_price'])) ):
+                    strike_f = parse_strike(i["strike_price"])
+                    if strike_f is None:
+                        continue
+                    # None = unknown book (bhavcopy / BSE post-close), which must not
+                    # exclude the strike the way a confirmed zero does.
+                    _buy_qty = i.get("total_buy_qty")
+                    _has_bid_side = _buy_qty is None or int(_buy_qty or 0) > 0
+                    if _has_bid_side and ((right == cfg.CALL and strike_f < range_lower and strike_f > float(i['spot_price'])) or (right == cfg.PUT and strike_f > range_upper and strike_f < float(i['spot_price'])) ):
                         temp = {}
                         temp['stock_code'] = stock_code
                         temp['sell_leg'] = sell_leg
                         temp['buy_leg'] = {}
-                        temp['buy_leg']['strike_price'] = int(i["strike_price"])
+                        temp['buy_leg']['strike_price'] = strike_f
                         temp['buy_leg']['ltp'] = i['ltp']
                         temp['buy_leg']['best_bid_price'] = i['best_bid_price']
                         temp['buy_leg']['best_offer_price'] = i['best_offer_price']
@@ -750,17 +898,22 @@ class processor():
                         temp['buy_leg']['total_sell_qty'] = i['total_sell_qty']
                         temp['buy_leg']['spot_price'] = i['spot_price']
                         temp['buy_leg']['spot_distance'] = abs(float(i['spot_price']) - float(i["strike_price"])) / float(i["strike_price"])
-                        temp['buy_leg']['buy_sell_ratio'] = int(i['total_buy_qty'])/int(i['total_sell_qty'])
+                        _sell_qty = i.get('total_sell_qty')
+                        temp['buy_leg']['buy_sell_ratio'] = (
+                            int(_buy_qty) / int(_sell_qty)
+                            if _buy_qty is not None and _sell_qty not in (None, 0)
+                            else None
+                        )
                         temp['expiry_date'] = _expiry_api_to_display(expiry_date)
                         temp['right'] = right
 
                         temp['buy_leg']['quantity'] = math.floor(sell_leg['premium'] / temp['buy_leg']['best_offer_price'] / lot_size) * lot_size
-                        if temp['buy_leg']['quantity'] <= int(i['total_sell_qty']):
+                        if _sell_qty is None or temp['buy_leg']['quantity'] <= int(_sell_qty):
                             temp['buy_leg']['best_offer_price'] = i["best_offer_price"]
                             if right == cfg.CALL:
-                                temp['profit'] = temp['buy_leg']['quantity'] * (range_lower - int(i["strike_price"]))
+                                temp['profit'] = temp['buy_leg']['quantity'] * (range_lower - strike_f)
                             else:
-                                temp['profit'] = temp['buy_leg']['quantity'] * (int(i["strike_price"]) - range_upper)
+                                temp['profit'] = temp['buy_leg']['quantity'] * (strike_f - range_upper)
                             days_to_expiry = _days_to_expiry(expiry_date)
                             temp['carry_returns'] = (temp['profit']/(limits * 100000)) * (365/days_to_expiry) * 100
                             options.append(copy.deepcopy(temp))
@@ -881,12 +1034,11 @@ class processor():
         product_type = cfg.OPTIONS
         action = cfg.SELL
         sorted_options = {}
-        breeze = self.get_session_breeze(user_id)
-        try:
-            _pt, _rt = _icici_option_chain_enums(product_type, right)
-            options_chain = breeze.get_option_chain_quotes(stock_code=stock_code,exchange_code=exchange_code,product_type=_pt,expiry_date=expiry_date,right=_rt)
-        except Exception as e:
-            options_chain = _icici_error(f"Error calling ICICI Breeze API get_option_chain_quotes(stock_code={stock_code},exchange_code={exchange_code},product_type={product_type},expiry_date={expiry_date},right={right}): {e}")
+        from icici_breeze_backend.app.services.quote_source_router import fetch_chain_side_icici_response
+
+        options_chain = fetch_chain_side_icici_response(
+            self, user_id, stock_code, exchange_code, expiry_date, right
+        )
 
         if options_chain.get('Status') == 200:
             # Calculating the premium that can be collected for every Liquid OTM CE option
@@ -898,10 +1050,12 @@ class processor():
             max_pct = max(min_pct, float(otm_max))
             for i in options_chain.get('Success') or []:
                 spot = float(i["spot_price"])
-                strike = int(i["strike_price"])
+                strike = parse_strike(i["strike_price"])
+                if strike is None:
+                    continue
                 in_range = (
-                    (right == cfg.CALL and strike >= int(spot * (1 + min_pct / 100)) and strike <= int(spot * (1 + max_pct / 100)))
-                    or (right == cfg.PUT and strike <= int(spot * (1 - min_pct / 100)) and strike >= int(spot * (1 - max_pct / 100)))
+                    (right == cfg.CALL and strike >= spot * (1 + min_pct / 100) and strike <= spot * (1 + max_pct / 100))
+                    or (right == cfg.PUT and strike <= spot * (1 - min_pct / 100) and strike >= spot * (1 - min_pct / 100))
                 )
                 if _uncovered_scan_row_has_bid_side(i, exchange_code) and in_range:
                     range_eligible_rows += 1
@@ -911,7 +1065,7 @@ class processor():
                         exchange_code=exchange_code,
                         stock_code=stock_code,
                         expiry_display=_expiry_api_to_display(expiry_date),
-                        strike_price=int(i["strike_price"]),
+                        strike_price=strike,
                         right=right,
                         quantity=int(lot_size),
                         margin_source=margin_source,
@@ -924,7 +1078,7 @@ class processor():
 
                     temp = {}
                     temp['stock_code'] = stock_code
-                    temp['strike_price'] = int(i["strike_price"])
+                    temp['strike_price'] = strike
                     temp['ltp'] = i['ltp']
                     temp['best_bid_price'] = i['best_bid_price']
                     temp['best_offer_price'] = i['best_offer_price']
@@ -938,13 +1092,18 @@ class processor():
                         if elm == cfg.CHECKED:
                             margin = margin + (float(temp['spot_price']) * float(lot_size) * cfg.ELM)
                         temp['quantity'] = math.floor(limits * 100000 / margin) * lot_size
+                        depth_known = i.get("total_buy_qty") is not None
                         buy_cap = int(i.get("total_buy_qty") or 0)
                         book_ok = buy_cap > 0 and temp["quantity"] <= buy_cap
-                        if exchange_code == cfg.BFO and buy_cap == 0 and temp["quantity"] > 0:
+                        # Can't size against a book we don't have: an unknown or
+                        # BSE-wiped book must not cap the line to zero.
+                        if not depth_known and temp["quantity"] > 0:
+                            book_ok = True
+                        elif exchange_code == cfg.BFO and buy_cap == 0 and temp["quantity"] > 0:
                             book_ok = True
                         if book_ok:
                             bid_for_prem = float(i.get("best_bid_price") or 0)
-                            if bid_for_prem <= 0 and exchange_code == cfg.BFO:
+                            if bid_for_prem <= 0:
                                 bid_for_prem = float(i.get("ltp") or 0)
                             temp['best_bid_price'] = i["best_bid_price"]
                             temp['premium'] = temp['quantity'] * bid_for_prem
@@ -1017,7 +1176,9 @@ class processor():
                         sorted_options['Status'] = 400
                         sorted_options['Error'] = f"Error calling ICICI Breeze API get_quote({stock_code},{expiry_date},{product_type},{right},{strike_price}): {e}"
                 else:
-                    if int(option['total_sell_qty']) > 0:
+                    if option.get('total_sell_qty') is None or option.get('total_buy_qty') is None:
+                        option['buy_sell_ratio'] = None
+                    elif int(option['total_sell_qty']) > 0:
                         option['buy_sell_ratio'] = int(option['total_buy_qty'])/int(option['total_sell_qty'])
                     else:
                         option['buy_sell_ratio'] = "NA"
@@ -1096,6 +1257,7 @@ class processor():
                 order['cancelable'] = True
             else:
                 order['cancelable'] = False
+            order['modifiable'] = order['cancelable']
 
         return orders
 
@@ -1177,10 +1339,8 @@ class processor():
             return {}
 
         def _strike_key(raw: Any) -> str:
-            try:
-                return "{:.0f}".format(float(raw))
-            except (TypeError, ValueError):
-                return str(raw or "").strip()
+            key = strike_key(raw)
+            return key if key else str(raw or "").strip()
 
         def _expiry_display(raw: str) -> str:
             s = str(raw or "").strip()
@@ -1220,28 +1380,19 @@ class processor():
             bucket = (stock_code, expiry_display, exchange_code, right)
             chain_buckets.setdefault(bucket, set()).add(strike)
 
-        breeze = self.get_session_breeze(user_id)
+        from icici_breeze_backend.app.services.quote_source_router import fetch_chain_side_icici_response
+
         strike_ltps: dict[tuple[str, str, str, str, str], float | None] = {}
 
         for (stock_code, expiry_display, exchange_code, right), strikes in chain_buckets.items():
-            if breeze is None:
-                for strike in strikes:
-                    strike_ltps[(stock_code, expiry_display, strike, right, exchange_code)] = None
-                continue
             try:
-                expiry_api = _expiry_to_breeze_place_order(expiry_display)
-            except (ValueError, TypeError):
-                for strike in strikes:
-                    strike_ltps[(stock_code, expiry_display, strike, right, exchange_code)] = None
-                continue
-            _pt, _rt = _icici_option_chain_enums(cfg.OPTIONS, right)
-            try:
-                chain = breeze.get_option_chain_quotes(
-                    stock_code=stock_code,
-                    exchange_code=exchange_code,
-                    product_type=_pt,
-                    expiry_date=expiry_api,
-                    right=_rt,
+                chain = fetch_chain_side_icici_response(
+                    self,
+                    user_id,
+                    stock_code,
+                    exchange_code,
+                    expiry_display,
+                    right,
                 )
             except Exception as e:
                 _logger.warning(
@@ -1338,6 +1489,45 @@ class processor():
 
         return messages
 
+    def build_modify_leg_messages(
+        self,
+        contract_label: str,
+        old_quantity: int,
+        new_quantity: int,
+        old_price: float | None,
+        new_price: float | None,
+        result: dict,
+    ) -> list[dict]:
+        messages: list[dict] = []
+        did_anything = bool(result.get("cancelled") or result.get("modified") or result.get("placed"))
+        if did_anything:
+            parts = [f"Modified {contract_label}"]
+            if old_quantity != new_quantity:
+                parts.append(
+                    f"quantity {_format_indian_integer_digits(old_quantity)} "
+                    f"→ {_format_indian_integer_digits(new_quantity)}"
+                )
+            if old_price is not None and new_price is not None and old_price != new_price:
+                parts.append(
+                    f"price {_format_inr_2dp_indian(old_price)} → {_format_inr_2dp_indian(new_price)}"
+                )
+            messages.append({"type": cfg.SUCCESS, "message": ": ".join([parts[0], ", ".join(parts[1:])]) if len(parts) > 1 else parts[0]})
+
+        failures = result.get("failures") or []
+        if failures:
+            fail_parts = [f"{ref}: {err}" for ref, err in failures[:5]]
+            extra = len(failures) - 5
+            tail = f" (+{extra} more)" if extra > 0 else ""
+            messages.append(
+                {
+                    "type": cfg.DANGER,
+                    "message": f"Failed to modify {len(failures)} order(s) for {contract_label}: "
+                    + "; ".join(fail_parts)
+                    + tail,
+                }
+            )
+        return messages
+
     def cancel_order_single(self, user_id, order_ref: str) -> dict:
         """Cancel one order; used for client-paced cancels on 429."""
         breeze = self.get_session_breeze(user_id)
@@ -1365,6 +1555,66 @@ class processor():
             return {"success": True, "rate_limited": False, "daily_limit_exhausted": False, "error": None}
         err = str(response.get("Error") or "Unknown error")
         rl, daily_exhausted = _order_rate_limit_flags(response)
+        _logger.warning(
+            "cancel_order_single failed: user_id=%s order_id=%s exchange_code=%s status=%s error=%s rate_limited=%s",
+            user_id, order_id, exchange_code, response.get("Status"), err, rl,
+        )
+        return {
+            "success": False,
+            "rate_limited": rl,
+            "daily_limit_exhausted": daily_exhausted,
+            "error": err,
+        }
+
+    def modify_order_single(
+        self,
+        user_id,
+        order_ref: str,
+        *,
+        quantity: str | None = None,
+        price: str | None = None,
+    ) -> dict:
+        """Modify quantity/price of one order; building block for leg-modify execution."""
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return {
+                "success": False,
+                "rate_limited": False,
+                "error": "Unable to connect to broker. Please log out and log back in.",
+            }
+        order_id = order_ref
+        exchange_code = cfg.NFO
+        if isinstance(order_ref, str) and "|" in order_ref:
+            order_id, exchange_code = order_ref.split("|", 1)
+        try:
+            # ICICI's modify_order rejects a sparse patch (order_id/exchange_code/
+            # quantity/price only) with a generic 500 — it needs the same full
+            # field set as place_order, or it 500s with no useful detail.
+            response = breeze.modify_order(
+                order_id=order_id,
+                exchange_code=exchange_code,
+                order_type=str(cfg.LIMIT).strip().lower(),
+                stoploss="",
+                quantity=str(quantity) if quantity not in (None, "") else "",
+                price=str(price) if price not in (None, "") else "",
+                validity="day",
+                disclosed_quantity="0",
+                validity_date=str(today_ist_date()) + "T06:00:00.000Z",
+            )
+        except Exception as e:
+            response = _icici_error(
+                f"Error calling ICICI Breeze API modify_order(exchange_code={exchange_code},order_id={order_id}): {e}"
+            )
+
+        self._maybe_evict_session(user_id, response)
+        if response.get("Status") == 200:
+            return {"success": True, "rate_limited": False, "daily_limit_exhausted": False, "error": None}
+        err = str(response.get("Error") or "Unknown error")
+        rl, daily_exhausted = _order_rate_limit_flags(response)
+        _logger.warning(
+            "modify_order_single failed: user_id=%s order_id=%s exchange_code=%s quantity=%s price=%s status=%s error=%s rate_limited=%s",
+            user_id, order_id, exchange_code, quantity, price, response.get("Status"), err, rl,
+        )
         return {
             "success": False,
             "rate_limited": rl,
@@ -1384,6 +1634,114 @@ class processor():
         return self.build_cancel_order_messages(
             success_idx, failures, list(orders), cancel_details
         )
+
+    def execute_leg_modification(
+        self,
+        user_id,
+        plan: LegRedistributionPlan,
+        *,
+        contract: dict,
+        new_price: str | None,
+        current_price: str | None,
+    ) -> dict:
+        """Carry out a leg-modify plan: cancel/modify existing orders, place new chunks."""
+        from icici_breeze_backend.audit.logger import AuditLogger, OperationType
+
+        audit = AuditLogger(None)
+        cancelled: list[str] = []
+        modified: list[dict] = []
+        placed: list[dict] = []
+        failures: list[tuple[str, str]] = []
+        rate_limited = False
+        price_changed = (
+            new_price is not None
+            and str(new_price).strip() != ""
+            and str(new_price) != str(current_price)
+        )
+
+        for order_id in plan.cancel_order_ids:
+            if rate_limited:
+                break
+            one = self.cancel_order_single(user_id, order_id)
+            if one["success"]:
+                cancelled.append(order_id)
+                audit.log_operation(user_id, OperationType.ORDER_CANCEL, "Order", order_id, action_status="success")
+            else:
+                failures.append((order_id, str(one.get("error") or "Unknown error")))
+                audit.log_operation(
+                    user_id, OperationType.ORDER_CANCEL, "Order", order_id,
+                    action_status="failure", error_details=str(one.get("error") or ""),
+                )
+                if one.get("rate_limited"):
+                    rate_limited = True
+
+        for item in plan.modify:
+            if rate_limited:
+                break
+            order_id = item["order_id"]
+            # ICICI's modify_order rejects a quantity-only change with a generic
+            # error unless price is resent too — omitting it isn't treated as
+            # "leave price alone", so always resend the (possibly unchanged) price.
+            one = self.modify_order_single(
+                user_id,
+                f"{order_id}|{item['exchange_code']}",
+                quantity=str(item["quantity"]),
+                price=str(new_price) if price_changed else (
+                    str(current_price) if current_price not in (None, "") else None
+                ),
+            )
+            if one["success"]:
+                modified.append({"order_id": order_id, "quantity": item["quantity"], "price": new_price if price_changed else current_price})
+                audit.log_operation(user_id, OperationType.ORDER_MODIFY, "Order", order_id, action_status="success")
+            else:
+                failures.append((order_id, str(one.get("error") or "Unknown error")))
+                audit.log_operation(
+                    user_id, OperationType.ORDER_MODIFY, "Order", order_id,
+                    action_status="failure", error_details=str(one.get("error") or ""),
+                )
+                if one.get("rate_limited"):
+                    rate_limited = True
+
+        for qty in plan.place_new_quantities:
+            if rate_limited:
+                break
+            response = self.place_order(
+                user_id=user_id,
+                product_type=contract["product_type"],
+                stock_code=contract["stock_code"],
+                action=contract["action"],
+                strike_price=contract["strike_price"],
+                right=contract["right"],
+                price=str(new_price if price_changed else current_price),
+                expiry_date=contract["expiry_date"],
+                quantity=qty,
+                exchange_code=contract["exchange_code"],
+            )
+            ok = isinstance(response, dict) and response.get("Status") == 200
+            order_id = (response or {}).get("Success", {}).get("order_id") if ok else None
+            if ok and order_id:
+                placed.append({"order_id": str(order_id), "quantity": qty, "price": new_price if price_changed else current_price})
+                audit.log_operation(user_id, OperationType.ORDER_PLACE, "Order", str(order_id), action_status="success")
+            else:
+                err = str((response or {}).get("Error") or "Unknown error")
+                failures.append((f"new order (qty={qty})", err))
+                audit.log_operation(user_id, OperationType.ORDER_PLACE, "Order", None, action_status="failure", error_details=err)
+                rl, _ = _order_rate_limit_flags(response)
+                if rl:
+                    rate_limited = True
+                _logger.warning(
+                    "execute_leg_modification place_order failed: user_id=%s qty=%s status=%s error=%s rate_limited=%s",
+                    user_id, qty, (response or {}).get("Status"), err, rl,
+                )
+
+        return {
+            "cancelled": cancelled,
+            "modified": modified,
+            "placed": placed,
+            "failures": failures,
+            "all_ok": not failures,
+            "rate_limited": rate_limited,
+        }
 
     def list_parked_orders(self, user_id: str) -> list[ParkedOrderListItem]:
         return parked_orders_repo.list_parked_orders(user_id)
@@ -1432,7 +1790,7 @@ class processor():
 
                 positions = {
                     "Status": 200,
-                    "Success": [dict(r) for r in _fx.MOCK_PORTFOLIO_POSITION_ROWS],
+                    "Success": _fx.mock_portfolio_position_rows(),
                     "Error": None,
                 }
             else:
@@ -1457,6 +1815,11 @@ class processor():
                     d for d in (success_data if isinstance(success_data, list) else [])
                     if (d.get("product_type") == cfg.OPTIONS and d.get("exchange_code") in (cfg.NFO, cfg.BFO))
                 ]
+                from icici_breeze_backend.app.services.quote_source_router import (
+                    cached_chain_spot,
+                    fetch_quote_icici_response,
+                )
+
                 for i in positions["Success"]:
                     stock_code = i['stock_code']
                     exchange_code = i['exchange_code']
@@ -1465,14 +1828,46 @@ class processor():
                     right = i['right']
                     strike_price = i['strike_price']
                     try:
-                        quote = breeze.get_quotes(stock_code,exchange_code,expiry_date,product_type,right,strike_price)
+                        # Cache-first (WS tick -> bhavcopy -> ICICI REST) instead of a raw
+                        # get_quotes() call every poll -- same router other panels on this
+                        # page (payoff chart, live overlay, PoP) already read from.
+                        quote = fetch_quote_icici_response(
+                            self, user_id, stock_code, exchange_code, expiry_date, right, strike_price,
+                            product_type=product_type,
+                        )
                     except Exception as e:
-                        quote = _icici_error(f"Error calling ICICI Breeze API get_quotes({stock_code},{exchange_code},{expiry_date},{product_type},{right},{strike_price}): {e}")
+                        quote = _icici_error(f"Error resolving quote via router({stock_code},{exchange_code},{expiry_date},{product_type},{right},{strike_price}): {e}")
                     quote_rows = _quote_success_rows(quote)
+                    resolved_spot: float | None = None
                     if quote.get("Status") == 200 and quote_rows:
-                        i["spot_price"] = quote_rows[0].get("spot_price", "Err")
-                    else:
-                        i["spot_price"] = "Err"
+                        try:
+                            row_spot = float(quote_rows[0].get("spot_price"))
+                        except (TypeError, ValueError):
+                            row_spot = None
+                        if row_spot is not None and row_spot > 0:
+                            resolved_spot = row_spot
+                        # ICICI's own get_portfolio_positions() ltp can be stale/wrong for
+                        # illiquid contracts (observed post-close for BFO index options) --
+                        # prefer the router's cache-first (WS -> bhavcopy -> REST) option ltp,
+                        # the same source already trusted for spot_price above and for the
+                        # frontend's live overlay. Fall back to the broker's raw ltp only when
+                        # the router has no usable quote for this contract.
+                        try:
+                            router_ltp = float(quote_rows[0].get("ltp"))
+                        except (TypeError, ValueError):
+                            router_ltp = None
+                        if router_ltp is not None and router_ltp > 0:
+                            i["ltp"] = router_ltp
+
+                    # The per-option quote can miss (deep OTM/ITM strike with no cached
+                    # cell, bhavcopy row, or REST quote) even while the underlying's spot
+                    # is live -- index_spot_feed keeps NIFTY/SENSEX index ticks warm in
+                    # the same cache `cached_chain_spot` reads. Use that before surfacing
+                    # "Err", so a healthy WS spot isn't hidden by an unrelated option-quote
+                    # miss. Only truly-unavailable spot falls through to "Err".
+                    if resolved_spot is None:
+                        resolved_spot = cached_chain_spot(exchange_code, stock_code)
+                    i["spot_price"] = resolved_spot if resolved_spot is not None else "Err"
 
                     if i['product_type'] == cfg.OPTIONS:
                         i['option'] = i['stock_code']+"-"+i['expiry_date']+"-"+i['strike_price']+"-"+i['right']
@@ -1482,41 +1877,50 @@ class processor():
                         else:
                             if i['action'] == cfg.SELL:
                                 i['current_profit'] = (float(i['average_price']) - float(i['ltp'])) * int(i['quantity'])
-                                i['carry_profit'] = float(i['ltp']) * int(i['quantity'])
-                                margin_input = [{}]
-                                margin_input[0]['strike_price'] = i['strike_price']
-                                margin_input[0]['quantity'] = i['quantity']
-                                margin_input[0]['right'] = i['right']
-                                margin_input[0]['action'] = i['action']
-                                margin_input[0]['product'] = i['product_type']
-                                margin_input[0]['expiry_date'] = i['expiry_date']
-                                margin_input[0]['stock_code'] = i['stock_code']
-                                margin_input[0]['cover_order_flow'] = "N"
-                                margin_input[0]['fresh_order_type'] = "N"
-                                margin_input[0]['cover_limit_rate'] = "0"
-                                margin_input[0]['cover_sltp_price'] = "0"
-                                margin_input[0]['fresh_limit_rate'] = "0"
-                                margin_input[0]['open_quantity'] = "0"
-                                try:
-                                    margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
-                                except Exception as e:
-                                    margins = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
-                                if margins.get('Status') == 200:
-                                    i['span_margin_required'] = float(margins['Success']['span_margin_required'])
-                                else:
-                                    i['span_margin_required'] = None
-                                    i['carry_margin_returns'] = None
-                                
-                                hedgeable_set = (cfg.HEDGEABLE_UNDERLYINGS or {}).get(i.get("exchange_code") or "", set())
-                                if i.get("action") == cfg.SELL and i.get("stock_code") in hedgeable_set:
-                                    i["hedgeable"] = True
-                                else:
-                                    i["hedgeable"] = False
+                                # Carry = P&L if this leg expires worthless (full premium kept) minus MTM already captured.
+                                worthless_value = float(i['average_price']) * int(i['quantity'])
+                                i['carry_profit'] = worthless_value - i['current_profit']
 
-                                # Extreme Loss Margin (ELM) calculations applicable for Index shorts only
+                                margin_cache_key = _portfolio_margin_cache_key(
+                                    user_id, exchange_code, i['stock_code'], i['expiry_date'],
+                                    i['strike_price'], i['right'], i['action'], i['quantity'],
+                                )
+                                cached_span_margin = _cached_span_margin_required(margin_cache_key)
+                                if cached_span_margin is not None:
+                                    i['span_margin_required'] = cached_span_margin
+                                else:
+                                    margin_input = [{}]
+                                    margin_input[0]['strike_price'] = i['strike_price']
+                                    margin_input[0]['quantity'] = i['quantity']
+                                    margin_input[0]['right'] = i['right']
+                                    margin_input[0]['action'] = i['action']
+                                    margin_input[0]['product'] = i['product_type']
+                                    margin_input[0]['expiry_date'] = i['expiry_date']
+                                    margin_input[0]['stock_code'] = i['stock_code']
+                                    margin_input[0]['cover_order_flow'] = "N"
+                                    margin_input[0]['fresh_order_type'] = "N"
+                                    margin_input[0]['cover_limit_rate'] = "0"
+                                    margin_input[0]['cover_sltp_price'] = "0"
+                                    margin_input[0]['fresh_limit_rate'] = "0"
+                                    margin_input[0]['open_quantity'] = "0"
+                                    try:
+                                        margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
+                                    except Exception as e:
+                                        margins = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
+                                    if margins.get('Status') == 200:
+                                        i['span_margin_required'] = float(margins['Success']['span_margin_required'])
+                                        _remember_span_margin_required(margin_cache_key, i['span_margin_required'])
+                                    else:
+                                        i['span_margin_required'] = None
+                                        i['carry_margin_returns'] = None
+
+                                # Extreme Loss Margin (ELM) calculations applicable for Index shorts only.
+                                # ELM is waived on the option's own expiry date (no overnight risk to cover).
                                 if (i['stock_index_indicator'] == cfg.INDEX and i['action'] == cfg.SELL):
-                                    if i['spot_price'] == "Err":
+                                    if i['spot_price'] in (None, "Err"):
                                         i['elm_margin_required'] = None
+                                    elif _parse_option_expiry_date(i['expiry_date']) == today_ist_date():
+                                        i['elm_margin_required'] = 0.0
                                     else:
                                         i['elm_margin_required'] = float(i['quantity']) * float(i['spot_price']) * cfg.ELM
                                 else:
@@ -1539,11 +1943,12 @@ class processor():
                                     )
                             else:
                                 i['current_profit'] = (float(i['ltp']) - float(i['average_price'])) * int(i['quantity'])
-                                i['carry_profit'] = - float(i['ltp']) * int(i['quantity'])
+                                # Carry = P&L if this leg expires worthless (full premium lost) minus MTM already captured.
+                                worthless_value = - float(i['average_price']) * int(i['quantity'])
+                                i['carry_profit'] = worthless_value - i['current_profit']
                                 i['span_margin_required'] = None
                                 i['elm_margin_required'] = None
                                 i['carry_margin_returns'] = None
-                                i['hedgeable'] = False
                 if positions.get("Status") == 200 and positions.get("Success") == []:
                     positions["Error"] = None
             else:
@@ -1567,8 +1972,10 @@ class processor():
         if option['ltp'] == 0:
             valid_hedge = False
         
-        # Can't buy as hedge if there are no sellers!
-        if int(option['total_sell_qty']) == 0:
+        # Can't buy as hedge if there are no sellers -- but an unknown book (None:
+        # bhavcopy has no depth, BSE wipes its book at close) is not the same as a
+        # confirmed empty one, so only disqualify on a real zero.
+        if option.get('total_sell_qty') is not None and int(option['total_sell_qty']) == 0:
             valid_hedge = False
         
         # Can't buy hedge if option is not liquid on the day. This also means you can't be the first buyer in the market for the hedge
@@ -1583,20 +1990,21 @@ class processor():
         if stock_code in hedgeable_set and action == cfg.SELL:
             
             try:
-                # collect option chain between the current spot and strike
-                breeze = self.get_session_breeze(user_id)
-                product_type = cfg.OPTIONS
-                _pt, _rt = _icici_option_chain_enums(product_type, right)
-                full_chain = breeze.get_option_chain_quotes(stock_code=stock_code,
-                                    exchange_code=exchange_code,
-                                    product_type=_pt,
-                                    expiry_date=expiry_date,
-                                    right=_rt)
-                
+                from icici_breeze_backend.app.services.quote_source_router import fetch_chain_side_icici_response
+
+                full_chain = fetch_chain_side_icici_response(
+                    self, user_id, stock_code, exchange_code, expiry_date, right
+                )
+                if full_chain.get("Status") != 200:
+                    raise ValueError(full_chain.get("Error") or "chain fetch failed")
+
                 hedge_chain = []
-                for option in full_chain['Success']:
-                    strike_price = int(strike_price)
-                    option['strike_price'] = int(option['strike_price'])
+                for option in full_chain.get("Success") or []:
+                    strike_price = parse_strike(strike_price)
+                    opt_strike = parse_strike(option.get('strike_price'))
+                    if strike_price is None or opt_strike is None:
+                        continue
+                    option['strike_price'] = opt_strike
                     option['spot_price'] = float(option['spot_price'])
 
                     if self.is_valid_hedge(strike_price,right,option) == True:
@@ -1682,107 +2090,6 @@ class processor():
         from icici_breeze_backend.app.repositories.message_repository import retrieve_and_flush_messages as _retrieve
         return _retrieve(user_id)
 
-    def fetch_option_chain_quotes_sb(
-        self,
-        user_id: str,
-        stock_code: str,
-        exchange_code: str,
-        expiry_api: str,
-        right: str,
-        *,
-        strike_price: str | None = None,
-        audit: "StrategyBuilderAuditSession | None" = None,
-        audit_rationale: str | None = None,
-        backoff: OptionChainBackoff,
-        max_attempts: int = 3,
-    ) -> dict[str, Any]:
-        """Strategy-builder option chain fetch with user-configured pause on 429/503 (up to max_attempts)."""
-        breeze = self.get_session_breeze(user_id)
-        icici_request: dict[str, Any] = {
-            "stock_code": stock_code,
-            "exchange_code": exchange_code,
-            "expiry_date": expiry_api,
-            "product_type": cfg.OPTIONS,
-            "right": right,
-        }
-        if strike_price is not None:
-            icici_request["strike_price"] = strike_price
-
-        if breeze is None:
-            quote: dict[str, Any] = {
-                "Status": 400,
-                "Error": "Unable to connect to broker. Please check your credentials and re-login.",
-            }
-            if audit:
-                audit.record_icici_api_call(
-                    "get_option_chain_quotes",
-                    icici_request,
-                    quote,
-                    rationale=audit_rationale,
-                    latency_ms=0.0,
-                )
-            return quote
-
-        _pt, _rt = _icici_option_chain_enums(cfg.OPTIONS, right)
-        _t0 = time.perf_counter()
-        try:
-            if strike_price is not None:
-                quote = breeze.get_option_chain_quotes(
-                    stock_code, exchange_code, expiry_api, _pt, _rt, strike_price
-                )
-            else:
-                quote = breeze.get_option_chain_quotes(
-                    stock_code=stock_code,
-                    exchange_code=exchange_code,
-                    product_type=_pt,
-                    expiry_date=expiry_api,
-                    right=_rt,
-                )
-        except Exception as e:
-            quote = {
-                "Status": 400,
-                "Error": f"Error calling ICICI Breeze API get_option_chain_quotes: {e}",
-            }
-        _latency_ms = (time.perf_counter() - _t0) * 1000
-        if audit:
-            audit.record_icici_api_call(
-                "get_option_chain_quotes",
-                icici_request,
-                quote if isinstance(quote, dict) else None,
-                rationale=audit_rationale,
-                latency_ms=_latency_ms,
-            )
-        if not isinstance(quote, dict):
-            quote = {"Status": 400, "Error": "Invalid response from get_option_chain_quotes"}
-            backoff.on_success()
-            return quote
-
-        if quote.get("Status") == 200:
-            backoff.on_success()
-            if strike_price is not None:
-                try:
-                    if int(quote["Success"][0]["total_sell_qty"]) > 0:
-                        quote["Success"][0]["buy_sell_ratio"] = int(
-                            quote["Success"][0]["total_buy_qty"]
-                        ) / int(quote["Success"][0]["total_sell_qty"])
-                    else:
-                        quote["Success"][0]["buy_sell_ratio"] = 0
-                except (KeyError, IndexError, TypeError, ZeroDivisionError):
-                    pass
-            return quote
-
-        if quote.get("Status") not in (429, 503):
-            backoff.on_success()
-        if quote.get("Error"):
-            _logger.warning(
-                "fetch_option_chain_quotes_sb failed: stock_code=%s right=%s strike=%s error=%s",
-                stock_code,
-                right,
-                strike_price,
-                quote["Error"],
-            )
-        return quote
-
     def get_quote(
         self,
         user_id,
@@ -1797,62 +2104,21 @@ class processor():
         audit_rationale: str | None = None,
         audit_request: dict[str, Any] | None = None,
     ):
-        breeze = self.get_session_breeze(user_id)
-        icici_request = audit_request or {
-            "stock_code": stock_code,
-            "exchange_code": exchange_code,
-            "expiry_date": expiry_date,
-            "product_type": product_type,
-            "right": right,
-            "strike_price": strike_price,
-        }
-        quote: dict[str, Any]
-        if breeze is None:
-            quote = {
-                "Status": 400,
-                "Error": "Unable to connect to broker. Please check your credentials and re-login.",
-            }
-        else:
-            try:
-                _pt, _rt = _icici_option_chain_enums(product_type, right)
-                quote = breeze.get_option_chain_quotes(
-                    stock_code, exchange_code, expiry_date, _pt, _rt, strike_price
-                )
-                if audit:
-                    audit.record_icici_api_call(
-                        "get_option_chain_quotes",
-                        icici_request,
-                        quote if isinstance(quote, dict) else None,
-                        rationale=audit_rationale,
-                    )
-            except Exception as e:
-                quote = {
-                    "Status": 400,
-                    "Error": f"Error calling ICICI Breeze API get_option_chain_quotes: {e}",
-                }
-                if audit:
-                    audit.record_icici_api_call(
-                        "get_option_chain_quotes",
-                        icici_request,
-                        quote,
-                        rationale=audit_rationale,
-                    )
-        if not isinstance(quote, dict):
-            quote = {"Status": 400, "Error": "Invalid response from get_option_chain_quotes"}
-        if quote.get("Status") != 200:
-            if quote.get("Error"):
-                _logger.warning("get_quote failed: stock_code=%s error=%s", stock_code, quote["Error"])
-            return quote
-        try:
-            if int(quote["Success"][0]["total_sell_qty"]) > 0:
-                quote["Success"][0]["buy_sell_ratio"] = int(quote["Success"][0]["total_buy_qty"]) / int(
-                    quote["Success"][0]["total_sell_qty"]
-                )
-            else:
-                quote["Success"][0]["buy_sell_ratio"] = 0
-        except (KeyError, IndexError, TypeError, ZeroDivisionError):
-            pass
-        return quote
+        from icici_breeze_backend.app.services.quote_source_router import fetch_quote_icici_response
+
+        return fetch_quote_icici_response(
+            self,
+            user_id,
+            stock_code,
+            exchange_code,
+            expiry_date,
+            right,
+            strike_price,
+            product_type=product_type,
+            audit=audit,
+            audit_rationale=audit_rationale,
+            audit_request=audit_request,
+        )
 
     def _transform_icici_chain_rows(
         self,
@@ -1865,11 +2131,31 @@ class processor():
         lot_size = self.fetch_lot_size(stock_code, expiry_display, exchange_code=exchange_code)
         lot_val = lot_size if lot_size is not None else 0
         rows: list[dict[str, Any]] = []
+        market_closed = not is_market_open()
         for i in raw_rows:
             try:
-                total_buy = int(i.get("total_buy_qty") or 0)
-                total_sell = int(i.get("total_sell_qty") or 0)
-                if total_sell > 0:
+                total_buy: int | None = int(i.get("total_buy_qty") or 0)
+                total_sell: int | None = int(i.get("total_sell_qty") or 0)
+                # BSE resets its entire market-depth block the moment the session
+                # closes, so a post-close REST quote reports a zero book for every
+                # BFO contract regardless of how liquid it actually was. Report
+                # that as unknown rather than as "nobody is trading this".
+                if (
+                    market_closed
+                    and exchange_code == cfg.BFO
+                    and total_buy == 0
+                    and total_sell == 0
+                ):
+                    total_buy = None
+                    total_sell = None
+                    # The same reset zeroes the quoted prices, not just the sizes.
+                    if not _positive_number(i.get("best_bid_price")):
+                        i = {**i, "best_bid_price": None}
+                    if not _positive_number(i.get("best_offer_price")):
+                        i = {**i, "best_offer_price": None}
+                if total_buy is None or total_sell is None:
+                    ratio = None
+                elif total_sell > 0:
                     ratio = total_buy / total_sell
                 else:
                     ratio = 0.0 if total_buy == 0 else None
@@ -1881,14 +2167,20 @@ class processor():
                 rows.append(
                     {
                         "stock_code": stock_code,
-                        "strike_price": int(float(i.get("strike_price", 0))),
+                        "strike_price": parse_strike(i.get("strike_price")) or 0.0,
                         "right": right,
                         "expiry_date": expiry_display,
                         "ltp": i.get("ltp"),
                         "open_interest": oi_val,
                         "total_buy_qty": total_buy,
                         "total_sell_qty": total_sell,
-                        "buy_sell_ratio": ratio if ratio is not None else "NA",
+                        # None only when depth is unknown; "NA" still means the real
+                        # "bids exist, no offers" case the frontend already renders.
+                        "buy_sell_ratio": (
+                            None
+                            if total_buy is None or total_sell is None
+                            else (ratio if ratio is not None else "NA")
+                        ),
                         "best_bid_price": i.get("best_bid_price"),
                         "best_offer_price": i.get("best_offer_price"),
                         "spot_price": i.get("spot_price"),
@@ -1912,7 +2204,9 @@ class processor():
             return _icici_error("Unable to connect to broker. Please log out and log back in.")
         try:
             _pt, _rt = _icici_option_chain_enums(cfg.OPTIONS, right)
-            r = breeze.get_option_chain_quotes(
+            r = icici_client.get_option_chain_quotes(
+                breeze,
+                user_id=user_id,
                 stock_code=stock_code,
                 exchange_code=exchange_code,
                 product_type=_pt,
@@ -1931,18 +2225,69 @@ class processor():
         stock_code: str,
         exchange_code: str,
         expiry_date: str,
+        *,
+        holder_id: str | None = None,
     ):
-        """Fetch full CE + PE option chain for order page. Expiry can be YYYY-MM-DD or DD-Mon-YYYY.
-        Returns dict with Status, Error, Success: { chain_rows, max_call_oi, max_put_oi, expiry_display, stock_code, exchange_code }.
-        chain_rows = list of { strike_price, call?: row, put?: row }; each row has OI, LTP, total_buy_qty, total_sell_qty, buy_sell_ratio, lot_size, best_bid_price, best_offer_price, etc.
-        """
-        # Normalize expiry: API format for Breeze, display for template/fetch_lot_size
+        """Fetch full CE + PE option chain for order page. Expiry can be YYYY-MM-DD or DD-Mon-YYYY."""
         expiry_display = expiry_date
         if expiry_date and len(expiry_date) == 10 and expiry_date[4] == "-":  # YYYY-MM-DD
             try:
                 expiry_display = datetime.datetime.strptime(expiry_date, "%Y-%m-%d").strftime("%d-%b-%Y")
             except ValueError:
                 pass
+        from icici_breeze_backend.app.services.quote_source_router import assemble_chain_with_router
+
+        return assemble_chain_with_router(
+            self, user_id, stock_code, exchange_code, expiry_display, holder_id=holder_id
+        )
+
+    def get_payoff_quote(
+        self,
+        user_id: str,
+        stock_code: str,
+        exchange_code: str,
+        expiry_date: str,
+        *,
+        holder_id: str | None = None,
+    ):
+        """Minimal spot + ATM-strike quote + lot size for the portfolio payoff
+        panel — see `quote_source_router.fetch_payoff_quote_routed` for why this
+        doesn't need to wait for the rest of the chain like get_full_option_chain does."""
+        expiry_display = expiry_date
+        if expiry_date and len(expiry_date) == 10 and expiry_date[4] == "-":  # YYYY-MM-DD
+            try:
+                expiry_display = datetime.datetime.strptime(expiry_date, "%Y-%m-%d").strftime("%d-%b-%Y")
+            except ValueError:
+                pass
+        from icici_breeze_backend.app.services.quote_source_router import assemble_payoff_quote_with_router
+
+        return assemble_payoff_quote_with_router(
+            self, user_id, stock_code, exchange_code, expiry_display, holder_id=holder_id
+        )
+
+    def _get_full_option_chain_icici_rest(
+        self,
+        user_id: str,
+        stock_code: str,
+        exchange_code: str,
+        expiry_display: str,
+        *,
+        strikes: list[Strike] | None = None,
+        lot_size: int | None = None,
+        freeze_quantity: int | None = None,
+    ):
+        """REST fallback: two get_option_chain_quotes calls (all CE strikes, all PE
+        strikes -- no per-strike looping) used when neither the live WebSocket nor
+        the day's bhavcopy is available (post-close, pre-bhavcopy gap -- see
+        quote_source_router.resolve_quote_source). Builds a full strike skeleton
+        (one chain_row per tradeable strike, nulls where ICICI returned nothing)
+        the same way bhavcopy_store.build_chain_from_bhavcopy does, so the result
+        satisfies chain_readiness.is_chain_complete's structural check. Does not
+        filter rows by live order-book depth -- after market close there is no
+        live depth even for strikes with a perfectly good closing LTP, so a
+        depth-based illiquidity filter would silently empty the whole chain;
+        completeness is judged downstream by is_chain_complete/_cell_has_quote,
+        which check ltp first."""
         expiry_api = _expiry_display_to_api(expiry_display)
 
         ce_res = self._fetch_icici_chain_side_raw(
@@ -1965,7 +2310,21 @@ class processor():
             stock_code, expiry_display, exchange_code, cfg.PUT, pe_raw
         )
 
-        strikes = sorted(set(r["strike_price"] for r in calls) | set(r["strike_price"] for r in puts))
+        from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
+            is_tradeable_contract,
+            list_tradeable_strikes,
+        )
+
+        if strikes:
+            strike_list = sorted(set(strikes))
+        else:
+            strike_list = list_tradeable_strikes(
+                stock_code, expiry_display, exchange_code=exchange_code
+            )
+            if not strike_list:
+                strike_list = sorted(
+                    set(r["strike_price"] for r in calls) | set(r["strike_price"] for r in puts)
+                )
         call_by_strike = {r["strike_price"]: r for r in calls}
         put_by_strike = {r["strike_price"]: r for r in puts}
 
@@ -1973,24 +2332,23 @@ class processor():
         max_put_oi = max((r["open_interest"] for r in puts), default=0)
 
         chain_rows = []
-        for k in strikes:
+        for k in strike_list:
+            call_cell = call_by_strike.get(k)
+            put_cell = put_by_strike.get(k)
+            if call_cell and not is_tradeable_contract(
+                stock_code, expiry_display, k, cfg.CALL, exchange_code=exchange_code
+            ):
+                call_cell = None
+            if put_cell and not is_tradeable_contract(
+                stock_code, expiry_display, k, cfg.PUT, exchange_code=exchange_code
+            ):
+                put_cell = None
             chain_rows.append({
                 "strike_price": k,
-                "call": call_by_strike.get(k),
-                "put": put_by_strike.get(k),
+                "call": call_cell,
+                "put": put_cell,
             })
 
-        def _is_illiquid(row):
-            c, p = row.get("call"), row.get("put")
-            c_zero = c is None or (c.get("total_buy_qty", 0) == 0 and c.get("total_sell_qty", 0) == 0)
-            p_zero = p is None or (p.get("total_buy_qty", 0) == 0 and p.get("total_sell_qty", 0) == 0)
-            return c_zero and p_zero
-
-        # BFO: keep strikes with no book on both sides so the full chain is visible (NFO still drops dead strikes).
-        if exchange_code != cfg.BFO:
-            chain_rows = [r for r in chain_rows if not _is_illiquid(r)]
-
-        # Spot and ATM from option chain response (no separate get_quote)
         spot_price = None
         if calls:
             raw = calls[0].get("spot_price")
@@ -2007,24 +2365,24 @@ class processor():
                 except (TypeError, ValueError):
                     pass
         atm_strike = None
-        if spot_price is not None and strikes:
-            atm_strike = min(strikes, key=lambda s: abs(s - spot_price))
+        chain_strike_prices = [r["strike_price"] for r in chain_rows]
+        if spot_price is not None and chain_strike_prices:
+            atm_strike = min(chain_strike_prices, key=lambda s: abs(s - spot_price))
 
-        lot_size_for_series = self.fetch_lot_size(
-            stock_code, expiry_display, exchange_code=exchange_code
-        )
-        freeze_quantity = None
-        try:
-            if lot_size_for_series is not None:
-                ls = int(lot_size_for_series)
-                if ls > 0:
-                    qty_limits = self.fetch_qty_limits(
-                        stock_code, exchange_code=exchange_code
-                    )
-                    if qty_limits is not None:
-                        freeze_quantity = (max(1, int(qty_limits)) // ls) * ls
-        except (TypeError, ValueError):
-            freeze_quantity = None
+        if lot_size is None:
+            lot_size = self.fetch_lot_size(stock_code, expiry_display, exchange_code=exchange_code)
+        if freeze_quantity is None:
+            try:
+                if lot_size is not None:
+                    ls = int(lot_size)
+                    if ls > 0:
+                        qty_limits = self.fetch_qty_limits(
+                            stock_code, exchange_code=exchange_code
+                        )
+                        if qty_limits is not None:
+                            freeze_quantity = (max(1, int(qty_limits)) // ls) * ls
+            except (TypeError, ValueError):
+                freeze_quantity = None
 
         success_payload: dict[str, Any] = {
             "chain_rows": chain_rows,
@@ -2035,10 +2393,9 @@ class processor():
             "exchange_code": exchange_code,
             "spot_price": spot_price,
             "atm_strike": atm_strike,
-            "lot_size": int(lot_size_for_series)
-            if lot_size_for_series is not None
-            else None,
+            "lot_size": int(lot_size) if lot_size is not None else None,
             "freeze_quantity": freeze_quantity,
+            "quote_source": "icici_api",
         }
 
         return {
@@ -2047,7 +2404,9 @@ class processor():
             "Success": success_payload,
         }
 
-    def place_order(self,user_id,product_type,stock_code,action,strike_price,right,price,expiry_date,quantity, exchange_code: str = cfg.NFO):
+    def place_order(self,user_id,product_type,stock_code,action,strike_price,right,price,expiry_date,quantity, exchange_code: str = cfg.NFO, aggressive_limit: bool = False):
+        if aggressive_limit and not cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED:
+            return _icici_error(AGGRESSIVE_LIMIT_DISABLED_MESSAGE)
         breeze = self.get_session_breeze(user_id)
         if breeze is None:
             return _icici_error(
@@ -2063,14 +2422,15 @@ class processor():
         act = str(action or "").strip().lower()
         rgt = str(right or "").strip().lower() if right not in (None, "") else ""
         try:
-            strike = str(int(float(strike_price)))
+            strike = strike_for_broker(strike_price)
         except (TypeError, ValueError):
             strike = str(strike_price)
         try:
             qty_str = str(int(quantity))
         except (TypeError, ValueError):
             qty_str = str(quantity)
-        prc = str(price).strip()
+        prc = "0" if aggressive_limit else str(price).strip()
+        order_type = str(cfg.MARKET if aggressive_limit else cfg.LIMIT).strip().lower()
 
         place_order_sdk_exception = False
         try:
@@ -2082,7 +2442,7 @@ class processor():
                 price=prc,
                 expiry_date=expiry_api,
                 validity="day",
-                order_type=str(cfg.LIMIT).strip().lower(),
+                order_type=order_type,
                 quantity=qty_str,
                 validity_date=str(today_ist_date()) + "T06:00:00.000Z",
                 stoploss="",
@@ -2151,28 +2511,136 @@ class processor():
         self._maybe_evict_session(user_id, response)
         return response
 
+    def place_gtt_oco_exit_order(
+        self,
+        user_id,
+        product_type,
+        stock_code,
+        exchange_code,
+        strike_price,
+        right,
+        quantity,
+        expiry_date,
+        close_action,
+        target_trigger_price,
+        target_limit_price,
+        stop_trigger_price,
+        stop_limit_price,
+    ):
+        """Place a broker-monitored GTT OCO (target + stoploss) bracket to exit one held leg.
+        Unlike the group Exit Rule, ICICI itself watches the triggers — no local P&L polling."""
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return _icici_error("Unable to connect to broker. Please log out and log back in.")
+        try:
+            expiry_api = _expiry_to_breeze_place_order(expiry_date)
+        except (ValueError, TypeError) as e:
+            return _icici_error(f"Invalid expiry_date for GTT order: {expiry_date!r} ({e})")
+        try:
+            strike = strike_for_broker(strike_price)
+        except (TypeError, ValueError):
+            return _icici_error(f"Invalid strike_price for GTT order: {strike_price!r}")
+        try:
+            qty_str = str(abs(int(quantity)))
+        except (TypeError, ValueError):
+            return _icici_error(f"Invalid quantity for GTT order: {quantity!r}")
+
+        act = str(close_action or "").strip().lower()
+        rgt = str(right or "").strip().lower()
+        prod = str(product_type or cfg.OPTIONS).strip().lower()
+        index_or_stock = "index" if cfg.is_index_symbol(stock_code) else "stock"
+
+        try:
+            response = breeze.gtt_three_leg_place_order(
+                exchange_code=exchange_code,
+                stock_code=stock_code,
+                product=prod,
+                quantity=qty_str,
+                expiry_date=expiry_api,
+                right=rgt,
+                strike_price=strike,
+                gtt_type="oco",
+                index_or_stock=index_or_stock,
+                trade_date=str(today_ist_date()) + "T06:00:00.000Z",
+                order_details=[
+                    {
+                        "gtt_leg_type": "target",
+                        "action": act,
+                        "limit_price": str(target_limit_price),
+                        "trigger_price": str(target_trigger_price),
+                    },
+                    {
+                        "gtt_leg_type": "stoploss",
+                        "action": act,
+                        "limit_price": str(stop_limit_price),
+                        "trigger_price": str(stop_trigger_price),
+                    },
+                ],
+            )
+        except Exception as e:
+            _logger.warning(
+                "place_gtt_oco_exit_order: Breeze SDK exception user_id=%s stock_code=%s exchange=%s "
+                "action=%s qty=%s strike=%s right=%r exc_type=%s err=%s",
+                user_id, stock_code, exchange_code, act, qty_str, strike, rgt, type(e).__name__, e,
+                exc_info=True,
+            )
+            return _icici_error(f"Error calling ICICI Breeze API gtt_three_leg_place_order: {e}")
+        return response or _icici_error("Empty response from ICICI Breeze API gtt_three_leg_place_order")
+
+    def get_gtt_order_book(self, user_id, exchange_code, from_date, to_date):
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return _icici_error("Unable to connect to broker. Please log out and log back in.")
+        try:
+            return breeze.gtt_order_book(exchange_code=exchange_code, from_date=from_date, to_date=to_date)
+        except Exception as e:
+            _logger.warning(
+                "get_gtt_order_book: Breeze SDK exception user_id=%s exc_type=%s err=%s",
+                user_id, type(e).__name__, e, exc_info=True,
+            )
+            return _icici_error(f"Error calling ICICI Breeze API gtt_order_book: {e}")
+
+    def cancel_gtt_order(self, user_id, exchange_code, gtt_order_id):
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return _icici_error("Unable to connect to broker. Please log out and log back in.")
+        try:
+            return breeze.gtt_three_leg_cancel_order(exchange_code=exchange_code, gtt_order_id=gtt_order_id)
+        except Exception as e:
+            _logger.warning(
+                "cancel_gtt_order: Breeze SDK exception user_id=%s gtt_order_id=%s exc_type=%s err=%s",
+                user_id, gtt_order_id, type(e).__name__, e, exc_info=True,
+            )
+            return _icici_error(f"Error calling ICICI Breeze API gtt_three_leg_cancel_order: {e}")
+
     def break_order_finalize_user_messages(
         self,
         contract_label: str,
         price_f: float,
         success_qty_chunks: list[int],
         danger_messages: list[str],
+        aggressive_limit: bool = False,
     ) -> list[dict]:
         """Success + failure toasts matching break_order (used by /order/break-finalize)."""
+        if aggressive_limit and not cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED:
+            aggressive_limit = False
         messages: list[dict] = []
         if success_qty_chunks:
             n_orders = len(success_qty_chunks)
             total_q = sum(success_qty_chunks)
-            total_prem = total_q * price_f
-            prem_s = _format_inr_integer_indian(total_prem)
+            if aggressive_limit:
+                price_clause = "at ICICI aggressive limit prices (LTP-derived)"
+            else:
+                total_prem = total_q * price_f
+                prem_s = _format_inr_integer_indian(total_prem)
+                price_clause = f"for a total premium of {prem_s}"
             messages.append(
                 {
                     "type": cfg.SUCCESS,
                     "message": (
                         f"Successfully placed {_format_indian_integer_digits(n_orders)} orders "
                         f"for {contract_label} totaling "
-                        f"{_format_indian_integer_digits(total_q)} quantity for a total "
-                        f"premium of {prem_s}"
+                        f"{_format_indian_integer_digits(total_q)} quantity {price_clause}"
                     ),
                 }
             )
@@ -2194,6 +2662,48 @@ class processor():
                 }
             )
         return messages
+
+    def _park_placement_for_execution(
+        self,
+        user_id: str,
+        *,
+        product_type: str,
+        stock_code: str,
+        exchange_code: str,
+        expiry_date: str,
+        right: str,
+        strike_price: str,
+        total_qty: str,
+        price: str,
+        action: str,
+        aggressive_limit: bool = False,
+        chunk_qty: str | None = None,
+        batch_group_id: str | None = None,
+    ) -> list[str]:
+        item = ParkedOrderItem(
+            product_type=product_type or "Options",
+            stock_code=stock_code,
+            exchange_code=exchange_code,
+            expiry_date=expiry_date,
+            right=right,
+            strike_price=str(strike_price),
+            quantity=str(total_qty),
+            price="0" if aggressive_limit else str(price),
+            action=action,  # type: ignore[arg-type]
+            aggressive_limit=aggressive_limit,
+            chunk_qty=chunk_qty,
+            batch_group_id=batch_group_id,
+        )
+        rows = self.create_parked_orders(user_id, [item])
+        return [r.id for r in rows]
+
+    @staticmethod
+    def _market_closed_park_message(reason: str | None = None) -> str:
+        r = reason or market_closed_reason()
+        return (
+            f"Market is closed ({r}). Order parked for execution — "
+            "execute it from Parked Execution when the market opens."
+        )
 
     def break_order_chunk_defaults(
         self, stock_code: str, expiry_date: str, exchange_code: str
@@ -2246,6 +2756,9 @@ class processor():
         exchange_code: str,
         chunk_index: int,
         chunk_qty: str | None = None,
+        aggressive_limit: bool = False,
+        from_parked_execution: bool = False,
+        batch_group_id: str | None = None,
     ) -> dict:
         """Place a single slice of a split order for client-driven pacing on 429."""
         contract_label = f"{stock_code}-{expiry_date}-{strike_price}-{right}"
@@ -2264,6 +2777,46 @@ class processor():
                 "contract_label": contract_label,
                 "price_f": price_f,
                 "rate_limited": False,
+                "parked_for_execution": False,
+                "success": False,
+                "placed_quantity": 0,
+                "danger_line": None,
+            }
+
+        if aggressive_limit and not cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED:
+            return _terminal(AGGRESSIVE_LIMIT_DISABLED_MESSAGE)
+
+        if chunk_index == 0 and not is_market_open():
+            closed_reason = market_closed_reason()
+            if from_parked_execution:
+                return _terminal(
+                    f"Market is still closed ({closed_reason}). Your order remains parked."
+                )
+            parked_ids = self._park_placement_for_execution(
+                user_id,
+                product_type=product_type,
+                stock_code=stock_code,
+                exchange_code=exchange_code,
+                expiry_date=expiry_date,
+                right=right,
+                strike_price=strike_price,
+                total_qty=total_qty,
+                price=price,
+                action=action,
+                aggressive_limit=aggressive_limit,
+                chunk_qty=chunk_qty,
+                batch_group_id=batch_group_id,
+            )
+            return {
+                "terminal_messages": [],
+                "chunk_index": 0,
+                "total_chunks": 1,
+                "contract_label": contract_label,
+                "price_f": price_f,
+                "rate_limited": False,
+                "parked_for_execution": True,
+                "parked_order_ids": parked_ids,
+                "market_closed_reason": closed_reason,
                 "success": False,
                 "placed_quantity": 0,
                 "danger_line": None,
@@ -2330,19 +2883,25 @@ class processor():
             expiry_date=expiry_date,
             quantity=qty_this,
             exchange_code=exchange_code,
+            aggressive_limit=aggressive_limit,
         )
         rl, daily_exhausted = _order_rate_limit_flags(response)
         ok = bool(response and response.get("Status") == 200)
         danger_line = None
         if not ok and not rl:
             err = (response or {}).get("Error") or "Unknown error"
+            price_label = (
+                "Aggressive limit (LTP-derived)"
+                if aggressive_limit
+                else _format_inr_integer_indian(price_f)
+            )
             danger_line = (
                 str(err)
                 + contract_label
                 + " | Qty = "
                 + _format_indian_integer_digits(int(qty_this))
                 + " | Price = "
-                + _format_inr_integer_indian(price_f)
+                + price_label
             )
         elif rl and daily_exhausted:
             danger_line = (response or {}).get("Error") or "Broker daily limit reached."
@@ -2355,6 +2914,7 @@ class processor():
             "price_f": price_f,
             "rate_limited": rl,
             "daily_limit_exhausted": daily_exhausted,
+            "parked_for_execution": False,
             "success": ok,
             "placed_quantity": int(qty_this) if ok else 0,
             "danger_line": danger_line,
@@ -2362,7 +2922,9 @@ class processor():
             "effective_chunk_qty": int(qty_per_order),
         }
 
-    def break_order(self,user_id,stock_code,expiry_date,product_type,right,strike_price,total_qty,price,action, exchange_code: str = cfg.NFO):
+    def break_order(self,user_id,stock_code,expiry_date,product_type,right,strike_price,total_qty,price,action, exchange_code: str = cfg.NFO, aggressive_limit: bool = False):
+        if aggressive_limit and not cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED:
+            return [{"type": cfg.DANGER, "message": AGGRESSIVE_LIMIT_DISABLED_MESSAGE}]
         messages: list[dict] = []
         contract_label = f"{stock_code}-{expiry_date}-{strike_price}-{right}"
         try:
@@ -2380,6 +2942,27 @@ class processor():
                     + " in the Options Quantity Limits file",
                 }
             )
+        elif not is_market_open():
+            closed_reason = market_closed_reason()
+            self._park_placement_for_execution(
+                user_id,
+                product_type=product_type,
+                stock_code=stock_code,
+                exchange_code=exchange_code,
+                expiry_date=expiry_date,
+                right=right,
+                strike_price=strike_price,
+                total_qty=str(total_qty),
+                price=price,
+                action=action,
+                aggressive_limit=aggressive_limit,
+            )
+            messages.append(
+                {
+                    "type": cfg.INFO,
+                    "message": self._market_closed_park_message(closed_reason),
+                }
+            )
         else:
             lot_size = self.fetch_lot_size(stock_code, expiry_date, exchange_code=exchange_code)
             qty_per_order = (max(1, int(qty_limits)) // lot_size) * lot_size  # avoid ZeroDivisionError when qty_limits is 1
@@ -2387,6 +2970,11 @@ class processor():
             remainder = int(total_qty) % int(qty_per_order)
             success_qty_chunks: list[int] = []
             danger_messages: list[str] = []
+            price_label = (
+                "Aggressive limit (LTP-derived)"
+                if aggressive_limit
+                else _format_inr_integer_indian(price_f)
+            )
 
             while iterations > 0:
                 response = self.place_order(
@@ -2400,6 +2988,7 @@ class processor():
                     expiry_date=expiry_date,
                     quantity=qty_per_order,
                     exchange_code=exchange_code,
+                    aggressive_limit=aggressive_limit,
                 )
                 iterations -= 1
                 if response and response.get("Status") == 200:
@@ -2412,7 +3001,7 @@ class processor():
                         + " | Qty = "
                         + _format_indian_integer_digits(int(qty_per_order))
                         + " | Price = "
-                        + _format_inr_integer_indian(price_f)
+                        + price_label
                     )
 
             if remainder > 0:
@@ -2427,6 +3016,7 @@ class processor():
                     expiry_date=expiry_date,
                     quantity=remainder,
                     exchange_code=exchange_code,
+                    aggressive_limit=aggressive_limit,
                 )
                 if response and response.get("Status") == 200:
                     success_qty_chunks.append(int(remainder))
@@ -2438,7 +3028,7 @@ class processor():
                         + " | Qty = "
                         + _format_indian_integer_digits(int(remainder))
                         + " | Price = "
-                        + _format_inr_integer_indian(price_f)
+                        + price_label
                     )
 
             if danger_messages:
@@ -2465,7 +3055,11 @@ class processor():
                 )
             messages.extend(
                 self.break_order_finalize_user_messages(
-                    contract_label, price_f, success_qty_chunks, danger_messages
+                    contract_label,
+                    price_f,
+                    success_qty_chunks,
+                    danger_messages,
+                    aggressive_limit=aggressive_limit,
                 )
             )
 
@@ -2505,7 +3099,7 @@ class processor():
                 return p
         return direct
 
-    def update_ICICImaster(self):
+    def update_ICICImaster(self, *, publish_scrip_index: bool = True):
         url = cfg.ICICI_MASTERFILE_URL
         output_path = cfg.DATA_PATH
         temp_zip_path = os.path.join(output_path, "temp_icici_master.zip")
@@ -2558,6 +3152,13 @@ class processor():
                     self.load_scrip_master(target_path, exchange_code=exchange_code)
                 else:
                     _logger.warning("Scrip master file %s not found in ZIP", scrip_filename)
+            if publish_scrip_index:
+                try:
+                    from icici_breeze_backend.app.services.reference_data.scrip_index import publish_scrip_index_from_db
+
+                    publish_scrip_index_from_db()
+                except Exception as exc:
+                    _logger.warning("Scrip index publish failed after master load: %s", exc)
         except requests.RequestException as e:
             _logger.warning("Error downloading ICICI master: %s", e, exc_info=True)
         except zipfile.BadZipFile as e:
@@ -2587,15 +3188,21 @@ class processor():
                     _logger.warning("Could not remove %s: %s", path, e)
 
     def load_qty_limits(self, limits_specs: list[tuple[str, str]]):
-        """(Re)load quantity limits into raw_limits_data for both NSE and BSE.
+        """One-time seed of raw_limits_data from the static NSE/BSE freeze-limit files
+        checked into backend/data/ (NSEFreezeLimits.txt, BSEFreezeLimits.txt) -- these
+        are not part of ICICI's downloaded SecurityMaster.zip, they're maintained
+        locally. After this initial load, users edit quantities via the Settings page
+        (`POST /quantity-limits`, route_settings.py) -- so once raw_limits_data already
+        has rows, this must never touch it again, or the next scheduled/startup
+        reference-data refresh would silently wipe out those edits.
+
         limits_specs: list of (file_path, segment_code) e.g. (path_to_NSEFreezeLimits.txt, NFO).
         """
         conn = _scrip_master_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("DROP TABLE IF EXISTS raw_limits_data")
             cursor.execute('''
-            CREATE TABLE raw_limits_data (
+            CREATE TABLE IF NOT EXISTS raw_limits_data (
                 InstrumentName TEXT,
                 ShortName TEXT,
                 ExchangeCode TEXT,
@@ -2605,11 +3212,19 @@ class processor():
             )
             ''')
 
+            already_seeded = cursor.execute("SELECT COUNT(*) FROM raw_limits_data").fetchone()[0]
+            if already_seeded:
+                _logger.debug(
+                    "raw_limits_data already seeded (%d rows); skipping reload to preserve Settings edits",
+                    already_seeded,
+                )
+                return
+
             rows = []
             for limits_path, segment_code in limits_specs:
                 if not limits_path or not os.path.isfile(limits_path):
                     raise FileNotFoundError(
-                        f"Quantity limits file missing (master load aborted): {limits_path}"
+                        f"Quantity limits seed file missing (master load aborted): {limits_path}"
                     )
                 with open(limits_path, newline='') as limitsfile:
                     reader = csv.DictReader(limitsfile)
@@ -2624,7 +3239,7 @@ class processor():
 
             if not rows:
                 raise ValueError(
-                    "No quantity limits rows loaded from NSE/BSE freeze limits (files empty or invalid)."
+                    "No quantity limits rows loaded from NSE/BSE freeze limits seed files (files empty or invalid)."
                 )
 
             cursor.executemany(
@@ -2632,7 +3247,7 @@ class processor():
                 rows,
             )
             conn.commit()
-            _logger.info("Loaded quantity limits rows into raw_limits_data (%d rows)", len(rows))
+            _logger.info("Seeded raw_limits_data from static freeze-limit files (%d rows, one-time)", len(rows))
         finally:
             conn.close()
 
@@ -2686,10 +3301,8 @@ class processor():
         product_type = cfg.OPTIONS
 
         try:
-            all_trades = []
-            first_error = None
-            for exchange_code in (cfg.NFO, cfg.BFO):
-                trades_resp = breeze.get_trade_list(
+            def _fetch_trades(exchange_code):
+                resp = breeze.get_trade_list(
                     from_date=start_date,
                     to_date=end_date,
                     exchange_code=exchange_code,
@@ -2697,8 +3310,17 @@ class processor():
                     action="",
                     stock_code="",
                 )
-                self._maybe_evict_session(user_id, trades_resp)
+                self._maybe_evict_session(user_id, resp)
+                return resp
 
+            # NFO and BFO trade lists are independent calls; fetch them concurrently
+            # instead of waiting on two sequential ICICI round-trips.
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                trade_responses = list(executor.map(_fetch_trades, (cfg.NFO, cfg.BFO)))
+
+            all_trades = []
+            first_error = None
+            for trades_resp in trade_responses:
                 if trades_resp.get("Status") == 200 and trades_resp.get("Success"):
                     all_trades.extend(trades_resp.get("Success") or [])
                 elif first_error is None and trades_resp.get("Status") != 200:
@@ -2720,29 +3342,37 @@ class processor():
             performance['Success']['net_pnl'] = 0
 
             per_month = defaultdict(lambda: {"pnl": 0.0, "brokerage": 0.0, "taxes": 0.0})
+            # Weekly buckets are a strictly finer partition of the monthly ones — same
+            # trades, same arithmetic, keyed by the Monday of the trade's week instead.
+            per_week = defaultdict(lambda: {"pnl": 0.0, "brokerage": 0.0, "taxes": 0.0})
 
             for trade in trades['Success']:
                 trade_date = trade['trade_date']
                 trade_date = datetime.datetime.strptime(trade_date, "%d-%b-%Y")
                 trade_month_name = trade_date.strftime("%b-%y")
+                trade_week_start = (trade_date - datetime.timedelta(days=trade_date.weekday())).strftime("%Y-%m-%d")
+                buckets = (per_month[trade_month_name], per_week[trade_week_start])
                 premium = float(trade['quantity']) * float(trade['average_cost'])
                 action = str(trade.get("action", "")).strip()
                 if action == cfg.SELL:
                     performance['Success']['premium_earned'] += premium
                     performance['Success']['net_pnl'] += premium
-                    per_month[trade_month_name]['pnl'] += premium
+                    for bucket in buckets:
+                        bucket['pnl'] += premium
 
                 if action == cfg.BUY:
                     performance['Success']['premium_paid'] += premium
                     performance['Success']['net_pnl'] -= premium
-                    per_month[trade_month_name]['pnl'] -= premium
+                    for bucket in buckets:
+                        bucket['pnl'] -= premium
 
                 performance['Success']['brokerage'] += float(trade['brokerage_amount'])
                 performance['Success']['taxes'] += float(trade['total_taxes'])
                 performance['Success']['net_pnl'] = performance['Success']['net_pnl'] - float(trade['brokerage_amount']) - float(trade['total_taxes'])
-                per_month[trade_month_name]['brokerage'] += float(trade['brokerage_amount'])
-                per_month[trade_month_name]['taxes'] += float(trade['total_taxes'])
-                per_month[trade_month_name]['pnl'] = per_month[trade_month_name]['pnl'] - float(trade['brokerage_amount']) - float(trade['total_taxes'])
+                for bucket in buckets:
+                    bucket['brokerage'] += float(trade['brokerage_amount'])
+                    bucket['taxes'] += float(trade['total_taxes'])
+                    bucket['pnl'] = bucket['pnl'] - float(trade['brokerage_amount']) - float(trade['total_taxes'])
 
             net_pnl = float(performance["Success"]["net_pnl"])
             margin_denom = margin if margin and float(margin) > 0 else None
@@ -2766,6 +3396,11 @@ class processor():
             monthly = [{"month": month, "pnl": values["pnl"], "brokerage": values["brokerage"], "taxes": values["taxes"]}for month, values in per_month.items()]
             monthly.sort(key=lambda x: datetime.datetime.strptime(x["month"], "%b-%y"))
             performance['Success']['monthly'] = monthly
+            # `week` is the ISO date of that week's Monday — the frontend needs real
+            # dates (not a display label) to pad out the FY's full week grid.
+            weekly = [{"week": week, "pnl": values["pnl"], "brokerage": values["brokerage"], "taxes": values["taxes"]}for week, values in per_week.items()]
+            weekly.sort(key=lambda x: x["week"])
+            performance['Success']['weekly'] = weekly
 
         else:
             performance['Success'] = None
@@ -2784,42 +3419,22 @@ class processor():
 
     def list_option_strikes(
         self, stock_code: str, expiry_date: str, exchange_code: str = cfg.NFO
-    ) -> list[int]:
-        """Distinct strike prices for an underlying + expiry from scrip_master."""
-        with _scrip_master_connection() as conn:
-            if exchange_code == cfg.NFO:
-                cursor = conn.execute(
-                    """
-                    SELECT DISTINCT StrikePrice FROM scrip_master
-                    WHERE ShortName = ? AND ExpiryDate = ?
-                      AND (SegmentCode = ? OR SegmentCode IS NULL)
-                      AND StrikePrice IS NOT NULL AND StrikePrice > 0
-                    ORDER BY StrikePrice
-                    """,
-                    (stock_code, expiry_date, exchange_code),
-                )
-            else:
-                cursor = conn.execute(
-                    """
-                    SELECT DISTINCT StrikePrice FROM scrip_master
-                    WHERE ShortName = ? AND ExpiryDate = ?
-                      AND SegmentCode = ?
-                      AND StrikePrice IS NOT NULL AND StrikePrice > 0
-                    ORDER BY StrikePrice
-                    """,
-                    (stock_code, expiry_date, exchange_code),
-                )
-            rows = cursor.fetchall()
-        out: list[int] = []
-        for row in rows:
-            try:
-                out.append(int(float(row[0])))
-            except (TypeError, ValueError):
-                continue
-        return sorted(set(out))
+    ) -> list[Strike]:
+        """Distinct tradeable strike prices from in-memory scrip index."""
+        expiry_sql_values = _scrip_master_expiry_sql_values(expiry_date)
+        if not expiry_sql_values:
+            return []
+        expiry_display = expiry_sql_values[0]
+        from icici_breeze_backend.app.services.reference_data.scrip_index import (
+            list_tradeable_strikes_memory,
+        )
+
+        return list_tradeable_strikes_memory(
+            stock_code, expiry_display, exchange_code=exchange_code
+        )
 
     @staticmethod
-    def strike_interval(strikes: list[int]) -> int:
+    def strike_interval(strikes: list[Strike]) -> float:
         """Minimum positive gap between adjacent strikes (fallback 50)."""
         if len(strikes) < 2:
             return 50
@@ -2827,7 +3442,7 @@ class processor():
         return min(gaps) if gaps else 50
 
     @staticmethod
-    def search_interval(strikes: list[int], spot: float) -> int:
+    def search_interval(strikes: list[Strike], spot: float) -> float:
         """Modal strike gap near spot for range padding (fallback 50)."""
         if len(strikes) < 2:
             return 50
@@ -2843,23 +3458,31 @@ class processor():
         return Counter(gaps).most_common(1)[0][0]
 
     def fetch_lot_size(self, stock_code, expiry_date, exchange_code: str = cfg.NFO):
-        # Fetches the lot size for the provided stock_code from the scrip_master table.
-        with _scrip_master_connection() as conn:
-            if exchange_code == cfg.NFO:
-                cursor = conn.execute(
-                    "SELECT LotSize FROM scrip_master WHERE ShortName = ? AND ExpiryDate = ? AND (SegmentCode = ? OR SegmentCode IS NULL) LIMIT 1",
-                    (stock_code, expiry_date, exchange_code),
-                )
-            else:
-                cursor = conn.execute(
-                    "SELECT LotSize FROM scrip_master WHERE ShortName = ? AND ExpiryDate = ? AND SegmentCode = ? LIMIT 1",
-                    (stock_code, expiry_date, exchange_code),
-                )
-            row = cursor.fetchone()
-        return row[0] if row else None
+        from icici_breeze_backend.app.services.reference_data.scrip_index import (
+            get_lot_size_memory,
+            list_tradeable_strikes_memory,
+        )
+        from icici_breeze_backend.app.services.reference_data.scrip_master_sql import (
+            scrip_master_expiry_sql_values,
+        )
+
+        expiry_sql_values = _scrip_master_expiry_sql_values(expiry_date)
+        if not expiry_sql_values:
+            return None
+        expiry_display = expiry_sql_values[0]
+        lot = get_lot_size_memory(stock_code, expiry_display, exchange_code=exchange_code)
+        if lot:
+            return lot
+        if not list_tradeable_strikes_memory(stock_code, expiry_display, exchange_code=exchange_code):
+            return None
+        return None
 
     def fetch_stock_codes(self, exchange_code: str = cfg.NFO):
-        # Fetches all unique combinations of ShortName and CompanyName (long_name) where Series is 'OPTION', and returns a list of dictionaries with all expiry dates for each combination.
+        from icici_breeze_backend.app.services.reference_data.scrip_index import get_underlyings
+
+        cached = get_underlyings(exchange_code)
+        if cached:
+            return cached
         with _scrip_master_connection() as conn:
             if exchange_code == cfg.NFO:
                 cursor = conn.execute(
@@ -2993,7 +3616,8 @@ class processor():
                 QuantityLimit INTEGER,
                 CompanyName TEXT,
                 ExchangeCode TEXT,
-                SegmentCode TEXT
+                SegmentCode TEXT,
+                MarginPercentage INTEGER
             )
             ''')
             _logger.debug("Created scrip_master table")
@@ -3001,6 +3625,10 @@ class processor():
             # Backward compatible schema upgrade for existing DBs.
             try:
                 cursor.execute("ALTER TABLE scrip_master ADD COLUMN SegmentCode TEXT")
+            except Exception:
+                pass
+            try:
+                cursor.execute("ALTER TABLE scrip_master ADD COLUMN MarginPercentage INTEGER")
             except Exception:
                 pass
 
@@ -3044,17 +3672,18 @@ class processor():
             # Requires raw_limits_data populated by load_qty_limits (master load fails if limits missing).
             cursor.execute(
                 """
-            INSERT INTO scrip_master (ShortName, ExpiryDate, StrikePrice, OptionType, LotSize, QuantityLimit, CompanyName, ExchangeCode, SegmentCode)
-            SELECT 
-                scrips.ShortName, 
-                scrips.ExpiryDate, 
-                scrips.StrikePrice, 
-                scrips.OptionType, 
-                scrips.LotSize, 
-                limits.QtyLimit AS QuantityLimit, 
-                scrips.CompanyName, 
+            INSERT INTO scrip_master (ShortName, ExpiryDate, StrikePrice, OptionType, LotSize, QuantityLimit, CompanyName, ExchangeCode, SegmentCode, MarginPercentage)
+            SELECT
+                scrips.ShortName,
+                scrips.ExpiryDate,
+                scrips.StrikePrice,
+                scrips.OptionType,
+                scrips.LotSize,
+                limits.QtyLimit AS QuantityLimit,
+                scrips.CompanyName,
                 scrips.ExchangeCode,
-                limits.SegmentCode
+                limits.SegmentCode,
+                scrips.MarginPercentage
             FROM raw_scrip_data scrips
             JOIN raw_limits_data limits
               ON scrips.ShortName = limits.ShortName
@@ -3065,6 +3694,18 @@ class processor():
                 (exchange_code,),
             )
             _logger.info("Inserted filtered data into scrip_master")
+
+            from icici_breeze_backend.app.services.reference_data.ws_token_index import (
+                clear_token_lookup_cache,
+                populate_ws_token_index_from_raw,
+            )
+
+            populate_ws_token_index_from_raw(cursor, exchange_code)
+            _logger.info("Updated ws_token_index for %s", exchange_code)
+            try:
+                clear_token_lookup_cache()
+            except Exception:
+                pass
 
             # Drop temp table (raw_limits_data is persistent)
             cursor.execute('DROP TABLE IF EXISTS raw_scrip_data')
@@ -3115,6 +3756,11 @@ class processor():
         exchange_code: str,
         legs: list,
         *,
+        margin_source_override: str | None = None,
+        baseline_only: bool = False,
+        spot: float | None = None,
+        iv: float | None = None,
+        time_years: float | None = None,
         audit: "StrategyBuilderAuditSession | None" = None,
         audit_context: dict[str, Any] | None = None,
         audit_rationale: str | None = None,
@@ -3127,11 +3773,17 @@ class processor():
                 "Error": "Unable to connect to broker. Please check your credentials and re-login.",
                 "Success": None,
             }
-        margin_source = self.get_strategy_builder_margin_source(user_id)
+        margin_source = margin_source_override or self.get_strategy_builder_margin_source(user_id)
+        if margin_source not in (MARGIN_SOURCE_BREEZE, MARGIN_SOURCE_EXCHANGE):
+            margin_source = MARGIN_SOURCE_BREEZE
         margin_input = []
         baseline_total = 0.0
         warnings: list[dict] = []
+        missing_baseline_count = 0
         can_use_baseline = margin_source == MARGIN_SOURCE_EXCHANGE
+        elm_legs: list[TradeLeg] = []
+        elm_stock_code: str | None = None
+        elm_expiry_api: str | None = None
         for leg in legs:
             ed = (leg.get("expiry_date") or "").strip()
             if len(ed) >= 10 and ed[4] == "-" and "T" not in ed:
@@ -3144,7 +3796,9 @@ class processor():
                 except Exception:
                     return {"Status": 400, "Error": f"Invalid expiry_date: {ed}", "Success": None}
             try:
-                strike_price = int(float(leg["strike_price"]))
+                strike_price = parse_strike(leg["strike_price"])
+                if strike_price is None:
+                    return {"Status": 400, "Error": "Invalid strike_price", "Success": None}
                 quantity = int(leg["quantity"])
                 action = leg["action"]
                 product = leg.get("product_type") or cfg.OPTIONS
@@ -3152,6 +3806,10 @@ class processor():
                 right = leg["right"]
             except (TypeError, ValueError) as e:
                 return {"Status": 400, "Error": f"Invalid leg fields: {e}", "Success": None}
+            elm_legs.append(TradeLeg(right, action, strike_price, quantity, 0.0))
+            if elm_stock_code is None:
+                elm_stock_code = stock_code
+                elm_expiry_api = expiry_api
             if can_use_baseline:
                 baseline_margin = resolve_exchange_baseline_margin(
                     exchange_code=exchange_code,
@@ -3164,6 +3822,7 @@ class processor():
                 if baseline_margin.get("found"):
                     baseline_total += float(baseline_margin.get("span_margin_required") or 0.0)
                     continue
+                missing_baseline_count += 1
                 warnings.append(
                     {
                         "type": "baseline_missing_contract",
@@ -3171,9 +3830,15 @@ class processor():
                         "expiry_date": _expiry_api_to_display(expiry_api),
                         "strike_price": strike_price,
                         "right": right,
-                        "message": "Contract missing in Exchange Risk Baseline; Breeze fallback used.",
+                        "message": (
+                            "Contract missing in Exchange Risk Baseline."
+                            if baseline_only
+                            else "Contract missing in Exchange Risk Baseline; Breeze fallback used."
+                        ),
                     }
                 )
+                if baseline_only:
+                    continue
             margin_input.append(
                 {
                     "strike_price": strike_price,
@@ -3185,15 +3850,102 @@ class processor():
                     "right": right,
                 }
             )
-        if can_use_baseline and not margin_input:
+        elm_requirement: float | None = None
+        elm_is_index = False
+        elm_approximate = False
+        if elm_legs and elm_stock_code and elm_expiry_api and spot is not None:
+            elm_is_index = cfg.is_index_symbol(elm_stock_code)
+            elm_same_day = _parse_option_expiry_date(elm_expiry_api) == today_ist_date()
+            elm_expiry_display = _expiry_api_to_display(elm_expiry_api)
+            elm_previous_close: float | None = None
+            if not elm_same_day:
+                for elm_leg in elm_legs:
+                    row = _lookup_bhav_row(
+                        elm_stock_code, elm_expiry_display, elm_leg.right, elm_leg.strike, exchange_code
+                    )
+                    candidate = 0.0
+                    if row and row.get("spot_price"):
+                        try:
+                            candidate = float(row["spot_price"])
+                        except (TypeError, ValueError):
+                            candidate = 0.0
+                    if candidate > 0:
+                        elm_previous_close = candidate
+                        break
+                if elm_previous_close is None:
+                    elm_previous_close = spot
+                    elm_approximate = True
+            lot_size_for_elm = self.fetch_lot_size(
+                elm_stock_code, elm_expiry_display, exchange_code=exchange_code
+            )
+            if lot_size_for_elm and lot_size_for_elm > 0:
+                elm_requirement = round(
+                    elm_addon(
+                        spot,
+                        int(lot_size_for_elm),
+                        elm_legs,
+                        provision_elm=True,
+                        is_index=elm_is_index,
+                        previous_close=elm_previous_close,
+                        same_day_expiry=elm_same_day,
+                    ),
+                    2,
+                )
+                elm_approximate = elm_approximate or not elm_is_index
+
+        def _attach_elm(success: dict[str, Any]) -> dict[str, Any]:
+            if elm_requirement is not None:
+                success["elm_requirement"] = elm_requirement
+                success["elm_is_index"] = elm_is_index
+                success["elm_approximate"] = elm_approximate
+            return success
+
+        if can_use_baseline and baseline_only and missing_baseline_count > 0:
             return {
                 "Status": 200,
                 "Error": "",
                 "Success": {
-                    "span_margin_required": baseline_total,
+                    "span_margin_required": None,
                     "margin_source": MARGIN_SOURCE_EXCHANGE,
                     "warnings": warnings,
                 },
+            }
+        if can_use_baseline and not margin_input:
+            portfolio_margin = self._portfolio_baseline_span_margin(
+                exchange_code,
+                legs,
+                spot=spot,
+                iv=iv,
+                time_years=time_years,
+            )
+            if portfolio_margin.get("found"):
+                success: dict[str, Any] = {
+                    "span_margin_required": portfolio_margin.get("span_margin_required"),
+                    "margin_source": MARGIN_SOURCE_EXCHANGE,
+                    "scanning_risk": portfolio_margin.get("scanning_risk"),
+                    "net_option_value": portfolio_margin.get("net_option_value"),
+                    "margin_benefit": portfolio_margin.get("margin_benefit"),
+                }
+                if warnings:
+                    success["warnings"] = warnings
+                scan_warnings = portfolio_margin.get("warnings") or []
+                if scan_warnings:
+                    success.setdefault("warnings", [])
+                    if isinstance(success["warnings"], list):
+                        success["warnings"].extend(
+                            {"type": "portfolio_span", "message": w} for w in scan_warnings
+                        )
+                return {"Status": 200, "Error": "", "Success": _attach_elm(success)}
+            return {
+                "Status": 200,
+                "Error": "",
+                "Success": _attach_elm(
+                    {
+                        "span_margin_required": baseline_total,
+                        "margin_source": MARGIN_SOURCE_EXCHANGE,
+                        "warnings": warnings,
+                    }
+                ),
             }
         margin_rationale = (
             audit_rationale or "Batch SPAN margin for unique proposed leg structure."
@@ -3236,6 +3988,7 @@ class processor():
             margins["Success"]["margin_source"] = margin_source
             if warnings:
                 margins["Success"]["warnings"] = warnings
+            _attach_elm(margins["Success"])
         return margins
 
     # Real-time portfolio fetch for US3 (called by tests)

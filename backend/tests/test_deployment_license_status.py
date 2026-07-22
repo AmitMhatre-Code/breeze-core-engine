@@ -128,6 +128,37 @@ def test_require_trading_not_revoked_allows_expired():
     require_trading_not_revoked()
 
 
+@pytest.mark.parametrize(
+    "override,trading_allowed,read_only",
+    [
+        ("active", True, False),
+        ("expired", True, False),
+        ("revoked", False, True),
+        ("unlicensed", False, True),
+        ("pending_activation", False, True),
+        ("trial_denied", False, True),
+    ],
+)
+def test_license_status_override(monkeypatch, override, trading_allowed, read_only):
+    monkeypatch.setattr(cfg, "PORTAL_API_BASE_URL", "")
+    monkeypatch.setattr(cfg, "DEPLOYMENT_LICENSE_KEY", "")
+    monkeypatch.setattr(cfg, "LICENSE_STATUS_OVERRIDE", override)
+    assert dls.get_license_status() == override
+    assert dls.trading_mutations_allowed() is trading_allowed
+    api = dls.get_license_status_for_api()
+    assert api is not None
+    assert api["deployment_license_status"] == override
+    assert api["deployment_license_read_only"] is read_only
+    if override in ("expired", "revoked", "unlicensed", "trial_denied"):
+        assert "contact_sales" in api
+
+
+def test_license_status_override_ignored_when_unset(monkeypatch):
+    monkeypatch.setattr(cfg, "LICENSE_STATUS_OVERRIDE", "")
+    dls.update_from_verified_policy({"deployment_license_status": "active"}, source="heartbeat")
+    assert dls.get_license_status() == "active"
+
+
 def test_home_data_response_includes_license_fields():
     from icici_breeze_backend.app.domain.responses import HomeDataResponse
 

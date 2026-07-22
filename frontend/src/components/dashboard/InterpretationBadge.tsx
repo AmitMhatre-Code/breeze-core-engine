@@ -4,27 +4,23 @@ import type { InterpretTone } from "@/lib/dashboard-interpretation";
 /** Inline colours so chips stay filled in high-contrast / forced-colour modes and any CSS order bugs. */
 const TONE_STYLE: Record<InterpretTone, CSSProperties> = {
   positive: {
-    backgroundColor: "#059669",
-    color: "#ffffff",
-    border: "1px solid rgba(16, 185, 129, 0.65)",
+    backgroundColor: "var(--up-tint)",
+    color: "var(--up)",
     forcedColorAdjust: "none",
   },
   muted: {
-    backgroundColor: "#059669",
-    color: "#ffffff",
-    border: "1px solid rgba(16, 185, 129, 0.65)",
+    backgroundColor: "var(--accent-tint)",
+    color: "var(--accent)",
     forcedColorAdjust: "none",
   },
   caution: {
-    backgroundColor: "#d97706",
-    color: "#fffbeb",
-    border: "1px solid rgba(217, 119, 6, 0.9)",
+    backgroundColor: "var(--amber-tint)",
+    color: "var(--amber)",
     forcedColorAdjust: "none",
   },
   alarm: {
-    backgroundColor: "#dc2626",
-    color: "#ffffff",
-    border: "1px solid rgba(220, 38, 38, 0.85)",
+    backgroundColor: "var(--down-tint)",
+    color: "var(--down)",
     forcedColorAdjust: "none",
   },
 };
@@ -42,7 +38,7 @@ export function InterpretationBadge({
     <span
       title={tooltip}
       style={TONE_STYLE[tone]}
-      className="ml-1.5 inline-flex max-w-[9.5rem] cursor-help items-center justify-end rounded-lg px-2 py-0.5 text-right text-[10px] font-semibold leading-tight tracking-tight"
+      className="inline-flex max-w-[9.5rem] cursor-help items-center rounded-lg px-2 py-0.5 text-micro uppercase tracking-wide"
     >
       {label}
     </span>

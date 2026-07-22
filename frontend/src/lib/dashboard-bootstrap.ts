@@ -40,10 +40,23 @@ export type PortfolioApiResponse = {
   };
 };
 
+/** Unrealized MTM since previous close (v1: no realized component). See GET /dashboard/bootstrap. */
+export type DaysPnlResponse = {
+  unrealized_day_pnl: number | null;
+  realized_day_pnl: number | null;
+  total_day_pnl: number | null;
+  as_of: string;
+  market_session_state: "open" | "post_close" | "pre_open" | "closed_non_trading_day";
+  positions_priced: number;
+  positions_missing_reference: number;
+  error?: string | null;
+};
+
 export type DashboardBootstrapResponse = {
   home: HomeDataResponse;
   portfolio: PortfolioApiResponse;
   vix: DashboardVixCore;
+  days_pnl: DaysPnlResponse;
 };
 
 export type DashboardVixHistoryResponse = {
@@ -71,4 +84,5 @@ export function hydrateDashboardQueryCache(
   queryClient.setQueryData(["home", "data"], data.home);
   queryClient.setQueryData(["portfolio", "positions"], data.portfolio);
   queryClient.setQueryData(["dashboard", "vix"], data.vix);
+  queryClient.setQueryData(["dashboard", "days-pnl"], data.days_pnl);
 }

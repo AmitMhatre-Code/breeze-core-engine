@@ -23,6 +23,9 @@ async def post_mock_broker_cookie(request: Request):
     if not ctx or not ctx.is_authenticated:
         raise HTTPException(status_code=401, detail="JWT required; sign in with Google first")
     token = getattr(cfg, "ICICI_MOCK_BROKER_COOKIE_VALUE", "mock") or "mock"
+    from icici_breeze_backend.app.repositories.broker_session import save_broker_session_token
+
+    save_broker_session_token(ctx.user_id, token)
     response = JSONResponse({"ok": True, "redirect": "/dashboard"})
     response.set_cookie(
         key=ICICI_BROKER_TOKEN_COOKIE,

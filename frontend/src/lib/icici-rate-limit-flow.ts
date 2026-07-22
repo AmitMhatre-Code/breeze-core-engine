@@ -1,5 +1,10 @@
 import { apiClient } from "@/lib/api-client";
 
+function rateLimitWaitSeconds(raw: unknown, fallback = 0): number {
+  const n = Number(raw);
+  return Math.max(0, Math.floor(Number.isFinite(n) ? n : fallback));
+}
+
 export type BreakOrderChunkResponse = {
   terminal_messages?: Array<{ type?: string; message?: string }>;
   chunk_index: number;
@@ -8,6 +13,9 @@ export type BreakOrderChunkResponse = {
   price_f?: number;
   rate_limited: boolean;
   daily_limit_exhausted?: boolean;
+  parked_for_execution?: boolean;
+  parked_order_ids?: string[];
+  market_closed_reason?: string;
   success: boolean;
   placed_quantity: number;
   danger_line: string | null;
@@ -29,6 +37,19 @@ export type PlaceBreakOrderArgs = {
   onRateLimitWait: (seconds: number) => Promise<void>;
   /** Max units per exchange order; server lot-rounds and caps at freeze. Omit for backend default. */
   chunk_qty?: string;
+  aggressive_limit?: boolean;
+  from_parked_execution?: boolean;
+  batch_group_id?: string;
+  /** When true, caller stores the parked info message after all legs (multi-leg). */
+  defer_parked_finalize?: boolean;
+};
+
+export type RunBreakOrderResult = {
+  ok: boolean;
+  parked?: boolean;
+  marketClosedReason?: string;
+  terminalError?: string;
+  redirect?: string;
 };
 
 /**
@@ -36,7 +57,7 @@ export type PlaceBreakOrderArgs = {
  */
 export async function runBreakOrderChunks(
   args: PlaceBreakOrderArgs,
-): Promise<{ ok: boolean; terminalError?: string; redirect?: string }> {
+): Promise<RunBreakOrderResult> {
   const successes: number[] = [];
   const dangers: string[] = [];
   let chunk = 0;
@@ -52,9 +73,12 @@ export async function runBreakOrderChunks(
     total_qty: args.total_qty,
     price: args.price,
     action: args.action,
+    ...(args.aggressive_limit ? { aggressive_limit: true } : {}),
     ...(args.chunk_qty != null && String(args.chunk_qty).trim() !== ""
       ? { chunk_qty: String(args.chunk_qty).trim() }
       : {}),
+    ...(args.from_parked_execution ? { from_parked_execution: true } : {}),
+    ...(args.batch_group_id ? { batch_group_id: args.batch_group_id } : {}),
   };
 
   for (;;) {
@@ -68,6 +92,34 @@ export async function runBreakOrderChunks(
       return {
         ok: false,
         terminalError: terminal.map((m) => String(m.message ?? "")).join(" "),
+      };
+    }
+
+    if (res.parked_for_execution) {
+      if (!args.defer_parked_finalize) {
+        const fin = await apiClient.post<{ redirect: string }>("/order/break-finalize", {
+          stock_code: args.stock_code,
+          expiry_date: args.expiry_date,
+          right: args.right,
+          strike_price: args.strike_price,
+          product_type: args.product_type,
+          exchange_code: args.exchange_code,
+          price: args.price,
+          action: args.action,
+          parked_only: true,
+          market_closed_reason: res.market_closed_reason ?? undefined,
+        });
+        return {
+          ok: true,
+          parked: true,
+          marketClosedReason: res.market_closed_reason,
+          redirect: fin.redirect,
+        };
+      }
+      return {
+        ok: true,
+        parked: true,
+        marketClosedReason: res.market_closed_reason,
       };
     }
 
@@ -85,10 +137,7 @@ export async function runBreakOrderChunks(
             "You have been throttled by ICICI and have reached the daily API limit.",
         };
       }
-      const sec = Math.max(
-        1,
-        Math.floor(Number(res.rate_limit_pause_seconds) || 0.5),
-      );
+      const sec = rateLimitWaitSeconds(res.rate_limit_pause_seconds);
       await args.onRateLimitWait(sec);
       continue;
     }
@@ -117,6 +166,7 @@ export async function runBreakOrderChunks(
     action: args.action,
     success_quantities: successes,
     danger_lines: dangers,
+    ...(args.aggressive_limit ? { aggressive_limit: true } : {}),
   });
   return { ok: true, redirect: fin.redirect };
 }
@@ -152,10 +202,7 @@ export async function runCancelOrdersWithPacing(args: {
           });
           break;
         }
-        const sec = Math.max(
-          1,
-          Math.floor(Number(res.rate_limit_pause_seconds) || 0.5),
-        );
+        const sec = rateLimitWaitSeconds(res.rate_limit_pause_seconds);
         await args.onRateLimitWait(sec);
         continue;
       }
@@ -176,4 +223,69 @@ export async function runCancelOrdersWithPacing(args: {
     cancel_details: metaOk ? args.cancel_details : undefined,
   });
   return { redirect: fin.redirect };
+}
+
+export type LegModifyOrderRef = {
+  order_id: string;
+  exchange_code: string;
+  quantity: number;
+  pending_quantity: number;
+  status: string;
+  price?: string | null;
+};
+
+export type LegModifyOrderOutcome = {
+  order_id: string;
+  quantity: number;
+  price?: string | null;
+};
+
+export type LegModifyFailure = { ref: string; error: string };
+
+export type LegModifyResponse = {
+  success: boolean;
+  cancelled_order_ids: string[];
+  modified: LegModifyOrderOutcome[];
+  placed: LegModifyOrderOutcome[];
+  failures: LegModifyFailure[];
+  rate_limited: boolean;
+  rate_limit_pause_seconds?: number;
+};
+
+export type ModifyLegArgs = {
+  stock_code: string;
+  expiry_date: string;
+  strike_price: string;
+  right: string;
+  product_type: string;
+  exchange_code: string;
+  action: "Buy" | "Sell";
+  orders: LegModifyOrderRef[];
+  new_quantity: string;
+  new_price?: string;
+  rule_id?: string;
+  scrip_key?: string;
+  onRateLimitWait: (seconds: number) => Promise<void>;
+};
+
+/**
+ * Modify a leg's total quantity/price in one server-side call (the backend
+ * redistributes across the leg's underlying chunk orders). On a 429, waits
+ * and retries the whole call — the server recomputes its plan from current
+ * broker state each time, so a retry naturally reconciles with whatever
+ * already succeeded.
+ */
+export async function runModifyLegWithPacing(
+  args: ModifyLegArgs,
+): Promise<LegModifyResponse> {
+  const { onRateLimitWait, ...payload } = args;
+  for (;;) {
+    const res = await apiClient.post<LegModifyResponse>("/book/modify-leg", payload);
+    if (res.rate_limited) {
+      const sec = rateLimitWaitSeconds(res.rate_limit_pause_seconds);
+      await onRateLimitWait(sec);
+      continue;
+    }
+    return res;
+  }
 }

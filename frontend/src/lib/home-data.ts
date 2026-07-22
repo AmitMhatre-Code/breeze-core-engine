@@ -10,6 +10,7 @@ export type HomeDataResponse = {
   api_usage_blocked?: boolean;
   deployment_license_status?: "active" | "expired" | "revoked";
   deployment_license_read_only?: boolean;
+  aggressive_limit_order_enabled?: boolean;
 };
 
 function readSuccess(

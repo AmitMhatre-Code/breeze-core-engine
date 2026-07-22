@@ -1,49 +1,92 @@
 "use client";
 
 import { useMemo } from "react";
-import { InfinitySymbol } from "@/components/strategy-builder/InfinitySymbol";
-import { OutlookIcon } from "@/components/strategy-builder/OutlookIcon";
-import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import { InfinitySymbol } from "@/components/shared/payoff/InfinitySymbol";
+import type { SigmaSmiles } from "@/lib/strategy-builder/chainIv";
+import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { strategyOutlook } from "@/lib/strategy-builder/templates";
 import {
   computeTradePop,
-  formatRiskRewardRatio,
   isUnlimitedMaxLoss,
+  isUnlimitedMaxProfit,
 } from "@/lib/strategy-builder/trade-metrics";
-import type { ProposedTrade } from "@/lib/strategy-builder/types";
+import type { Outlook, ProposedTrade } from "@/lib/strategy-builder/types";
 
-const BOOK_LAKH = 100_000;
-
-const CONVICTION_LABELS: Record<string, string> = {
-  conservative: "Conservative",
-  moderate: "Moderate",
-  aggressive: "Aggressive",
+const OUTLOOK_BADGE_TONE: Record<
+  Outlook,
+  { text: string; tint: string; solidBg: string; solidText: string }
+> = {
+  neutral: {
+    text: "text-accent-strong",
+    tint: "bg-accent-tint",
+    solidBg: "bg-accent",
+    solidText: "text-accent-ink",
+  },
+  bullish: {
+    text: "text-up",
+    tint: "bg-up-tint",
+    solidBg: "bg-up",
+    solidText: "text-accent-ink",
+  },
+  bearish: {
+    text: "text-down",
+    tint: "bg-down-tint",
+    solidBg: "bg-down",
+    solidText: "text-accent-ink",
+  },
+  volatile: {
+    text: "text-gtt",
+    tint: "bg-gtt-tint",
+    solidBg: "bg-gtt",
+    solidText: "text-accent-ink",
+  },
 };
 
-const rowClass =
-  "flex flex-nowrap items-center gap-x-2 whitespace-nowrap text-xs";
-
-function formatBookQtyInL(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  return `${(n / BOOK_LAKH).toLocaleString("en-IN", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  })} L`;
+function legPart(leg: ProposedTrade["legs"][number]): string {
+  const abbr = leg.right === "Put" ? "PE" : "CE";
+  return `${leg.side} ${leg.strike.toLocaleString("en-IN")} ${abbr}`;
 }
 
-function fmtPx(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+/** 4-leg strategies (e.g. Iron Condor) pair into 2 wing lines: "Sell X PE / Buy Y PE"
+ * and "Sell A CE / Buy B CE". 2-leg strategies get one line per leg. Single-leg
+ * strategies (Naked CE/PE Short) get a padding blank line so every card is 2 leg-lines
+ * tall, keeping tile heights consistent across 1/2/4-leg strategies. */
+function legLines(legs: ProposedTrade["legs"]): string[] {
+  if (legs.length === 1) {
+    return [legPart(legs[0]), " "];
+  }
+  if (legs.length !== 4) {
+    return legs.map(legPart);
+  }
+  const puts = legs.filter((l) => l.right === "Put");
+  const calls = legs.filter((l) => l.right === "Call");
+  const lines: string[] = [];
+  if (puts.length) lines.push(puts.map(legPart).join(" / "));
+  if (calls.length) lines.push(calls.map(legPart).join(" / "));
+  return lines;
 }
 
-function premiumCapsuleClass(premium: number | null | undefined): string {
-  if (premium == null || !Number.isFinite(premium)) {
-    return "bg-zinc-500/10 text-zinc-700 ring-zinc-500/20 dark:text-zinc-300 dark:ring-zinc-400/25";
-  }
-  if (premium < 0) {
-    return "bg-rose-500/14 text-rose-800 ring-rose-600/20 dark:bg-rose-500/12 dark:text-rose-300 dark:ring-rose-400/30";
-  }
-  return "bg-emerald-500/14 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-500/12 dark:text-emerald-300 dark:ring-emerald-400/30";
+function Stat({
+  label,
+  value,
+  tone = "foreground",
+}: {
+  label: string;
+  value: React.ReactNode;
+  tone?: "up" | "down" | "foreground";
+}) {
+  const toneClass =
+    tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-foreground";
+  return (
+    <div>
+      <div className="text-body font-bold uppercase tracking-wide text-faint">
+        {label}
+      </div>
+      <div className={`font-mono text-sm font-bold tabular-nums ${toneClass}`}>
+        {value}
+      </div>
+    </div>
+  );
 }
 
 export function ProposedStrategyTradeCard({
@@ -51,6 +94,7 @@ export function ProposedStrategyTradeCard({
   lotSize,
   spot,
   atmIv,
+  sigmaSmiles = null,
   expiryDate,
   selected,
   onSelect,
@@ -59,263 +103,125 @@ export function ProposedStrategyTradeCard({
   lotSize: number;
   spot: number | null;
   atmIv: number | null;
+  /** Per-strike IV smile (skew-aware); falls back to flat `atmIv` where a strike lacks trusted anchors. */
+  sigmaSmiles?: SigmaSmiles | null;
   expiryDate: string;
   selected: boolean;
   onSelect: () => void;
 }) {
   const skipped = trade.status === "skipped";
+  const relaxed = trade.compliance === "relaxed";
   const outlook = strategyOutlook(trade.strategy_id);
+  const tone = outlook ? OUTLOOK_BADGE_TONE[outlook] : null;
 
   const pop = useMemo(
-    () => computeTradePop(trade, spot, atmIv, expiryDate, lotSize),
-    [trade, spot, atmIv, expiryDate, lotSize],
+    () => computeTradePop(trade, spot, atmIv, expiryDate, lotSize, sigmaSmiles),
+    [trade, spot, atmIv, expiryDate, lotSize, sigmaSmiles],
   );
 
-  const prem = trade.net_premium;
-  const premLabel =
-    prem != null ? formatIndianMoneyCompact(prem) : "—";
-  const roiLabel =
-    trade.annualized_return_pct != null
-      ? `${trade.annualized_return_pct.toFixed(1)}%`
-      : "—";
-  const rrLabel = formatRiskRewardRatio(
-    trade.risk_reward_ratio,
-    trade.max_loss,
-  );
-  const convictionLabel = trade.conviction_profile
-    ? CONVICTION_LABELS[trade.conviction_profile] ?? trade.conviction_profile
-    : null;
-  const useHeroMetric = trade.hero_metric != null;
-  const secondaryFromApi = trade.secondary_metrics ?? [];
-
-  const vBar = (
-    <span
-      className="mx-1.5 h-4 w-px shrink-0 self-center bg-zinc-200 dark:bg-zinc-600"
-      aria-hidden
-    />
-  );
+  if (skipped) {
+    return (
+      <div className="w-full min-w-0 rounded-[12px] border border-border-soft bg-panel2 p-3.5 opacity-70">
+        <span className="text-sm font-bold text-foreground">
+          {trade.strategy_name}
+        </span>
+        <p className="mt-1 text-xs text-muted">
+          {trade.skip_reason ?? "Not available"}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div
-      className={`group relative w-full min-w-0 rounded-lg border p-2.5 shadow-sm backdrop-blur-sm transition hover:shadow-md ${
-        skipped
-          ? "border-zinc-200/60 bg-zinc-100/50 opacity-70 dark:border-zinc-700/60 dark:bg-zinc-900/40"
+      className={`w-full min-w-0 rounded-[12px] border p-3.5 transition ${
+        relaxed
+          ? selected
+            ? "border-amber-accent bg-amber-tint"
+            : "border-amber-accent/40 bg-amber-tint/60 hover:border-amber-accent/70"
           : selected
-            ? "border-sky-500 ring-2 ring-sky-500/40 bg-white/95 dark:bg-zinc-950/70"
-            : "border-zinc-200/80 bg-white/90 ring-1 ring-zinc-950/[0.03] hover:border-zinc-300 dark:border-zinc-700/80 dark:bg-zinc-950/60 dark:ring-white/[0.04] dark:hover:border-zinc-600"
+            ? "border-[1.5px] border-accent bg-accent-tint"
+            : "border-border bg-panel hover:border-accent/40"
       }`}
     >
-      <div className="space-y-2">
-        <div className="flex items-start justify-between gap-2">
-          <div
-            className={`${rowClass} min-w-0 gap-x-1.5 text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50`}
-          >
-            {outlook ? (
-              <span className="shrink-0">
-                <OutlookIcon outlook={outlook} />
-              </span>
-            ) : null}
-            <span className="shrink-0 leading-snug">{trade.strategy_name}</span>
-            {convictionLabel ? (
-              <span className="shrink-0 rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-medium text-violet-800 dark:text-violet-200">
-                {convictionLabel}
-              </span>
-            ) : null}
-            {(trade.badges ?? []).map((badge) => (
-              <span
-                key={badge}
-                className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:text-emerald-200"
-              >
-                {badge}
-              </span>
-            ))}
-            {!convictionLabel &&
-            (trade.badges ?? []).length === 0 &&
-            trade.variant_rank != null &&
-            trade.variant_rank > 0 ? (
-              <span className="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-200">
-                #{trade.variant_rank}
-              </span>
-            ) : null}
-            {trade.structure_modified ? (
-              <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
-                Modified
-              </span>
-            ) : null}
-          </div>
-          {!skipped && (useHeroMetric || prem != null) ? (
+      <div className="flex flex-col gap-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-bold text-foreground">
+            {trade.strategy_name}
+          </span>
+          {tone ? (
             <span
-              className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ring-1 ${
-                useHeroMetric
-                  ? "bg-sky-500/14 text-sky-900 ring-sky-600/20 dark:bg-sky-500/12 dark:text-sky-200 dark:ring-sky-400/30"
-                  : premiumCapsuleClass(prem)
+              className={`shrink-0 rounded-[5px] px-1.5 py-0.5 text-body font-bold uppercase tracking-wide ${
+                selected && !relaxed
+                  ? `${tone.solidBg} ${tone.solidText}`
+                  : `${tone.tint} ${tone.text}`
               }`}
-              title={
-                useHeroMetric
-                  ? trade.hero_metric!.label
-                  : "Net premium (annualised ROI)"
-              }
             >
-              {useHeroMetric ? (
-                <>
-                  <span className="font-normal opacity-80">
-                    {trade.hero_metric!.label}:{" "}
-                  </span>
-                  <span>{trade.hero_metric!.value}</span>
-                </>
-              ) : (
-                <>
-                  <span className={moneyToneClass(prem!)}>{premLabel}</span>
-                  {trade.annualized_return_pct != null ? (
-                    <span className="font-normal opacity-90">
-                      {" "}
-                      ({roiLabel})
-                    </span>
-                  ) : null}
-                </>
-              )}
+              {outlook}
             </span>
           ) : null}
         </div>
 
-        {skipped ? (
-          <p className="whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400">
-            {trade.skip_reason ?? "Not available"}
-          </p>
-        ) : (
-          <>
-            {trade.ranking_summary ? (
-              <p className="text-xs leading-snug text-zinc-500 dark:text-zinc-400">
-                {trade.ranking_summary}
-              </p>
-            ) : null}
-            {useHeroMetric && secondaryFromApi.length > 0 ? (
-              <div
-                className={`${rowClass} flex-wrap gap-x-3 gap-y-1 text-zinc-600 dark:text-zinc-300`}
-              >
-                {secondaryFromApi.map((metric) => (
-                  <span key={metric.label} className="inline-flex shrink-0 items-center gap-1">
-                    {metric.label}:{" "}
-                    <strong
-                      className={`tabular-nums ${
-                        metric.label === "Est. PoP"
-                          ? "font-normal text-zinc-500 dark:text-zinc-400"
-                          : "text-zinc-800 dark:text-zinc-200"
-                      }`}
-                    >
-                      {metric.value}
-                    </strong>
-                  </span>
-                ))}
-              </div>
-            ) : (
-            <div
-              className={`${rowClass} gap-x-3 text-zinc-600 dark:text-zinc-300`}
-            >
-              <span className="inline-flex shrink-0 items-center gap-1">
-                Max loss:{" "}
-                <strong className="inline-flex items-center tabular-nums">
-                  {isUnlimitedMaxLoss(trade.max_loss) ? (
-                    <InfinitySymbol />
-                  ) : (
-                    formatIndianMoneyCompact(trade.max_loss!)
-                  )}
-                </strong>
-              </span>
-              <span className="inline-flex shrink-0 items-center gap-1">
-                R:R{" "}
-                <strong className="inline-flex items-center tabular-nums">
-                  {rrLabel === "∞" ? <InfinitySymbol /> : rrLabel}
-                </strong>
-              </span>
-              {pop != null ? (
-                <span className="shrink-0">
-                  PoP:{" "}
-                  <strong className="text-zinc-800 dark:text-zinc-200">
-                    {pop.toFixed(1)}%
-                  </strong>
-                </span>
-              ) : null}
-              <span className="inline-flex shrink-0 items-center gap-1">
-                SPAN:{" "}
-                <strong className="tabular-nums">
-                  {trade.span_margin != null
-                    ? formatIndianMoneyCompact(trade.span_margin)
-                    : "—"}
-                </strong>
-              </span>
-              <span className="inline-flex shrink-0 items-center gap-1">
-                ELM:{" "}
-                <strong className="tabular-nums">
-                  {trade.elm_requirement != null && trade.elm_requirement > 0
-                    ? formatIndianMoneyCompact(trade.elm_requirement)
-                    : "—"}
-                </strong>
-              </span>
-            </div>
-            )}
+        <div className="font-mono text-heading leading-[1.7] text-muted">
+          {legLines(trade.legs).map((line, i) => (
+            <div key={i}>{line}</div>
+          ))}
+        </div>
 
-            <div className="space-y-1.5 border-t border-zinc-100 pt-1.5 dark:border-zinc-800">
-              {trade.legs.map((leg, i) => {
-                const abbr = leg.right === "Put" ? "PE" : "CE";
-                const ratioStr =
-                  typeof leg.buy_sell_ratio === "number"
-                    ? leg.buy_sell_ratio.toLocaleString("en-IN", {
-                        maximumFractionDigits: 2,
-                      })
-                    : leg.buy_sell_ratio ?? "—";
-                return (
-                  <div
-                    key={`${leg.strike}-${leg.right}-${leg.side}-${i}`}
-                    className="rounded border border-zinc-100 bg-zinc-50/80 px-2 py-1.5 text-[11px] dark:border-zinc-800 dark:bg-zinc-900/50"
-                  >
-                    <div
-                      className={`${rowClass} gap-x-2 font-medium text-zinc-800 dark:text-zinc-200`}
-                    >
-                      <span className="shrink-0">
-                        {leg.side} {leg.strike.toLocaleString("en-IN")} {abbr}
-                      </span>
-                      {vBar}
-                      <span className="shrink-0 tabular-nums">×{leg.quantity}</span>
-                    </div>
-                    <div
-                      className={`${rowClass} mt-0.5 gap-x-2 text-zinc-500 dark:text-zinc-400`}
-                    >
-                      <span className="shrink-0">LTP {fmtPx(leg.ltp)}</span>
-                      <span className="shrink-0">
-                        Bid {fmtPx(leg.best_bid_price)} / Offer{" "}
-                        {fmtPx(leg.best_offer_price)}
-                      </span>
-                      <span className="shrink-0">B:S {ratioStr}</span>
-                      <span className="shrink-0">
-                        Buy {formatBookQtyInL(leg.total_buy_qty ?? NaN)} / Sell{" "}
-                        {formatBookQtyInL(leg.total_sell_qty ?? NaN)}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
+        <div className="grid grid-cols-2 gap-2 border-t border-border-soft pt-2.5">
+          <Stat
+            label="Max profit"
+            tone="up"
+            value={
+              isUnlimitedMaxProfit(trade.max_profit) ? (
+                <InfinitySymbol />
+              ) : trade.max_profit != null ? (
+                formatIndianMoneyCompact(trade.max_profit)
+              ) : (
+                "—"
+              )
+            }
+          />
+          <Stat
+            label="Max loss"
+            tone="down"
+            value={
+              isUnlimitedMaxLoss(trade.max_loss) ? (
+                <InfinitySymbol />
+              ) : trade.max_loss != null ? (
+                formatIndianMoneyCompact(trade.max_loss)
+              ) : (
+                "—"
+              )
+            }
+          />
+          <Stat
+            label="POP"
+            value={pop != null ? `${pop.toFixed(1)}%` : "—"}
+          />
+          <Stat
+            label="Margin"
+            value={
+              trade.span_margin != null
+                ? formatIndianMoneyCompact(trade.span_margin)
+                : "—"
+            }
+          />
+        </div>
       </div>
 
-      {!skipped ? (
-        <div className="mt-2.5">
-          <button
-            type="button"
-            className={
-              selected
-                ? "w-full cursor-default rounded-lg border border-sky-600 bg-sky-600 py-2.5 text-sm font-semibold text-white"
-                : "w-full rounded-lg border border-sky-600 bg-transparent py-2.5 text-sm font-semibold text-sky-700 transition hover:bg-sky-600 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 dark:border-sky-500 dark:text-sky-300 dark:hover:bg-sky-600 dark:hover:text-white"
-            }
-            onClick={onSelect}
-            aria-pressed={selected}
-          >
-            {selected ? "Selected" : "Select"}
-          </button>
-        </div>
-      ) : null}
+      <button
+        type="button"
+        className={
+          selected
+            ? "mt-2.5 w-full cursor-default rounded-lg bg-accent-strong py-2 text-heading font-bold text-accent-ink"
+            : "mt-2.5 w-full rounded-lg border border-accent-strong bg-transparent py-2 text-heading font-bold text-accent-strong transition hover:bg-accent-strong hover:text-accent-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+        }
+        onClick={onSelect}
+        aria-pressed={selected}
+      >
+        {selected ? "Selected trade" : "Select trade"}
+      </button>
     </div>
   );
 }

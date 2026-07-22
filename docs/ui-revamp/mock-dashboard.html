@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  :root {
+    --bg:#0A0C10; --panel:#12151C; --panel2:#0F141C; --elevated:#161B24;
+    --border:#232A36; --border-soft:#1B222E;
+    --text:#E6EAF2; --muted:#8A93A6; --faint:#5C6577;
+    --accent:#22D3EE; --accent-strong:#22D3EE; --accent-ink:#06222A; --accent-tint:#0C2229; --accent-bar:#22D3EE;
+    --up:#34D399; --down:#F87171; --up-tint:#0F1F1B; --down-tint:#231518;
+    --amber:#FBBF24; --amber-tint:#241D0E;
+    --shadow:0 18px 50px -20px rgba(0,0,0,.65);
+    --track:#1A2330;
+  }
+  .theme-light {
+    --bg:#EEF1F5; --panel:#FFFFFF; --panel2:#F5F7FA; --elevated:#FFFFFF;
+    --border:#DBE1E9; --border-soft:#E8ECF2;
+    --text:#0E1520; --muted:#5A6473; --faint:#93A0B0;
+    --accent:#0891B2; --accent-strong:#0E7490; --accent-ink:#FFFFFF; --accent-tint:#E1F4FA; --accent-bar:#0891B2;
+    --up:#0F9D6B; --down:#DC2F44; --up-tint:#E7F6F0; --down-tint:#FCECEE;
+    --amber:#B45309; --amber-tint:#FBF0DE;
+    --shadow:0 10px 34px -16px rgba(15,25,40,.20);
+    --track:#E3E8EE;
+  }
+  body { background: var(--bg); }
+  .navlink:hover { background: var(--panel2); color: var(--text) !important; }
+  .tbtn:hover { filter: brightness(1.08); }
+  .tbtn-ghost:hover { background: var(--accent-tint); }
+  .iconbtn { transition: background .15s ease, color .15s ease; }
+  .iconbtn:hover { background: var(--border-soft); color: var(--text) !important; }
+  .iconbtn:hover .rot { transform: rotate(-25deg); }
+  .rot { transition: transform .2s ease; }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+</style>
+</helmet>
+
+<div class="breeze {{ themeClass }}" style="display:flex; min-height:100vh; background:var(--bg); color:var(--text); font-family:'IBM Plex Sans',system-ui,sans-serif; font-size:14px;">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside style="width:236px; flex:0 0 auto; border-right:1px solid var(--border); background:var(--panel); display:flex; flex-direction:column; padding:16px 12px;">
+    <div style="display:flex; align-items:center; gap:11px; padding:2px 6px 18px;">
+      <img src="assets/breeze-logo.png" alt="Breeze" style="width:34px; height:34px; border-radius:8px; flex:0 0 auto; display:block;">
+      <div style="line-height:1.15;">
+        <div style="font-size:16px; font-weight:700; letter-spacing:-.01em;">Breeze</div>
+        <div style="font-size:10px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--faint);">Terminal</div>
+      </div>
+    </div>
+
+    <nav style="display:flex; flex-direction:column; gap:2px;">
+      <a class="navlink" href="#" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; position:relative; background:var(--accent-tint); color:var(--text); font-weight:600;">
+        <span style="position:absolute; left:0; top:9px; bottom:9px; width:2.5px; border-radius:999px; background:var(--accent-bar);"></span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="9" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span style="font-size:13.5px;">Dashboard</span>
+      </a>
+      <a class="navlink" href="Breeze Portfolio - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="13" width="16" height="8" rx="1"/><path d="M8 6H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-1"/><path d="M8 6V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1"/></svg>
+        <span style="font-size:13.5px;">Portfolio</span>
+      </a>
+      <a class="navlink" href="Breeze Performance - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 2 4-6"/></svg>
+        <span style="font-size:13.5px;">Performance</span>
+      </a>
+      <a class="navlink" href="Breeze Order Book - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+        <span style="font-size:13.5px;">Order Book</span>
+      </a>
+      <a class="navlink" href="Breeze Place Order - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+        <span style="font-size:13.5px;">Place Order</span>
+      </a>
+      <a class="navlink" href="Breeze Basket Order - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="18" rx="1.5"/><rect x="14" y="3" width="7" height="10" rx="1.5"/><rect x="14" y="16" width="7" height="5" rx="1.5"/></svg>
+        <span style="font-size:13.5px; display:flex; align-items:center; gap:6px;">Basket Order <span style="font-size:9px; font-weight:700; letter-spacing:.06em; color:var(--accent-ink); background:var(--accent); padding:1.5px 5px; border-radius:4px;">NEW</span></span>
+      </a>
+      <a class="navlink" href="Breeze Strategy Builder - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M8 8l4 8"/><path d="M16 8l-4 8"/></svg>
+        <span style="font-size:13.5px;">Strategy Builder</span>
+      </a>
+      <a class="navlink" href="Breeze Settings - Terminal Pro.dc.html" style="display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:7px; text-decoration:none; color:var(--muted);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span style="font-size:13.5px;">Settings</span>
+      </a>
+    </nav>
+
+    <div style="margin-top:auto; padding:12px 11px 4px; border-top:1px solid var(--border-soft);">
+      <div style="font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin-bottom:4px;">Session</div>
+      <div style="display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted);">
+        <span style="width:7px; height:7px; border-radius:999px; background:var(--up); box-shadow:0 0 8px var(--up);"></span>
+        ICICI Breeze · active
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN COLUMN ============ -->
+  <div style="flex:1 1 auto; min-width:0; display:flex; flex-direction:column;">
+
+    <!-- header -->
+    <header style="height:52px; flex:0 0 auto; border-bottom:1px solid var(--border); background:var(--panel); display:flex; align-items:center; justify-content:space-between; gap:16px; padding:0 20px;">
+      <div style="display:flex; align-items:center; gap:18px; min-width:0;">
+        <span style="font-size:10.5px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--faint);">Trading</span>
+        <span style="font-size:14px; font-weight:600; color:var(--text);">Amit Mhatre</span>
+        <span style="display:flex; align-items:baseline; gap:7px;">
+          <span style="font-size:11.5px; color:var(--muted);">Free margin</span>
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:14px; font-weight:600; color:var(--up);">₹4.86L</span>
+        </span>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <button class="tbtn-ghost" onClick="{{ openApiUsage }}" style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted); background:transparent; border:none; padding:4px 6px; border-radius:6px; cursor:pointer;"><span style="color:var(--faint);">API</span> 1,284 / 5,000</button>
+        <span style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted);"><span style="width:7px; height:7px; border-radius:999px; background:var(--accent); box-shadow:0 0 8px var(--accent);"></span>ICICI</span>
+        <span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--accent-strong);">v4.2.0</span>
+
+        <!-- NOTIFICATIONS -->
+        <button class="iconbtn" onClick="{{ openNotifications }}" title="Notifications" style="width:34px; height:34px; position:relative; display:flex; align-items:center; justify-content:center; border-radius:8px; border:none; background:transparent; color:var(--muted); cursor:pointer;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          <span style="position:absolute; top:6px; right:6px; width:7px; height:7px; border-radius:999px; background:var(--down); box-shadow:0 0 0 2px var(--panel);"></span>
+        </button>
+
+        <!-- THEME TOGGLE -->
+        <button class="iconbtn" onClick="{{ toggleTheme }}" title="Toggle theme" style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:8px; border:none; background:transparent; color:var(--muted); cursor:pointer;">
+          <sc-if value="{{ showSun }}" hint-placeholder-val="{{ true }}">
+            <svg class="rot" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </sc-if>
+          <sc-if value="{{ showMoon }}" hint-placeholder-val="{{ false }}">
+            <svg class="rot" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          </sc-if>
+        </button>
+
+        <a class="iconbtn" href="#" title="Log out" style="width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:8px; border:none; background:transparent; color:var(--muted); text-decoration:none; cursor:pointer;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </a>
+      </div>
+    </header>
+
+    <!-- ===== NOTIFICATIONS DRAWER ===== -->
+    <sc-if value="{{ drawerOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeOverlay }}" style="position:fixed; inset:0; z-index:60; background:rgba(6,9,14,.5);">
+        <div onClick="{{ stopProp }}" style="position:absolute; top:0; right:0; bottom:0; width:360px; max-width:92vw; background:var(--panel); border-left:1px solid var(--border); box-shadow:var(--shadow); display:flex; flex-direction:column;">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 18px; border-bottom:1px solid var(--border-soft);">
+            <span style="font-size:14.5px; font-weight:700;">Notifications</span>
+            <button class="iconbtn" onClick="{{ closeOverlay }}" style="width:28px; height:28px; display:flex; align-items:center; justify-content:center; border-radius:7px; border:none; background:transparent; color:var(--muted); cursor:pointer;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div style="flex:1 1 auto; overflow:auto; padding:8px 0;">
+            <div style="display:flex; gap:11px; padding:13px 18px; border-bottom:1px solid var(--border-soft);">
+              <span style="width:30px; height:30px; flex:0 0 auto; border-radius:8px; background:var(--down-tint); display:flex; align-items:center; justify-content:center;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--down)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+              </span>
+              <div style="min-width:0;">
+                <div style="font-size:13px; font-weight:600;">Margin utilisation at 44%</div>
+                <div style="margin-top:2px; font-size:12px; color:var(--muted); line-height:1.5;">Free margin has dropped below ₹5L. Consider reducing open exposure.</div>
+                <div style="margin-top:5px; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--faint);">13:04 IST</div>
+              </div>
+            </div>
+            <div style="display:flex; gap:11px; padding:13px 18px; border-bottom:1px solid var(--border-soft);">
+              <span style="width:30px; height:30px; flex:0 0 auto; border-radius:8px; background:var(--up-tint); display:flex; align-items:center; justify-content:center;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--up)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              </span>
+              <div style="min-width:0;">
+                <div style="font-size:13px; font-weight:600;">Order executed — NIFTY 24200 CE</div>
+                <div style="margin-top:2px; font-size:12px; color:var(--muted); line-height:1.5;">Buy 75 qty @ ₹98.40 filled in full.</div>
+                <div style="margin-top:5px; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--faint);">12:51 IST</div>
+              </div>
+            </div>
+            <div style="display:flex; gap:11px; padding:13px 18px; border-bottom:1px solid var(--border-soft);">
+              <span style="width:30px; height:30px; flex:0 0 auto; border-radius:8px; background:var(--accent-tint); display:flex; align-items:center; justify-content:center;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+              </span>
+              <div style="min-width:0;">
+                <div style="font-size:13px; font-weight:600;">Weekly expiry today</div>
+                <div style="margin-top:2px; font-size:12px; color:var(--muted); line-height:1.5;">NIFTY weekly contracts expire 03-Jul. Review open positions.</div>
+                <div style="margin-top:5px; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--faint);">09:15 IST</div>
+              </div>
+            </div>
+          </div>
+          <div style="padding:12px 18px; border-top:1px solid var(--border-soft);">
+            <button class="tbtn-ghost" style="width:100%; font-size:12px; font-weight:600; color:var(--accent-strong); background:transparent; border:1px solid var(--border); border-radius:8px; padding:9px; cursor:pointer;">Mark all as read</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===== API USAGE MODAL ===== -->
+    <sc-if value="{{ apiModalOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeOverlay }}" style="position:fixed; inset:0; z-index:60; background:rgba(6,9,14,.55); display:flex; align-items:center; justify-content:center; padding:24px;">
+        <div onClick="{{ stopProp }}" style="width:100%; max-width:400px; background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); padding:20px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+            <span style="font-size:14.5px; font-weight:700;">API usage · today</span>
+            <button class="iconbtn" onClick="{{ closeOverlay }}" style="width:28px; height:28px; display:flex; align-items:center; justify-content:center; border-radius:7px; border:none; background:transparent; color:var(--muted); cursor:pointer;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div style="display:flex; align-items:baseline; gap:8px; margin-bottom:8px;">
+            <span style="font-family:'IBM Plex Mono',monospace; font-size:24px; font-weight:700;">1,284</span>
+            <span style="font-size:12.5px; color:var(--muted);">of 5,000 calls</span>
+          </div>
+          <div style="height:6px; border-radius:999px; background:var(--track); overflow:hidden; margin-bottom:16px;"><div style="width:26%; height:100%; background:var(--accent);"></div></div>
+          <div style="display:flex; flex-direction:column; gap:9px;">
+            <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Order placement</span><span style="font-family:'IBM Plex Mono',monospace;">412</span></div>
+            <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Market quotes</span><span style="font-family:'IBM Plex Mono',monospace;">640</span></div>
+            <div style="display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Portfolio / holdings</span><span style="font-family:'IBM Plex Mono',monospace;">232</span></div>
+            <div style="border-top:1px solid var(--border-soft); margin-top:2px; padding-top:10px; display:flex; justify-content:space-between; font-size:12.5px;"><span style="color:var(--muted);">Resets</span><span style="font-family:'IBM Plex Mono',monospace;">Midnight IST</span></div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- content -->
+    <main style="flex:1 1 auto; overflow:auto; padding:22px 24px 40px; background:var(--bg);">
+      <div style="max-width:1200px; margin:0 auto;">
+
+        <!-- page title row -->
+        <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:18px;">
+          <div>
+            <h1 style="margin:0; font-size:22px; font-weight:700; letter-spacing:-.015em;">Dashboard</h1>
+            <div style="margin-top:3px; font-size:12.5px; color:var(--muted);">Market snapshot · NIFTY F&amp;O · <span style="font-family:'IBM Plex Mono',monospace;">01 Jul 2026, 13:24 IST</span></div>
+          </div>
+          <button class="tbtn-ghost" style="display:flex; align-items:center; gap:7px; font-family:'IBM Plex Mono',monospace; font-size:11.5px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--accent-strong); background:transparent; border:1px solid var(--border); border-radius:7px; padding:8px 13px; cursor:pointer;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+            Refresh
+          </button>
+        </div>
+
+        <!-- KPI TILES -->
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px;">
+          <div style="background:var(--panel); border:1px solid var(--border); border-radius:11px; padding:14px 15px;">
+            <div style="font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint);">Open P&amp;L</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:25px; font-weight:600; white-space:nowrap; color:var(--up); margin-top:5px;">+₹42,318</div>
+            <div style="font-size:11.5px; color:var(--muted); margin-top:3px;">6 open positions</div>
+          </div>
+          <div style="background:var(--panel); border:1px solid var(--border); border-radius:11px; padding:14px 15px;">
+            <div style="font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint);">Day's P&amp;L</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:25px; font-weight:600; white-space:nowrap; color:var(--up); margin-top:5px;">+₹12,540</div>
+            <div style="font-size:11.5px; color:var(--muted); margin-top:3px;">Realised + MTM</div>
+          </div>
+          <div style="background:var(--panel); border:1px solid var(--border); border-radius:11px; padding:14px 15px;">
+            <div style="font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint);">Margin used</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:25px; font-weight:600; white-space:nowrap; color:var(--text); margin-top:5px;">₹2.14L</div>
+            <div style="display:flex; align-items:center; gap:8px; margin-top:7px;">
+              <div style="flex:1; height:4px; border-radius:999px; background:var(--track); overflow:hidden;"><div style="width:44%; height:100%; background:var(--accent);"></div></div>
+              <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--muted);">44%</span>
+            </div>
+          </div>
+          <div style="background:var(--panel); border:1px solid var(--border); border-radius:11px; padding:14px 15px;">
+            <div style="font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint);">Free margin</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:25px; font-weight:600; white-space:nowrap; color:var(--text); margin-top:5px;">₹4.86L</div>
+            <div style="font-size:11.5px; color:var(--muted); margin-top:3px;">Cash + collateral</div>
+          </div>
+        </div>
+
+        <!-- MAIN GRID -->
+        <div style="display:grid; grid-template-columns:1.25fr 1.3fr; gap:14px; margin-bottom:14px;">
+
+          <!-- NIFTY volatility widget -->
+          <section style="background:var(--panel); border:1px solid var(--border); border-radius:13px; overflow:hidden;">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--border-soft);">
+              <div style="display:flex; align-items:baseline; gap:12px;">
+                <span style="font-size:14px; font-weight:700;">NIFTY 50</span>
+                <span style="font-family:'IBM Plex Mono',monospace; font-size:22px; font-weight:600; letter-spacing:-.01em;">24,180<span style="color:var(--muted);">.35</span></span>
+                <span style="font-family:'IBM Plex Mono',monospace; font-size:12.5px; font-weight:600; color:var(--up);">+186.40 · +0.78%</span>
+              </div>
+              <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:3px 8px;">Exp 03 Jul</span>
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:1px; background:var(--border-soft);">
+              <div style="background:var(--panel); padding:13px 16px;">
+                <div style="font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint);">ATM IV</div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:19px; font-weight:600; margin-top:4px;">11.8%</div>
+                <span style="display:inline-block; margin-top:6px; font-size:10px; font-weight:600; color:var(--up); background:var(--up-tint); border-radius:5px; padding:2px 7px;">Low</span>
+              </div>
+              <div style="background:var(--panel); padding:13px 16px;">
+                <div style="font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint);">PCR (OI)</div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:19px; font-weight:600; margin-top:4px;">1.14</div>
+                <span style="display:inline-block; margin-top:6px; font-size:10px; font-weight:600; color:var(--accent-strong); background:var(--accent-tint); border-radius:5px; padding:2px 7px;">Neutral–bullish</span>
+              </div>
+              <div style="background:var(--panel); padding:13px 16px; grid-column:span 2;">
+                <div style="font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint);">Expected range (based on 2σ)</div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:600; margin-top:4px;">23,721 – 24,639</div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--muted); margin-top:4px;">±1.9% · ±459 pts</div>
+              </div>
+              <div style="background:var(--panel); padding:13px 16px; grid-column:span 2;">
+                <div style="font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint);">Expected range (based on highest OI)</div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:600; margin-top:4px;"><span style="color:var(--up);">24,000</span> – <span style="color:var(--down);">24,500</span></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- India VIX + sparkline -->
+          <section style="background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:14px 16px 14px 22px; display:flex; flex-direction:column;">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <span style="font-size:13px; font-weight:600;">India VIX</span>
+              <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--muted);">30-day</span>
+            </div>
+            <div style="display:flex; align-items:baseline; gap:10px; margin-top:6px;">
+              <span style="font-family:'IBM Plex Mono',monospace; font-size:30px; font-weight:600; letter-spacing:-.01em;">13.42</span>
+              <span style="font-family:'IBM Plex Mono',monospace; font-size:12.5px; font-weight:600; color:var(--down);">−0.61</span>
+            </div>
+            <span style="align-self:flex-start; margin-top:8px; font-size:10.5px; font-weight:600; color:var(--up); background:var(--up-tint); border-radius:6px; padding:3px 9px;">Calm · low volatility</span>
+            <svg viewBox="0 0 420 90" preserveAspectRatio="none" style="width:100%; height:100px; margin-top:14px; display:block;">
+              <defs>
+                <linearGradient id="vixfill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.28"/>
+                  <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <path d="M0,54 L35,50 L70,58 L105,44 L140,48 L175,36 L210,42 L245,30 L280,46 L315,40 L350,52 L385,58 L420,62 L420,90 L0,90 Z" fill="url(#vixfill)"/>
+              <path d="M0,54 L35,50 L70,58 L105,44 L140,48 L175,36 L210,42 L245,30 L280,46 L315,40 L350,52 L385,58 L420,62" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="420" cy="62" r="3.4" fill="var(--accent)"/>
+            </svg>
+            <div style="display:flex; justify-content:space-between; font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--faint); margin-top:2px;">
+              <span>02 Jun</span><span>16 Jun</span><span>01 Jul</span>
+            </div>
+          </section>
+        </div>
+
+        <!-- AI MARKET OUTLOOK -->
+        <section style="background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:16px 18px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:11px;">
+            <div style="display:flex; align-items:center; gap:9px;">
+              <span style="width:24px; height:24px; border-radius:7px; background:var(--accent-tint); display:flex; align-items:center; justify-content:center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-strong)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
+              </span>
+              <span style="font-size:13.5px; font-weight:600;">AI Market Outlook</span>
+              <span style="font-size:10px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); border:1px solid var(--border); border-radius:5px; padding:2px 7px;">Cached · 12:50</span>
+            </div>
+            <button class="tbtn-ghost" style="font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--accent-strong); background:transparent; border:1px solid var(--border); border-radius:7px; padding:6px 11px; cursor:pointer;">Regenerate</button>
+          </div>
+          <p style="margin:0; font-size:13.5px; line-height:1.65; color:var(--muted);">NIFTY holds firmly above the <span style="color:var(--text); font-weight:600;">24,000</span> put wall with ATM IV compressed near <span style="color:var(--text); font-weight:600;">11.8%</span> — options are pricing a quiet expiry. PCR of <span style="color:var(--text); font-weight:600;">1.14</span> tilts mildly bullish, while heavy call writing at 24,500 caps immediate upside. Range-bound premium-selling structures (iron condors, short strangles) look favoured into the <span style="color:var(--text); font-weight:600;">03 Jul</span> weekly; watch a VIX break above 15 as the invalidation signal.</p>
+        </section>
+
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { theme: "dark", overlay: null };
+
+  componentDidMount() {
+    try {
+      const saved = localStorage.getItem("breeze-tp-theme");
+      if (saved === "light" || saved === "dark") {
+        this.setState({ theme: saved });
+      }
+    } catch (e) {}
+  }
+
+  toggleTheme = () => {
+    this.setState((s) => {
+      const next = s.theme === "light" ? "dark" : "light";
+      try { localStorage.setItem("breeze-tp-theme", next); } catch (e) {}
+      return { theme: next };
+    });
+  };
+
+  openNotifications = () => this.setState({ overlay: "notifications" });
+  openApiUsage = () => this.setState({ overlay: "api" });
+  closeOverlay = () => this.setState({ overlay: null });
+  stopProp = (e) => e.stopPropagation();
+
+  renderVals() {
+    const isLight = this.state.theme === "light";
+    return {
+      themeClass: isLight ? "theme-light" : "",
+      showSun: !isLight,  // dark mode -> show sun (tap to go light)
+      showMoon: isLight,  // light mode -> show moon (tap to go dark)
+      toggleTheme: this.toggleTheme,
+      drawerOpen: this.state.overlay === "notifications",
+      apiModalOpen: this.state.overlay === "api",
+      openNotifications: this.openNotifications,
+      openApiUsage: this.openApiUsage,
+      closeOverlay: this.closeOverlay,
+      stopProp: this.stopProp,
+    };
+  }
+}
+</script>
+</body>
+</html>

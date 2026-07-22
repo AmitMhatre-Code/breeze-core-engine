@@ -62,9 +62,15 @@ export async function handleUnauthorizedApiResponse(
   clearSessionAck();
 
   try {
+    // `session_expired` keeps the server-side broker session alive so armed PB/SL
+    // rules keep firing headless — a lapsed app JWT must not disarm the user's
+    // stop-losses. Deliberate logout (the /logout page) sends no such reason and
+    // clears everything.
     await fetch("/auth/logout", {
       method: "POST",
       credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "session_expired" }),
     });
   } catch {
     // Still navigate to login; cookies may already be invalid.

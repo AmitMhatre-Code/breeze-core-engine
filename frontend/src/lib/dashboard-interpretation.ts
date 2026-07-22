@@ -24,7 +24,7 @@ export function interpretIndiaVix(vix: number): MetricInterpretation {
   }
   if (vix < 15) {
     return {
-      label: "Subdued",
+      label: "Calm · Low Volatility",
       tooltip:
         "Fear gauge is below its long-run average zone for many periods: volatility is muted; moves can still happen, but option premia are usually cheaper.",
       tone: "muted",
@@ -127,7 +127,7 @@ export function interpretPcrOi(pcr: number): MetricInterpretation {
   }
   if (pcr >= 1.05) {
     return {
-      label: "Defensive Tilt",
+      label: "Neutral-Bullish",
       tooltip:
         "More put OI than calls: positioning leans defensive or hedge-heavy. Often ‘cautious’ rather than euphoric; pair with price trend and fund flows.",
       tone: "muted",

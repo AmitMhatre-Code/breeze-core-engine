@@ -8,8 +8,24 @@ from pydantic import BaseModel, ConfigDict, Field
 # ---- Health & Metrics ----
 class HealthResponse(BaseModel):
     """Health check response."""
-    status: str = "ok"
+    status: Literal["ok", "degraded"] = "ok"
     timestamp: str = Field(..., description="ISO 8601 timestamp")
+    redis_connected: bool = True
+    redis_memory_fallback: bool = False
+    redis_used_memory_human: Optional[str] = Field(
+        None,
+        description="Redis used_memory_human when connected",
+    )
+
+
+class RuntimeMetricsResponse(BaseModel):
+    """Process and cache runtime metrics for small-instance monitoring."""
+
+    model_config = ConfigDict(extra="allow")
+    redis: Dict[str, Any] = Field(default_factory=dict)
+    ws_tick_pipeline: Dict[str, Any] = Field(default_factory=dict)
+    active_chains: Dict[str, Any] = Field(default_factory=dict)
+    pnl_engine: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ICICIMetricsResponse(BaseModel):
@@ -122,6 +138,10 @@ class HomeDataResponse(BaseModel):
         None,
         description="License/deployment snapshot for Contact Sales when status is expired, revoked, or unlicensed",
     )
+    aggressive_limit_order_enabled: bool = Field(
+        False,
+        description="False while ICICI has no native aggressive-limit order support (AGGRESSIVE_LIMIT_ORDER_ENABLED)",
+    )
 
 
 class DeploymentLicenseStatusResponse(BaseModel):
@@ -190,4 +210,12 @@ class BookDataResponse(BaseModel):
     orders_failed: bool = Field(
         False,
         description="True when get_orders returned non-200",
+    )
+    rule_spawned_orders: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description=(
+            "Raw order rows excluded from grouped_orders because they were spawned by a "
+            "Profit Booking / Stop Loss exit rule; each is tagged with exit_rule_source "
+            "('squareoff_rule' | 'gtt_exit_order') and exit_rule_id"
+        ),
     )

@@ -1,3 +1,4 @@
+import { blendedSigmaForLegs, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import { proposedLegsToStrategyLegs } from "@/lib/strategy-builder/map-proposed-legs";
 import { estimateProbabilityOfProfit } from "@/lib/strategy-builder/payoff";
@@ -34,13 +35,15 @@ export function computeTradePop(
   atmIv: number | null,
   expiryDate: string,
   lotSize: number,
+  sigmaSmiles: SigmaSmiles | null = null,
 ): number | null {
   if (trade.status === "skipped" || !trade.legs.length) return null;
   if (trade.pop_pct != null && Number.isFinite(trade.pop_pct)) return trade.pop_pct;
   if (spot == null) return null;
   const T = expiryDisplayToYears(expiryDate);
-  const sigma = atmIv != null && atmIv > 0 ? atmIv : 0.2;
+  const fallback = atmIv != null && atmIv > 0 ? atmIv : 0.2;
   const legs = proposedLegsToStrategyLegs(trade.legs, lotSize);
+  const sigma = blendedSigmaForLegs(sigmaSmiles, legs, spot, lotSize, fallback);
   return estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
 }
 
@@ -57,4 +60,26 @@ export function computeTradeScore(
   const prem = trade.net_premium;
   if (prem == null || !Number.isFinite(prem)) return null;
   return prem * (pop / 100);
+}
+
+export function formatConstraintViolation(
+  violation: string,
+  trade: ProposedTrade,
+  minPopPct?: number | null,
+  minAnnReturnPct?: number | null,
+): string {
+  if (violation === "pop_floor" && trade.pop_pct != null && minPopPct != null) {
+    return `PoP ${trade.pop_pct.toFixed(1)}% (your min ${minPopPct}%)`;
+  }
+  if (
+    violation === "min_ann_return" &&
+    trade.annualized_return_pct != null &&
+    minAnnReturnPct != null
+  ) {
+    return `ROI ${trade.annualized_return_pct.toFixed(1)}% (your min ${minAnnReturnPct}%)`;
+  }
+  if (violation === "infinite_loss") {
+    return "Unlimited loss";
+  }
+  return violation.replace(/_/g, " ");
 }

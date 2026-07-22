@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends
 from fastapi import Request
 from fastapi import HTTPException
@@ -50,12 +52,18 @@ async def get_performance_api(
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
 
-    years = breeze.get_financial_years() or []
+    # years, margin, and funds are mutually independent ICICI calls; run them
+    # concurrently on worker threads instead of blocking the event loop in series.
+    years, margin, funds = await asyncio.gather(
+        asyncio.to_thread(breeze.get_financial_years),
+        asyncio.to_thread(breeze.get_margin_situation, user_id, target_margin_ute=100),
+        asyncio.to_thread(breeze.get_funds, user_id),
+    )
+    years = years or []
     start_d, end_d, fy_label = _resolve_performance_range(years, fy, start, end)
     if not start_d or not end_d:
         raise HTTPException(status_code=503, detail="Could not resolve performance date range")
 
-    margin = breeze.get_margin_situation(user_id, target_margin_ute=100)
     if margin.get("Status") == 200 and margin.get("Success"):
         m_success = margin["Success"]
         actual_margin_ute = float(m_success.get("actual_margin_ute", 0) or 0)
@@ -64,7 +72,7 @@ async def get_performance_api(
         total_margin = actual_margin_avl + abs(actual_margin_ute)
         if total_margin <= 0:
             total_margin = cash_limit
-        performance = breeze.get_performance(user_id, total_margin, start_d, end_d)
+        performance = await asyncio.to_thread(breeze.get_performance, user_id, total_margin, start_d, end_d)
     else:
         performance = {
             "Status": margin.get("Status", 500),
@@ -72,7 +80,6 @@ async def get_performance_api(
             "Success": None,
         }
 
-    funds = breeze.get_funds(user_id)
     AuditLogger(None).log_operation(user_id, OperationType.PORTFOLIO_VIEW, "Performance")
     return PerformanceDataResponse(
         performance=performance if isinstance(performance, dict) else {},

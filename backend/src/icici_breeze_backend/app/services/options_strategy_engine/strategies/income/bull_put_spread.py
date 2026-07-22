@@ -31,6 +31,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.strategies.income
     iter_pop_band_expansions,
     passes_capital_gate,
     pop_band,
+    pop_for_short_strike,
     record_feasible,
     run_income_champion_pipeline,
     score_ann_return,
@@ -186,6 +187,7 @@ def enumerate_bull_put_spreads(
     short_strike: int,
     *,
     stats: BullPutSpreadRejectionStats | None = None,
+    enforce_pop: bool = True,
 ) -> list[BullPutSpreadCandidate]:
     """All feasible bull put spreads for a short strike."""
     L = ctx.lot_size
@@ -211,6 +213,11 @@ def enumerate_bull_put_spreads(
                 wing_width=wing_width,
                 **detail,
             )
+            est_pop = (
+                pop_for_short_strike(ctx, short_strike, "Put")
+                if pop_detail is not None
+                else None
+            )
             stats.record_evaluation(
                 short_strike=short_strike,
                 long_strike=long_strike,
@@ -219,6 +226,8 @@ def enumerate_bull_put_spreads(
                 reject_reason=reason,
                 pop_detail=pop_detail,
                 credit=credit,
+                estimated_pop=est_pop,
+                rejected_stage=reason if reason == "pop_floor" else None,
             )
 
     qs = ctx.cache.get((short_strike, "Put"))
@@ -267,7 +276,7 @@ def enumerate_bull_put_spreads(
             net_credit=credit,
             max_loss_per_unit=max_loss_u,
             max_loss_total=max_loss_u * L,
-            max_loss_budget=ctx.max_loss_rupees,
+            max_loss_budget=ctx.effective_max_loss_budget(),
             require_pop=False,
         ):
             _reject(
@@ -292,7 +301,7 @@ def enumerate_bull_put_spreads(
         ]
         pop_detail = pop_detail_for_legs(ctx, legs)
         pop = pop_detail.pop_pct
-        if not meets_pop_floor(ctx, pop):
+        if enforce_pop and not meets_pop_floor(ctx, pop):
             _reject(
                 "pop_floor",
                 long_strike=long_strike,
@@ -323,6 +332,7 @@ def enumerate_bull_put_spreads(
                 reject_reason=None,
                 pop_detail=pop_detail,
                 credit=credit,
+                estimated_pop=pop_for_short_strike(ctx, short_strike, "Put"),
             )
         record_feasible(stats, pop_detail=pop_detail, credit=credit, passed_capital=True)
 
@@ -354,6 +364,7 @@ def _collect_with_adaptive_search(
     ctx: EngineContext,
     *,
     stats: BullPutSpreadRejectionStats | None = None,
+    enforce_pop: bool = True,
 ) -> tuple[list[BullPutSpreadCandidate], IncomeSearchState]:
     search_state = IncomeSearchState(initial_pop_band=pop_band(ctx.min_pop_pct), final_pop_band=0.0)
     candidates: list[BullPutSpreadCandidate] = []
@@ -373,7 +384,11 @@ def _collect_with_adaptive_search(
         )
         candidates = []
         for short_strike in short_strikes:
-            candidates.extend(enumerate_bull_put_spreads(ctx, short_strike, stats=stats))
+            candidates.extend(
+                enumerate_bull_put_spreads(
+                    ctx, short_strike, stats=stats, enforce_pop=enforce_pop
+                )
+            )
         if candidates:
             search_state.final_pop_band = ceiling_pop - ctx.min_pop_pct
             search_state.expansion_attempts = expansion
@@ -405,6 +420,7 @@ def _candidate_to_result(
         name,
         cand.legs,
         max_loss=max_loss,
+        max_profit=cand.net_collected,
         rr=f"{max_loss:.0f} : {cand.net_collected:.0f}",
         pop=cand.pop,
         net_premium_val=cand.net_collected,
@@ -428,6 +444,22 @@ async def calc_bull_put_spread(ctx: EngineContext) -> list[StrategyResult]:
     if stats is not None:
         stats.end_generation(ctx.audit.telemetry if ctx.audit else None)
 
+    pipeline_kwargs = dict(
+        strategy_id=sid,
+        strategy_name=name,
+        stats=stats,
+        to_result=_candidate_to_result,
+        span_phase="bps_candidate_span",
+        search_state=search_state,
+    )
+
+    if not candidates:
+        candidates, search_state = _collect_with_adaptive_search(
+            ctx, stats=stats, enforce_pop=False
+        )
+        if stats is not None:
+            stats.end_generation(ctx.audit.telemetry if ctx.audit else None)
+
     if not candidates:
         skip_reason = stats.skip_message() if stats else (
             "No bull put spread meets minimum PoP within risk limits."
@@ -443,17 +475,18 @@ async def calc_bull_put_spread(ctx: EngineContext) -> list[StrategyResult]:
             )
         return [skip(sid, name, skip_reason)]
 
-    results = await run_income_champion_pipeline(
-        ctx,
-        candidates,
-        strategy_id=sid,
-        strategy_name=name,
-        stats=stats,
-        to_result=_candidate_to_result,
-        span_phase="bps_candidate_span",
-        search_state=search_state,
-    )
+    recommended, relaxed = await run_income_champion_pipeline(ctx, candidates, **pipeline_kwargs)
+    if not recommended and not relaxed:
+        pop_relaxed, search_state = _collect_with_adaptive_search(
+            ctx, stats=stats, enforce_pop=False
+        )
+        if pop_relaxed:
+            pipeline_kwargs["search_state"] = search_state
+            recommended, relaxed = await run_income_champion_pipeline(
+                ctx, pop_relaxed, **pipeline_kwargs
+            )
 
+    results = recommended + relaxed
     if not results:
         return [
             skip(

@@ -13,13 +13,17 @@ import {
   useState,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import breezeMark from "@/app/android-chrome-192x192.png";
+import { ApiLimitExhaustedBanner } from "@/components/api-usage/ApiLimitExhaustedBanner";
 import { ApiUsageWarningDialog } from "@/components/api-usage/ApiUsageWarningDialog";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
+import { LogoutConfirmDialog } from "@/components/layout/LogoutConfirmDialog";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
+import { ContraOrphanBanner } from "@/components/portfolio/ContraOrphanBanner";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
+import { Modal } from "@/components/ui/Modal";
+import breezeMark from "@/app/android-chrome-192x192.png";
 import { apiClient } from "@/lib/api-client";
 import { formatAppVersionLabel } from "@/lib/app-version";
 import { getLatestRelease } from "@/lib/changelog";
@@ -29,6 +33,8 @@ import {
   type HomeDataResponse,
 } from "@/lib/home-data";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import { useWsHealth } from "@/lib/use-ws-health";
+import { useIndexQuotes, type IndexQuote } from "@/lib/use-index-quotes";
 
 // Hidden from nav (route still works): { href: "/trade-options-chain", label: "Trade Options Chain" },
 const navItems = [
@@ -37,13 +43,13 @@ const navItems = [
   { href: "/performance", label: "Performance", icon: PerformanceIcon },
   { href: "/orders", label: "Order Book", icon: OrdersIcon },
   { href: "/place-order", label: "Place Order", icon: PlaceOrderIcon },
-  { href: "/strategy-builder", label: "Strategy Builder", icon: StrategyIcon },
   {
-    href: "/strategy-builder-new",
-    label: "Strategy Builder",
-    icon: StrategyIcon,
+    href: "/basket-order",
+    label: "Basket Order",
+    icon: BasketOrderIcon,
     showNewBadge: true,
   },
+  { href: "/strategy-builder", label: "Strategy Builder", icon: StrategyIcon },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
@@ -51,7 +57,6 @@ function navItemActive(pathname: string, href: string) {
   if (href === "/dashboard") {
     return pathname === "/" || pathname.startsWith("/dashboard");
   }
-  // Exact match or sub-route only — avoids `/strategy-builder` matching `/strategy-builder-new`.
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
@@ -65,6 +70,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const [changelogOpen, setChangelogOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [apiUsageWarnDismissed, setApiUsageWarnDismissed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [pathnameSeen, setPathnameSeen] = useState(pathname);
@@ -78,36 +84,15 @@ export function AppShell({
 
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
 
-  useEffect(() => {
-    if (!mobileNavOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        closeMobileNav();
-        menuButtonRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [mobileNavOpen, closeMobileNav]);
-
-  useEffect(() => {
-    if (!mobileNavOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [mobileNavOpen]);
-
-  useEffect(() => {
-    if (!mobileNavOpen) return;
-    const id = window.requestAnimationFrame(() => {
-      drawerCloseRef.current?.focus();
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [mobileNavOpen]);
-
   const { licenseStatus, contactSalesMailto } = useLicenseRestrictions();
+
+  const wsHealthQ = useWsHealth();
+  const wsHealthStatus = wsHealthQ.data?.status ?? "gray";
+  const wsHealthReason = wsHealthQ.data?.reason ?? "Checking market data status…";
+  const wsHealthDotClass =
+    wsHealthStatus === "green" ? "bg-up" : wsHealthStatus === "red" ? "bg-down" : "bg-faint";
+
+  const indexQuotesQ = useIndexQuotes();
 
   const homeQ = useQuery({
     queryKey: ["home", "data"],
@@ -133,6 +118,10 @@ export function AppShell({
   const apiCallsLimit = homeQ.data?.api_calls_limit ?? 5000;
   const apiUsageBand = homeQ.data?.api_usage_band ?? "green";
   const apiUsageWarning = homeQ.data?.api_usage_warning ?? null;
+  // Populated either by this query directly, or (on /dashboard, where it's disabled to
+  // avoid a redundant ICICI round-trip) hydrated into the shared ["home","data"] cache
+  // by the dashboard bootstrap query -- see hydrateDashboardQueryCache.
+  const apiUsageBlocked = homeQ.data?.api_usage_blocked ?? false;
 
   const apiUsageWarnStorageKey = useMemo(() => {
     const istDay = new Date().toLocaleDateString("en-CA", {
@@ -168,43 +157,34 @@ export function AppShell({
 
   const apiCounterClass =
     apiUsageBand === "red"
-      ? "text-red-600 dark:text-red-400"
+      ? "text-down"
       : apiUsageBand === "amber"
-        ? "text-amber-700 dark:text-amber-300"
-        : "text-zinc-500 dark:text-zinc-400";
+        ? "text-amber-accent"
+        : "text-faint";
 
   const freeMarginDisplay = useMemo(() => {
     if (freeMargin == null || !Number.isFinite(freeMargin)) return null;
     return {
-      text: formatIndianMoneyCompact(freeMargin),
+      text: formatIndianMoneyCompact(freeMargin, { shortSuffix: true }),
       className: moneyToneClass(freeMargin),
     };
   }, [freeMargin]);
   const latestVersionLabel = formatAppVersionLabel(getLatestRelease()?.version);
 
   return (
-    <div className="flex min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
-      <aside className="hidden w-60 border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 md:flex md:flex-col">
-        <div className="mb-4 flex items-stretch gap-3 px-3 pt-1">
-          <div className="flex w-11 shrink-0 flex-col items-center justify-center">
-            <Image
-              src={breezeMark}
-              alt="Breeze"
-              width={192}
-              height={192}
-              className="max-h-full w-full object-contain object-left"
-            />
-          </div>
-          <div className="min-w-0 flex flex-col justify-center py-0.5">
-            <div className="text-base font-semibold tracking-tight text-sky-600 dark:text-sky-500">
-              Breeze Modern
-            </div>
-            <div className="app-text-muted mt-0.5">
-              Enabled by Breeze API
-            </div>
-          </div>
+    <div className="flex min-h-screen bg-background text-foreground">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[300] focus:rounded-md focus:border focus:border-border focus:bg-panel focus:px-4 focus:py-2.5 focus:text-sm focus:font-medium focus:text-accent-strong focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent/45"
+      >
+        Skip to main content
+      </a>
+      <aside className="hidden w-[236px] flex-col border-r border-border bg-panel md:flex">
+        <div className="mb-4 flex items-center gap-2.5 px-3 pt-1">
+          <BrandMark />
+          <BrandWordmark />
         </div>
-        <nav className="space-y-0.5 px-2 text-sm">
+        <nav className="space-y-0.5 px-2 text-sm" aria-label="Primary">
           {navItems.map((item) => {
             const active = navItemActive(pathname, item.href);
             const Icon = item.icon;
@@ -216,12 +196,18 @@ export function AppShell({
                   item.showNewBadge ? "Strategy Builder, new" : undefined
                 }
                 className={[
-                  "flex items-center gap-2 rounded-sm px-2.5 py-2 transition",
+                  "relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-heading transition",
                   active
-                    ? "bg-sky-100 text-sky-950 dark:bg-sky-950/50 dark:text-sky-50"
-                    : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100",
+                    ? "bg-accent-tint font-semibold text-foreground [&_svg]:text-accent-strong"
+                    : "text-muted hover:bg-panel2 hover:text-foreground",
                 ].join(" ")}
               >
+                {active ? (
+                  <span
+                    aria-hidden
+                    className="absolute inset-y-[9px] left-0 w-[2.5px] rounded-full bg-accent-bar"
+                  />
+                ) : null}
                 <Icon />
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate">{item.label}</span>
@@ -231,13 +217,31 @@ export function AppShell({
             );
           })}
         </nav>
+        <div className="mt-auto space-y-1.5 border-t border-border-soft px-4 py-3">
+          <div className="text-body font-semibold uppercase tracking-[0.2em] text-faint">
+            Session
+          </div>
+          <div className="flex items-center gap-2" title={wsHealthReason}>
+            <span className="relative flex size-2 shrink-0">
+              {wsHealthStatus === "green" ? (
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-up opacity-75" />
+              ) : null}
+              <span
+                className={`relative inline-flex size-2 rounded-full ${wsHealthDotClass}`}
+              />
+            </span>
+            <span className="truncate text-xs text-muted">
+              ICICI Breeze · {wsHealthReason}
+            </span>
+          </div>
+        </div>
       </aside>
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="flex min-h-12 items-center justify-between gap-2 border-b border-zinc-200 bg-white px-[max(0.75rem,env(safe-area-inset-left))] py-1 pe-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.25rem,env(safe-area-inset-top))] dark:border-zinc-800 dark:bg-zinc-950 sm:gap-3 sm:px-4">
+        <header className="flex min-h-[52px] items-center justify-between gap-2 border-b border-border bg-panel px-[max(0.75rem,env(safe-area-inset-left))] py-1 pe-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.25rem,env(safe-area-inset-top))] sm:gap-3 sm:px-4">
           <button
             type="button"
             ref={menuButtonRef}
-            className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-700 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 md:hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 md:hidden"
             aria-label="Open menu"
             aria-expanded={mobileNavOpen}
             aria-controls="mobile-app-nav"
@@ -246,19 +250,19 @@ export function AppShell({
             <MenuIcon />
           </button>
           <div className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-4">
-            <span className="hidden truncate text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 md:inline">
+            <span className="hidden truncate text-xs font-medium uppercase tracking-wide text-faint md:inline">
               Trading
             </span>
             {homeQ.isLoading || (homeQ.isFetching && !homeQ.data) ? (
-              <span className="text-xs text-zinc-500">Loading account…</span>
+              <span className="text-xs text-muted">Loading account…</span>
             ) : homeQ.isError ? (
-              <span className="truncate text-xs text-amber-700 dark:text-amber-200/90">
+              <span className="truncate text-xs text-amber-accent">
                 Account info unavailable
               </span>
             ) : (
               <>
                 <span
-                  className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100"
+                  className="truncate text-sm font-semibold text-foreground"
                   title={displayName ?? undefined}
                 >
                   {displayName ?? "—"}
@@ -267,14 +271,13 @@ export function AppShell({
                   className="flex min-w-0 shrink-0 items-baseline gap-1.5"
                   title="Available margin (cash + limits from ICICI margin API)"
                 >
-                  <span className="hidden truncate text-xs text-zinc-500 dark:text-zinc-400 md:inline">
+                  <span className="hidden truncate text-xs text-muted md:inline">
                     Free margin
                   </span>
                   <span
                     className={[
-                      "truncate text-sm font-semibold tabular-nums",
-                      freeMarginDisplay?.className ??
-                        "text-zinc-900 dark:text-zinc-100",
+                      "truncate font-mono text-sm font-semibold tabular-nums",
+                      freeMarginDisplay?.className ?? "text-foreground",
                     ].join(" ")}
                   >
                     {freeMarginDisplay?.text ?? "—"}
@@ -284,10 +287,14 @@ export function AppShell({
             )}
           </div>
           <div className="flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-3">
+            <div className="hidden items-center gap-3 lg:flex">
+              <IndexTickerItem label="NIFTY" quote={indexQuotesQ.data?.quotes.nifty ?? null} />
+              <IndexTickerItem label="SENSEX" quote={indexQuotesQ.data?.quotes.sensex ?? null} />
+            </div>
             {homeDataReady && (
               <span
                 className={[
-                  "min-w-0 max-w-[6.25rem] shrink-0 truncate whitespace-nowrap text-[11px] tabular-nums sm:max-w-none sm:text-xs",
+                  "min-w-0 max-w-[6.25rem] shrink-0 truncate whitespace-nowrap font-mono text-heading tabular-nums sm:max-w-none sm:text-xs",
                   apiCounterClass,
                 ].join(" ")}
                 title="Breeze REST calls from this app today (IST calendar day, ICICI daily cap 5,000)"
@@ -299,66 +306,64 @@ export function AppShell({
                 </span>
               </span>
             )}
-            <span className="hidden text-xs text-zinc-400 dark:text-zinc-500 lg:inline">
-              ICICI
-            </span>
+            <span className="hidden text-xs text-faint lg:inline">ICICI</span>
             <span
-              className="hidden h-2 w-2 rounded-full bg-sky-500 sm:inline"
-              title="Session active"
+              className={`hidden h-2 w-2 rounded-full sm:inline ${wsHealthDotClass}`}
+              title={wsHealthReason}
               aria-hidden
             />
             <button
               type="button"
               onClick={() => setChangelogOpen(true)}
-              className="inline-flex min-h-11 min-w-9 shrink-0 items-center justify-center truncate rounded-md px-1.5 text-xs font-medium text-sky-700 underline-offset-2 hover:underline sm:min-h-9 sm:min-w-0 sm:px-2 dark:text-sky-400"
+              className="inline-flex min-h-11 min-w-9 shrink-0 items-center justify-center truncate rounded-md px-1.5 font-mono text-xs font-semibold text-accent-strong underline-offset-2 hover:underline sm:min-h-9 sm:min-w-0 sm:px-2"
               aria-haspopup="dialog"
               aria-label="Open changelog"
             >
               {latestVersionLabel || "Version"}
             </button>
             <ThemeToggle />
-            <Link
-              href="/logout"
-              title="Log out"
-              aria-label="Log out"
-              className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-600 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
-            >
-              <LogOutIcon />
-            </Link>
-          </div>
-        </header>
-        {mobileNavOpen ? (
-          <div
-            className="fixed inset-0 z-50 md:hidden"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={mobileNavTitleId}
-            id="mobile-app-nav"
-          >
             <button
               type="button"
-              className="absolute inset-0 bg-zinc-950/55 dark:bg-black/60"
-              aria-label="Close menu"
-              onClick={() => {
-                closeMobileNav();
-                menuButtonRef.current?.focus();
-              }}
-            />
-            <div className="absolute inset-y-0 left-0 flex w-[min(18rem,85vw)] max-w-[calc(100vw-env(safe-area-inset-left)-0.5rem)] flex-col border-r border-zinc-200 bg-white pt-[env(safe-area-inset-top)] ps-[max(0.5rem,env(safe-area-inset-left))] shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
-              <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2.5 pe-2 dark:border-zinc-800">
+              onClick={() => setLogoutConfirmOpen(true)}
+              title="Log out"
+              aria-label="Log out"
+              aria-haspopup="dialog"
+              className="inline-flex size-[34px] shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+            >
+              <LogOutIcon />
+            </button>
+          </div>
+        </header>
+        <Modal
+          open={mobileNavOpen}
+          onClose={closeMobileNav}
+          variant="drawer"
+          titleId={mobileNavTitleId}
+          initialFocusRef={drawerCloseRef}
+          className="md:hidden"
+          panelClassName="flex w-[min(18rem,85vw)] max-w-[calc(100vw-env(safe-area-inset-left)-0.5rem)] flex-col border-r border-border bg-panel pt-[env(safe-area-inset-top)] ps-[max(0.5rem,env(safe-area-inset-left))] shadow-xl"
+        >
+            <div
+              id="mobile-app-nav"
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <div className="flex items-center justify-between gap-2 border-b border-border-soft px-3 py-2.5 pe-2">
                 <div className="min-w-0">
                   <div
                     id={mobileNavTitleId}
-                    className="truncate text-sm font-semibold text-sky-600 dark:text-sky-500"
+                    className="flex items-center gap-1.5 truncate text-sm font-semibold text-foreground"
                   >
-                    Breeze Modern
+                    Breeze
+                    <span className="text-body font-semibold uppercase tracking-[0.2em] text-faint">
+                      Terminal
+                    </span>
                   </div>
                   <div className="app-text-muted">Menu</div>
                 </div>
                 <button
                   type="button"
                   ref={drawerCloseRef}
-                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-600 transition hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/45 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
                   aria-label="Close menu"
                   onClick={() => {
                     closeMobileNav();
@@ -383,16 +388,22 @@ export function AppShell({
                         item.showNewBadge ? "Strategy Builder, new" : undefined
                       }
                       className={[
-                        "flex min-h-11 items-center gap-3 rounded-md px-3 py-2 transition",
+                        "relative flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 transition",
                         active
-                          ? "bg-sky-100 text-sky-950 dark:bg-sky-950/50 dark:text-sky-50"
-                          : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100",
+                          ? "bg-accent-tint font-semibold text-foreground [&_svg]:text-accent-strong"
+                          : "text-muted hover:bg-panel2 hover:text-foreground",
                       ].join(" ")}
                       onClick={() => {
                         closeMobileNav();
                         menuButtonRef.current?.focus();
                       }}
                     >
+                      {active ? (
+                        <span
+                          aria-hidden
+                          className="absolute inset-y-[9px] left-0 w-[2.5px] rounded-full bg-accent-bar"
+                        />
+                      ) : null}
                       <Icon />
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className="truncate">{item.label}</span>
@@ -403,11 +414,14 @@ export function AppShell({
                 })}
               </nav>
             </div>
-          </div>
-        ) : null}
+        </Modal>
         <ChangelogDialog
           open={changelogOpen}
           onClose={() => setChangelogOpen(false)}
+        />
+        <LogoutConfirmDialog
+          open={logoutConfirmOpen}
+          onClose={() => setLogoutConfirmOpen(false)}
         />
         <ApiUsageWarningDialog
           open={showApiUsageWarning}
@@ -418,18 +432,98 @@ export function AppShell({
           status={licenseStatus}
           contactSalesMailto={contactSalesMailto}
         />
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-50 py-4 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-zinc-950 md:py-5 md:ps-5 md:pe-5">
+        <ApiLimitExhaustedBanner blocked={apiUsageBlocked} />
+        {/* Scoped to one Strategy Group rather than deployment-wide like the two above —
+            a deliberate exception, because a resting contra order can put on risk the
+            user never asked for and doesn't care which page they're on. Tier 3 only. */}
+        <ContraOrphanBanner />
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="flex min-h-0 min-w-0 flex-1 flex-col bg-background py-[22px] ps-[max(1.5rem,env(safe-area-inset-left))] pe-[max(1.5rem,env(safe-area-inset-right))] pb-[max(2.75rem,env(safe-area-inset-bottom))]"
+        >
           <div
             className={[
               "mx-auto w-full min-w-0",
-              contentWidth === "wide"
-                ? "max-w-[min(100%,100rem)]"
-                : "max-w-6xl",
+              contentWidth === "wide" ? "max-w-[min(100%,100rem)]" : "max-w-[1280px]",
             ].join(" ")}
           >
             {children}
           </div>
         </main>
+      </div>
+    </div>
+  );
+}
+
+function IndexTickerItem({
+  label,
+  quote,
+}: {
+  label: string;
+  quote: IndexQuote | null;
+}) {
+  if (!quote) {
+    return (
+      <span className="whitespace-nowrap font-mono text-xs text-faint">
+        {label} <span className="text-faint">—</span>
+      </span>
+    );
+  }
+  const change = quote.change;
+  const tone =
+    change == null || change === 0
+      ? "text-muted"
+      : change > 0
+        ? "text-up"
+        : "text-down";
+  const sign = change != null && change > 0 ? "+" : "";
+  const updatedTitle = Number.isFinite(quote.updated_at)
+    ? `${label} · updated ${new Date(quote.updated_at * 1000).toLocaleTimeString("en-IN", { hour12: false })}`
+    : label;
+
+  return (
+    <span
+      className="inline-flex items-baseline gap-1 whitespace-nowrap font-mono text-xs"
+      title={updatedTitle}
+    >
+      <span className="text-faint">{label}</span>
+      <span className="font-semibold tabular-nums text-foreground">
+        {quote.ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+      </span>
+      {change != null ? (
+        <span className={`tabular-nums ${tone}`}>
+          {sign}
+          {change.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+          {quote.change_pct != null ? ` (${sign}${quote.change_pct.toFixed(2)}%)` : ""}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function BrandMark() {
+  return (
+    <Image
+      src={breezeMark}
+      alt=""
+      aria-hidden
+      width={34}
+      height={34}
+      className="size-[34px] shrink-0 rounded-sm object-contain"
+      priority
+    />
+  );
+}
+
+function BrandWordmark() {
+  return (
+    <div className="min-w-0 flex flex-col justify-center leading-tight">
+      <div className="text-base font-semibold tracking-tight text-foreground">
+        Breeze
+      </div>
+      <div className="text-body font-semibold uppercase tracking-[0.2em] text-faint">
+        Terminal
       </div>
     </div>
   );
@@ -593,6 +687,28 @@ function PlaceOrderIcon() {
       <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
       <path d="M3 6h18" />
       <path d="M16 10a4 4 0 0 1-8 0" />
+    </svg>
+  );
+}
+
+function BasketOrderIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M16 10a4 4 0 0 1-8 0" />
+      <path d="M3 6h18" />
+      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h6" />
+      <path d="M19 16v6" />
+      <path d="M16 19h6" />
     </svg>
   );
 }

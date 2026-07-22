@@ -15,14 +15,25 @@ def size_lots(
     unit_max_loss: float,
     *,
     margin_rupees: float,
-    max_loss_rupees: float,
+    max_loss_rupees: float | None,
     lot_size: int,
-    unit_short_lots: int,
+    unit_legs: list[TradeLeg],
     spot: float,
     provision_elm: bool,
+    is_index: bool = False,
+    previous_close: float | None = None,
+    same_day_expiry: bool = False,
 ) -> int:
     """Return number of lots (not contracts)."""
-    unit_elm = elm_addon(spot, lot_size, unit_short_lots, provision_elm)
+    unit_elm = elm_addon(
+        spot,
+        lot_size,
+        unit_legs,
+        provision_elm=provision_elm,
+        is_index=is_index,
+        previous_close=previous_close,
+        same_day_expiry=same_day_expiry,
+    )
     total_unit_margin = unit_span_margin + unit_elm
 
     if total_unit_margin > 0:
@@ -33,10 +44,10 @@ def size_lots(
     if strategy_id in UNDEFINED_RISK_STRATEGIES:
         return max(0, n_margin)
 
-    if unit_max_loss > 0:
+    if unit_max_loss > 0 and max_loss_rupees is not None:
         n_risk = int(max_loss_rupees // unit_max_loss)
     else:
-        n_risk = 0
+        n_risk = n_margin
 
     return max(0, min(n_margin, n_risk))
 
@@ -47,11 +58,14 @@ def size_quantity_from_budgets(
     per_lot_max_loss: float,
     *,
     margin_rupees: float,
-    max_loss_rupees: float,
+    max_loss_rupees: float | None,
     lot_size: int,
-    unit_short_lots: int,
+    unit_legs: list[TradeLeg],
     spot: float,
     provision_elm: bool,
+    is_index: bool = False,
+    previous_close: float | None = None,
+    same_day_expiry: bool = False,
 ) -> int:
     """Return contract quantity snapped to lot_size multiples."""
     lots = size_lots(
@@ -61,15 +75,18 @@ def size_quantity_from_budgets(
         margin_rupees=margin_rupees,
         max_loss_rupees=max_loss_rupees,
         lot_size=lot_size,
-        unit_short_lots=unit_short_lots,
+        unit_legs=unit_legs,
         spot=spot,
         provision_elm=provision_elm,
+        is_index=is_index,
+        previous_close=previous_close,
+        same_day_expiry=same_day_expiry,
     )
     return lots * lot_size
 
 
 def size_quantity_loss_only(
-    max_loss_rupees: float,
+    max_loss_rupees: float | None,
     max_loss_per_lot: float,
     lot_size: int,
 ) -> int:
@@ -143,5 +160,7 @@ def rescale_result_to_lots(result: StrategyResult, *, lot_size: int, lots: int) 
         leg.quantity = max(L, (leg_qty // L) * L) if leg_qty > 0 else 0
     if result.max_loss is not None:
         result.max_loss = round(result.max_loss * scale, 2)
+    if result.max_profit is not None:
+        result.max_profit = round(result.max_profit * scale, 2)
     result.net_premium = net_premium(result.legs)
     _update_risk_reward_after_scale(result, scale)

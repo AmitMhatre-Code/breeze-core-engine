@@ -20,6 +20,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.pruning import (
 )
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.iron_condor import (
     IC_SHORT_STRIKES_MAX_ATM,
+    IC_TOP_K_SHORT_STRIKES,
     iron_condor_short_pairs,
 )
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import short_lots_in_legs
@@ -103,7 +104,8 @@ class TestPruning(unittest.TestCase):
         ctx = _mock_ctx()
         ctx.min_pop_pct = 25.0
         pairs = iron_condor_short_pairs(ctx)
-        self.assertLessEqual(len(pairs), IC_SHORT_STRIKES_MAX_ATM * IC_SHORT_STRIKES_MAX_ATM)
+        per_side_max = IC_SHORT_STRIKES_MAX_ATM + IC_TOP_K_SHORT_STRIKES
+        self.assertLessEqual(len(pairs), per_side_max * per_side_max)
         self.assertGreater(len(pairs), 0)
 
     def test_top_k_truncates(self):
@@ -142,13 +144,20 @@ class TestSizing(unittest.TestCase):
             margin_rupees=500_000,
             max_loss_rupees=50_000,
             lot_size=75,
-            unit_short_lots=2,
+            unit_legs=[],
             spot=23310,
             provision_elm=False,
         )
         self.assertEqual(lots, 5)
 
     def test_straddle_elm_counts_both_short_legs(self):
+        # Strikes at spot so the deep-OTM tier never triggers; index rate is a flat 2%,
+        # so ELM scales linearly with the number of short legs just like before tiering.
+        one_short_leg = [TradeLeg("Call", "Sell", 23_310, 75, 100.0)]
+        two_short_legs = [
+            TradeLeg("Call", "Sell", 23_310, 75, 100.0),
+            TradeLeg("Put", "Sell", 23_310, 75, 80.0),
+        ]
         lots_one_short_elm = size_lots(
             "short_straddle",
             100_000,
@@ -156,9 +165,10 @@ class TestSizing(unittest.TestCase):
             margin_rupees=500_000,
             max_loss_rupees=50_000,
             lot_size=75,
-            unit_short_lots=1,
+            unit_legs=one_short_leg,
             spot=23_310,
             provision_elm=True,
+            is_index=True,
         )
         lots_two_short_elm = size_lots(
             "short_straddle",
@@ -167,9 +177,10 @@ class TestSizing(unittest.TestCase):
             margin_rupees=500_000,
             max_loss_rupees=50_000,
             lot_size=75,
-            unit_short_lots=2,
+            unit_legs=two_short_legs,
             spot=23_310,
             provision_elm=True,
+            is_index=True,
         )
         self.assertEqual(lots_one_short_elm, 3)
         self.assertEqual(lots_two_short_elm, 2)
@@ -183,7 +194,7 @@ class TestSizing(unittest.TestCase):
             margin_rupees=500_000,
             max_loss_rupees=200_000,
             lot_size=75,
-            unit_short_lots=1,
+            unit_legs=[],
             spot=23310,
             provision_elm=False,
         )

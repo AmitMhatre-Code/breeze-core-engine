@@ -18,7 +18,7 @@ export function MarginRefreshIconButton({
       disabled={disabled}
       aria-label={label}
       title={titleProp ?? label}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 hover:bg-zinc-200/80 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent dark:text-zinc-400 dark:hover:bg-zinc-700/80 dark:hover:text-zinc-100 dark:disabled:text-zinc-600 dark:disabled:hover:bg-transparent"
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-panel2 hover:text-foreground disabled:cursor-not-allowed disabled:text-faint disabled:hover:bg-transparent"
     >
       <svg
         className="h-4 w-4"

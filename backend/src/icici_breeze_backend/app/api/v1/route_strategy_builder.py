@@ -28,6 +28,11 @@ from icici_breeze_backend.app.domain.strategy_builder import (
     StrategyBuilderLegResult,
     StrategyBuilderMarginRequest,
     StrategyBuilderMarginResponse,
+    SpanBaselineContract,
+    SpanBaselineSheetResponse,
+    SpanPortfolioMarginRequest,
+    SpanPortfolioMarginResponse,
+    SpanPortfolioMarginSuccess,
     StrategyBuilderUnderlyingsResponse,
 )
 from icici_breeze_backend.app.services.options_strategy_engine import run_propose_trades
@@ -73,13 +78,17 @@ async def list_underlyings(
 ):
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
-    raw = breeze.fetch_stock_codes(exchange_code=exchange_code) or []
+    from icici_breeze_backend.app.services.reference_data.scrip_index import get_underlyings
+
+    raw = get_underlyings(exchange_code)
+    if not raw:
+        raw = breeze.fetch_stock_codes(exchange_code=exchange_code) or []
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderUnderlyings")
     return StrategyBuilderUnderlyingsResponse(underlyings=raw)
 
 
-@router.get("/chain", response_model=StrategyBuilderChainResponse)
-async def get_chain(
+@router.get("/span-baseline", response_model=SpanBaselineSheetResponse)
+async def get_span_baseline_sheet(
     stock_code: str,
     expiry_date: str,
     exchange_code: str = cfg.NFO,
@@ -89,13 +98,144 @@ async def get_chain(
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
     if not stock_code.strip() or not expiry_date.strip():
         raise HTTPException(status_code=400, detail="stock_code and expiry_date required")
-    data = breeze.get_full_option_chain(
+    from icici_breeze_backend.app.services.reference_data.span_baseline_store import (
+        get_span_baseline_sheet as load_span_sheet,
+    )
+
+    raw = load_span_sheet(exchange_code, stock_code.strip(), expiry_date.strip())
+    contracts: dict[str, SpanBaselineContract] = {}
+    for key, entry in (raw.get("contracts") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        try:
+            contracts[str(key)] = SpanBaselineContract(
+                margin_per_lot=float(entry.get("margin_per_lot")),
+                lot_size=int(entry.get("lot_size") or 0),
+            )
+        except (TypeError, ValueError):
+            continue
+    AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderSpanBaseline")
+    return SpanBaselineSheetResponse(
+        found=bool(raw.get("found")),
+        contracts=contracts,
+        source_date=raw.get("source_date"),
+        source_file=raw.get("source_file"),
+    )
+
+
+@router.post("/span-portfolio-margin", response_model=SpanPortfolioMarginResponse)
+async def post_span_portfolio_margin(
+    body: SpanPortfolioMarginRequest,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    if not body.stock_code.strip() or not body.expiry_date.strip():
+        raise HTTPException(status_code=400, detail="stock_code and expiry_date required")
+    if body.spot is None or body.spot <= 0:
+        raise HTTPException(status_code=400, detail="spot is required for portfolio SPAN with NOV")
+
+    from icici_breeze_backend.app.services.options_strategy_engine.helpers import days_to_expiry
+    from icici_breeze_backend.app.services.reference_data.span_portfolio_scan import (
+        resolve_portfolio_span_margin,
+    )
+
+    time_years = body.time_years
+    if time_years is None:
+        time_years = max(1, days_to_expiry(body.expiry_date.strip())) / 365.0
+
+    margin_legs = [leg.model_dump() for leg in body.legs]
+    result = resolve_portfolio_span_margin(
+        body.exchange_code.strip() or cfg.NFO,
+        body.stock_code.strip(),
+        body.expiry_date.strip(),
+        margin_legs,
+        spot=float(body.spot),
+        time_years=float(time_years),
+        sigma=float(body.iv) if body.iv and body.iv > 0 else None,
+    )
+    AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderSpanPortfolioMargin")
+    if not result.get("found"):
+        return SpanPortfolioMarginResponse(
+            Status=200,
+            Error=None,
+            Success=SpanPortfolioMarginSuccess(
+                span_margin_required=None,
+                scanning_risk=result.get("scanning_risk"),
+                net_option_value=result.get("net_option_value"),
+                margin_benefit=result.get("margin_benefit"),
+                per_leg_standalone=result.get("per_leg_standalone") or {},
+                warnings=result.get("warnings") or [],
+            ),
+        )
+    return SpanPortfolioMarginResponse(
+        Status=200,
+        Error=None,
+        Success=SpanPortfolioMarginSuccess(
+            span_margin_required=result.get("span_margin_required"),
+            scanning_risk=result.get("scanning_risk"),
+            net_option_value=result.get("net_option_value"),
+            margin_benefit=result.get("margin_benefit"),
+            per_leg_standalone=result.get("per_leg_standalone") or {},
+            warnings=result.get("warnings") or [],
+        ),
+    )
+
+
+@router.get("/chain", response_model=StrategyBuilderChainResponse)
+async def get_chain(
+    stock_code: str,
+    expiry_date: str,
+    exchange_code: str = cfg.NFO,
+    subscription_holder: str | None = None,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    if not stock_code.strip() or not expiry_date.strip():
+        raise HTTPException(status_code=400, detail="stock_code and expiry_date required")
+    holder = (subscription_holder or "").strip() or None
+    # get_full_option_chain blocks synchronously (WS subscribe + poll-wait for
+    # chain completeness, up to CHAIN_WS_WAIT_TIMEOUT_MS) — offload to a worker
+    # thread so a slow/cold chain doesn't stall the single-process event loop
+    # for every other in-flight request.
+    data = await asyncio.to_thread(
+        breeze.get_full_option_chain,
         ctx.user_id,
         stock_code.strip(),
         exchange_code,
         expiry_date.strip(),
+        holder_id=holder,
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderChain")
+    return StrategyBuilderChainResponse(**data)
+
+
+@router.get("/payoff-quote", response_model=StrategyBuilderChainResponse)
+async def get_payoff_quote(
+    stock_code: str,
+    expiry_date: str,
+    exchange_code: str = cfg.NFO,
+    subscription_holder: str | None = None,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Same response shape as /chain (a chain_rows list + spot/atm_strike/lot_size),
+    but only ever contains the ATM strike's row — see fetch_payoff_quote_routed
+    for why the portfolio payoff panel doesn't need the rest of the chain."""
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    if not stock_code.strip() or not expiry_date.strip():
+        raise HTTPException(status_code=400, detail="stock_code and expiry_date required")
+    holder = (subscription_holder or "").strip() or None
+    data = await asyncio.to_thread(
+        breeze.get_payoff_quote,
+        ctx.user_id,
+        stock_code.strip(),
+        exchange_code,
+        expiry_date.strip(),
+        holder_id=holder,
+    )
+    AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderPayoffQuote")
     return StrategyBuilderChainResponse(**data)
 
 
@@ -166,6 +306,7 @@ async def _run_propose_trades_job(job_id: str, user_id: str, body: ProposeTrades
             expiry_date=body.expiry_date.strip(),
             margin_lacs=body.margin_lacs,
             max_loss_lacs=body.max_loss_lacs,
+            allow_infinite_loss=body.allow_infinite_loss,
             min_pop_pct=body.min_pop_pct,
             min_ann_return_pct=body.min_ann_return_pct,
             provision_elm=body.provision_elm,
@@ -241,11 +382,23 @@ async def post_margin(
     for leg in legs:
         if leg.get("exchange_code") != ex0:
             raise HTTPException(status_code=400, detail="All legs must use the same exchange_code")
-    data = breeze.strategy_builder_margin(ctx.user_id, ex0, legs)
+    effective_margin_source = (
+        body.margin_source or breeze.get_strategy_builder_margin_source(ctx.user_id)
+    )
+    data = breeze.strategy_builder_margin(
+        ctx.user_id,
+        ex0,
+        legs,
+        margin_source_override=body.margin_source,
+        baseline_only=body.baseline_only,
+        spot=body.spot,
+        iv=body.iv,
+        time_years=body.time_years,
+    )
     if data.get("Status") == 200 and "Success" in data and isinstance(data.get("Success"), dict):
-        data["Success"]["margin_source"] = breeze.get_strategy_builder_margin_source(ctx.user_id)
+        data["Success"]["margin_source"] = effective_margin_source
     elif data.get("Status") != 200:
-        data["margin_source"] = breeze.get_strategy_builder_margin_source(ctx.user_id)
+        data["margin_source"] = effective_margin_source
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderMargin")
     return StrategyBuilderMarginResponse(**data)
 
@@ -337,6 +490,7 @@ async def post_execute(
             leg.price or "0",
             leg.action,
             exchange_code=ex,
+            aggressive_limit=leg.aggressive_limit,
         )
         breeze.store_messages(ctx.user_id, messages)
         serialized = _serialize_messages(messages)

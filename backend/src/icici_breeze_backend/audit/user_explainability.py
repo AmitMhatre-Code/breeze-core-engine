@@ -59,12 +59,17 @@ def build_user_explainability_report(
     min_pop = float(request.get("min_pop_pct") or 0)
     min_roi = float(request.get("min_ann_return_pct") or 0)
     margin_lacs = float(request.get("margin_lacs") or 0)
-    max_loss_lacs = float(request.get("max_loss_lacs") or 0)
+    allow_infinite_loss = bool(request.get("allow_infinite_loss"))
+    max_loss_lacs = (
+        None if allow_infinite_loss else float(request.get("max_loss_lacs") or 0)
+    )
     category = str(request.get("strategy_category") or "")
 
-    ok_trades = [t for t in trades if t.get("status") == "ok"]
+    ok_trades = [t for t in trades if t.get("status") == "ok" and t.get("compliance") != "relaxed"]
+    relaxed_trades = [t for t in trades if t.get("status") == "ok" and t.get("compliance") == "relaxed"]
+    all_ok = ok_trades + relaxed_trades
     skipped_trades = [t for t in trades if t.get("status") == "skipped"]
-    recommended_ids = sorted({str(t["strategy_id"]) for t in ok_trades if t.get("strategy_id")})
+    recommended_ids = sorted({str(t["strategy_id"]) for t in all_ok if t.get("strategy_id")})
 
     executive = _build_executive_summary(
         request=request,
@@ -74,12 +79,13 @@ def build_user_explainability_report(
         min_pop=min_pop,
         min_roi=min_roi,
         strategy_evaluations=strategy_evaluations,
-        ok_trades=ok_trades,
+        ok_trades=all_ok,
         recommended_ids=recommended_ids,
         skipped_trades=skipped_trades,
         summary=summary,
+        allow_infinite_loss=allow_infinite_loss,
     )
-    why_this = _build_why_this(ok_trades, strategy_evaluations)
+    why_this = _build_why_this(all_ok, strategy_evaluations)
     why_not = _build_why_not(
         skipped_trades,
         strategy_evaluations,
@@ -89,7 +95,7 @@ def build_user_explainability_report(
         max_loss_lacs=max_loss_lacs,
     )
     what_if = _build_what_if_insights(
-        ok_trades=ok_trades,
+        ok_trades=all_ok,
         skipped_trades=skipped_trades,
         strategy_evaluations=strategy_evaluations,
         min_pop=min_pop,
@@ -118,7 +124,7 @@ def _build_executive_summary(
     request: dict[str, Any],
     category: str,
     margin_lacs: float,
-    max_loss_lacs: float,
+    max_loss_lacs: float | None,
     min_pop: float,
     min_roi: float,
     strategy_evaluations: dict[str, dict[str, Any]],
@@ -126,6 +132,7 @@ def _build_executive_summary(
     recommended_ids: list[str],
     skipped_trades: list[dict[str, Any]],
     summary: dict[str, Any],
+    allow_infinite_loss: bool = False,
 ) -> dict[str, Any]:
     evaluated_count = len(strategy_evaluations) or len(summary.get("strategies_ok", [])) + len(
         summary.get("strategies_skipped", [])
@@ -157,8 +164,12 @@ def _build_executive_summary(
     user_inputs: dict[str, Any] = {
         "strategy_category": category,
         "margin_lacs": margin_lacs,
-        "max_loss_lacs": max_loss_lacs,
+        "allow_infinite_loss": allow_infinite_loss,
     }
+    if allow_infinite_loss:
+        user_inputs["max_loss_lacs"] = None
+    else:
+        user_inputs["max_loss_lacs"] = max_loss_lacs
     if category == "income":
         user_inputs["min_pop_pct"] = min_pop
         user_inputs["min_ann_return_pct"] = min_roi
@@ -305,7 +316,7 @@ def _build_why_not(
     min_pop: float,
     min_roi: float,
     margin_lacs: float,
-    max_loss_lacs: float,
+    max_loss_lacs: float | None,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for trade in skipped_trades:
@@ -424,7 +435,7 @@ def _skip_one_liner(
     min_pop: float,
     min_roi: float,
     margin_lacs: float,
-    max_loss_lacs: float,
+    max_loss_lacs: float | None,
 ) -> str:
     return _skip_explanation(
         name=name,
@@ -447,7 +458,7 @@ def _skip_explanation(
     min_pop: float,
     min_roi: float,
     margin_lacs: float,
-    max_loss_lacs: float,
+    max_loss_lacs: float | None,
 ) -> str:
     if primary == "pop_floor":
         best = _best_pop_below_floor(ev, min_pop)
@@ -474,6 +485,8 @@ def _skip_explanation(
     if primary in ("capital", "budget"):
         return f"{name} candidates exceeded your ₹{margin_lacs:g}L capital budget."
     if primary in ("max_loss", "economic_prune"):
+        if max_loss_lacs is None:
+            return f"{name} structures were pruned by the engine's economic-viability check."
         return f"{name} structures exceeded your ₹{max_loss_lacs:g}L max-loss limit."
     if primary == "liquidity":
         return f"{name} was evaluated, but liquid strikes did not produce viable structures."
@@ -493,7 +506,7 @@ def _build_what_if_insights(
     min_pop: float,
     min_roi: float,
     margin_lacs: float,
-    max_loss_lacs: float,
+    max_loss_lacs: float | None,
 ) -> list[dict[str, Any]]:
     insights: list[dict[str, Any]] = []
     seen_messages: set[str] = set()
@@ -558,7 +571,7 @@ def _build_what_if_insights(
                 }
             )
 
-        if primary in ("max_loss", "economic_prune"):
+        if primary in ("max_loss", "economic_prune") and max_loss_lacs is not None:
             _add(
                 {
                     "constraint": "max_loss_lacs",

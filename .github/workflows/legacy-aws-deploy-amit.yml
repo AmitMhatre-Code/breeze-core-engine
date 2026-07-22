@@ -69,6 +69,14 @@ jobs:
           systemctl enable docker
           systemctl start docker
 
+          if ! swapon --show 2>/dev/null | grep -q /swapfile; then
+            fallocate -l 2G /swapfile
+            chmod 600 /swapfile
+            mkswap /swapfile
+            swapon /swapfile
+            grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+          fi
+
           if [ "${EXPECT_DATA_VOLUME}" = "1" ]; then
             DATA_DEV=""
             for _ in \$(seq 1 90); do

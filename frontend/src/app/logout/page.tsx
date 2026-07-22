@@ -14,6 +14,8 @@ export default function LogoutPage() {
         await fetch("/auth/logout", {
           method: "POST",
           credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: "user_initiated" }),
         });
       } catch {
         // Even if logout fails (e.g., expired session), still redirect.

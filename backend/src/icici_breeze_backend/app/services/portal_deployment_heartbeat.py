@@ -146,6 +146,65 @@ def execute_upgrade(target_tag: str | None) -> None:
         logger.warning("portal heartbeat upgrade: container recreate failed: %s", exc)
 
 
+def apply_env_overrides(env_overrides: dict, version: str) -> None:
+    """Recreate the deployment container with new env vars pushed from the portal
+    Console's fleet settings (e.g. TELEGRAM_BOT_TOKEN) — same image, new env.
+
+    Reuses the image-upgrade helper path since nothing short of a container
+    recreate applies a new env var (os.environ is only read at import time;
+    docker --env-file is only read at container creation, not on restart).
+    """
+    from icici_breeze_backend.app.services.deployment_container_upgrade import (
+        running_image_ref,
+        schedule_recreate_via_helper,
+    )
+
+    container_name = (cfg.DEPLOYMENT_CONTAINER_NAME or "breeze-core-engine").strip() or "breeze-core-engine"
+
+    try:
+        import docker
+        from docker.errors import APIError, DockerException
+    except ImportError:
+        logger.warning("portal heartbeat env-override apply skipped: docker SDK not installed")
+        return
+
+    try:
+        client = docker.from_env()
+    except DockerException as exc:
+        logger.warning("portal heartbeat env-override apply: docker connection failed: %s", exc)
+        return
+
+    # Must be the image we are *running*, not DEPLOYMENT_GHCR_IMAGE. That resolves to
+    # `...:latest`, so pushing an env override (e.g. a Telegram token) to an instance
+    # upgraded past latest would reinstall latest and undo the upgrade. Observed in a
+    # rehearsal: an upgrade to 2.1.0-b was reverted 11 seconds later by this path.
+    image = None
+    try:
+        image = running_image_ref(client, client.containers.get(container_name))
+    except (APIError, DockerException) as exc:
+        logger.warning("portal heartbeat env-override apply: could not inspect %s: %s", container_name, exc)
+    if not image:
+        image = _resolve_upgrade_image(None)
+    if not image:
+        logger.warning("portal heartbeat env-override apply skipped: no image reference resolved")
+        return
+
+    # Deliberately never log env_overrides' values — only that an update is happening.
+    logger.info(
+        "portal heartbeat env-override apply: scheduling detached helper recreate for %s (version=%s)",
+        container_name,
+        version,
+    )
+    overrides = dict(env_overrides)
+    overrides["BREEZE_ENV_OVERRIDES_VERSION"] = version
+    try:
+        schedule_recreate_via_helper(
+            client, image=image, container_name=container_name, env_overrides=overrides
+        )
+    except (APIError, DockerException) as exc:
+        logger.warning("portal heartbeat env-override apply: container recreate failed: %s", exc)
+
+
 async def post_heartbeat() -> dict | None:
     """POST heartbeat to portal; return verified policy dict or None on failure."""
     base = (cfg.PORTAL_API_BASE_URL or "").strip().rstrip("/")
@@ -159,12 +218,18 @@ async def post_heartbeat() -> dict | None:
         return None
 
     url = f"{base}/api/public/heartbeat"
-    payload: dict[str, str] = {
+    payload: dict[str, object] = {
         "public_ip": public_ip,
         "version": _reported_version(),
     }
     if key:
         payload["license_key"] = key
+    try:
+        from icici_breeze_backend.app.services.squareoff_watch import build_squareoff_watch
+
+        payload["squareoff_watch"] = build_squareoff_watch()
+    except Exception:  # noqa: BLE001 -- best-effort telemetry, never block heartbeat
+        logger.debug("portal heartbeat: squareoff_watch build failed", exc_info=True)
     try:
         async with httpx.AsyncClient(timeout=_HEARTBEAT_TIMEOUT_SEC) as client:
             resp = await client.post(url, json=payload)
@@ -193,12 +258,58 @@ async def post_heartbeat() -> dict | None:
         return None
 
 
+async def _maybe_execute_upgrade(policy: dict) -> None:
+    """Run the portal-approved upgrade if the policy calls for it right now.
+
+    Shared by the startup heartbeat and the periodic tick so an upgrade queued
+    while a deployment was powered off is acted on as soon as it checks back
+    in, instead of only on the next periodic tick (which the portal's
+    one-shot consume-on-delivery semantics may never re-offer).
+    """
+    if policy.get("status") != "OK":
+        logger.warning("portal heartbeat unexpected status: %s", policy.get("status"))
+        return
+
+    if policy.get("trigger_upgrade"):
+        if _upgrade_allowed(policy):
+            target_tag = policy.get("target_tag")
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, execute_upgrade, target_tag)
+        else:
+            logger.info("portal heartbeat upgrade deferred: outside operator upgrade window")
+
+
+def _local_env_overrides_version() -> str:
+    return (os.environ.get("BREEZE_ENV_OVERRIDES_VERSION") or "").strip()
+
+
+async def _maybe_apply_env_overrides(policy: dict) -> None:
+    """Recreate with portal-pushed env vars (e.g. Telegram bot token) if the
+    fleet config version has changed since we last applied one.
+
+    Independent of `_maybe_execute_upgrade` — checked separately, not merged
+    into one atomic recreate. If both happen to fire in the same tick, that's
+    two sequential recreates instead of one (the second catches up on the next
+    tick); simpler than coordinating the two, and the coincidence is rare.
+    """
+    env_overrides = policy.get("env_overrides")
+    version = str(policy.get("env_overrides_version") or "").strip()
+    if not env_overrides or not version:
+        return
+    if version == _local_env_overrides_version():
+        return
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, apply_env_overrides, env_overrides, version)
+
+
 async def send_startup_heartbeat() -> bool:
     """First portal check-in after DB/master init (before periodic loop)."""
     policy = await post_heartbeat()
     if policy:
         _apply_policy_from_body(policy)
         logger.info("portal startup heartbeat succeeded")
+        await _maybe_execute_upgrade(policy)
+        await _maybe_apply_env_overrides(policy)
         return True
     logger.warning("portal startup heartbeat failed or skipped")
     return False
@@ -215,17 +326,8 @@ async def heartbeat_tick() -> int:
     if not policy:
         return _last_interval_sec
 
-    if policy.get("status") != "OK":
-        logger.warning("portal heartbeat unexpected status: %s", policy.get("status"))
-        return _last_interval_sec
-
-    if policy.get("trigger_upgrade"):
-        if _upgrade_allowed(policy):
-            target_tag = policy.get("target_tag")
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, execute_upgrade, target_tag)
-        else:
-            logger.info("portal heartbeat upgrade deferred: outside operator upgrade window")
+    await _maybe_execute_upgrade(policy)
+    await _maybe_apply_env_overrides(policy)
 
     return _last_interval_sec
 

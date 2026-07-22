@@ -94,13 +94,19 @@ def _login_query_from_request(request: Request) -> str:
     return ("?" + "&".join(parts)) if parts else ""
 
 
-def _set_auth_cookies(response: Response, icici_token: str, access_token: str, full_secret: str | None) -> None:
+def _set_auth_cookies(
+    response: Response, icici_token: str, access_token: str, full_secret: str | None, user_id: str
+) -> None:
     from datetime import timedelta
 
     def _secs_until_midnight() -> int:
         now = now_ist()
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
         return int((midnight - now).total_seconds())
+
+    from icici_breeze_backend.app.repositories.broker_session import save_broker_session_token
+
+    save_broker_session_token(user_id, icici_token)
 
     response.delete_cookie(key=LOGIN_USER_ID_COOKIE, path="/")
     response.set_cookie(
@@ -203,12 +209,11 @@ async def logout(request: Request):
                 handler = JWTHandler(secret_key=secret)
                 payload = handler.validate_token(access_token)
                 if payload and getattr(payload, "user_id", None):
-                    from icici_breeze_backend.app.services.breeze_session_cache import evict
+                    from icici_breeze_backend.app.services.session_teardown import teardown_session
 
-                    evict(payload.user_id, broker_token)
-                    from icici_breeze_backend.app.services.broker_snapshot_cache import evict as evict_snapshot
-
-                    evict_snapshot(payload.user_id, broker_token)
+                    # Navigating here is always a user action (there is no automatic
+                    # redirect to this route), so it is a deliberate logout.
+                    teardown_session(payload.user_id, broker_token, deliberate=True)
         except Exception:
             pass
     response = redirect_to_frontend("/login")
@@ -280,106 +285,143 @@ async def _complete_icici_session(
 
     login_bootstrap_portfolio = None
     login_bootstrap_vix = None
+    customer_check: dict | None = None
+    margin_check: dict = {}
+    raw_session: str | None = None
+    broker_token = str(apisession or "")
 
-    try:
-        from icici_breeze_backend.app.services.icici_api_pacing import icici_user_scope
+    from icici_breeze_backend.app.external.icici_api import session_token_from_customer_response
+    from icici_breeze_backend.app.services.api_usage import is_daily_limit_reached
 
-        with icici_user_scope(form.user_id):
-            api_key = cred_data["Success"]["broker_api_key"]
-            breeze_inst = BreezeConnect(api_key=api_key)
-            breeze_inst.generate_session(api_secret=full_secret, session_token=str(apisession or ""))
+    # ICICI enforces a hard 5000-calls/day cap per user. When it's already exhausted, every
+    # ICICI call below (generate_session's customerdetails probe included) is guaranteed to
+    # come back as a 429 throttle response, not a real credential failure -- so don't let the
+    # broad except below turn that into a misleading "secret fragment is incorrect" error.
+    # Log the user in with a degraded broker session instead; the frontend shows a banner
+    # (api_usage_blocked) once /home data confirms the daily cap is reached.
+    icici_daily_limit_exhausted = is_daily_limit_reached(form.user_id)
 
-            try:
-                customer_check = breeze_inst.get_customer_details(api_session=str(apisession or ""))
-            except TypeError:
-                customer_check = breeze_inst.get_customer_details(str(apisession or ""))
-            except Exception:
-                customer_check = None
-            if not customer_check or customer_check.get("Status") != 200:
-                logger.warning("login_submit session_validation_failed user_id=%s", form.user_id)
-                raise HTTPException(status_code=400, detail="The secret fragment is incorrect. Please try again.")
+    if icici_daily_limit_exhausted:
+        logger.warning(
+            "login_submit icici_daily_limit_exhausted user_id=%s; skipping broker session "
+            "verification and logging in with degraded broker access",
+            form.user_id,
+        )
+    else:
+        try:
+            from icici_breeze_backend.app.services.icici_api_pacing import icici_user_scope
 
-            from icici_breeze_backend.app.external.icici_api import (
-                fetch_customerdetails_session_token,
-                call_icici_api_direct,
-                session_token_from_customer_response,
-            )
+            with icici_user_scope(form.user_id):
+                api_key = cred_data["Success"]["broker_api_key"]
+                breeze_inst = BreezeConnect(api_key=api_key)
+                breeze_inst.generate_session(api_secret=full_secret, session_token=str(apisession or ""))
 
-            broker_token = str(apisession or "")
-            raw_session = (
-                fetch_customerdetails_session_token(api_key, broker_token, user_id=form.user_id)
-                if broker_token
-                else None
-            )
-            if broker_token:
-                margin_check = call_icici_api_direct(
-                    "https://api.icicidirect.com/breezeapi/api/v1/margin",
-                    {"exchange_code": "NFO"},
-                    api_key,
-                    full_secret,
-                    broker_token,
-                    user_id=form.user_id,
-                    x_session_token=raw_session if raw_session else None,
+                try:
+                    customer_check = breeze_inst.get_customer_details(api_session=str(apisession or ""))
+                except TypeError:
+                    customer_check = breeze_inst.get_customer_details(str(apisession or ""))
+                except Exception:
+                    customer_check = None
+                if not customer_check or customer_check.get("Status") != 200:
+                    logger.warning("login_submit session_validation_failed user_id=%s", form.user_id)
+                    raise HTTPException(status_code=400, detail="The secret fragment is incorrect. Please try again.")
+
+                from icici_breeze_backend.app.external.icici_api import (
+                    fetch_customerdetails_session_token,
+                    call_icici_api_direct,
                 )
-                margin_status = margin_check.get("Status") or margin_check.get("status")
-                err = (margin_check.get("Error") or margin_check.get("error") or "").lower()
-                raw_err = (margin_check.get("Error") or margin_check.get("error") or "").strip()
-                if margin_status != 200 or "invalid checksum" in err:
-                    logger.warning(
-                        "login_submit margin_probe_failed user_id=%s status=%s error=%s",
-                        form.user_id,
-                        margin_status,
-                        err,
+
+                raw_session = (
+                    fetch_customerdetails_session_token(api_key, broker_token, user_id=form.user_id)
+                    if broker_token
+                    else None
+                )
+                if broker_token:
+                    margin_check = call_icici_api_direct(
+                        "https://api.icicidirect.com/breezeapi/api/v1/margin",
+                        {"exchange_code": "NFO"},
+                        api_key,
+                        full_secret,
+                        broker_token,
+                        user_id=form.user_id,
+                        x_session_token=raw_session if raw_session else None,
                     )
-                    if "invalid checksum" in err:
-                        raise HTTPException(status_code=400, detail="The secret fragment is incorrect. Please try again.")
-                    if "time out" in err:
+                    margin_status = margin_check.get("Status") or margin_check.get("status")
+                    err = (margin_check.get("Error") or margin_check.get("error") or "").lower()
+                    raw_err = (margin_check.get("Error") or margin_check.get("error") or "").strip()
+                    if margin_status != 200 or "invalid checksum" in err:
+                        logger.warning(
+                            "login_submit margin_probe_failed user_id=%s status=%s error=%s",
+                            form.user_id,
+                            margin_status,
+                            err,
+                        )
+                        if "invalid checksum" in err:
+                            raise HTTPException(status_code=400, detail="The secret fragment is incorrect. Please try again.")
+                        if "time out" in err:
+                            raise HTTPException(
+                                status_code=503,
+                                detail=(
+                                    "ICICI margin API returned a session timeout while verifying your login. "
+                                    "Your secret fragment is often still correct. Try again shortly, complete ICICI login a bit faster, "
+                                    "or sync the host clock (NTP). If this keeps happening, contact ICICI support."
+                                ),
+                            )
                         raise HTTPException(
-                            status_code=503,
+                            status_code=502,
                             detail=(
-                                "ICICI margin API returned a session timeout while verifying your login. "
-                                "Your secret fragment is often still correct. Try again shortly, complete ICICI login a bit faster, "
-                                "or sync the host clock (NTP). If this keeps happening, contact ICICI support."
+                                "Broker validation failed after login. "
+                                + (raw_err if raw_err else "Unknown error from ICICI.")
+                                + " This is not necessarily a wrong secret fragment."
                             ),
                         )
-                    raise HTTPException(
-                        status_code=502,
-                        detail=(
-                            "Broker validation failed after login. "
-                            + (raw_err if raw_err else "Unknown error from ICICI.")
-                            + " This is not necessarily a wrong secret fragment."
-                        ),
-                    )
 
-            from icici_breeze_backend.app.services.breeze_session_cache import set as cache_breeze_session
-            from icici_breeze_backend.app.services.dashboard_bootstrap import (
-                warm_dashboard_bootstrap_snapshot,
-            )
+                from icici_breeze_backend.app.services.breeze_session_cache import set as cache_breeze_session
+                from icici_breeze_backend.app.services.dashboard_bootstrap import (
+                    warm_dashboard_bootstrap_snapshot,
+                )
 
-            cache_breeze_session(form.user_id, broker_token, breeze_inst)
-            try:
-                login_bootstrap_portfolio, login_bootstrap_vix = warm_dashboard_bootstrap_snapshot(
-                    form.user_id,
-                    broker_token=broker_token,
-                    session_token=session_token_from_customer_response(
-                        customer_check,
-                        raw_session=raw_session or "",
+                cache_breeze_session(form.user_id, broker_token, breeze_inst)
+
+                from icici_breeze_backend.app.services.system_chain_health import (
+                    start_prefetch_for_new_broker_session,
+                )
+
+                start_prefetch_for_new_broker_session(form.user_id, broker_token)
+                try:
+                    login_bootstrap_portfolio, login_bootstrap_vix = warm_dashboard_bootstrap_snapshot(
+                        form.user_id,
                         broker_token=broker_token,
-                    ),
-                    breeze=breeze_inst,
-                    processor=breeze,
-                )
-            except Exception as warm_exc:
+                        session_token=session_token_from_customer_response(
+                            customer_check,
+                            raw_session=raw_session or "",
+                            broker_token=broker_token,
+                        ),
+                        breeze=breeze_inst,
+                        processor=breeze,
+                    )
+                except Exception as warm_exc:
+                    logger.warning(
+                        "login_submit bootstrap_warm_failed user_id=%s error=%s",
+                        form.user_id,
+                        warm_exc,
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            if is_daily_limit_reached(form.user_id):
                 logger.warning(
-                    "login_submit bootstrap_warm_failed user_id=%s error=%s",
+                    "login_submit icici_daily_limit_exhausted_mid_flow user_id=%s error=%s",
                     form.user_id,
-                    warm_exc,
+                    e,
                 )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning("login_submit icici_session_failed user_id=%s error=%s", form.user_id, e, exc_info=True)
-        raise HTTPException(status_code=400, detail="The secret fragment is incorrect. Please try again.") from e
+                icici_daily_limit_exhausted = True
+                customer_check = None
+                margin_check = {}
+                raw_session = None
+            else:
+                logger.warning("login_submit icici_session_failed user_id=%s error=%s", form.user_id, e, exc_info=True)
+                raise HTTPException(status_code=400, detail="The secret fragment is incorrect. Please try again.") from e
 
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         if not user_account_exists_by_user_id(conn, form.user_id):
@@ -457,6 +499,11 @@ async def _complete_icici_session(
     from icici_breeze_backend.app.services.broker_snapshot_cache import set_snapshot
     from icici_breeze_backend.app.services.processor import build_margin_situation_from_raw
 
+    if customer_check and customer_check.get("Status") == 200:
+        from icici_breeze_backend.app.services.customer_details_cache import set as set_customer_details_cache
+
+        set_customer_details_cache(form.user_id, icici_token, customer_check)
+
     set_snapshot(
         form.user_id,
         icici_token,
@@ -477,7 +524,7 @@ async def _complete_icici_session(
     )
 
     response = JSONResponse({"redirect": "/dashboard"})
-    _set_auth_cookies(response, icici_token, access_token, full_secret)
+    _set_auth_cookies(response, icici_token, access_token, full_secret, form.user_id)
     from icici_breeze_backend.app.services.portal_deployment_login import notify_portal_deployment_login
 
     notify_portal_deployment_login(icici_user_id=icici_user_id)
@@ -563,6 +610,7 @@ async def get_home_api(ctx: RequestContext = Depends(get_request_context)):
         api_usage_band=usage["api_usage_band"],
         api_usage_warning=get_usage_warning(user_id),
         api_usage_blocked=is_daily_limit_reached(user_id),
+        aggressive_limit_order_enabled=cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED,
         **license_fields,
     )
 
