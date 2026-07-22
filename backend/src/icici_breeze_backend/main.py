@@ -404,6 +404,15 @@ def start_application():
             reset_active_chains_registry,
         )
 
+        # Instances upgraded from 2.0.x arrive with no Redis sidecar and no
+        # breeze-core-net (the old image wrote that recreate). Finish the install
+        # here, before anything depends on Redis. Off-thread: the Docker calls block.
+        from icici_breeze_backend.app.services.deployment_redis_selfheal import (
+            run_redis_self_heal_if_needed,
+        )
+
+        await asyncio.to_thread(run_redis_self_heal_if_needed)
+
         require_redis_connected()
         reset_active_chains_registry()
         bootstrap_reference_data_on_startup()
