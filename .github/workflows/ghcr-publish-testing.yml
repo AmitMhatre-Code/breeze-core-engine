@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    # Native arm64 avoids QEMU emulation during npm ci (sharp / Next.js postinstalls).
+    runs-on: ubuntu-24.04-arm
     environment:
       name: production
     steps:
@@ -35,13 +36,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Same source of truth the image bakes into APP_VERSION (see Dockerfile).
+      - name: Resolve app version from changelog
+        id: appver
+        run: |
+          set -euo pipefail
+          VERSION="$(node scripts/changelog-latest-version.mjs frontend/src/lib/changelog.ts)"
+          test -n "$VERSION" || { echo "ERROR: empty app version"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "publishing version $VERSION"
+
+      # Deliberately NOT `latest`: that tag is what live customer deployments pull, and
+      # this branch must never be able to retag it. `beta` is this branch's own channel.
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=beta
+            type=raw,value=${{ steps.appver.outputs.version }}
             type=sha
 
       - name: Resolve portal DRM build args (required)
@@ -65,21 +79,17 @@ jobs:
           build-args: |
             PORTAL_HEARTBEAT_JWT_PUBLIC_KEY_B64=${{ steps.portal_drm.outputs.public_key_b64 }}
             PORTAL_ALLOWED_HOSTS=${{ steps.portal_drm.outputs.allowed_hosts }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+          cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-arm64
+          cache-to: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-arm64,mode=max
 
       - name: Verify image contains no secrets or env files
         env:
-          IMAGE: ${{ steps.image.outputs.name }}:latest
+          IMAGE: ${{ steps.image.outputs.name }}:beta
           CANARY: BREEZE_CI_CANARY_MARKER
         run: |
           set -euo pipefail
-          # Image is built for linux/arm64 only; GHA runners are amd64 — pull/run with explicit platform.
-          docker pull --platform linux/arm64 "$IMAGE"
-          docker run --rm --platform linux/arm64 "$IMAGE" sh -c '
+          docker pull "$IMAGE"
+          docker run --rm "$IMAGE" sh -c '
             set -e
             if find /app \( -name ".env*" -o -name "*.pem" \) 2>/dev/null | grep -q .; then
               echo "ERROR: .env or .pem files found under /app"
