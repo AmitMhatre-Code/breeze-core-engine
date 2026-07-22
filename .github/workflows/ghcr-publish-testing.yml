@@ -36,13 +36,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Same source of truth the image bakes into APP_VERSION (see Dockerfile).
+      - name: Resolve app version from changelog
+        id: appver
+        run: |
+          set -euo pipefail
+          VERSION="$(node scripts/changelog-latest-version.mjs frontend/src/lib/changelog.ts)"
+          test -n "$VERSION" || { echo "ERROR: empty app version"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "publishing version $VERSION"
+
+      # Deliberately NOT `latest`: that tag is what live customer deployments pull, and
+      # this branch must never be able to retag it. `beta` is this branch's own channel.
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=beta
+            type=raw,value=${{ steps.appver.outputs.version }}
             type=sha
 
       - name: Resolve portal DRM build args (required)
@@ -71,7 +84,7 @@ jobs:
 
       - name: Verify image contains no secrets or env files
         env:
-          IMAGE: ${{ steps.image.outputs.name }}:latest
+          IMAGE: ${{ steps.image.outputs.name }}:beta
           CANARY: BREEZE_CI_CANARY_MARKER
         run: |
           set -euo pipefail

@@ -36,6 +36,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Same source of truth the image bakes into APP_VERSION (see Dockerfile).
+      - name: Resolve app version from changelog
+        id: appver
+        run: |
+          set -euo pipefail
+          VERSION="$(node scripts/changelog-latest-version.mjs frontend/src/lib/changelog.ts)"
+          test -n "$VERSION" || { echo "ERROR: empty app version"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "publishing version $VERSION"
+
+      # `latest` is the moving tag customer deployments track; the bare version is the
+      # immutable copy the portal pins to once rollout is version-selectable.
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
@@ -43,6 +55,7 @@ jobs:
           images: ${{ steps.image.outputs.name }}
           tags: |
             type=raw,value=latest
+            type=raw,value=${{ steps.appver.outputs.version }}
             type=sha
 
       - name: Resolve portal DRM build args (required)
