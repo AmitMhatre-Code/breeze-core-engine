@@ -84,29 +84,6 @@ def _on_redis_network(container: Any) -> bool:
     return REDIS_NETWORK_NAME in networks
 
 
-def _self_image_ref(container: Any, client: Any) -> str | None:
-    """
-    Image to recreate from — the one we are running, resolved to a digest when possible.
-
-    Deliberately *not* ``DEPLOYMENT_GHCR_IMAGE``: on a 2.0.x host that still reads
-    ``...:latest``, which is the 2.0.1 release. Recreating from it would silently
-    downgrade the instance we were sent to upgrade.
-    """
-    config_image = ((container.attrs or {}).get("Config") or {}).get("Image") or ""
-    try:
-        image = client.images.get(container.attrs["Image"])
-        digests = getattr(image, "attrs", {}).get("RepoDigests") or []
-        repo = config_image.rsplit(":", 1)[0] if ":" in config_image else config_image
-        for digest in digests:
-            if repo and digest.startswith(f"{repo}@"):
-                return digest
-        if digests:
-            return digests[0]
-    except Exception as exc:  # noqa: BLE001 — any lookup failure falls back to the tag
-        logger.debug("redis self-heal: could not resolve image digest: %s", exc)
-    return config_image or None
-
-
 def run_redis_self_heal_if_needed() -> None:
     """
     Provision the Redis sidecar (and, if needed, re-home this container onto its
@@ -130,6 +107,7 @@ def run_redis_self_heal_if_needed() -> None:
         from icici_breeze_backend.app.services.deployment_container_upgrade import (
             REDIS_NETWORK_NAME,
             ensure_redis_sidecar_sdk,
+            running_image_ref,
             schedule_recreate_via_helper,
         )
     except ImportError as exc:
@@ -181,7 +159,7 @@ def run_redis_self_heal_if_needed() -> None:
         )
         return
 
-    image = _self_image_ref(container, client)
+    image = running_image_ref(client, container)
     if not image:
         logger.error("redis self-heal: could not determine own image; not recreating")
         return

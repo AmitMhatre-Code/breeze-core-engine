@@ -170,6 +170,31 @@ def ensure_redis_sidecar_sdk(client: Any) -> None:
         _start_redis_sidecar_sdk(client)
 
 
+def running_image_ref(client: Any, container: Any) -> str | None:
+    """
+    The image `container` is running, pinned to a digest when one is available.
+
+    Use this for any recreate that means "same image, new something-else". The
+    obvious alternative — `DEPLOYMENT_GHCR_IMAGE` — is a trap: on deployment hosts
+    it reads `...:latest`, a moving tag. A recreate from it silently installs
+    whatever `latest` points at *now*, which downgrades any instance that has been
+    upgraded past it. A digest cannot drift that way.
+    """
+    config_image = ((getattr(container, "attrs", None) or {}).get("Config") or {}).get("Image") or ""
+    try:
+        image = client.images.get(container.attrs["Image"])
+        digests = (getattr(image, "attrs", None) or {}).get("RepoDigests") or []
+        repo = config_image.rsplit(":", 1)[0] if ":" in config_image else config_image
+        for digest in digests:
+            if repo and digest.startswith(f"{repo}@"):
+                return digest
+        if digests:
+            return digests[0]
+    except Exception as exc:  # noqa: BLE001 — any lookup failure falls back to the tag
+        logger.debug("could not resolve running image digest: %s", exc)
+    return config_image or None
+
+
 def deployment_env_file_path() -> str:
     return (getattr(cfg, "DEPLOYMENT_ENV_FILE", None) or _DEFAULT_ENV_FILE).strip() or _DEFAULT_ENV_FILE
 

@@ -155,13 +155,9 @@ def apply_env_overrides(env_overrides: dict, version: str) -> None:
     docker --env-file is only read at container creation, not on restart).
     """
     from icici_breeze_backend.app.services.deployment_container_upgrade import (
+        running_image_ref,
         schedule_recreate_via_helper,
     )
-
-    image = _resolve_upgrade_image(None)
-    if not image:
-        logger.warning("portal heartbeat env-override apply skipped: DEPLOYMENT_GHCR_IMAGE not set")
-        return
 
     container_name = (cfg.DEPLOYMENT_CONTAINER_NAME or "breeze-core-engine").strip() or "breeze-core-engine"
 
@@ -176,6 +172,21 @@ def apply_env_overrides(env_overrides: dict, version: str) -> None:
         client = docker.from_env()
     except DockerException as exc:
         logger.warning("portal heartbeat env-override apply: docker connection failed: %s", exc)
+        return
+
+    # Must be the image we are *running*, not DEPLOYMENT_GHCR_IMAGE. That resolves to
+    # `...:latest`, so pushing an env override (e.g. a Telegram token) to an instance
+    # upgraded past latest would reinstall latest and undo the upgrade. Observed in a
+    # rehearsal: an upgrade to 2.1.0-b was reverted 11 seconds later by this path.
+    image = None
+    try:
+        image = running_image_ref(client, client.containers.get(container_name))
+    except (APIError, DockerException) as exc:
+        logger.warning("portal heartbeat env-override apply: could not inspect %s: %s", container_name, exc)
+    if not image:
+        image = _resolve_upgrade_image(None)
+    if not image:
+        logger.warning("portal heartbeat env-override apply skipped: no image reference resolved")
         return
 
     # Deliberately never log env_overrides' values — only that an update is happening.

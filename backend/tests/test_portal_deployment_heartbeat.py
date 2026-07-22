@@ -350,11 +350,23 @@ def _fake_docker_module(monkeypatch, mock_client):
     monkeypatch.setitem(sys.modules, "docker.errors", docker_errors)
 
 
+def _client_running(image_ref: str, *, digests: list[str] | None = None):
+    """Mock docker client whose deployment container runs `image_ref`."""
+    client = MagicMock()
+    container = MagicMock()
+    container.attrs = {"Config": {"Image": image_ref}, "Image": "sha256:localid"}
+    client.containers.get.return_value = container
+    image = MagicMock()
+    image.attrs = {"RepoDigests": digests if digests is not None else []}
+    client.images.get.return_value = image
+    return client
+
+
 def test_apply_env_overrides_recreates_with_version_stamped(monkeypatch):
     monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/org/breeze-core-engine:v1.0.0")
     monkeypatch.setattr(hb.cfg, "DEPLOYMENT_CONTAINER_NAME", "breeze-core-engine")
 
-    mock_client = MagicMock()
+    mock_client = _client_running("ghcr.io/org/breeze-core-engine:v1.0.0")
     _fake_docker_module(monkeypatch, mock_client)
 
     with patch(
@@ -370,6 +382,50 @@ def test_apply_env_overrides_recreates_with_version_stamped(monkeypatch):
         container_name="breeze-core-engine",
         env_overrides={"TELEGRAM_BOT_TOKEN": "123:abc", "BREEZE_ENV_OVERRIDES_VERSION": "hash123"},
     )
+
+
+def test_apply_env_overrides_never_reinstalls_latest(monkeypatch):
+    """
+    Regression: an env-override push must not downgrade an upgraded instance.
+
+    DEPLOYMENT_GHCR_IMAGE reads `...:latest` on deployment hosts. Recreating from
+    it reinstalled whatever `latest` pointed at — observed live, where a portal
+    upgrade to 2.1.0-b was undone 11 seconds later by a Telegram-token push.
+    """
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/org/breeze-core-engine:latest")
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_CONTAINER_NAME", "breeze-core-engine")
+
+    mock_client = _client_running(
+        "ghcr.io/org/breeze-core-engine:2.1.0-b",
+        digests=["ghcr.io/org/breeze-core-engine@sha256:47a30968"],
+    )
+    _fake_docker_module(monkeypatch, mock_client)
+
+    with patch(
+        "icici_breeze_backend.app.services.deployment_container_upgrade.schedule_recreate_via_helper",
+    ) as schedule:
+        hb.apply_env_overrides({"TELEGRAM_BOT_TOKEN": "123:abc"}, "hash123")
+
+    image = schedule.call_args.kwargs["image"]
+    assert image == "ghcr.io/org/breeze-core-engine@sha256:47a30968"
+    assert not image.endswith(":latest")
+
+
+def test_apply_env_overrides_falls_back_when_inspect_fails(monkeypatch):
+    """Config pushes must still land when the container can't be inspected."""
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/org/breeze-core-engine:v1.0.0")
+    monkeypatch.setattr(hb.cfg, "DEPLOYMENT_CONTAINER_NAME", "breeze-core-engine")
+
+    mock_client = MagicMock()
+    mock_client.containers.get.side_effect = Exception("no such container")
+    _fake_docker_module(monkeypatch, mock_client)
+
+    with patch(
+        "icici_breeze_backend.app.services.deployment_container_upgrade.schedule_recreate_via_helper",
+    ) as schedule:
+        hb.apply_env_overrides({"TELEGRAM_BOT_TOKEN": "123:abc"}, "hash123")
+
+    assert schedule.call_args.kwargs["image"] == "ghcr.io/org/breeze-core-engine:v1.0.0"
 
 
 def test_maybe_apply_env_overrides_noop_when_absent():
