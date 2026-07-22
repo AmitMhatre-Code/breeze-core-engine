@@ -257,3 +257,22 @@ This document records **why** the modern stack is shaped the way it is. It is no
 **Migration**: `app/db/exchange_calendar_migrate.py` backfills the old per-user table on first startup after upgrade — it picks the customized row (if any; most-recently-updated wins ties) as the new global default, and renames the legacy table to `_legacy_user_exchange_calendar_backup` rather than dropping it.
 
 **Trade-off**: In a deployment shared by more than one user (uncommon but possible — see `app/services/squareoff_watch.py`'s handling of multi-user deployments), any authenticated user editing the Exchange Calendar changes it for everyone. This is accepted because the alternative (per-user calendars) doesn't correspond to anything real — the exchange only has one set of hours.
+
+
+---
+
+## 22. Only a deliberate logout clears the broker session; an expired app session does not
+
+**Decision**: `/auth/logout` branches on `LogoutRequest.reason` (`app/services/session_teardown.py`). A deliberate logout clears the persisted broker session token and the warm Breeze/snapshot/customer caches, as before. The frontend's *automatic* 401 sign-out (`auth-session-expired.ts`, which POSTs `reason: "session_expired"`) clears browser cookies only — the server-side broker session survives until its own midnight-IST expiry.
+
+**Rationale**:
+
+- PB/SL square-off dispatch runs off the `portfolio_pnl_engine` poll loop with no HTTP request in scope, so it reaches the broker via the persisted token (`app/repositories/broker_session.py`). Clearing that token disarms every live Strategy Group.
+- Closing the browser has always left monitoring running; an app-JWT lapse in a background tab looked identical to the user but silently ended their protection, and the failure only surfaced *at the breach*, as a failed exit-order placement → Reset.
+- The retained token is server-side only and is never handed back to a caller. A signed-out browser still has to log in from scratch; all the retention buys is the background engine's ability to finish the trading day the user already armed.
+- A missing body (older client) is treated as deliberate, so the conservative behaviour is the default.
+
+**User-facing consequences**:
+
+- Logging out with live SGs shows a confirm dialog naming them (`components/layout/LogoutConfirmDialog.tsx`) and, on confirm, sends a Telegram alert that monitoring has stopped.
+- A session expiry with live SGs sends a Telegram alert saying the opposite — monitoring is *still running* until midnight IST. That reassurance is deliberate: told "monitoring stopped", a user might re-arm on top of rules that are still live, or manually close positions automation is also about to close. The alert is deduped per user (15 min) because every open tab's 401 handler POSTs its own logout.

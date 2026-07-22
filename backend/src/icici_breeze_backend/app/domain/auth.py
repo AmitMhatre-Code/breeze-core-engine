@@ -20,9 +20,26 @@ class LoginRequest(BaseModel):
     )
 
 
+#: `LogoutRequest.reason` value the frontend sends from its automatic 401 sign-out.
+SESSION_EXPIRED_LOGOUT_REASON = "session_expired"
+
+
 class LogoutRequest(BaseModel):
-    """Request body for /auth/logout."""
-    reason: Optional[str] = Field(None, description="Optional reason (ignored)")
+    """Request body for /auth/logout.
+
+    `reason` decides whether the persisted broker session token is cleared — see
+    `app/services/session_teardown.py`. Anything other than `session_expired` (including
+    a missing body, i.e. an older client) is treated as a deliberate logout, so the
+    conservative "clear everything" behaviour is the default.
+    """
+    reason: Optional[str] = Field(
+        None,
+        description=(
+            "'session_expired' for the frontend's automatic 401 sign-out (keeps the broker "
+            "session so armed PB/SL rules keep firing); 'user_initiated' or omitted for a "
+            "deliberate logout."
+        ),
+    )
 
 
 class UserInfo(BaseModel):

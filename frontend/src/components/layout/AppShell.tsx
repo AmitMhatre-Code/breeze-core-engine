@@ -16,6 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ApiLimitExhaustedBanner } from "@/components/api-usage/ApiLimitExhaustedBanner";
 import { ApiUsageWarningDialog } from "@/components/api-usage/ApiUsageWarningDialog";
 import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
+import { LogoutConfirmDialog } from "@/components/layout/LogoutConfirmDialog";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
 import { ContraOrphanBanner } from "@/components/portfolio/ContraOrphanBanner";
@@ -69,6 +70,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const [changelogOpen, setChangelogOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [apiUsageWarnDismissed, setApiUsageWarnDismissed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [pathnameSeen, setPathnameSeen] = useState(pathname);
@@ -320,14 +322,16 @@ export function AppShell({
               {latestVersionLabel || "Version"}
             </button>
             <ThemeToggle />
-            <Link
-              href="/logout"
+            <button
+              type="button"
+              onClick={() => setLogoutConfirmOpen(true)}
               title="Log out"
               aria-label="Log out"
+              aria-haspopup="dialog"
               className="inline-flex size-[34px] shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
             >
               <LogOutIcon />
-            </Link>
+            </button>
           </div>
         </header>
         <Modal
@@ -414,6 +418,10 @@ export function AppShell({
         <ChangelogDialog
           open={changelogOpen}
           onClose={() => setChangelogOpen(false)}
+        />
+        <LogoutConfirmDialog
+          open={logoutConfirmOpen}
+          onClose={() => setLogoutConfirmOpen(false)}
         />
         <ApiUsageWarningDialog
           open={showApiUsageWarning}

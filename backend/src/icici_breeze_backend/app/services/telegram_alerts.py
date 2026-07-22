@@ -124,6 +124,80 @@ def _format_reset_message(rule: Any, reason: str, orphans: list[Any]) -> str:
     return "\n".join(lines)
 
 
+def _rule_lines(rules: list[Any]) -> list[str]:
+    return [f"• {r.stock_code} · {r.expiry_display}" for r in rules]
+
+
+def _format_session_expired_message(rules: list[Any]) -> str:
+    """App session gone, broker session still good.
+
+    The honest version of this is counter-intuitive and has to be said plainly: being
+    logged out of the app does *not* switch PB/SL off. The stored broker session keeps
+    the engine firing headless until it expires at midnight IST. If we said "monitoring
+    stopped" here the user might re-arm on top of rules that are still live, or worse,
+    manually close positions that automation is also about to close.
+    """
+    n = len(rules)
+    return "\n".join(
+        [
+            "⚠️ *App session expired — PB/SL still armed*",
+            "",
+            f"You were signed out of the app, but {n} rule(s) are still being monitored:",
+            *_rule_lines(rules),
+            "",
+            "Monitoring continues on your stored broker session until midnight IST — "
+            "exit orders can still be placed without you being signed in.",
+            "",
+            "Log back in to see and control them. After midnight IST the broker session "
+            "expires and monitoring stops.",
+        ]
+    )
+
+
+def _format_logout_message(rules: list[Any]) -> str:
+    """Deliberate logout: the broker session is cleared, so this really is the end of
+    monitoring. Unlike a Reset, no exit orders were placed, so there is nothing live to
+    warn about — the whole message is "you are now unprotected"."""
+    n = len(rules)
+    return "\n".join(
+        [
+            "🛑 *PB/SL monitoring stopped — you logged out*",
+            "",
+            f"{n} rule(s) are no longer being monitored:",
+            *_rule_lines(rules),
+            "",
+            "No exit orders will be placed for these. Log back in and re-arm to resume.",
+        ]
+    )
+
+
+def notify_session_expired_with_live_rules(user_id: str, rules: list[Any]) -> None:
+    """Alert when the app session lapses while SGs are live — see
+    `_format_session_expired_message` for why this is reassurance, not a warning."""
+    _notify(user_id, _format_session_expired_message(rules), kind="session expired")
+
+
+def notify_logout_stopped_monitoring(user_id: str, rules: list[Any]) -> None:
+    """Alert when a deliberate logout ends monitoring.
+
+    The logout confirm dialog already warned in-app and the user proceeded anyway, so
+    this is not the first notice — it is the durable one. Ending protection is exactly
+    the kind of thing a user does in a hurry and forgets by the next move in the market.
+    """
+    _notify(user_id, _format_logout_message(rules), kind="logout")
+
+
+def _notify(user_id: str, text: str, *, kind: str) -> None:
+    try:
+        status = get_status(user_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("telegram %s alert: status lookup failed for user_id=%s", kind, user_id)
+        return
+    if not status["alerts_enabled"] or not status["telegram_chat_id"]:
+        return
+    _send_async(status["telegram_chat_id"], text)
+
+
 def notify_squareoff_reset(user_id: str, rule: Any, reason: str, orphans: list[Any] | None = None) -> None:
     """Alert on every Reset — not optional.
 

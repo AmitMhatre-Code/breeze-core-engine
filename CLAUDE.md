@@ -10,7 +10,7 @@ This repo is one half of a two-repo system. Production instances are **licensed 
 
 Deeper docs live in `docs/` — read these before making non-trivial changes, they are kept current:
 - `docs/architecture.md` — runtime topologies, middleware chain, routing, persistence, portal integration, reference-data pipeline, active-chains/WS layer
-- `docs/design-decisions.md` — **why** things are shaped this way (read before "fixing" something that looks odd) — 20 numbered decisions
+- `docs/design-decisions.md` — **why** things are shaped this way (read before "fixing" something that looks odd) — 22 numbered decisions
 - `docs/functionality.md` — feature/route map
 - `docs/flows.md` — sequence diagrams for auth, broker return, heartbeat/upgrade, deploy
 - `docs/configuration-reference.md` — full env var reference

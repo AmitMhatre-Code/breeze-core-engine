@@ -209,17 +209,11 @@ async def logout(request: Request):
                 handler = JWTHandler(secret_key=secret)
                 payload = handler.validate_token(access_token)
                 if payload and getattr(payload, "user_id", None):
-                    from icici_breeze_backend.app.repositories.broker_session import clear_broker_session_token
-                    from icici_breeze_backend.app.services.breeze_session_cache import evict
+                    from icici_breeze_backend.app.services.session_teardown import teardown_session
 
-                    evict(payload.user_id, broker_token)
-                    from icici_breeze_backend.app.services.broker_snapshot_cache import evict as evict_snapshot
-
-                    evict_snapshot(payload.user_id, broker_token)
-                    from icici_breeze_backend.app.services.customer_details_cache import evict as evict_customer_details
-
-                    evict_customer_details(payload.user_id, broker_token)
-                    clear_broker_session_token(payload.user_id)
+                    # Navigating here is always a user action (there is no automatic
+                    # redirect to this route), so it is a deliberate logout.
+                    teardown_session(payload.user_id, broker_token, deliberate=True)
         except Exception:
             pass
     response = redirect_to_frontend("/login")

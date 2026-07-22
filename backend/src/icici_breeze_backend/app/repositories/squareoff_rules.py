@@ -169,6 +169,27 @@ def get_active_rule_for_group(
         return _row_to_record(row) if row else None
 
 
+def list_monitoring_rules(user_id: str) -> list[SquareOffRuleRecord]:
+    """This user's SGs that still depend on a working broker session — what logout is
+    about to take away.
+
+    Same non-terminal set as `list_all_live_rules`, scoped to one user: `armed` needs the
+    session to place exit orders, and `fired`/`triggered` still need the order feed to
+    reach Completed. `reset` is excluded (its monitoring has already stopped, so logging
+    out takes nothing further away from it)."""
+    with sqlite3.connect(_db_path()) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            f"""
+            SELECT {_SELECT_COLUMNS} FROM portfolio_squareoff_rules
+            WHERE user_id = ? AND status IN {ACTIVE_STATUSES}
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        )
+        return [_row_to_record(r) for r in cur.fetchall()]
+
+
 def list_all_live_rules() -> list[dict[str, Any]]:
     """Every live SG across all users — for startup hydration of the in-memory engine
     and for re-pinning WS subscriptions so PB/SL keeps working headless."""

@@ -9,9 +9,11 @@ from icici_breeze_backend.app.auth.auth_cookies import COOKIE_MAX_AGE, DIRECT_IC
 from icici_breeze_backend.app.auth.credentials import encrypt_direct_icici_cookie
 from icici_breeze_backend.app.auth.user_account import verify_direct_account_password, get_google_id_by_user_id
 from icici_breeze_backend.app.domain.auth import (
+    SESSION_EXPIRED_LOGOUT_REASON,
     AdminRotateRequest,
     AdminRevokeRequest,
     DirectLoginRequest,
+    LogoutRequest,
 )
 from icici_breeze_backend.app.domain.responses import AdminRevokeResponse, AdminRotateResponse, LogoutResponse
 from icici_breeze_backend.app.services.auth_service import rotate_credentials, revoke_credentials
@@ -118,8 +120,17 @@ async def auth_direct_login(request: Request, body: DirectLoginRequest):
 
 
 @router.post("/auth/logout", response_model=LogoutResponse)
-async def logout_endpoint(ctx: RequestContext = Depends(get_current_user), request_obj: Request = None):
-    """Logout and clear auth cookies."""
+async def logout_endpoint(
+    body: LogoutRequest | None = None,
+    ctx: RequestContext = Depends(get_current_user),
+    request_obj: Request = None,
+):
+    """Logout and clear auth cookies.
+
+    Cookies always go. Whether the *broker* session goes with them depends on
+    `body.reason` — an expired app session must not disarm live PB/SL monitoring. See
+    `app/services/session_teardown.py`.
+    """
     if not ctx:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
@@ -127,15 +138,10 @@ async def logout_endpoint(ctx: RequestContext = Depends(get_current_user), reque
     ip_address = request_obj.client.host if request_obj.client else None
     request_id = getattr(request_obj.state, "correlation_id", None)
 
-    from icici_breeze_backend.app.repositories.broker_session import clear_broker_session_token
-    from icici_breeze_backend.app.services.breeze_session_cache import evict
-    from icici_breeze_backend.app.services.broker_snapshot_cache import evict as evict_snapshot
-    from icici_breeze_backend.app.services.customer_details_cache import evict as evict_customer_details
+    from icici_breeze_backend.app.services.session_teardown import teardown_session
 
-    evict(user_id, ctx.broker_token or "")
-    evict_snapshot(user_id, ctx.broker_token or "")
-    evict_customer_details(user_id, ctx.broker_token or "")
-    clear_broker_session_token(user_id)
+    deliberate = (body.reason if body else None) != SESSION_EXPIRED_LOGOUT_REASON
+    teardown_session(user_id, ctx.broker_token or "", deliberate=deliberate)
 
     response = JSONResponse(content=LogoutResponse().model_dump())
     response.delete_cookie(key=ICICI_BROKER_TOKEN_COOKIE, path="/")
