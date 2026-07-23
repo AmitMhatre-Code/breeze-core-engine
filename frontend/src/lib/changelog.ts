@@ -20,6 +20,19 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.1.1",
+    date: "23-Jul-2026",
+    releaseKind: "patch",
+    summary:
+      "Corrected Dashboard Day's P&L, netted portfolio margin, after-hours option quotes, and clearer strategy/automation wording.",
+    changes: [
+      "Dashboard Day's P&L is rebuilt and now correct: it marks your open positions against the previous trading day's close and adds any realized profit from intraday round-trips, so the tile no longer swings to nonsensical figures (it now separates Realized and Open, gross of brokerage and taxes).",
+      "Portfolio margin is now netted, not summed per leg: Total Margin and Carry Return reflect the broker's netted SPAN + ELM for each option group and for the portfolio as a whole, instead of adding up each leg and overstating the margin.",
+      "Option chains and quotes now load reliably after market hours (and on a brief live-feed miss): the app falls back through captured live snapshots, Bhavcopy, and the broker API, fixing spurious \"Bhavcopy not loaded yet\" errors when data was actually available.",
+      "Clearer wording in Strategy Builder: near-threshold strategies are described as the \"closest matches\" rather than \"best available/recommended\", and a new help topic explains that Profit Booking / Stop Loss is best-effort automation — not a guaranteed stop.",
+    ],
+  },
+  {
     version: "2.1.0",
     date: "22-Jul-2026",
     releaseKind: "minor",
