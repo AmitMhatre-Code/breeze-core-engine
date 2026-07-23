@@ -20,18 +20,21 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
-    version: "2.1.0-b",
-    date: "26-Jun-2026",
-    releaseKind: "prerelease",
-    summary: "Websocket for live quotes, After Market-hours Orders (AMO) improvements, Basket Order and Trigger based exits",
+    version: "2.1.0",
+    date: "22-Jul-2026",
+    releaseKind: "minor",
+    summary:
+      "Automated Profit-Booking & Stop-Loss (PB/SL) square-off for strategy groups, real-time P&L, live WebSocket quotes, Telegram alerts, and Basket Orders.",
     changes: [
-      "New Basket Order page: build multi-leg option baskets, view payoff and PoP, and execute all legs at once.",
-      "Place Order and Strategy Builder support aggressive limit orders (ICICI derives price from LTP; no manual limit price required).",
-      "Infinite Loss strategies and strategies that were missed out because of user provided constraints are shown separately in the Strategy Builder.",
-      "After Market-hours Orders (AMO) now parked for execution. User has to manually trigger them when market opens.",
-      "Order placement modal (Place Order, Basket Order, Strategy Builder) disables live execution when the market is closed and shows a reminder to fire parked orders from the Orders page after open.",
-      "Instead of get_option_chain_quotes API, we now use websocket during market hours and NSE/BSE Bhavopy data after market hours.",
-      "Strategy Builder propose-trades, legacy scans, and single-strike quotes now share the same cache-first quote path (REST only on cache miss).",
+      "Profit-Booking / Stop-Loss (PB/SL): arm a rupee profit target and loss limit on a whole strategy group (all legs of a stock + expiry). The app tracks the group's live P&L and automatically fires exit orders to close every leg the moment your target or stop is hit — no manual watching.",
+      "Real-time P&L: open positions are now revalued roughly every 2 seconds from live market data, so group and leg P&L update continuously without hammering the broker.",
+      "Per-leg Exit Rules: attach a target-and-stop (GTT OCO) bracket to an individual leg, placed and monitored by ICICI, straight from the Portfolio page.",
+      "Telegram alerts: link your Telegram account to get notified the instant a Profit-Booking or Stop-Loss rule fires — including a warning if any exit orders are still live after you reset a rule.",
+      "Live quotes now stream over WebSocket during market hours (with Bhavcopy data after hours), replacing slower on-demand quote polling.",
+      "New Basket Order page: build a multi-leg option basket, review payoff and PoP, and place all legs together.",
+      "Modify an open order's price or quantity in place from the Orders page, instead of cancelling and re-placing it.",
+      "Aggressive limit orders in Place Order and Strategy Builder — ICICI derives the price from LTP, so no manual limit price is needed.",
+      "Reference data (scrip master, NSE/BSE Bhavcopy, SPAN baselines) now loads at startup and refreshes on a daily schedule, with a new Reference Data Loads view in Settings showing status and history.",
     ],
   },  
   {
