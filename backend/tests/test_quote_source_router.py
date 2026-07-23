@@ -627,3 +627,68 @@ def test_get_full_option_chain_icici_rest_builds_full_skeleton(_mock_tradeable, 
     missing_row = next(r for r in chain_rows if r["strike_price"] == 24100)
     assert missing_row["call"] is None
     assert missing_row["put"] is None
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="snapshot")
+@patch("icici_breeze_backend.app.services.quote_source_router._resolve_chain_metadata")
+@patch(
+    "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
+    return_value=76391.39,
+)
+@patch(
+    "icici_breeze_backend.app.services.quote_source_router.offline_source_order",
+    return_value=["snapshot"],
+)
+@patch("icici_breeze_backend.app.services.quote_source_router.is_tradeable_contract", return_value=True)
+@patch("icici_breeze_backend.app.services.quote_source_router.build_chain_from_snapshot")
+def test_atm_gated_serves_ws_snapshot_post_close(
+    mock_snapshot,
+    _mock_tradeable,
+    _mock_order,
+    _mock_spot,
+    mock_meta,
+    _mock_source,
+):
+    """Regression: post-close the captured WS snapshot is the primary source. The
+    payoff/dashboard ATM-gated path must build from it, not fall through to a
+    spurious "Bhavcopy not loaded yet" error. Before the fix `_fetch_chain_payload_atm_gated`
+    had no `snapshot` branch, so a `source == "snapshot"` resolution returned None."""
+    from icici_breeze_backend.app.services.quote_source_router import (
+        assemble_payoff_quote_with_router,
+    )
+    from icici_breeze_backend.app.services.ws_quote_snapshot import contract_field
+
+    atm = 76400
+    mock_meta.return_value = (20, None, [76300, atm])
+    mock_snapshot.return_value = {
+        contract_field(atm, "call"): {
+            "strike_price": atm,
+            "ltp": 12.5,
+            "open_interest": 100,
+            "updated_at": 1.0,
+        },
+        contract_field(atm, "put"): {
+            "strike_price": atm,
+            "ltp": 8.0,
+            "open_interest": 90,
+            "updated_at": 1.0,
+        },
+    }
+
+    out = assemble_payoff_quote_with_router(
+        MagicMock(), "u1", "BSESEN", cfg.BFO, "23-Jul-2026"
+    )
+
+    assert out["Status"] == 200
+    payload = out["Success"]
+    assert payload["quote_source"] == "snapshot"
+    assert payload["atm_strike"] == atm
+    assert _find_chain_row_strike(payload, atm) is not None
+    mock_snapshot.assert_called_once()
+
+
+def _find_chain_row_strike(payload, strike):
+    return next(
+        (r for r in payload.get("chain_rows", []) if r.get("strike_price") == strike),
+        None,
+    )

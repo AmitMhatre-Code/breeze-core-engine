@@ -20,7 +20,6 @@ from icici_breeze_backend.core.icici_client import icici_client
 from icici_breeze_backend.app.services.reference_data.bhavcopy_store import (
     _lookup_bhav_row,
     _row_to_chain_cell,
-    build_chain_from_bhavcopy,
     get_bhavcopy_source_date,
 )
 from icici_breeze_backend.app.services.reference_data.keys import (
@@ -983,46 +982,34 @@ def _fetch_chain_payload_atm_gated(
             return _enrich_quote_metadata(ws_payload)
 
         _logger.warning(
-            "WebSocket ATM quote incomplete for %s %s; trying bhavcopy", stock_code, expiry_display
-        )
-        if bhavcopy_is_fresh(exchange_code):
-            source = "bhavcopy"
-        else:
-            return None
-
-    if source == "bhavcopy":
-        payload = build_chain_from_bhavcopy(
+            "WebSocket ATM quote incomplete for %s %s; falling back to offline sources",
             stock_code,
             expiry_display,
-            exchange_code,
-            lot_size=int(lot_size) if lot_size else None,
-            freeze_quantity=freeze_quantity,
-            strikes=strikes,
         )
-        if payload is not None and _find_chain_row(payload, atm_strike) is not None:
-            payload["spot_price"] = spot
-            payload["atm_strike"] = atm_strike
-            return _enrich_quote_metadata(payload)
-        _logger.warning("Bhavcopy ATM quote unavailable for %s %s", stock_code, expiry_display)
-        return None
 
-    if source == "icici_api":
-        payload = _get_or_build_icici_rest_chain(
-            proc,
-            user_id,
-            stock_code,
-            exchange_code,
-            expiry_display,
-            strikes,
-            lot_size=int(lot_size) if lot_size else None,
-            freeze_quantity=freeze_quantity,
-        )
-        if payload is not None and _find_chain_row(payload, atm_strike) is not None:
-            payload = dict(payload)
-            payload["spot_price"] = spot
-            payload["atm_strike"] = atm_strike
-            return _enrich_quote_metadata(payload)
-        _logger.warning("ICICI REST ATM quote unavailable for %s %s", stock_code, expiry_display)
+    # Offline (market closed, or a mid-session WS miss): assemble the chain per
+    # cell across snapshot -> bhavcopy -> REST, exactly like the full-chain
+    # builder, then gate on the ATM row only. Sharing `_build_offline_chain` is
+    # what gives this path the WS snapshot tier -- the earlier per-source dispatch
+    # here had no `snapshot` branch, so a fresh post-close snapshot resolved to a
+    # source this function could not build and it returned nothing (surfacing the
+    # "Bhavcopy not loaded yet" error even though captured depth was available).
+    payload = _build_offline_chain(
+        proc,
+        user_id,
+        stock_code,
+        exchange_code,
+        expiry_display,
+        strikes,
+        lot_size=int(lot_size) if lot_size else None,
+        freeze_quantity=freeze_quantity,
+    )
+    if payload is not None and _find_chain_row(payload, atm_strike) is not None:
+        payload = dict(payload)
+        payload["spot_price"] = spot
+        payload["atm_strike"] = atm_strike
+        return _enrich_quote_metadata(payload)
+    _logger.warning("Offline ATM quote unavailable for %s %s", stock_code, expiry_display)
     return None
 
 
