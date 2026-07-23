@@ -242,7 +242,7 @@ export function ExplainabilityLevel1View({
           </span>
         </p>
         <p>
-          <span className="text-faint">Recommended: </span>
+          <span className="text-faint">Matched: </span>
           <span className="font-semibold text-up">
             {executiveSummary.strategies_recommended.length
               ? executiveSummary.strategies_recommended.map((s) => s.strategy_name).join(", ")
@@ -301,7 +301,7 @@ export function ExplainabilityLevel2View({
       {whyThis.length > 0 ? (
         <div className="space-y-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-up">
-            Recommended
+            Matched
           </p>
           {whyThis.map((entry) => (
             <WhyThisBlock key={entry.strategy_id} entry={entry} />

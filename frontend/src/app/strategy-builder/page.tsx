@@ -1030,7 +1030,7 @@ export default function StrategyBuilderPage() {
                           The strategies below did not meet your PoP and/or
                           annualized return thresholds, or are unlimited-loss
                           structures excluded while a max-loss limit is set.
-                          They are the best available options if those
+                          They are the closest matches if those
                           constraints were relaxed.{" "}
                           <HelpLink
                             topicId="near-threshold-alternatives"

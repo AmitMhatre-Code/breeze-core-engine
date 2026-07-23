@@ -65,7 +65,7 @@ export const helpTopics: HelpTopic[] = [
       "Contact sales if your trial was already used for your ICICI User ID.",
     ],
     keywords: ["license", "expired", "revoked", "trial", "read-only"],
-    relatedTopicIds: ["account-deletion"],
+    relatedTopicIds: ["account-deletion", "profit-booking-stop-loss"],
   },
   {
     id: "account-deletion",
@@ -168,6 +168,29 @@ export const helpTopics: HelpTopic[] = [
     relatedTopicIds: ["order-pages-compared", "strategy-builder-overview"],
   },
   {
+    id: "profit-booking-stop-loss",
+    category: "orders",
+    title: "Profit Booking / Stop Loss (automated exits)",
+    summary:
+      "Best-effort automated group exit — not a guaranteed stop loss.",
+    body: [
+      "From the Portfolio page you can arm a Profit Booking / Stop Loss rule on an option group: set a rupee profit target and loss limit, and the app places exit orders for every leg when the group's live P&L crosses either threshold.",
+      "This is best-effort protection, not a guaranteed stop. It can only fire while this deployment is running, connected to the live quote feed, and licensed at the moment the threshold is crossed. If the instance is offline, quotes are stale, or the license is read-only, no exit orders are placed and your positions are not protected.",
+      "Exits are placed as limit orders priced off LTP by the offsets you set — not raw market orders — so they may fill partially or not at all. The rupee target and loss limit are trigger thresholds, not guaranteed exit prices; actual fills depend on market conditions.",
+      "If a rule Resets (for example the group changed, or an exit order was rejected), monitoring stops but any orders already placed are not retracted — they stay live and may still execute, and one may even open a new position. Review the Reset warning and cancel leftover orders if you do not want them.",
+    ],
+    keywords: [
+      "stop loss",
+      "profit booking",
+      "pb/sl",
+      "square off",
+      "exit",
+      "target",
+      "automation",
+    ],
+    relatedTopicIds: ["license-status", "market-hours", "clone-square-off"],
+  },
+  {
     id: "quote-sources",
     category: "quotes",
     title: "Quote source badges (Live, Bhavcopy, ICICI API)",
@@ -248,7 +271,7 @@ export const helpTopics: HelpTopic[] = [
     body: [
       "These strategies did not meet your minimum PoP and/or annualized return thresholds.",
       "Unlimited-loss structures are excluded while a max-loss limit is set.",
-      "They are the best available options if you choose to relax your constraints.",
+      "They are the closest matches if you choose to relax your constraints.",
     ],
     keywords: ["relaxed", "threshold", "alternative"],
     relatedTopicIds: ["strategy-builder-constraints", "unlimited-loss"],
