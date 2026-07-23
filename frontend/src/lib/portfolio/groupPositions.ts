@@ -24,13 +24,53 @@ export function portfolioGroupKey(row: PortfolioPositionRecord): string {
   return `${stock}|${ex}|${exp}`;
 }
 
+/** Netted SPAN (+ additive ELM, + carry-return on that margin) for a whole
+ * Strategy Group or the whole portfolio, computed server-side in one
+ * multi-leg margin_calculator call. Nulls mean the broker call didn't resolve. */
+export type NettedMargin = {
+  span_margin_required: number | null;
+  elm_margin_required: number | null;
+  carry_margin_returns: number | null;
+};
+
+/** One entry of `Success.groups` from `/portfolio/data` — a group's netted
+ * margin, tagged with the same identity the frontend groups by. */
+export type BackendGroupMargin = NettedMargin & {
+  key?: string;
+  stock_code?: string;
+  exchange_code?: string;
+  expiry_date?: string;
+};
+
 export type PortfolioPositionGroup = {
   key: string;
   stockCode: string;
   exchangeCode: string;
   expiryDate: string;
   rows: PortfolioPositionRecord[];
+  /** Backend netted SPAN + ELM for this group; null until/unless resolved. */
+  netted?: NettedMargin | null;
 };
+
+/** Index the server's per-group netted margins by the same key the UI groups by,
+ * so each `PortfolioPositionGroup` can be overlaid with its netted figure. */
+export function nettedMarginByKey(
+  backendGroups: BackendGroupMargin[] | undefined,
+): Map<string, NettedMargin> {
+  const map = new Map<string, NettedMargin>();
+  if (!backendGroups) return map;
+  for (const g of backendGroups) {
+    const key =
+      g.key ??
+      `${g.stock_code ?? ""}|${g.exchange_code ?? "NFO"}|${g.expiry_date ?? ""}`;
+    map.set(key, {
+      span_margin_required: g.span_margin_required ?? null,
+      elm_margin_required: g.elm_margin_required ?? null,
+      carry_margin_returns: g.carry_margin_returns ?? null,
+    });
+  }
+  return map;
+}
 
 export function buildPortfolioPositionGroups(
   positions: PortfolioPositionRecord[],
@@ -73,6 +113,12 @@ export function buildPortfolioPositionGroups(
 }
 
 function groupMarginTotal(group: PortfolioPositionGroup): number {
+  // Prefer the server's netted SPAN + ELM; fall back to the per-leg sum only if a
+  // netted figure isn't attached yet (e.g. margin call hasn't resolved).
+  const netted = group.netted;
+  if (netted && netted.span_margin_required != null) {
+    return netted.span_margin_required + (netted.elm_margin_required ?? 0);
+  }
   let total = 0;
   for (const row of group.rows) {
     const span = parseFinite(row.span_margin_required) ?? 0;

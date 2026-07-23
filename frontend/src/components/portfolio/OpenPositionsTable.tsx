@@ -44,7 +44,11 @@ import {
   candidateToExecutionLeg,
   candidateToStrategyLeg,
 } from "@/lib/hedge/legs";
-import { buildPortfolioPositionGroups } from "@/lib/portfolio/groupPositions";
+import {
+  buildPortfolioPositionGroups,
+  nettedMarginByKey,
+} from "@/lib/portfolio/groupPositions";
+import type { BackendGroupMargin } from "@/lib/portfolio/groupPositions";
 import type { PortfolioPositionGroup } from "@/lib/portfolio/groupPositions";
 import { formatSignedRupees } from "@/lib/portfolio/totals";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
@@ -240,29 +244,6 @@ function sumNumericField(
   return any ? sum : null;
 }
 
-/**
- * Group Carry Ret. %: margin-weighted average of each leg's `carry_margin_returns`.
- * Matches the page-level formula in totals.ts (`computePortfolioTotals`), and reduces to
- * groupCarry/groupMargin since every leg in a group shares the same expiry (same DTE).
- */
-function computeGroupCarryReturnPct(
-  rows: PortfolioPositionRecord[],
-): number | null {
-  let num = 0;
-  let den = 0;
-  for (const row of rows) {
-    const span = coerceNum(row.span_margin_required);
-    const elm = coerceNum(row.elm_margin_required) ?? 0;
-    const margin = span != null ? span + elm : null;
-    const cr = coerceNum(row.carry_margin_returns);
-    if (cr != null && margin != null && margin > 0) {
-      num += cr * margin;
-      den += margin;
-    }
-  }
-  return den > 0 ? num / den : null;
-}
-
 const thBase =
   "whitespace-nowrap px-2 py-2 text-heading font-semibold uppercase tracking-wide text-faint 2xl:px-3 2xl:py-2.5";
 const tdShell =
@@ -297,6 +278,10 @@ function LiveDot({ title }: { title: string }) {
 
 type OpenPositionsTableProps = {
   positions: PortfolioPositionRecord[];
+  /** Server-computed netted SPAN + ELM per Strategy Group (`Success.groups`),
+   * joined onto each group by key so the group row shows the netted figure
+   * instead of a per-leg sum. */
+  nettedGroups?: BackendGroupMargin[];
   emptyMessage?: string;
   /** Group key expanded by default (e.g. the largest position by margin) so it's live immediately. */
   defaultExpandedGroupKey?: string | null;
@@ -665,11 +650,15 @@ function PortfolioGroupTableBlock({
   const spotAgg = formatSpot(liveRows[0]?.spot_price);
   const mtmSum = sumNumericField(liveRows, "current_profit");
   const carrySum = sumNumericField(liveRows, "carry_profit");
-  const spanSum = sumNumericField(liveRows, "span_margin_required");
-  const elmSum = sumNumericField(liveRows, "elm_margin_required");
+  // SPAN + ELM (and its carry-return) are the server's netted group figure — one
+  // multi-leg margin call for the whole group — not a per-leg sum. They don't tick
+  // with live quotes (margin is composition-based), so they come from `g.netted`,
+  // not the live overlay, while MTM/Carry rupees stay live off `liveRows`.
+  const gSpan = g.netted?.span_margin_required ?? null;
+  const gElm = g.netted?.elm_margin_required ?? null;
   const gMtm = formatMtmCarry(mtmSum);
   const gCarry = formatMtmCarry(carrySum);
-  const gCr = formatCarryRet(computeGroupCarryReturnPct(liveRows));
+  const gCr = formatCarryRet(g.netted?.carry_margin_returns ?? null);
   const groupTitle = `${g.stockCode} · ${g.expiryDate} · ${g.rows.length} leg${g.rows.length === 1 ? "" : "s"}`;
   const allSelected = selectedLegs.size > 0 && selectedLegs.size === g.rows.length;
   const someSelected = selectedLegs.size > 0 && !allSelected;
@@ -740,7 +729,7 @@ function PortfolioGroupTableBlock({
           </span>
         </td>
         <td className={`${tdSummaryBase} text-right font-mono tabular-nums`}>
-          <SpanElmCell span={spanSum} elm={elmSum} />
+          <SpanElmCell span={gSpan} elm={gElm} />
         </td>
         <td className={`${tdSummaryBase} text-right font-mono tabular-nums`}>
           {formatPoP(pop)}
@@ -863,11 +852,15 @@ function PortfolioGroupCardBlock({
   const spotAgg = formatSpot(liveRows[0]?.spot_price);
   const mtmSum = sumNumericField(liveRows, "current_profit");
   const carrySum = sumNumericField(liveRows, "carry_profit");
-  const spanSum = sumNumericField(liveRows, "span_margin_required");
-  const elmSum = sumNumericField(liveRows, "elm_margin_required");
+  // SPAN + ELM (and its carry-return) are the server's netted group figure — one
+  // multi-leg margin call for the whole group — not a per-leg sum. They don't tick
+  // with live quotes (margin is composition-based), so they come from `g.netted`,
+  // not the live overlay, while MTM/Carry rupees stay live off `liveRows`.
+  const gSpan = g.netted?.span_margin_required ?? null;
+  const gElm = g.netted?.elm_margin_required ?? null;
   const gMtm = formatMtmCarry(mtmSum);
   const gCarry = formatMtmCarry(carrySum);
-  const gCr = formatCarryRet(computeGroupCarryReturnPct(liveRows));
+  const gCr = formatCarryRet(g.netted?.carry_margin_returns ?? null);
   const groupTitle = `${g.stockCode} · ${g.expiryDate} · ${g.rows.length} leg${g.rows.length === 1 ? "" : "s"}`;
   const allSelected = selectedLegs.size > 0 && selectedLegs.size === g.rows.length;
   const someSelected = selectedLegs.size > 0 && !allSelected;
@@ -935,11 +928,11 @@ function PortfolioGroupCardBlock({
             </span>
           </p>
           <p>
-            <span className="app-text-muted">Span + ELM (sum):</span>{" "}
+            <span className="app-text-muted">Span + ELM:</span>{" "}
             <span className="font-mono tabular-nums">
-              {formatSpanElm(spanSum)}{" "}
+              {formatSpanElm(gSpan)}{" "}
               <span className="text-xs font-normal app-text-muted">
-                + {formatSpanElm(elmSum)}
+                + {formatSpanElm(gElm)}
               </span>
             </span>
           </p>
@@ -1071,8 +1064,6 @@ function PortfolioLegTableBlock({
   const cr = formatCarryRet(coerceNum(row.carry_margin_returns));
   const spot = formatSpot(row.spot_price);
   const qty = coerceNum(row.quantity);
-  const span = coerceNum(row.span_margin_required);
-  const elm = coerceNum(row.elm_margin_required);
   const label = formatOptionSymbol(row);
 
   return (
@@ -1128,8 +1119,9 @@ function PortfolioLegTableBlock({
             </span>
           </span>
         </td>
-        <td className={`${tdBase} text-right font-mono tabular-nums`}>
-          <SpanElmCell span={span} elm={elm} />
+        <td className={`${tdBase} text-right font-mono tabular-nums app-text-muted`}>
+          {/* SPAN is netted at group/portfolio level — never attributable to one leg. */}
+          —
         </td>
         <td className={`${tdBase} text-right font-mono tabular-nums`}>
           {formatPoP(pop)}
@@ -1169,8 +1161,6 @@ function PortfolioLegCardBlock({
   const cr = formatCarryRet(coerceNum(row.carry_margin_returns));
   const spot = formatSpot(row.spot_price);
   const qty = coerceNum(row.quantity);
-  const span = coerceNum(row.span_margin_required);
-  const elm = coerceNum(row.elm_margin_required);
   const label = formatOptionSymbol(row);
 
   return (
@@ -1242,13 +1232,9 @@ function PortfolioLegCardBlock({
             </span>
           </p>
           <p>
+            {/* SPAN is netted at group/portfolio level — never attributable to one leg. */}
             <span className="app-text-muted">Span + ELM:</span>{" "}
-            <span className="font-mono tabular-nums">
-              {formatSpanElm(span)}{" "}
-              <span className="text-xs font-normal app-text-muted">
-                + {formatSpanElm(elm)}
-              </span>
-            </span>
+            <span className="font-mono tabular-nums app-text-muted">—</span>
           </p>
           <p>
             <span className="app-text-muted">PoP:</span>{" "}
@@ -1273,15 +1259,17 @@ function PortfolioLegCardBlock({
 
 export function OpenPositionsTable({
   positions,
+  nettedGroups,
   emptyMessage = "No positions to display",
   defaultExpandedGroupKey = null,
   onLiveGroupCountChange,
   viewMode = "grouped",
 }: OpenPositionsTableProps) {
-  const groups = useMemo(
-    () => buildPortfolioPositionGroups(positions),
-    [positions],
-  );
+  const groups = useMemo(() => {
+    const built = buildPortfolioPositionGroups(positions);
+    const netted = nettedMarginByKey(nettedGroups);
+    return built.map((g) => ({ ...g, netted: netted.get(g.key) ?? null }));
+  }, [positions, nettedGroups]);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(defaultExpandedGroupKey ? [defaultExpandedGroupKey] : []),
   );

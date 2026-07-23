@@ -377,9 +377,34 @@ class MockBreezeSdk:
         return {"Status": 200, "Success": succ, "Error": None}
 
     def margin_calculator(self, margin_list, exchange_code: str = "", **kwargs):
+        # Deterministic stand-in that actually reacts to the leg set, so netting is
+        # observable in mock mode: a multi-leg call returns LESS than the sum of its
+        # legs priced alone (opposing CE/PE offset; long legs hedge). Not a real SPAN
+        # model -- just enough structure to exercise the group/portfolio netting path.
+        legs = margin_list or []
+
+        def _qty(leg):
+            try:
+                return abs(float(leg.get("quantity", 0) or 0))
+            except (TypeError, ValueError):
+                return 0.0
+
+        def _is(leg, prefix):
+            return str(leg.get("action", "")).strip().lower().startswith(prefix)
+
+        sells = [l for l in legs if _is(l, "s")]
+        buys = [l for l in legs if _is(l, "b")]
+        naked = 1000.0 * sum(_qty(l) for l in sells)
+        rights = {str(l.get("right", "")).strip().lower()[:1] for l in sells}
+        net_factor = 0.65 if {"c", "p"} <= rights else 1.0  # strangle/condor offset
+        hedge = 600.0 * sum(_qty(l) for l in buys)
+        span = max(0.0, naked * net_factor - hedge)
         return {
             "Status": 200,
-            "Success": {"total_margin": 125000, "span_margin_required": 118500},
+            "Success": {
+                "total_margin": round(span * 1.07, 2),
+                "span_margin_required": round(span, 2),
+            },
             "Error": None,
         }
 

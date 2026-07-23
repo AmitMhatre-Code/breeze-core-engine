@@ -1,5 +1,8 @@
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
-import type { PortfolioPositionGroup } from "@/lib/portfolio/groupPositions";
+import type {
+  NettedMargin,
+  PortfolioPositionGroup,
+} from "@/lib/portfolio/groupPositions";
 
 function coerceNum(v: unknown): number | null {
   if (v == null || v === "") return null;
@@ -16,26 +19,29 @@ function coerceNum(v: unknown): number | null {
 export type PortfolioTotals = {
   totalMtm: number | null;
   totalCarry: number | null;
-  /** Span + ELM margin summed across every leg. */
+  /** Netted Span + ELM across the whole portfolio (per-underlying netted, summed). */
   totalMargin: number | null;
-  /** Weighted (by per-row margin) annualised carry return, matching the backend's per-row formula. */
+  /** Annualised carry return on the netted portfolio margin. */
   carryReturnPct: number | null;
   groupCount: number;
   legCount: number;
 };
 
-/** Rolls per-leg backend fields into the page-level summary tiles (Total MTM / Carry / Margin / Carry Return). */
+/**
+ * Rolls the page-level summary tiles. MTM and Carry are additive, so they stay
+ * per-leg sums. Margin and Carry-Return come from the server's netted portfolio
+ * figure (`Success.portfolio`, netted per underlying then summed) — SPAN is a
+ * portfolio risk model and cannot be summed per leg without over-stating it
+ * (the bug this replaced).
+ */
 export function computePortfolioTotals(
   groups: PortfolioPositionGroup[],
+  portfolio?: NettedMargin | null,
 ): PortfolioTotals {
   let mtm = 0;
   let mtmAny = false;
   let carry = 0;
   let carryAny = false;
-  let margin = 0;
-  let marginAny = false;
-  let weightedNum = 0;
-  let weightedDen = 0;
   let legCount = 0;
 
   for (const g of groups) {
@@ -51,26 +57,18 @@ export function computePortfolioTotals(
         carry += rowCarry;
         carryAny = true;
       }
-      const span = coerceNum(row.span_margin_required);
-      const elm = coerceNum(row.elm_margin_required) ?? 0;
-      const rowMargin = span != null ? span + elm : null;
-      if (rowMargin != null) {
-        margin += rowMargin;
-        marginAny = true;
-      }
-      const carryRet = coerceNum(row.carry_margin_returns);
-      if (carryRet != null && rowMargin != null && rowMargin > 0) {
-        weightedNum += carryRet * rowMargin;
-        weightedDen += rowMargin;
-      }
     }
   }
+
+  const span = coerceNum(portfolio?.span_margin_required);
+  const elm = coerceNum(portfolio?.elm_margin_required) ?? 0;
+  const totalMargin = span != null ? span + elm : null;
 
   return {
     totalMtm: mtmAny ? mtm : null,
     totalCarry: carryAny ? carry : null,
-    totalMargin: marginAny ? margin : null,
-    carryReturnPct: weightedDen > 0 ? weightedNum / weightedDen : null,
+    totalMargin,
+    carryReturnPct: coerceNum(portfolio?.carry_margin_returns),
     groupCount: groups.length,
     legCount,
   };

@@ -12,7 +12,10 @@ import {
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import {
   buildPortfolioPositionGroups,
+  nettedMarginByKey,
   pickTopGroupKey,
+  type BackendGroupMargin,
+  type NettedMargin,
 } from "@/lib/portfolio/groupPositions";
 import {
   computePortfolioTotals,
@@ -25,6 +28,10 @@ type IciciApiResponse = {
   Error?: string;
   Success?: {
     positions?: PortfolioPositionRecord[];
+    /** Per-Strategy-Group netted SPAN + ELM (one multi-leg margin call each). */
+    groups?: BackendGroupMargin[];
+    /** Whole-portfolio netted SPAN + ELM (per-underlying netted, summed). */
+    portfolio?: NettedMargin;
   };
 };
 
@@ -49,11 +56,15 @@ export default function PortfolioPage() {
     () => data?.Success?.positions ?? [],
     [data?.Success?.positions],
   );
-  const groups = useMemo(
-    () => buildPortfolioPositionGroups(positions),
-    [positions],
+  const groups = useMemo(() => {
+    const built = buildPortfolioPositionGroups(positions);
+    const netted = nettedMarginByKey(data?.Success?.groups);
+    return built.map((g) => ({ ...g, netted: netted.get(g.key) ?? null }));
+  }, [positions, data?.Success?.groups]);
+  const totals = useMemo(
+    () => computePortfolioTotals(groups, data?.Success?.portfolio),
+    [groups, data?.Success?.portfolio],
   );
-  const totals = useMemo(() => computePortfolioTotals(groups), [groups]);
   const topGroupKey = useMemo(() => pickTopGroupKey(groups), [groups]);
   const [liveGroupCount, setLiveGroupCount] = useState(0);
   const [positionsViewMode, setPositionsViewMode] =
@@ -128,6 +139,7 @@ export default function PortfolioPage() {
             <div className="p-0">
               <OpenPositionsTable
                 positions={positions}
+                nettedGroups={data?.Success?.groups}
                 defaultExpandedGroupKey={topGroupKey}
                 onLiveGroupCountChange={setLiveGroupCount}
                 viewMode={positionsViewMode}

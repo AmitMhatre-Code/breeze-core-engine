@@ -312,16 +312,6 @@ def _quote_success_rows(quote: dict | None) -> list:
 _PORTFOLIO_MARGIN_CACHE_TTL_SECONDS = 24 * 60 * 60
 
 
-def _portfolio_margin_cache_key(
-    user_id: str, exchange_code: str, stock_code: str, expiry_date: str,
-    strike_price: str, right: str, action: str, quantity: str,
-) -> str:
-    return (
-        f"portfolio_margin:{user_id}:{exchange_code}:{stock_code}:{expiry_date}:"
-        f"{strike_price}:{right}:{action}:{quantity}"
-    )
-
-
 def _cached_span_margin_required(cache_key: str) -> float | None:
     from icici_breeze_backend.app.db.redis_client import cache_get_json
 
@@ -344,6 +334,49 @@ def _remember_span_margin_required(cache_key: str, span_margin_required: float) 
         cache_set_json(cache_key, span_margin_required, ex=_PORTFOLIO_MARGIN_CACHE_TTL_SECONDS)
     except Exception:
         pass
+
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None or v == "" or isinstance(v, bool):
+            return default
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(v: Any, default: int = 0) -> int:
+    try:
+        if v is None or v == "" or isinstance(v, bool):
+            return default
+        return int(float(v))
+    except (TypeError, ValueError):
+        return default
+
+
+def _sum_leg_elm(legs: list) -> float | None:
+    """Additive ELM across legs; None only when no leg carries an ELM figure."""
+    total = 0.0
+    any_elm = False
+    for leg in legs:
+        elm = leg.get("elm_margin_required")
+        if elm is None:
+            continue
+        any_elm = True
+        total += _safe_float(elm)
+    return total if any_elm else None
+
+
+def _portfolio_netted_cache_key(user_id: str, exchange_code: str, legs: list) -> str:
+    """Cache key encoding the exact leg composition of a netted SPAN call, so an
+    unchanged group/portfolio reuses its result across polls but any change to a
+    leg's contract/qty/action busts it."""
+    ident = sorted(
+        f"{l.get('stock_code')}:{l.get('expiry_date')}:{l.get('strike_price')}:"
+        f"{l.get('right')}:{l.get('action')}:{l.get('quantity')}"
+        for l in legs
+    )
+    return f"portfolio_netmargin:{user_id}:{exchange_code}:" + "|".join(ident)
 
 
 def build_margin_situation_from_raw(margin: dict | None, *, target_margin_ute: float = 100) -> dict:
@@ -1881,41 +1914,22 @@ class processor():
                                 worthless_value = float(i['average_price']) * int(i['quantity'])
                                 i['carry_profit'] = worthless_value - i['current_profit']
 
-                                margin_cache_key = _portfolio_margin_cache_key(
-                                    user_id, exchange_code, i['stock_code'], i['expiry_date'],
-                                    i['strike_price'], i['right'], i['action'], i['quantity'],
-                                )
-                                cached_span_margin = _cached_span_margin_required(margin_cache_key)
-                                if cached_span_margin is not None:
-                                    i['span_margin_required'] = cached_span_margin
-                                else:
-                                    margin_input = [{}]
-                                    margin_input[0]['strike_price'] = i['strike_price']
-                                    margin_input[0]['quantity'] = i['quantity']
-                                    margin_input[0]['right'] = i['right']
-                                    margin_input[0]['action'] = i['action']
-                                    margin_input[0]['product'] = i['product_type']
-                                    margin_input[0]['expiry_date'] = i['expiry_date']
-                                    margin_input[0]['stock_code'] = i['stock_code']
-                                    margin_input[0]['cover_order_flow'] = "N"
-                                    margin_input[0]['fresh_order_type'] = "N"
-                                    margin_input[0]['cover_limit_rate'] = "0"
-                                    margin_input[0]['cover_sltp_price'] = "0"
-                                    margin_input[0]['fresh_limit_rate'] = "0"
-                                    margin_input[0]['open_quantity'] = "0"
-                                    try:
-                                        margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
-                                    except Exception as e:
-                                        margins = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
-                                    if margins.get('Status') == 200:
-                                        i['span_margin_required'] = float(margins['Success']['span_margin_required'])
-                                        _remember_span_margin_required(margin_cache_key, i['span_margin_required'])
-                                    else:
-                                        i['span_margin_required'] = None
-                                        i['carry_margin_returns'] = None
+                                # SPAN is a portfolio risk model, not an additive per-leg number:
+                                # a single short's naked SPAN ignores the offsetting risk of the
+                                # other legs (e.g. a strangle can only be breached on one side).
+                                # It is therefore netted once per Strategy Group and once per
+                                # exchange for the whole portfolio in _compute_netted_margins()
+                                # below -- per-leg SPAN and carry-return are intentionally left
+                                # blank (the UI shows them at group/portfolio level only).
+                                i['span_margin_required'] = None
+                                i['carry_margin_returns'] = None
+                                i["days_to_expiry"] = max(1, _days_to_expiry(i["expiry_date"]))
 
-                                # Extreme Loss Margin (ELM) calculations applicable for Index shorts only.
-                                # ELM is waived on the option's own expiry date (no overnight risk to cover).
+                                # Extreme Loss Margin (ELM) is additive (a flat % of notional per
+                                # index short), not netted -- so it is computed per leg here and
+                                # summed into the group/portfolio totals. Applicable for Index
+                                # shorts only, and waived on the option's own expiry date (no
+                                # overnight risk to cover).
                                 if (i['stock_index_indicator'] == cfg.INDEX and i['action'] == cfg.SELL):
                                     if i['spot_price'] in (None, "Err"):
                                         i['elm_margin_required'] = None
@@ -1925,22 +1939,6 @@ class processor():
                                         i['elm_margin_required'] = float(i['quantity']) * float(i['spot_price']) * cfg.ELM
                                 else:
                                     i['elm_margin_required'] = None
-
-                                if i.get('span_margin_required') is not None:
-                                    carry_amount = float(i["carry_profit"])
-                                    elm = float(i["elm_margin_required"] or 0)
-                                    total_margin = float(i["span_margin_required"]) + elm
-                                    dte = max(1, _days_to_expiry(i["expiry_date"]))
-                                    i["days_to_expiry"] = dte
-                                    i["carry_margin_returns"] = (
-                                        _annualized_carry_percent_on_span(
-                                            carry_amount,
-                                            dte,
-                                            total_margin,
-                                        )
-                                        if total_margin > 0
-                                        else None
-                                    )
                             else:
                                 i['current_profit'] = (float(i['ltp']) - float(i['average_price'])) * int(i['quantity'])
                                 # Carry = P&L if this leg expires worthless (full premium lost) minus MTM already captured.
@@ -1949,6 +1947,14 @@ class processor():
                                 i['span_margin_required'] = None
                                 i['elm_margin_required'] = None
                                 i['carry_margin_returns'] = None
+
+                # Netted SPAN once per Strategy Group and once per exchange for the
+                # whole portfolio (see _compute_netted_margins) -- replaces the old
+                # sum-of-naked-legs, which over-stated margin by ignoring offsets.
+                if positions["Success"]:
+                    netted = self._compute_netted_margins(breeze, user_id, positions["Success"])
+                    positions["groups"] = netted["groups"]
+                    positions["portfolio"] = netted["portfolio"]
                 if positions.get("Status") == 200 and positions.get("Success") == []:
                     positions["Error"] = None
             else:
@@ -1956,6 +1962,142 @@ class processor():
                 _logger.warning("get_positions: API returned status=%s error=%r user_id=%s", status, err, user_id)
 
         return positions
+
+    def _netted_span_for_legs(
+        self, breeze, user_id: str, exchange_code: str, legs: list,
+    ) -> float | None:
+        """Netted multi-leg SPAN for a set of open legs on ONE exchange.
+
+        Every leg (buys included) is sent in a single margin_calculator call so
+        ICICI nets the offsetting risk -- unlike the retired per-leg path, which
+        priced each short as naked and summed. Cached by leg composition (24h) so
+        repeated /portfolio/data polls don't re-hit the rate-limited broker API
+        unless a leg's identity or quantity actually changes. Returns None on any
+        failure -- callers surface "—" rather than falling back to a naked sum.
+        """
+        active = [l for l in legs if _safe_int(l.get("quantity")) != 0]
+        if not active:
+            return None
+        cache_key = _portfolio_netted_cache_key(user_id, exchange_code, active)
+        cached = _cached_span_margin_required(cache_key)
+        if cached is not None:
+            return cached
+        margin_input = [
+            {
+                "strike_price": l["strike_price"],
+                "quantity": l["quantity"],
+                "right": l["right"],
+                "action": l["action"],
+                "product": l["product_type"],
+                "expiry_date": l["expiry_date"],
+                "stock_code": l["stock_code"],
+                "cover_order_flow": "N",
+                "fresh_order_type": "N",
+                "cover_limit_rate": "0",
+                "cover_sltp_price": "0",
+                "fresh_limit_rate": "0",
+                "open_quantity": "0",
+            }
+            for l in active
+        ]
+        try:
+            margins = breeze.margin_calculator(margin_input, exchange_code=exchange_code)
+        except Exception as e:
+            _logger.warning(
+                "netted margin_calculator failed exchange=%s legs=%d: %s",
+                exchange_code, len(active), e,
+            )
+            return None
+        if isinstance(margins, dict) and margins.get("Status") == 200:
+            try:
+                span = float((margins.get("Success") or {}).get("span_margin_required"))
+            except (TypeError, ValueError):
+                return None
+            _remember_span_margin_required(cache_key, span)
+            return span
+        return None
+
+    def _compute_netted_margins(self, breeze, user_id: str, legs: list) -> dict:
+        """Group-level and portfolio-level netted SPAN + additive ELM.
+
+        - One netted SPAN call per Strategy Group (exchange|stock|expiry).
+        - One netted SPAN call per underlying for the portfolio, summed across
+          underlyings. Netting is deliberately capped at a single underlying: an
+          underlying's own legs (across expiries) net against each other, but
+          distinct underlyings never offset -- the conservative choice, and it
+          also avoids relying on ICICI's inter-commodity treatment in a mixed
+          call.
+        - ELM stays additive (sum of per-leg ELM); carry is the sum of per-leg
+          carry_profit; carry-return uses the netted (SPAN + ELM) denominator.
+        """
+        from collections import OrderedDict
+
+        groups_map: "OrderedDict[tuple, list]" = OrderedDict()
+        for l in legs:
+            gkey = (l.get("exchange_code"), l.get("stock_code"), l.get("expiry_date"))
+            groups_map.setdefault(gkey, []).append(l)
+
+        groups_out = []
+        for (exch, stock, expiry), grp_legs in groups_map.items():
+            span = self._netted_span_for_legs(breeze, user_id, exch, grp_legs)
+            elm = _sum_leg_elm(grp_legs)
+            carry = sum(_safe_float(l.get("carry_profit")) for l in grp_legs)
+            total_margin = (span + (elm or 0.0)) if span is not None else None
+            dte = max(1, _days_to_expiry(expiry))
+            carry_ret = (
+                _annualized_carry_percent_on_span(carry, dte, total_margin)
+                if total_margin and total_margin > 0
+                else None
+            )
+            groups_out.append(
+                {
+                    "key": f"{stock}|{exch}|{expiry}",
+                    "stock_code": stock,
+                    "exchange_code": exch,
+                    "expiry_date": expiry,
+                    "span_margin_required": span,
+                    "elm_margin_required": elm,
+                    "carry_margin_returns": carry_ret,
+                }
+            )
+
+        # Portfolio SPAN: netted per underlying, then summed across underlyings
+        # (netting capped at one underlying -- no cross-underlying offset).
+        by_underlying: "OrderedDict[tuple, list]" = OrderedDict()
+        for l in legs:
+            by_underlying.setdefault(
+                (l.get("exchange_code"), l.get("stock_code")), []
+            ).append(l)
+        port_span: float | None = None
+        for (exch, _stock), u_legs in by_underlying.items():
+            s = self._netted_span_for_legs(breeze, user_id, exch, u_legs)
+            if s is not None:
+                port_span = (port_span or 0.0) + s
+        port_elm = _sum_leg_elm(legs)
+
+        # Portfolio carry-return: margin-weighted average of the group carry-returns.
+        # Each group has a single DTE so its rate is well-defined; a single
+        # portfolio DTE is not, since groups can span different expiries.
+        num = 0.0
+        den = 0.0
+        for g in groups_out:
+            gm = g["span_margin_required"]
+            cr = g["carry_margin_returns"]
+            if gm is not None and cr is not None:
+                weight = gm + (g["elm_margin_required"] or 0.0)
+                if weight > 0:
+                    num += cr * weight
+                    den += weight
+        port_carry_ret = (num / den) if den > 0 else None
+
+        return {
+            "groups": groups_out,
+            "portfolio": {
+                "span_margin_required": port_span,
+                "elm_margin_required": port_elm,
+                "carry_margin_returns": port_carry_ret,
+            },
+        }
 
     def is_valid_hedge(self,strike_price,right,option):
         valid_hedge = True

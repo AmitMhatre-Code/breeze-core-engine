@@ -92,7 +92,16 @@ def _normalize_portfolio_success_for_ui(data: Dict[str, Any]) -> Dict[str, Any]:
     positions = [
         _coerce_position_row(r) if isinstance(r, dict) else r for r in rows
     ]
-    out = {**data, "Success": {"positions": positions}}
+    success_out: Dict[str, Any] = {"positions": positions}
+    # Netted group/portfolio SPAN + ELM (computed in processor.get_positions) rides
+    # alongside positions. Only present when there are positions, so the empty-portfolio
+    # response stays exactly {"positions": []}.
+    if isinstance(data.get("groups"), list):
+        success_out["groups"] = data["groups"]
+    if isinstance(data.get("portfolio"), dict):
+        success_out["portfolio"] = data["portfolio"]
+    out = {k: v for k, v in data.items() if k not in ("groups", "portfolio")}
+    out["Success"] = success_out
     if not positions:
         out["Error"] = None
     return out
