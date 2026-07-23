@@ -1294,6 +1294,57 @@ class processor():
 
         return orders
 
+    def get_trades(self, user_id, from_date, to_date, product_type=None):
+        """Executed trades (ICICI get_trade_list) across NFO+BFO for a date range.
+
+        Concurrent per-exchange calls, merged; each row tagged with its exchange_code.
+        Dates are 'YYYY-MM-DD'. Used by the Dashboard Day's P&L mark-to-market calc,
+        which filters to a single trade_date itself. Mirrors the get_performance fan-out.
+        """
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            return _icici_error("Unable to connect to broker. Please log out and log back in.")
+
+        start_date = from_date + "T06:00:00.000Z"
+        end_date = to_date + "T06:00:00.000Z"
+        product = product_type if product_type is not None else cfg.OPTIONS
+        exchanges = (cfg.NFO, cfg.BFO)
+
+        def _fetch(exchange_code):
+            try:
+                resp = breeze.get_trade_list(
+                    from_date=start_date,
+                    to_date=end_date,
+                    exchange_code=exchange_code,
+                    product_type=product,
+                    action="",
+                    stock_code="",
+                )
+            except Exception as e:
+                resp = _icici_error(f"Error calling ICICI Breeze API get_trade_list: {e}")
+            self._maybe_evict_session(user_id, resp)
+            return resp
+
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                responses = list(executor.map(_fetch, exchanges))
+        except Exception as e:
+            return _icici_error(f"Error calling ICICI Breeze API get_trade_list: {e}")
+
+        all_trades: list[dict] = []
+        first_error: dict | None = None
+        for exchange_code, resp in zip(exchanges, responses):
+            if resp.get("Status") == 200 and resp.get("Success"):
+                for t in resp.get("Success") or []:
+                    t["exchange_code"] = t.get("exchange_code") or exchange_code
+                    all_trades.append(t)
+            elif first_error is None and resp.get("Status") != 200:
+                first_error = resp
+
+        if not all_trades and first_error is not None:
+            return first_error
+        return {"Status": 200, "Success": all_trades, "Error": None}
+
     def group_orders(self, user_id, orders, *, fetch_ltp: bool = False):
         orders = sorted(orders['Success'], key=lambda x: (x.get("exchange_code", ""), x["option"]))
         grouped_orders = []

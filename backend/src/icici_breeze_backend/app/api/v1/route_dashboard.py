@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
 from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.services.dashboard_bootstrap import build_dashboard_bootstrap
+from icici_breeze_backend.app.services.dashboard_day_pnl import build_dashboard_day_pnl
 from icici_breeze_backend.app.services.dashboard_vix import (
     fetch_vix_core,
     fetch_vix_history,
@@ -49,6 +50,19 @@ async def get_dashboard_bootstrap(ctx: RequestContext = Depends(get_request_cont
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
     return build_dashboard_bootstrap(ctx.user_id, breeze, broker_token=ctx.broker_token or "")
+
+
+@router.get("/day-pnl")
+@router.get("/day-pnl/")
+async def get_dashboard_day_pnl(ctx: RequestContext = Depends(get_request_context)):
+    """Lazy: mark-to-market Day's P&L (realized + unrealized) from positions + today's trades.
+
+    Loaded after first paint so /bootstrap stays fast; the tile renders a loading state
+    until this resolves. Gross of brokerage/taxes.
+    """
+    if not ctx.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+    return build_dashboard_day_pnl(ctx.user_id, breeze, broker_token=ctx.broker_token or "")
 
 
 @router.get("/vix")

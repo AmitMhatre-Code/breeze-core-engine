@@ -21,6 +21,7 @@ import {
   interpretPcrOi,
 } from "@/lib/dashboard-interpretation";
 import { getHomeMarginTiles, type HomeDataResponse } from "@/lib/home-data";
+import { fetchDashboardDayPnl } from "@/lib/dashboard-day-pnl";
 import {
   fetchDashboardBootstrap,
   fetchDashboardVixHistory,
@@ -292,6 +293,15 @@ export default function DashboardPage() {
     enabled: chartEnabled && Boolean(bootstrapQ.data),
   });
 
+  // Day's P&L is a mark-to-market over positions + today's trade book (2 extra broker
+  // calls); load it lazily after bootstrap so first paint stays fast.
+  const dayPnlQ = useQuery({
+    queryKey: ["dashboard", "day-pnl"],
+    queryFn: fetchDashboardDayPnl,
+    staleTime: 30_000,
+    enabled: Boolean(bootstrapQ.data),
+  });
+
   const marketOutlookQ = useQuery({
     queryKey: ["dashboard", "market-outlook"],
     queryFn: () => getMarketOutlook(false),
@@ -468,10 +478,13 @@ export default function DashboardPage() {
       queryClient.invalidateQueries({ queryKey: ["dashboard", "bootstrap"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard", "vix-options"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard", "vix-history"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard", "day-pnl"] }),
     ]);
   }, [queryClient]);
 
-  const daysPnl = bootstrapQ.data?.days_pnl;
+  const dayPnl = dayPnlQ.data;
+  const dayPnlLoading =
+    bootstrapQ.isPending || (Boolean(bootstrapQ.data) && dayPnlQ.isPending);
   const marginUsedPct =
     marginUsedDisplay != null && funds != null && marginUsedDisplay + funds > 0
       ? Math.min(100, Math.max(0, (marginUsedDisplay / (marginUsedDisplay + funds)) * 100))
@@ -588,18 +601,30 @@ export default function DashboardPage() {
           />
           <MetricTile
             label="Day's P&L"
-            loading={accountLoading}
+            loading={dayPnlLoading}
             value={
-              daysPnl?.total_day_pnl == null
+              dayPnl?.total_day_pnl == null
                 ? null
-                : formatSignedMoneyShort(daysPnl.total_day_pnl)
+                : formatSignedMoneyShort(dayPnl.total_day_pnl)
             }
             toneClassName={
-              daysPnl?.total_day_pnl != null
-                ? moneyToneClass(daysPnl.total_day_pnl)
+              dayPnl?.total_day_pnl != null
+                ? moneyToneClass(dayPnl.total_day_pnl)
                 : undefined
             }
-            caption="vs previous close"
+            caption={
+              dayPnl && dayPnl.total_day_pnl != null ? (
+                <span
+                  title="Gross — before brokerage & taxes. Realized (today's closed trades) + open MTM since previous close."
+                  className="cursor-help"
+                >
+                  {`Realized ${formatSignedMoneyShort(dayPnl.realized_day_pnl ?? 0)} · Open ${formatSignedMoneyShort(dayPnl.unrealized_day_pnl ?? 0)}`}
+                  {dayPnl.degraded ? " · partial" : ""}
+                </span>
+              ) : (
+                "vs previous close"
+              )
+            }
           />
           <MetricTile
             label="Margin used"

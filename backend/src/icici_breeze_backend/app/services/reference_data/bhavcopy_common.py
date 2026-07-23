@@ -117,6 +117,17 @@ def normalize_nse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
     cls = safe_float(raw_row.get("ClsPric") or bhav_row_get(raw_row, "ClsPric", "CLSPRIC"), 0.0)
     if cls <= 0:
         return None
+    # `ltp` must be the option's LAST TRADED price, not `ClsPric`. On expiry day the
+    # exchange's ClsPric (settlement) for an index option carries the *underlying*
+    # settlement value (e.g. the SENSEX level), not the option premium -- reading it as
+    # ltp produced a ~index-magnitude "previous close" and blew up Day's P&L (see
+    # dashboard_day_pnl). LastPric is the real traded price; fall back to ClsPric only
+    # when the contract genuinely did not trade (LastPric absent/0).
+    last = safe_float(
+        raw_row.get("LastPric")
+        or bhav_row_get(raw_row, "LastPric", "LstPric", "LAST_PRICE", "LAST_TRADED_PRICE", "LTP", "LAST"),
+        0.0,
+    )
     # Depth is deliberately NOT synthesized. Bhavcopy is an EOD price file with no
     # order-book columns; the previous `buy_qty = vol // 2` split invented a book
     # out of traded volume, and defaulting bid/ask to the close invented a
@@ -137,7 +148,7 @@ def normalize_nse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
         "expiry_date": expiry_key,
         "right": right,
         "strike_price": strike_key(strike),
-        "ltp": fmt2(cls),
+        "ltp": fmt2(last if last > 0 else cls),
         "open_interest": str(oi),
         "spot_price": fmt2(spot if spot > 0 else cls),
         "open": fmt2(safe_float(raw_row.get("OpnPric"), cls)),
@@ -191,6 +202,14 @@ def normalize_bse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
     cls = safe_float(bhav_row_get(raw_row, "CLSPRIC", "CLS_PRIC", "CLOSE", "CLOSE_PR"), 0.0)
     if cls <= 0:
         return None
+    # BSE `CLSPRIC` is a settlement price that, on expiry day, carries the underlying
+    # index level for index options -- not the option premium. Use `LastPric` (real last
+    # traded price) as the option ltp, keeping ClsPric only as a fallback for contracts
+    # that did not trade. See normalize_nse_fo_bhavcopy_row / dashboard_day_pnl.
+    last = safe_float(
+        bhav_row_get(raw_row, "LastPric", "LstPric", "LAST_PRICE", "LAST_TRADED_PRICE", "LTP", "LAST"),
+        0.0,
+    )
     # BSE wipes its order book at close, so these columns are routinely absent or
     # zero in the published file -- pass them through only when genuinely present
     # rather than defaulting them to the close price.
@@ -207,6 +226,7 @@ def normalize_bse_fo_bhavcopy_row(raw_row: dict[str, str]) -> dict[str, str] | N
             "OptnTp": right,
             "StrkPric": strike_raw or strike_key(strike),
             "ClsPric": str(cls),
+            "LastPric": str(last),
             "BidPric": bid_raw or "",
             "AskPric": ask_raw or "",
             "TtlTradgVol": str(vol),
