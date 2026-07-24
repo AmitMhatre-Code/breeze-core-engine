@@ -210,11 +210,22 @@ def sync_index_spot_subscriptions(proc: "Processor", user_id: str, *, force: boo
         if _subscribed_date == today and not force:
             return True
 
-    from icici_breeze_backend.app.services.breeze_websocket_manager import _ensure_ws
+    from icici_breeze_backend.app.services.breeze_websocket_manager import (
+        _ensure_ws,
+        _reset_stale_auth_latch,
+        _subscribe_feeds_error,
+    )
 
     sdk = _ensure_ws(proc, user_id)
     if sdk is None:
         return False
+
+    # Same sticky-latch and swallowed-error hazards as the chain subscribe path -- see
+    # `breeze_websocket_manager._reset_stale_auth_latch`. This feed is where the latch
+    # bug was *least* visible: its tokens were joined before the blip so it kept
+    # ticking, while every re-subscribe here silently failed.
+    _reset_stale_auth_latch(sdk)
+    subscribe_failed = False
 
     _register_listener_once()
     # breeze_connect's get_stock_token_value() reads sdk.interval without the SDK ever
@@ -240,12 +251,20 @@ def sync_index_spot_subscriptions(proc: "Processor", user_id: str, *, force: boo
                 already_subscribed = token in _subscribed_cash_tokens
                 _subscribed_cash_tokens.add(token)
             if force or not already_subscribed:
-                sdk.subscribe_feeds(
-                    exchange_code=cash_exchange,
-                    stock_code=cash_stock_code,
-                    get_exchange_quotes=True,
-                    get_market_depth=False,
+                err = _subscribe_feeds_error(
+                    sdk.subscribe_feeds(
+                        exchange_code=cash_exchange,
+                        stock_code=cash_stock_code,
+                        get_exchange_quotes=True,
+                        get_market_depth=False,
+                    )
                 )
+                if err is not None:
+                    subscribe_failed = True
+                    _logger.warning("index spot subscribe rejected for %s: %s", label, err)
+                    with _lock:
+                        _subscribed_cash_tokens.discard(token)
+                    continue
             # Only a REST call's worth of value once per day -- skip it when we
             # already have today's close, so a forced re-subscribe (which can
             # repeat on the watchdog's throttle) doesn't re-hit `get_quotes`.
@@ -257,8 +276,15 @@ def sync_index_spot_subscriptions(proc: "Processor", user_id: str, *, force: boo
                     with _lock:
                         _previous_close[label] = prev_close
         except Exception:
+            subscribe_failed = True
             _logger.warning("index spot subscribe failed for %s", label, exc_info=True)
 
+    if subscribe_failed:
+        # Don't claim the day. Per this function's own contract, the daily latch must
+        # record only that the subscribe *succeeded* -- latching on a rejected
+        # subscribe is what turns one bad moment into a feed that stays cold until
+        # the process restarts.
+        return False
     with _lock:
         _subscribed_date = today
     return True
@@ -305,12 +331,17 @@ def sync_underlying_spot_subscriptions(
     if not pending:
         return True
 
-    from icici_breeze_backend.app.services.breeze_websocket_manager import _ensure_ws
+    from icici_breeze_backend.app.services.breeze_websocket_manager import (
+        _ensure_ws,
+        _reset_stale_auth_latch,
+        _subscribe_feeds_error,
+    )
 
     sdk = _ensure_ws(proc, user_id)
     if sdk is None:
         return False
 
+    _reset_stale_auth_latch(sdk)
     _register_listener_once()
     # Same SDK quirk as `sync_index_spot_subscriptions` -- get_stock_token_value reads
     # sdk.interval, normally initialized as a side effect of subscribe_feeds().
@@ -335,12 +366,24 @@ def sync_underlying_spot_subscriptions(
                 already_subscribed = token in _subscribed_cash_tokens
                 _subscribed_cash_tokens.add(token)
             if not already_subscribed:
-                sdk.subscribe_feeds(
-                    exchange_code=cash_exchange,
-                    stock_code=cash_stock_code,
-                    get_exchange_quotes=True,
-                    get_market_depth=False,
+                err = _subscribe_feeds_error(
+                    sdk.subscribe_feeds(
+                        exchange_code=cash_exchange,
+                        stock_code=cash_stock_code,
+                        get_exchange_quotes=True,
+                        get_market_depth=False,
+                    )
                 )
+                if err is not None:
+                    # Leave this scrip unsynced so a later call retries it, rather
+                    # than recording a subscribe that ICICI refused.
+                    _logger.warning(
+                        "underlying spot subscribe rejected for %s/%s: %s",
+                        cash_exchange, cash_stock_code, err,
+                    )
+                    with _lock:
+                        _subscribed_cash_tokens.discard(token)
+                    continue
             with _lock:
                 _synced_underlying_scrips.add(
                     (cash_exchange.upper(), cash_stock_code.upper())

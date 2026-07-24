@@ -164,7 +164,7 @@ class TestMaybeTriggerSystemPrefetch:
 
         sch.maybe_trigger_system_prefetch("u1")
         state = sch.prefetch_state()
-        assert state["last_error"] == "index-spot: no live broker session"
+        assert state["last_error"] == "index-spot: subscribe did not complete"
         assert sorted(calls) == ["system:health:nifty", "system:health:sensex"]
 
         # Within cooldown: no retry at all (holder chains didn't re-run either).

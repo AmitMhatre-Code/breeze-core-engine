@@ -20,6 +20,15 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.1.2",
+    date: "24-Jul-2026",
+    releaseKind: "patch",
+    summary: "Fixed live option chain prices freezing mid-session.",
+    changes: [
+      "Live option chain prices no longer freeze mid-session: a momentary drop in the broker's market-data connection could leave option chains stuck on stale prices for the rest of the day — while index quotes kept updating, which made the feed look healthy — and only a restart recovered it. The app now detects and clears that state on its own, and reports a genuine error when the broker refuses a price subscription instead of treating it as success.",
+    ],
+  },
+  {
     version: "2.1.1",
     date: "23-Jul-2026",
     releaseKind: "patch",

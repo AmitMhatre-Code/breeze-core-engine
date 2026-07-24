@@ -242,6 +242,63 @@ def _attach_sdk_ticks_handler(sdk: Any) -> None:
     start_tick_pipeline()
 
 
+def _reset_stale_auth_latch(sdk: Any) -> None:
+    """Clear breeze_connect's sticky `authentication` flag before subscribing.
+
+    `SocketEventBreeze.my_connect_error` sets `authentication = False` on *any*
+    socket.io `connect_error` -- including a transient one the client's own
+    auto-reconnect immediately recovers from -- and nothing in the SDK ever sets it
+    back to True. `subscribe_feeds` refuses outright while it is False, so a single
+    blip permanently deafens every *future* subscribe on that handler for the life
+    of the process, while rooms joined *before* the blip keep streaming over the
+    reconnected socket. That asymmetry is exactly how this hid in production: index
+    spot (subscribed at login) ticked on happily while every option-chain re-subscribe
+    was rejected, and the only recovery was rebuilding the handler via
+    `ws_disconnect()` + `ws_connect()`.
+
+    Safe, not a bypass: `SocketEventBreeze.watch` still gates on `sio.connected` and
+    raises for real when the socket is actually down, and a genuinely bad session key
+    fails the connect itself. The latch adds nothing those checks don't already cover
+    -- only permanence.
+    """
+    handler = getattr(sdk, "sio_rate_refresh_handler", None)
+    if handler is None:
+        return
+    if getattr(handler, "authentication", True) is False:
+        handler.authentication = True
+        _logger.warning(
+            "cleared stale breeze_connect auth latch before subscribe "
+            "(an earlier connect_error left it set; socket is otherwise usable)"
+        )
+
+
+def _subscribe_feeds_error(result: Any) -> str | None:
+    """Failure text from a `subscribe_feeds` return value, or None when it succeeded.
+
+    `breeze_connect.subscribe_feeds` never raises: it catches every exception and
+    *returns* the message as a plain string, and falls off the end returning None
+    when it has no rate-refresh handler. Only a dict is a real response
+    (`socket_connection_response` -> `{"message": ...}`). Treating the string and
+    None cases as success is what let a dead chain report `ok=True` once a minute
+    for an hour with `last_error: null`.
+
+    Deliberately narrow -- anything that is not a dict, str, or None is assumed
+    fine, matching the SDK's actual return contract rather than guessing.
+    """
+    if isinstance(result, dict):
+        st = result.get("Status") or result.get("status")
+        if st in (200, None):
+            return None
+        return str(
+            result.get("Error") or result.get("error") or result.get("message") or result
+        )
+    if result is None:
+        return "subscribe_feeds returned None (SDK has no rate-refresh handler)"
+    if isinstance(result, str):
+        return result
+    return None
+
+
 def _subscribe_order_notifications(sdk: Any) -> None:
     """Subscribe to account-wide order notifications.
 
@@ -256,7 +313,11 @@ def _subscribe_order_notifications(sdk: Any) -> None:
     everything it sees is ours.
     """
     try:
-        sdk.subscribe_feeds(get_order_notification=True)
+        _reset_stale_auth_latch(sdk)
+        err = _subscribe_feeds_error(sdk.subscribe_feeds(get_order_notification=True))
+        if err is not None:
+            _note_error("subscribe_feeds(get_order_notification=True) failed: %s", err)
+            return
         _logger.info("Subscribed to ICICI order notifications")
     except Exception as exc:  # noqa: BLE001 — price ticks must still work without this
         _note_error("subscribe_feeds(get_order_notification=True) failed: %s", exc)
@@ -423,23 +484,16 @@ def _subscribe_token_batches(
     so both handle ICICI's non-200-in-a-200 error shape identically."""
     batch_size = _subscribe_batch_size()
     ok_all = True
+    _reset_stale_auth_latch(sdk)
     for i in range(0, len(tokens), batch_size):
         chunk = tokens[i : i + batch_size]
         sdk_args = _stock_token_sdk_args(chunk)
         try:
-            result = sdk.subscribe_feeds(**sdk_args)
-            if isinstance(result, dict):
-                st = result.get("Status") or result.get("status")
-                if st not in (200, None):
-                    err = (
-                        result.get("Error")
-                        or result.get("error")
-                        or result.get("message")
-                        or str(result)
-                    )
-                    _note_error("subscribe_feeds ICICI error batch %s: %s", chunk[:3], err)
-                    ok_all = False
-                    continue
+            err = _subscribe_feeds_error(sdk.subscribe_feeds(**sdk_args))
+            if err is not None:
+                _note_error("subscribe_feeds ICICI error batch %s: %s", chunk[:3], err)
+                ok_all = False
+                continue
             if on_batch_ok is not None:
                 on_batch_ok(chunk)
         except Exception as exc:

@@ -193,7 +193,9 @@ def _run_system_prefetch_blocking(user_id: str, today: date, *, force: bool = Fa
     errors: list[str] = []
     try:
         if not sync_index_spot_subscriptions(proc, user_id, force=force):
-            errors.append("index-spot: no live broker session")
+            # Either no live broker session, or ICICI refused the subscribe -- both
+            # leave today's latch unclaimed so this retries rather than going cold.
+            errors.append("index-spot: subscribe did not complete")
     except Exception:
         errors.append("index-spot: subscribe raised an exception")
         _logger.warning("index spot subscription sync failed", exc_info=True)
