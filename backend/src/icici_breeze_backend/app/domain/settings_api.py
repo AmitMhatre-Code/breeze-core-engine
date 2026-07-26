@@ -79,6 +79,20 @@ class ApiUsagePreferencesUpdateBody(BaseModel):
     rate_limit_pause_seconds: float = Field(ge=0, le=3)
 
 
+class AggressiveOrderPreferencesResponse(BaseModel):
+    user_id: str = ""
+    enabled: bool = False
+    mode: str = "limit_tolerance"
+    tolerance_pct: float = 5.0
+    default_tolerance_pct: float = 5.0
+    max_tolerance_pct: float = 25.0
+
+
+class AggressiveOrderPreferencesUpdateBody(BaseModel):
+    mode: Optional[str] = None
+    tolerance_pct: Optional[float] = None
+
+
 class MarginSourceStateResponse(BaseModel):
     user_id: str = ""
     margin_source: str = "breeze_api"

@@ -231,6 +231,35 @@ class BookGroupLtpResponse(BaseModel):
     ltps: dict[str, float | None] = Field(default_factory=dict)
 
 
+class AggressivePriceLeg(BaseModel):
+    """One leg to price for the tolerance-mode aggressive limit (server derives from LTP)."""
+
+    ref: str = Field(description="Client-supplied id echoed back so results map to legs.")
+    stock_code: str
+    exchange_code: str = "NFO"
+    expiry_date: str
+    right: str
+    strike_price: str | float | int
+    action: Literal["Buy", "Sell"]
+
+
+class AggressivePriceRequest(BaseModel):
+    legs: List[AggressivePriceLeg] = Field(default_factory=list)
+    tolerance_pct: Optional[float] = None
+
+
+class AggressivePriceResultItem(BaseModel):
+    ref: str
+    price: Optional[str] = None
+    ltp: Optional[float] = None
+    error: Optional[str] = None
+
+
+class AggressivePriceResponse(BaseModel):
+    tolerance_pct: float
+    results: List[AggressivePriceResultItem] = Field(default_factory=list)
+
+
 class OrderFormRequest(BaseModel):
     """Full order form request (all actions: BUY, SELL, QUOTE, CLEAR)."""
     product_type: Optional[str] = None

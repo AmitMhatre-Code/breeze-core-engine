@@ -336,12 +336,40 @@ PNL_ENGINE_ENABLED = str(os.environ.get("PNL_ENGINE_ENABLED", "true")).strip().l
     "0", "false", "no",
 )
 
-# ICICI has not yet implemented native aggressive-limit order support (a real order_type=limit
-# submission that reprices aggressively); until they do, this app-side workaround is deactivated
-# by default. Flip to true once ICICI confirms support, without deleting the workaround itself.
+# Master gate for the aggressive-order feature (the ⚡ toggle on order forms). When on, users can
+# pick one of two execution styles per order:
+#   - "market": a native ICICI market order (order_type=market, price=0). ICICI has not yet enabled
+#     native market/aggressive-limit orders, so these may be rejected upstream until they do.
+#   - "limit_tolerance": an ordinary limit order priced off LTP by a user tolerance % (BUY at
+#     LTP*(1+tol), SELL at LTP*(1-tol), tick-rounded). This needs nothing from ICICI and works today.
+# Enabled by default now that "limit_tolerance" is a fully working, ICICI-independent path (the
+# default mode); set AGGRESSIVE_LIMIT_ORDER_ENABLED=false to hide the feature entirely.
 AGGRESSIVE_LIMIT_ORDER_ENABLED = str(
-    os.environ.get("AGGRESSIVE_LIMIT_ORDER_ENABLED", "false")
+    os.environ.get("AGGRESSIVE_LIMIT_ORDER_ENABLED", "true")
 ).strip().lower() in ("1", "true", "yes")
+
+# Tolerance (percent) for the "limit_tolerance" mode: how far past LTP the auto-derived limit price
+# is placed so it fills like a market order but stays bounded. DEFAULT seeds a new user's form; MAX
+# is a hard server-side clamp regardless of what the client sends.
+try:
+    AGGRESSIVE_LIMIT_DEFAULT_TOLERANCE_PCT = float(
+        os.environ.get("AGGRESSIVE_LIMIT_DEFAULT_TOLERANCE_PCT", "5") or "5"
+    )
+except ValueError:
+    AGGRESSIVE_LIMIT_DEFAULT_TOLERANCE_PCT = 5.0
+try:
+    AGGRESSIVE_LIMIT_MAX_TOLERANCE_PCT = float(
+        os.environ.get("AGGRESSIVE_LIMIT_MAX_TOLERANCE_PCT", "25") or "25"
+    )
+except ValueError:
+    AGGRESSIVE_LIMIT_MAX_TOLERANCE_PCT = 25.0
+# Exchange tick size the derived limit price is rounded to.
+try:
+    AGGRESSIVE_LIMIT_TICK_SIZE = float(
+        os.environ.get("AGGRESSIVE_LIMIT_TICK_SIZE", "0.05") or "0.05"
+    )
+except ValueError:
+    AGGRESSIVE_LIMIT_TICK_SIZE = 0.05
 
 
 def redis_connection_url() -> str:

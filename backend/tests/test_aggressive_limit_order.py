@@ -1,8 +1,8 @@
 """Aggressive limit order placement (Breeze order_type=market, price=0).
 
-ICICI has no native aggressive-limit order support yet, so the whole feature is
-deactivated by default behind AGGRESSIVE_LIMIT_ORDER_ENABLED (see core/config.py).
-These tests cover both states: disabled (default) and enabled (once ICICI ships it).
+ICICI has no native market-order support yet, but the feature ships enabled via the
+ICICI-independent "limit_tolerance" mode; AGGRESSIVE_LIMIT_ORDER_ENABLED (see core/config.py)
+is the master gate. These tests cover both states: gate disabled and gate enabled.
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ def proc(monkeypatch):
     return p, mock_breeze
 
 
-def test_place_order_aggressive_limit_disabled_by_default(proc):
-    """Feature flag defaults false until ICICI implements native support."""
+def test_place_order_aggressive_limit_rejected_when_gate_disabled(proc, monkeypatch):
+    """With the master gate off, aggressive_limit requests are rejected."""
+    monkeypatch.setattr(processor_module.cfg, "AGGRESSIVE_LIMIT_ORDER_ENABLED", False)
     p, mock_breeze = proc
     resp = p.place_order(
         "user1",
@@ -93,7 +94,8 @@ def test_place_order_limit_unchanged(proc):
     assert kwargs["price"] == "150.50"
 
 
-def test_break_order_place_chunk_aggressive_limit_disabled_by_default(proc):
+def test_break_order_place_chunk_aggressive_limit_rejected_when_gate_disabled(proc, monkeypatch):
+    monkeypatch.setattr(processor_module.cfg, "AGGRESSIVE_LIMIT_ORDER_ENABLED", False)
     p, mock_breeze = proc
     result = p.break_order_place_chunk(
         "user1",
@@ -114,7 +116,8 @@ def test_break_order_place_chunk_aggressive_limit_disabled_by_default(proc):
     assert "disabled" in result["terminal_messages"][0]["message"].lower()
 
 
-def test_break_order_aggressive_limit_disabled_by_default(proc):
+def test_break_order_aggressive_limit_rejected_when_gate_disabled(proc, monkeypatch):
+    monkeypatch.setattr(processor_module.cfg, "AGGRESSIVE_LIMIT_ORDER_ENABLED", False)
     p, mock_breeze = proc
     msgs = p.break_order(
         "user1",
@@ -133,8 +136,9 @@ def test_break_order_aggressive_limit_disabled_by_default(proc):
     assert "disabled" in msgs[0]["message"].lower()
 
 
-def test_break_order_finalize_messages_aggressive_limit_disabled_by_default(proc):
-    """When disabled, finalize messaging falls back to premium wording (flag ignored)."""
+def test_break_order_finalize_messages_aggressive_limit_when_gate_disabled(proc, monkeypatch):
+    """With the gate off, finalize messaging falls back to premium wording (flag ignored)."""
+    monkeypatch.setattr(processor_module.cfg, "AGGRESSIVE_LIMIT_ORDER_ENABLED", False)
     p, _ = proc
     msgs = p.break_order_finalize_user_messages(
         "NIFTY-27-Feb-2025-24000-Call",

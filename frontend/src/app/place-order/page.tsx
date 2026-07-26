@@ -13,6 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { AggressiveLimitOrderField } from "@/components/order/AggressiveLimitOrderField";
+import { useAggressiveOrderControls } from "@/lib/use-aggressive-order-controls";
 import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
 import { OrderSideBadge } from "@/components/shared/badges/OrderSideBadge";
 import { QuoteSourceBadge } from "@/components/shared/market-data/QuoteSourceBadge";
@@ -157,6 +158,7 @@ function PlaceOrderPageInner() {
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
   const [aggressiveLimit, setAggressiveLimit] = useState(false);
+  const aggressiveControls = useAggressiveOrderControls();
   const [previewSide, setPreviewSide] = useState<OrderSide>("Buy");
   /** When set, the opposite side button is disabled (clone / square-off / URL prefill). */
   const [lockedOrderSide, setLockedOrderSide] = useState<OrderSide | null>(null);
@@ -440,6 +442,8 @@ function PlaceOrderPageInner() {
           quantity: qtyNum,
           premiumPerUnit: aggressiveLimit ? 0 : priceNum,
           aggressiveLimit,
+          aggressiveMode: aggressiveControls.mode,
+          aggressiveTolerancePct: aggressiveControls.tolerancePct,
         },
       ],
     });
@@ -647,11 +651,15 @@ function PlaceOrderPageInner() {
                     <AggressiveLimitOrderField
                       aggressive={aggressiveLimit}
                       price={price}
+                      mode={aggressiveControls.mode}
+                      tolerancePct={aggressiveControls.tolerancePct}
                       onAggressiveChange={(checked) => {
                         setAggressiveLimit(checked);
                         if (checked) setPrice("");
                       }}
                       onPriceChange={setPrice}
+                      onModeChange={aggressiveControls.setMode}
+                      onTolerancePctChange={aggressiveControls.setTolerancePct}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-3">

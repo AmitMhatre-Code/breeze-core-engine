@@ -140,7 +140,15 @@ class HomeDataResponse(BaseModel):
     )
     aggressive_limit_order_enabled: bool = Field(
         False,
-        description="False while ICICI has no native aggressive-limit order support (AGGRESSIVE_LIMIT_ORDER_ENABLED)",
+        description="Master gate for the aggressive-order feature (AGGRESSIVE_LIMIT_ORDER_ENABLED)",
+    )
+    aggressive_limit_default_tolerance_pct: float = Field(
+        5.0,
+        description="Default tolerance% seeding the limit_tolerance order mode",
+    )
+    aggressive_limit_max_tolerance_pct: float = Field(
+        25.0,
+        description="Hard server-side clamp on the limit_tolerance tolerance%",
     )
 
 

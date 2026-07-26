@@ -11,10 +11,18 @@ from icici_breeze_backend.app.auth.context import (
     RequestContext,
 )
 from icici_breeze_backend.app.domain.order import (
+    AggressivePriceRequest,
+    AggressivePriceResponse,
+    AggressivePriceResultItem,
     BreakChunkDefaultsRequest,
     BreakOrderChunkRequest,
     BreakOrderFinalizeRequest,
     OrderFormRequest,
+)
+from icici_breeze_backend.app.services.aggressive_limit import (
+    AggressiveLimitError,
+    clamp_tolerance_pct,
+    compute_aggressive_limit_price,
 )
 from icici_breeze_backend.app.services.user_rate_limit_prefs import (
     get_icici_rate_limit_pause_seconds,
@@ -168,6 +176,53 @@ async def process_post(
                 idempotency_store.store_result(idempotency_key, user_id, "place_order", body, 302)
             return json_redirect(redirect_url)
     raise_route_errors(errors, log_context="route_order.process_post")
+
+
+@router.post("/aggressive-price", response_model=AggressivePriceResponse)
+async def post_aggressive_price(
+    body: AggressivePriceRequest,
+    context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
+):
+    """Resolve tolerance-mode aggressive limit prices server-side (LTP fetched here, never trusted
+    from the client). Returns one tick-rounded limit price per leg; the client then submits an
+    ordinary limit order at that price. Feature-gated behind AGGRESSIVE_LIMIT_ORDER_ENABLED.
+    """
+    if not cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED:
+        raise HTTPException(status_code=403, detail="Aggressive limit orders are not enabled.")
+    if not context.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+
+    tolerance_pct = clamp_tolerance_pct(body.tolerance_pct)
+    if not body.legs:
+        return AggressivePriceResponse(tolerance_pct=tolerance_pct, results=[])
+
+    groups = [
+        {
+            "group": leg.ref,
+            "stock_code": leg.stock_code,
+            "expiry_date": leg.expiry_date,
+            "strike_price": leg.strike_price,
+            "right": leg.right,
+            "exchange_code": leg.exchange_code or cfg.NFO,
+        }
+        for leg in body.legs
+    ]
+    ltps = breeze.fetch_group_ltps_batch(context.user_id, groups)
+
+    results: list[AggressivePriceResultItem] = []
+    for leg in body.legs:
+        ltp = ltps.get(leg.ref)
+        try:
+            price = compute_aggressive_limit_price(leg.action, ltp, tolerance_pct)
+            results.append(
+                AggressivePriceResultItem(ref=leg.ref, price=str(price), ltp=ltp)
+            )
+        except AggressiveLimitError as e:
+            results.append(
+                AggressivePriceResultItem(ref=leg.ref, ltp=ltp, error=str(e))
+            )
+    return AggressivePriceResponse(tolerance_pct=tolerance_pct, results=results)
 
 
 @router.post("/break-chunk-defaults")

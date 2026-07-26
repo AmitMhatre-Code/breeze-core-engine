@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import { useOrderConfirm } from "@/components/shared/order/OrderConfirmProvider";
 import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
 import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
+import { AggressiveModeControl } from "@/components/order/AggressiveModeControl";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Modal } from "@/components/ui/Modal";
 import { ltpAsOrderPrice, positionRowToExecutionLeg } from "@/lib/order-confirm";
+import { useAggressiveOrderControls } from "@/lib/use-aggressive-order-controls";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { formatOptionSymbolLabel } from "@/lib/strategy-builder/leg-ui-helpers";
 import { sb } from "@/lib/strategy-builder/ui";
@@ -50,6 +52,7 @@ export function SquareOffLegsModal({
   onClose: () => void;
 }) {
   const { openExecutionConfirm } = useOrderConfirm();
+  const aggressiveControls = useAggressiveOrderControls();
   const [legStates, setLegStates] = useState<LegState[]>([]);
 
   useEffect(() => {
@@ -79,10 +82,21 @@ export function SquareOffLegsModal({
       .map((row, idx) => {
         const state = legStates[idx];
         if (!state?.included) return null;
-        return positionRowToExecutionLeg(row, {
+        const leg = positionRowToExecutionLeg(row, {
           premiumPerUnit: state.premiumPerUnit ?? 0,
           aggressiveLimit: state.aggressiveLimit,
         });
+        if (!leg) return null;
+        // Aggressive square-off legs follow the user's chosen execution style, same as the order
+        // forms. Without this they'd default to native market orders (rejected until ICICI enables
+        // them); the default (limit_tolerance) is a real LTP-derived limit that works today.
+        return state.aggressiveLimit
+          ? {
+              ...leg,
+              aggressiveMode: aggressiveControls.mode,
+              aggressiveTolerancePct: aggressiveControls.tolerancePct,
+            }
+          : leg;
       })
       .filter((l): l is NonNullable<typeof l> => l != null);
     if (!legs.length) return;
@@ -113,7 +127,7 @@ export function SquareOffLegsModal({
             Square off
           </h3>
           <p className="mt-1 text-sm leading-relaxed text-muted">
-            Edit the price per leg, or use the bolt for an aggressive limit,
+            Edit the price per leg, or use the bolt for an aggressive fill,
             then confirm.
           </p>
         </div>
@@ -192,6 +206,12 @@ export function SquareOffLegsModal({
           );
         })}
       </ul>
+
+      <AggressiveModeControl
+        controls={aggressiveControls}
+        visible={legStates.some((s) => s.included && s.aggressiveLimit)}
+        className="mt-3"
+      />
 
       <div className="grid grid-cols-1 gap-2 pt-3 sm:grid-cols-2 sm:gap-3">
         <button type="button" className={sb.btnSecondary} onClick={onClose}>

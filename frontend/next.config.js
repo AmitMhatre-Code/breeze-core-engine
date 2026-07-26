@@ -132,6 +132,10 @@ const nextConfig = {
         destination: `${backendUpstream}/order/break-finalize`,
       },
       {
+        source: "/order/aggressive-price",
+        destination: `${backendUpstream}/order/aggressive-price`,
+      },
+      {
         source: "/order",
         destination: `${backendUpstream}/order`,
       },

@@ -99,15 +99,16 @@ export const helpTopics: HelpTopic[] = [
   {
     id: "aggressive-limit",
     category: "orders",
-    title: "Aggressive limit orders",
+    title: "Aggressive orders",
     summary:
-      "ICICI derives the limit price from LTP within the exchange daily price band.",
+      "Fill quickly using a market order or a limit priced a set tolerance past LTP.",
     body: [
-      "Enable Aggressive limit or tap the lightning bolt on a leg. ICICI sets the limit from the last traded price (LTP) within the exchange daily price range.",
-      "Buy orders use a higher price; sell orders use a lower price. You do not enter a manual limit.",
+      "Tap the lightning bolt to send an order aggressively so it fills quickly instead of resting at a price you type. Choose how it executes:",
+      "Limit + tolerance: an ordinary limit order priced off the last traded price (LTP) by a tolerance you set — Buy above LTP, Sell below — so it fills like a market order but never worse than your tolerance. The price is derived live at confirmation.",
+      "Market: a native ICICI market order. ICICI has not enabled native market orders yet, so these may be rejected until they do — use Limit + tolerance in the meantime.",
       "Orders may partially fill, remain pending, or be rejected depending on market conditions.",
     ],
-    keywords: ["mkt", "market", "ltp", "limit"],
+    keywords: ["mkt", "market", "ltp", "limit", "tolerance", "aggressive"],
     relatedTopicIds: ["parked-orders", "chunk-splitting"],
   },
   {

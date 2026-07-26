@@ -74,6 +74,8 @@ import { tradeSelectionKey } from "@/lib/strategy-builder/types";
 const DEFAULT_MIN_POP_PCT = 65;
 const DEFAULT_MIN_ANN_RETURN_PCT = 5;
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
+import { useAggressiveOrderControls } from "@/lib/use-aggressive-order-controls";
+import { AggressiveModeControl } from "@/components/order/AggressiveModeControl";
 
 const MARGIN_LACS_MAX = 999_999;
 
@@ -637,6 +639,8 @@ export default function StrategyBuilderPage() {
       enabled: executePreviewOpen,
     });
 
+  const aggressiveControls = useAggressiveOrderControls();
+
   const strategyExecuteLegs = useMemo(
     () =>
       legs
@@ -648,10 +652,14 @@ export default function StrategyBuilderPage() {
           quantity: Math.round(l.lots * lotSize),
           premiumPerUnit: l.aggressiveLimit ? 0 : (l.premiumPerUnit ?? 0),
           aggressiveLimit: l.aggressiveLimit ?? false,
+          aggressiveMode: aggressiveControls.mode,
+          aggressiveTolerancePct: aggressiveControls.tolerancePct,
         }))
         .sort((a, b) => a.strike - b.strike),
-    [legs, lotSize],
+    [legs, lotSize, aggressiveControls.mode, aggressiveControls.tolerancePct],
   );
+
+  const anyAggressiveLeg = legs.some((l) => l.lots > 0 && l.aggressiveLimit);
 
   const onSegmentChange = (ex: "NFO" | "BFO") => {
     setSegmentExchange(ex);
@@ -1115,6 +1123,11 @@ export default function StrategyBuilderPage() {
               onCalculateMargins={marginCalc.calculate}
               calculatingMargins={marginCalc.isCalculating}
               calculateMarginsDisabled={marginCalc.calculateDisabled}
+            />
+            <AggressiveModeControl
+              controls={aggressiveControls}
+              visible={anyAggressiveLeg}
+              className="mt-3 px-5"
             />
             </div>
 

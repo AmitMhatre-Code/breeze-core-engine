@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { InfoPopover } from "@/components/ui/InfoPopover";
 import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
 import { LegQuantityInput } from "@/components/shared/legs/LegQuantityInput";
@@ -15,12 +16,32 @@ import {
   formatSignedLegPremium,
 } from "@/lib/strategy-builder/leg-ui-helpers";
 import { sb } from "@/lib/strategy-builder/ui";
+import type { ScaleMode } from "@/lib/strategy-builder/basket-scale";
 import type {
   BasketLegMarginEntry,
   OptionRight,
   OrderSide,
   StrategyLeg,
 } from "@/lib/strategy-builder/types";
+
+export type BasketScaleControls = {
+  mode: ScaleMode;
+  onModeChange: (mode: ScaleMode) => void;
+  marginModeAvailable: boolean;
+  premiumModeAvailable: boolean;
+  marginLakh: string;
+  onMarginLakhChange: (value: string) => void;
+  premiumRupees: string;
+  onPremiumRupeesChange: (value: string) => void;
+  includeElm: boolean;
+  onIncludeElmChange: (value: boolean) => void;
+  /** True when a premium target leans on a last-known mid (aggressive/unpriced leg). */
+  premiumEstimated: boolean;
+  onScale: () => void;
+  scaling: boolean;
+  disabled: boolean;
+  warning: string | null;
+};
 
 const thCls =
   "px-2.5 py-2 text-left text-micro font-bold uppercase tracking-[.06em] text-faint";
@@ -52,6 +73,7 @@ export function BasketLegsPanel({
   onCalculateMargins,
   calculatingMargins,
   calculateMarginsDisabled,
+  scaleControls,
 }: {
   sectionLabel: string;
   strikes: number[];
@@ -86,6 +108,7 @@ export function BasketLegsPanel({
   onCalculateMargins: () => void;
   calculatingMargins: boolean;
   calculateMarginsDisabled: boolean;
+  scaleControls: BasketScaleControls;
 }) {
   const activeLegCount = legs.filter((l) => l.lots > 0).length;
   const sortedLegs = [...legs].sort((a, b) => a.strike - b.strike);
@@ -256,6 +279,8 @@ export function BasketLegsPanel({
         ) : null}
       </div>
 
+      {legs.length > 0 ? <BasketScaleRow controls={scaleControls} /> : null}
+
       <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border-soft bg-panel2 px-[18px] py-3.5">
         <div className="flex flex-wrap items-center gap-6">
           <TotalStat
@@ -329,6 +354,141 @@ export function BasketLegsPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+function BasketScaleRow({ controls }: { controls: BasketScaleControls }) {
+  const {
+    mode,
+    onModeChange,
+    marginModeAvailable,
+    premiumModeAvailable,
+    marginLakh,
+    onMarginLakhChange,
+    premiumRupees,
+    onPremiumRupeesChange,
+    includeElm,
+    onIncludeElmChange,
+    premiumEstimated,
+    onScale,
+    scaling,
+    disabled,
+    warning,
+  } = controls;
+
+  const isPremium = mode === "premium";
+
+  return (
+    <div className="border-t border-border-soft bg-panel px-[18px] py-3.5">
+      <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
+        <div className="flex flex-col gap-1.5">
+          <span className="text-micro font-bold uppercase tracking-[.06em] text-faint">
+            Deploy target across basket
+          </span>
+          <div
+            role="tablist"
+            aria-label="Scale basket by"
+            className="inline-flex rounded-[8px] border border-border p-0.5"
+          >
+            <ScaleModeTab
+              active={mode === "margin"}
+              disabled={!marginModeAvailable}
+              onClick={() => onModeChange("margin")}
+              label="Margin"
+            />
+            <ScaleModeTab
+              active={mode === "premium"}
+              disabled={!premiumModeAvailable}
+              onClick={() => onModeChange("premium")}
+              label="Premium"
+            />
+          </div>
+        </div>
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-micro font-bold uppercase tracking-[.06em] text-faint">
+            {isPremium ? "Target premium debit (₹)" : "Target margin (₹ lakh)"}
+          </span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={isPremium ? premiumRupees : marginLakh}
+            onChange={(e) =>
+              isPremium
+                ? onPremiumRupeesChange(e.target.value)
+                : onMarginLakhChange(e.target.value)
+            }
+            placeholder={isPremium ? "e.g. 40000" : "e.g. 5"}
+            className={`${sb.tableInput} w-[12ch] tabular-nums`}
+          />
+        </label>
+
+        {!isPremium ? (
+          <label className="mb-2 inline-flex cursor-pointer items-center gap-2 text-xs text-muted">
+            <Checkbox
+              checked={includeElm}
+              onChange={onIncludeElmChange}
+              aria-label="Include ELM in margin budget"
+            />
+            Include ELM
+          </label>
+        ) : null}
+
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onScale}
+          className={`${sb.btnPrimaryOutline} mb-[1px]`}
+        >
+          {scaling
+            ? "Scaling…"
+            : isPremium
+              ? "Scale to premium"
+              : "Scale to margin"}
+        </button>
+      </div>
+
+      {isPremium && premiumEstimated ? (
+        <p className="mt-2 text-xs text-muted">
+          Some legs have no fixed price — premium is estimated from the last-known
+          mid, so the actual fill may differ.
+        </p>
+      ) : null}
+      {warning ? (
+        <p className="mt-2 rounded-md border border-amber/40 bg-amber-tint p-3 text-sm text-amber-on-tint">
+          {warning}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function ScaleModeTab({
+  active,
+  disabled,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      disabled={disabled}
+      onClick={onClick}
+      className={`rounded-[6px] px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+        active
+          ? "bg-accent-strong text-accent-ink"
+          : "text-muted hover:text-foreground"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 

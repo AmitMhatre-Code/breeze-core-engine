@@ -4,12 +4,17 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { ChunkSizeOrderField } from "@/components/order/ChunkSizeOrderField";
 import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
 import { OrderSideBadge } from "@/components/shared/badges/OrderSideBadge";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { apiClient } from "@/lib/api-client";
+import {
+  resolveAggressivePrices,
+  type AggressiveOrderMode,
+  type AggressivePriceResultItem,
+} from "@/lib/aggressive-order";
 import type { BreakChunkDefaultsResponse } from "@/lib/break-chunk-defaults";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { runBreakOrderChunks } from "@/lib/icici-rate-limit-flow";
@@ -39,7 +44,24 @@ export type ExecutionPreviewLeg = {
   quantity: number;
   premiumPerUnit: number;
   aggressiveLimit?: boolean;
+  /**
+   * Aggressive execution style when aggressiveLimit is set. Defaults to "market" for backward
+   * compatibility. "limit_tolerance" legs are repriced from live LTP server-side before placement.
+   */
+  aggressiveMode?: AggressiveOrderMode;
+  /** Tolerance % for "limit_tolerance" mode (ignored otherwise). */
+  aggressiveTolerancePct?: number;
 };
+
+/** Is this leg an app-side aggressive-limit (LTP × tolerance) rather than a native market order? */
+function isToleranceLeg(l: ExecutionPreviewLeg): boolean {
+  return Boolean(l.aggressiveLimit) && (l.aggressiveMode ?? "market") === "limit_tolerance";
+}
+
+/** Is this leg a native ICICI market order? */
+function isMarketLeg(l: ExecutionPreviewLeg): boolean {
+  return Boolean(l.aggressiveLimit) && (l.aggressiveMode ?? "market") === "market";
+}
 
 export type ControlledChunkProps = {
   chunkQty: string;
@@ -112,19 +134,148 @@ export function OrderExecutionConfirmDialog({
     controlledChunk?.defaultsQuery ?? internalChunk.defaultsQuery;
   const chunkReady = controlledChunk?.chunkReady ?? internalChunk.chunkReady;
 
-  const marginLegKey = useMemo(
+  // Legs that need server-side repricing from live LTP (limit_tolerance mode). Native-market and
+  // plain-limit legs keep their price as-is.
+  const toleranceLegs = useMemo(
+    () =>
+      legs
+        .map((l, i) => ({ l, i }))
+        .filter(({ l }) => isToleranceLeg(l)),
+    [legs],
+  );
+  const toleranceTolerancePct = toleranceLegs[0]?.l.aggressiveTolerancePct ?? 0;
+  const toleranceKey = useMemo(
     () =>
       JSON.stringify(
-        legs.map((l) => [
+        toleranceLegs.map(({ l, i }) => [
+          i,
           l.strike,
           l.right,
           l.side,
-          l.quantity,
-          l.premiumPerUnit,
-          l.aggressiveLimit ?? false,
+          l.aggressiveTolerancePct ?? 0,
         ]),
       ),
-    [legs],
+    [toleranceLegs],
+  );
+
+  const resolvedPricesQueryKey = useMemo(
+    () => [
+      "order-execution-confirm",
+      "aggressive-price",
+      stockCode,
+      exchangeCode,
+      expiryDisplay,
+      toleranceKey,
+    ],
+    [stockCode, exchangeCode, expiryDisplay, toleranceKey],
+  );
+
+  // Shared by the on-open estimate query and the re-resolve at Confirm — both must price the
+  // exact same legs/tolerance.
+  const runResolve = useCallback(
+    () =>
+      resolveAggressivePrices(
+        toleranceLegs.map(({ l, i }) => ({
+          ref: String(i),
+          stock_code: stockCode,
+          exchange_code: exchangeCode,
+          expiry_date: expiryDisplay,
+          right: l.right,
+          strike_price: String(l.strike),
+          action: l.side,
+        })),
+        toleranceTolerancePct,
+      ),
+    [toleranceLegs, stockCode, exchangeCode, expiryDisplay, toleranceTolerancePct],
+  );
+
+  const resolvedPricesQ = useQuery({
+    queryKey: resolvedPricesQueryKey,
+    queryFn: runResolve,
+    enabled:
+      open &&
+      toleranceLegs.length > 0 &&
+      stockCode.trim().length > 0 &&
+      expiryDisplay.trim().length > 0,
+    staleTime: 4000,
+  });
+
+  type PricedLeg = {
+    leg: ExecutionPreviewLeg;
+    /** Price to send to the order API; null while a tolerance leg is still resolving. */
+    placementPrice: string | null;
+    /** Whether the order is placed as a native market order (aggressive_limit=true). */
+    placementAggressive: boolean;
+    /** Per-unit price to display/compute premium from; null when unknown (market / unresolved). */
+    displayPrice: number | null;
+    resolveError: string | null;
+    resolving: boolean;
+    isMarket: boolean;
+    isTolerance: boolean;
+  };
+
+  const pricedLegs: PricedLeg[] = useMemo(() => {
+    const map = resolvedPricesQ.data;
+    return legs.map((l, i) => {
+      if (isToleranceLeg(l)) {
+        const r: AggressivePriceResultItem | undefined = map?.get(String(i));
+        const price = r?.price != null ? Number(r.price) : null;
+        return {
+          leg: l,
+          placementPrice:
+            price != null && Number.isFinite(price) ? String(price) : null,
+          placementAggressive: false,
+          displayPrice: price != null && Number.isFinite(price) ? price : null,
+          resolveError: r?.error ?? null,
+          resolving: map == null,
+          isMarket: false,
+          isTolerance: true,
+        };
+      }
+      if (isMarketLeg(l)) {
+        return {
+          leg: l,
+          placementPrice: "0",
+          placementAggressive: true,
+          displayPrice: null,
+          resolveError: null,
+          resolving: false,
+          isMarket: true,
+          isTolerance: false,
+        };
+      }
+      return {
+        leg: l,
+        placementPrice: String(l.premiumPerUnit),
+        placementAggressive: false,
+        displayPrice: l.premiumPerUnit,
+        resolveError: null,
+        resolving: false,
+        isMarket: false,
+        isTolerance: false,
+      };
+    });
+  }, [legs, resolvedPricesQ.data]);
+
+  const toleranceResolving =
+    toleranceLegs.length > 0 && resolvedPricesQ.isPending;
+  const toleranceError = pricedLegs.find((p) => p.resolveError)?.resolveError ?? null;
+  const toleranceReady =
+    toleranceLegs.length === 0 ||
+    (resolvedPricesQ.data != null && !toleranceError);
+
+  const marginLegKey = useMemo(
+    () =>
+      JSON.stringify(
+        pricedLegs.map((p) => [
+          p.leg.strike,
+          p.leg.right,
+          p.leg.side,
+          p.leg.quantity,
+          p.placementAggressive ? "0" : (p.placementPrice ?? ""),
+        ]),
+      ),
+    [pricedLegs],
   );
 
   const marginQ = useQuery({
@@ -138,23 +289,24 @@ export function OrderExecutionConfirmDialog({
     ],
     queryFn: () =>
       apiClient.post<MarginApiResponse>("/strategy-builder/margin", {
-        legs: legs.map((l) => ({
+        legs: pricedLegs.map((p) => ({
           stock_code: stockCode,
           exchange_code: exchangeCode,
           expiry_date: expiryDisplay,
           product_type: productType,
-          right: l.right,
-          strike_price: String(l.strike),
-          quantity: String(Math.round(l.quantity)),
-          price: l.aggressiveLimit ? "0" : String(l.premiumPerUnit),
-          action: l.side,
+          right: p.leg.right,
+          strike_price: String(p.leg.strike),
+          quantity: String(Math.round(p.leg.quantity)),
+          price: p.placementAggressive ? "0" : (p.placementPrice ?? "0"),
+          action: p.leg.side,
         })),
       }),
     enabled:
       open &&
       legs.length > 0 &&
       stockCode.trim().length > 0 &&
-      expiryDisplay.trim().length > 0,
+      expiryDisplay.trim().length > 0 &&
+      toleranceReady,
     staleTime: 5000,
   });
 
@@ -174,15 +326,47 @@ export function OrderExecutionConfirmDialog({
   const spanMargin = parseSpanMarginFromResponse(marginState);
 
   const netPremium = useMemo(() => {
-    if (legs.some((l) => l.aggressiveLimit)) return null;
-    return legs.reduce((sum, l) => {
-      const linePrem = l.premiumPerUnit * Math.round(l.quantity);
-      return sum + (l.side === "Buy" ? -linePrem : linePrem);
+    // Unknown while any leg lacks a concrete price (native market, or tolerance still resolving).
+    if (pricedLegs.some((p) => p.displayPrice == null)) return null;
+    return pricedLegs.reduce((sum, p) => {
+      const linePrem = (p.displayPrice ?? 0) * Math.round(p.leg.quantity);
+      return sum + (p.leg.side === "Buy" ? -linePrem : linePrem);
     }, 0);
-  }, [legs]);
+  }, [pricedLegs]);
 
   const execMut = useMutation({
     mutationFn: async () => {
+      // Re-resolve tolerance legs from fresh LTP at click time so the placed price reflects the
+      // market now, not the estimate shown when the dialog opened. The result also updates the
+      // cache so the preview and margin reflect what was actually sent.
+      let freshMap = resolvedPricesQ.data;
+      if (toleranceLegs.length > 0) {
+        freshMap = await runResolve();
+        queryClient.setQueryData(resolvedPricesQueryKey, freshMap);
+      }
+
+      // Final placement price + flag per leg (index-aligned with `legs`). Tolerance legs use the
+      // freshly resolved price; a missing/errored price aborts before anything is sent.
+      const placements = legs.map((l, i) => {
+        const p = pricedLegs[i]!;
+        if (p.isTolerance) {
+          const r = freshMap?.get(String(i));
+          const price = r?.price != null ? Number(r.price) : null;
+          if (r?.error || price == null || !Number.isFinite(price)) {
+            throw new Error(
+              r?.error ??
+                "Could not derive an aggressive limit price from live prices. Try again.",
+            );
+          }
+          return { leg: l, price: String(price), aggressive: false };
+        }
+        return {
+          leg: l,
+          price: p.placementAggressive ? "0" : (p.placementPrice ?? "0"),
+          aggressive: p.placementAggressive,
+        };
+      });
+
       const batchGroupId =
         sourceParkedIds.length === 0 && legs.length > 1 ? randomUuid() : undefined;
       const deferParkedFinalize = legs.length > 1;
@@ -190,7 +374,8 @@ export function OrderExecutionConfirmDialog({
       let parkedReason: string | undefined;
       let placedAny = false;
 
-      for (const l of legs) {
+      for (const pl of placements) {
+        const l = pl.leg;
         const qn = Math.round(l.quantity);
         if (qn <= 0) continue;
         const out = await runBreakOrderChunks({
@@ -201,11 +386,11 @@ export function OrderExecutionConfirmDialog({
           right: l.right,
           strike_price: String(l.strike),
           total_qty: String(qn),
-          price: l.aggressiveLimit ? "0" : String(l.premiumPerUnit),
+          price: pl.price,
           action: l.side,
           onRateLimitWait: wait,
           chunk_qty: chunkQty.trim() || undefined,
-          aggressive_limit: l.aggressiveLimit ?? false,
+          aggressive_limit: pl.aggressive,
           from_parked_execution: sourceParkedIds.length > 0,
           batch_group_id: batchGroupId,
           defer_parked_finalize: deferParkedFinalize,
@@ -222,15 +407,16 @@ export function OrderExecutionConfirmDialog({
       }
 
       if (anyParked && deferParkedFinalize) {
+        const pl0 = placements[0];
         await apiClient.post<{ redirect: string }>("/order/break-finalize", {
           stock_code: stockCode,
           expiry_date: expiryDisplay,
-          right: legs[0]?.right ?? "Call",
-          strike_price: String(legs[0]?.strike ?? 0),
+          right: pl0?.leg.right ?? "Call",
+          strike_price: String(pl0?.leg.strike ?? 0),
           product_type: productType,
           exchange_code: exchangeCode,
-          price: legs[0]?.aggressiveLimit ? "0" : String(legs[0]?.premiumPerUnit ?? 0),
-          action: legs[0]?.side ?? "Buy",
+          price: pl0?.price ?? "0",
+          action: pl0?.leg.side ?? "Buy",
           parked_only: true,
           market_closed_reason: parkedReason,
         });
@@ -332,9 +518,11 @@ export function OrderExecutionConfirmDialog({
         </p>
 
         <ul className="mt-3 max-h-64 divide-y divide-border-soft overflow-x-auto overflow-y-auto">
-          {legs.map((l, idx) => {
+          {pricedLegs.map((p, idx) => {
+            const l = p.leg;
             const q = Math.round(l.quantity);
-            const linePrem = l.aggressiveLimit ? null : l.premiumPerUnit * q;
+            const linePrem =
+              p.displayPrice == null ? null : p.displayPrice * q;
             const label = formatOptionSymbolLabel(
               stockCode,
               expiryDisplay,
@@ -355,9 +543,29 @@ export function OrderExecutionConfirmDialog({
                     Qty {q <= 0 ? "—" : q.toLocaleString("en-IN")}
                   </span>
                   <span className="shrink-0 whitespace-nowrap text-muted">
-                    {l.aggressiveLimit ? (
+                    {p.isMarket ? (
                       <span className="rounded-full bg-amber-tint px-2 py-0.5 font-sans text-xs font-medium text-amber-on-tint">
-                        Aggressive limit
+                        Market
+                      </span>
+                    ) : p.isTolerance ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="rounded-full bg-amber-tint px-2 py-0.5 font-sans text-xs font-medium text-amber-on-tint">
+                          Aggressive limit
+                        </span>
+                        {p.resolveError ? (
+                          <span className="font-sans text-xs text-down">
+                            no live price
+                          </span>
+                        ) : p.displayPrice == null ? (
+                          <span className="text-muted">@ …</span>
+                        ) : (
+                          <>
+                            @ ₹
+                            {p.displayPrice.toLocaleString("en-IN", {
+                              maximumFractionDigits: 2,
+                            })}
+                          </>
+                        )}
                       </span>
                     ) : (
                       <>
@@ -441,6 +649,12 @@ export function OrderExecutionConfirmDialog({
               : "Could not park execution"}
           </p>
         ) : null}
+        {toleranceError ? (
+          <p className="app-alert-error mt-2 text-xs">
+            Couldn&apos;t derive an aggressive limit price from live prices:{" "}
+            {toleranceError} Retry, switch to a fixed price, or park the order.
+          </p>
+        ) : null}
 
         {marketClosed ? (
           <div
@@ -489,20 +703,22 @@ export function OrderExecutionConfirmDialog({
               !legs.length ||
               !chunkReady ||
               !executeAllowed ||
+              !toleranceReady ||
+              toleranceResolving ||
               legs.some((x) => x.quantity <= 0)
             }
             title={
               marketClosed
                 ? "Market is closed — park the order and execute from Orders when the market opens."
-                : undefined
+                : toleranceError ?? undefined
             }
             aria-busy={execMut.isPending}
             onClick={() => execMut.mutate()}
           >
             <AsyncLabelSpan
-              busy={execMut.isPending}
+              busy={execMut.isPending || toleranceResolving}
               idleLabel="Confirm"
-              busyLabel="Placing…"
+              busyLabel={toleranceResolving ? "Pricing…" : "Placing…"}
             />
           </button>
         </div>

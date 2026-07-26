@@ -40,7 +40,19 @@ import {
 } from "@/lib/strategy-builder/chain-quote";
 import { atmSigmaFromChain, buildSigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { expiryDisplayToYears, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
-import { useOnDemandBasketMargin } from "@/lib/strategy-builder/real-margin";
+import {
+  fetchRealBasketMargins,
+  useOnDemandBasketMargin,
+} from "@/lib/strategy-builder/real-margin";
+import {
+  computeNetDebit,
+  computeScaleMultiplier,
+  hasUnpricedActiveLeg,
+  suggestScaleMode,
+  type ScaleLeg,
+  type ScaleMode,
+} from "@/lib/strategy-builder/basket-scale";
+import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   ChainRow,
@@ -51,6 +63,8 @@ import type {
   UnderlyingsApiResponse,
 } from "@/lib/strategy-builder/types";
 import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
+import { useAggressiveOrderControls } from "@/lib/use-aggressive-order-controls";
+import { AggressiveModeControl } from "@/components/order/AggressiveModeControl";
 
 function parseNum(raw: unknown): number {
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
@@ -71,6 +85,13 @@ export default function BasketOrderPage() {
     () => new Set(),
   );
   const [executePreviewOpen, setExecutePreviewOpen] = useState(false);
+  /** null until the user flips the mode toggle — until then it follows basket composition. */
+  const [userScaleMode, setUserScaleMode] = useState<ScaleMode | null>(null);
+  const [scaleMarginLakh, setScaleMarginLakh] = useState("");
+  const [scalePremiumRupees, setScalePremiumRupees] = useState("");
+  const [scaleIncludeElm, setScaleIncludeElm] = useState(true);
+  const [scaling, setScaling] = useState(false);
+  const [scaleWarning, setScaleWarning] = useState<string | null>(null);
   const [ivShockPct, setIvShockPct] = useState(0);
   const [showGreeks, setShowGreeks] = useState(false);
   const [showToday, setShowToday] = useState(true);
@@ -86,6 +107,7 @@ export default function BasketOrderPage() {
     setLegs([]);
     setPriceManuallyEdited(new Set());
     setChainModalOpen(false);
+    setScaleWarning(null);
   }, []);
 
   const uq = useQuery({
@@ -294,6 +316,156 @@ export default function BasketOrderPage() {
     return t;
   }, [legs, lotSize]);
 
+  /** Legs with a resolved per-unit price — aggressive legs fall back to the last-known chain mid. */
+  const scaleLegs = useMemo<ScaleLeg[]>(
+    () =>
+      legs.map((l) => ({
+        lots: l.lots,
+        side: l.side,
+        unitPrice: l.aggressiveLimit
+          ? premiumFromChainRow(chainRows, l.strike, l.right)
+          : (l.premiumPerUnit ?? premiumFromChainRow(chainRows, l.strike, l.right)),
+      })),
+    [legs, chainRows],
+  );
+
+  const baseNetDebit = useMemo(
+    () => computeNetDebit(scaleLegs, lotSize),
+    [scaleLegs, lotSize],
+  );
+
+  const activeLegCount = useMemo(
+    () => legs.filter((l) => l.lots > 0).length,
+    [legs],
+  );
+  const hasActiveSellLeg = useMemo(
+    () => legs.some((l) => l.lots > 0 && l.side === "Sell"),
+    [legs],
+  );
+  // Premium is a mid estimate whenever an active leg is aggressive (no fixed
+  // price) or otherwise unpriced — surface that so the overshoot risk is visible.
+  const premiumEstimated = useMemo(
+    () =>
+      hasUnpricedActiveLeg(scaleLegs) ||
+      legs.some((l) => l.lots > 0 && l.aggressiveLimit),
+    [scaleLegs, legs],
+  );
+
+  const suggestedScaleMode = suggestScaleMode(baseNetDebit);
+  const scaleMode: ScaleMode = userScaleMode ?? suggestedScaleMode;
+  const marginModeAvailable = hasActiveSellLeg;
+  const premiumModeAvailable = baseNetDebit > 0;
+
+  const applyScaleMultiplier = useCallback(
+    (k: number): StrategyLeg[] => {
+      const scaled = legs.map((l) =>
+        l.lots > 0 ? { ...l, lots: l.lots * k } : l,
+      );
+      setLegs(scaled);
+      return scaled;
+    },
+    [legs],
+  );
+
+  const handleScale = useCallback(async () => {
+    setScaleWarning(null);
+    if (activeLegCount === 0) return;
+
+    if (scaleMode === "premium") {
+      if (!premiumModeAvailable) {
+        setScaleWarning(
+          "This basket collects net premium (a credit) — switch to Margin to scale it.",
+        );
+        return;
+      }
+      const target = parseNum(scalePremiumRupees);
+      const res = computeScaleMultiplier(baseNetDebit, target);
+      if (!res.ok) {
+        setScaleWarning(
+          res.reason === "underflow"
+            ? `A single basket already costs ${formatIndianMoneyCompact(baseNetDebit)} in premium, which exceeds your target of ${formatIndianMoneyCompact(target)}.`
+            : "Enter a target premium debit greater than zero.",
+        );
+        return;
+      }
+      applyScaleMultiplier(res.k);
+      return;
+    }
+
+    // Margin mode.
+    if (!marginModeAvailable) {
+      setScaleWarning(
+        "This basket has no short (margin-bearing) leg — switch to Premium to scale it.",
+      );
+      return;
+    }
+    const target = parseNum(scaleMarginLakh) * 100000;
+    if (!(Number.isFinite(target) && target > 0)) {
+      setScaleWarning("Enter a target margin greater than zero.");
+      return;
+    }
+    setScaling(true);
+    try {
+      const data = await fetchRealBasketMargins({
+        legs,
+        stockCode,
+        exchangeCode: segmentExchange,
+        expiryDate,
+        lotSize,
+        spot,
+      });
+      const elmUnavailable = scaleIncludeElm && data.elmRequirement == null;
+      const base =
+        data.spanMargin +
+        (scaleIncludeElm && data.elmRequirement != null ? data.elmRequirement : 0);
+      const res = computeScaleMultiplier(base, target);
+      if (!res.ok) {
+        setScaleWarning(
+          res.reason === "underflow"
+            ? `A single basket already needs ${formatIndianMoneyCompact(base)} in margin, which exceeds your target of ${formatIndianMoneyCompact(target)}.`
+            : "Could not compute a base margin for this basket.",
+        );
+        return;
+      }
+      const scaled = applyScaleMultiplier(res.k);
+      // Confirm-recalc against the scaled legs so the totals show true deployed margin.
+      marginCalc.calculateFor(scaled);
+      if (elmUnavailable) {
+        setScaleWarning(
+          "Basket ELM wasn't available, so this was scaled against SPAN margin alone.",
+        );
+      }
+    } catch (err) {
+      setScaleWarning(
+        err instanceof Error ? err.message : "Failed to calculate margin for scaling.",
+      );
+    } finally {
+      setScaling(false);
+    }
+  }, [
+    activeLegCount,
+    scaleMode,
+    premiumModeAvailable,
+    marginModeAvailable,
+    scalePremiumRupees,
+    scaleMarginLakh,
+    baseNetDebit,
+    scaleIncludeElm,
+    legs,
+    stockCode,
+    segmentExchange,
+    expiryDate,
+    lotSize,
+    spot,
+    applyScaleMultiplier,
+    marginCalc,
+  ]);
+
+  const scaleDisabled =
+    scaling ||
+    activeLegCount === 0 ||
+    (scaleMode === "premium" ? !premiumModeAvailable : !marginModeAvailable);
+
   const { chunkQty, setChunkQty, defaultsQuery: chunkDefaultsQ, chunkReady } =
     useBreakChunkQty({
       stockCode,
@@ -301,6 +473,9 @@ export default function BasketOrderPage() {
       expiryDisplay: expiryDate,
       enabled: executePreviewOpen,
     });
+
+  const aggressiveControls = useAggressiveOrderControls();
+  const anyAggressiveLeg = legs.some((l) => l.lots > 0 && l.aggressiveLimit);
 
   const strategyExecuteLegs = useMemo(
     () =>
@@ -313,9 +488,11 @@ export default function BasketOrderPage() {
           quantity: Math.round(l.lots * lotSize),
           premiumPerUnit: l.aggressiveLimit ? 0 : (l.premiumPerUnit ?? 0),
           aggressiveLimit: l.aggressiveLimit ?? false,
+          aggressiveMode: aggressiveControls.mode,
+          aggressiveTolerancePct: aggressiveControls.tolerancePct,
         }))
         .sort((a, b) => a.strike - b.strike),
-    [legs, lotSize],
+    [legs, lotSize, aggressiveControls.mode, aggressiveControls.tolerancePct],
   );
 
   const executeDisabled = useMemo(() => {
@@ -447,6 +624,28 @@ export default function BasketOrderPage() {
                   onCalculateMargins={marginCalc.calculate}
                   calculatingMargins={marginCalc.isCalculating}
                   calculateMarginsDisabled={marginCalc.calculateDisabled}
+                  scaleControls={{
+                    mode: scaleMode,
+                    onModeChange: setUserScaleMode,
+                    marginModeAvailable,
+                    premiumModeAvailable,
+                    marginLakh: scaleMarginLakh,
+                    onMarginLakhChange: setScaleMarginLakh,
+                    premiumRupees: scalePremiumRupees,
+                    onPremiumRupeesChange: setScalePremiumRupees,
+                    includeElm: scaleIncludeElm,
+                    onIncludeElmChange: setScaleIncludeElm,
+                    premiumEstimated,
+                    onScale: handleScale,
+                    scaling,
+                    disabled: scaleDisabled,
+                    warning: scaleWarning,
+                  }}
+                />
+                <AggressiveModeControl
+                  controls={aggressiveControls}
+                  visible={anyAggressiveLeg}
+                  className="mt-3"
                 />
               </div>
 

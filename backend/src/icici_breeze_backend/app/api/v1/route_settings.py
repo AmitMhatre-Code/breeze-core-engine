@@ -48,6 +48,8 @@ from icici_breeze_backend.app.domain.settings_api import (
     ExchangeCalendarSyncPreviewResponse,
     ExchangeCalendarUpdateBody,
     ExchangeCalendarWorkingHours,
+    AggressiveOrderPreferencesResponse,
+    AggressiveOrderPreferencesUpdateBody,
     MarketStatusResponse,
     PnlEnginePreferencesResponse,
     PnlEnginePreferencesUpdateBody,
@@ -73,6 +75,10 @@ from icici_breeze_backend.app.services.api_usage import (
 from icici_breeze_backend.app.services.user_rate_limit_prefs import (
     get_icici_rate_limit_pause_seconds,
     set_icici_rate_limit_pause_seconds,
+)
+from icici_breeze_backend.app.services.aggressive_order_prefs import (
+    get_aggressive_order_prefs,
+    set_aggressive_order_prefs,
 )
 from icici_breeze_backend.app.core.timezone import today_ist_date
 from icici_breeze_backend.app.services.nsccl_baseline import (
@@ -368,6 +374,35 @@ async def settings_api_usage_preferences_post(
 ):
     v = set_icici_rate_limit_pause_seconds(ctx.user_id, body.rate_limit_pause_seconds)
     return ApiUsagePreferencesResponse(user_id=ctx.user_id, rate_limit_pause_seconds=v)
+
+
+def _aggressive_order_prefs_response(user_id: str, prefs: dict) -> AggressiveOrderPreferencesResponse:
+    return AggressiveOrderPreferencesResponse(
+        user_id=user_id,
+        enabled=bool(cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED),
+        mode=prefs["mode"],
+        tolerance_pct=prefs["tolerance_pct"],
+        default_tolerance_pct=float(cfg.AGGRESSIVE_LIMIT_DEFAULT_TOLERANCE_PCT),
+        max_tolerance_pct=float(cfg.AGGRESSIVE_LIMIT_MAX_TOLERANCE_PCT),
+    )
+
+
+@router.get("/aggressive-order/preferences", response_model=AggressiveOrderPreferencesResponse)
+async def settings_aggressive_order_preferences_get(
+    ctx: RequestContext = Depends(get_request_context),
+):
+    return _aggressive_order_prefs_response(ctx.user_id, get_aggressive_order_prefs(ctx.user_id))
+
+
+@router.post("/aggressive-order/preferences", response_model=AggressiveOrderPreferencesResponse)
+async def settings_aggressive_order_preferences_post(
+    body: AggressiveOrderPreferencesUpdateBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    prefs = set_aggressive_order_prefs(
+        ctx.user_id, mode=body.mode, tolerance_pct=body.tolerance_pct
+    )
+    return _aggressive_order_prefs_response(ctx.user_id, prefs)
 
 
 @router.post("/quantity-limits")

@@ -11,6 +11,8 @@ export type HomeDataResponse = {
   deployment_license_status?: "active" | "expired" | "revoked";
   deployment_license_read_only?: boolean;
   aggressive_limit_order_enabled?: boolean;
+  aggressive_limit_default_tolerance_pct?: number;
+  aggressive_limit_max_tolerance_pct?: number;
 };
 
 function readSuccess(

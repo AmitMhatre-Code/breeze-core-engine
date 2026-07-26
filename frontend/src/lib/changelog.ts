@@ -20,6 +20,18 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.2.0",
+    date: "26-Jul-2026",
+    releaseKind: "minor",
+    summary:
+      "Aggressive orders are now enabled — fill via a Market or LTP-tolerance limit — and baskets can be scaled to a target margin or premium.",
+    changes: [
+      "Aggressive orders are now switched on for everyone. Tap the ⚡ toggle to fill a leg quickly instead of resting at a price you type, and choose how it executes, per order: \"Limit + tolerance\" places an ordinary limit priced a set percentage past the last traded price — above LTP to buy, below to sell — so it fills fast but never worse than your tolerance, and works today with no dependency on ICICI. \"Market\" sends a native ICICI market order (which ICICI may still reject until they enable native market orders). The price is derived live at the moment you confirm.",
+      "Set your preferred aggressive mode and default tolerance % once in Settings; every order form seeds from it and you can still override either value for an individual order. Aggressive fills are now available consistently across Place Order, Strategy Builder, Basket Order, and portfolio square-off.",
+      "Scale a whole basket at once: on the Basket Order page you can grow or shrink every leg together to hit a target deployed margin (using the broker's netted SPAN + ELM) or a target net premium debit, instead of adjusting lots leg by leg. It warns you when a basket can't be scaled the way you picked — for example a net-credit basket in premium mode or a basket with no short leg in margin mode — and flags when the premium shown is an estimate.",
+    ],
+  },
+  {
     version: "2.1.2",
     date: "24-Jul-2026",
     releaseKind: "patch",

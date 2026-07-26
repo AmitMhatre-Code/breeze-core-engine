@@ -197,6 +197,16 @@ export function useOnDemandBasketMargin(params: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentKey, legs]);
 
+  /**
+   * Calculate for an explicit legs array rather than the hook's current prop.
+   * Used right after a margin-scale applies new lots, so the confirm-recalc runs
+   * against the scaled legs without waiting for the render that carries them in.
+   */
+  const calculateFor = useCallback((legsArg: StrategyLeg[]) => {
+    mutation.mutate({ key: computeMarginsCalcKey(legsArg), legs: legsArg });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const prefillSpanMargin = useCallback((spanMargin: number, forKey: string) => {
     setLastResult({
       forKey,
@@ -248,6 +258,7 @@ export function useOnDemandBasketMargin(params: {
     error: mutation.isError ? formatMutationError(mutation.error) : null,
     isCalculating: mutation.isPending,
     calculate,
+    calculateFor,
     calculateDisabled: !canCalculate || mutation.isPending,
     prefillSpanMargin,
   };
