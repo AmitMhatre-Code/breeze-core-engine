@@ -388,7 +388,7 @@ function BasketScaleRow({ controls }: { controls: BasketScaleControls }) {
           <div
             role="tablist"
             aria-label="Scale basket by"
-            className="inline-flex rounded-[8px] border border-border p-0.5"
+            className="inline-flex h-9 w-fit rounded-[8px] border border-border p-0.5"
           >
             <ScaleModeTab
               active={mode === "margin"}
@@ -419,7 +419,7 @@ function BasketScaleRow({ controls }: { controls: BasketScaleControls }) {
                 : onMarginLakhChange(e.target.value)
             }
             placeholder={isPremium ? "e.g. 40000" : "e.g. 5"}
-            className={`${sb.tableInput} w-[12ch] tabular-nums`}
+            className={`${sb.tableInput} h-9 w-[12ch] tabular-nums`}
           />
         </label>
 

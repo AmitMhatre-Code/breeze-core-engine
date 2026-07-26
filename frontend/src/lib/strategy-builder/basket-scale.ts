@@ -47,6 +47,31 @@ export function suggestScaleMode(netDebit: number): ScaleMode {
   return netDebit > 0 ? "premium" : "margin";
 }
 
+function gcd2(a: number, b: number): number {
+  a = Math.abs(a);
+  b = Math.abs(b);
+  while (b) {
+    [a, b] = [b, a % b];
+  }
+  return a;
+}
+
+/**
+ * GCD of the active (`lots > 0`) legs' lot counts — the size, in lots, of the
+ * strategy's irreducible unit basket. Dividing each active leg's lots by this
+ * yields the smallest lot ratio that preserves the strategy exactly, which is
+ * the granularity `Scale` snaps to (so a basket can be scaled down as well as
+ * up). Returns 0 when no leg is active.
+ */
+export function activeLotsGcd(legs: { lots: number }[]): number {
+  let g = 0;
+  for (const l of legs) {
+    if (!(l.lots > 0)) continue;
+    g = gcd2(g, Math.round(l.lots));
+  }
+  return g;
+}
+
 export type ScaleMultiplier =
   | { ok: true; k: number }
   | { ok: false; reason: "invalid-base" | "invalid-target" | "underflow" };

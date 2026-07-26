@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeLotsGcd,
   computeNetDebit,
   computeScaleMultiplier,
   hasUnpricedActiveLeg,
@@ -80,6 +81,29 @@ describe("suggestScaleMode", () => {
   it("suggests margin for a net-credit or zero-debit basket", () => {
     expect(suggestScaleMode(-3000)).toBe("margin");
     expect(suggestScaleMode(0)).toBe("margin");
+  });
+});
+
+describe("activeLotsGcd", () => {
+  it("returns the common lot count for an equal-ratio basket", () => {
+    expect(activeLotsGcd([{ lots: 4 }, { lots: 4 }])).toBe(4);
+  });
+
+  it("reduces a ratio spread to its irreducible unit", () => {
+    // 6:3 → unit is 2:1 (gcd 3)
+    expect(activeLotsGcd([{ lots: 6 }, { lots: 3 }])).toBe(3);
+  });
+
+  it("is 1 for an already-irreducible ratio", () => {
+    expect(activeLotsGcd([{ lots: 2 }, { lots: 1 }])).toBe(1);
+  });
+
+  it("ignores inactive legs", () => {
+    expect(activeLotsGcd([{ lots: 0 }, { lots: 5 }])).toBe(5);
+  });
+
+  it("is 0 when no leg is active", () => {
+    expect(activeLotsGcd([{ lots: 0 }, { lots: 0 }])).toBe(0);
   });
 });
 

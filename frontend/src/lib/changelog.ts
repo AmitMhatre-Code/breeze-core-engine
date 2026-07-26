@@ -20,6 +20,15 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.2.1",
+    date: "26-Jul-2026",
+    releaseKind: "patch",
+    summary: "Scale to margin/premium can now shrink an oversized basket, not just grow it.",
+    changes: [
+      "Scale to margin/premium now scales down as well as up: if a single basket already exceeds your target, the app reduces every leg together to the largest size that fits, instead of refusing with an \"exceeds your target\" message. Scaling snaps to the strategy's smallest whole-number leg ratio, so a ratio spread keeps its shape exactly and the target is met as closely as possible in both directions.",
+    ],
+  },
+  {
     version: "2.2.0",
     date: "26-Jul-2026",
     releaseKind: "minor",

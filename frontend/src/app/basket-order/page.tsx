@@ -45,6 +45,7 @@ import {
   useOnDemandBasketMargin,
 } from "@/lib/strategy-builder/real-margin";
 import {
+  activeLotsGcd,
   computeNetDebit,
   computeScaleMultiplier,
   hasUnpricedActiveLeg,
@@ -356,10 +357,13 @@ export default function BasketOrderPage() {
   const marginModeAvailable = hasActiveSellLeg;
   const premiumModeAvailable = baseNetDebit > 0;
 
-  const applyScaleMultiplier = useCallback(
-    (k: number): StrategyLeg[] => {
+  // Set every active leg to `k` copies of the strategy's irreducible unit
+  // (its lots ÷ the active-leg GCD), so scaling snaps to the finest lot ratio
+  // that preserves the strategy — letting the basket scale down as well as up.
+  const applyUnitMultiplier = useCallback(
+    (gcdLots: number, k: number): StrategyLeg[] => {
       const scaled = legs.map((l) =>
-        l.lots > 0 ? { ...l, lots: l.lots * k } : l,
+        l.lots > 0 ? { ...l, lots: Math.round(l.lots / gcdLots) * k } : l,
       );
       setLegs(scaled);
       return scaled;
@@ -371,6 +375,10 @@ export default function BasketOrderPage() {
     setScaleWarning(null);
     if (activeLegCount === 0) return;
 
+    // Scale in units of the strategy's irreducible basket (lots ÷ GCD), so the
+    // target can be met by scaling down as well as up. gcdLots ≥ 1 here.
+    const gcdLots = activeLotsGcd(legs);
+
     if (scaleMode === "premium") {
       if (!premiumModeAvailable) {
         setScaleWarning(
@@ -379,16 +387,17 @@ export default function BasketOrderPage() {
         return;
       }
       const target = parseNum(scalePremiumRupees);
-      const res = computeScaleMultiplier(baseNetDebit, target);
+      const unitDebit = baseNetDebit / gcdLots;
+      const res = computeScaleMultiplier(unitDebit, target);
       if (!res.ok) {
         setScaleWarning(
           res.reason === "underflow"
-            ? `A single basket already costs ${formatIndianMoneyCompact(baseNetDebit)} in premium, which exceeds your target of ${formatIndianMoneyCompact(target)}.`
+            ? `A single basket already costs ${formatIndianMoneyCompact(unitDebit)} in premium, which exceeds your target of ${formatIndianMoneyCompact(target)}.`
             : "Enter a target premium debit greater than zero.",
         );
         return;
       }
-      applyScaleMultiplier(res.k);
+      applyUnitMultiplier(gcdLots, res.k);
       return;
     }
 
@@ -418,16 +427,19 @@ export default function BasketOrderPage() {
       const base =
         data.spanMargin +
         (scaleIncludeElm && data.elmRequirement != null ? data.elmRequirement : 0);
-      const res = computeScaleMultiplier(base, target);
+      // Per-unit margin from the current basket's real margin — the same
+      // linear approximation used when scaling up by whole multiples.
+      const unitBase = base / gcdLots;
+      const res = computeScaleMultiplier(unitBase, target);
       if (!res.ok) {
         setScaleWarning(
           res.reason === "underflow"
-            ? `A single basket already needs ${formatIndianMoneyCompact(base)} in margin, which exceeds your target of ${formatIndianMoneyCompact(target)}.`
+            ? `A single basket already needs ${formatIndianMoneyCompact(unitBase)} in margin, which exceeds your target of ${formatIndianMoneyCompact(target)}.`
             : "Could not compute a base margin for this basket.",
         );
         return;
       }
-      const scaled = applyScaleMultiplier(res.k);
+      const scaled = applyUnitMultiplier(gcdLots, res.k);
       // Confirm-recalc against the scaled legs so the totals show true deployed margin.
       marginCalc.calculateFor(scaled);
       if (elmUnavailable) {
@@ -457,7 +469,7 @@ export default function BasketOrderPage() {
     expiryDate,
     lotSize,
     spot,
-    applyScaleMultiplier,
+    applyUnitMultiplier,
     marginCalc,
   ]);
 
