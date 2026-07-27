@@ -14,7 +14,10 @@ import {
   buildSigmaSmiles,
   sigmaForLeg,
 } from "@/lib/strategy-builder/chainIv";
-import { payoffQuoteQueryOptions } from "@/lib/strategy-builder/chain-query";
+import {
+  chainSuccessForExpiry,
+  payoffQuoteQueryOptions,
+} from "@/lib/strategy-builder/chain-query";
 import { usePnlRecomputeRefetchMs } from "@/lib/portfolio/usePnlRecomputeRefetchMs";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
@@ -81,7 +84,7 @@ export function PortfolioGroupPayoffPanel({
     enabled: Boolean(stockCode && expiryDisplay && rows.length > 0),
   });
 
-  const chainSuccess = cq.data?.Status === 200 ? cq.data?.Success : null;
+  const chainSuccess = chainSuccessForExpiry(cq.data, expiryDisplay);
 
   const lotSize = useMemo(
     () => (chainSuccess ? chainLotSize(chainSuccess) : 1),

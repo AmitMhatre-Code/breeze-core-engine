@@ -13,6 +13,12 @@ export function useRecentlyTradedScrips(): RecentScripEntry[] {
     queryFn: () => Promise.resolve([] as RecentScripEntry[]),
     enabled: false,
     staleTime: Infinity,
+    // Default gcTime (5 min) would evict this the moment no page using the hook is
+    // mounted — e.g. a few minutes on Dashboard/Portfolio/Orders, none of which use
+    // it — silently emptying the quick-select for the rest of the session. This is
+    // meant to live for the whole SPA session regardless of which pages get visited
+    // in between, so it must never be garbage-collected on its own.
+    gcTime: Infinity,
   });
   return q.data ?? [];
 }

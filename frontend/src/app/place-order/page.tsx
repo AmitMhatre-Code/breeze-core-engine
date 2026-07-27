@@ -34,7 +34,10 @@ import {
   consumePlaceOrderClonePayload,
   placeOrderPrefillFromSearchParams,
 } from "@/lib/place-order-clone";
-import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import {
+  chainQueryOptions,
+  chainSuccessForExpiry,
+} from "@/lib/strategy-builder/chain-query";
 import {
   chainIsLoading,
 } from "@/lib/strategy-builder/chain-loading";
@@ -222,10 +225,10 @@ function PlaceOrderPageInner() {
     }),
   });
 
-  const chainSuccess: ChainSuccess | null =
-    chainQ.data?.Status === 200 && chainQ.data.Success
-      ? chainQ.data.Success
-      : null;
+  const chainSuccess: ChainSuccess | null = chainSuccessForExpiry(
+    chainQ.data,
+    expiryDate,
+  );
 
   const expiryOptions = useMemo(() => {
     const raw = uq.data?.underlyings ?? [];

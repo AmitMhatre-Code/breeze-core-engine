@@ -3,7 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { chainLotSize, rowsToStrategyLegs } from "@/lib/portfolio/legsFromRows";
 import type { PortfolioPositionGroup } from "@/lib/portfolio/groupPositions";
 import { atmSigmaFromChain, blendedSigmaForLegs, buildSigmaSmiles } from "@/lib/strategy-builder/chainIv";
-import { payoffQuoteQueryOptions } from "@/lib/strategy-builder/chain-query";
+import {
+  chainSuccessForExpiry,
+  payoffQuoteQueryOptions,
+} from "@/lib/strategy-builder/chain-query";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import { estimateProbabilityOfProfit } from "@/lib/strategy-builder/payoff";
 
@@ -26,7 +29,7 @@ export function useGroupPoP(group: PortfolioPositionGroup): number | null {
     enabled: Boolean(group.stockCode && group.expiryDate && group.rows.length > 0),
   });
 
-  const chainSuccess = cq.data?.Status === 200 ? cq.data?.Success : null;
+  const chainSuccess = chainSuccessForExpiry(cq.data, group.expiryDate);
 
   return useMemo(() => {
     if (!chainSuccess) return null;

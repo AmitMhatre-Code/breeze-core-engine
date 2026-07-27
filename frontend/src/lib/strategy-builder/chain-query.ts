@@ -3,7 +3,7 @@ import {
   fetchPortfolioPayoffQuote,
   fetchStrategyBuilderChain,
 } from "@/lib/strategy-builder/api";
-import type { ChainApiResponse } from "@/lib/strategy-builder/types";
+import type { ChainApiResponse, ChainSuccess } from "@/lib/strategy-builder/types";
 
 export const CHAIN_STALE_MS = 5_000;
 export const CHAIN_WS_REFETCH_MS = 2_000;
@@ -66,6 +66,26 @@ function samePlaceholderInstrument(
       ? prev
       : undefined;
   };
+}
+
+/**
+ * Extracts a chain response's `Success` payload, but only when it actually
+ * belongs to `expiryDate`. `samePlaceholderInstrument` above deliberately
+ * carries the *previous* expiry's chain across an expiry switch (keyed on
+ * exchange+stock only, not expiry) so the spot price doesn't flicker — but
+ * that means `chainQ.data` can briefly hold a different expiry's chain_rows
+ * (and thus a different contract's LTP/premium) while the real fetch for the
+ * newly selected expiry is still in flight. Every caller that reads strikes,
+ * premiums, or LTPs out of a chain response must go through this guard rather
+ * than reading `data.Success` directly, or it risks pricing a leg off the
+ * wrong expiry's contract.
+ */
+export function chainSuccessForExpiry(
+  data: ChainApiResponse | undefined,
+  expiryDate: string,
+): ChainSuccess | null {
+  if (data?.Status !== 200 || !data.Success) return null;
+  return data.Success.expiry_display === expiryDate.trim() ? data.Success : null;
 }
 
 export function chainQueryOptions({

@@ -20,7 +20,10 @@ import { BuildYourOwnChainSection } from "@/components/strategy-builder/BuildYou
 import { ExpirySelectPill } from "@/components/shared/order/ExpirySelectPill";
 import { SectionGate } from "@/components/strategy-builder/SectionGate";
 import { apiClient } from "@/lib/api-client";
-import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import {
+  chainQueryOptions,
+  chainSuccessForExpiry,
+} from "@/lib/strategy-builder/chain-query";
 import {
   chainIsLoading,
 } from "@/lib/strategy-builder/chain-loading";
@@ -139,8 +142,7 @@ export default function BasketOrderPage() {
     }),
   });
 
-  const chainSuccess =
-    chainQ.data?.Status === 200 ? chainQ.data.Success : null;
+  const chainSuccess = chainSuccessForExpiry(chainQ.data, expiryDate);
   const chainRows = chainSuccess?.chain_rows ?? [];
   const strikes = useMemo(() => strikesFromChain(chainRows), [chainRows]);
   const strikeSet = useMemo(() => new Set(strikes), [strikes]);

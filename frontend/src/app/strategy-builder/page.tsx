@@ -34,7 +34,10 @@ import {
   getProposeTradesJobStatus,
   startProposeTradesJob,
 } from "@/lib/strategy-builder/api";
-import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import {
+  chainQueryOptions,
+  chainSuccessForExpiry,
+} from "@/lib/strategy-builder/chain-query";
 import { buildSigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import {
   chainIsLoading,
@@ -241,8 +244,7 @@ export default function StrategyBuilderPage() {
     }),
   });
 
-  const chainSuccess =
-    chainQ.data?.Status === 200 ? chainQ.data.Success : null;
+  const chainSuccess = chainSuccessForExpiry(chainQ.data, expiryDate);
   const chainRows = chainSuccess?.chain_rows ?? [];
   const chainSpot = chainSuccess?.spot_price ?? null;
   const chainQuoteMeta = useMemo(

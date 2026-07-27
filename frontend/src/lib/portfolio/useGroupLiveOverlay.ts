@@ -2,7 +2,10 @@
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import {
+  chainQueryOptions,
+  chainSuccessForExpiry,
+} from "@/lib/strategy-builder/chain-query";
 import { normRight } from "@/lib/portfolio/legNormalize";
 import { chainLtpLookup, computeLegMtm, parseNum } from "@/lib/portfolio/liveMtm";
 import type { PortfolioPositionGroup } from "@/lib/portfolio/groupPositions";
@@ -80,7 +83,7 @@ export function useGroupLiveOverlay(
     enabled: Boolean(group.stockCode && group.expiryDate),
   });
 
-  const chainSuccess = cq.data?.Status === 200 ? cq.data.Success : null;
+  const chainSuccess = chainSuccessForExpiry(cq.data, group.expiryDate);
   const isLive = chainSuccess?.quote_source === "websocket";
 
   const rows = useMemo(() => {

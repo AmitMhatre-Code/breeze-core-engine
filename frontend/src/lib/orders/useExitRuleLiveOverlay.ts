@@ -2,7 +2,10 @@
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { chainQueryOptions } from "@/lib/strategy-builder/chain-query";
+import {
+  chainQueryOptions,
+  chainSuccessForExpiry,
+} from "@/lib/strategy-builder/chain-query";
 import { normRight } from "@/lib/portfolio/legNormalize";
 import { chainLtpLookup, computeLegMtm, parseNum } from "@/lib/portfolio/liveMtm";
 import { usePnlRecomputeRefetchMs } from "@/lib/portfolio/usePnlRecomputeRefetchMs";
@@ -53,7 +56,7 @@ export function useExitRuleLiveOverlay(
     enabled: enabled && Boolean(row.stockCode && row.expiryDisplay),
   });
 
-  const chainSuccess = cq.data?.Status === 200 ? cq.data.Success : null;
+  const chainSuccess = chainSuccessForExpiry(cq.data, row.expiryDisplay);
   const isLive = enabled && chainSuccess?.quote_source === "websocket";
 
   const mtm = useMemo(() => {
