@@ -19,6 +19,10 @@ import { OrderSideBadge } from "@/components/shared/badges/OrderSideBadge";
 import { QuoteSourceBadge } from "@/components/shared/market-data/QuoteSourceBadge";
 import { useOrderConfirm } from "@/components/shared/order/OrderConfirmProvider";
 import { OptionChainUnderlyingSearch } from "@/components/shared/order/OptionChainUnderlyingSearch";
+import {
+  filterRecentStockCodes,
+  useRecentlyTradedScrips,
+} from "@/lib/use-recently-traded-scrips";
 import { ExchangeFlipToggle } from "@/components/shared/order/ExchangeFlipToggle";
 import { ExpirySelectPill } from "@/components/shared/order/ExpirySelectPill";
 import { StrikeSelectPill } from "@/components/shared/order/StrikeSelectPill";
@@ -196,6 +200,12 @@ function PlaceOrderPageInner() {
       ),
     staleTime: 60_000,
   });
+
+  const recentScrips = useRecentlyTradedScrips();
+  const recentStockCodes = useMemo(
+    () => filterRecentStockCodes(recentScrips, uq.data?.underlyings ?? []),
+    [recentScrips, uq.data?.underlyings],
+  );
 
   // Redis-cached chain, refetched on a WS-aware interval — the single source of truth
   // for scrip details below, so no separate manual "fetch" round-trip is needed. Kept
@@ -537,6 +547,7 @@ function PlaceOrderPageInner() {
                       spot={spot}
                       loading={chainLoading}
                       quoteMeta={chainQuoteMeta}
+                      recentStockCodes={recentStockCodes}
                       onChange={(code) => {
                         setStockCode(code);
                         setExpiryDate("");

@@ -10,6 +10,10 @@ import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPage
 import { BasketLegsPanel } from "@/components/basket-order/BasketLegsPanel";
 import { BasketPayoffPanel } from "@/components/basket-order/BasketPayoffPanel";
 import { OptionChainUnderlyingSearch } from "@/components/shared/order/OptionChainUnderlyingSearch";
+import {
+  filterRecentStockCodes,
+  useRecentlyTradedScrips,
+} from "@/lib/use-recently-traded-scrips";
 import { ExchangeFlipToggle } from "@/components/shared/order/ExchangeFlipToggle";
 import { OrderExecutionConfirmDialog } from "@/components/shared/order/OrderExecutionConfirmDialog";
 import { BuildYourOwnChainSection } from "@/components/strategy-builder/BuildYourOwnChainSection";
@@ -118,6 +122,12 @@ export default function BasketOrderPage() {
         `/strategy-builder/underlyings?exchange_code=${segmentExchange}`,
       ),
   });
+
+  const recentScrips = useRecentlyTradedScrips();
+  const recentStockCodes = useMemo(
+    () => filterRecentStockCodes(recentScrips, uq.data?.underlyings ?? []),
+    [recentScrips, uq.data?.underlyings],
+  );
 
   const chainQ = useQuery({
     ...chainQueryOptions({
@@ -584,6 +594,7 @@ export default function BasketOrderPage() {
                       spot={spot}
                       loading={chainLoading}
                       quoteMeta={chainQuoteMeta}
+                      recentStockCodes={recentStockCodes}
                       onChange={(code) => {
                         setStockCode(code);
                         setExpiryDate("");

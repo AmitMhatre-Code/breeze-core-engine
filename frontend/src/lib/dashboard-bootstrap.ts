@@ -52,11 +52,14 @@ export type DaysPnlResponse = {
   error?: string | null;
 };
 
+export type RecentScripEntry = { stock_code: string; trade_count: number };
+
 export type DashboardBootstrapResponse = {
   home: HomeDataResponse;
   portfolio: PortfolioApiResponse;
   vix: DashboardVixCore;
   days_pnl: DaysPnlResponse;
+  recent_scrips: RecentScripEntry[];
 };
 
 export type DashboardVixHistoryResponse = {
@@ -85,4 +88,5 @@ export function hydrateDashboardQueryCache(
   queryClient.setQueryData(["portfolio", "positions"], data.portfolio);
   queryClient.setQueryData(["dashboard", "vix"], data.vix);
   queryClient.setQueryData(["dashboard", "days-pnl"], data.days_pnl);
+  queryClient.setQueryData(["scrips", "recent"], data.recent_scrips ?? []);
 }

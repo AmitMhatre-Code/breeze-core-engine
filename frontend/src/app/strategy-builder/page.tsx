@@ -7,6 +7,10 @@ import { HelpLink } from "@/components/help/HelpLink";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { Modal } from "@/components/ui/Modal";
 import { OptionChainUnderlyingSearch } from "@/components/shared/order/OptionChainUnderlyingSearch";
+import {
+  filterRecentStockCodes,
+  useRecentlyTradedScrips,
+} from "@/lib/use-recently-traded-scrips";
 import { QuoteSourceBadge } from "@/components/shared/market-data/QuoteSourceBadge";
 import { ExchangeFlipToggle } from "@/components/shared/order/ExchangeFlipToggle";
 import { OrderExecutionConfirmDialog } from "@/components/shared/order/OrderExecutionConfirmDialog";
@@ -220,6 +224,12 @@ export default function StrategyBuilderPage() {
         `/strategy-builder/underlyings?exchange_code=${segmentExchange}`,
       ),
   });
+
+  const recentScrips = useRecentlyTradedScrips();
+  const recentStockCodes = useMemo(
+    () => filterRecentStockCodes(recentScrips, uq.data?.underlyings ?? []),
+    [recentScrips, uq.data?.underlyings],
+  );
 
   const chainQ = useQuery({
     ...chainQueryOptions({
@@ -730,6 +740,7 @@ export default function StrategyBuilderPage() {
                   spot={spot}
                   loading={chainLoading}
                   quoteMeta={chainQuoteMeta}
+                  recentStockCodes={recentStockCodes}
                   onChange={(code) => {
                     setStockCode(code);
                     setExpiryDate("");

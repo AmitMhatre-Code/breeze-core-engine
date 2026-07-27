@@ -20,6 +20,17 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.3.0",
+    date: "27-Jul-2026",
+    releaseKind: "minor",
+    summary:
+      "Quick-select your most-traded scrips, and see live progress while a large order is placed.",
+    changes: [
+      "Place Order, Basket Order, and Strategy Builder now show your most commonly traded underlyings as one-click pills right under the scrip search (up to 5, or 3 in the compact ticker layout) — computed once from your last 30 days of trades when you log in and reused for the rest of the session, so you don't have to retype the same few symbols every time.",
+      "The order confirmation modal now shows real progress while a large order is split into exchange-freeze-limited chunks and placed: a progress bar, a live \"chunk X of Y · qty placed\" status line, and a per-leg status marker on each row, instead of a single static \"Placing…\" spinner that looked frozen while the app was actually working through the chunks.",
+    ],
+  },
+  {
     version: "2.2.1",
     date: "26-Jul-2026",
     releaseKind: "patch",

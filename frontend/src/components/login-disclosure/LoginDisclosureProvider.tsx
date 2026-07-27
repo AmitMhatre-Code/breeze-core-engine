@@ -1,11 +1,19 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { usePathname } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LoginDisclosureDialog } from "@/components/login-disclosure/LoginDisclosureDialog";
 import { fetchAuthSession } from "@/lib/auth-session";
-import { fetchDashboardBootstrap } from "@/lib/dashboard-bootstrap";
+import { fetchDashboardBootstrap, hydrateDashboardQueryCache } from "@/lib/dashboard-bootstrap";
 import { composeDisclosureMarkdown } from "@/lib/login-disclosure-content";
 import { acceptLoginDisclosure, fetchLoginDisclosureCurrent } from "@/lib/login-disclosure";
 import { getPreloadedLoginDisclosure } from "@/lib/login-disclosure-preload";
@@ -160,6 +168,30 @@ export function LoginDisclosureProvider({ children }: { children: ReactNode }) {
       staleTime: 30_000,
     });
   }, [needsDisclosure, disclosureLoading, hasDisclosure, queryClient]);
+
+  // Warm the session-scoped bootstrap caches (incl. recently-traded scrips for the
+  // Place Order / Basket Order / Strategy Builder quick-select) once per SPA session —
+  // this provider is mounted once in the root layout, so "authed becomes true" fires
+  // exactly once per full page load, regardless of whether that load lands on
+  // /dashboard or goes straight to another page (that page's own first render should
+  // already see hydrated data). `pendingLogin` alone would miss users whose JWT/broker
+  // session is already valid on load (no fresh login flow to hook into).
+  const bootstrapWarmedRef = useRef(false);
+  useEffect(() => {
+    if (!enabled || !authed || bootstrapWarmedRef.current) return;
+    bootstrapWarmedRef.current = true;
+    void queryClient
+      .fetchQuery({
+        queryKey: ["dashboard", "bootstrap"],
+        queryFn: fetchDashboardBootstrap,
+        staleTime: 30_000,
+      })
+      .then((data) => hydrateDashboardQueryCache(queryClient, data))
+      .catch(() => {
+        bootstrapWarmedRef.current = false;
+        // Best-effort warm-up; the dashboard page (or a direct API call) will fetch normally.
+      });
+  }, [enabled, authed, queryClient]);
 
   const showDisclosureDialog = blocksApp;
   const contentMarkdown = resolvedDoc?.content_markdown ?? "";

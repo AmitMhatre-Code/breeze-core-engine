@@ -10,6 +10,7 @@ from icici_breeze_backend.app.domain.responses import HomeDataResponse
 from icici_breeze_backend.app.services.broker_snapshot_cache import get_snapshot
 from icici_breeze_backend.app.services.dashboard_days_pnl import compute_days_pnl
 from icici_breeze_backend.app.services.dashboard_vix import fetch_vix_headline
+from icici_breeze_backend.app.services.recent_scrips import get_recently_traded_scrips
 from icici_breeze_backend.audit.logger import AuditLogger
 
 _logger = logging.getLogger(__name__)
@@ -148,10 +149,12 @@ def build_dashboard_bootstrap(user_id: str, processor, *, broker_token: str) -> 
         if isinstance(success, dict) and isinstance(success.get("positions"), list):
             positions = success["positions"]
     days_pnl = compute_days_pnl(positions)
+    recent_scrips = get_recently_traded_scrips(user_id, processor)
 
     return {
         "home": home.model_dump(),
         "portfolio": portfolio,
         "vix": vix,
         "days_pnl": days_pnl,
+        "recent_scrips": recent_scrips,
     }

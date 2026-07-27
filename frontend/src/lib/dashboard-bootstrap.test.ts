@@ -30,6 +30,7 @@ describe("hydrateDashboardQueryCache", () => {
         positions_priced: 0,
         positions_missing_reference: 0,
       },
+      recent_scrips: [{ stock_code: "NIFTY", trade_count: 4 }],
     };
 
     hydrateDashboardQueryCache(queryClient, bootstrap);
@@ -40,6 +41,7 @@ describe("hydrateDashboardQueryCache", () => {
     );
     expect(queryClient.getQueryData(["dashboard", "vix"])).toEqual(bootstrap.vix);
     expect(queryClient.getQueryData(["dashboard", "days-pnl"])).toEqual(bootstrap.days_pnl);
+    expect(queryClient.getQueryData(["scrips", "recent"])).toEqual(bootstrap.recent_scrips);
     expect(queryClient.getQueryData(["dashboard", "vix-options"])).toBeUndefined();
   });
 });

@@ -42,6 +42,13 @@ export type PlaceBreakOrderArgs = {
   batch_group_id?: string;
   /** When true, caller stores the parked info message after all legs (multi-leg). */
   defer_parked_finalize?: boolean;
+  /** Fired after each successfully-placed (non-rate-limited) chunk, for progress UI. */
+  onChunkPlaced?: (info: {
+    chunkIndex: number;
+    totalChunks: number;
+    placedQuantity: number;
+    totalQty: number;
+  }) => void;
 };
 
 export type RunBreakOrderResult = {
@@ -148,6 +155,13 @@ export async function runBreakOrderChunks(
     if (res.danger_line) {
       dangers.push(res.danger_line);
     }
+
+    args.onChunkPlaced?.({
+      chunkIndex: res.chunk_index,
+      totalChunks,
+      placedQuantity: successes.reduce((a, b) => a + b, 0),
+      totalQty: Number(args.total_qty) || 0,
+    });
 
     if (chunk >= totalChunks - 1) {
       break;

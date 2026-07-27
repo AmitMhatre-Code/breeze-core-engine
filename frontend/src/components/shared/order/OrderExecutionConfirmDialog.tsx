@@ -4,7 +4,7 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ChunkSizeOrderField } from "@/components/order/ChunkSizeOrderField";
 import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
 import { OrderSideBadge } from "@/components/shared/badges/OrderSideBadge";
@@ -120,6 +120,15 @@ export function OrderExecutionConfirmDialog({
   const router = useRouter();
   const queryClient = useQueryClient();
   const { wait } = useRateLimitCountdown();
+
+  const [progress, setProgress] = useState<{
+    legIndex: number;
+    totalLegs: number;
+    chunkIndex: number;
+    totalChunks: number;
+    placedQty: number;
+    totalQty: number;
+  } | null>(null);
 
   const internalChunk = useBreakChunkQty({
     stockCode,
@@ -336,6 +345,7 @@ export function OrderExecutionConfirmDialog({
 
   const execMut = useMutation({
     mutationFn: async () => {
+      setProgress(null);
       // Re-resolve tolerance legs from fresh LTP at click time so the placed price reflects the
       // market now, not the estimate shown when the dialog opened. The result also updates the
       // cache so the preview and margin reflect what was actually sent.
@@ -374,10 +384,19 @@ export function OrderExecutionConfirmDialog({
       let parkedReason: string | undefined;
       let placedAny = false;
 
-      for (const pl of placements) {
+      for (let legIndex = 0; legIndex < placements.length; legIndex++) {
+        const pl = placements[legIndex]!;
         const l = pl.leg;
         const qn = Math.round(l.quantity);
         if (qn <= 0) continue;
+        setProgress({
+          legIndex,
+          totalLegs: placements.length,
+          chunkIndex: 0,
+          totalChunks: 1,
+          placedQty: 0,
+          totalQty: qn,
+        });
         const out = await runBreakOrderChunks({
           product_type: productType,
           stock_code: stockCode,
@@ -394,6 +413,15 @@ export function OrderExecutionConfirmDialog({
           from_parked_execution: sourceParkedIds.length > 0,
           batch_group_id: batchGroupId,
           defer_parked_finalize: deferParkedFinalize,
+          onChunkPlaced: (info) =>
+            setProgress({
+              legIndex,
+              totalLegs: placements.length,
+              chunkIndex: info.chunkIndex,
+              totalChunks: info.totalChunks,
+              placedQty: info.placedQuantity,
+              totalQty: info.totalQty,
+            }),
         });
         if (!out.ok) {
           throw new Error(out.terminalError ?? "Order leg failed");
@@ -481,6 +509,34 @@ export function OrderExecutionConfirmDialog({
 
   const pending = execMut.isPending || parkMut.isPending;
 
+  const progressFraction =
+    progress != null
+      ? Math.min(
+          1,
+          (progress.legIndex +
+            (progress.totalChunks > 0
+              ? (progress.chunkIndex + 1) / progress.totalChunks
+              : 0)) /
+            Math.max(1, progress.totalLegs),
+        )
+      : 0;
+
+  const progressLabel = progress
+    ? [
+        progress.totalLegs > 1
+          ? `Leg ${progress.legIndex + 1} of ${progress.totalLegs}`
+          : null,
+        progress.totalChunks > 1
+          ? `chunk ${progress.chunkIndex + 1} of ${progress.totalChunks}`
+          : null,
+        `${progress.placedQty.toLocaleString("en-IN")} / ${progress.totalQty.toLocaleString(
+          "en-IN",
+        )} qty`,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
+
   return (
     <Modal
       open={open}
@@ -528,9 +584,44 @@ export function OrderExecutionConfirmDialog({
               expiryDisplay,
               l.strike,
             );
+            const legStatus =
+              progress == null
+                ? null
+                : idx < progress.legIndex
+                  ? "done"
+                  : idx === progress.legIndex
+                    ? execMut.isError
+                      ? "failed"
+                      : "active"
+                    : "pending";
             return (
               <li key={`${l.strike}-${l.right}-${idx}`} className="px-1 py-2.5">
                 <div className="flex w-max min-w-full flex-nowrap items-center gap-3 font-mono text-sm font-normal tabular-nums text-foreground">
+                  {legStatus ? (
+                    <span
+                      className="inline-flex size-4 shrink-0 items-center justify-center"
+                      aria-hidden
+                      title={
+                        legStatus === "done"
+                          ? "Placed"
+                          : legStatus === "active"
+                            ? "Placing…"
+                            : legStatus === "failed"
+                              ? "Failed"
+                              : "Pending"
+                      }
+                    >
+                      {legStatus === "done" ? (
+                        <span className="text-up">✓</span>
+                      ) : legStatus === "active" ? (
+                        <span className="size-2 animate-pulse rounded-full bg-accent-strong" />
+                      ) : legStatus === "failed" ? (
+                        <span className="text-down">×</span>
+                      ) : (
+                        <span className="size-1.5 rounded-full bg-border" />
+                      )}
+                    </span>
+                  ) : null}
                   <span
                     className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap"
                     title={label}
@@ -678,6 +769,20 @@ export function OrderExecutionConfirmDialog({
           </div>
         ) : null}
 
+        {execMut.isPending && progressLabel ? (
+          <div className="mt-3 space-y-1.5" role="status" aria-live="polite">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-border-soft">
+              <div
+                className="h-full rounded-full bg-accent-strong transition-[width] duration-300"
+                style={{ width: `${Math.round(progressFraction * 100)}%` }}
+              />
+            </div>
+            <p className="font-mono text-xs tabular-nums text-muted">
+              Placing order — {progressLabel}. Don&apos;t close this window.
+            </p>
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-2 pt-3 sm:grid-cols-2 sm:gap-3">
           <button
             type="button"
@@ -718,7 +823,13 @@ export function OrderExecutionConfirmDialog({
             <AsyncLabelSpan
               busy={execMut.isPending || toleranceResolving}
               idleLabel="Confirm"
-              busyLabel={toleranceResolving ? "Pricing…" : "Placing…"}
+              busyLabel={
+                toleranceResolving
+                  ? "Pricing…"
+                  : progressLabel
+                    ? `Placing… ${Math.round(progressFraction * 100)}%`
+                    : "Placing…"
+              }
             />
           </button>
         </div>

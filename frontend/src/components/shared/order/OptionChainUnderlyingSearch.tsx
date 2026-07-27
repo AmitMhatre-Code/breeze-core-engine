@@ -32,6 +32,12 @@ type Props = {
    * stacked on its own line below — needs a wide-enough container to avoid wrapping.
    */
   quoteMetaInline?: boolean;
+  /**
+   * Stock codes the user has most commonly traded in the last month, most-traded first.
+   * Rendered as a one-click pill row directly under the input (5 for `variant="field"`, 3 for
+   * `variant="ticker"`). Pass already filtered to this page's own `underlyings` list.
+   */
+  recentStockCodes?: string[];
 };
 
 function SearchIcon({ className }: { className?: string }) {
@@ -92,6 +98,7 @@ export function OptionChainUnderlyingSearch({
   quoteMeta = null,
   chainBar = false,
   quoteMetaInline = false,
+  recentStockCodes = [],
 }: Props) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -276,6 +283,26 @@ export function OptionChainUnderlyingSearch({
       ? `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`
       : null;
 
+  const recentPills =
+    !open && recentStockCodes.length > 0 ? (
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        {recentStockCodes
+          .slice(0, variant === "ticker" ? 3 : 5)
+          .map((code) => (
+            <button
+              key={code}
+              type="button"
+              disabled={disabled}
+              onClick={() => select(code)}
+              title={`Recently traded: ${code}`}
+              className="rounded-full border border-border-soft bg-panel2 px-2.5 py-1 font-mono text-xs font-medium tracking-tight text-muted transition hover:border-accent hover:text-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {code}
+            </button>
+          ))}
+      </div>
+    ) : null;
+
   if (variant === "ticker") {
     const rowClass = chainBar
       ? `flex min-w-0 items-center gap-x-2.5 gap-y-1 sm:gap-x-3 ${
@@ -360,6 +387,7 @@ export function OptionChainUnderlyingSearch({
         ) : (
           tickerRow
         )}
+        {recentPills}
 
         {open && !disabled ? (
           <>
@@ -440,6 +468,7 @@ export function OptionChainUnderlyingSearch({
           />
         </div>
       </div>
+      {recentPills}
 
       {open && !disabled ? (
         <>
