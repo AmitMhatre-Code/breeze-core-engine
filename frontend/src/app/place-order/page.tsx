@@ -525,9 +525,11 @@ function PlaceOrderPageInner() {
               aria-label="Options order entry"
             >
               <div className="flex flex-col gap-4 p-[18px]">
-                <div className="flex items-end gap-2.5">
+                <div className="flex items-start gap-2.5">
                   <div className="shrink-0">
-                    {/* <span className={sb.fieldLabel}>Exchange</span> */}
+                    <span className={`${sb.fieldLabel} invisible`} aria-hidden>
+                      Exchange
+                    </span>
                     <ExchangeFlipToggle
                       value={segment}
                       disabled={contractFieldsLocked}
@@ -559,15 +561,15 @@ function PlaceOrderPageInner() {
                     />
                   </div>
                   <div className="shrink-0">
-                    {/* <span className={sb.fieldLabel}>Type</span> */}
-                    {/* <div className="flex h-11 items-center"> */}
-                      <OptionTypeBadge
-                        right={right}
-                        disabled={contractFieldsLocked}
-                        onToggle={setRight}
-                        className="inline-flex h-10 items-center justify-center rounded-[9px] border-[1.5px] px-3.5 font-mono text-table font-bold uppercase tracking-[.04em] transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:pointer-events-none disabled:opacity-50"
-                      />
-                    {/* </div> */}
+                    <span className={`${sb.fieldLabel} invisible`} aria-hidden>
+                      Type
+                    </span>
+                    <OptionTypeBadge
+                      right={right}
+                      disabled={contractFieldsLocked}
+                      onToggle={setRight}
+                      className="inline-flex h-10 items-center justify-center rounded-[9px] border-[1.5px] px-3.5 font-mono text-table font-bold uppercase tracking-[.04em] transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:pointer-events-none disabled:opacity-50"
+                    />
                   </div>
                 </div>
 
