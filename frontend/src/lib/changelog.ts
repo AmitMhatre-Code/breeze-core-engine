@@ -20,6 +20,20 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.3.1",
+    date: "28-Jul-2026",
+    releaseKind: "patch",
+    summary:
+      "Margin figures now tally across the navbar, Dashboard and Portfolio — including a fix for Margin used always showing ₹0.",
+    changes: [
+      "Fixed Dashboard \"Margin used\" always showing ₹0: it was computed the wrong way round and clamped to zero whenever margin was actually blocked. It now shows the capital ICICI has blocked against your positions.",
+      "Free margin stays ICICI's own available balance, and the ELM buffer is shown as a separate line beneath it (\"− ELM … after buffer\") instead of being quietly subtracted — so the number on the Dashboard matches what ICICI tells you is available to trade.",
+      "Portfolio \"Span + ELM margin\" now breaks the figure down into what's actually blocked plus the ELM buffer, so you can see which part of it is our conservative overlay rather than broker-blocked capital.",
+      "Margin and capital figures are formatted consistently everywhere (navbar, Dashboard, Portfolio), so the same amount reads the same on every screen.",
+      "Added an info tooltip on the margin tiles explaining that ICICI's margin API doesn't always report the amount upstreamed to the exchange, which is why blocked-margin figures can occasionally differ slightly between screens or from ICICI's own portal.",
+    ],
+  },
+  {
     version: "2.3.0",
     date: "27-Jul-2026",
     releaseKind: "minor",

@@ -21,6 +21,11 @@ export type PortfolioTotals = {
   totalCarry: number | null;
   /** Netted Span + ELM across the whole portfolio (per-underlying netted, summed). */
   totalMargin: number | null;
+  /** Netted SPAN only — matches what ICICI actually blocks. */
+  spanMargin: number | null;
+  /** ELM overlay (2% notional on index shorts) — additive, our conservative
+   * buffer that ICICI does not reserve. Null when SPAN itself is unavailable. */
+  elmMargin: number | null;
   /** Annualised carry return on the netted portfolio margin. */
   carryReturnPct: number | null;
   groupCount: number;
@@ -68,6 +73,8 @@ export function computePortfolioTotals(
     totalMtm: mtmAny ? mtm : null,
     totalCarry: carryAny ? carry : null,
     totalMargin,
+    spanMargin: span,
+    elmMargin: span != null ? elm : null,
     carryReturnPct: coerceNum(portfolio?.carry_margin_returns),
     groupCount: groups.length,
     legCount,

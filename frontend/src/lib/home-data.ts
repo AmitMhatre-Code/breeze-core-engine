@@ -71,8 +71,12 @@ export function getHomeMarginTiles(margin: Record<string, unknown> | undefined):
   const cash = num(o.cash_limit);
   const ute = num(o.actual_margin_ute);
   const funds = avl;
+  // Margin used = capital blocked = cash_limit − available (≡ −actual_margin_ute,
+  // which ICICI reports negative when utilised). This was previously avl − cash,
+  // the negated value, which clamps to ₹0 whenever margin is actually blocked —
+  // the "Margin used = ₹0" bug on the Dashboard.
   let marginUsed: number | null = null;
-  if (avl != null && cash != null) marginUsed = Math.max(0, avl - cash);
+  if (avl != null && cash != null) marginUsed = Math.max(0, cash - avl);
   else if (ute != null) marginUsed = Math.max(0, Math.abs(ute));
   return { funds, marginUsed };
 }

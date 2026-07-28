@@ -1,7 +1,7 @@
 // Client component so auth cookies are included with browser fetch.
 "use client";
 
-import { useLayoutEffect, useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { apiClient } from "@/lib/api-client";
@@ -21,7 +21,8 @@ import {
   computePortfolioTotals,
   formatSignedRupees,
 } from "@/lib/portfolio/totals";
-import { formatIndianMoneyCompact } from "@/lib/format-money-in";
+import { formatMarginCompact } from "@/lib/format-money-in";
+import { MarginFiguresInfoTrigger } from "@/components/shared/MarginFiguresInfo";
 
 type IciciApiResponse = {
   Status: number;
@@ -177,13 +178,18 @@ function PortfolioSummaryPanel({
       />
       <SummaryTile
         label="Span + ELM margin"
+        info={<MarginFiguresInfoTrigger />}
         value={
           totals.totalMargin != null
-            ? formatIndianMoneyCompact(totals.totalMargin, { shortSuffix: true })
+            ? formatMarginCompact(totals.totalMargin)
             : "—"
         }
         valueClassName="text-foreground"
-        caption="Blocked across positions"
+        caption={
+          totals.spanMargin != null
+            ? `${formatMarginCompact(totals.spanMargin)} blocked + ${formatMarginCompact(totals.elmMargin ?? 0)} ELM buffer`
+            : "Blocked across positions"
+        }
       />
       <SummaryTile
         label="Carry return"
@@ -204,16 +210,19 @@ function SummaryTile({
   value,
   valueClassName,
   caption,
+  info,
 }: {
   label: string;
   value: string;
   valueClassName: string;
   caption: string;
+  info?: ReactNode;
 }) {
   return (
     <div className="p-4">
-      <div className="text-heading uppercase tracking-wide text-faint">
-        {label}
+      <div className="flex items-center gap-1.5 text-heading uppercase tracking-wide text-faint">
+        <span>{label}</span>
+        {info ?? null}
       </div>
       <div
         className={`mt-1.5 font-mono text-title font-semibold tabular-nums ${valueClassName}`}

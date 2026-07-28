@@ -2,6 +2,7 @@
 
 import { apiClient } from "@/lib/api-client";
 import type { HomeDataResponse } from "@/lib/home-data";
+import type { NettedMargin } from "@/lib/portfolio/groupPositions";
 
 export type Vix30Point = { date: string; value: number };
 
@@ -37,6 +38,8 @@ export type PortfolioApiResponse = {
   Error?: string;
   Success?: {
     positions?: PortfolioPositionRow[];
+    /** Whole-portfolio netted SPAN + ELM (per-underlying netted, summed). */
+    portfolio?: NettedMargin;
   };
 };
 

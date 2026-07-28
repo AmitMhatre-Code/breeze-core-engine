@@ -5,7 +5,7 @@ const CRORE = 10_000_000;
 
 export function formatIndianMoneyCompact(
   amount: number,
-  opts?: { shortSuffix?: boolean; skipK?: boolean },
+  opts?: { shortSuffix?: boolean; skipK?: boolean; lacDecimals?: number },
 ): string {
   if (!Number.isFinite(amount)) return "—";
   const abs = Math.abs(amount);
@@ -18,8 +18,9 @@ export function formatIndianMoneyCompact(
     );
   }
   if (abs >= LAC) {
+    const lacDp = opts?.lacDecimals ?? 2;
     return wrapNegative(
-      `₹${(abs / LAC).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${sep}${short ? "L" : "Lac"}`,
+      `₹${(abs / LAC).toLocaleString("en-IN", { minimumFractionDigits: lacDp, maximumFractionDigits: lacDp })}${sep}${short ? "L" : "Lac"}`,
     );
   }
   if (!opts?.skipK && abs >= 1000) {
@@ -30,6 +31,17 @@ export function formatIndianMoneyCompact(
   return wrapNegative(
     `₹${abs.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`,
   );
+}
+
+/**
+ * Margin/capital figures (free margin, margin used, SPAN, ELM, capital) shown
+ * on the navbar, Dashboard and Portfolio. Crore ≥ ₹1 Cr (2 dp), Lakh in the
+ * ₹1 L–₹1 Cr band (1 dp, "L" suffix), and the shared K / plain-₹ fallback below
+ * ₹1 L. Deliberately separate from formatIndianMoneyCompact's default so P&L and
+ * per-leg values keep their existing 2-dp Lakh format.
+ */
+export function formatMarginCompact(amount: number): string {
+  return formatIndianMoneyCompact(amount, { shortSuffix: true, lacDecimals: 1 });
 }
 
 export function moneyToneClass(amount: number): string {

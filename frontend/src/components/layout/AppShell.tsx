@@ -32,7 +32,7 @@ import {
   getCustomerDisplayName,
   type HomeDataResponse,
 } from "@/lib/home-data";
-import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import { formatMarginCompact, moneyToneClass } from "@/lib/format-money-in";
 import { useWsHealth } from "@/lib/use-ws-health";
 import { useIndexQuotes, type IndexQuote } from "@/lib/use-index-quotes";
 
@@ -165,7 +165,7 @@ export function AppShell({
   const freeMarginDisplay = useMemo(() => {
     if (freeMargin == null || !Number.isFinite(freeMargin)) return null;
     return {
-      text: formatIndianMoneyCompact(freeMargin, { shortSuffix: true }),
+      text: formatMarginCompact(freeMargin),
       className: moneyToneClass(freeMargin),
     };
   }, [freeMargin]);

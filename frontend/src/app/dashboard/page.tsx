@@ -31,7 +31,12 @@ import {
   type DashboardVixOptions,
   type PortfolioApiResponse,
 } from "@/lib/dashboard-bootstrap";
-import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import {
+  formatIndianMoneyCompact,
+  formatMarginCompact,
+  moneyToneClass,
+} from "@/lib/format-money-in";
+import { MarginFiguresInfoTrigger } from "@/components/shared/MarginFiguresInfo";
 import { ApiHttpError, apiClient } from "@/lib/api-client";
 import {
   getMarketOutlook,
@@ -408,6 +413,15 @@ export default function DashboardPage() {
         ? marginUsedFromPositions
         : marginUsedFromHome ?? null;
 
+  // ELM overlay: our conservative buffer (2% notional on index shorts) that ICICI
+  // does NOT block, so it never reduces "Free margin" (which stays ICICI's avl).
+  // Shown as a separate line to derive the headroom left after reserving for it.
+  const portfolioElm = coerceMarginField(
+    portData?.Success?.portfolio?.elm_margin_required,
+  );
+  const freeAfterElm =
+    funds != null && portfolioElm != null ? funds - portfolioElm : null;
+
   const openPnl = useMemo(() => sumOpenPositionsPnl(portData), [portData]);
 
   const dashboardWarnings = useMemo(() => {
@@ -628,11 +642,12 @@ export default function DashboardPage() {
           />
           <MetricTile
             label="Margin used"
+            info={<MarginFiguresInfoTrigger />}
             loading={accountLoading}
             value={
               marginUsedDisplay == null
                 ? null
-                : formatIndianMoneyCompact(marginUsedDisplay, { shortSuffix: true })
+                : formatMarginCompact(marginUsedDisplay)
             }
             caption={
               marginUsedPct != null ? <ProgressBar pct={marginUsedPct} /> : undefined
@@ -641,10 +656,23 @@ export default function DashboardPage() {
           <MetricTile
             label="Free margin"
             loading={accountLoading}
-            value={
-              funds == null ? null : formatIndianMoneyCompact(funds, { shortSuffix: true })
+            value={funds == null ? null : formatMarginCompact(funds)}
+            caption={
+              portfolioElm != null && portfolioElm > 0 && freeAfterElm != null ? (
+                <span className="flex flex-col gap-0.5">
+                  <span>Cash + collateral</span>
+                  <span>
+                    − ELM {formatMarginCompact(portfolioElm)} ={" "}
+                    <span className="text-foreground">
+                      {formatMarginCompact(freeAfterElm)}
+                    </span>{" "}
+                    after buffer
+                  </span>
+                </span>
+              ) : (
+                "Cash + collateral"
+              )
             }
-            caption="Cash + collateral"
           />
         </div>
 
@@ -940,17 +968,20 @@ function MetricTile({
   value,
   toneClassName,
   caption,
+  info,
 }: {
   label: string;
   loading: boolean;
   value: string | null;
   toneClassName?: string;
   caption?: ReactNode;
+  info?: ReactNode;
 }) {
   return (
     <div className="app-card p-[14px_15px]">
-      <div className="text-heading uppercase tracking-wide text-faint">
-        {label}
+      <div className="flex items-center gap-1.5 text-heading uppercase tracking-wide text-faint">
+        <span>{label}</span>
+        {info ?? null}
       </div>
       <div
         className={[
