@@ -707,11 +707,13 @@ type CancelPrompt =
 function CancelConfirmDialog({
   prompt,
   pending,
+  progress,
   onClose,
   onConfirm,
 }: {
   prompt: CancelPrompt | null;
   pending: boolean;
+  progress: { orderIndex: number; totalOrders: number } | null;
   onClose: () => void;
   onConfirm: () => void;
 }) {
@@ -745,6 +747,24 @@ function CancelConfirmDialog({
         </span>
       </div>
       <p className="mb-[18px] text-heading leading-relaxed text-muted">{body}</p>
+      {pending && progress ? (
+        <div className="mb-[18px] space-y-1.5" role="status" aria-live="polite">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-border-soft">
+            <div
+              className="h-full rounded-full bg-accent-strong transition-[width] duration-300"
+              style={{
+                width: `${Math.round(
+                  ((progress.orderIndex + 1) / Math.max(1, progress.totalOrders)) * 100,
+                )}%`,
+              }}
+            />
+          </div>
+          <p className="font-mono text-xs tabular-nums text-muted">
+            Cancelling order {Math.min(progress.orderIndex + 1, progress.totalOrders)} of{" "}
+            {progress.totalOrders}. Don&apos;t close this window.
+          </p>
+        </div>
+      ) : null}
       <div className="flex gap-2.5">
         <button
           type="button"
@@ -765,7 +785,11 @@ function CancelConfirmDialog({
           <AsyncLabelSpan
             busy={pending}
             idleLabel="Cancel order"
-            busyLabel="Cancelling…"
+            busyLabel={
+              progress && progress.totalOrders > 1
+                ? `Cancelling ${progress.orderIndex + 1}/${progress.totalOrders}…`
+                : "Cancelling…"
+            }
           />
         </button>
       </div>
@@ -777,12 +801,14 @@ function ModifyLegDialog({
   target,
   pending,
   error,
+  progress,
   onClose,
   onConfirm,
 }: {
   target: ModifyLegTarget | null;
   pending: boolean;
   error: string | null;
+  progress: { stepIndex: number; totalSteps: number } | null;
   onClose: () => void;
   onConfirm: (quantity: string, price: string) => void;
 }) {
@@ -898,6 +924,24 @@ function ModifyLegDialog({
         </label>
       </div>
       {error ? <p className="mb-3 text-xs text-down">{error}</p> : null}
+      {pending && progress ? (
+        <div className="mb-3 space-y-1.5" role="status" aria-live="polite">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-border-soft">
+            <div
+              className="h-full rounded-full bg-accent-strong transition-[width] duration-300"
+              style={{
+                width: `${Math.round(
+                  ((progress.stepIndex + 1) / Math.max(1, progress.totalSteps)) * 100,
+                )}%`,
+              }}
+            />
+          </div>
+          <p className="font-mono text-xs tabular-nums text-muted">
+            Modifying order {Math.min(progress.stepIndex + 1, progress.totalSteps)} of{" "}
+            {progress.totalSteps}. Don&apos;t close this window.
+          </p>
+        </div>
+      ) : null}
       <div className="flex gap-2.5">
         <button
           type="button"
@@ -914,7 +958,15 @@ function ModifyLegDialog({
           aria-busy={pending}
           onClick={() => onConfirm(quantity.trim(), price.trim())}
         >
-          <AsyncLabelSpan busy={pending} idleLabel="Modify order" busyLabel="Modifying…" />
+          <AsyncLabelSpan
+            busy={pending}
+            idleLabel="Modify order"
+            busyLabel={
+              progress && progress.totalSteps > 1
+                ? `Modifying ${progress.stepIndex + 1}/${progress.totalSteps}…`
+                : "Modifying…"
+            }
+          />
         </button>
       </div>
     </Modal>
@@ -955,8 +1007,16 @@ function OrdersBody() {
   >({});
   const [parkedError, setParkedError] = useState<string | null>(null);
   const [cancelPrompt, setCancelPrompt] = useState<CancelPrompt | null>(null);
+  const [cancelProgress, setCancelProgress] = useState<{
+    orderIndex: number;
+    totalOrders: number;
+  } | null>(null);
   const [modifyTarget, setModifyTarget] = useState<ModifyLegTarget | null>(null);
   const [modifyError, setModifyError] = useState<string | null>(null);
+  const [modifyProgress, setModifyProgress] = useState<{
+    stepIndex: number;
+    totalSteps: number;
+  } | null>(null);
 
   const queryString = useMemo(() => {
     if (!appliedRange) return "";
@@ -1033,12 +1093,15 @@ function OrdersBody() {
     mutationFn: (payload: {
       order_ids: string[];
       cancel_details: { option: string; open_quantity: number }[];
-    }) =>
-      runCancelOrdersWithPacing({
+    }) => {
+      setCancelProgress(null);
+      return runCancelOrdersWithPacing({
         orderIds: payload.order_ids,
         cancel_details: payload.cancel_details,
         onRateLimitWait: wait,
-      }),
+        onOrderCancelled: setCancelProgress,
+      });
+    },
     onSuccess: async () => {
       setSelected(new Set());
       setCancelPrompt(null);
@@ -1049,6 +1112,7 @@ function OrdersBody() {
   const modifyLegMut = useMutation({
     mutationFn: (payload: { new_quantity: string; new_price: string }) => {
       if (!modifyTarget) throw new Error("Nothing to modify");
+      setModifyProgress(null);
       return runModifyLegWithPacing({
         stock_code: modifyTarget.contract.stock_code,
         expiry_date: modifyTarget.contract.expiry_date,
@@ -1063,6 +1127,7 @@ function OrdersBody() {
         rule_id: modifyTarget.ruleId,
         scrip_key: modifyTarget.scripKey,
         onRateLimitWait: wait,
+        onStepDone: setModifyProgress,
       });
     },
     onSuccess: (res) => {
@@ -1271,12 +1336,15 @@ function OrdersBody() {
     mutationFn: (payload: {
       order_ids: string[];
       cancel_details: { option: string; open_quantity: number }[];
-    }) =>
-      runCancelOrdersWithPacing({
+    }) => {
+      setCancelProgress(null);
+      return runCancelOrdersWithPacing({
         orderIds: payload.order_ids,
         cancel_details: payload.cancel_details,
         onRateLimitWait: wait,
-      }),
+        onOrderCancelled: setCancelProgress,
+      });
+    },
     onSuccess: async () => {
       setExitRuleSelected(new Set());
       setCancelPrompt(null);
@@ -2984,16 +3052,22 @@ function OrdersBody() {
       <CancelConfirmDialog
         prompt={cancelPrompt}
         pending={cancelPromptPending}
-        onClose={() => setCancelPrompt(null)}
+        progress={cancelProgress}
+        onClose={() => {
+          setCancelPrompt(null);
+          setCancelProgress(null);
+        }}
         onConfirm={confirmCancel}
       />
       <ModifyLegDialog
         target={modifyTarget}
         pending={modifyLegMut.isPending}
         error={modifyError}
+        progress={modifyProgress}
         onClose={() => {
           setModifyTarget(null);
           setModifyError(null);
+          setModifyProgress(null);
         }}
         onConfirm={confirmModify}
       />

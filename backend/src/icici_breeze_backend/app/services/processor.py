@@ -42,7 +42,7 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import elm_addon
 from icici_breeze_backend.app.services.options_strategy_engine.types import TradeLeg
 from icici_breeze_backend.app.services.reference_data.bhavcopy_store import _lookup_bhav_row
-from icici_breeze_backend.app.services.leg_order_redistribution import LegRedistributionPlan
+from icici_breeze_backend.app.services.leg_order_redistribution import LegModStep
 
 _logger = logging.getLogger(__name__)
 
@@ -1719,113 +1719,103 @@ class processor():
             success_idx, failures, list(orders), cancel_details
         )
 
-    def execute_leg_modification(
+    def execute_leg_modification_step(
         self,
         user_id,
-        plan: LegRedistributionPlan,
+        step: LegModStep,
         *,
         contract: dict,
         new_price: str | None,
         current_price: str | None,
     ) -> dict:
-        """Carry out a leg-modify plan: cancel/modify existing orders, place new chunks."""
+        """Carry out exactly one step (cancel/modify/place) of a leg-modify plan.
+
+        Each call to `plan_leg_redistribution` + `plan_steps` is pure/deterministic given the
+        same (orders, new_quantity, new_price) inputs, so the caller re-derives the same ordered
+        step list every request and executes step_index once — no cross-request state is kept
+        here, mirroring `break_order_place_chunk`.
+        """
         from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
         audit = AuditLogger(None)
-        cancelled: list[str] = []
-        modified: list[dict] = []
-        placed: list[dict] = []
-        failures: list[tuple[str, str]] = []
-        rate_limited = False
         price_changed = (
             new_price is not None
             and str(new_price).strip() != ""
             and str(new_price) != str(current_price)
         )
 
-        for order_id in plan.cancel_order_ids:
-            if rate_limited:
-                break
+        if step.kind == "cancel":
+            order_id = step.order_id
             one = self.cancel_order_single(user_id, order_id)
             if one["success"]:
-                cancelled.append(order_id)
                 audit.log_operation(user_id, OperationType.ORDER_CANCEL, "Order", order_id, action_status="success")
-            else:
-                failures.append((order_id, str(one.get("error") or "Unknown error")))
-                audit.log_operation(
-                    user_id, OperationType.ORDER_CANCEL, "Order", order_id,
-                    action_status="failure", error_details=str(one.get("error") or ""),
-                )
-                if one.get("rate_limited"):
-                    rate_limited = True
+                return {"success": True, "order_id": order_id, "quantity": None, "price": None, "error": None, "rate_limited": False}
+            audit.log_operation(
+                user_id, OperationType.ORDER_CANCEL, "Order", order_id,
+                action_status="failure", error_details=str(one.get("error") or ""),
+            )
+            return {
+                "success": False, "order_id": order_id, "quantity": None, "price": None,
+                "error": str(one.get("error") or "Unknown error"),
+                "rate_limited": bool(one.get("rate_limited")),
+            }
 
-        for item in plan.modify:
-            if rate_limited:
-                break
-            order_id = item["order_id"]
+        if step.kind == "modify":
+            order_id = step.order_id
             # ICICI's modify_order rejects a quantity-only change with a generic
             # error unless price is resent too — omitting it isn't treated as
             # "leave price alone", so always resend the (possibly unchanged) price.
+            price_to_send = str(new_price) if price_changed else (
+                str(current_price) if current_price not in (None, "") else None
+            )
             one = self.modify_order_single(
                 user_id,
-                f"{order_id}|{item['exchange_code']}",
-                quantity=str(item["quantity"]),
-                price=str(new_price) if price_changed else (
-                    str(current_price) if current_price not in (None, "") else None
-                ),
+                f"{order_id}|{step.exchange_code}",
+                quantity=str(step.quantity),
+                price=price_to_send,
             )
+            out_price = new_price if price_changed else current_price
             if one["success"]:
-                modified.append({"order_id": order_id, "quantity": item["quantity"], "price": new_price if price_changed else current_price})
                 audit.log_operation(user_id, OperationType.ORDER_MODIFY, "Order", order_id, action_status="success")
-            else:
-                failures.append((order_id, str(one.get("error") or "Unknown error")))
-                audit.log_operation(
-                    user_id, OperationType.ORDER_MODIFY, "Order", order_id,
-                    action_status="failure", error_details=str(one.get("error") or ""),
-                )
-                if one.get("rate_limited"):
-                    rate_limited = True
-
-        for qty in plan.place_new_quantities:
-            if rate_limited:
-                break
-            response = self.place_order(
-                user_id=user_id,
-                product_type=contract["product_type"],
-                stock_code=contract["stock_code"],
-                action=contract["action"],
-                strike_price=contract["strike_price"],
-                right=contract["right"],
-                price=str(new_price if price_changed else current_price),
-                expiry_date=contract["expiry_date"],
-                quantity=qty,
-                exchange_code=contract["exchange_code"],
+                return {"success": True, "order_id": order_id, "quantity": step.quantity, "price": out_price, "error": None, "rate_limited": False}
+            audit.log_operation(
+                user_id, OperationType.ORDER_MODIFY, "Order", order_id,
+                action_status="failure", error_details=str(one.get("error") or ""),
             )
-            ok = isinstance(response, dict) and response.get("Status") == 200
-            order_id = (response or {}).get("Success", {}).get("order_id") if ok else None
-            if ok and order_id:
-                placed.append({"order_id": str(order_id), "quantity": qty, "price": new_price if price_changed else current_price})
-                audit.log_operation(user_id, OperationType.ORDER_PLACE, "Order", str(order_id), action_status="success")
-            else:
-                err = str((response or {}).get("Error") or "Unknown error")
-                failures.append((f"new order (qty={qty})", err))
-                audit.log_operation(user_id, OperationType.ORDER_PLACE, "Order", None, action_status="failure", error_details=err)
-                rl, _ = _order_rate_limit_flags(response)
-                if rl:
-                    rate_limited = True
-                _logger.warning(
-                    "execute_leg_modification place_order failed: user_id=%s qty=%s status=%s error=%s rate_limited=%s",
-                    user_id, qty, (response or {}).get("Status"), err, rl,
-                )
+            return {
+                "success": False, "order_id": order_id, "quantity": step.quantity, "price": out_price,
+                "error": str(one.get("error") or "Unknown error"),
+                "rate_limited": bool(one.get("rate_limited")),
+            }
 
-        return {
-            "cancelled": cancelled,
-            "modified": modified,
-            "placed": placed,
-            "failures": failures,
-            "all_ok": not failures,
-            "rate_limited": rate_limited,
-        }
+        # step.kind == "place"
+        qty = step.quantity
+        out_price = new_price if price_changed else current_price
+        response = self.place_order(
+            user_id=user_id,
+            product_type=contract["product_type"],
+            stock_code=contract["stock_code"],
+            action=contract["action"],
+            strike_price=contract["strike_price"],
+            right=contract["right"],
+            price=str(out_price),
+            expiry_date=contract["expiry_date"],
+            quantity=qty,
+            exchange_code=contract["exchange_code"],
+        )
+        ok = isinstance(response, dict) and response.get("Status") == 200
+        order_id = (response or {}).get("Success", {}).get("order_id") if ok else None
+        if ok and order_id:
+            audit.log_operation(user_id, OperationType.ORDER_PLACE, "Order", str(order_id), action_status="success")
+            return {"success": True, "order_id": str(order_id), "quantity": qty, "price": out_price, "error": None, "rate_limited": False}
+        err = str((response or {}).get("Error") or "Unknown error")
+        audit.log_operation(user_id, OperationType.ORDER_PLACE, "Order", None, action_status="failure", error_details=err)
+        rl, _ = _order_rate_limit_flags(response)
+        _logger.warning(
+            "execute_leg_modification_step place_order failed: user_id=%s qty=%s status=%s error=%s rate_limited=%s",
+            user_id, qty, (response or {}).get("Status"), err, rl,
+        )
+        return {"success": False, "order_id": None, "quantity": qty, "price": out_price, "error": err, "rate_limited": rl}
 
     def list_parked_orders(self, user_id: str) -> list[ParkedOrderListItem]:
         return parked_orders_repo.list_parked_orders(user_id)

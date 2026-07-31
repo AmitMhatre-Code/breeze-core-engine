@@ -11,6 +11,7 @@ the plan that `processor.execute_leg_modification` then carries out.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal, Optional
 
 import icici_breeze_backend.app.core.config as cfg
 
@@ -43,6 +44,40 @@ class LegRedistributionPlan:
 
 class LegModifyValidationError(ValueError):
     """Raised when the requested new total quantity is below the leg's filled floor."""
+
+
+@dataclass
+class LegModStep:
+    """One broker-call-sized unit of work from a `LegRedistributionPlan`."""
+
+    kind: Literal["cancel", "modify", "place"]
+    order_id: Optional[str]
+    exchange_code: Optional[str]
+    quantity: int
+
+
+def plan_steps(plan: LegRedistributionPlan) -> list[LegModStep]:
+    """Flatten a plan into an ordered list of single broker-call steps.
+
+    Order matters and must match `processor.execute_leg_modification`'s historical
+    behavior: all cancels first, then all modifies, then all new placements — so a
+    retry that resumes at a given step index reproduces the same effective sequence.
+    """
+    steps: list[LegModStep] = []
+    for order_id in plan.cancel_order_ids:
+        steps.append(LegModStep(kind="cancel", order_id=order_id, exchange_code=None, quantity=0))
+    for item in plan.modify:
+        steps.append(
+            LegModStep(
+                kind="modify",
+                order_id=item["order_id"],
+                exchange_code=item["exchange_code"],
+                quantity=item["quantity"],
+            )
+        )
+    for qty in plan.place_new_quantities:
+        steps.append(LegModStep(kind="place", order_id=None, exchange_code=None, quantity=qty))
+    return steps
 
 
 def filled_floor(orders: list[LegOrderState]) -> int:

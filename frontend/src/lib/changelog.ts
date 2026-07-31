@@ -20,6 +20,17 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.4.0",
+    date: "31-Jul-2026",
+    releaseKind: "minor",
+    summary:
+      "Order Modify and Cancel now show live per-order progress, matching the placement confirmation modal.",
+    changes: [
+      "The Cancel confirmation dialog now shows a progress bar and \"Cancelling order X of N\" status while multiple orders are cancelled one by one, instead of a single static \"Cancelling…\" spinner.",
+      "The Modify dialog now shows a progress bar and \"Modifying order X of N\" status as a leg's underlying orders are cancelled, resized, or newly placed to reach the requested quantity/price — this required moving leg modification from one opaque server-side call to a step-by-step flow the app can report progress on as it happens.",
+    ],
+  },
+  {
     version: "2.3.1",
     date: "28-Jul-2026",
     releaseKind: "patch",

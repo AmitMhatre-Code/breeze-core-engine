@@ -197,10 +197,13 @@ export async function runCancelOrdersWithPacing(args: {
   orderIds: string[];
   cancel_details: { option: string; open_quantity: number }[];
   onRateLimitWait: (seconds: number) => Promise<void>;
+  /** Fired after each order's cancel call resolves (success or failure), for progress UI. */
+  onOrderCancelled?: (info: { orderIndex: number; totalOrders: number }) => void;
 }): Promise<{ redirect?: string }> {
   const results: { order_ref: string; success: boolean; error?: string }[] = [];
 
-  for (const oid of args.orderIds) {
+  for (let i = 0; i < args.orderIds.length; i++) {
+    const oid = args.orderIds[i]!;
     for (;;) {
       const res = await apiClient.post<CancelOneResponse>("/book/cancel-one", {
         order_id: oid,
@@ -227,6 +230,7 @@ export async function runCancelOrdersWithPacing(args: {
       });
       break;
     }
+    args.onOrderCancelled?.({ orderIndex: i, totalOrders: args.orderIds.length });
   }
 
   const metaOk =
@@ -262,8 +266,20 @@ export type LegModifyResponse = {
   modified: LegModifyOrderOutcome[];
   placed: LegModifyOrderOutcome[];
   failures: LegModifyFailure[];
+};
+
+export type LegModifyStepResponse = {
+  total_steps: number;
+  step_index: number;
+  done: boolean;
+  op?: "cancel" | "modify" | "place" | null;
+  order_id?: string | null;
+  quantity?: number | null;
+  price?: string | null;
+  success: boolean;
+  error?: string | null;
   rate_limited: boolean;
-  rate_limit_pause_seconds?: number;
+  rate_limit_pause_seconds?: number | null;
 };
 
 export type ModifyLegArgs = {
@@ -280,26 +296,96 @@ export type ModifyLegArgs = {
   rule_id?: string;
   scrip_key?: string;
   onRateLimitWait: (seconds: number) => Promise<void>;
+  /** Fired after each step completes (success or failure) but not on a rate-limited retry. */
+  onStepDone?: (info: { stepIndex: number; totalSteps: number }) => void;
 };
 
 /**
- * Modify a leg's total quantity/price in one server-side call (the backend
- * redistributes across the leg's underlying chunk orders). On a 429, waits
- * and retries the whole call — the server recomputes its plan from current
- * broker state each time, so a retry naturally reconciles with whatever
- * already succeeded.
+ * Modify a leg's open quantity/price by driving the plan one broker-call-sized step (cancel,
+ * modify, or place) at a time — the backend recomputes the same deterministic plan on every
+ * call, so a step_index only advances once its step has genuinely succeeded. This mirrors
+ * `runBreakOrderChunks`'s chunk-by-chunk loop, giving the caller live per-order progress instead
+ * of a single opaque round trip. Once every step is done, one finalize call persists messages,
+ * audit-adjacent side effects, and exit-rule leg bookkeeping from the accumulated outcome.
  */
 export async function runModifyLegWithPacing(
   args: ModifyLegArgs,
 ): Promise<LegModifyResponse> {
-  const { onRateLimitWait, ...payload } = args;
-  for (;;) {
-    const res = await apiClient.post<LegModifyResponse>("/book/modify-leg", payload);
+  const { onRateLimitWait, onStepDone, orders, rule_id, scrip_key, ...base } = args;
+
+  const cancelled_order_ids: string[] = [];
+  const modified: LegModifyOrderOutcome[] = [];
+  const placed: LegModifyOrderOutcome[] = [];
+  const failures: LegModifyFailure[] = [];
+
+  let stepIndex = 0;
+  let totalSteps = Infinity;
+  while (stepIndex < totalSteps) {
+    const res = await apiClient.post<LegModifyStepResponse>("/book/modify-leg-step", {
+      stock_code: base.stock_code,
+      expiry_date: base.expiry_date,
+      strike_price: base.strike_price,
+      right: base.right,
+      product_type: base.product_type,
+      exchange_code: base.exchange_code,
+      action: base.action,
+      orders,
+      new_quantity: base.new_quantity,
+      new_price: base.new_price,
+      step_index: stepIndex,
+    });
+    totalSteps = res.total_steps;
+    if (res.done || stepIndex >= totalSteps) break;
+
     if (res.rate_limited) {
       const sec = rateLimitWaitSeconds(res.rate_limit_pause_seconds);
       await onRateLimitWait(sec);
       continue;
     }
-    return res;
+
+    if (res.op === "cancel" && res.order_id) {
+      if (res.success) {
+        cancelled_order_ids.push(res.order_id);
+      } else {
+        failures.push({ ref: res.order_id, error: res.error ?? "Unknown error" });
+      }
+    } else if (res.op === "modify" && res.order_id) {
+      if (res.success) {
+        modified.push({ order_id: res.order_id, quantity: res.quantity ?? 0, price: res.price ?? null });
+      } else {
+        failures.push({ ref: res.order_id, error: res.error ?? "Unknown error" });
+      }
+    } else if (res.op === "place") {
+      if (res.success && res.order_id) {
+        placed.push({ order_id: res.order_id, quantity: res.quantity ?? 0, price: res.price ?? null });
+      } else {
+        failures.push({
+          ref: `new order (qty=${res.quantity ?? "?"})`,
+          error: res.error ?? "Unknown error",
+        });
+      }
+    }
+
+    onStepDone?.({ stepIndex, totalSteps });
+    stepIndex += 1;
   }
+
+  return apiClient.post<LegModifyResponse>("/book/modify-leg-finalize", {
+    stock_code: base.stock_code,
+    expiry_date: base.expiry_date,
+    strike_price: base.strike_price,
+    right: base.right,
+    product_type: base.product_type,
+    exchange_code: base.exchange_code,
+    action: base.action,
+    orders,
+    new_quantity: Number(base.new_quantity),
+    new_price: base.new_price,
+    cancelled_order_ids,
+    modified,
+    placed,
+    failures,
+    rule_id,
+    scrip_key,
+  });
 }

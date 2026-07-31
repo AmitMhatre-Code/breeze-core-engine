@@ -161,12 +161,27 @@ class LegModifyOrderRef(BaseModel):
     price: Optional[str] = None
 
 
-class LegModifyRequest(BaseModel):
-    """Change the open (not-yet-filled) quantity/price of a leg (1..N underlying chunk orders).
+class LegModifyOrderOutcome(BaseModel):
+    order_id: str
+    quantity: int
+    price: Optional[str] = None
+
+
+class LegModifyFailure(BaseModel):
+    ref: str
+    error: str
+
+
+class LegModifyStepRequest(BaseModel):
+    """Execute step `step_index` of the redistribution plan for a leg modify.
 
     `new_quantity` is the desired OPEN quantity, not the leg's total size — already-filled
     quantity is never affected and is added back server-side before planning. 0 is valid and
     cancels all remaining open orders for the leg while leaving filled quantity untouched.
+
+    The plan (and therefore the step-index -> op mapping) is recomputed fresh from `orders`/
+    `new_quantity`/`new_price` on every call — it is pure/deterministic given the same inputs, so
+    resubmitting the same `step_index` after a rate-limit pause always re-targets the same op.
     """
 
     stock_code: str
@@ -179,8 +194,7 @@ class LegModifyRequest(BaseModel):
     orders: List[LegModifyOrderRef]
     new_quantity: str
     new_price: Optional[str] = None
-    rule_id: Optional[str] = None
-    scrip_key: Optional[str] = None
+    step_index: int = Field(ge=0)
 
     @model_validator(mode="after")
     def require_orders_and_nonnegative_quantity(self):
@@ -191,25 +205,54 @@ class LegModifyRequest(BaseModel):
         return self
 
 
-class LegModifyOrderOutcome(BaseModel):
-    order_id: str
-    quantity: int
+class LegModifyStepResponse(BaseModel):
+    total_steps: int
+    step_index: int
+    done: bool
+    op: Optional[Literal["cancel", "modify", "place"]] = None
+    order_id: Optional[str] = None
+    quantity: Optional[int] = None
     price: Optional[str] = None
+    success: bool = True
+    error: Optional[str] = None
+    rate_limited: bool = False
+    rate_limit_pause_seconds: Optional[float] = None
 
 
-class LegModifyFailure(BaseModel):
-    ref: str
-    error: str
+class LegModifyFinalizeRequest(BaseModel):
+    """Persist messages/audit-adjacent side effects after the client has driven every step of a
+    leg modify to completion (see LegModifyStepRequest). Carries the client-aggregated outcome of
+    every step rather than recomputing broker state, mirroring BreakOrderFinalizeRequest.
+    """
+
+    stock_code: str
+    expiry_date: str
+    strike_price: str
+    right: str
+    product_type: str = "Options"
+    exchange_code: str = "NFO"
+    action: Literal["Buy", "Sell"]
+    orders: List[LegModifyOrderRef]
+    new_quantity: int
+    new_price: Optional[str] = None
+    cancelled_order_ids: List[str] = Field(default_factory=list)
+    modified: List[LegModifyOrderOutcome] = Field(default_factory=list)
+    placed: List[LegModifyOrderOutcome] = Field(default_factory=list)
+    failures: List[LegModifyFailure] = Field(default_factory=list)
+    rule_id: Optional[str] = None
+    scrip_key: Optional[str] = None
 
 
 class LegModifyResponse(BaseModel):
+    """Final leg-modify outcome, echoed back from /modify-leg-finalize for symmetry with the
+    aggregated result the client already holds from stepping through /modify-leg-step.
+    """
+
     success: bool
     cancelled_order_ids: List[str] = Field(default_factory=list)
     modified: List[LegModifyOrderOutcome] = Field(default_factory=list)
     placed: List[LegModifyOrderOutcome] = Field(default_factory=list)
     failures: List[LegModifyFailure] = Field(default_factory=list)
-    rate_limited: bool = False
-    rate_limit_pause_seconds: Optional[float] = None
 
 
 class BookGroupLtpItem(BaseModel):

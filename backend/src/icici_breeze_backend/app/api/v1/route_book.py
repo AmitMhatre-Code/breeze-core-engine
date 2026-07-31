@@ -18,10 +18,10 @@ from icici_breeze_backend.app.domain.order import (
     BookCancelOneRequest,
     BookGroupLtpRequest,
     BookGroupLtpResponse,
-    LegModifyFailure,
-    LegModifyOrderOutcome,
-    LegModifyRequest,
+    LegModifyFinalizeRequest,
     LegModifyResponse,
+    LegModifyStepRequest,
+    LegModifyStepResponse,
     ParkedOrderCreateRequest,
     ParkedOrderIdsRequest,
     ParkedOrderListResponse,
@@ -32,6 +32,7 @@ from icici_breeze_backend.app.services.leg_order_redistribution import (
     LegOrderState,
     filled_floor,
     plan_leg_redistribution,
+    plan_steps,
 )
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 from icici_breeze_backend.app.services.user_rate_limit_prefs import (
@@ -242,12 +243,119 @@ async def post_cancel_commit(
     return json_redirect("/orders")
 
 
-@router.post("/modify-leg", response_model=LegModifyResponse)
-async def post_modify_leg(
-    body: LegModifyRequest,
+def _leg_orders_and_plan(
+    orders: list, stock_code: str, expiry_date: str, exchange_code: str, new_quantity: str, new_price: str | None
+):
+    """Shared plan derivation for both step and finalize — pure/deterministic given the same
+    inputs, so recomputing it on every request (rather than caching across steps) always
+    reproduces the same ordered step list.
+    """
+    leg_orders = [
+        LegOrderState(
+            order_id=o.order_id,
+            exchange_code=o.exchange_code,
+            quantity=o.quantity,
+            pending_quantity=o.pending_quantity,
+            status=o.status,
+        )
+        for o in orders
+    ]
+    # new_quantity is the desired OPEN quantity (already-filled quantity is untouched and is
+    # added back here so the pure planner, which reasons in terms of the leg's new total, gets
+    # the number it expects).
+    floor = filled_floor(leg_orders)
+    new_total_qty = floor + int(new_quantity)
+    qty_limits = breeze.fetch_qty_limits(stock_code, exchange_code=exchange_code)
+    lot_size = breeze.fetch_lot_size(stock_code, expiry_date, exchange_code=exchange_code)
+    qty_per_order = new_total_qty
+    if qty_limits and lot_size:
+        aligned = (max(1, int(qty_limits)) // int(lot_size)) * int(lot_size)
+        if aligned > 0:
+            qty_per_order = aligned
+
+    current_price = next((o.price for o in orders if o.price), None)
+    price_changed = (
+        new_price is not None
+        and str(new_price).strip() != ""
+        and str(new_price) != str(current_price)
+    )
+    plan = plan_leg_redistribution(
+        leg_orders, qty_per_order, new_total_qty, price_changed=price_changed
+    )
+    return leg_orders, plan, current_price
+
+
+@router.post("/modify-leg-step", response_model=LegModifyStepResponse)
+async def post_modify_leg_step(
+    body: LegModifyStepRequest,
     context: RequestContext = Depends(get_request_context),
     _trading_ok: None = Depends(require_trading_not_revoked),
 ):
+    """Execute one broker-call-sized step (cancel/modify/place) of a leg-modify plan, for
+    live per-order progress in the Modify dialog. The client loops: call with step_index=0,1,2...
+    advancing only on a non-rate-limited response, until step_index reaches total_steps, then
+    calls /modify-leg-finalize once with the accumulated outcome.
+    """
+    if not context.broker_token:
+        raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
+
+    try:
+        _leg_orders, plan, current_price = _leg_orders_and_plan(
+            body.orders, body.stock_code, body.expiry_date, body.exchange_code, body.new_quantity, body.new_price
+        )
+    except LegModifyValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    steps = plan_steps(plan)
+    pause = get_icici_rate_limit_pause_seconds(context.user_id)
+
+    if body.step_index >= len(steps):
+        return LegModifyStepResponse(total_steps=len(steps), step_index=body.step_index, done=True)
+
+    step = steps[body.step_index]
+    outcome = breeze.execute_leg_modification_step(
+        context.user_id,
+        step,
+        contract={
+            "product_type": body.product_type,
+            "stock_code": body.stock_code,
+            "action": body.action,
+            "strike_price": body.strike_price,
+            "right": body.right,
+            "expiry_date": body.expiry_date,
+            "exchange_code": body.exchange_code,
+        },
+        new_price=body.new_price,
+        current_price=current_price,
+    )
+    if outcome["success"] and not outcome["rate_limited"]:
+        evict_broker_snapshot(context.user_id, context.broker_token or "")
+
+    return LegModifyStepResponse(
+        total_steps=len(steps),
+        step_index=body.step_index,
+        done=False,
+        op=step.kind,
+        order_id=outcome["order_id"],
+        quantity=outcome["quantity"],
+        price=outcome["price"],
+        success=outcome["success"],
+        error=outcome["error"],
+        rate_limited=outcome["rate_limited"],
+        rate_limit_pause_seconds=pause,
+    )
+
+
+@router.post("/modify-leg-finalize", response_model=LegModifyResponse)
+async def post_modify_leg_finalize(
+    body: LegModifyFinalizeRequest,
+    context: RequestContext = Depends(get_request_context),
+    _trading_ok: None = Depends(require_trading_not_revoked),
+):
+    """Store messages/audit-adjacent side effects once the client has driven every step of a leg
+    modify (see /modify-leg-step) to completion, using the outcome the client accumulated along
+    the way rather than re-deriving broker state.
+    """
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
 
@@ -261,80 +369,42 @@ async def post_modify_leg(
         )
         for o in body.orders
     ]
-    # new_quantity is the desired OPEN quantity (already-filled quantity is untouched and is
-    # added back here so the pure planner, which reasons in terms of the leg's new total, gets
-    # the number it expects).
-    new_quantity = int(body.new_quantity)
-    floor = filled_floor(leg_orders)
-    new_total_qty = floor + new_quantity
-    qty_limits = breeze.fetch_qty_limits(body.stock_code, exchange_code=body.exchange_code)
-    lot_size = breeze.fetch_lot_size(body.stock_code, body.expiry_date, exchange_code=body.exchange_code)
-    qty_per_order = new_total_qty
-    if qty_limits and lot_size:
-        aligned = (max(1, int(qty_limits)) // int(lot_size)) * int(lot_size)
-        if aligned > 0:
-            qty_per_order = aligned
-
-    current_price = next((o.price for o in body.orders if o.price), None)
     old_quantity = sum(o.pending_quantity for o in leg_orders if o.is_open)
-    price_changed = (
-        body.new_price is not None
-        and str(body.new_price).strip() != ""
-        and str(body.new_price) != str(current_price)
-    )
-
-    try:
-        plan = plan_leg_redistribution(
-            leg_orders, qty_per_order, new_total_qty, price_changed=price_changed
-        )
-    except LegModifyValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    result = breeze.execute_leg_modification(
-        context.user_id,
-        plan,
-        contract={
-            "product_type": body.product_type,
-            "stock_code": body.stock_code,
-            "action": body.action,
-            "strike_price": body.strike_price,
-            "right": body.right,
-            "expiry_date": body.expiry_date,
-            "exchange_code": body.exchange_code,
-        },
-        new_price=body.new_price,
-        current_price=current_price,
-    )
+    current_price = next((o.price for o in body.orders if o.price), None)
 
     if body.rule_id and body.scrip_key:
-        untouched = {o.order_id for o in body.orders} - set(plan.cancel_order_ids) - {
-            m["order_id"] for m in plan.modify
+        untouched = {o.order_id for o in body.orders} - set(body.cancelled_order_ids) - {
+            m.order_id for m in body.modified
         }
-        final_ids = list(untouched) + [m["order_id"] for m in plan.modify] + [p["order_id"] for p in result["placed"]]
+        final_ids = list(untouched) + [m.order_id for m in body.modified] + [p.order_id for p in body.placed]
         squareoff_repo.update_leg_order_ids(body.rule_id, body.scrip_key, final_ids)
 
     contract_label = f"{body.stock_code}-{body.expiry_date}-{body.strike_price}-{body.right}"
+    result = {
+        "cancelled": body.cancelled_order_ids,
+        "modified": [m.model_dump() for m in body.modified],
+        "placed": [p.model_dump() for p in body.placed],
+        "failures": [(f.ref, f.error) for f in body.failures],
+        "all_ok": not body.failures,
+    }
     messages = breeze.build_modify_leg_messages(
         contract_label,
         old_quantity,
-        new_quantity,
+        body.new_quantity,
         float(current_price) if current_price else None,
         float(body.new_price) if body.new_price else None,
         result,
     )
     breeze.store_messages(context.user_id, messages)
-    if result["cancelled"] or result["modified"] or result["placed"]:
+    if body.cancelled_order_ids or body.modified or body.placed:
         evict_broker_snapshot(context.user_id, context.broker_token or "")
 
-    pause = get_icici_rate_limit_pause_seconds(context.user_id)
     return LegModifyResponse(
         success=result["all_ok"],
-        cancelled_order_ids=result["cancelled"],
-        modified=[LegModifyOrderOutcome(**m) for m in result["modified"]],
-        placed=[LegModifyOrderOutcome(**p) for p in result["placed"]],
-        failures=[LegModifyFailure(ref=ref, error=err) for ref, err in result["failures"]],
-        rate_limited=result["rate_limited"],
-        rate_limit_pause_seconds=pause,
+        cancelled_order_ids=body.cancelled_order_ids,
+        modified=body.modified,
+        placed=body.placed,
+        failures=body.failures,
     )
 
 
