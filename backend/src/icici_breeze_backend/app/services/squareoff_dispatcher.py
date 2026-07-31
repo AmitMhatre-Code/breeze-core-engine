@@ -244,7 +244,9 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
         )
         notify_squareoff_fired(user_id, reason=reason, payload=payload, leg_results=leg_results, failed=False)
     else:
-        failed = [r for r in leg_results if r["status"] == "failed"]
+        # "failed" legs placed zero chunks; "partial" legs placed some but not all --
+        # both mean the leg did not fully square off, so both count against the reset reason.
+        not_fully_placed = [r for r in leg_results if r["status"] in ("failed", "partial")]
         # A placement failure is one flavour of Reset: monitoring has stopped and the user
         # must re-arm. Any legs that DID get an order placed before the failure are now
         # live orphans -- they are NOT cancelled here (Reset withdraws future automation,
@@ -253,7 +255,7 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
         repo.mark_fire_failed(
             rule_id,
             leg_results,
-            f"{len(failed)} of {len(leg_results)} exit orders could not be placed.",
+            f"{len(not_fully_placed)} of {len(leg_results)} exit orders could not be fully placed.",
         )
         AuditLogger(None).log_operation(
             user_id,
@@ -261,7 +263,7 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
             "PortfolioSquareOffRule",
             rule_id,
             action_status="failure",
-            error_details=f"{len(failed)}/{len(leg_results)} leg(s) failed to place",
+            error_details=f"{len(not_fully_placed)}/{len(leg_results)} leg(s) not fully placed",
         )
         notify_squareoff_fired(user_id, reason=reason, payload=payload, leg_results=leg_results, failed=True)
 

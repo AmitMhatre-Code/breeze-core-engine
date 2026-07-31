@@ -4,11 +4,15 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type MouseEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   OrderExecutionConfirmDialog,
   type ExecutionPreviewLeg,
@@ -395,23 +399,134 @@ function ExitRuleBadge({ rule }: { rule: SquareOffRuleRecord }) {
   );
 }
 
+const RESET_NOTE_PANEL_MAX_WIDTH = 360;
+const RESET_NOTE_VIEWPORT_MARGIN = 8;
+
 /**
- * The Reset explanation, as VISIBLE text under the group title.
+ * The Reset explanation, under the group title.
  *
- * Deliberately not a `title` tooltip, which is what this used to be: tooltips are
- * invisible on touch, unannounced by screen readers, and trivially missed. That is
- * disqualifying for a message that may be saying "a live order will open a position you
- * didn't ask for".
+ * Truncated to one line so it can't paint over neighbouring cells in the fixed-height
+ * summary row (see `tdSummaryShell`). It is NOT a `title` tooltip though — those are
+ * invisible on touch and unannounced by screen readers, which is disqualifying for a
+ * message that may be saying "a live order will open a position you didn't ask for". So:
+ * the trigger is a real button (reachable by tap and keyboard, `aria-label` carries the
+ * full text regardless of truncation) that opens a floating panel with the untruncated
+ * message on click — same disclosure pattern as `InfoPopover`.
  */
-function ExitRuleResetNote({ rule }: { rule: SquareOffRuleRecord }) {
+function ExitRuleResetNote({
+  rule,
+  variant = "compact",
+}: {
+  rule: SquareOffRuleRecord;
+  variant?: "compact" | "full";
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
+
+  const close = useCallback(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+
+  const reposition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const panelHeight = panelRef.current?.offsetHeight ?? 0;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const flipped = spaceBelow < panelHeight + RESET_NOTE_VIEWPORT_MARGIN && rect.top > panelHeight;
+    const top = flipped ? rect.top - panelHeight - 6 : rect.bottom + 6;
+    const left = Math.min(
+      Math.max(rect.left, RESET_NOTE_VIEWPORT_MARGIN),
+      window.innerWidth - RESET_NOTE_PANEL_MAX_WIDTH - RESET_NOTE_VIEWPORT_MARGIN,
+    );
+    setPos({ top, left });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    reposition();
+  }, [open, reposition]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: globalThis.MouseEvent) => {
+      const target = e.target as Node;
+      if (triggerRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [open, close, reposition]);
+
   if (rule.status !== "reset") return null;
+
+  const message = resetMessage(rule);
+  const isAlert = resetHazardTier(rule) === "contra_risk";
+  const noteClassName = resetNoteClassName(rule);
+
+  if (variant === "full") {
+    return (
+      <p
+        className={`max-w-[46ch] rounded-md border px-2 py-1.5 text-hint leading-relaxed ${noteClassName}`}
+        role={isAlert ? "alert" : undefined}
+      >
+        {message}
+      </p>
+    );
+  }
+
   return (
-    <p
-      className={`max-w-[46ch] rounded-md border px-2 py-1.5 text-hint leading-relaxed ${resetNoteClassName(rule)}`}
-      role={resetHazardTier(rule) === "contra_risk" ? "alert" : undefined}
-    >
-      {resetMessage(rule)}
-    </p>
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        title={message}
+        aria-label={message}
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className={`block max-w-[46ch] truncate rounded-md border px-2 py-1.5 text-left text-hint leading-relaxed ${noteClassName}`}
+      >
+        {message}
+      </button>
+      {open && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={panelRef}
+              id={panelId}
+              role={isAlert ? "alert" : "dialog"}
+              className={`fixed z-50 w-max max-w-[360px] rounded-md border px-2.5 py-2 text-left text-hint leading-relaxed shadow-pop ${noteClassName}`}
+              style={{
+                top: pos?.top ?? -9999,
+                left: pos?.left ?? -9999,
+                visibility: pos ? "visible" : "hidden",
+              }}
+            >
+              {message}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }
 
@@ -424,13 +539,21 @@ function ExitRuleSummaryLine({
   rule,
   currentMtm,
   onOpenExitRuleModal,
+  noteVariant = "compact",
 }: {
   rule: SquareOffRuleRecord | null;
   currentMtm: number | null;
   onOpenExitRuleModal: (e: MouseEvent) => void;
+  /**
+   * "compact" truncates to one line with a click-to-expand panel — required in the desktop
+   * grouped table, whose summary row has a fixed height it can't grow to fit a wrapped
+   * multi-line note. "full" renders the complete message inline, wrapped — used on the
+   * mobile card layout, which stacks rows in a free-flowing column with no such constraint.
+   */
+  noteVariant?: "compact" | "full";
 }) {
   if (!rule) return <PnlTargetCta onClick={onOpenExitRuleModal} />;
-  if (rule.status === "reset") return <ExitRuleResetNote rule={rule} />;
+  if (rule.status === "reset") return <ExitRuleResetNote rule={rule} variant={noteVariant} />;
   return <PnlTargetGauge rule={rule} currentMtm={currentMtm} />;
 }
 
@@ -911,6 +1034,7 @@ function PortfolioGroupCardBlock({
             rule={squareOffRule}
             currentMtm={mtmSum}
             onOpenExitRuleModal={onOpenExitRuleModal}
+            noteVariant="full"
           />
           <p>
             <span className="app-text-muted">Spot:</span>{" "}
