@@ -214,6 +214,11 @@ def _ensure_app_database() -> None:
             )
 
             ensure_squareoff_rules_table(db_path)
+            from icici_breeze_backend.app.db.squareoff_protection_migrate import (
+                ensure_squareoff_protection_table,
+            )
+
+            ensure_squareoff_protection_table(db_path)
             from icici_breeze_backend.app.db.broker_session_migrate import (
                 ensure_broker_session_table,
             )
@@ -441,6 +446,7 @@ def start_application():
 
         pnl_flush_task: asyncio.Task | None = None
         pnl_loop_task: asyncio.Task | None = None
+        protection_guard_task: asyncio.Task | None = None
         if pnl_engine_enabled():
             pnl_flush_task = asyncio.create_task(run_pnl_quote_flush_loop())
             pnl_loop_task = asyncio.create_task(run_pnl_loop())
@@ -452,6 +458,15 @@ def start_application():
 
             hydrate_group_rules_on_startup()
             register_squareoff_dispatcher()
+
+            # Retries the position warm hydration may not have managed (a restart outside
+            # a live broker session), keeps leg composition fresh, and alerts the user
+            # while their SGs are armed but unevaluatable.
+            from icici_breeze_backend.app.services.squareoff_protection_guard import (
+                run_protection_guard_loop,
+            )
+
+            protection_guard_task = asyncio.create_task(run_protection_guard_loop())
 
         from icici_breeze_backend.app.services.breeze_websocket_manager import (
             run_order_feed_watchdog_loop,
@@ -494,7 +509,7 @@ def start_application():
                 await telegram_task
             except asyncio.CancelledError:
                 pass
-        for pnl_task in (pnl_flush_task, pnl_loop_task):
+        for pnl_task in (pnl_flush_task, pnl_loop_task, protection_guard_task):
             if pnl_task is not None:
                 pnl_task.cancel()
                 try:

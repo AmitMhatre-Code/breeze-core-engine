@@ -14,6 +14,18 @@ from tests.fixtures.portal_heartbeat_drm_keys import TEST_PUBLIC_KEY_PEM
 
 
 @pytest.fixture(autouse=True)
+def _clear_order_book_cache():
+    """The SG order-book cache is process-global, so without this a test that reads the
+    book would silently satisfy the next test's read and any assertion counting broker
+    calls would pass for the wrong reason."""
+    from icici_breeze_backend.app.services import order_book_cache
+
+    order_book_cache.clear()
+    yield
+    order_book_cache.clear()
+
+
+@pytest.fixture(autouse=True)
 def portal_heartbeat_verify_files(tmp_path, monkeypatch):
     """Bake test public key and allowed portal host for DRM verification tests."""
     pub = tmp_path / "portal_heartbeat_public.pem"

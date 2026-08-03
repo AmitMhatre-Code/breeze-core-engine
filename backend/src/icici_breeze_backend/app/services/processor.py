@@ -1219,8 +1219,15 @@ class processor():
         
         return sorted_options
 
-    def get_orders(self,user_id,start,end):
-        """Fetch orders. ICICI API limits date range to 10 days; we chunk and merge when needed."""
+    def get_orders(self, user_id, start, end, *, exchange_codes=None):
+        """Fetch orders. ICICI API limits date range to 10 days; we chunk and merge when needed.
+
+        `exchange_codes` restricts which exchanges are queried. Every exchange costs a
+        separate `get_order_list` call, so a caller that already knows its orders are all
+        NFO (an SG carries its own `exchange_code`) can halve the cost by saying so.
+        Defaults to both, because a caller that does not know — the Orders page — must not
+        silently lose BFO rows.
+        """
         breeze = self.get_session_breeze(user_id)
         if breeze is None:
             return _icici_error("Unable to connect to broker. Please log out and log back in.")
@@ -1230,7 +1237,11 @@ class processor():
         start_dt = datetime.datetime.strptime(start, "%Y-%m-%d")
         end_dt = datetime.datetime.strptime(end, "%Y-%m-%d")
         total_days = (end_dt - start_dt).days + 1
-        exchange_codes = [cfg.NFO, cfg.BFO]
+        if exchange_codes:
+            allowed = {str(e).strip().upper() for e in exchange_codes}
+            exchange_codes = [e for e in (cfg.NFO, cfg.BFO) if str(e).upper() in allowed]
+        if not exchange_codes:
+            exchange_codes = [cfg.NFO, cfg.BFO]
 
         all_orders: list[dict] = []
         first_error: dict | None = None

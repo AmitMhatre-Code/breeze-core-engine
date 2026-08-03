@@ -75,7 +75,7 @@ def _no_open_legs(monkeypatch):
 def _stub_order_book(monkeypatch, statuses: dict[str, str]):
     """statuses: order_id -> broker status."""
     class _Breeze:
-        def get_orders(self, user_id, start=None, end=None):
+        def get_orders(self, user_id, start=None, end=None, *, exchange_codes=None):
             return {
                 "Status": 200,
                 "Success": [
@@ -163,7 +163,7 @@ class _RecordingBreeze:
         self._rows_by_window = rows_by_window
         self.windows: list[tuple[str, str]] = []
 
-    def get_orders(self, user_id, start=None, end=None):
+    def get_orders(self, user_id, start=None, end=None, *, exchange_codes=None):
         self.windows.append((start, end))
         statuses = self._rows_by_window.get((start, end), {})
         return {

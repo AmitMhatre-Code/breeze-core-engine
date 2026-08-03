@@ -20,6 +20,23 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.5.0",
+    date: "03-Aug-2026",
+    releaseKind: "minor",
+    summary:
+      "Profit Booking / Stop Loss keeps monitoring after a restart, retries exit orders through ICICI throttles, and stops a leftover Reset rule from eating your daily API quota.",
+    changes: [
+      "Fixed a serious gap where Profit Booking / Stop Loss silently stopped evaluating after the app restarted (including during an automatic version upgrade). The rules still showed as Armed and the price feed stayed live, but nothing was being measured until someone opened the Portfolio page — so a breach could pass without any exit order being placed. Positions are now reloaded on startup and refreshed every minute, independently of any browser.",
+      "If the app can't reach your broker session while rules are armed, it now says so on Telegram instead of failing quietly — repeating every 30 minutes during market hours until you log back in, then confirming once monitoring has resumed. Protection is deliberately left off rather than resuming against a position that may have changed while the app was down.",
+      "Fixed a bug where a single Reset Profit Booking / Stop Loss rule left sitting on the Orders page could exhaust your entire 5,000-call daily ICICI API limit in about an hour, by re-reading the order book on every 2-second refresh. Rules left over from a previous day now cost nothing at all, and the order book is read once and shared instead of once per rule.",
+      "The app now paces itself against ICICI's per-minute request limit rather than only reacting after being throttled, and reserves the last 500 calls of your daily quota for placing and cancelling orders — so non-essential screen refreshes can no longer starve your ability to trade.",
+      "Exit orders now retry for about 50 seconds when ICICI rate-limits them, instead of giving up after ~4 seconds and leaving a position half unwound. Only throttles are retried — a rejection or a timeout is never re-sent, so an order can't be duplicated.",
+      "You now get a Telegram message the moment a retry starts, not just when it ends. If you place the order yourself in the meantime, the app detects it and stops retrying, so you won't end up with a duplicate — and the message says so.",
+      "The alert for a failed exit leg no longer just says \"check the app\". It now warns that any leg which did fill has already changed your position, so you review before placing anything manually.",
+      "A Profit Booking / Stop Loss rule now Resets correctly when you close the entire strategy group yourself elsewhere. Previously it stayed Armed indefinitely, which also blocked you from arming a new rule on that group.",
+    ],
+  },
+  {
     version: "2.4.0",
     date: "31-Jul-2026",
     releaseKind: "minor",

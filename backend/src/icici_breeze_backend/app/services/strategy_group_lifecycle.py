@@ -38,6 +38,7 @@ import logging
 from typing import Any, Iterable
 
 from icici_breeze_backend.app.core.strike import strike_key
+from icici_breeze_backend.app.core.timezone import today_ist_date
 from icici_breeze_backend.app.domain.squareoff_rule import (
     ResetHazardTier,
     SquareOffRuleOrphanOrder,
@@ -73,6 +74,13 @@ def reason_manual_intervention(leg_label: str) -> str:
 
 def reason_composition_changed(detail: str) -> str:
     return detail
+
+
+def reason_group_closed_elsewhere() -> str:
+    return (
+        "every leg in this group was closed outside this rule, so there is nothing left "
+        "to monitor."
+    )
 
 
 def reason_order_failed(leg_label: str, status: str) -> str:
@@ -141,6 +149,13 @@ def on_order_notification(n: OrderNotification) -> None:
     """Route one normalized order event into the SG state machine. Best-effort: this runs
     on the SDK's WS callback thread, so it must never raise."""
     try:
+        # Any order event means this user's cached book may now be wrong. Invalidate
+        # before the state machine reads it, so Completed / Reset decisions below are
+        # never made against a book that predates the event that triggered them.
+        from icici_breeze_backend.app.services import order_book_cache
+
+        order_book_cache.invalidate_user(n.user_id)
+
         rule = repo.get_active_rule_for_group(n.user_id, n.stock_code, n.expiry_display)
         if rule is None:
             return  # no live SG for this contract's group — nothing to do
@@ -278,7 +293,10 @@ def reconcile_fired_rules_for_user(user_id: str, breeze) -> None:
             order_ids = {oid for rule in group for oid in repo.order_ids_for_rule(rule)}
             if not order_ids:
                 continue
-            statuses = _order_statuses(breeze, user_id, order_ids, window=window)
+            exchanges = sorted({r.exchange_code for r in group if r.exchange_code})
+            statuses = _order_statuses(
+                breeze, user_id, order_ids, window=window, exchanges=exchanges or None
+            )
             if not statuses:
                 continue  # couldn't read the book — leave Fired; the next load retries
             for rule in group:
@@ -383,6 +401,7 @@ def _order_statuses(
     order_ids: set[str],
     *,
     window: tuple[str, str] | None = None,
+    exchanges: Iterable[str] | None = None,
 ) -> dict[str, str]:
     """order_id -> lowercased broker status, read from the REST order book.
 
@@ -394,12 +413,29 @@ def _order_statuses(
     about orders from an earlier session (the fired-SG reconcile) must pass one — today's
     book cannot confirm an order placed last week, and an absent row reads exactly like
     an unfilled one.
+
+    `exchanges` restricts the query to the exchanges the caller's rules actually live on;
+    each one is a separate `get_order_list` call. Reads go through `order_book_cache`,
+    which the WS order feed invalidates, so this stays REST-authoritative without paying
+    for a fetch on every poll tick.
     """
+    from icici_breeze_backend.app.services import order_book_cache
     from icici_breeze_backend.app.services.strategy_group_arm_guard import today_order_window
 
     try:
-        start, end = window if window is not None else today_order_window()
-        resp = breeze.get_orders(user_id, start=start, end=end)
+        win = window if window is not None else today_order_window()
+        wanted = sorted({str(e).strip().upper() for e in (exchanges or ()) if str(e).strip()})
+        # An unscoped read queries every exchange, so it must not be served from — or
+        # stored under — a scoped entry's key: an NFO-only book would silently answer a
+        # question about BFO orders with "not found", which reads as "not live".
+        resp = order_book_cache.get_or_fetch(
+            user_id,
+            win,
+            wanted or ["ALL"],
+            lambda: breeze.get_orders(
+                user_id, start=win[0], end=win[1], exchange_codes=wanted or None
+            ),
+        )
     except Exception:  # noqa: BLE001
         _logger.exception("Could not read order book for user_id=%s", user_id)
         return {}
@@ -418,19 +454,63 @@ def _order_statuses(
     return out
 
 
+def orders_could_still_be_live(rule: SquareOffRuleRecord) -> bool:
+    """False when this rule's exit orders were placed on an earlier trading day.
+
+    SG exits go out with `validity="day"` (`processor.place_order`), so they expire at
+    that session's close and cannot be working now. This changes no outcome — `live_orphans`
+    reads *today's* window, which never contains an earlier day's order_ids, so those rules
+    already resolved to "no orphans". It just stops paying a broker call per poll to
+    rediscover that.
+
+    That cost is not hypothetical: a single `reset` rule left over from the previous
+    Friday exhausted a 5000-call daily quota in about two hours, because it stayed in
+    `list_active_rules` and re-read the order book on every 2s poll to learn nothing.
+
+    A missing or unparseable `fired_at` falls through to the read. Reporting "settled"
+    when we cannot tell would clear `rearm_blocked` and let a new SG stack on top of an
+    order that is still live — the dangerous direction.
+    """
+    raw = (rule.fired_at or "").strip()
+    if not raw:
+        return True
+    try:
+        fired_date = datetime.date.fromisoformat(raw[:10])
+    except ValueError:
+        _logger.warning("SG %s has unparseable fired_at=%r", rule.id, raw)
+        return True
+    return fired_date >= today_ist_date()
+
+
 def live_orphans(
-    breeze, user_id: str, rule: SquareOffRuleRecord, open_leg_keys: set[str]
+    breeze,
+    user_id: str,
+    rule: SquareOffRuleRecord,
+    open_leg_keys: set[str],
+    *,
+    status_by_id: dict[str, str] | None = None,
 ) -> list[SquareOffRuleOrphanOrder]:
     """This SG's exit orders that are still live at the exchange.
 
     `opens_contra_position` is the sharp one: the order was placed to CLOSE a leg, but
     that leg is gone (the user closed it manually in the interim). If it fills it no
     longer closes anything — it opens a brand-new position the user never asked for.
+
+    `status_by_id` lets a caller that already holds the order book pass it in, exactly as
+    `_maybe_complete` does. `attach_reset_details` uses it to read the book once for all
+    reset rules instead of once per rule.
     """
     order_ids = repo.order_ids_for_rule(rule)
     if not order_ids:
         return []
-    statuses = _order_statuses(breeze, user_id, order_ids)
+    if not orders_could_still_be_live(rule):
+        return []
+    if status_by_id is not None:
+        statuses = {oid: status_by_id[oid] for oid in order_ids if oid in status_by_id}
+    else:
+        statuses = _order_statuses(
+            breeze, user_id, order_ids, exchanges=[rule.exchange_code] if rule.exchange_code else None
+        )
     out: list[SquareOffRuleOrphanOrder] = []
     for leg in rule.leg_results or []:
         for oid in leg.order_ids:
@@ -471,17 +551,42 @@ def attach_reset_details(user_id: str, breeze, rules: list[SquareOffRuleRecord])
     Derived server-side, never stored: the order book and the position registry already
     live here, and computing it in the frontend would duplicate the join and invent a
     second opinion about the same facts.
+
+    The order book is read ONCE for all reset rules, scoped to the exchanges they actually
+    use — mirroring what `reconcile_fired_rules_for_user` already does. Per-rule fetching
+    here was an N+1 on a 2s-polled endpoint, and it is what spent 4236 of 4730 daily broker
+    calls on 2026-07-31 to render an advisory banner.
     """
-    for rule in rules:
-        if rule.status != "reset":
+    reset_rules = [r for r in rules if r.status == "reset"]
+    if not reset_rules:
+        return
+
+    # Only rules whose orders could still be working contribute to the read. A stale
+    # `reset` rule from an earlier day is the common case on a Monday morning, and it must
+    # not drag a broker call along behind it on every poll.
+    all_order_ids: set[str] = set()
+    exchanges: set[str] = set()
+    for rule in reset_rules:
+        if not orders_could_still_be_live(rule):
             continue
+        all_order_ids.update(repo.order_ids_for_rule(rule))
+        if rule.exchange_code:
+            exchanges.add(rule.exchange_code)
+
+    status_by_id: dict[str, str] = {}
+    if all_order_ids:
+        status_by_id = _order_statuses(
+            breeze, user_id, all_order_ids, exchanges=sorted(exchanges) or None
+        )
+
+    for rule in reset_rules:
         open_keys = {
             leg.scrip_key
             for leg in portfolio_pnl_engine.group_legs_for_user(
                 user_id, rule.stock_code, rule.expiry_display
             )
         }
-        orphans = live_orphans(breeze, user_id, rule, open_keys)
+        orphans = live_orphans(breeze, user_id, rule, open_keys, status_by_id=status_by_id)
         rule.orphan_orders = orphans
         rule.hazard_tier = hazard_tier(orphans)
         # Same condition gates re-arming and dismissal: a live orphan means a re-arm

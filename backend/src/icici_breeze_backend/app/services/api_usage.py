@@ -329,6 +329,22 @@ def is_daily_limit_reached(user_id: str) -> bool:
     return get_today_count(user_id) >= API_CALLS_LIMIT_PER_DAY
 
 
+def advisory_budget_exhausted(user_id: str) -> bool:
+    """True once advisory traffic must stop to protect the reserve.
+
+    The reserve line is `AMBER_MAX` (4500), not a new constant — the UI already turns
+    amber there and tells the user to spend carefully on "critical operations such as
+    placing or cancelling orders". This makes that advice structural instead of advisory:
+    past 4500 the app itself stops spending on decoration.
+
+    500 calls is a large reserve in practice. On the day this was designed against,
+    `place_order` accounted for 51 calls and every genuinely critical API combined for
+    well under 200 — so the reserve has never come close to blocking real trading, while
+    the advisory traffic it fences off had consumed 90% of the cap.
+    """
+    return get_today_count(user_id) >= AMBER_MAX
+
+
 def get_usage_warning(user_id: str) -> str | None:
     """Return a proactive warning when the user is in the final 1000-call band."""
     count = get_today_count(user_id)
