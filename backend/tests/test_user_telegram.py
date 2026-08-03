@@ -186,7 +186,10 @@ class TestMessageFormatting:
             "group_target_hit", self._payload(), [leg], failed=True
         )
         assert "RMS:Margin Exceeds" in text
-        assert "One or more legs failed" in text
+        assert "did not go through" in text
+        # The banner must not read as "go fix this yourself" — a manual fill placed against
+        # a partially-executed exit is how a contra position gets opened.
+        assert "check the app" not in text.lower()
 
 
 class TestNotifyDispatch:

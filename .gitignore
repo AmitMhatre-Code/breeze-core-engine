@@ -57,6 +57,8 @@ backend/data/users.sqlite3
 backend/data/users.sqlite3-wal
 backend/data/users.sqlite3-shm
 backend/data/scrips.sqlite3
+backend/data/scrips.sqlite3-wal
+backend/data/scrips.sqlite3-shm
 backend/logs/
 backend/data/strategy-builder-audit/
 

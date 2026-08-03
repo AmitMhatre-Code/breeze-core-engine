@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -11,12 +12,20 @@ _CHANGELOG = _REPO_ROOT / "frontend" / "src" / "lib" / "changelog.ts"
 
 
 def test_changelog_latest_version_script():
+    """The script must return the newest entry in the changelog.
+
+    Derived from the file rather than hardcoded: the previous literal ("2.1.2") had gone
+    stale three releases earlier, so the suite failed on every release for a reason that
+    had nothing to do with the script being broken — which trains people to ignore it.
+    """
+    expected = re.search(r'version:\s*"([^"]+)"', _CHANGELOG.read_text(encoding="utf-8"))
+    assert expected, "no version entry found in changelog.ts"
     out = subprocess.check_output(
         ["node", str(_SCRIPT), str(_CHANGELOG)],
         text=True,
         cwd=_REPO_ROOT,
     ).strip()
-    assert out == "2.1.2"
+    assert out == expected.group(1)
 
 
 def test_reported_version_reads_baked_file(monkeypatch, tmp_path):

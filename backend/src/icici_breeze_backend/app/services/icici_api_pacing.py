@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from contextlib import contextmanager
 from typing import Any, Callable, TypeVar
 
@@ -11,6 +12,15 @@ _logger = logging.getLogger(__name__)
 
 _MAX_BACKOFF_SEC = 3.0
 _MAX_HTTP_ATTEMPTS = 4
+
+# ICICI's documented ceiling is ~100 requests/minute. 90 leaves headroom for calls this
+# process cannot see — the same broker account used from ICICI's own web or mobile app
+# spends the identical quota, and nothing here can count those.
+_MAX_CALLS_PER_MINUTE = 90
+_RATE_WINDOW_SEC = 60.0
+# Longest a critical call will wait for a minute-slot. Beyond this the window is so full
+# that waiting no longer beats surfacing the problem to the caller.
+_MAX_SLOT_WAIT_SEC = 20.0
 
 T = TypeVar("T")
 
@@ -49,6 +59,74 @@ class GlobalIciciApiPacer:
     _lock = threading.Lock()
     _last_call_mono: dict[str, float] = {}
     _consecutive_rate_limited: dict[str, int] = {}
+    _recent_calls: dict[str, deque[float]] = {}
+
+    @classmethod
+    def _prune(cls, uid: str, now: float) -> deque[float]:
+        """Caller must hold `_lock`."""
+        dq = cls._recent_calls.setdefault(uid, deque())
+        cutoff = now - _RATE_WINDOW_SEC
+        while dq and dq[0] < cutoff:
+            dq.popleft()
+        return dq
+
+    @classmethod
+    def calls_in_window(cls, user_id: str) -> int:
+        with cls._lock:
+            return len(cls._prune(user_id, time.monotonic()))
+
+    @classmethod
+    def note_call(cls, user_id: str) -> None:
+        now = time.monotonic()
+        with cls._lock:
+            cls._prune(user_id, now).append(now)
+
+    @classmethod
+    def wait_for_minute_slot(cls, user_id: str, *, advisory: bool, endpoint: str = "icici") -> bool:
+        """Reserve a slot in the trailing-60s window. False means "do not make this call".
+
+        The pre-existing pacer only ever remembered the *last* call, so it could space
+        calls but had no idea how many it had made in the last minute — it could not see a
+        throttle coming and only ever reacted after ICICI returned 429, then gave up in
+        ~4s against a minute-scale cooldown. This is the missing half: refuse to exceed the
+        window in the first place.
+
+        Advisory callers are refused immediately rather than queued. Making them wait would
+        hand the scarce slots to whichever call arrived first, which is exactly the
+        random-loser behaviour the classification exists to end.
+        """
+        deadline = time.monotonic() + _MAX_SLOT_WAIT_SEC
+        while True:
+            now = time.monotonic()
+            with cls._lock:
+                dq = cls._prune(user_id, now)
+                if len(dq) < _MAX_CALLS_PER_MINUTE:
+                    dq.append(now)
+                    return True
+                oldest = dq[0]
+            if advisory:
+                _logger.info(
+                    "ICICI minute-window full (%d/%ds): shedding advisory %s (user=%s)",
+                    _MAX_CALLS_PER_MINUTE,
+                    int(_RATE_WINDOW_SEC),
+                    endpoint,
+                    user_id,
+                )
+                return False
+            if now >= deadline:
+                _logger.warning(
+                    "ICICI minute-window still full after %.0fs; letting critical %s "
+                    "through (user=%s)",
+                    _MAX_SLOT_WAIT_SEC,
+                    endpoint,
+                    user_id,
+                )
+                with cls._lock:
+                    cls._prune(user_id, time.monotonic()).append(time.monotonic())
+                return True
+            # Sleep only until the oldest call ages out of the window, never past the
+            # deadline. A fixed poll interval would either burn CPU or overshoot.
+            time.sleep(max(0.05, min(oldest + _RATE_WINDOW_SEC - now, deadline - now)))
 
     @classmethod
     def wait_for_slot(cls, user_id: str, base_spacing_sec: float, *, endpoint: str = "icici") -> None:
@@ -97,6 +175,7 @@ class GlobalIciciApiPacer:
         with cls._lock:
             cls._last_call_mono.pop(user_id, None)
             cls._consecutive_rate_limited.pop(user_id, None)
+            cls._recent_calls.pop(user_id, None)
 
 
 class GlobalIciciApiLimiter:
@@ -151,6 +230,27 @@ class GlobalIciciApiLimiter:
             "Error": msg,
             "icici_throttled": True,
             "daily_limit_exhausted": daily_exhausted,
+        }
+
+    @classmethod
+    def build_shed_error(cls, user_id: str | None, *, endpoint: str = "icici") -> dict[str, Any]:
+        """Refusal for an advisory call held back to protect the critical budget.
+
+        Distinct from `build_throttle_error` on purpose: nothing failed and ICICI was
+        never asked. Reporting it as a broker throttle would send users chasing a problem
+        at ICICI's end that does not exist, and would hide the fact that the app made a
+        deliberate choice on their behalf.
+        """
+        _logger.info("Shedding advisory ICICI call %s (user=%s)", endpoint, user_id)
+        return {
+            "Status": 429,
+            "Error": (
+                "Skipped a non-essential broker refresh to protect your remaining daily "
+                "API calls for placing and cancelling orders. This display may be "
+                "slightly out of date."
+            ),
+            "icici_throttled": False,
+            "advisory_shed": True,
         }
 
     @classmethod
@@ -216,13 +316,27 @@ class GlobalIciciApiLimiter:
         ep = endpoint or cls._endpoint_from_url(record_url)
 
         if uid:
-            from icici_breeze_backend.app.services.api_usage import is_daily_limit_reached
+            from icici_breeze_backend.app.services.api_usage import (
+                advisory_budget_exhausted,
+                is_daily_limit_reached,
+            )
+            from icici_breeze_backend.app.services.icici_call_class import is_advisory
             from icici_breeze_backend.app.services.user_rate_limit_prefs import (
                 get_icici_rate_limit_pause_seconds,
             )
 
+            advisory = is_advisory()
+
             if is_daily_limit_reached(uid):
                 return build_result(cls.build_throttle_error(uid))
+            # The reserved floor: advisory traffic stops early so the last 500 calls of
+            # the day stay available for placing and cancelling orders.
+            if advisory and advisory_budget_exhausted(uid):
+                return build_result(cls.build_shed_error(uid, endpoint=ep))
+            # Proactive minute-window gate. Everything below this line is the old reactive
+            # path — it now only has to handle throttles we could not predict.
+            if not GlobalIciciApiPacer.wait_for_minute_slot(uid, advisory=advisory, endpoint=ep):
+                return build_result(cls.build_shed_error(uid, endpoint=ep))
 
             base_pause = get_icici_rate_limit_pause_seconds(uid)
             GlobalIciciApiPacer.wait_for_slot(uid, base_pause, endpoint=ep)
@@ -234,6 +348,12 @@ class GlobalIciciApiLimiter:
         def _attempt_loop() -> T:
             broker_error: str | None = None
             for attempt in range(_MAX_HTTP_ATTEMPTS):
+                if uid and attempt > 0:
+                    # The first attempt reserved its slot in `wait_for_minute_slot`; every
+                    # retry is another real request against the same quota and has to be
+                    # counted, or a throttle storm would be invisible to the window that
+                    # exists to prevent it.
+                    GlobalIciciApiPacer.note_call(uid)
                 raw = perform_http()
                 http_status, body, err_text = classify_response(raw)
                 broker_error = err_text or broker_error

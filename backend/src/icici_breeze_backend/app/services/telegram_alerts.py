@@ -55,9 +55,49 @@ def _format_message(
         lines.append(f"\nTotal P&L: ₹{sign}{total_pnl:,.2f}")
 
     if failed:
-        lines.insert(1, "⚠️ _One or more legs failed to place — check the app._")
+        # "check the app" was an invitation to go place the leg manually on ICICI's
+        # portal, which is exactly how a user ends up opening a contra position against
+        # an exit that was still in flight. Name the risk instead of implying an action.
+        lines.insert(
+            1,
+            "⚠️ _One or more legs did not go through. Automatic retries are finished — "
+            "review the position before placing anything yourself, since any leg that DID "
+            "fill has already changed it._",
+        )
 
     return "\n".join(lines)
+
+
+def _format_retrying_message(reason: str, payload: dict[str, Any], seconds: int) -> str:
+    """Sent the moment a throttle forces the first retry, not after the last one.
+
+    The whole point is to reach the user during the wait. A user who sees no exit appear
+    and has been told nothing will reasonably go and place it on ICICI's app — and that
+    manual fill is what creates the contra-position risk. Telling them we are retrying,
+    and that we will detect their action and stop, removes the reason to intervene.
+    """
+    emoji, label = _REASON_LABEL.get(reason, ("🔔", "Square-Off Rule Fired"))
+    stock_code = payload.get("stock_code", "")
+    expiry_display = payload.get("expiry_display", "")
+    return "\n".join(
+        [
+            f"⏳ *Retrying exit orders* — {stock_code} · {expiry_display}",
+            "",
+            f"{label} fired, but ICICI is rate-limiting us. Retrying automatically for up "
+            f"to about {seconds} seconds.",
+            "",
+            "*You don't need to do anything.* If you place these orders yourself in the "
+            "meantime we'll detect it and stop retrying, so you won't get a duplicate.",
+            "",
+            "You'll get a final confirmation here either way.",
+        ]
+    )
+
+
+def notify_squareoff_retrying(
+    user_id: str, *, reason: str, payload: dict[str, Any], seconds: int
+) -> None:
+    _notify(user_id, _format_retrying_message(reason, payload, seconds), kind="squareoff retry")
 
 
 def notify_squareoff_fired(
@@ -185,6 +225,71 @@ def notify_logout_stopped_monitoring(user_id: str, rules: list[Any]) -> None:
     the kind of thing a user does in a hurry and forgets by the next move in the market.
     """
     _notify(user_id, _format_logout_message(rules), kind="logout")
+
+
+def _format_protection_suspended_message(rules: list[Any], *, first: bool) -> str:
+    """Armed on paper, evaluating nothing — the engine has no positions to measure against
+    because there is no usable broker session.
+
+    This is the opposite case to `_format_session_expired_message` and the distinction is
+    the entire message. There, monitoring genuinely continues on a stored broker session.
+    Here it does not: the rules exist, the app will show them as Armed, and nothing will
+    fire. Saying "still armed" would be the most dangerous possible wording, so the words
+    "not being monitored" have to come before anything else.
+    """
+    n = len(rules)
+    header = (
+        "🛑 *PB/SL protection suspended*"
+        if first
+        else "🛑 *PB/SL protection still suspended*"
+    )
+    return "\n".join(
+        [
+            header,
+            "",
+            f"{n} rule(s) are *not being monitored* right now:",
+            *_rule_lines(rules),
+            "",
+            "The app cannot reach your broker session, so no profit-booking or stop-loss "
+            "exit orders can be placed — even though these rules still show as Armed.",
+            "",
+            "*Log back in to restore protection.* You'll get a confirmation here the "
+            "moment monitoring resumes.",
+        ]
+    )
+
+
+def _format_protection_resumed_message(rules: list[Any]) -> str:
+    n = len(rules)
+    return "\n".join(
+        [
+            "✅ *PB/SL monitoring resumed*",
+            "",
+            f"Your broker session is live again and {n} rule(s) are being monitored:",
+            *_rule_lines(rules),
+        ]
+    )
+
+
+def notify_protection_suspended(user_id: str, rules: list[Any], *, first: bool) -> None:
+    """Recurring alert while live SGs cannot be evaluated. `first` only changes the
+    wording — the repeat has to read as a continuing state, not a fresh incident, or a
+    user who has been unprotected for two hours cannot tell it from a new one."""
+    _notify(
+        user_id,
+        _format_protection_suspended_message(rules, first=first),
+        kind="protection suspended",
+    )
+
+
+def notify_protection_resumed(user_id: str, rules: list[Any]) -> None:
+    """Sent once, when a previously-suspended user's positions warm successfully.
+
+    Closing the loop is not a nicety: we told the user protection was off and asked them
+    to act, so leaving them to guess whether it worked would make them distrust the
+    suspended alert itself next time.
+    """
+    _notify(user_id, _format_protection_resumed_message(rules), kind="protection resumed")
 
 
 def _notify(user_id: str, text: str, *, kind: str) -> None:

@@ -9,17 +9,22 @@ are ignored defensively rather than assumed unreachable.
 from __future__ import annotations
 
 import logging
-from typing import Any
+import time
+from typing import Any, Callable
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.repositories import squareoff_rules as repo
 from icici_breeze_backend.app.services.deployment_license_status import trading_mutations_allowed
+from icici_breeze_backend.app.services.icici_api_pacing import is_breeze_rate_limited
 from icici_breeze_backend.app.services.portfolio_pnl_engine import (
     register_rule_hit_listener,
     set_group_rule,
 )
 from icici_breeze_backend.app.services.processor import processor
-from icici_breeze_backend.app.services.telegram_alerts import notify_squareoff_fired
+from icici_breeze_backend.app.services.telegram_alerts import (
+    notify_squareoff_fired,
+    notify_squareoff_retrying,
+)
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
 _logger = logging.getLogger(__name__)
@@ -92,10 +97,30 @@ def hydrate_group_rules_on_startup() -> None:
     quotes would go stale and the engine would never see a breach.
     """
     from icici_breeze_backend.app.services import strategy_group_lifecycle as sg
+    from icici_breeze_backend.app.services.squareoff_protection_guard import (
+        warm_positions_for_user,
+    )
 
     armed_order_feed: set[str] = set()
+    warmed_positions: set[str] = set()
     for row in repo.list_all_live_rules():
         user_id = str(row["user_id"])
+        # Re-arming the rule is not enough to make it fire. `run_pnl_tick` iterates the
+        # position registry and returns early when it is empty, and `_evaluate_rules` is
+        # called from inside that per-user loop — so without warming positions here the
+        # SGs below are restored, pinned, visible in the UI as Armed, and evaluate
+        # nothing until someone opens the Portfolio page. Cost is one call per user.
+        if user_id not in warmed_positions:
+            warmed_positions.add(user_id)
+            if not warm_positions_for_user(user_id):
+                # Expected when the instance restarts outside a live broker session. The
+                # guard loop retries every tick and alerts the user; do not block
+                # hydration of the remaining rules on it.
+                _logger.warning(
+                    "Could not warm positions for user_id=%s during hydration; "
+                    "PB/SL evaluation is suspended until a broker session is available",
+                    user_id,
+                )
         # Arm the account-wide order feed once per user with a live SG, independent of the
         # per-rule chain pins below — the SG lifecycle can't reach Completed / Reset without
         # it, and it must not hinge on a chain subscription happening to bring the WS up.
@@ -125,6 +150,111 @@ def hydrate_group_rules_on_startup() -> None:
         rule = repo.get_rule(str(row["id"]))
         if rule is not None:
             sg.pin_subscription(user_id, rule)
+
+
+# ~50s of patience, against ICICI's minute-scale throttle cooldown. The old behaviour gave
+# up after the transport layer's ~4s of backoff, which is an order of magnitude short — a
+# leg that could have filled 20 seconds later was abandoned, leaving the position half
+# unwound with no automatic second chance (the rule is popped from the registry before
+# dispatch, so no later tick re-evaluates it).
+_RETRY_DELAYS_SEC = (5.0, 10.0, 15.0, 20.0)
+
+
+def _is_retryable_throttle(response: Any) -> bool:
+    """Only an explicit ICICI throttle is retryable.
+
+    Deliberately narrow. A throttle is a *refusal*: ICICI tells us it did not accept the
+    order, so re-sending cannot duplicate it. A timeout or transport error carries no such
+    guarantee — the order may well have reached the exchange — and re-sending one risks
+    opening a second position. Those are surfaced to the user instead of retried, which is
+    why this never needs an order-book round-trip to stay safe.
+
+    A day-limit exhaustion is a throttle we also refuse to retry: it will not clear before
+    midnight IST, so waiting 50s only delays the bad news.
+    """
+    if not isinstance(response, dict):
+        return False
+    if response.get("daily_limit_exhausted"):
+        return False
+    if response.get("advisory_shed"):
+        return False  # never applies to order placement, but be explicit
+    if response.get("icici_throttled"):
+        return True
+    return is_breeze_rate_limited(response.get("Status"), response.get("Error"))
+
+
+def _still_firing(rule_id: str) -> bool:
+    """True while this rule is still the one we are placing exits for.
+
+    `_handle_group_rule_hit` marks the rule `triggered` before placing. Anything else —
+    most importantly a Reset from `_handle_foreign_order`, which fires when the WS order
+    feed sees a fill the user made from the ICICI website or app — means our exit is no
+    longer wanted. Re-checking this between retries is what makes a long retry safe: the
+    user can act during the wait and we stand down instead of racing them into a contra
+    position.
+    """
+    try:
+        rule = repo.get_rule(rule_id)
+    except Exception:  # noqa: BLE001 — a DB blip must not silently abandon an exit
+        _logger.exception("Could not re-read rule %s mid-retry; continuing", rule_id)
+        return True
+    return rule is not None and rule.status == "triggered"
+
+
+def _place_chunk_with_retry(
+    breeze,
+    *,
+    user_id: str,
+    rule_id: str,
+    leg: dict[str, Any],
+    chunk_qty: int,
+    limit_price: float,
+    on_first_retry: Callable[[], None],
+) -> tuple[str | None, str | None]:
+    """Place one chunk, retrying only through ICICI throttles. Returns (order_id, error)."""
+    last_error: str | None = None
+    notified = False
+    for attempt in range(len(_RETRY_DELAYS_SEC) + 1):
+        if attempt:
+            time.sleep(_RETRY_DELAYS_SEC[attempt - 1])
+            if not _still_firing(rule_id):
+                return None, (
+                    "Not retried — this rule was reset while we were waiting out an ICICI "
+                    "throttle (the position was acted on elsewhere)."
+                )
+        response = breeze.place_order(
+            user_id=user_id,
+            product_type=leg["product_type"],
+            stock_code=leg["stock_code"],
+            action=leg["action"],
+            strike_price=leg["strike_price"],
+            right=leg["right"],
+            price=str(limit_price),
+            expiry_date=leg["expiry_display"],
+            quantity=chunk_qty,
+            exchange_code=leg["exchange_code"],
+            aggressive_limit=False,
+        )
+        if isinstance(response, dict) and response.get("Status") == 200:
+            order_id = (response.get("Success") or {}).get("order_id")
+            if order_id:
+                return str(order_id), None
+            return None, "Broker did not return an order id"
+
+        last_error = str((response or {}).get("Error") or "Broker rejected the order")
+        if not _is_retryable_throttle(response):
+            return None, last_error
+        if not notified:
+            notified = True
+            on_first_retry()
+        _logger.warning(
+            "Exit leg throttled for rule_id=%s leg=%s; retry %d/%d",
+            rule_id,
+            leg.get("scrip_key"),
+            attempt + 1,
+            len(_RETRY_DELAYS_SEC),
+        )
+    return None, last_error
 
 
 def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
@@ -173,6 +303,31 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
     breeze = processor()
     leg_results: list[dict[str, Any]] = []
     all_ok = True
+
+    announced = {"retry": False}
+
+    def _announce_retry() -> None:
+        """Tell the user we are retrying, the moment it starts — not 50s later.
+
+        Without this the only signal is the final alert, so a user watching an exit not
+        appear has every reason to go place it themselves on ICICI's app. Saying we are
+        retrying *and* that we will stand down if they act is what makes the wait
+        tolerable; the stand-down is real (`_still_firing`), so this is a promise the code
+        actually keeps.
+        """
+        if announced["retry"]:
+            return
+        announced["retry"] = True
+        try:
+            notify_squareoff_retrying(
+                user_id,
+                reason=reason,
+                payload=payload,
+                seconds=int(sum(_RETRY_DELAYS_SEC)),
+            )
+        except Exception:  # noqa: BLE001 — an alert must never break placement
+            _logger.exception("Retry alert failed for rule_id=%s", rule_id)
+
     for leg in legs:
         order_ids: list[str] = []
         chunk_errors: list[str] = []
@@ -182,28 +337,19 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
             qty_per_order = _leg_qty_per_order(breeze, leg)
             chunks = _split_into_chunks(int(leg["quantity"]), qty_per_order)
             for chunk_qty in chunks:
-                response = breeze.place_order(
+                order_id, chunk_error = _place_chunk_with_retry(
+                    breeze,
                     user_id=user_id,
-                    product_type=leg["product_type"],
-                    stock_code=leg["stock_code"],
-                    action=leg["action"],
-                    strike_price=leg["strike_price"],
-                    right=leg["right"],
-                    price=str(limit_price),
-                    expiry_date=leg["expiry_display"],
-                    quantity=chunk_qty,
-                    exchange_code=leg["exchange_code"],
-                    aggressive_limit=False,
+                    rule_id=rule_id,
+                    leg=leg,
+                    chunk_qty=chunk_qty,
+                    limit_price=limit_price,
+                    on_first_retry=_announce_retry,
                 )
-                ok = isinstance(response, dict) and response.get("Status") == 200
-                if not ok:
-                    chunk_errors.append(str((response or {}).get("Error") or "Broker rejected the order"))
-                    continue
-                order_id = (response or {}).get("Success", {}).get("order_id")
                 if order_id:
-                    order_ids.append(str(order_id))
+                    order_ids.append(order_id)
                 else:
-                    chunk_errors.append("Broker did not return an order id")
+                    chunk_errors.append(chunk_error or "Broker rejected the order")
         except Exception as exc:  # defensive: one leg's failure must not stop the rest
             _logger.exception(
                 "Square-off order placement raised for rule_id=%s leg=%s", rule_id, leg.get("scrip_key")

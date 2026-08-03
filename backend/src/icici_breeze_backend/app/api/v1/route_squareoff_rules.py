@@ -15,6 +15,7 @@ from icici_breeze_backend.app.domain.squareoff_rule import (
 )
 from icici_breeze_backend.app.repositories import squareoff_rules as repo
 from icici_breeze_backend.app.services import portfolio_pnl_engine, strategy_group_lifecycle
+from icici_breeze_backend.app.services.icici_call_class import advisory_calls
 from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.services.reference_data.scrip_master_sql import normalize_expiry_display
 from icici_breeze_backend.app.services.strategy_group_arm_guard import (
@@ -70,7 +71,12 @@ def _attach_reset_details(user_id: str, rules: list[SquareOffRuleRecord]) -> Non
     if not any(r.status == "reset" for r in rules):
         return
     try:
-        strategy_group_lifecycle.attach_reset_details(user_id, processor(), rules)
+        # Advisory: this is the hazard/orphan banner. It is the single largest consumer of
+        # the daily broker budget on this deployment, and losing a refresh costs a
+        # slightly-stale warning — not a missed exit. It sheds first under pressure so the
+        # reserve stays available for placing and cancelling orders.
+        with advisory_calls():
+            strategy_group_lifecycle.attach_reset_details(user_id, processor(), rules)
     except Exception:  # noqa: BLE001
         _logger.exception("Could not attach reset details for user_id=%s", user_id)
 
@@ -210,6 +216,14 @@ async def cancel_orphan_orders(
             failed.append(
                 {"order_id": o.order_id, "error": str(result.get("error") or "Unknown error")}
             )
+    if cancelled:
+        # The cached order book still shows these as live, and `rearm_blocked` is derived
+        # from exactly that. Without this the user cancels their orphans and is still told
+        # they cannot re-arm, for up to the cache TTL — friction on a safety action, and
+        # indistinguishable from the cancel having failed.
+        from icici_breeze_backend.app.services import order_book_cache
+
+        order_book_cache.invalidate_user(ctx.user_id)
     AuditLogger(None).log_operation(
         ctx.user_id,
         OperationType.SQUAREOFF_RULE_DISARMED,
