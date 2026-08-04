@@ -311,6 +311,38 @@ def _quote_success_rows(quote: dict | None) -> list:
 # repeated /portfolio/data refreshes instead of re-calling margin_calculator.
 _PORTFOLIO_MARGIN_CACHE_TTL_SECONDS = 24 * 60 * 60
 
+# get_positions() and get_margin_situation() are each independently called by
+# GET /home/data (navbar, every non-dashboard page), GET /dashboard/bootstrap, GET
+# /portfolio/data, and the PB/SL protection guard's 60s warm loop -- none of which
+# know about the others. A short shared cache collapses whichever of those land
+# within the same few seconds into one broker round-trip. TTL is kept below the
+# protection guard's minimum tick interval (15s, see squareoff_protection_guard.py
+# _tick_interval_seconds) so the guard is never the one *reusing* an entry older
+# than its own cadence -- worst case it free-rides on a very recent fetch someone
+# else already paid for, never skips a live check on its own schedule. Only
+# successful (Status 200) responses are cached: a failure must always be visible
+# live so the guard's suspend/alert path is never masked or delayed by a stale hit.
+_LIVE_SNAPSHOT_CACHE_TTL_SECONDS = 15
+
+
+def _cached_live_snapshot(cache_key: str) -> dict | None:
+    from icici_breeze_backend.app.db.redis_client import cache_get_json
+
+    try:
+        cached = cache_get_json(cache_key)
+    except Exception:
+        return None
+    return cached if isinstance(cached, dict) else None
+
+
+def _remember_live_snapshot(cache_key: str, data: dict) -> None:
+    from icici_breeze_backend.app.db.redis_client import cache_set_json
+
+    try:
+        cache_set_json(cache_key, data, ex=_LIVE_SNAPSHOT_CACHE_TTL_SECONDS)
+    except Exception:
+        pass
+
 
 def _cached_span_margin_required(cache_key: str) -> float | None:
     from icici_breeze_backend.app.db.redis_client import cache_get_json
@@ -995,6 +1027,10 @@ class processor():
                 margin_situation["Status"] = cred_data.get("Status", 400)
                 margin_situation["Error"] = cred_data.get("Error", "Could not fetch credentials")
                 return margin_situation
+            live_cache_key = f"margin_situation_snapshot:{user_id}:{target_margin_ute}"
+            cached_snapshot = _cached_live_snapshot(live_cache_key)
+            if cached_snapshot is not None:
+                return cached_snapshot
             # Try SDK first (uses patched requests for GET+body)
             margin = None
             try:
@@ -1047,6 +1083,8 @@ class processor():
             margin_situation["Error"] = "Unable to fetch margin information. Please try again or re-login."
 
         self._maybe_evict_session(user_id, margin_situation)
+        if margin_situation.get("Status") == 200:
+            _remember_live_snapshot(live_cache_key, margin_situation)
         return margin_situation
 
     def get_options(
@@ -1881,6 +1919,10 @@ class processor():
             else:
                 return {"Status": cred_data.get("Status", 400), "Error": cred_data.get("Error", "Could not fetch credentials"), "Success": None}
         else:
+            live_cache_key = f"portfolio_positions_snapshot:{user_id}"
+            cached_snapshot = _cached_live_snapshot(live_cache_key)
+            if cached_snapshot is not None:
+                return cached_snapshot
             # Same SDK entry point as Breeze API tester (get_portfolio_positions).
             try:
                 positions = breeze.get_portfolio_positions()
@@ -1892,7 +1934,10 @@ class processor():
         if positions is None:
             positions = {"Status": 400, "Error": "ICICI Breeze API get_portfolio_positions() returned NULL", "Success": None}
         if _is_empty_portfolio_positions_response(positions):
-            return _empty_portfolio_positions_result()
+            empty_result = _empty_portfolio_positions_result()
+            if full_secret is not None:
+                _remember_live_snapshot(live_cache_key, empty_result)
+            return empty_result
         if positions is not None:
             status, success_data, _ = _normalize_icici_response(positions)
             if status == 200 and success_data is not None:
@@ -2013,6 +2058,8 @@ class processor():
                 err = positions.get("Error") or positions.get("error") or "No data"
                 _logger.warning("get_positions: API returned status=%s error=%r user_id=%s", status, err, user_id)
 
+        if full_secret is not None and positions.get("Status") == 200:
+            _remember_live_snapshot(live_cache_key, positions)
         return positions
 
     def _netted_span_for_legs(

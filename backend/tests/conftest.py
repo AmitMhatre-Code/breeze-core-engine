@@ -55,6 +55,22 @@ def exchange_calendar_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolate_live_snapshot_cache_keys():
+    """Purge processor.py's short-TTL get_positions()/get_margin_situation() cache
+    around every test. It's a process-global Redis/in-memory cache keyed only by
+    user_id, and its 15s TTL comfortably outlives a single test -- without this, a
+    test asserting `assert_called_once()` on a mocked broker call could pass only
+    because an earlier test for the same user_id already warmed the cache."""
+    from icici_breeze_backend.app.db.redis_client import cache_delete_pattern
+
+    cache_delete_pattern("portfolio_positions_snapshot:*")
+    cache_delete_pattern("margin_situation_snapshot:*")
+    yield
+    cache_delete_pattern("portfolio_positions_snapshot:*")
+    cache_delete_pattern("margin_situation_snapshot:*")
+
+
+@pytest.fixture(autouse=True)
 def isolate_quote_snapshot_keys():
     """Purge the durable quote-snapshot keys around every test.
 
