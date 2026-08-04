@@ -203,7 +203,7 @@ export function StrategyLegsPanel({
               <TotalStat
                 label="Net premium"
                 value={formatIndianMoneyCompact(totalsNetPremium)}
-                tone={totalsNetPremium < 0 ? "down" : "foreground"}
+                tone={totalsNetPremium < 0 ? "down" : totalsNetPremium > 0 ? "up" : "foreground"}
               />
               <TotalStat
                 label="Net SPAN margin"
