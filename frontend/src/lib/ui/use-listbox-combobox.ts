@@ -49,7 +49,13 @@ export function useListboxCombobox<T>({
       if (!open) return;
 
       if (e.key === "Tab") {
-        onClose();
+        if (options.length === 0) {
+          onClose();
+          return;
+        }
+        // Don't preventDefault: focus should still move to the next field natively.
+        const idx = highlightIndex >= 0 ? highlightIndex : 0;
+        onSelect(options[idx]!);
         return;
       }
 

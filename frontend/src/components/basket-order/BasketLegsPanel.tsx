@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { InfoPopover } from "@/components/ui/InfoPopover";
 import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
@@ -56,6 +56,7 @@ export function BasketLegsPanel({
   lotSize,
   legs,
   onLegsChange,
+  strikePendingIds,
   onAddLeg,
   onStrikeChange,
   onRightChange,
@@ -83,6 +84,8 @@ export function BasketLegsPanel({
   lotSize: number;
   legs: StrategyLeg[];
   onLegsChange: (updater: (prev: StrategyLeg[]) => StrategyLeg[]) => void;
+  /** Leg ids added via "Add leg" whose strike hasn't been confirmed yet. */
+  strikePendingIds: Set<string>;
   onAddLeg: () => void;
   onStrikeChange: (legId: string, strike: number) => void;
   onRightChange: (legId: string, right: OptionRight) => void;
@@ -111,7 +114,21 @@ export function BasketLegsPanel({
   scaleControls: BasketScaleControls;
 }) {
   const activeLegCount = legs.filter((l) => l.lots > 0).length;
-  const sortedLegs = [...legs].sort((a, b) => a.strike - b.strike);
+
+  // Default is insertion order (a newly added leg lands at the bottom). Clicking the Strike
+  // column header opts into ascending/descending; legs with an unconfirmed strike always sort
+  // last regardless of direction, so a freshly added row never jumps mid-list.
+  const [strikeSortDir, setStrikeSortDir] = useState<"asc" | "desc" | null>(null);
+  const displayedLegs = useMemo(() => {
+    if (!strikeSortDir) return legs;
+    return [...legs].sort((a, b) => {
+      const aPending = strikePendingIds.has(a.id);
+      const bPending = strikePendingIds.has(b.id);
+      if (aPending !== bPending) return aPending ? 1 : -1;
+      if (aPending) return 0;
+      return strikeSortDir === "asc" ? a.strike - b.strike : b.strike - a.strike;
+    });
+  }, [legs, strikeSortDir, strikePendingIds]);
 
   return (
     <div>
@@ -158,7 +175,19 @@ export function BasketLegsPanel({
                 <thead>
                   <tr className="border-b border-border-soft">
                     <th className="py-2 pl-[18px] pr-2.5 text-left text-micro font-bold uppercase tracking-[.06em] text-faint">
-                      Strike
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setStrikeSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                        }
+                        aria-label={`Sort by strike, ${strikeSortDir === "asc" ? "currently ascending" : strikeSortDir === "desc" ? "currently descending" : "unsorted"}`}
+                        className="inline-flex items-center gap-1 transition hover:text-foreground"
+                      >
+                        Strike
+                        <span aria-hidden className="text-[10px] leading-none">
+                          {strikeSortDir === "asc" ? "▲" : strikeSortDir === "desc" ? "▼" : "⇅"}
+                        </span>
+                      </button>
                     </th>
                     <th className={thCls}>Type</th>
                     <th className={thCls}>Position</th>
@@ -179,7 +208,8 @@ export function BasketLegsPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedLegs.map((l) => {
+                  {displayedLegs.map((l) => {
+                    const strikePending = strikePendingIds.has(l.id);
                     const qtyU = l.lots > 0 ? Math.round(l.lots * lotSize) : 0;
                     const aggressive = l.aggressiveLimit ?? false;
                     const premTotal = aggressive
@@ -194,7 +224,7 @@ export function BasketLegsPanel({
                         <td className="max-w-[8rem] py-2 pl-[18px] pr-2.5">
                           <StrikeSelectPill
                             strikes={strikes}
-                            value={l.strike}
+                            value={strikePending ? null : l.strike}
                             onChange={(strike) => onStrikeChange(l.id, strike)}
                             busy={chainBusy && strikes.length === 0}
                             layout="table"

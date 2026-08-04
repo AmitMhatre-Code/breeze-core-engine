@@ -92,6 +92,12 @@ export default function BasketOrderPage() {
   const [priceManuallyEdited, setPriceManuallyEdited] = useState<Set<string>>(
     () => new Set(),
   );
+  /** Leg ids added via "Add leg" whose strike hasn't been confirmed by the user yet — kept
+   * blank in the table (rather than showing the auto-picked ATM default) and pinned to the
+   * bottom while a sort is active, so a freshly added row never appears to jump elsewhere. */
+  const [strikePendingIds, setStrikePendingIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [executePreviewOpen, setExecutePreviewOpen] = useState(false);
   /** null until the user flips the mode toggle — until then it follows basket composition. */
   const [userScaleMode, setUserScaleMode] = useState<ScaleMode | null>(null);
@@ -198,6 +204,12 @@ export default function BasketOrderPage() {
 
   const onStrikeChange = useCallback(
     (legId: string, strike: number) => {
+      setStrikePendingIds((prev) => {
+        if (!prev.has(legId)) return prev;
+        const next = new Set(prev);
+        next.delete(legId);
+        return next;
+      });
       setLegs((prev) => {
         const updated = prev.map((x) =>
           x.id === legId ? { ...x, strike } : x,
@@ -287,6 +299,11 @@ export default function BasketOrderPage() {
       leg.premiumPerUnit = prem;
     }
     setLegs((prev) => [...prev, leg]);
+    setStrikePendingIds((prev) => {
+      const next = new Set(prev);
+      next.add(leg.id);
+      return next;
+    });
   }, [atmStrike, strikes, chainRows]);
 
   const handleStrategyChainBuySell = useCallback(
@@ -638,6 +655,7 @@ export default function BasketOrderPage() {
                   lotSize={lotSize}
                   legs={legs}
                   onLegsChange={setLegs}
+                  strikePendingIds={strikePendingIds}
                   onAddLeg={onAddLeg}
                   onStrikeChange={onStrikeChange}
                   onRightChange={onRightChange}
