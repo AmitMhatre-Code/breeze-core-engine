@@ -8,6 +8,7 @@ from typing import Any
 
 from icici_breeze_backend.audit.strategy_builder_audit import StrategyBuilderAuditSession, quote_row_to_audit
 from icici_breeze_backend.audit.user_explainability import build_user_explainability_report
+from icici_breeze_backend.app.services.icici_call_class import advisory_calls
 from icici_breeze_backend.app.services.processor import (
     _annualized_carry_percent_on_span,
     _days_to_expiry,
@@ -422,9 +423,13 @@ async def run_propose_trades(
     for res in recommended_results + relaxed_results:
         log_strategy_result(ctx, res)
 
-    await attach_margins_and_returns(
-        proc, user_id, exchange_code, ctx.stock_code, expiry_display, all_ok, ctx, audit
-    )
+    # Advisory: this is the final-leg SPAN/return refresh for display only — sizing
+    # already happened above. Losing it under budget pressure blanks span_margin /
+    # annualized_return_pct for this generation, it never empties the strategy list.
+    with advisory_calls():
+        await attach_margins_and_returns(
+            proc, user_id, exchange_code, ctx.stock_code, expiry_display, all_ok, ctx, audit
+        )
 
     for res in all_ok:
         refresh_directional_tile_metrics(res)

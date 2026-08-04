@@ -143,6 +143,14 @@ function parseNum(raw: unknown): number {
   return NaN;
 }
 
+type GeneratedParams = {
+  marginLacs: number | null;
+  maxLossLacs: number | null;
+  provisionElm: boolean;
+  minPopPct: number | null;
+  minAnnReturnPct: number | null;
+};
+
 function resetDownstream(
   setters: {
     setMinPopPct: (v: string) => void;
@@ -185,12 +193,15 @@ export default function StrategyBuilderPage() {
   const [proposedData, setProposedData] = useState<ProposeTradesSuccess | null>(
     null,
   );
+  const [lastGeneratedParams, setLastGeneratedParams] =
+    useState<GeneratedParams | null>(null);
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [generatingCategory, setGeneratingCategory] =
     useState<StrategyCategory | null>(null);
   const activeJobIdRef = useRef<string | null>(null);
+  const generatingParamsRef = useRef<GeneratedParams | null>(null);
   const [executePreviewOpen, setExecutePreviewOpen] = useState(false);
   const [showBuilderTip, setShowBuilderTip] = useState(false);
   const [showTransparency, setShowTransparency] = useState(false);
@@ -357,10 +368,24 @@ export default function StrategyBuilderPage() {
     canGenerateShared && minPopPctNum != null && minAnnReturnPctNum != null;
   const canGenerateDirectional = canGenerateShared;
 
+  const isResultStale =
+    proposedData != null &&
+    lastGeneratedParams != null &&
+    (marginLacsNum !== lastGeneratedParams.marginLacs ||
+      maxLossLacsNum !== lastGeneratedParams.maxLossLacs ||
+      provisionElm !== lastGeneratedParams.provisionElm ||
+      minPopPctNum !== lastGeneratedParams.minPopPct ||
+      minAnnReturnPctNum !== lastGeneratedParams.minAnnReturnPct);
+
   const applyGenerateSuccess = useCallback(
-    (success: ProposeTradesSuccess, category: StrategyCategory) => {
+    (
+      success: ProposeTradesSuccess,
+      category: StrategyCategory,
+      params: GeneratedParams,
+    ) => {
       setGenerateError(null);
       setProposedData(success);
+      setLastGeneratedParams(params);
       setBuilderMode(category);
       setSelectedTradeId(null);
       setLegs([]);
@@ -376,6 +401,13 @@ export default function StrategyBuilderPage() {
 
   const startGenerateM = useMutation({
     mutationFn: async (category: StrategyCategory) => {
+      const params: GeneratedParams = {
+        marginLacs: marginLacsNum,
+        maxLossLacs: maxLossLacsNum,
+        provisionElm,
+        minPopPct: minPopPctNum,
+        minAnnReturnPct: minAnnReturnPctNum,
+      };
       const res = await startProposeTradesJob({
         exchange_code: segmentExchange,
         stock_code: stockCode.trim(),
@@ -396,11 +428,12 @@ export default function StrategyBuilderPage() {
       if (res.Status !== 202 || !res.Success?.job_id) {
         throw new Error(res.Error ?? "Failed to start strategy generation.");
       }
-      return { jobId: res.Success.job_id, category };
+      return { jobId: res.Success.job_id, category, params };
     },
-    onSuccess: ({ jobId, category }) => {
+    onSuccess: ({ jobId, category, params }) => {
       setGenerateError(null);
       setGeneratingCategory(category);
+      generatingParamsRef.current = params;
       activeJobIdRef.current = jobId;
       setActiveJobId(jobId);
     },
@@ -428,8 +461,12 @@ export default function StrategyBuilderPage() {
       return;
     }
     if (payload.status === "done" && payload.result) {
-      if (generatingCategory) {
-        applyGenerateSuccess(payload.result, generatingCategory);
+      if (generatingCategory && generatingParamsRef.current) {
+        applyGenerateSuccess(
+          payload.result,
+          generatingCategory,
+          generatingParamsRef.current,
+        );
       }
       clearGenerateJob();
       return;
@@ -922,7 +959,9 @@ export default function StrategyBuilderPage() {
                     >
                       {isGenerating && generatingCategory === "income"
                         ? "Generating…"
-                        : CATEGORY_LABELS.income}
+                        : builderMode === "income" && isResultStale
+                          ? `Regenerate ${CATEGORY_LABELS.income}`
+                          : CATEGORY_LABELS.income}
                     </button>
                   </div>
 
@@ -946,7 +985,9 @@ export default function StrategyBuilderPage() {
                         >
                           {isGenerating && generatingCategory === category
                             ? "Generating…"
-                            : CATEGORY_LABELS[category]}
+                            : builderMode === category && isResultStale
+                              ? `Regenerate ${CATEGORY_LABELS[category]}`
+                              : CATEGORY_LABELS[category]}
                         </button>
                       ))}
                     </div>
@@ -987,6 +1028,11 @@ export default function StrategyBuilderPage() {
                       — {CATEGORY_LABELS[builderMode]}
                     </span>
                   ) : null}
+                  {isResultStale ? (
+                    <span className="ml-2 inline-flex items-center rounded-full border border-accent/30 bg-accent-tint px-2 py-0.5 align-middle text-xs font-medium text-foreground">
+                      Inputs changed — click Regenerate
+                    </span>
+                  ) : null}
                 </h2>
                 {trades.some((t) => t.status === "ok") ||
                 relaxedTrades.length > 0 ? (
@@ -1005,6 +1051,9 @@ export default function StrategyBuilderPage() {
                   </div>
                 ) : null}
               </div>
+              <div
+                className={isResultStale ? "opacity-60 transition-opacity" : undefined}
+              >
               {!trades.some((t) => t.status === "ok") &&
               !relaxedTrades.length ? (
                 <p className="text-sm text-muted">
@@ -1090,6 +1139,7 @@ export default function StrategyBuilderPage() {
                   ) : null}
                 </>
               )}
+              </div>
               {proposedData?.user_report ? (
                 <div>
                   <button
