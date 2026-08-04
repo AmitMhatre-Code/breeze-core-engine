@@ -308,7 +308,7 @@ export function OptionChainUnderlyingSearch({
       ? `flex min-w-0 items-center gap-x-2.5 gap-y-1 sm:gap-x-3 ${
           quoteMetaInline ? "flex-nowrap" : "flex-wrap"
         }`
-      : "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 py-2 transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel sm:gap-x-3";
+      : "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 py-2.5 transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel sm:gap-x-3";
 
     const tickerRow = (
       <div className={rowClass}>

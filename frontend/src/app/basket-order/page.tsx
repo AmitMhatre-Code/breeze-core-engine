@@ -585,7 +585,7 @@ export default function BasketOrderPage() {
                 className="flex min-h-[2.75rem] flex-col overflow-visible rounded-[9px] sm:flex-row sm:items-start"
                 role="toolbar"
               >
-                <div className="flex shrink-0 items-center border-b border-border-soft px-2 py-2 sm:border-b-0 sm:border-r sm:py-0 sm:ps-2.5 sm:pe-2">
+                <div className="flex shrink-0 items-center border-b border-border-soft px-2 py-2 sm:border-b-0 sm:border-r sm:ps-2.5 sm:pe-2">
                   <ExchangeFlipToggle value={segmentExchange} onChange={onSegmentChange} />
                 </div>
                 <div className="relative z-30 flex min-w-0 max-w-[min(100%,17rem)] flex-1 items-center px-3 py-2 sm:border-r sm:border-border-soft">
