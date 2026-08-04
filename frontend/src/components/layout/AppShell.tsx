@@ -21,7 +21,6 @@ import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionP
 import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
 import { ContraOrphanBanner } from "@/components/portfolio/ContraOrphanBanner";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
-import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
 import { Modal } from "@/components/ui/Modal";
 import breezeMark from "@/app/android-chrome-192x192.png";
 import { apiClient } from "@/lib/api-client";
@@ -191,9 +190,6 @@ export function AppShell({
               <Link
                 key={item.href}
                 href={item.href}
-                aria-label={
-                  item.showNewBadge ? "Strategy Builder, new" : undefined
-                }
                 className={[
                   "relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-heading transition",
                   active
@@ -210,7 +206,6 @@ export function AppShell({
                 <Icon />
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate">{item.label}</span>
-                  {item.showNewBadge ? <NewFeatureBadge /> : null}
                 </span>
               </Link>
             );
@@ -383,9 +378,6 @@ export function AppShell({
                     <Link
                       key={item.href}
                       href={item.href}
-                      aria-label={
-                        item.showNewBadge ? "Strategy Builder, new" : undefined
-                      }
                       className={[
                         "relative flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 transition",
                         active
@@ -406,7 +398,6 @@ export function AppShell({
                       <Icon />
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className="truncate">{item.label}</span>
-                        {item.showNewBadge ? <NewFeatureBadge /> : null}
                       </span>
                     </Link>
                   );
