@@ -20,6 +20,23 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.6.0",
+    date: "05-Aug-2026",
+    releaseKind: "minor",
+    summary:
+      "Strategy Builder flags stale results after you change inputs, legs get inline strike editing, and quote badges show when a chain is still building instead of looking frozen.",
+    changes: [
+      "Strategy Builder now tells you when your results no longer match what's in the form: changing margin, max loss, min PoP, min return, or the ELM checkbox after generating dims the current results and relabels the button \"Regenerate …\", so you don't act on strategies built from parameters you've since changed.",
+      "Basket Order and Strategy Builder legs now have an inline strike selector in the legs table instead of static text — click a leg's strike to change it directly, without reopening the option chain. Strategy Builder's legs table gains this for the first time; Basket Order's Strike column header is now also clickable to sort ascending/descending, and a leg added via \"Add leg\" starts with a blank strike (instead of silently defaulting to ATM) and stays pinned to the bottom until you pick one.",
+      "Pressing Tab out of a scrip, expiry, or strike dropdown (Place Order, Basket Order, Strategy Builder) now selects the highlighted option and moves on to the next field, instead of just closing the dropdown and leaving whatever you'd typed.",
+      "Fixed a leg pricing bug in Basket Order and Strategy Builder: once you'd manually typed a price for a leg, changing that leg's strike or Call/Put afterwards silently kept the old, now-wrong price instead of refreshing it from the live chain. Price now always follows strike/right changes unless the leg is set to aggressive pricing.",
+      "Net premium now shows green for a net credit, matching the red already used for a net debit, in both the Basket Order and Strategy Builder legs panels — a positive net premium previously rendered in the same neutral colour as zero.",
+      "Place Order, Basket Order, and Strategy Builder now show an animated \"building live chain…\" badge while a chain has fallen back to end-of-day prices and is being rebuilt from the WebSocket feed in the background, instead of looking stuck on stale prices with no explanation. After about a minute without success it settles into a static message with a manual refresh button.",
+      "Reduced ICICI API usage from routine screen refreshes: position and margin data used by the navbar, Dashboard, Portfolio, and the Profit-Booking/Stop-Loss background monitor is now shared for a few seconds instead of every screen independently re-querying the broker for data someone else just fetched.",
+      "Strategy generation's final margin/return refresh now yields to the order-placement budget reserved in 2.5.0 instead of competing with it: under tight ICICI capacity, results still display — just without an updated SPAN margin / annualized-return figure for that batch — rather than spending calls meant to stay free for placing and cancelling orders.",
+    ],
+  },
+  {
     version: "2.5.0",
     date: "03-Aug-2026",
     releaseKind: "minor",
