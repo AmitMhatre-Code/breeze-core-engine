@@ -89,9 +89,6 @@ export default function BasketOrderPage() {
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
-  const [priceManuallyEdited, setPriceManuallyEdited] = useState<Set<string>>(
-    () => new Set(),
-  );
   /** Leg ids added via "Add leg" whose strike hasn't been confirmed by the user yet — kept
    * blank in the table (rather than showing the auto-picked ATM default) and pinned to the
    * bottom while a sort is active, so a freshly added row never appears to jump elsewhere. */
@@ -119,7 +116,6 @@ export default function BasketOrderPage() {
 
   const resetBasket = useCallback(() => {
     setLegs([]);
-    setPriceManuallyEdited(new Set());
     setChainModalOpen(false);
     setScaleWarning(null);
   }, []);
@@ -214,17 +210,15 @@ export default function BasketOrderPage() {
         const updated = prev.map((x) =>
           x.id === legId ? { ...x, strike } : x,
         );
-        if (priceManuallyEdited.has(legId)) return updated;
         const leg = updated.find((l) => l.id === legId);
         if (!leg || leg.aggressiveLimit) return updated;
         const prem = premiumFromChainRow(chainRows, strike, leg.right);
-        if (prem == null) return updated;
         return updated.map((x) =>
           x.id === legId ? { ...x, premiumPerUnit: prem } : x,
         );
       });
     },
-    [chainRows, priceManuallyEdited],
+    [chainRows],
   );
 
   const onRightChange = useCallback(
@@ -233,17 +227,15 @@ export default function BasketOrderPage() {
         const updated = prev.map((x) =>
           x.id === legId ? { ...x, right } : x,
         );
-        if (priceManuallyEdited.has(legId)) return updated;
         const leg = updated.find((l) => l.id === legId);
         if (!leg || leg.aggressiveLimit) return updated;
         const prem = premiumFromChainRow(chainRows, leg.strike, right);
-        if (prem == null) return updated;
         return updated.map((x) =>
           x.id === legId ? { ...x, premiumPerUnit: prem } : x,
         );
       });
     },
-    [chainRows, priceManuallyEdited],
+    [chainRows],
   );
 
   const onSideChange = useCallback((legId: string, side: OrderSide) => {
@@ -254,11 +246,6 @@ export default function BasketOrderPage() {
 
   const onPriceChange = useCallback(
     (legId: string, premiumPerUnit: number | undefined) => {
-      setPriceManuallyEdited((prev) => {
-        const next = new Set(prev);
-        next.add(legId);
-        return next;
-      });
       setLegs((prev) =>
         prev.map((x) =>
           x.id === legId ? { ...x, premiumPerUnit } : x,
@@ -270,12 +257,6 @@ export default function BasketOrderPage() {
 
   const onAggressiveChange = useCallback(
     (legId: string, checked: boolean) => {
-      setPriceManuallyEdited((prev) => {
-        if (!prev.has(legId)) return prev;
-        const next = new Set(prev);
-        next.delete(legId);
-        return next;
-      });
       setLegs((prev) => {
         const leg = prev.find((x) => x.id === legId);
         if (!leg) return prev;

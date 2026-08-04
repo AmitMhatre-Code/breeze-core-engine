@@ -48,7 +48,7 @@ import {
   inferChainBuildPhase,
 } from "@/components/shared/market-data/ChainBuildStatus";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
-import { premiumFromChainRow } from "@/lib/strategy-builder/chain-quote";
+import { premiumFromChainRow, strikesFromChain } from "@/lib/strategy-builder/chain-quote";
 import { expiryDisplayToYears, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import {
   computeMarginsCalcKey,
@@ -205,9 +205,6 @@ export default function StrategyBuilderPage() {
   const [executePreviewOpen, setExecutePreviewOpen] = useState(false);
   const [showBuilderTip, setShowBuilderTip] = useState(false);
   const [showTransparency, setShowTransparency] = useState(false);
-  const [priceManuallyEdited, setPriceManuallyEdited] = useState<Set<string>>(
-    new Set(),
-  );
   const [outlookFilter, setOutlookFilter] = useState<Set<Outlook>>(
     () => new Set(ALL_OUTLOOKS),
   );
@@ -257,6 +254,7 @@ export default function StrategyBuilderPage() {
 
   const chainSuccess = chainSuccessForExpiry(chainQ.data, expiryDate);
   const chainRows = chainSuccess?.chain_rows ?? [];
+  const strikes = useMemo(() => strikesFromChain(chainRows), [chainRows]);
   const chainSpot = chainSuccess?.spot_price ?? null;
   const chainQuoteMeta = useMemo(
     () => quoteMetaFromChain(chainSuccess),
@@ -562,7 +560,6 @@ export default function StrategyBuilderPage() {
       setSelectedTradeId(tradeSelectionKey(trade));
       const newLegs = proposedLegsToStrategyLegs(trade.legs, lotSize);
       setLegs(newLegs);
-      setPriceManuallyEdited(new Set());
       if (trade.span_margin != null) {
         marginCalc.prefillSpanMargin(
           trade.span_margin,
@@ -591,17 +588,32 @@ export default function StrategyBuilderPage() {
         const updated = prev.map((x) =>
           x.id === legId ? { ...x, right } : x,
         );
-        if (priceManuallyEdited.has(legId)) return updated;
         const leg = updated.find((l) => l.id === legId);
         if (!leg || leg.aggressiveLimit) return updated;
         const prem = premiumFromChainRow(chainRows, leg.strike, right);
-        if (prem == null) return updated;
         return updated.map((x) =>
           x.id === legId ? { ...x, premiumPerUnit: prem } : x,
         );
       });
     },
-    [chainRows, priceManuallyEdited],
+    [chainRows],
+  );
+
+  const onStrikeChange = useCallback(
+    (legId: string, strike: number) => {
+      setLegs((prev) => {
+        const updated = prev.map((x) =>
+          x.id === legId ? { ...x, strike } : x,
+        );
+        const leg = updated.find((l) => l.id === legId);
+        if (!leg || leg.aggressiveLimit) return updated;
+        const prem = premiumFromChainRow(chainRows, strike, leg.right);
+        return updated.map((x) =>
+          x.id === legId ? { ...x, premiumPerUnit: prem } : x,
+        );
+      });
+    },
+    [chainRows],
   );
 
   const onSideChange = useCallback((legId: string, side: OrderSide) => {
@@ -630,12 +642,6 @@ export default function StrategyBuilderPage() {
 
   const onAggressiveChange = useCallback(
     (legId: string, checked: boolean) => {
-      setPriceManuallyEdited((prev) => {
-        if (!prev.has(legId)) return prev;
-        const next = new Set(prev);
-        next.delete(legId);
-        return next;
-      });
       setLegs((prev) => {
         const leg = prev.find((x) => x.id === legId);
         if (!leg) return prev;
@@ -654,11 +660,6 @@ export default function StrategyBuilderPage() {
 
   const onPriceChange = useCallback(
     (legId: string, premiumPerUnit: number | undefined) => {
-      setPriceManuallyEdited((prev) => {
-        const next = new Set(prev);
-        next.add(legId);
-        return next;
-      });
       setLegs((prev) =>
         prev.map((x) =>
           x.id === legId ? { ...x, premiumPerUnit } : x,
@@ -1174,6 +1175,9 @@ export default function StrategyBuilderPage() {
               legs={legs}
               onLegsChange={setLegs}
               onAddLeg={onAddLeg}
+              strikes={strikes}
+              chainBusy={chainLoading}
+              onStrikeChange={onStrikeChange}
               onRightChange={onRightChange}
               onSideChange={onSideChange}
               onPriceChange={onPriceChange}

@@ -7,6 +7,7 @@ import { LegQuantityInput } from "@/components/shared/legs/LegQuantityInput";
 import { LegQuantityHeader } from "@/components/shared/legs/LegQuantityHeader";
 import { cloneLeg, LegRowActions } from "@/components/shared/legs/LegRowActions";
 import { LegRightToggle, LegSideToggle } from "@/components/shared/legs/LegToggles";
+import { StrikeSelectPill } from "@/components/shared/order/StrikeSelectPill";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import {
   formatBuySellRatio,
@@ -27,6 +28,9 @@ export function StrategyLegsPanel({
   legs,
   onLegsChange,
   onAddLeg,
+  strikes,
+  chainBusy,
+  onStrikeChange,
   onRightChange,
   onSideChange,
   onPriceChange,
@@ -46,6 +50,9 @@ export function StrategyLegsPanel({
   legs: StrategyLeg[];
   onLegsChange: (updater: (prev: StrategyLeg[]) => StrategyLeg[]) => void;
   onAddLeg?: () => void;
+  strikes: number[];
+  chainBusy: boolean;
+  onStrikeChange: (legId: string, strike: number) => void;
   onRightChange: (legId: string, right: OptionRight) => void;
   onSideChange: (legId: string, side: OrderSide) => void;
   onPriceChange: (legId: string, premiumPerUnit: number | undefined) => void;
@@ -124,8 +131,15 @@ export function StrategyLegsPanel({
                   const legEntry = legMargins[l.id];
                   return (
                     <tr key={l.id} className="app-table-row">
-                      <td className="py-1.5 pl-5 pr-2 tabular-nums text-foreground">
-                        {l.strike.toLocaleString("en-IN")}
+                      <td className="max-w-[8rem] py-1.5 pl-5 pr-2">
+                        <StrikeSelectPill
+                          strikes={strikes}
+                          value={l.strike}
+                          onChange={(strike) => onStrikeChange(l.id, strike)}
+                          busy={chainBusy && strikes.length === 0}
+                          layout="table"
+                          hideLabel
+                        />
                       </td>
                       <td className="px-2 py-1.5">
                         <LegRightToggle
