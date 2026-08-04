@@ -47,7 +47,6 @@ const navItems = [
     href: "/basket-order",
     label: "Basket Order",
     icon: BasketOrderIcon,
-    showNewBadge: true,
   },
   { href: "/strategy-builder", label: "Strategy Builder", icon: StrategyIcon },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
