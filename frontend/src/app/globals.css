@@ -477,6 +477,26 @@
     @apply overflow-auto whitespace-pre-wrap break-words rounded-[9px] border border-border bg-panel2 p-3 font-mono text-[11px] leading-relaxed text-muted;
   }
 
+  /** QuoteSourceBadge "building" state — indeterminate sweep under the label
+      while a chain is still assembling from WebSocket ticks in the background. */
+  @keyframes qsb-build-progress {
+    0% {
+      left: -35%;
+    }
+    100% {
+      left: 100%;
+    }
+  }
+  .qsb-progress-bar {
+    animation: qsb-build-progress 1.3s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .qsb-anim,
+    .qsb-anim * {
+      animation: none !important;
+    }
+  }
+
   /**
    * Strategy-builder range sliders: slim rail + compact thumb.
    */

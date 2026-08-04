@@ -39,8 +39,13 @@ export function chainQueryKey(
 
 export function chainRefetchInterval(intervalMs: number = CHAIN_WS_REFETCH_MS) {
   return (query: Query<ChainApiResponse, Error>): number | false => {
-    const src = query.state.data?.Success?.quote_source;
-    return src === "websocket" ? intervalMs : false;
+    const success = query.state.data?.Success;
+    if (success?.quote_source === "websocket") return intervalMs;
+    // Market has opened since the Bhavcopy this chain fell back to — keep polling so
+    // the badge can pick up the live chain once the background chain builder finishes,
+    // instead of going idle on session-close prices for the rest of the page visit.
+    if (success?.bhavcopy_stale === true) return intervalMs;
+    return false;
   };
 }
 

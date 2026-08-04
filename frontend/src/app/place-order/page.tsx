@@ -726,7 +726,14 @@ function PlaceOrderPageInner() {
                     Scrip details
                   </span>
                   {chainQuoteMeta ? (
-                    <QuoteSourceBadge meta={chainQuoteMeta} variant="default" showAsOf={false} />
+                    <QuoteSourceBadge
+                      meta={chainQuoteMeta}
+                      variant="default"
+                      showAsOf={false}
+                      buildKey={`${segment}:${stockCode}:${expiryDate}`}
+                      onRefresh={() => chainQ.refetch()}
+                      refreshing={chainQ.isFetching}
+                    />
                   ) : null}
                 </div>
                 <div className="p-4">

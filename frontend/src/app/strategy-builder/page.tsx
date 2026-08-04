@@ -714,7 +714,13 @@ export default function StrategyBuilderPage() {
             </div>
 
             {chainQuoteMeta ? (
-              <QuoteSourceBadge meta={chainQuoteMeta} variant="compact" />
+              <QuoteSourceBadge
+                meta={chainQuoteMeta}
+                variant="compact"
+                buildKey={`${segmentExchange}:${stockCode}:${expiryDate}`}
+                onRefresh={() => chainQ.refetch()}
+                refreshing={chainQ.isFetching}
+              />
             ) : null}
           </header>
 
