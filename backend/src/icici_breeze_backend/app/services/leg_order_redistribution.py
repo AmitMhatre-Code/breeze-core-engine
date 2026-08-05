@@ -7,6 +7,15 @@ orders currently exist for that leg — shrinking/cancelling some, growing
 others, or adding new chunk orders — without ever touching the portion of an
 order that's already filled. No broker calls happen here; this only computes
 the plan that `processor.execute_leg_modification` then carries out.
+
+Quantity semantics: every quantity emitted in `modify` is that order's new
+**open** (not-yet-filled) quantity, never its placed total. ICICI's modify_order
+treats the quantity on a partially-traded order as the remaining quantity and
+validates the exchange freeze limit against `already_traded + quantity_sent`, so
+sending the placed total for an order with fills double-counts the filled
+portion and is rejected ("Maximum qty per order for this stock allowed by the
+exchange is : :N") once that sum passes the limit. For an order with no fills
+the two are identical, which is why this only ever misfires on partial fills.
 """
 from __future__ import annotations
 
@@ -116,7 +125,7 @@ def plan_leg_redistribution(
             # Quantity is unchanged, so the redistribution logic below would
             # otherwise return a totally empty plan — but a price-only change
             # still needs to reach the broker, so re-submit every open order
-            # at its current quantity purely to carry the new price.
+            # at its current open quantity purely to carry the new price.
             if not open_orders:
                 raise LegModifyValidationError(
                     "Cannot change price: this leg has no open quantity left "
@@ -127,7 +136,7 @@ def plan_leg_redistribution(
                     {
                         "order_id": o.order_id,
                         "exchange_code": o.exchange_code,
-                        "quantity": o.quantity,
+                        "quantity": o.pending_quantity,
                     }
                 )
         return plan
@@ -147,7 +156,7 @@ def plan_leg_redistribution(
                     {
                         "order_id": o.order_id,
                         "exchange_code": o.exchange_code,
-                        "quantity": o.quantity - to_shed,
+                        "quantity": o.pending_quantity - to_shed,
                     }
                 )
                 to_shed = 0
@@ -158,6 +167,8 @@ def plan_leg_redistribution(
     for o in open_orders:
         if to_grow <= 0:
             break
+        # Headroom is measured against the placed total, since the exchange caps
+        # filled + open per order; the quantity *sent* is then the open portion.
         capacity = qty_per_order - o.quantity
         if capacity <= 0:
             continue
@@ -166,7 +177,7 @@ def plan_leg_redistribution(
             {
                 "order_id": o.order_id,
                 "exchange_code": o.exchange_code,
-                "quantity": o.quantity + add,
+                "quantity": o.pending_quantity + add,
             }
         )
         to_grow -= add
