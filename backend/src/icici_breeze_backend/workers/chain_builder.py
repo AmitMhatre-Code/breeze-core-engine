@@ -136,9 +136,13 @@ def _handle_signal(signum: int, _frame: object) -> None:
 
 def main() -> int:
     _load_env()
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    # Shared with the API process rather than basicConfig: this worker is a separate OS
+    # process, and rolling its own config meant it silently opted out of the secret
+    # redaction filter and of any future handler wired up in configure_logging.
+    from icici_breeze_backend.app.core.logging import configure_logging
+
+    configure_logging(
+        level=os.environ.get("LOG_LEVEL", "INFO"), process_name="chain-builder"
     )
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)

@@ -36,8 +36,16 @@ def _parse_env_file_key(path: str, key: str) -> Optional[str]:
     return None
 
 
-def _get_log_config_from_env_file() -> dict:
-    """Read LOG_LEVEL and LOG_FILE only from .env file. Never from os.environ."""
+def _get_log_config() -> dict:
+    """Resolve LOG_LEVEL/LOG_FILE: .env file wins, then os.environ.
+
+    The .env file keeps precedence so a stray shell export can't quietly override an
+    operator's on-disk config. The os.environ fallback exists because the deployed
+    container has no .env file on a path this module looks at — the CFN bootstrap
+    mounts it at /opt/breeze-core-engine/.env and passes it via `--env-file`, i.e.
+    as environment. Without the fallback these two settings are unreachable in
+    production and always resolve to their defaults.
+    """
     out = {}
     for _p in _env_paths_tried:
         if not os.path.isfile(_p):
@@ -47,6 +55,11 @@ def _get_log_config_from_env_file() -> dict:
             if val is not None:
                 out[key] = val
         break
+    for key in _LOG_KEYS_FROM_ENV_FILE:
+        if key not in out:
+            val = (os.environ.get(key) or "").strip()
+            if val:
+                out[key] = val
     return out
 
 
@@ -83,8 +96,8 @@ def _load_env_early():
 # Load .env before reading LOG_LEVEL/LOG_FILE so they are available from file
 _load_env_early()
 
-# LOG_LEVEL and LOG_FILE: only from .env file, never from os.environ
-_log_config = _get_log_config_from_env_file()
+# LOG_LEVEL and LOG_FILE: .env file first, then os.environ (see _get_log_config)
+_log_config = _get_log_config()
 LOG_LEVEL = _log_config.get("LOG_LEVEL") or "INFO"
 LOG_FILE = _log_config.get("LOG_FILE")
 

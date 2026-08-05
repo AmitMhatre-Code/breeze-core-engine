@@ -47,6 +47,7 @@ Paths below are relative to the site root (e.g. `http://localhost:3000` in devel
 | `/settings/api-usage` | API usage statistics. |
 | `/settings/breeze-api-playground` | Interactively call raw ICICI Breeze API methods (including WS subscribe) against the signed-in session — for diagnosing broker-side issues. |
 | `/settings/strategy-audit-logs` | Browse recorded strategy-builder evaluation/audit entries. |
+| `/settings?tab=application-logs` | Download this deployment's rotating application logs as a zip (`/diagnostics/logs/*`). Deployment-wide, not per-user; authenticated but not admin-only. |
 | `/settings/delete-account` | Account deletion entry. |
 
 The UI uses **React Query** for server state and **Chart.js** where charts are shown.

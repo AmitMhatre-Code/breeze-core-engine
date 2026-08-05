@@ -65,7 +65,10 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
             request, state_user_id_after or state_user_id_before
         )
 
-        logger.info(
+        # DEBUG, not INFO: uvicorn.access already logs method/path/status for every
+        # request, so at INFO this duplicated it on every single call. The user_id here
+        # is the part uvicorn can't give you, so it stays available one level down.
+        logger.debug(
             "Incoming request %s %s user_id=%s",
             request.method,
             request.url.path,

@@ -117,12 +117,72 @@ For **licensed deployments**, `TELEGRAM_BOT_TOKEN`/`TELEGRAM_BOT_USERNAME` are c
 
 ## Logging
 
-Read **only from the `.env` file** (not from the process environment) in `main.py`:
+Resolved in `main.py` by `_get_log_config()`: the **`.env` file wins**, and the process
+environment is the **fallback** when the file doesn't set a key. File precedence keeps a
+stray shell export from overriding an operator's on-disk config; the environment fallback
+is what makes these reachable on the CloudFormation deployment at all, where the env
+arrives via `docker run --env-file` and no `.env` sits on a path `main.py` reads.
 
 | Variable | Purpose |
 |----------|---------|
-| `LOG_LEVEL` | e.g. `INFO`, `DEBUG`. |
+| `LOG_LEVEL` | e.g. `INFO`, `DEBUG`. Defaults to `INFO`. Set `WARNING` in production — at `INFO` the per-request `uvicorn.access` lines dominate the log. |
 | `LOG_FILE` | Optional path for file logging under `backend/logs/` or absolute path. |
+
+`LOG_LEVEL` now genuinely controls per-request access logging. uvicorn's own loggers
+(`uvicorn`, `uvicorn.error`, `uvicorn.access`) are stripped of the self-contained handlers
+and `propagate=False` that its dictConfig gives them, so all three flow through the root
+handlers and are gated, formatted and redacted like application logging. `/health` and
+`/metrics` access lines are always dropped (`QuietAccessPathFilter`); the container
+HEALTHCHECK alone hits `/health` every 30s. The `chain_builder` worker shares the same
+`configure_logging()` rather than its own `basicConfig`, so it gets redaction and the
+error-context buffer too.
+
+### Error-context buffer
+
+The console handler carries `LOG_LEVEL`; the **root logger stays more verbose** so
+`ErrorContextBufferHandler` (`app/core/log_buffer.py`) can hold recent sub-threshold
+records in memory without printing them. When a record at ERROR or above arrives, the
+buffered lines are replayed to the console immediately *before* the error, then dropped.
+This is why running at `WARNING` doesn't cost you the context around a failure — the run-up
+is what a plain level increase throws away. Buffered records are message-rendered on the
+way in, so the buffer holds strings rather than references to whatever was passed as a
+`%s` arg.
+
+| Variable | Purpose |
+|----------|---------|
+| `LOG_ERROR_CONTEXT` | `0`/`false`/`no`/`off` disables buffering; root then sits at `LOG_LEVEL`. Default on. |
+| `LOG_ERROR_CONTEXT_LINES` | Ring-buffer capacity (default `2000`). |
+| `LOG_ERROR_CONTEXT_COOLDOWN_SECONDS` | Minimum gap between replays (default `60`) so an error loop can't dump repeatedly. The buffer is cleared even when a replay is suppressed — stale context must not attach to a later, unrelated error. |
+| `LOG_CAPTURE_LEVEL` | Numeric level the buffer captures at (default `20`/INFO). Never more verbose than `LOG_LEVEL` itself. |
+
+### Downloadable log sink
+
+`app/core/log_sink.py` writes JSON lines to `backend/data/logs/<process>.jsonl` — one file
+per OS process (`backend`, `chain-builder`), because a `RotatingFileHandler` shared across
+processes corrupts rotation. Users download a zip of it from **Settings → Application
+Logs** (`GET /diagnostics/logs/download`), which requires authentication but is **not**
+admin-gated: the bundle is deployment-wide by design, since the records worth having
+(chain builder, scheduler, ICICI pacing, heartbeats) carry no user id at all.
+
+Records pass `SecretRedactingFilter` before they are written, so nothing unredacted
+reaches the volume — scrubbing at download time would be too late, as the files sit on a
+host bind mount.
+
+The sink contributes its own floor to the root logger level, so it keeps recording INFO
+while the console is at WARNING, and keeps working if the error-context buffer is
+disabled. DEBUG lines (e.g. the VIX traces) are **not** included unless
+`LOG_CAPTURE_LEVEL=10` and `LOG_SINK_LEVEL=10` are both set.
+
+| Variable | Purpose |
+|----------|---------|
+| `LOG_SINK` | `0`/`false`/`no`/`off` disables on-disk recording (and the download). Default on. |
+| `LOG_SINK_LEVEL` | Numeric level written to disk (default `20`/INFO). |
+| `LOG_SINK_MAX_BYTES` | Size per file before rotation (default `4194304`). |
+| `LOG_SINK_BACKUP_COUNT` | Rotated files kept per process (default `5`). |
+| `LOG_SINK_RETENTION_DAYS` | Age cap, swept at startup (default `7`). |
+
+Worst case on disk is `MAX_BYTES x (BACKUP_COUNT + 1) x 2 processes` ≈ 40 MB — deliberately
+well under the data volume, which also holds the sqlite databases.
 
 ---
 

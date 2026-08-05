@@ -423,7 +423,11 @@ def _icici_unsubscribe_stock_token(stock_token: str, meta: dict[str, Any]) -> bo
             sdk.unsubscribe_feeds(**meta)
         else:
             _logger.warning("SDK missing unsubscribe_feeds; skipping %s", stock_token)
-        _logger.info("unsubscribe_feeds ok token=%s", stock_token)
+        # DEBUG, not INFO: this fires once per *token*, and tearing down a chain
+        # unsubscribes hundreds at a time — measured at 396 of 427 lines from this
+        # module in a single browsing session, which would crowd everything else out
+        # of the retained log. Failures still surface via _note_error above.
+        _logger.debug("unsubscribe_feeds ok token=%s", stock_token)
         return True
     except Exception as exc:
         _note_error("unsubscribe_feeds failed %s: %s", stock_token, exc)

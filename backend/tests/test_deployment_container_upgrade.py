@@ -120,6 +120,41 @@ def test_upgrade_shell_script_uses_env_file():
     assert dcu.DEFAULT_REDIS_URL in script
 
 
+def test_upgrade_shell_script_caps_container_log_size():
+    # Without these, /var/lib/docker/containers/*-json.log grows unbounded on the root
+    # volume the next image pull needs free space on.
+    script = dcu.upgrade_shell_script(
+        image="ghcr.io/org/breeze-core-engine:latest",
+        container_name="breeze-core-engine",
+        env_file="/opt/breeze-core-engine/.upgrade.env",
+        data_host="/opt/breeze-core-engine/data",
+        host_port=80,
+    )
+    assert script.count(f"--log-opt max-size={dcu.LOG_MAX_SIZE}") == 2  # app + redis
+    assert script.count(f"--log-opt max-file={dcu.LOG_MAX_FILE}") == 2
+
+
+def test_sdk_redis_start_applies_log_config(monkeypatch):
+    client = MagicMock()
+    client.containers.get.side_effect = sys.modules["docker.errors"].NotFound("nope")
+    dcu.ensure_redis_sidecar_sdk(client)
+    _, kwargs = client.containers.run.call_args
+    assert kwargs["log_config"] == dcu.log_config_kwargs()["log_config"]
+
+
+def test_log_config_kwargs_matches_shell_flags():
+    # The SDK and shell paths start the same containers; caps must not drift apart.
+    config = dcu.log_config_kwargs()["log_config"]
+    assert config["type"] == "json-file"
+    assert config["config"] == {
+        "max-size": dcu.LOG_MAX_SIZE,
+        "max-file": dcu.LOG_MAX_FILE,
+    }
+    flags = dcu.log_opt_flags()
+    assert f"max-size={config['config']['max-size']}" in flags
+    assert f"max-file={config['config']['max-file']}" in flags
+
+
 def test_prepare_upgrade_env_file_writes_host(tmp_path, monkeypatch):
     mock_client = MagicMock()
     written: dict[str, str] = {}

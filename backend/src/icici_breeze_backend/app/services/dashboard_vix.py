@@ -40,11 +40,15 @@ def _cache_set(cache: Dict[str, Tuple[float, Dict[str, Any]]], key: str, payload
     cache[key] = (time.time(), payload)
 
 
+# Everything this module logs below WARNING is step-by-step calculation tracing
+# (`VIX_TIMING_PREFIX`, `ATM_IV_TRACE_PREFIX`, `[vix-trend-debug]`) — a single dashboard
+# load emitted ~24 INFO lines. It sits at DEBUG so it stays greppable when you turn the
+# level up to chase an IV discrepancy, without riding along in normal operation.
 def _log_timing(step: str, elapsed_ms: float, detail: str = "") -> None:
     msg = f"{VIX_TIMING_PREFIX} {step}: {elapsed_ms:.0f} ms"
     if detail:
         msg += f" ({detail})"
-    _logger.info(msg)
+    _logger.debug(msg)
 
 
 T = TypeVar("T")
@@ -536,10 +540,10 @@ def _log_atm_iv_trace(
     Log each step of ATM IV calculation with real data from ICICI (NIFTY quote + option chain).
     Grep logs for ATM_IV_TRACE_PREFIX to see the full trace.
     """
-    _logger.info("%s === ATM IV calculation trace (real ICICI data) ===", ATM_IV_TRACE_PREFIX)
+    _logger.debug("%s === ATM IV calculation trace (real ICICI data) ===", ATM_IV_TRACE_PREFIX)
 
     # Step 1: NIFTY spot source
-    _logger.info(
+    _logger.debug(
         "%s Step 1 - NIFTY spot: used spot = %.2f (from get_quotes NSE cash NIFTY)",
         ATM_IV_TRACE_PREFIX, spot,
     )
@@ -547,7 +551,7 @@ def _log_atm_iv_trace(
         ltp_raw = nifty_quote.get("ltp")
         last_raw = nifty_quote.get("last")
         spot_price_raw = nifty_quote.get("spot_price")
-        _logger.info(
+        _logger.debug(
             "%s Step 1 - Raw quote keys used: ltp=%s, last=%s, spot_price=%s (value chosen: first non-empty)",
             ATM_IV_TRACE_PREFIX, ltp_raw, last_raw, spot_price_raw,
         )
@@ -555,11 +559,11 @@ def _log_atm_iv_trace(
     # Step 2: Expiry and time to expiry (LTT = expiry date 3:30 PM IST)
     ref_ist = get_reference_time_for_iv_ist()
     ref_label = "now (market open)" if is_market_open(ref_ist) else "previous market close (market closed)"
-    _logger.info(
+    _logger.debug(
         "%s Step 2 - Reference time for T: %s (%s)",
         ATM_IV_TRACE_PREFIX, ref_ist.strftime("%Y-%m-%d %H:%M:%S %Z"), ref_label,
     )
-    _logger.info(
+    _logger.debug(
         "%s Step 2 - First expiry: %s -> t_years = %.6f (time from reference to LTT, 3:30 PM IST on expiry date)",
         ATM_IV_TRACE_PREFIX, exp, t_years,
     )
@@ -567,35 +571,35 @@ def _log_atm_iv_trace(
     # Step 3: Sample raw option chain row from ICICI (so we see exact field names/values)
     if calls:
         sample = calls[0]
-        _logger.info(
+        _logger.debug(
             "%s Step 3 - Sample call row (ICICI get_option_chain_quotes): keys=%s",
             ATM_IV_TRACE_PREFIX, list(sample.keys()),
         )
-        _logger.info(
+        _logger.debug(
             "%s Step 3 - Sample call: strike_price=%s, ltp=%s, last=%s (LTP used = ltp or last)",
             ATM_IV_TRACE_PREFIX,
             sample.get("strike_price"), sample.get("ltp"), sample.get("last"),
         )
     if puts:
         sample = puts[0]
-        _logger.info(
+        _logger.debug(
             "%s Step 3 - Sample put row: strike_price=%s, ltp=%s, last=%s",
             ATM_IV_TRACE_PREFIX,
             sample.get("strike_price"), sample.get("ltp"), sample.get("last"),
         )
 
     # Step 4: ATM strike selection
-    _logger.info(
+    _logger.debug(
         "%s Step 4 - Strikes in window (4 below ATM, ATM, 4 above): %s",
         ATM_IV_TRACE_PREFIX, strikes_window,
     )
-    _logger.info(
+    _logger.debug(
         "%s Step 4 - ATM strike = strike closest to spot: atm_k = %.2f (spot = %.2f)",
         ATM_IV_TRACE_PREFIX, atm_k if atm_k is not None else 0, spot,
     )
 
     if atm_k is None:
-        _logger.info("%s (No ATM strike; trace ends)", ATM_IV_TRACE_PREFIX)
+        _logger.debug("%s (No ATM strike; trace ends)", ATM_IV_TRACE_PREFIX)
         return
 
     call_ltp, put_ltp = _build_ltp_maps(calls, puts)
@@ -603,30 +607,30 @@ def _log_atm_iv_trace(
     put_ltp_atm = put_ltp.get(atm_k)
 
     # Step 5: LTPs used for ATM
-    _logger.info(
+    _logger.debug(
         "%s Step 5 - ATM option premiums (from ICICI): call_ltp = %s, put_ltp = %s",
         ATM_IV_TRACE_PREFIX, call_ltp_atm, put_ltp_atm,
     )
 
     # Step 6: IV from call and put (Black–Scholes inverse)
-    _logger.info(
+    _logger.debug(
         "%s Step 6 - Black–Scholes IV inputs: spot=%.2f, strike=%.2f, t_years=%.6f, r=%.4f, q=%.4f",
         ATM_IV_TRACE_PREFIX, spot, atm_k, t_years, DEFAULT_R, DEFAULT_Q,
     )
     iv_call = implied_volatility(call_ltp_atm, spot, atm_k, t_years, "call") if call_ltp_atm else None
     iv_put = implied_volatility(put_ltp_atm, spot, atm_k, t_years, "put") if put_ltp_atm else None
-    _logger.info(
+    _logger.debug(
         "%s Step 6 - implied_volatility(call): price=%.4f -> iv_call = %s (annualized)",
         ATM_IV_TRACE_PREFIX, call_ltp_atm or 0, iv_call,
     )
-    _logger.info(
+    _logger.debug(
         "%s Step 6 - implied_volatility(put):  price=%.4f -> iv_put  = %s (annualized)",
         ATM_IV_TRACE_PREFIX, put_ltp_atm or 0, iv_put,
     )
 
     # Step 7: ATM IV = average of call and put IV
     atm_iv = strike_to_iv.get(atm_k)
-    _logger.info(
+    _logger.debug(
         "%s Step 7 - ATM IV = (iv_call + iv_put) / 2 = (%s + %s) / 2 = %s (displayed as %.2f%%)",
         ATM_IV_TRACE_PREFIX, iv_call, iv_put, atm_iv, (atm_iv * 100) if atm_iv else 0,
     )
@@ -636,15 +640,15 @@ def _log_atm_iv_trace(
         import math
         lower, upper, move_pct = expected_range_from_atm_iv(spot, atm_iv, t_years)
         sqrt_t = math.sqrt(t_years)
-        _logger.info(
+        _logger.debug(
             "%s Step 8 - Expected range: sigma*sqrt(T) = %.6f; lower = spot*exp(-sigma*sqrt(T)) = %.2f; upper = spot*exp(sigma*sqrt(T)) = %.2f",
             ATM_IV_TRACE_PREFIX, atm_iv * sqrt_t, lower, upper,
         )
-        _logger.info(
+        _logger.debug(
             "%s Step 8 - expected_range = [%.2f, %.2f], expected_move_pct = %.2f%%",
             ATM_IV_TRACE_PREFIX, lower, upper, move_pct * 100,
         )
-    _logger.info("%s === end ATM IV trace ===", ATM_IV_TRACE_PREFIX)
+    _logger.debug("%s === end ATM IV trace ===", ATM_IV_TRACE_PREFIX)
 
 
 def fetch_vix_headline(
@@ -673,7 +677,7 @@ def fetch_vix_headline(
 
     vix_quote = _quote_nse_cash(breeze, INDVIX_SYMBOL)
     if vix_quote:
-        _logger.info(
+        _logger.debug(
             "[vix-trend-debug] INDVIX quote keys=%s ltp=%r previous_close=%r",
             list(vix_quote.keys()),
             vix_quote.get("ltp"),
@@ -688,7 +692,7 @@ def fetch_vix_headline(
                 prev = 0.0
             if prev and prev > 0:
                 result["vix_trend_pct"] = round(((vix_ltp - prev) / prev) * 100, 2)
-                _logger.info(
+                _logger.debug(
                     "[vix-trend-debug] INDVIX ltp=%s prev=%s trend_pct=%s",
                     vix_ltp,
                     prev,
@@ -697,7 +701,7 @@ def fetch_vix_headline(
 
     nifty_quote = _quote_nse_cash(breeze, NIFTY_SYMBOL)
     if nifty_quote:
-        _logger.info(
+        _logger.debug(
             "[vix-trend-debug] NIFTY quote keys=%s ltp=%r previous_close=%r",
             list(nifty_quote.keys()),
             nifty_quote.get("ltp"),
@@ -715,7 +719,7 @@ def fetch_vix_headline(
                 prev = 0.0
             if prev and prev > 0:
                 result["nifty_spot_trend_pct"] = round(((spot - prev) / prev) * 100, 2)
-                _logger.info(
+                _logger.debug(
                     "[vix-trend-debug] NIFTY spot=%s prev=%s trend_pct=%s",
                     spot,
                     prev,

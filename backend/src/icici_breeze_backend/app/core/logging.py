@@ -3,7 +3,20 @@ import logging
 import os
 import re
 import sys
+from logging.handlers import RotatingFileHandler
 from typing import Optional
+
+from icici_breeze_backend.app.core.log_buffer import (
+    ErrorContextBufferHandler,
+    buffer_enabled,
+    build_handler,
+    capture_level_for,
+)
+from icici_breeze_backend.app.core.log_sink import (
+    build_handler as build_sink_handler,
+    prune_expired,
+    sink_enabled,
+)
 
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -16,6 +29,30 @@ LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 # library's, without having to silence anything.
 _SECRET_PATTERNS = (re.compile(r"/bot\d+:[A-Za-z0-9_-]+"),)
 _REDACTED = "/bot<redacted>"
+
+
+# Machine traffic, not user traffic: the container HEALTHCHECK hits /health every 30s
+# (Dockerfile) and /metrics is scraped on its own cadence. At one access line each they
+# dominate the log without ever saying anything.
+_QUIET_ACCESS_PATHS = frozenset({"/health", "/metrics"})
+
+
+class QuietAccessPathFilter(logging.Filter):
+    """Drops `uvicorn.access` lines for unattended probe endpoints."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn.access formats as (client_addr, method, path, http_version, status);
+        # read the path positionally and fall back to the rendered line if that shape
+        # ever changes, so a uvicorn upgrade degrades to "logs too much", not a crash.
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5:
+            path = str(args[2]).split("?", 1)[0]
+            return path not in _QUIET_ACCESS_PATHS
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - never let a filter drop a log line
+            return True
+        return not any(f" {p} HTTP/" in message for p in _QUIET_ACCESS_PATHS)
 
 
 class SecretRedactingFilter(logging.Filter):
@@ -40,35 +77,116 @@ def configure_logging(
     format_string: Optional[str] = None,
     stream: Optional[object] = None,
     log_file: Optional[str] = None,
+    process_name: str = "backend",
 ) -> None:
-    """Configure root logger with consistent format and level. log_file is from .env only."""
+    """Configure root logging: console at `level`, plus buffer and download sinks.
+
+    `process_name` names this process's file in the download sink — the API process and
+    the chain-builder worker must not share one, since each rotates without knowing
+    about the other's open file handles.
+    """
     log_level = getattr(logging, level.upper(), logging.INFO)
     fmt = format_string or LOG_FORMAT
     formatter = logging.Formatter(fmt, datefmt=LOG_DATE_FORMAT)
-    handler = logging.StreamHandler(stream or sys.stderr)
+    root = logging.getLogger()
+
+    # The *console handler* carries the configured level, not the root logger. Root has
+    # to stay more verbose than the console so sub-threshold records still reach the
+    # error-context buffer below; the handler level is what decides what gets printed.
+    # Prefer an existing console handler; a FileHandler is a StreamHandler subclass, so
+    # exclude it explicitly or a configured LOG_FILE would end up being treated as the
+    # console and the terminal would go silent.
+    existing = [
+        h for h in root.handlers
+        if isinstance(h, logging.StreamHandler)
+        and not isinstance(h, (logging.FileHandler, ErrorContextBufferHandler))
+    ]
+    handler = existing[0] if existing else logging.StreamHandler(stream or sys.stderr)
     handler.setLevel(log_level)
     handler.setFormatter(formatter)
-    root = logging.getLogger()
-    root.setLevel(log_level)
-    if not root.handlers:
+    if handler not in root.handlers:
         root.addHandler(handler)
-    else:
-        root.handlers[0].setLevel(log_level)
-        root.handlers[0].setFormatter(formatter)
-        root.setLevel(log_level)
+
+    # Root must sit at the most verbose level any attached sink wants, or records are
+    # dropped before a handler ever sees them. Each sink contributes its own floor, so
+    # turning one off can't silently starve another — the download sink in particular
+    # must keep receiving INFO when the console is at WARNING.
+    capture_floors = [log_level]
+
+    for stale in [h for h in root.handlers if isinstance(h, ErrorContextBufferHandler)]:
+        root.removeHandler(stale)
+        stale.close()
+    if buffer_enabled():
+        capture_floors.append(capture_level_for(log_level))
+        buffer_handler = build_handler(handler)
+        root.addHandler(buffer_handler)
+        # Must run *before* the console handler: handlers fire in list order, and the
+        # replayed context reads as nonsense if it lands after the error it leads up to.
+        # Safe to reorder in place — configure_logging runs at startup, single-threaded.
+        root.handlers.remove(buffer_handler)
+        root.handlers.insert(0, buffer_handler)
+
+    if sink_enabled():
+        for stale_sink in [
+            h for h in root.handlers if isinstance(h, RotatingFileHandler)
+        ]:
+            root.removeHandler(stale_sink)
+            stale_sink.close()
+        sink_handler = build_sink_handler(process_name)
+        if sink_handler is not None:
+            capture_floors.append(sink_handler.level)
+            root.addHandler(sink_handler)
+            prune_expired()
+
+    root.setLevel(min(capture_floors))
+
     if log_file and log_file.strip():
         try:
-            log_path = log_file.strip()
-            os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
-            file_handler = logging.FileHandler(log_path, encoding="utf-8")
-            file_handler.setLevel(log_level)
-            file_handler.setFormatter(formatter)
-            root.addHandler(file_handler)
+            log_path = os.path.abspath(log_file.strip())
+            already = any(
+                isinstance(h, logging.FileHandler)
+                and os.path.abspath(getattr(h, "baseFilename", "")) == log_path
+                for h in root.handlers
+            )
+            if not already:
+                os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+                file_handler = logging.FileHandler(log_path, encoding="utf-8")
+                file_handler.setLevel(log_level)
+                file_handler.setFormatter(formatter)
+                root.addHandler(file_handler)
         except OSError:
             pass
-    # Always show uvicorn lifecycle and access (startup, per-request lines)
+    # Lifecycle lines (`uvicorn.error`, despite the name: "Started server process",
+    # "Application startup complete") are once-per-boot and worth keeping even at
+    # WARNING. Access lines are per-request and now inherit the root level instead of
+    # being pinned to INFO — pinning them left LOG_LEVEL unable to quieten the loudest
+    # source in the log.
+    #
+    # The parent `uvicorn` logger must go to NOTSET as well, not just `uvicorn.access`:
+    # level lookup walks up the hierarchy until it finds a logger with a level set, so
+    # leaving the parent at INFO would keep access lines at INFO however the child is
+    # configured. uvicorn's own dictConfig sets all three to INFO; it runs in
+    # `Config.__init__`, before the app module is imported, so this runs last and wins.
+    # uvicorn's dictConfig makes its loggers self-contained sinks: `uvicorn` and
+    # `uvicorn.access` each get their own handler and propagate=False. Records therefore
+    # never reach the root handlers, which means the console level doesn't gate them,
+    # SecretRedactingFilter doesn't see them, and the error-context buffer can't capture
+    # them — access lines being the single noisiest source in the log. Strip the handlers
+    # and let everything propagate to root, so all three get the same treatment as
+    # application logging. `uvicorn` (the parent) matters as much as the child here: it
+    # holds both a handler and propagate=False, so leaving it alone would keep access
+    # records printing there and stop them reaching root.
     for uvicorn_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-        logging.getLogger(uvicorn_name).setLevel(logging.INFO)
+        uvicorn_logger = logging.getLogger(uvicorn_name)
+        uvicorn_logger.setLevel(logging.NOTSET)
+        uvicorn_logger.propagate = True
+        for uvicorn_handler in list(uvicorn_logger.handlers):
+            uvicorn_logger.removeHandler(uvicorn_handler)
+    # On the logger, not a handler: the filter must apply before the record reaches
+    # either the console or the buffer.
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, QuietAccessPathFilter) for f in access_logger.filters):
+        access_logger.addFilter(QuietAccessPathFilter())
     # breeze_connect logs ERROR on empty/invalid API response (e.g. JSON decode); we handle it and return error to user
     for breeze_logger_name in ("APILogger", "breeze_connect"):
         logging.getLogger(breeze_logger_name).setLevel(logging.WARNING)

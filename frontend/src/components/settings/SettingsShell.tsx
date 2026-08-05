@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { AdvancedPnlEngineScreen } from "./screens/AdvancedPnlEngineScreen";
 import { ApiPlaygroundScreen } from "./screens/ApiPlaygroundScreen";
 import { ApiUsageScreen } from "./screens/ApiUsageScreen";
+import { ApplicationLogsScreen } from "./screens/ApplicationLogsScreen";
 import { AuditLogsScreen } from "./screens/AuditLogsScreen";
 import { BrokerCredentialsScreen } from "./screens/BrokerCredentialsScreen";
 import { DeleteAccountScreen } from "./screens/DeleteAccountScreen";
@@ -23,6 +24,7 @@ type ScreenKey =
   | "advanced-pnl-engine"
   | "telegram-alerts"
   | "audit-logs"
+  | "application-logs"
   | "api-playground"
   | "delete-account";
 
@@ -47,6 +49,7 @@ const SCREENS: Record<ScreenKey, ComponentType> = {
   "advanced-pnl-engine": AdvancedPnlEngineScreen,
   "telegram-alerts": TelegramAlertsScreen,
   "audit-logs": AuditLogsScreen,
+  "application-logs": ApplicationLogsScreen,
   "api-playground": ApiPlaygroundScreen,
   "delete-account": DeleteAccountScreen,
 };
@@ -77,7 +80,10 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Diagnostics",
-    items: [{ key: "audit-logs", label: "Audit Logs", icon: DocIcon }],
+    items: [
+      { key: "audit-logs", label: "Audit Logs", icon: DocIcon },
+      { key: "application-logs", label: "Application Logs", icon: DocIcon },
+    ],
   },
   {
     label: "Danger zone",

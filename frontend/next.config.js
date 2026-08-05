@@ -236,6 +236,10 @@ const nextConfig = {
         destination: `${backendUpstream}/admin/tests/:path*`,
       },
       {
+        source: "/diagnostics/logs/:path*",
+        destination: `${backendUpstream}/diagnostics/logs/:path*`,
+      },
+      {
         source: "/dev/mock-broker-cookie",
         destination: `${backendUpstream}/dev/mock-broker-cookie`,
       },

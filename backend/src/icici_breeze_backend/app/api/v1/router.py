@@ -24,6 +24,7 @@ from icici_breeze_backend.app.api.v1 import route_terms
 from icici_breeze_backend.app.api.v1 import route_market_data
 from icici_breeze_backend.app.api.v1 import route_login_disclosure
 from icici_breeze_backend.app.api.v1 import route_settings_telegram
+from icici_breeze_backend.app.api.v1 import route_diagnostics
 
 v1_router = APIRouter()
 
@@ -46,6 +47,7 @@ v1_router.include_router(route_dashboard.router, prefix="/dashboard", tags=["das
 v1_router.include_router(route_outlook.router, prefix="", tags=["outlook"], include_in_schema=False)
 v1_router.include_router(route_performance.router, prefix="/performance", tags=[""], include_in_schema=False)
 v1_router.include_router(route_admin.router, prefix="/admin", tags=[""], include_in_schema=False)
+v1_router.include_router(route_diagnostics.router, prefix="", include_in_schema=False)
 v1_router.include_router(
     route_strategy_builder.router,
     prefix="/strategy-builder",

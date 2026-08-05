@@ -38,6 +38,29 @@ REDIS_MEMORY_LIMIT = "450m"
 APP_MEMORY_LIMIT = "1400m"
 APP_MEMORY_SWAP_LIMIT = "1800m"
 
+# Docker's default json-file driver never rotates: /var/lib/docker/containers/*-json.log
+# grows without bound on the 8GiB *root* volume, which also holds the OS, the 2GiB swapfile
+# and every pulled image. An upgrade needs free root space to pull into, so an unbounded log
+# doesn't just waste disk — it can starve the mechanism that would fix it. Caps are per
+# container: 5 x 20m = 100MB worst case each. Must match infra/breeze-core-engine-stack.yaml.
+LOG_MAX_SIZE = "20m"
+LOG_MAX_FILE = "5"
+
+
+def log_opt_flags() -> str:
+    """`docker run` log-rotation flags, for the shell-script (helper container) path."""
+    return f"--log-opt max-size={LOG_MAX_SIZE} --log-opt max-file={LOG_MAX_FILE} "
+
+
+def log_config_kwargs() -> dict[str, Any]:
+    """Same caps as `log_opt_flags`, shaped for the docker-py SDK path."""
+    return {
+        "log_config": {
+            "type": "json-file",
+            "config": {"max-size": LOG_MAX_SIZE, "max-file": LOG_MAX_FILE},
+        }
+    }
+
 
 def redis_maxmemory_mb() -> int:
     """Sidecar Redis maxmemory cap (MB); overridable via REDIS_MAXMEMORY_MB env."""
@@ -106,6 +129,7 @@ def _start_redis_sidecar_sdk(client: Any) -> None:
         command=redis_server_command(),
         mem_limit=REDIS_MEMORY_LIMIT,
         memswap_limit=REDIS_MEMORY_LIMIT,
+        **log_config_kwargs(),
     )
     logger.info(
         "deployment upgrade: started %s on %s (maxmemory=%smb)",
@@ -129,6 +153,7 @@ def _redis_sidecar_shell_lines() -> list[str]:
     redis_run_cmd = (
         f"docker run -d --name {REDIS_CONTAINER_NAME} --network {REDIS_NETWORK_NAME} "
         f"--restart unless-stopped --memory {REDIS_MEMORY_LIMIT} --memory-swap {REDIS_MEMORY_LIMIT} "
+        f"{log_opt_flags()}"
         f"{REDIS_IMAGE} redis-server --maxmemory {mb}mb "
         f"--maxmemory-policy {policy}"
     )
@@ -509,6 +534,7 @@ def upgrade_shell_script(
             "--restart unless-stopped "
             f"--network {REDIS_NETWORK_NAME} "
             f"--memory {APP_MEMORY_LIMIT} --memory-swap {APP_MEMORY_SWAP_LIMIT} "
+            f"{log_opt_flags()}"
             f"-p {int(host_port)}:{_CONTAINER_PORT} "
             f"-v {qd}:/app/backend/data "
             '-v "$ENV_FILE":"$ENV_FILE":ro '

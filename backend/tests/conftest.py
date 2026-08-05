@@ -14,6 +14,19 @@ from tests.fixtures.portal_heartbeat_drm_keys import TEST_PUBLIC_KEY_PEM
 
 
 @pytest.fixture(autouse=True)
+def _isolate_log_sink(tmp_path, monkeypatch):
+    """Keep the on-disk log sink out of the real backend/data/ during tests.
+
+    Any test that calls `configure_logging` attaches a RotatingFileHandler pointed at
+    `cfg.DATA_PATH/logs`; without this the suite writes hundreds of KB into the
+    developer's working tree.
+    """
+    from icici_breeze_backend.app.core import log_sink
+
+    monkeypatch.setattr(log_sink, "logs_dir", lambda: str(tmp_path / "logs"))
+
+
+@pytest.fixture(autouse=True)
 def _clear_order_book_cache():
     """The SG order-book cache is process-global, so without this a test that reads the
     book would silently satisfy the next test's read and any assertion counting broker
