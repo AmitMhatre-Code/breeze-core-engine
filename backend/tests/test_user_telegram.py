@@ -256,14 +256,33 @@ class TestTelegramClient:
 
         asyncio.run(_run())
 
-    def test_get_updates_swallows_http_errors(self):
+    def test_get_updates_swallows_http_errors_but_reports_failure(self):
+        """None, not [] — the caller backs off on failure and must be able to
+        tell a failed poll apart from a poll that simply saw no messages."""
         class FakeClient:
             async def get(self, url, params, timeout):
                 raise telegram_client.httpx.HTTPError("boom")
 
         async def _run():
             result = await telegram_client.get_updates(FakeClient(), None, 25)
-            assert result == []
+            assert result is None
+
+        asyncio.run(_run())
+
+    def test_get_updates_reports_failure_on_non_ok_body(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"ok": False, "description": "Conflict"}
+
+        class FakeClient:
+            async def get(self, url, params, timeout):
+                return FakeResponse()
+
+        async def _run():
+            assert await telegram_client.get_updates(FakeClient(), None, 25) is None
 
         asyncio.run(_run())
 
@@ -377,3 +396,45 @@ class TestBotPoller:
         telegram_bot_poller._handle_message({"text": "hello", "chat": {"id": 999}, "from": {}})
 
         assert sent == []
+
+
+class TestPollLoopBackoff:
+    """A failed `getUpdates` returns immediately instead of blocking for the
+    long-poll timeout, so without backoff a persistent failure (Telegram's 409
+    when another poller holds the same bot token) becomes a hot retry loop."""
+
+    def _run_loop(self, results, monkeypatch):
+        """Drives the real loop over a scripted sequence of get_updates results,
+        recording every sleep, then cancels it once the script is exhausted."""
+        sleeps: list[float] = []
+        pending = list(results)
+
+        async def fake_get_updates(client, offset, timeout):
+            if not pending:
+                raise asyncio.CancelledError
+            return pending.pop(0)
+
+        async def fake_sleep(seconds):
+            sleeps.append(seconds)
+
+        monkeypatch.setattr(telegram_bot_poller, "get_updates", fake_get_updates)
+        monkeypatch.setattr(telegram_bot_poller.asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(telegram_bot_poller, "_offset", None)
+
+        async def _run():
+            with pytest.raises(asyncio.CancelledError):
+                await telegram_bot_poller.run_telegram_poll_loop()
+
+        asyncio.run(_run())
+        return sleeps
+
+    def test_failures_back_off_exponentially_up_to_the_cap(self, monkeypatch):
+        sleeps = self._run_loop([None] * 6, monkeypatch)
+        assert sleeps == [5.0, 10.0, 20.0, 40.0, 60.0, 60.0]
+
+    def test_successful_poll_does_not_sleep(self, monkeypatch):
+        assert self._run_loop([[], []], monkeypatch) == []
+
+    def test_backoff_resets_after_recovery(self, monkeypatch):
+        sleeps = self._run_loop([None, None, [], None], monkeypatch)
+        assert sleeps == [5.0, 10.0, 5.0]

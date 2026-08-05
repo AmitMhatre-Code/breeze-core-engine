@@ -29,8 +29,15 @@ def _bot_url(method: str) -> str:
     return f"{_API_BASE}/bot{token}/{method}"
 
 
-async def get_updates(client: httpx.AsyncClient, offset: int | None, timeout: int) -> list[dict[str, Any]]:
-    """Long-poll for new updates since `offset`. Returns [] on any failure.
+async def get_updates(client: httpx.AsyncClient, offset: int | None, timeout: int) -> list[dict[str, Any]] | None:
+    """Long-poll for new updates since `offset`.
+
+    Returns the (possibly empty) update list on success, and `None` on failure —
+    the caller needs that distinction to back off. Collapsing both into `[]` turns
+    a persistent error (e.g. Telegram's 409 when a second poller holds the same
+    bot token) into a hot retry loop, because a failed long-poll returns
+    immediately instead of blocking for `timeout` seconds. Failures are still
+    never raised at the caller.
 
     Takes a caller-owned, reused `AsyncClient` rather than opening one per call —
     this loop runs a call roughly every `timeout` seconds for the app's entire
@@ -47,12 +54,13 @@ async def get_updates(client: httpx.AsyncClient, offset: int | None, timeout: in
         body = resp.json()
     except httpx.HTTPError as exc:
         logger.warning("telegram getUpdates request failed: %s", exc)
-        return []
+        return None
     except Exception as exc:  # noqa: BLE001
         logger.warning("telegram getUpdates unexpected error: %s", exc)
-        return []
+        return None
     if not isinstance(body, dict) or not body.get("ok"):
-        return []
+        logger.warning("telegram getUpdates returned a non-ok body")
+        return None
     result = body.get("result")
     return result if isinstance(result, list) else []
 
