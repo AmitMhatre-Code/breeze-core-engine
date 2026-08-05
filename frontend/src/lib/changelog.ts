@@ -20,6 +20,20 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.7.0",
+    date: "05-Aug-2026",
+    releaseKind: "minor",
+    summary:
+      "Download application logs from Settings, Telegram linking actually completes, and far-dated expiries stop hanging on \"building live chain\".",
+    changes: [
+      "New Settings → Application Logs screen: download a zip of this deployment's logs for the last 1, 3, 7, 14 or 30 days, to check what the app was doing or to attach when reporting a problem. Passwords, session tokens and API keys are stripped before anything is written to disk, so the bundle is safe to share.",
+      "Logging itself is more useful and much less noisy: routine per-request lines no longer drown the log, but when something does fail the app replays the minutes of activity leading up to the error, so the context around a failure survives even at the quieter production setting.",
+      "Fixed Telegram account linking failing for everyone: because every deployment shares one bot, only whichever instance won a race could see your \"/start\" handshake — so scanning the QR code in Settings → Telegram Alerts typically did nothing at all, and could in principle have been answered by someone else's deployment. Linking is now routed to the correct deployment centrally. Alerts to accounts that were already linked were never affected.",
+      "Option chains for far-dated and thinly traded expiries (BSE Sensex monthlies, single-stock options) no longer sit permanently on \"building live chain…\": a chain is now judged ready on the strikes near the money rather than on deep wings that may not trade at all in a session, and a request falls back to end-of-day prices after a few seconds instead of waiting on quotes that will never arrive.",
+      "Fixed Modify being rejected by the exchange on a partially filled leg: the app was re-sending the order's original quantity rather than the part still open, so once filled + open crossed the exchange's per-order freeze limit ICICI refused the change with a \"maximum qty per order\" error. It now sends the remaining open quantity.",
+    ],
+  },
+  {
     version: "2.6.0",
     date: "05-Aug-2026",
     releaseKind: "minor",
