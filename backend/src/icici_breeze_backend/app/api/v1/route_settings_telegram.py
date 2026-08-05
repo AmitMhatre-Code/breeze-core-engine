@@ -1,10 +1,14 @@
 """Settings > Telegram Alerts: deep-link based account linking + alert prefs."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
+from icici_breeze_backend.app.services.telegram_link_portal import (
+    PortalLinkUnavailable,
+    register_link_token,
+)
 from icici_breeze_backend.app.domain.telegram_alerts import (
     SetAlertsEnabledRequest,
     SetOnboardingDismissedRequest,
@@ -37,7 +41,21 @@ async def get_status(ctx: RequestContext = Depends(get_request_context)):
 
 @router.post("/link-token", response_model=TelegramLinkTokenResponse)
 async def create_link_token(ctx: RequestContext = Depends(get_request_context)):
+    """Issue a deep-link token and register it with the portal.
+
+    Registration is awaited rather than fired off in the background: the portal
+    owns the single Telegram consumer, so a token it doesn't know about routes
+    nowhere. Surfacing the failure here means the user is told to retry instead
+    of being handed a QR code that silently does nothing.
+    """
     token, expires_at = repo.generate_link_token(ctx.user_id)
+    try:
+        await register_link_token(token)
+    except PortalLinkUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not start Telegram linking right now. Please try again in a moment.",
+        ) from exc
     return TelegramLinkTokenResponse(
         link_token=token,
         link_token_expires_at=expires_at,

@@ -94,9 +94,10 @@ Use the **same** host you type in the browser (`localhost` vs `127.0.0.1` are di
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `TELEGRAM_BOT_TOKEN` | unset | BotFather token. Leave unset to disable the feature entirely — no background loop starts, Settings > Telegram Alerts shows "not configured". |
+| `TELEGRAM_BOT_TOKEN` | unset | BotFather token. Leave unset to disable the feature entirely — no background loop starts, Settings > Telegram Alerts shows "not configured". Used only to *send* alerts; this app never reads Telegram updates. |
 | `TELEGRAM_BOT_USERNAME` | unset | Bot's `@username` (without the `@`), used to build the `t.me/<username>?start=<token>` deep link. |
-| `TELEGRAM_POLL_TIMEOUT_SEC` | `25` | Telegram long-poll `timeout` for `getUpdates`, clamped to 5–60s. No public webhook/HTTPS endpoint is used — see `docs/architecture.md`. |
+
+`TELEGRAM_POLL_TIMEOUT_SEC` was removed: this app no longer polls Telegram. Account **linking** is routed by the portal, which owns the single permitted `getUpdates`/webhook consumer for the shared bot token — so the claim loop also needs `PORTAL_API_BASE_URL` and a correct `PUBLIC_FRONTEND_ORIGIN` (it identifies itself to the portal by public IP). With the bot configured but no portal reachable, alerts still send to already-linked users; only new linking is unavailable.
 
 For **licensed deployments**, `TELEGRAM_BOT_TOKEN`/`TELEGRAM_BOT_USERNAME` are centrally managed via the portal Console (Admin → Core Engine fleet settings) and pushed to every deployment automatically over the existing heartbeat channel — the portal has no other way to reach an instance running in a customer's own AWS account. Manually setting these in `.env` is a fallback for unlicensed/local dev instances, not the primary path; see `docs/architecture.md#telegram-alerts-stop-loss--profit-booking-notifications` for how the push mechanism works.
 

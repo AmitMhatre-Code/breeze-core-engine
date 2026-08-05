@@ -1,7 +1,7 @@
 """Tests for Telegram alert linking: repo (app.repositories.user_telegram),
 routes (route_settings_telegram), message formatting + dispatch
 (telegram_alerts), the bot API wrapper (telegram_client), and the long-poll
-handshake handler (telegram_bot_poller).
+portal-routed handshake handling (telegram_link_portal).
 """
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ import pytest
 
 from icici_breeze_backend.app.db.user_telegram_migrate import ensure_user_telegram_table
 from icici_breeze_backend.app.repositories import user_telegram as repo
-from icici_breeze_backend.app.services import telegram_alerts, telegram_bot_poller, telegram_client
+from icici_breeze_backend.app.services import telegram_alerts, telegram_client
+from icici_breeze_backend.app.services import telegram_link_portal as link_portal
 
 
 @pytest.fixture
@@ -105,12 +106,34 @@ class TestRoutes:
         assert resp.bot_configured is True
         assert resp.connected is False
 
-    def test_create_link_token_route_persists(self, db_path):
+    def test_create_link_token_route_persists(self, db_path, monkeypatch):
         from icici_breeze_backend.app.api.v1 import route_settings_telegram as route
 
+        registered = []
+
+        async def fake_register(token):
+            registered.append(token)
+
+        monkeypatch.setattr(route, "register_link_token", fake_register)
         resp = asyncio.run(route.create_link_token(_ctx()))
         assert resp.link_token
+        assert registered == [resp.link_token]
         assert repo.consume_link_token(resp.link_token) == "u1"
+
+    def test_create_link_token_fails_loudly_when_portal_is_unreachable(self, db_path, monkeypatch):
+        """A token the portal never registered routes nowhere, so the user must
+        be told to retry rather than handed a QR code that silently does nothing."""
+        from fastapi import HTTPException
+
+        from icici_breeze_backend.app.api.v1 import route_settings_telegram as route
+
+        async def fail_register(token):
+            raise link_portal.PortalLinkUnavailable("portal unreachable")
+
+        monkeypatch.setattr(route, "register_link_token", fail_register)
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(route.create_link_token(_ctx()))
+        assert exc.value.status_code == 503
 
     def test_unlink_route(self, db_path):
         from icici_breeze_backend.app.api.v1 import route_settings_telegram as route
@@ -238,80 +261,6 @@ class TestNotifyDispatch:
 
 
 class TestTelegramClient:
-    def test_get_updates_returns_result_list(self):
-        class FakeResponse:
-            def raise_for_status(self):
-                return None
-
-            def json(self):
-                return {"ok": True, "result": [{"update_id": 1}]}
-
-        class FakeClient:
-            async def get(self, url, params, timeout):
-                return FakeResponse()
-
-        async def _run():
-            result = await telegram_client.get_updates(FakeClient(), None, 25)
-            assert result == [{"update_id": 1}]
-
-        asyncio.run(_run())
-
-    def test_get_updates_swallows_http_errors_but_reports_failure(self):
-        """None, not [] — the caller backs off on failure and must be able to
-        tell a failed poll apart from a poll that simply saw no messages."""
-        class FakeClient:
-            async def get(self, url, params, timeout):
-                raise telegram_client.httpx.HTTPError("boom")
-
-        async def _run():
-            result = await telegram_client.get_updates(FakeClient(), None, 25)
-            assert result is None
-
-        asyncio.run(_run())
-
-    def test_get_updates_reports_failure_on_non_ok_body(self):
-        class FakeResponse:
-            def raise_for_status(self):
-                return None
-
-            def json(self):
-                return {"ok": False, "description": "Conflict"}
-
-        class FakeClient:
-            async def get(self, url, params, timeout):
-                return FakeResponse()
-
-        async def _run():
-            assert await telegram_client.get_updates(FakeClient(), None, 25) is None
-
-        asyncio.run(_run())
-
-    def test_get_updates_reuses_the_passed_client_not_a_fresh_one(self):
-        """The whole point of taking `client` as a param instead of opening a
-        new AsyncClient per call: verify no new client is constructed here."""
-        calls = []
-
-        class FakeResponse:
-            def raise_for_status(self):
-                return None
-
-            def json(self):
-                return {"ok": True, "result": []}
-
-        class FakeClient:
-            async def get(self, url, params, timeout):
-                calls.append(1)
-                return FakeResponse()
-
-        async def _run():
-            client = FakeClient()
-            await telegram_client.get_updates(client, None, 25)
-            await telegram_client.get_updates(client, 5, 25)
-
-        with patch.object(telegram_client.httpx, "AsyncClient", side_effect=AssertionError("must not construct a new client")):
-            asyncio.run(_run())
-        assert len(calls) == 2
-
     def test_send_message_sync_posts_markdown(self):
         captured = {}
 
@@ -361,14 +310,17 @@ class TestTelegramClient:
         assert ok is False
 
 
-class TestBotPoller:
-    def test_valid_start_token_links_chat(self, db_path, monkeypatch):
+class TestLinkEventHandling:
+    """The portal routes a handshake to us; completing it stays here, because
+    single-use/expiry semantics live in this deployment's own database."""
+
+    def test_valid_token_links_chat(self, db_path, monkeypatch):
         token, _ = repo.generate_link_token("u1")
         sent = []
-        monkeypatch.setattr(telegram_bot_poller, "send_message_sync", lambda chat_id, text: sent.append((chat_id, text)))
+        monkeypatch.setattr(link_portal, "send_message_sync", lambda chat_id, text: sent.append((chat_id, text)))
 
-        telegram_bot_poller._handle_message(
-            {"text": f"/start {token}", "chat": {"id": 999}, "from": {"username": "trader1"}}
+        link_portal.handle_link_event(
+            {"token": token, "chat_id": "999", "username": "trader1"}
         )
 
         status = repo.get_status("u1")
@@ -380,61 +332,56 @@ class TestBotPoller:
 
     def test_expired_or_unknown_token_does_not_link(self, db_path, monkeypatch):
         sent = []
-        monkeypatch.setattr(telegram_bot_poller, "send_message_sync", lambda chat_id, text: sent.append((chat_id, text)))
+        monkeypatch.setattr(link_portal, "send_message_sync", lambda chat_id, text: sent.append((chat_id, text)))
 
-        telegram_bot_poller._handle_message(
-            {"text": "/start not-a-real-token", "chat": {"id": 999}, "from": {}}
+        link_portal.handle_link_event(
+            {"token": "not-a-real-token", "chat_id": "999", "username": None}
         )
 
         assert len(sent) == 1
         assert "expired" in sent[0][1].lower()
 
-    def test_non_start_message_is_ignored(self, db_path, monkeypatch):
+    def test_token_is_single_use(self, db_path, monkeypatch):
+        token, _ = repo.generate_link_token("u1")
         sent = []
-        monkeypatch.setattr(telegram_bot_poller, "send_message_sync", lambda chat_id, text: sent.append((chat_id, text)))
+        monkeypatch.setattr(link_portal, "send_message_sync", lambda chat_id, text: sent.append((chat_id, text)))
 
-        telegram_bot_poller._handle_message({"text": "hello", "chat": {"id": 999}, "from": {}})
+        link_portal.handle_link_event({"token": token, "chat_id": "999", "username": None})
+        link_portal.handle_link_event({"token": token, "chat_id": "999", "username": None})
+
+        assert "Connected" in sent[0][1]
+        assert "expired" in sent[1][1].lower()
+
+    def test_malformed_event_is_ignored(self, db_path, monkeypatch):
+        sent = []
+        monkeypatch.setattr(link_portal, "send_message_sync", lambda chat_id, text: sent.append((chat_id, text)))
+
+        link_portal.handle_link_event({"chat_id": "999"})
+        link_portal.handle_link_event({"token": "abc"})
 
         assert sent == []
 
 
-class TestPollLoopBackoff:
-    """A failed `getUpdates` returns immediately instead of blocking for the
-    long-poll timeout, so without backoff a persistent failure (Telegram's 409
-    when another poller holds the same bot token) becomes a hot retry loop."""
+class TestOutstandingLinkToken:
+    """Drives the claim loop's duty cycle -- with nothing outstanding it idles
+    instead of polling the portal."""
 
-    def _run_loop(self, results, monkeypatch):
-        """Drives the real loop over a scripted sequence of get_updates results,
-        recording every sleep, then cancels it once the script is exhausted."""
-        sleeps: list[float] = []
-        pending = list(results)
+    def test_false_when_no_token_issued(self, db_path):
+        assert repo.has_outstanding_link_token() is False
 
-        async def fake_get_updates(client, offset, timeout):
-            if not pending:
-                raise asyncio.CancelledError
-            return pending.pop(0)
+    def test_true_while_a_token_is_live(self, db_path):
+        repo.generate_link_token("u1")
+        assert repo.has_outstanding_link_token() is True
 
-        async def fake_sleep(seconds):
-            sleeps.append(seconds)
+    def test_false_once_consumed(self, db_path):
+        token, _ = repo.generate_link_token("u1")
+        repo.consume_link_token(token)
+        assert repo.has_outstanding_link_token() is False
 
-        monkeypatch.setattr(telegram_bot_poller, "get_updates", fake_get_updates)
-        monkeypatch.setattr(telegram_bot_poller.asyncio, "sleep", fake_sleep)
-        monkeypatch.setattr(telegram_bot_poller, "_offset", None)
-
-        async def _run():
-            with pytest.raises(asyncio.CancelledError):
-                await telegram_bot_poller.run_telegram_poll_loop()
-
-        asyncio.run(_run())
-        return sleeps
-
-    def test_failures_back_off_exponentially_up_to_the_cap(self, monkeypatch):
-        sleeps = self._run_loop([None] * 6, monkeypatch)
-        assert sleeps == [5.0, 10.0, 20.0, 40.0, 60.0, 60.0]
-
-    def test_successful_poll_does_not_sleep(self, monkeypatch):
-        assert self._run_loop([[], []], monkeypatch) == []
-
-    def test_backoff_resets_after_recovery(self, monkeypatch):
-        sleeps = self._run_loop([None, None, [], None], monkeypatch)
-        assert sleeps == [5.0, 10.0, 5.0]
+    def test_false_once_expired(self, db_path):
+        repo.generate_link_token("u1")
+        with repo._connect() as conn:
+            past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+            conn.execute("UPDATE user_telegram SET link_token_expires_at = ?", (past,))
+            conn.commit()
+        assert repo.has_outstanding_link_token() is False

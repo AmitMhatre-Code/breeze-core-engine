@@ -392,14 +392,18 @@ def start_application():
             await portal_market_outlook.refresh_once()
             outlook_task = asyncio.create_task(portal_market_outlook.run_market_outlook_refresh_loop())
 
-        from icici_breeze_backend.app.services.telegram_bot_poller import (
-            run_telegram_poll_loop,
-            telegram_bot_enabled,
+        from icici_breeze_backend.app.services.telegram_client import telegram_bot_enabled
+        from icici_breeze_backend.app.services.telegram_link_portal import (
+            portal_linking_enabled,
+            run_link_claim_loop,
         )
 
+        # Inbound linking is routed by the portal (it owns the single Telegram
+        # consumer for the shared bot token); this loop only claims what the
+        # portal has already routed to us. Alert *sending* needs neither.
         telegram_task: asyncio.Task | None = None
-        if telegram_bot_enabled():
-            telegram_task = asyncio.create_task(run_telegram_poll_loop())
+        if telegram_bot_enabled() and portal_linking_enabled():
+            telegram_task = asyncio.create_task(run_link_claim_loop())
 
         from icici_breeze_backend.app.services.reference_data.scheduler import (
             bootstrap_reference_data_on_startup,

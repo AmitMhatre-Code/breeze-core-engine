@@ -100,6 +100,19 @@ def generate_link_token(user_id: str) -> tuple[str, str]:
     return token, expires_at
 
 
+def has_outstanding_link_token() -> bool:
+    """True while any user has an unexpired link token awaiting a handshake.
+
+    Drives the portal claim loop's duty cycle: with no token outstanding there
+    is nothing a claim could ever return, so the loop idles instead of polling.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT link_token_expires_at FROM user_telegram WHERE link_token IS NOT NULL"
+        ).fetchall()
+    return any(_token_not_expired(row[0]) for row in rows)
+
+
 def consume_link_token(token: str) -> Optional[str]:
     """Look up the user owning an unexpired token and clear it (single-use)."""
     with _connect() as conn:

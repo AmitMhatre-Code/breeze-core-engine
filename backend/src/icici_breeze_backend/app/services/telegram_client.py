@@ -1,14 +1,17 @@
-"""Thin wrapper over Telegram's Bot API: long-poll getUpdates + sendMessage.
+"""Thin wrapper over Telegram's Bot API: sendMessage only.
+
+Outbound alerts go straight from each deployment to Telegram — `sendMessage`
+has no single-consumer restriction, unlike `getUpdates`. Inbound linking is
+routed by the portal instead (see `telegram_link_portal.py`), so nothing here
+reads updates.
 
 No retry/circuit-breaker machinery here (unlike `core/icici_client.py`) — a
-missed poll tick or a failed send is retried naturally on the next loop
-iteration / rule fire, and failures must never propagate into the callers
-(the poll loop and the order-execution path).
+failed send is retried naturally on the next rule fire, and failures must never
+propagate into the order-execution path.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import httpx
 
@@ -27,42 +30,6 @@ def telegram_bot_enabled() -> bool:
 def _bot_url(method: str) -> str:
     token = (cfg.TELEGRAM_BOT_TOKEN or "").strip()
     return f"{_API_BASE}/bot{token}/{method}"
-
-
-async def get_updates(client: httpx.AsyncClient, offset: int | None, timeout: int) -> list[dict[str, Any]] | None:
-    """Long-poll for new updates since `offset`.
-
-    Returns the (possibly empty) update list on success, and `None` on failure —
-    the caller needs that distinction to back off. Collapsing both into `[]` turns
-    a persistent error (e.g. Telegram's 409 when a second poller holds the same
-    bot token) into a hot retry loop, because a failed long-poll returns
-    immediately instead of blocking for `timeout` seconds. Failures are still
-    never raised at the caller.
-
-    Takes a caller-owned, reused `AsyncClient` rather than opening one per call —
-    this loop runs a call roughly every `timeout` seconds for the app's entire
-    uptime, and a fresh TCP+TLS handshake every cycle is pure waste on a small
-    instance. `timeout` is still passed per-request (see `httpx`'s per-call
-    override) since it varies with the long-poll duration, not the client.
-    """
-    params: dict[str, Any] = {"timeout": timeout, "allowed_updates": ["message"]}
-    if offset is not None:
-        params["offset"] = offset
-    try:
-        resp = await client.get(_bot_url("getUpdates"), params=params, timeout=timeout + 10)
-        resp.raise_for_status()
-        body = resp.json()
-    except httpx.HTTPError as exc:
-        logger.warning("telegram getUpdates request failed: %s", exc)
-        return None
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("telegram getUpdates unexpected error: %s", exc)
-        return None
-    if not isinstance(body, dict) or not body.get("ok"):
-        logger.warning("telegram getUpdates returned a non-ok body")
-        return None
-    result = body.get("result")
-    return result if isinstance(result, list) else []
 
 
 def send_message_sync(chat_id: str, text: str) -> bool:
