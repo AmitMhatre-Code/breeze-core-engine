@@ -692,3 +692,144 @@ def _find_chain_row_strike(payload, strike):
         (r for r in payload.get("chain_rows", []) if r.get("strike_price") == strike),
         None,
     )
+
+
+def _bsesen_bhav_row(strike, right, ltp):
+    return {
+        "stock_code": "BSESEN",
+        "expiry_display": "27-Aug-2026",
+        "right": right,
+        "strike_price": str(strike),
+        "ltp": ltp,
+        "best_bid_price": ltp,
+        "best_offer_price": ltp,
+        "total_buy_qty": "10",
+        "total_sell_qty": "12",
+        "open_interest": "5000",
+        "spot_price": "82000.0",
+        "segment": cfg.BFO,
+    }
+
+
+@patch("icici_breeze_backend.app.services.index_spot_feed.ensure_underlying_spot_subscription")
+@patch(
+    "icici_breeze_backend.app.services.breeze_websocket_manager.ensure_chain_subscriptions",
+    return_value=None,
+)
+@patch(
+    "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
+    return_value=82000.0,
+)
+@patch("icici_breeze_backend.app.services.quote_source_router._resolve_chain_metadata")
+@patch("icici_breeze_backend.app.services.chain_readiness.list_tradeable_strikes_memory")
+@patch("icici_breeze_backend.app.services.chain_readiness.is_tradeable_contract", return_value=True)
+@patch("icici_breeze_backend.app.services.quote_source_router.is_tradeable_contract", return_value=True)
+@patch(
+    "icici_breeze_backend.app.services.quote_source_router.offline_source_order",
+    return_value=["bhavcopy"],
+)
+@patch(
+    "icici_breeze_backend.app.services.quote_source_router.resolve_quote_source",
+    return_value="websocket",
+)
+def test_offline_fallback_survives_untraded_wings(
+    _mock_source,
+    _mock_order,
+    _mock_tradeable_router,
+    _mock_tradeable_readiness,
+    mock_strikes_memory,
+    mock_meta,
+    _mock_spot,
+    _mock_ws,
+    _mock_spot_sub,
+    monkeypatch,
+):
+    """Regression (far-dated BSESEN): the websocket gate can never pass on a thin
+    chain whose deep wings don't trade at all, and the offline fallback used to
+    emit rows only for the strikes bhavcopy could fill -- which then failed
+    `is_chain_complete`'s full-skeleton structural check, so the endpoint returned
+    "Live option chain not ready" forever and Strategy Builder stayed locked."""
+    strikes = [81000.0 + 100 * i for i in range(21)]  # ATM 82000 at index 10
+    traded = set(strikes[5:16])  # only the band around ATM traded yesterday
+
+    mock_strikes_memory.return_value = strikes
+    mock_meta.return_value = (20, None, strikes)
+    monkeypatch.setattr(cfg, "CHAIN_READY_ATM_STRIKE_WINDOW", 5)
+
+    def fake_bhav_row(stock_code, expiry_display, right, strike, exchange_code):
+        if strike not in traded:
+            return None
+        return _bsesen_bhav_row(strike, right, "120.5")
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.quote_source_router._lookup_bhav_row",
+        fake_bhav_row,
+    )
+
+    payload = fetch_chain_payload_routed(
+        MagicMock(), "u1", "BSESEN", cfg.BFO, "27-Aug-2026"
+    )
+
+    assert payload is not None
+    assert payload["quote_source"] == "bhavcopy"
+    # Full skeleton: every tradeable strike is a row, untraded wings carry null cells.
+    by_strike = {r["strike_price"]: r for r in payload["chain_rows"]}
+    assert set(by_strike) == set(strikes)
+    assert by_strike[82000.0]["call"]["ltp"] == 120.5
+    assert by_strike[81000.0]["call"] is None
+    assert by_strike[83000.0]["put"] is None
+
+
+@patch("icici_breeze_backend.app.services.index_spot_feed.ensure_underlying_spot_subscription")
+@patch(
+    "icici_breeze_backend.app.services.breeze_websocket_manager.ensure_chain_subscriptions",
+    return_value=None,
+)
+@patch(
+    "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
+    return_value=82000.0,
+)
+@patch("icici_breeze_backend.app.services.quote_source_router._resolve_chain_metadata")
+@patch("icici_breeze_backend.app.services.chain_readiness.list_tradeable_strikes_memory")
+@patch("icici_breeze_backend.app.services.chain_readiness.is_tradeable_contract", return_value=True)
+@patch("icici_breeze_backend.app.services.quote_source_router.is_tradeable_contract", return_value=True)
+@patch(
+    "icici_breeze_backend.app.services.quote_source_router.offline_source_order",
+    return_value=["bhavcopy"],
+)
+@patch(
+    "icici_breeze_backend.app.services.quote_source_router.resolve_quote_source",
+    return_value="websocket",
+)
+def test_offline_fallback_still_rejects_unquoted_atm_band(
+    _mock_source,
+    _mock_order,
+    _mock_tradeable_router,
+    _mock_tradeable_readiness,
+    mock_strikes_memory,
+    mock_meta,
+    _mock_spot,
+    _mock_ws,
+    _mock_spot_sub,
+    monkeypatch,
+):
+    """The skeleton must not turn the gate into a rubber stamp: a chain whose ATM
+    band itself has no quotes is still incomplete."""
+    strikes = [81000.0 + 100 * i for i in range(21)]
+    traded = {strikes[0], strikes[20]}  # only the far wings, nothing near ATM
+
+    mock_strikes_memory.return_value = strikes
+    mock_meta.return_value = (20, None, strikes)
+    monkeypatch.setattr(cfg, "CHAIN_READY_ATM_STRIKE_WINDOW", 5)
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.quote_source_router._lookup_bhav_row",
+        lambda stock_code, expiry_display, right, strike, exchange_code: (
+            _bsesen_bhav_row(strike, right, "120.5") if strike in traded else None
+        ),
+    )
+
+    assert (
+        fetch_chain_payload_routed(MagicMock(), "u1", "BSESEN", cfg.BFO, "27-Aug-2026")
+        is None
+    )

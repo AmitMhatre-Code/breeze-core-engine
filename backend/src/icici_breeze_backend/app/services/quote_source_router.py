@@ -627,6 +627,14 @@ def _build_offline_chain(
     a limited strike band. Merging per cell means a subscribed chain keeps its
     real close-time book while unsubscribed strikes in the same chain still fill
     in, instead of one missing strike discarding the whole snapshot.
+
+    `chain_rows` spans every tradeable strike, carrying a null call/put where no
+    source could fill the contract -- the same full-skeleton shape
+    `chain_build_service.build_canonical_chain` produces, and the shape
+    `chain_readiness.is_chain_complete`'s structural check assumes. Emitting only
+    the strikes that resolved made that check reject every offline chain with a
+    single untraded contract (routine on far-dated or thin expiries), so the
+    fallback could never satisfy the gate it was the fallback *for*.
     """
     order = offline_source_order(exchange_code)
     lot_val = int(lot_size or 0)
@@ -717,7 +725,7 @@ def _build_offline_chain(
     call_by = {parse_strike(c.get("strike_price")): c for c in calls}
     put_by = {parse_strike(p.get("strike_price")): p for p in puts}
     chain_strikes = sorted(
-        {k for k in (set(call_by) | set(put_by)) if k is not None}
+        {k for k in (set(strikes) | set(call_by) | set(put_by)) if k is not None}
     )
     chain_rows = [
         {"strike_price": k, "call": call_by.get(k), "put": put_by.get(k)}
@@ -784,6 +792,7 @@ def fetch_chain_payload_routed(
         # no-op for indices already covered by the session-start index feed.
         ensure_underlying_spot_subscription(proc, user_id, exchange_code, stock_code)
 
+        ws_detail: dict[str, Any] = {}
         ws_payload = ensure_chain_subscriptions(
             proc,
             user_id,
@@ -795,6 +804,7 @@ def fetch_chain_payload_routed(
             freeze_quantity=freeze_quantity,
             holder_id=holder_id,
             spot=spot,
+            detail=ws_detail,
         )
         if ws_payload is not None:
             ws_payload = _apply_chain_spot(
@@ -813,13 +823,15 @@ def fetch_chain_payload_routed(
             exchange_code=exchange_code,
             expiry_display=expiry_display,
             spot=spot,
+            detail=ws_detail,
         ):
             return _enrich_quote_metadata(ws_payload)
 
         _logger.warning(
-            "WebSocket chain incomplete for %s %s; falling back to offline sources",
+            "WebSocket chain incomplete for %s %s (%s); falling back to offline sources",
             stock_code,
             expiry_display,
+            ws_detail or "no detail",
         )
 
     payload = _build_offline_chain(
@@ -840,6 +852,7 @@ def fetch_chain_payload_routed(
     # that drew on the snapshot is final -- nothing further will ever fill in --
     # so gating it would only burn CHAIN_WS_WAIT_TIMEOUT_MS before returning the
     # same rows. Pure bhavcopy/REST chains keep the original completeness check.
+    offline_detail: dict[str, Any] = {}
     used_snapshot = bool((payload.get("quote_source_counts") or {}).get(SNAPSHOT_SOURCE))
     if used_snapshot or is_chain_complete(
         payload,
@@ -847,6 +860,7 @@ def fetch_chain_payload_routed(
         exchange_code=exchange_code,
         expiry_display=expiry_display,
         spot=spot,
+        detail=offline_detail,
     ):
         return _enrich_quote_metadata(
             _apply_chain_spot(
@@ -860,7 +874,12 @@ def fetch_chain_payload_routed(
                 spot=spot,
             )
         )
-    _logger.warning("Offline chain incomplete for %s %s", stock_code, expiry_display)
+    _logger.warning(
+        "Offline chain incomplete for %s %s (%s)",
+        stock_code,
+        expiry_display,
+        offline_detail or "no detail",
+    )
     return None
 
 
@@ -918,13 +937,26 @@ def assemble_chain_with_router(
     return chain_fetch_error_response(exchange_code, stock_code, expiry_display)
 
 
-def _find_chain_row(payload: dict[str, Any] | None, strike: Strike) -> dict[str, Any] | None:
-    if not payload:
-        return None
-    for row in payload.get("chain_rows") or []:
-        if isinstance(row, dict) and parse_strike(row.get("strike_price")) == strike:
-            return row
-    return None
+def _atm_row_is_quoted(
+    payload: dict[str, Any] | None,
+    *,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    atm_strike: Strike,
+) -> bool:
+    """Both chain builders emit a full strike skeleton, so the ATM row's *presence*
+    proves nothing -- it can carry null call/put cells. Gate on the row actually
+    holding a quote instead."""
+    from icici_breeze_backend.app.services.chain_readiness import is_strike_quoted
+
+    return is_strike_quoted(
+        payload,
+        stock_code=stock_code,
+        exchange_code=exchange_code,
+        expiry_display=expiry_display,
+        strike=atm_strike,
+    )
 
 
 def _fetch_chain_payload_atm_gated(
@@ -976,7 +1008,13 @@ def _fetch_chain_payload_atm_gated(
             freeze_quantity=freeze_quantity,
             holder_id=holder_id,
         )
-        if ws_payload is not None and _find_chain_row(ws_payload, atm_strike) is not None:
+        if ws_payload is not None and _atm_row_is_quoted(
+            ws_payload,
+            stock_code=stock_code,
+            exchange_code=exchange_code,
+            expiry_display=expiry_display,
+            atm_strike=atm_strike,
+        ):
             ws_payload["spot_price"] = spot
             ws_payload["atm_strike"] = atm_strike
             return _enrich_quote_metadata(ws_payload)
@@ -1004,7 +1042,13 @@ def _fetch_chain_payload_atm_gated(
         lot_size=int(lot_size) if lot_size else None,
         freeze_quantity=freeze_quantity,
     )
-    if payload is not None and _find_chain_row(payload, atm_strike) is not None:
+    if payload is not None and _atm_row_is_quoted(
+        payload,
+        stock_code=stock_code,
+        exchange_code=exchange_code,
+        expiry_display=expiry_display,
+        atm_strike=atm_strike,
+    ):
         payload = dict(payload)
         payload["spot_price"] = spot
         payload["atm_strike"] = atm_strike

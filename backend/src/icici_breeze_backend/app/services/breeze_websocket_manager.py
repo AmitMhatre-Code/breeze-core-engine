@@ -673,7 +673,9 @@ def ensure_chain_subscriptions(
     freeze_quantity: int | None = None,
     holder_id: str | None = None,
     spot: float | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    """`detail` is passed straight through to `wait_for_canonical_chain` -- see there."""
     from icici_breeze_backend.app.services.chain_readiness import wait_for_canonical_chain
 
     sync_holder_chain_subscriptions(
@@ -686,6 +688,7 @@ def ensure_chain_subscriptions(
         lot_size=lot_size,
         freeze_quantity=freeze_quantity,
         spot=spot,
+        detail=detail,
     )
     if payload is None:
         return None

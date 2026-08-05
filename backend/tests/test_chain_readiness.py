@@ -189,3 +189,53 @@ def test_is_chain_complete_only_requires_atm_window_when_spot_given(monkeypatch)
         exchange_code=cfg.NFO,
         expiry_display="30-Jun-2026",
     )
+
+
+def test_is_chain_complete_falls_back_to_payload_spot(monkeypatch):
+    """When the caller couldn't resolve a spot, bhavcopy/REST-sourced cells still
+    carry one through to `payload["spot_price"]`. Using it keeps a thin chain on
+    the ATM-window gate instead of silently widening to the all-strikes rule,
+    which an illiquid chain can essentially never satisfy."""
+    strikes = _wide_strikes(21)  # 24000 ATM at index 10, 100-point spacing
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.chain_readiness.list_tradeable_strikes_memory",
+        lambda *args, **kwargs: strikes,
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.chain_readiness.is_tradeable_contract",
+        lambda *args, **kwargs: True,
+    )
+    monkeypatch.setattr(cfg, "CHAIN_READY_ATM_STRIKE_WINDOW", 5)
+
+    quoted = set(strikes[5:16])
+    rows = [
+        {
+            "strike_price": strike,
+            "call": {"ltp": 1.0} if strike in quoted else None,
+            "put": {"ltp": 1.0} if strike in quoted else None,
+        }
+        for strike in strikes
+    ]
+
+    detail: dict = {}
+    assert is_chain_complete(
+        _payload(spot=24000.0, rows=rows),
+        stock_code="NIFTY",
+        exchange_code=cfg.NFO,
+        expiry_display="30-Jun-2026",
+        spot=None,
+        detail=detail,
+    )
+    assert detail == {}
+
+    # No spot from either source -> all-strikes gate, and `detail` says so.
+    assert not is_chain_complete(
+        _payload(spot=None, rows=rows),
+        stock_code="NIFTY",
+        exchange_code=cfg.NFO,
+        expiry_display="30-Jun-2026",
+        spot=None,
+        detail=detail,
+    )
+    assert detail["gate"] == "all_strikes_no_spot"
+    assert detail["reason"] == "unquoted contracts"

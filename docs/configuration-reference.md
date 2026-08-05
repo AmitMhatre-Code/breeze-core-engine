@@ -196,6 +196,9 @@ Customer deployments (the current, active path) get their `.env` written by bree
 | `WS_TICK_COALESCE_MS` | `100` | Coalesce window (ms) before writing latest tick per token to Redis. |
 | `CHAIN_BUILDER_POLL_MS` | `250` | chain-builder worker poll interval when rebuilding active chains. |
 | `CANONICAL_CHAIN_TTL_SECONDS` | `5` | Redis TTL for assembled canonical option chains. |
+| `CHAIN_WS_WAIT_TIMEOUT_MS` | `8000` | How long a chain request blocks waiting for the live chain to become ready before falling back to offline sources. |
+| `CHAIN_WS_WAIT_POLL_MS` | `100` | Poll interval within that wait. |
+| `CHAIN_READY_ATM_STRIKE_WINDOW` | `5` | Strikes each side of ATM that must carry a real quote for a chain to count as ready. Raise it and far-dated or thin chains (BSESEN monthlies, single-stock options) become permanently un-ready — their deep wings may not trade at all in a session, so no wait length helps. |
 
 **Monitoring:** `GET /health` reports Redis connectivity (`status`: `ok` or `degraded`). `GET /metrics/runtime` reports Redis memory, WS tick pipeline queues, and active chain registry stats.
 

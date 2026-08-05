@@ -63,12 +63,23 @@ def _atm_window_strikes(tradeable_strikes: list[Strike], spot: float) -> set[Str
     ordered = sorted(tradeable_strikes)
     atm_index = min(range(len(ordered)), key=lambda i: abs(ordered[i] - spot))
     try:
-        window = max(0, int(getattr(cfg, "CHAIN_READY_ATM_STRIKE_WINDOW", 20) or 20))
+        window = max(0, int(getattr(cfg, "CHAIN_READY_ATM_STRIKE_WINDOW", 5) or 5))
     except (TypeError, ValueError):
-        window = 20
+        window = 5
     lo = max(0, atm_index - window)
     hi = min(len(ordered), atm_index + window + 1)
     return set(ordered[lo:hi])
+
+
+def _payload_spot(payload: dict[str, Any]) -> float | None:
+    """Last-resort spot when the caller couldn't resolve one: bhavcopy/REST-sourced
+    cells carry `spot_price` through to the payload, so an offline chain can still
+    locate its own ATM rather than falling through to the all-strikes gate."""
+    try:
+        spot = float(payload.get("spot_price"))
+    except (TypeError, ValueError):
+        return None
+    return spot if spot > 0 else None
 
 
 def is_chain_complete(
@@ -78,6 +89,7 @@ def is_chain_complete(
     exchange_code: str,
     expiry_display: str,
     spot: float | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> bool:
     """Completeness is judged by per-contract quotes (ltp / bid-ask / buy-sell qty via
     `_cell_has_quote`), not `payload["spot_price"]`. Real WS option ticks never carry a
@@ -86,28 +98,40 @@ def is_chain_complete(
     `payload["spot_price"] > 0` gate. `payload["spot_price"]` for the response is filled
     in separately by `quote_source_router._apply_chain_spot()`.
 
-    Every tradeable strike must still be *present* as a row (chain_rows is always built
-    as a full skeleton -- see `chain_build_service.build_canonical_chain` -- so this is
-    a structural sanity check, not a liveness one). But only strikes within
-    `CHAIN_READY_ATM_STRIKE_WINDOW` of the ATM strike (resolved from the externally
-    supplied `spot`, e.g. cache/bhavcopy-sourced -- not `payload["spot_price"]`) must
-    actually have a live quote. Deep OTM/ITM strikes on a wide chain (NIFTY, BANKNIFTY)
-    routinely take longer than `CHAIN_WS_WAIT_TIMEOUT_MS` to tick at all; requiring them
-    too meant one illiquid strike could flip an otherwise-live chain to bhavcopy. Rows
-    outside the window are still returned to the caller (possibly with null call/put
-    cells) and fill in as later requests re-poll the same canonical chain. If `spot` is
-    unavailable, falls back to requiring every tradeable strike (the old behavior).
+    Every tradeable strike must still be *present* as a row -- both chain builders emit
+    chain_rows as a full skeleton (`chain_build_service.build_canonical_chain` for the
+    websocket path, `quote_source_router._build_offline_chain` for the offline one), so
+    this is a structural sanity check, not a liveness one. But only strikes within
+    `CHAIN_READY_ATM_STRIKE_WINDOW` of the ATM strike must actually have a live quote.
+
+    That window is deliberately tight. Deep OTM/ITM strikes don't merely take longer than
+    `CHAIN_WS_WAIT_TIMEOUT_MS` to tick -- on a far-dated or thin chain (BSESEN monthlies,
+    single-stock options) they may not trade or be quoted *at all* that session, so any
+    window wide enough to include them makes the chain permanently un-ready rather than
+    slow. Rows outside the window are still returned to the caller (possibly with null
+    call/put cells) and fill in as later requests re-poll the same canonical chain.
+
+    ATM is located from the externally supplied `spot` (e.g. cache/bhavcopy-sourced),
+    falling back to `payload["spot_price"]`, and only if neither resolves does the gate
+    widen to every tradeable strike -- a rule a thin chain can rarely satisfy, so
+    `detail["gate"]` reports which one ran and callers log it on failure.
     """
     label = f"{exchange_code}/{stock_code} {expiry_display}"
 
-    if not isinstance(payload, dict):
-        _logger.debug("chain incomplete %s: no payload", label)
+    def _fail(reason: str, **fields: Any) -> bool:
+        if detail is not None:
+            detail.clear()
+            detail["reason"] = reason
+            detail.update(fields)
+        _logger.debug("chain incomplete %s: %s %s", label, reason, fields or "")
         return False
+
+    if not isinstance(payload, dict):
+        return _fail("no payload")
 
     chain_rows = payload.get("chain_rows") or []
     if not chain_rows:
-        _logger.debug("chain incomplete %s: empty chain_rows", label)
-        return False
+        return _fail("empty chain_rows")
 
     row_by_strike: dict[Strike, dict[str, Any]] = {}
     for row in chain_rows:
@@ -121,28 +145,24 @@ def is_chain_complete(
         stock_code, expiry_display, exchange_code=exchange_code
     )
     if not tradeable_strikes:
-        _logger.debug("chain incomplete %s: no tradeable strikes", label)
-        return False
+        return _fail("no tradeable strikes")
 
     if set(row_by_strike.keys()) != set(tradeable_strikes):
-        _logger.debug(
-            "chain incomplete %s: row/strike mismatch (rows=%d strikes=%d)",
-            label, len(row_by_strike), len(tradeable_strikes),
+        return _fail(
+            "row/strike mismatch",
+            rows=len(row_by_strike),
+            tradeable_strikes=len(tradeable_strikes),
         )
-        return False
 
-    # Diagnostic aid: when `spot` never resolves for a thinner chain (e.g. BSE
-    # Sensex weeklies), the gate below silently widens to require every tradeable
-    # strike, which a less liquid chain may never satisfy inside the wait window --
-    # log which gate is active so that failure mode is visible without guessing.
+    effective_spot = spot if (spot is not None and spot > 0) else _payload_spot(payload)
     gate = "atm_window"
     required_strikes = set(tradeable_strikes)
-    if spot is not None and spot > 0:
-        required_strikes = _atm_window_strikes(tradeable_strikes, spot)
+    if effective_spot is not None:
+        required_strikes = _atm_window_strikes(tradeable_strikes, effective_spot)
     else:
         gate = "all_strikes_no_spot"
 
-    missing = 0
+    missing: list[Strike] = []
     for strike in tradeable_strikes:
         if strike not in required_strikes:
             continue
@@ -154,14 +174,19 @@ def is_chain_complete(
                 continue
             cell = row.get(side)
             if not _cell_has_quote(cell, exchange_code=exchange_code):
-                missing += 1
+                missing.append(strike)
 
     if missing:
-        _logger.debug(
-            "chain incomplete %s: gate=%s spot=%s missing=%d contract-quotes out of %d required strikes",
-            label, gate, spot, missing, len(required_strikes),
+        return _fail(
+            "unquoted contracts",
+            gate=gate,
+            spot=effective_spot,
+            missing=len(missing),
+            required_strikes=len(required_strikes),
+            sample=sorted(set(missing))[:6],
         )
-        return False
+    if detail is not None:
+        detail.clear()
     return True
 
 
@@ -243,7 +268,11 @@ def wait_for_canonical_chain(
     lot_size: int = 0,
     freeze_quantity: int | None = None,
     spot: float | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    """`detail`, if given, is left holding the *last* poll's incompleteness reason,
+    so a caller that gives up after the wait window can log why rather than just
+    that it happened."""
     return _poll_canonical_chain(
         exchange_code,
         stock_code,
@@ -256,6 +285,7 @@ def wait_for_canonical_chain(
             exchange_code=exchange_code,
             expiry_display=expiry_display,
             spot=spot,
+            detail=detail,
         ),
     )
 
