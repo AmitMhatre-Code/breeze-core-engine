@@ -20,6 +20,19 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.7.1",
+    date: "06-Aug-2026",
+    releaseKind: "patch",
+    summary:
+      "The downloadable log bundle no longer contains your broker session key, live prices recover on their own when the feed drops, and logs now reach much further back.",
+    changes: [
+      "Fixed the Application Logs download (new in 2.7.0) writing your ICICI session key into the log. The key is part of the address ICICI redirects you to after login, and the routine per-request log line recorded that address in full — so it ended up in any bundle covering the day you logged in, and would have let anyone holding that bundle use your broker session until it expired that night. It is now replaced with \"<redacted>\" before anything is written to disk, as is any other session key, token, API key, password or checksum passed the same way. Bundles you downloaded before this release should be treated as sensitive and deleted; the key itself expires nightly, so nothing else is needed once it has.",
+      "Fixed live prices freezing mid-session with no error shown. If the connection carrying ICICI's price feed dropped while leaving the app believing it was still connected, every attempt to restart the feed was refused and the app kept retrying an approach that could not work — prices across every screen sat unchanged until the connection happened to recover on its own, which on 6 August took about three minutes during market hours. The app now recognises that state and rebuilds the connection outright, restoring each option chain it was following along with the index prices.",
+      "Routine background chatter no longer crowds real events out of the log. Successful screen-refresh requests, and a once-a-minute internal check that only ever confirms nothing has changed, are no longer recorded — while failures of those very same requests still are, so an expired session or a broker error stays visible. On a full trading day's traffic this cuts the log to roughly a seventh of its former size, so a downloaded bundle covers far more history: over seven weeks instead of about nine days.",
+      "The reference number shown alongside an error message is now recorded as a searchable field in the log, so quoting it when you report a problem points straight at the failure it came from.",
+    ],
+  },
+  {
     version: "2.7.0",
     date: "05-Aug-2026",
     releaseKind: "minor",
