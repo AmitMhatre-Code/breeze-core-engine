@@ -84,3 +84,4 @@ legacy/
 
 # --- Ad hoc review screenshots (not part of the app) ---
 .review/
+/docs
