@@ -27,8 +27,53 @@ LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 # is shared fleet-wide, so a leaked token is a cross-tenant credential, not a
 # local one. Redact at the handler so it covers every logger, ours or a
 # library's, without having to silence anything.
-_SECRET_PATTERNS = (re.compile(r"/bot\d+:[A-Za-z0-9_-]+"),)
-_REDACTED = "/bot<redacted>"
+_BOT_TOKEN_PATTERN = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
+
+# Credentials that ride in a *query string* rather than a path. The one that made
+# this necessary is ICICI's `apisession`: the broker hands it back on the
+# `/icici-return` redirect, so `uvicorn.access` writes a live, day-valid broker
+# session key into the log — and `/diagnostics/logs/download` zips that up for
+# support. Names are matched whole (the lookbehind rejects a `_`-joined prefix) so
+# `stock_token=4.1!40879`, which is not a secret and is worth reading, survives
+# while `broker_token=` does not. Listed longest-first: alternation is
+# leftmost-first, and `token` must not win ahead of `session_token`.
+_SENSITIVE_QUERY_PARAMS = (
+    "refresh_token",
+    "session_token",
+    "access_token",
+    "broker_token",
+    "sessiontoken",
+    "api_session",
+    "session_key",
+    "apisession",
+    "auth_token",
+    "api_secret",
+    "sessionkey",
+    "password",
+    "checksum",
+    "api_key",
+    "passwd",
+    "apikey",
+    "secret",
+    "token",
+    "pwd",
+)
+# The value is `+`, not `*`, and excludes `<>` so the rule cannot match its own output:
+# this filter is attached to *every* root handler, so each record passes through it once
+# per handler, and a value pattern that also matched the empty string turned one secret
+# into `apisession=<redacted><redacted><redacted>`. An empty value has nothing to hide.
+_SENSITIVE_QUERY_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])(" + "|".join(_SENSITIVE_QUERY_PARAMS) + r")=[^&\s\"'<>]+",
+    re.IGNORECASE,
+)
+
+# (pattern, replacement) rather than one shared replacement string: the query-param
+# rule has to put the parameter *name* back, or a redacted log line no longer says
+# which credential it was hiding.
+_SECRET_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
+    (_BOT_TOKEN_PATTERN, "/bot<redacted>"),
+    (_SENSITIVE_QUERY_PATTERN, r"\1=<redacted>"),
+)
 
 
 # Machine traffic, not user traffic: the container HEALTHCHECK hits /health every 30s
@@ -36,9 +81,31 @@ _REDACTED = "/bot<redacted>"
 # dominate the log without ever saying anything.
 _QUIET_ACCESS_PATHS = frozenset({"/health", "/metrics"})
 
+# Browser polling, which is user traffic but says nothing while it succeeds: an open
+# tab hits these three roughly every 2.4s, and they accounted for 9,572 of 12,352 lines
+# in a 16-hour capture — crowding real events out of a size-capped sink. Dropped only
+# while they succeed: a burst of 401s here is how an expired session announces itself,
+# and a 5xx here is a real fault, so failures still get logged.
+_QUIET_WHEN_OK_ACCESS_PATHS = frozenset(
+    {"/dashboard/ws-health", "/dashboard/index-quotes", "/portfolio/squareoff-rules"}
+)
+_QUIET_STATUS_CEILING = 400
+_RENDERED_ACCESS_STATUS = re.compile(r"\"\s+(\d{3})\s*$")
+
+
+def _access_line_is_quiet(path: str, status: int | None) -> bool:
+    """True when this access line carries no information worth retaining."""
+    if path in _QUIET_ACCESS_PATHS:
+        return True
+    if path not in _QUIET_WHEN_OK_ACCESS_PATHS:
+        return False
+    # Unknown status -> keep the line. Erring towards a noisier log is the same
+    # trade the arg-shape fallback below makes.
+    return status is not None and status < _QUIET_STATUS_CEILING
+
 
 class QuietAccessPathFilter(logging.Filter):
-    """Drops `uvicorn.access` lines for unattended probe endpoints."""
+    """Drops `uvicorn.access` lines for unattended probes and successful polling."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         # uvicorn.access formats as (client_addr, method, path, http_version, status);
@@ -47,12 +114,21 @@ class QuietAccessPathFilter(logging.Filter):
         args = record.args
         if isinstance(args, tuple) and len(args) == 5:
             path = str(args[2]).split("?", 1)[0]
-            return path not in _QUIET_ACCESS_PATHS
+            try:
+                status = int(args[4])
+            except (TypeError, ValueError):
+                status = None
+            return not _access_line_is_quiet(path, status)
         try:
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - never let a filter drop a log line
             return True
-        return not any(f" {p} HTTP/" in message for p in _QUIET_ACCESS_PATHS)
+        rendered_status = _RENDERED_ACCESS_STATUS.search(message)
+        status = int(rendered_status.group(1)) if rendered_status else None
+        for quiet_path in _QUIET_ACCESS_PATHS | _QUIET_WHEN_OK_ACCESS_PATHS:
+            if f" {quiet_path} HTTP/" in message or f" {quiet_path}?" in message:
+                return not _access_line_is_quiet(quiet_path, status)
+        return True
 
 
 class SecretRedactingFilter(logging.Filter):
@@ -64,8 +140,8 @@ class SecretRedactingFilter(logging.Filter):
         except Exception:  # noqa: BLE001 - never let redaction drop a log line
             return True
         redacted = message
-        for pattern in _SECRET_PATTERNS:
-            redacted = pattern.sub(_REDACTED, redacted)
+        for pattern, replacement in _SECRET_PATTERNS:
+            redacted = pattern.sub(replacement, redacted)
         if redacted != message:
             record.msg = redacted
             record.args = ()

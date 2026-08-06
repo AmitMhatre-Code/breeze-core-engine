@@ -22,6 +22,13 @@ duplicate subscribe is assumed idempotent -- the same assumption
     illiquid deep-OTM strikes legitimately go quiet for minutes, but a live chain
     always has *something* ticking, so total silence is unambiguous breakage.
 
+Re-subscribing is not always enough. When the socket *itself* is gone, ICICI rejects
+every batch with "Failed to connect to live stream" and no amount of subscribing helps --
+so after two consecutive passes in which everything attempted failed, this escalates to
+`reconnect_ws()` and rebuilds the handler. Without that, recovery depends entirely on the
+SDK's own socket.io reconnect happening to succeed (three silent minutes during market
+hours on 2026-08-06 while every forced re-subscribe reported ok=False).
+
 The order-notification feed has its own equivalent (`order_feed_watchdog_tick`);
 this one covers price ticks, which that watchdog explicitly does not.
 """
@@ -63,11 +70,21 @@ _OPEN_PASS_DELAY_SECONDS = 10.0
 
 _INDEX_SPOT_TARGET = "__index_spot__"
 
+# Consecutive passes in which *every* attempted re-subscribe failed before we stop
+# re-subscribing and rebuild the socket instead. Two, not one: a lone batch rejection is
+# ordinary, and a needless rebuild costs every live chain its feed.
+_ESCALATE_AFTER_FAILED_PASSES = 2
+# Floor between rebuilds. A broker-side outage fails the rebuild too, and hammering
+# `ws_connect` through it would burn session attempts for no gain.
+_RECONNECT_COOLDOWN_SECONDS = 300.0
+
 # target -> monotonic timestamp we last saw it healthy (or first saw it silent)
 _last_ok: dict[str, float] = {}
 # target -> monotonic timestamp of the last forced re-subscribe
 _last_forced: dict[str, float] = {}
 _open_pass_date: date | None = None
+_consecutive_failed_passes = 0
+_last_reconnect: float | None = None
 
 
 def _interval_seconds() -> float:
@@ -133,14 +150,16 @@ def _silent_for(target: str, now: float, age: float | None) -> float:
     return now - first_seen
 
 
-def _force_chain(chain_key: str) -> None:
+def _force_chain(chain_key: str) -> bool | None:
+    """Re-subscribe one chain. Returns the subscribe outcome, or None when nothing was
+    attempted -- the escalation counter must not read "we had nothing to do" as failure."""
     from icici_breeze_backend.app.services.breeze_websocket_manager import (
         force_resubscribe_tokens,
     )
 
     parsed = parse_chain_registry_key(chain_key)
     if parsed is None:
-        return
+        return None
     exchange_code, stock_code, expiry_display = parsed
     tokens = list_ws_stock_tokens_for_liquid_contracts(exchange_code, stock_code, expiry_display)
     if not tokens:
@@ -151,7 +170,7 @@ def _force_chain(chain_key: str) -> None:
             "price-feed watchdog: no tradeable tokens resolve for %s; nothing to re-subscribe",
             chain_key,
         )
-        return
+        return None
     ok = force_resubscribe_tokens(tokens)
     _logger.info(
         "price-feed watchdog: forced re-subscribe chain=%s tokens=%s ok=%s",
@@ -159,18 +178,70 @@ def _force_chain(chain_key: str) -> None:
         len(tokens),
         ok,
     )
+    return ok
 
 
-def _force_index_spot() -> None:
+def _force_index_spot() -> bool | None:
     from icici_breeze_backend.app.services.breeze_websocket_manager import current_ws_user_id
     from icici_breeze_backend.app.services.index_spot_feed import sync_index_spot_subscriptions
     from icici_breeze_backend.app.services.processor import processor
 
     user_id = current_ws_user_id()
     if user_id is None:
-        return
+        return None
     ok = sync_index_spot_subscriptions(processor(), user_id, force=True)
     _logger.info("price-feed watchdog: forced re-subscribe index spot ok=%s", ok)
+    return ok
+
+
+def _escalate_to_reconnect(now: float) -> None:
+    """Rebuild the socket after repeated whole-pass failure.
+
+    `force_resubscribe_tokens` can only ever fail this way when the socket underneath is
+    dead -- ICICI answers with "Failed to connect to live stream" and every batch reports
+    the same thing. Re-subscribing harder cannot fix that; only a rebuilt handler can."""
+    global _consecutive_failed_passes, _last_reconnect
+
+    from icici_breeze_backend.app.services.breeze_websocket_manager import reconnect_ws
+
+    if _last_reconnect is not None and (now - _last_reconnect) < _RECONNECT_COOLDOWN_SECONDS:
+        # DEBUG so a broker-side outage can't turn the cooldown into its own log storm.
+        _logger.debug(
+            "price-feed watchdog: reconnect suppressed, %.0fs of cooldown left",
+            _RECONNECT_COOLDOWN_SECONDS - (now - _last_reconnect),
+        )
+        return
+    _logger.warning(
+        "price-feed watchdog: %s consecutive fully-failed re-subscribe passes; "
+        "rebuilding the WS socket",
+        _consecutive_failed_passes,
+    )
+    ok = reconnect_ws()
+    _last_reconnect = now
+    _consecutive_failed_passes = 0
+    _logger.warning("price-feed watchdog: WS socket rebuild ok=%s", ok)
+    # Give the rebuilt socket a full silence window before judging it, and drop the
+    # throttle so the next genuine re-subscribe isn't blocked by the pre-rebuild one.
+    _last_ok.clear()
+    _last_forced.clear()
+
+
+def _note_pass_outcome(results: list[bool], now: float) -> None:
+    """Track consecutive passes where everything we forced failed.
+
+    One pass is not enough to act on: a single batch rejection is ordinary, and tearing
+    down a working socket costs every live chain its feed. Two in a row -- with the 30s
+    interval and 60s per-target throttle, roughly 90s of total failure -- is not noise."""
+    global _consecutive_failed_passes
+
+    if not results:
+        return  # nothing was attempted -> no evidence either way
+    if any(results):
+        _consecutive_failed_passes = 0
+        return
+    _consecutive_failed_passes += 1
+    if _consecutive_failed_passes >= _ESCALATE_AFTER_FAILED_PASSES:
+        _escalate_to_reconnect(now)
 
 
 def _force_order_feed() -> None:
@@ -199,6 +270,10 @@ def _run_open_pass(now: float) -> None:
 
 
 def _check_silent_feeds(now: float) -> None:
+    # Every subscribe actually attempted this pass, so `_note_pass_outcome` can tell
+    # "all of them failed" (the socket is dead) from "we forced nothing" (all healthy).
+    results: list[bool] = []
+
     for chain_key in list_active_chains():
         parsed = parse_chain_registry_key(chain_key)
         if parsed is None:
@@ -219,19 +294,23 @@ def _check_silent_feeds(now: float) -> None:
             chain_key,
             silent_for,
         )
-        _force_chain(chain_key)
+        outcome = _force_chain(chain_key)
+        if outcome is not None:
+            results.append(outcome)
         _mark_forced(chain_key, now)
 
     if _index_spot_ticking():
         _last_ok[_INDEX_SPOT_TARGET] = now
-        return
-    if _silent_for(_INDEX_SPOT_TARGET, now, None) < _SILENCE_SECONDS or _throttled(
+    elif _silent_for(_INDEX_SPOT_TARGET, now, None) >= _SILENCE_SECONDS and not _throttled(
         _INDEX_SPOT_TARGET, now
     ):
-        return
-    _logger.warning("price-feed watchdog: index spot silent; re-subscribing")
-    _force_index_spot()
-    _mark_forced(_INDEX_SPOT_TARGET, now)
+        _logger.warning("price-feed watchdog: index spot silent; re-subscribing")
+        outcome = _force_index_spot()
+        if outcome is not None:
+            results.append(outcome)
+        _mark_forced(_INDEX_SPOT_TARGET, now)
+
+    _note_pass_outcome(results, now)
 
 
 def price_feed_watchdog_tick(now_ist: datetime | None = None) -> None:
@@ -295,8 +374,10 @@ async def run_price_feed_watchdog_loop() -> None:
 
 def reset_state_for_tests() -> None:
     """Test-only: reset module state back to a fresh-process baseline."""
-    global _open_pass_date
+    global _open_pass_date, _consecutive_failed_passes, _last_reconnect
     with _lock:
         _open_pass_date = None
+        _consecutive_failed_passes = 0
+        _last_reconnect = None
         _last_ok.clear()
         _last_forced.clear()

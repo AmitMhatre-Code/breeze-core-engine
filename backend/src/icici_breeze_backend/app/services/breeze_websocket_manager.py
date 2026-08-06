@@ -299,8 +299,13 @@ def _subscribe_feeds_error(result: Any) -> str | None:
     return None
 
 
-def _subscribe_order_notifications(sdk: Any) -> None:
+def _subscribe_order_notifications(sdk: Any, *, quiet: bool = False) -> None:
     """Subscribe to account-wide order notifications.
+
+    `quiet` demotes the success line to DEBUG for the watchdog's periodic re-arm, which
+    is a no-op on all but the rare tick that actually recovers something. At INFO it
+    wrote 990 identical lines in 16 hours — 8% of a size-capped sink — to say nothing
+    had changed. Failures still surface via `_note_error` at WARNING either way.
 
     Must run on every (re)connect, not once per process: the SDK guards its order socket
     behind `if self.orderconnect == 0`, and `unsubscribe_feeds`/a dropped connection
@@ -318,7 +323,10 @@ def _subscribe_order_notifications(sdk: Any) -> None:
         if err is not None:
             _note_error("subscribe_feeds(get_order_notification=True) failed: %s", err)
             return
-        _logger.info("Subscribed to ICICI order notifications")
+        if quiet:
+            _logger.debug("Order-notification feed still armed (watchdog re-arm)")
+        else:
+            _logger.info("Subscribed to ICICI order notifications")
     except Exception as exc:  # noqa: BLE001 — price ticks must still work without this
         _note_error("subscribe_feeds(get_order_notification=True) failed: %s", exc)
 
@@ -379,7 +387,7 @@ def order_feed_watchdog_tick() -> None:
         connected = _connected
     if sdk is None or not connected:
         return  # nothing connected -> nothing to keep alive
-    _subscribe_order_notifications(sdk)
+    _subscribe_order_notifications(sdk, quiet=True)
     # Observability only: if the *whole* feed (price ticks included) has gone silent during
     # market hours, the order re-arm above won't help — surface it so it isn't invisible.
     try:
@@ -582,6 +590,71 @@ def force_resubscribe_tokens(tokens: list[str]) -> bool:
     if sdk is None or not connected:
         return False
     return _subscribe_token_batches(sdk, sorted(set(tokens)))
+
+
+def reconnect_ws() -> bool:
+    """Rebuild the socket handler from scratch and replay every subscription.
+
+    The escalation path behind `ws_price_feed_watchdog`, for when forced re-subscribes
+    keep failing. Re-issuing `subscribe_feeds` cannot recover a socket that is *itself*
+    gone -- ICICI answers every call with "Failed to connect to live stream" -- and
+    nothing else here would ever notice: `_ensure_ws` short-circuits on `_connected`,
+    which only a failed *connect attempt* clears, so a handle that dies after connecting
+    stays installed for the life of the process. Observed in production on 2026-08-06:
+    three minutes of a fully silent feed during market hours, recovered only by the SDK's
+    own socket.io reconnect happening to succeed.
+
+    Two things this deliberately does not do:
+
+      * Not `ws_disconnect_playground()`, despite the name fitting -- that calls
+        `_unsubscribe_all_feeds()`, which clears the very bookkeeping needed to know what
+        to re-subscribe. Bookkeeping is preserved and replayed instead.
+      * Not `stop_tick_pipeline()`. The pipeline is process-wide, idempotent to start, and
+        shared with anything still healthy; `_attach_sdk_ticks_handler` re-arms it.
+
+    Reuses the cached `BreezeConnect` rather than building a new session: the cache is
+    keyed by user + broker token and `generate_session` returns "Invalid Checksum" when
+    called twice for one token (see `processor.get_session_breeze`).
+    """
+    global _sdk, _sdk_user_id, _connected
+    from icici_breeze_backend.app.services.index_spot_feed import (
+        sync_index_spot_subscriptions,
+    )
+    from icici_breeze_backend.app.services.processor import processor
+
+    with _lock:
+        sdk = _sdk
+        user_id = _sdk_user_id
+    if user_id is None:
+        _note_error("WS reconnect: no broker session on the socket to rebuild")
+        return False
+
+    if sdk is not None:
+        try:
+            sdk.on_ticks = None
+            sdk.ws_disconnect()
+        except Exception as exc:  # noqa: BLE001 — the handle is already suspect
+            _logger.warning("WS reconnect: ws_disconnect failed, rebuilding anyway: %s", exc)
+    with _lock:
+        _sdk = None
+        _connected = False
+
+    if _ensure_ws(processor(), user_id) is None:
+        _note_error("WS reconnect: rebuild failed for user_id=%s", user_id)
+        return False
+
+    with _lock:
+        tokens = sorted(_sub_meta.keys())
+    tokens_ok = force_resubscribe_tokens(tokens) if tokens else True
+    spot_ok = sync_index_spot_subscriptions(processor(), user_id, force=True)
+    _logger.info(
+        "WS reconnect: rebuilt for user_id=%s tokens=%s tokens_ok=%s index_spot_ok=%s",
+        user_id,
+        len(tokens),
+        tokens_ok,
+        spot_ok,
+    )
+    return True
 
 
 def _unsubscribe_stock_token_batch(tokens: list[str]) -> None:

@@ -208,6 +208,168 @@ class TestGating:
         assert env["forced_chains"] == [_CHAIN]  # in-hours silence does count
 
 
+class TestReconnectEscalation:
+    """Re-subscribing cannot recover a socket that is itself gone: ICICI rejects every
+    batch with "Failed to connect to live stream" and `_ensure_ws` short-circuits on
+    `_connected`, which nothing clears. Production, 2026-08-06: three minutes of silence
+    during market hours with every forced re-subscribe reporting ok=False."""
+
+    @pytest.fixture
+    def failing(self, env, monkeypatch):
+        """Silent feed, and every re-subscribe attempt fails."""
+        calls = {"reconnect": 0, "outcome": False}
+        monkeypatch.setattr(wd, "_force_chain", lambda chain_key: calls["outcome"])
+        monkeypatch.setattr(wd, "_force_index_spot", lambda: calls["outcome"])
+        monkeypatch.setattr(
+            bwm, "reconnect_ws", lambda: calls.__setitem__("reconnect", calls["reconnect"] + 1) or True
+        )
+        env["tick_age"] = wd._SILENCE_SECONDS + 5
+        env["spot_ticking"] = False
+        return calls
+
+    def _silent_pass(self, env, at):
+        """One watchdog pass, far enough past the last for the throttle to have cleared."""
+        env["clock"]["t"] += wd._THROTTLE_SECONDS + 1
+        wd.price_feed_watchdog_tick(at)
+
+    def test_one_failed_pass_does_not_reconnect(self, env, monkeypatch, failing):
+        """A lone batch rejection is ordinary; rebuilding costs every live chain its feed."""
+        _mark_open_pass_done(env, monkeypatch)
+        self._silent_pass(env, _now(11, 0, 0))
+        assert failing["reconnect"] == 0
+
+    def test_two_consecutive_failed_passes_rebuild_the_socket(self, env, monkeypatch, failing):
+        _mark_open_pass_done(env, monkeypatch)
+        self._silent_pass(env, _now(11, 0, 0))
+        self._silent_pass(env, _now(11, 1, 0))
+        assert failing["reconnect"] == 1
+
+    def test_a_successful_pass_resets_the_counter(self, env, monkeypatch, failing):
+        """Otherwise two failures an hour apart would count as consecutive."""
+        _mark_open_pass_done(env, monkeypatch)
+        self._silent_pass(env, _now(11, 0, 0))
+        failing["outcome"] = True
+        self._silent_pass(env, _now(11, 1, 0))
+        failing["outcome"] = False
+        self._silent_pass(env, _now(11, 2, 0))
+        assert failing["reconnect"] == 0
+
+    def test_passes_that_attempt_nothing_do_not_count(self, env, monkeypatch, failing):
+        """Healthy feeds force nothing, and "nothing to do" must not read as failure."""
+        _mark_open_pass_done(env, monkeypatch)
+        env["tick_age"] = 1.0
+        env["spot_ticking"] = True
+        self._silent_pass(env, _now(11, 0, 0))
+        self._silent_pass(env, _now(11, 1, 0))
+        self._silent_pass(env, _now(11, 2, 0))
+        assert failing["reconnect"] == 0
+
+    def test_cooldown_suppresses_a_second_rebuild(self, env, monkeypatch, failing):
+        """A broker-side outage fails the rebuild too; hammering ws_connect through it
+        burns session attempts for no gain."""
+        _mark_open_pass_done(env, monkeypatch)
+        self._silent_pass(env, _now(11, 0, 0))
+        self._silent_pass(env, _now(11, 1, 0))
+        assert failing["reconnect"] == 1
+        self._silent_pass(env, _now(11, 2, 0))
+        self._silent_pass(env, _now(11, 3, 0))
+        assert failing["reconnect"] == 1
+
+    def test_rebuild_retried_once_the_cooldown_expires(self, env, monkeypatch, failing):
+        _mark_open_pass_done(env, monkeypatch)
+        self._silent_pass(env, _now(11, 0, 0))
+        self._silent_pass(env, _now(11, 1, 0))
+        env["clock"]["t"] += wd._RECONNECT_COOLDOWN_SECONDS + 1
+        self._silent_pass(env, _now(11, 10, 0))
+        self._silent_pass(env, _now(11, 11, 0))
+        assert failing["reconnect"] == 2
+
+    def test_escalation_cannot_fire_outside_market_hours(self, env, monkeypatch, failing):
+        """The tick returns before `_check_silent_feeds` off-hours -- there is no feed to
+        lose, and reconnecting into a closed market wastes session attempts."""
+        _mark_open_pass_done(env, monkeypatch)
+        self._silent_pass(env, _now(16, 30, 0))
+        self._silent_pass(env, _now(16, 31, 0))
+        assert failing["reconnect"] == 0
+
+
+class TestReconnectWs:
+    """`reconnect_ws` rebuilds the handler; what it must *not* do is lose the bookkeeping
+    that says what to re-subscribe, or mint a second broker session."""
+
+    @pytest.fixture
+    def wired(self, monkeypatch):
+        sdk = MagicMock()
+        sdk.subscribe_feeds.return_value = {"Status": 200}
+        proc = MagicMock()
+        proc.get_session_breeze.return_value = sdk
+        monkeypatch.setattr(bwm, "_sdk", sdk)
+        monkeypatch.setattr(bwm, "_connected", True)
+        monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
+        monkeypatch.setattr(bwm, "_holders", {"h1": set(_TOKENS)})
+        monkeypatch.setattr(bwm, "_sub_holders", {t: {"h1"} for t in _TOKENS})
+        monkeypatch.setattr(bwm, "_sub_meta", {t: {"stock_token": [t]} for t in _TOKENS})
+        monkeypatch.setattr(bwm, "_attach_sdk_ticks_handler", lambda s: None)
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.processor.processor", lambda: proc
+        )
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.index_spot_feed.sync_index_spot_subscriptions",
+            lambda *a, **k: True,
+        )
+        return sdk, proc
+
+    def test_disconnects_then_reconnects(self, wired):
+        sdk, _proc = wired
+        assert bwm.reconnect_ws() is True
+        sdk.ws_disconnect.assert_called_once()
+        sdk.ws_connect.assert_called_once()
+
+    def test_preserves_holder_bookkeeping(self, wired):
+        """`ws_disconnect_playground` clears this; an auto-reconnect must not, or the
+        rebuilt socket comes up subscribed to nothing."""
+        bwm.reconnect_ws()
+        assert bwm._holders == {"h1": set(_TOKENS)}
+        assert sorted(bwm._sub_meta) == sorted(_TOKENS)
+
+    def test_replays_every_subscription(self, wired):
+        sdk, _proc = wired
+        bwm.reconnect_ws()
+        subscribed = [
+            c.kwargs["stock_token"]
+            for c in sdk.subscribe_feeds.call_args_list
+            if "stock_token" in c.kwargs
+        ]
+        assert subscribed == [sorted(_TOKENS)]
+
+    def test_reuses_the_cached_session(self, wired):
+        """A fresh BreezeConnect would re-run generate_session, which ICICI answers with
+        "Invalid Checksum" for a token that already has one."""
+        sdk, proc = wired
+        bwm.reconnect_ws()
+        proc.get_session_breeze.assert_called_once_with("u1")
+
+    def test_does_not_unsubscribe_before_rebuilding(self, wired):
+        """The socket is already gone -- unsubscribing over it does nothing and the
+        playground path that does it also wipes the bookkeeping."""
+        sdk, _proc = wired
+        bwm.reconnect_ws()
+        sdk.unsubscribe_feeds.assert_not_called()
+
+    def test_survives_a_failing_ws_disconnect(self, wired):
+        """A dead handle may well raise on the way down; that must not block the rebuild."""
+        sdk, _proc = wired
+        sdk.ws_disconnect.side_effect = RuntimeError("already gone")
+        assert bwm.reconnect_ws() is True
+        sdk.ws_connect.assert_called_once()
+
+    def test_returns_false_with_nothing_connected(self, monkeypatch):
+        monkeypatch.setattr(bwm, "_sdk", None)
+        monkeypatch.setattr(bwm, "_sdk_user_id", None)
+        monkeypatch.setattr(bwm, "_connected", False)
+        assert bwm.reconnect_ws() is False
+
+
 class TestForceResubscribeTokens:
     def test_reissues_subscribe_for_already_held_tokens(self, monkeypatch):
         """The whole point: the normal path short-circuits on bookkeeping, so

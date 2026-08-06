@@ -1,0 +1,4 @@
+{"ts": "2026-08-05T16:11:47.281", "level": "INFO", "logger": "__main__", "message": "chain-builder worker starting (poll=500ms)"}
+{"ts": "2026-08-05T16:11:47.704", "level": "INFO", "logger": "icici_breeze_backend.app.db.redis_client", "message": "Redis connected at redis://breeze-redis:6379/0"}
+{"ts": "2026-08-05T16:11:47.788", "level": "INFO", "logger": "icici_breeze_backend.app.db.redis_client", "message": "Redis connected at redis://breeze-redis:6379/0"}
+{"ts": "2026-08-05T16:11:51.661", "level": "INFO", "logger": "icici_breeze_backend.app.services.reference_data.scrip_index", "message": "Published scrip index version 104 contracts=14262"}

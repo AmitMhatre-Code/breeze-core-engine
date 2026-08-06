@@ -63,7 +63,9 @@ async def fetch_market_outlook_from_portal() -> dict[str, Any] | None:
             data = resp.json()
             return data if isinstance(data, dict) else None
     except httpx.HTTPError as exc:
-        logger.warning("market outlook fetch failed: %s", exc)
+        # Type included: several httpx transport errors stringify to "", which logged a
+        # bare "market outlook fetch failed:" with nothing to act on.
+        logger.warning("market outlook fetch failed: %s: %s", type(exc).__name__, exc)
         return None
     except Exception as exc:  # noqa: BLE001
         logger.warning("market outlook fetch unexpected error: %s", exc)

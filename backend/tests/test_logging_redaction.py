@@ -48,6 +48,65 @@ class TestSecretRedactingFilter:
         assert SecretRedactingFilter().filter(record) is True
 
 
+class TestQueryStringSecrets:
+    """ICICI hands the broker session key back on the `/icici-return` redirect, so
+    `uvicorn.access` wrote a live, day-valid credential into a log that
+    `/diagnostics/logs/download` zips up for support."""
+
+    def test_redacts_apisession_from_an_access_line(self):
+        out = _redact(
+            '%s - "%s %s HTTP/%s" %d',
+            ("1.2.3.4:0", "POST", "/icici-return?apisession=56609767", "1.1", 303),
+        )
+        assert "56609767" not in out
+        assert out == '1.2.3.4:0 - "POST /icici-return?apisession=<redacted> HTTP/1.1" 303'
+
+    def test_keeps_the_parameter_name(self):
+        # A redacted line still has to say *which* credential it hid.
+        assert "apisession=<redacted>" in _redact("GET /icici-return?apisession=abc123")
+
+    def test_redacts_only_the_secret_among_several_params(self):
+        out = _redact("GET /x?stock_code=BSESEN&apisession=abc123&expiry_date=06-Aug-2026")
+        assert "abc123" not in out
+        assert "stock_code=BSESEN" in out
+        assert "expiry_date=06-Aug-2026" in out
+
+    def test_leaves_stock_token_readable(self):
+        """`stock_token` merely ends in "token" and is not a secret -- it is the WS
+        subscribe path's primary debugging handle, so the name match is whole-word."""
+        out = _redact("GET /market-data?stock_token=4.1!40879")
+        assert out == "GET /market-data?stock_token=4.1!40879"
+
+    def test_redacts_underscore_prefixed_credentials(self):
+        assert "xyz789" not in _redact("GET /x?broker_token=xyz789")
+        assert "xyz789" not in _redact("GET /x?session_token=xyz789")
+
+    def test_matches_regardless_of_case(self):
+        assert "abc123" not in _redact("GET /x?ApiSession=abc123")
+
+    def test_redacts_every_occurrence(self):
+        out = _redact("retry /icici-return?apisession=aaa after /icici-return?apisession=bbb")
+        assert "aaa" not in out and "bbb" not in out
+        assert out.count("apisession=<redacted>") == 2
+
+    def test_redaction_is_idempotent(self):
+        """The filter is attached to every root handler, so each record passes through it
+        once per handler. A rule that matched its own output produced
+        `apisession=<redacted><redacted><redacted>` in the sink."""
+        record = _record("GET /icici-return?apisession=56609767")
+        for _ in range(3):
+            SecretRedactingFilter().filter(record)
+        assert record.getMessage() == "GET /icici-return?apisession=<redacted>"
+
+    def test_leaves_a_valueless_parameter_alone(self):
+        assert _redact("GET /icici-return?apisession=") == "GET /icici-return?apisession="
+
+    def test_stops_at_the_parameter_boundary(self):
+        out = _redact("GET /x?apisession=abc123&next=/portfolio")
+        assert "abc123" not in out
+        assert "next=/portfolio" in out
+
+
 class TestConfigureLogging:
     def test_attaches_the_filter_to_root_handlers(self):
         configure_logging(level="INFO")

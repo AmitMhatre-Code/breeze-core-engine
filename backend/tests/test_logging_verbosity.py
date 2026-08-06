@@ -60,7 +60,7 @@ def _fresh_console(level: str) -> io.StringIO:
     return stream
 
 
-def _access_record(path: str) -> logging.LogRecord:
+def _access_record(path: str, status: int = 200) -> logging.LogRecord:
     """A record shaped the way uvicorn.access emits them."""
     return logging.LogRecord(
         "uvicorn.access",
@@ -68,9 +68,16 @@ def _access_record(path: str) -> logging.LogRecord:
         __file__,
         1,
         '%s - "%s %s HTTP/%s" %d',
-        ("127.0.0.1:1234", "GET", path, "1.1", 200),
+        ("127.0.0.1:1234", "GET", path, "1.1", status),
         None,
     )
+
+
+_POLL_PATHS = [
+    "/dashboard/ws-health",
+    "/dashboard/index-quotes",
+    "/portfolio/squareoff-rules",
+]
 
 
 class TestQuietAccessPathFilter:
@@ -97,6 +104,58 @@ class TestQuietAccessPathFilter:
             "uvicorn.access", logging.INFO, __file__, 1, "%d", ("not-an-int",), None,
         )
         assert QuietAccessPathFilter().filter(record) is True
+
+
+class TestQuietWhenOkPolling:
+    """An open browser tab polls these every ~2.4s -- 9,572 of 12,352 lines in a 16-hour
+    capture, crowding real events out of a size-capped sink. Dropped only while they
+    succeed: a burst of 401s here is how an expired session announces itself."""
+
+    @pytest.mark.parametrize("path", _POLL_PATHS)
+    def test_drops_successful_polls(self, path):
+        assert QuietAccessPathFilter().filter(_access_record(path, 200)) is False
+
+    @pytest.mark.parametrize("path", _POLL_PATHS)
+    def test_keeps_unauthorised_polls(self, path):
+        assert QuietAccessPathFilter().filter(_access_record(path, 401)) is True
+
+    @pytest.mark.parametrize("path", _POLL_PATHS)
+    def test_keeps_server_errors(self, path):
+        assert QuietAccessPathFilter().filter(_access_record(path, 500)) is True
+
+    def test_redirects_are_still_quiet(self):
+        # 3xx is not a fault; the ceiling is 400, not 300.
+        assert QuietAccessPathFilter().filter(_access_record(_POLL_PATHS[0], 304)) is False
+
+    def test_probe_paths_stay_quiet_at_any_status(self):
+        """/health and /metrics are unattended machine traffic -- a failing probe is the
+        healthcheck's business, not the log's."""
+        assert QuietAccessPathFilter().filter(_access_record("/health", 503)) is False
+
+    def test_does_not_quieten_a_longer_path_that_shares_the_prefix(self):
+        assert (
+            QuietAccessPathFilter().filter(
+                _access_record("/portfolio/squareoff-rules/for-exit-board", 200)
+            )
+            is True
+        )
+
+    def test_keeps_the_line_when_status_cannot_be_read(self):
+        record = _access_record(_POLL_PATHS[0])
+        record.args = ("127.0.0.1:1234", "GET", _POLL_PATHS[0], "1.1", "not-an-int")
+        assert QuietAccessPathFilter().filter(record) is True
+
+    def test_status_read_from_the_rendered_line_when_arg_shape_changes(self):
+        ok = logging.LogRecord(
+            "uvicorn.access", logging.INFO, __file__, 1,
+            f'127.0.0.1 - "GET {_POLL_PATHS[0]} HTTP/1.1" 200', (), None,
+        )
+        failed = logging.LogRecord(
+            "uvicorn.access", logging.INFO, __file__, 1,
+            f'127.0.0.1 - "GET {_POLL_PATHS[0]} HTTP/1.1" 401', (), None,
+        )
+        assert QuietAccessPathFilter().filter(ok) is False
+        assert QuietAccessPathFilter().filter(failed) is True
 
 
 class TestConfigureLogging:

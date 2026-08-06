@@ -1065,11 +1065,13 @@ class processor():
                 margin, target_margin_ute=target_margin_ute
             )
             if margin_situation.get("Status") == 200:
-                _logger.info(
+                # DEBUG, and once rather than twice: the second line was a strict superset
+                # of the first, and the payload is the customer's cash limit and margin
+                # utilisation — which `/diagnostics/logs/download` hands to support.
+                _logger.debug(
                     "get_margin_situation: success=%s",
                     margin_situation.get("Success"),
                 )
-                _logger.info("get_margin_situation: margin_situation=%s", margin_situation)
             else:
                 _logger.warning(
                     "get_margin_situation: API returned status=%s error=%r user_id=%s",

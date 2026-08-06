@@ -580,9 +580,13 @@ def start_application():
     @app.exception_handler(AppException)
     async def app_exception_handler(request: Request, exc: AppException):
         cid = getattr(request.state, "correlation_id", None)
+        # Also as `extra=`, not just interpolated: the JSON-lines sink promotes
+        # `record.correlation_id` to a top-level field, which is what makes a support
+        # bundle greppable by the id the user was shown.
         _logger.warning(
             "AppException: status=%s path=%s detail=%s correlation_id=%s",
             exc.status_code, request.url.path, exc.detail, cid,
+            extra={"correlation_id": cid},
         )
         return JSONResponse(
             status_code=exc.status_code,
@@ -595,6 +599,7 @@ def start_application():
         _logger.warning(
             "HTTP error: status=%s path=%s detail=%s correlation_id=%s",
             exc.status_code, request.url.path, exc.detail, cid,
+            extra={"correlation_id": cid},
         )
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "correlation_id": cid})
 
@@ -604,6 +609,7 @@ def start_application():
         _logger.exception(
             "Unhandled exception: path=%s correlation_id=%s error=%s",
             request.url.path, cid, exc,
+            extra={"correlation_id": cid},
         )
         # User-friendly message; internal detail only in logs
         user_message = "An unexpected error occurred. Please try again or contact support."
