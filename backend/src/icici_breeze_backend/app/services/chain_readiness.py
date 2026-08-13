@@ -14,6 +14,9 @@ from icici_breeze_backend.app.services.reference_data.tradable_contracts import 
 
 _logger = logging.getLogger(__name__)
 
+_FRESHNESS_CACHE_SECONDS = 30.0
+_freshness_cache: tuple[float, float] | None = None  # (value, monotonic_expiry)
+
 
 def _wait_timeout_ms() -> int:
     try:
@@ -22,11 +25,72 @@ def _wait_timeout_ms() -> int:
         return 8000
 
 
+def _chain_wait_timeout_ms() -> int:
+    """How long to wait for a *whole chain* to be quotable, as opposed to a single
+    contract (`_wait_timeout_ms`).
+
+    These were one setting, which meant the window sized for a thin chain's deep-OTM
+    strikes -- which may simply never trade all session -- also governed the quote
+    lookup done while pricing an order. Splitting them lets the chain wait be short
+    (a screen showing slightly stale prices beats a screen that hangs) without
+    shortening order pricing, which keeps the original, more patient window.
+    """
+    try:
+        return max(250, int(getattr(cfg, "CHAIN_WS_CHAIN_WAIT_TIMEOUT_MS", 2000) or 2000))
+    except (TypeError, ValueError):
+        return 2000
+
+
 def _wait_poll_ms() -> int:
     try:
         return max(25, int(getattr(cfg, "CHAIN_WS_WAIT_POLL_MS", 100) or 100))
     except (TypeError, ValueError):
         return 100
+
+
+def _chain_freshness_window_seconds() -> float:
+    """A published chain counts as fresh for one rebuild interval -- the same clock
+    the chain_builder worker rebuilds on, so a request only rebuilds when the worker
+    genuinely hasn't yet.
+
+    Cached: the setting is a fresh SQLite read per call by design, and this runs on
+    every poll iteration of every chain request.
+    """
+    global _freshness_cache
+    now = time.monotonic()
+    cached = _freshness_cache
+    if cached is not None and now < cached[1]:
+        return cached[0]
+    value = 2.0
+    try:
+        from icici_breeze_backend.app.services.pnl_engine_settings import (
+            load_pnl_engine_settings,
+        )
+
+        value = max(0.25, float(load_pnl_engine_settings()["pnl_recompute_interval_seconds"]))
+    except Exception:
+        _logger.debug("P&L recalc interval lookup failed; using %.1fs", value, exc_info=True)
+    _freshness_cache = (value, now + _FRESHNESS_CACHE_SECONDS)
+    return value
+
+
+def _payload_is_fresh(raw: Any) -> bool:
+    """True if the cached chain was built within the current rebuild interval.
+
+    `built_at` is stamped by `chain_build_service` when it publishes. A payload
+    without one predates this change (or came from a different builder path), so it
+    is treated as stale -- never as fresh, which would risk serving an old chain
+    indefinitely.
+    """
+    if not isinstance(raw, dict):
+        return False
+    try:
+        built_at = float(raw.get("built_at"))
+    except (TypeError, ValueError):
+        return False
+    if built_at <= 0:
+        return False
+    return (time.time() - built_at) < _chain_freshness_window_seconds()
 
 
 def _cell_has_quote(cell: Any, *, exchange_code: str) -> bool:
@@ -232,20 +296,30 @@ def _poll_canonical_chain(
     lot_size: int,
     freeze_quantity: int | None,
     is_ready: Callable[[dict[str, Any]], bool],
+    timeout_ms: int | None = None,
+    reuse_fresh: bool = True,
 ) -> dict[str, Any] | None:
+    """`reuse_fresh` skips this request's own rebuild when the chain_builder worker
+    already published one within the rebuild interval -- without it, every request
+    rebuilds the chain itself before reading it, which simply relocates the CPU the
+    worker's cadence gate just saved. Callers that must have the freshest possible
+    quote regardless of cost (order pricing) pass False."""
     from icici_breeze_backend.app.services.chain_build_service import refresh_active_chains
     from icici_breeze_backend.app.services.reference_data.active_chains import chain_registry_key
 
     chain_key = chain_registry_key(exchange_code, stock_code, expiry_display)
-    deadline = time.monotonic() + _wait_timeout_ms() / 1000.0
+    deadline = time.monotonic() + (timeout_ms if timeout_ms is not None else _wait_timeout_ms()) / 1000.0
     poll_s = _wait_poll_ms() / 1000.0
 
+    cache_key = canonical_chain_key(exchange_code, stock_code, expiry_display)
     while time.monotonic() < deadline:
-        try:
-            refresh_active_chains([chain_key])
-        except Exception:
-            pass
-        raw = cache_get_json(canonical_chain_key(exchange_code, stock_code, expiry_display))
+        raw = cache_get_json(cache_key)
+        if not (reuse_fresh and _payload_is_fresh(raw)):
+            try:
+                refresh_active_chains([chain_key])
+            except Exception:
+                pass
+            raw = cache_get_json(cache_key)
         if not isinstance(raw, dict):
             time.sleep(poll_s)
             continue
@@ -272,13 +346,18 @@ def wait_for_canonical_chain(
 ) -> dict[str, Any] | None:
     """`detail`, if given, is left holding the *last* poll's incompleteness reason,
     so a caller that gives up after the wait window can log why rather than just
-    that it happened."""
+    that it happened.
+
+    Uses the short chain-wait window and reuses a freshly published chain: this
+    feeds screens, where showing slightly stale prices beats hanging on strikes
+    that may never trade."""
     return _poll_canonical_chain(
         exchange_code,
         stock_code,
         expiry_display,
         lot_size=lot_size,
         freeze_quantity=freeze_quantity,
+        timeout_ms=_chain_wait_timeout_ms(),
         is_ready=lambda payload: is_chain_complete(
             payload,
             stock_code=stock_code,
@@ -301,13 +380,19 @@ def wait_for_strike_quote(
 ) -> dict[str, Any] | None:
     """Same wait/poll shape as `wait_for_canonical_chain`, gated on a single
     strike's quote — the ATM strike ticks far more reliably than deep OTM
-    strikes, so this typically resolves well inside the worst-case timeout."""
+    strikes, so this typically resolves well inside the worst-case timeout.
+
+    This is the order-pricing path, so it deliberately keeps the longer window and
+    rebuilds on every poll rather than reusing the worker's last publish: an
+    aggressive limit order priced off a two-second-old book can miss its fill, and
+    the cost is paid only when an order is actually placed."""
     return _poll_canonical_chain(
         exchange_code,
         stock_code,
         expiry_display,
         lot_size=lot_size,
         freeze_quantity=freeze_quantity,
+        reuse_fresh=False,
         is_ready=lambda payload: is_strike_quoted(
             payload,
             stock_code=stock_code,

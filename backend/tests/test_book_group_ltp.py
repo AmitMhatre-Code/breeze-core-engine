@@ -126,24 +126,31 @@ def test_fetch_group_ltps_batch_dedupes_contract_and_buckets_chains(mock_broker_
         },
     ]
 
-    def side_effect_chain(_proc, _user_id, _stock_code, _exchange_code, _expiry, right):
-        if str(right).lower().startswith("p"):
-            return {
-                "Status": 200,
-                "Success": [{"strike_price": 24100, "ltp": 88.0}],
-            }
-        return {
-            "Status": 200,
-            "Success": [{"strike_price": 24000, "ltp": 101.25}],
-        }
+    def side_effect_chain(_proc, _user_id, _stock_code, _exchange_code, _expiry, rights):
+        out = {}
+        for right in rights:
+            if str(right).lower().startswith("p"):
+                out[right] = {
+                    "Status": 200,
+                    "Success": [{"strike_price": 24100, "ltp": 88.0}],
+                }
+            else:
+                out[right] = {
+                    "Status": 200,
+                    "Success": [{"strike_price": 24000, "ltp": 101.25}],
+                }
+        return out
 
     with patch(
-        "icici_breeze_backend.app.services.quote_source_router.fetch_chain_side_icici_response",
+        "icici_breeze_backend.app.services.quote_source_router.fetch_chain_sides_icici_response",
         side_effect=side_effect_chain,
     ) as mock_chain:
         ltps = proc.fetch_group_ltps_batch("U1", groups)
 
-    assert mock_chain.call_count == 2
+    # One chain build for the whole (stock, expiry, exchange), not one per right:
+    # building a chain yields both sides, so asking per-right built it twice.
+    assert mock_chain.call_count == 1
+    assert sorted(mock_chain.call_args.args[5]) == ["Call", "Put"]
     assert ltps["buy-g0"] == 101.25
     assert ltps["sell-g1"] == 101.25
     assert ltps["put-g2"] == 88.0

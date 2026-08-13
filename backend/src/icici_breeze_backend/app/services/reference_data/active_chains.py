@@ -1,8 +1,10 @@
 """Redis-backed registry of option chains with active WS subscribers."""
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import threading
+from datetime import date
 from typing import Any
 
 from icici_breeze_backend.app.db.redis_client import get_redis
@@ -11,9 +13,14 @@ _logger = logging.getLogger(__name__)
 
 CHAIN_ACTIVE_SET = "chain:active"
 
+# Often enough to catch a dead expiry registered mid-session (the order book pins one
+# whenever an older date range is viewed), rare enough to be invisible.
+_SWEEP_INTERVAL_SECONDS = 900.0
+
 _lock = threading.RLock()
 _chain_refcount: dict[str, int] = {}
 _holder_chains: dict[str, set[str]] = {}
+_last_full_reset_date: date | None = None
 
 
 def chain_registry_key(exchange_code: str, stock_code: str, expiry_display: str) -> str:
@@ -105,11 +112,98 @@ def active_chain_stats() -> dict[str, Any]:
 
 
 def reset_active_chains_registry() -> None:
-    """Clear Redis chain:active and in-process holder refcounts (API startup)."""
+    """Clear Redis chain:active and in-process holder refcounts (API startup).
+
+    Both halves must be cleared together: `register_holder_chain` early-returns when
+    its in-process bookkeeping already lists the chain for that holder, so clearing
+    only the Redis set would leave chains that can never re-register.
+    """
     with _lock:
         _chain_refcount.clear()
         _holder_chains.clear()
+        global _last_full_reset_date
+        _last_full_reset_date = _today_ist()
     try:
         get_redis().delete(CHAIN_ACTIVE_SET)
     except Exception:
         _logger.debug("reset_active_chains_registry failed", exc_info=True)
+
+
+def _today_ist() -> "date":
+    from icici_breeze_backend.app.core.timezone import IST
+
+    return dt.datetime.now(IST).date()
+
+
+def _drop_chain_everywhere(chain_key: str) -> None:
+    """Remove one chain from every holder's set, the refcounts, and Redis."""
+    with _lock:
+        for chains in _holder_chains.values():
+            chains.discard(chain_key)
+        _chain_refcount.pop(chain_key, None)
+    _redis_srem(chain_key)
+
+
+def sweep_expired_active_chains() -> int:
+    """Drop chains whose expiry has already passed. Returns the number dropped.
+
+    Nothing releases these on their own: `register_holder_chain` only ever adds, and
+    the order book legitimately registers chains for *past* expiries whenever someone
+    views an older date range -- which then stay in the rebuild set forever.
+    """
+    today = _today_ist()
+    dropped = 0
+    for chain_key in list_active_chains():
+        parsed = parse_chain_registry_key(chain_key)
+        if parsed is None:
+            continue
+        try:
+            expiry = dt.datetime.strptime(parsed[2], "%d-%b-%Y").date()
+        except (TypeError, ValueError):
+            continue  # unparseable -> leave alone rather than guess
+        if expiry >= today:
+            continue
+        _drop_chain_everywhere(chain_key)
+        dropped += 1
+    if dropped:
+        _logger.info("active-chain sweep: dropped %s expired chain(s)", dropped)
+    return dropped
+
+
+def maybe_daily_reset_active_chains() -> bool:
+    """Once per calendar day (IST), clear the registry outright so a long-running
+    instance starts each session with only what is actually asked for again.
+
+    No-ops on an instance that booted today, because startup already reset and
+    stamped the date -- which is the common case here, since many deployments are
+    shut down overnight and booted the next working morning. This exists for the
+    instances that stay up for weeks.
+    """
+    today = _today_ist()
+    with _lock:
+        if _last_full_reset_date == today:
+            return False
+    _logger.info("active-chain registry: daily reset")
+    reset_active_chains_registry()
+    return True
+
+
+async def run_active_chain_sweep_loop() -> None:
+    """Periodic registry hygiene: expired-expiry sweep plus the once-daily reset.
+
+    Mirrors the heartbeat / pnl-loop idiom: infinite loop cancelled only by the
+    lifespan's `task.cancel()`, `CancelledError` re-raised, everything else logged
+    and swallowed. Runs in the API process, never the worker -- the worker sees only
+    the Redis set, so a removal there would desync the in-process refcounts.
+    """
+    import asyncio
+
+    while True:
+        try:
+            await asyncio.sleep(_SWEEP_INTERVAL_SECONDS)
+            await asyncio.to_thread(maybe_daily_reset_active_chains)
+            await asyncio.to_thread(sweep_expired_active_chains)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _logger.exception("active-chain sweep failed")

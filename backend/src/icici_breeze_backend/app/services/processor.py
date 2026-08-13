@@ -1506,52 +1506,60 @@ class processor():
             group_contract[group_id] = contract_key
             contract_groups.setdefault(contract_key, []).append(group_id)
 
-        # Unique contracts -> chain buckets
-        chain_buckets: dict[tuple[str, str, str, str], set[str]] = {}
+        # Unique contracts -> chain buckets, keyed WITHOUT `right`: one chain build
+        # serves both CE and PE, so bucketing per right built the same chain twice.
+        chain_buckets: dict[tuple[str, str, str], dict[str, set[str]]] = {}
         for contract_key in contract_groups:
             stock_code, expiry_display, strike, right, exchange_code = contract_key
             if not stock_code:
                 continue
-            bucket = (stock_code, expiry_display, exchange_code, right)
-            chain_buckets.setdefault(bucket, set()).add(strike)
+            bucket = (stock_code, expiry_display, exchange_code)
+            chain_buckets.setdefault(bucket, {}).setdefault(right, set()).add(strike)
 
-        from icici_breeze_backend.app.services.quote_source_router import fetch_chain_side_icici_response
+        from icici_breeze_backend.app.services.quote_source_router import (
+            fetch_chain_sides_icici_response,
+        )
 
         strike_ltps: dict[tuple[str, str, str, str, str], float | None] = {}
 
-        for (stock_code, expiry_display, exchange_code, right), strikes in chain_buckets.items():
+        for (stock_code, expiry_display, exchange_code), strikes_by_right in chain_buckets.items():
+            rights = sorted(strikes_by_right)
             try:
-                chain = fetch_chain_side_icici_response(
+                chains = fetch_chain_sides_icici_response(
                     self,
                     user_id,
                     stock_code,
                     exchange_code,
                     expiry_display,
-                    right,
+                    rights,
                 )
             except Exception as e:
                 _logger.warning(
-                    "fetch_group_ltps_batch: chain failed user=%s stock=%s expiry=%s right=%s: %s",
+                    "fetch_group_ltps_batch: chain failed user=%s stock=%s expiry=%s rights=%s: %s",
                     user_id,
                     stock_code,
                     expiry_display,
-                    right,
+                    ",".join(rights),
                     e,
                 )
-                chain = _icici_error(str(e))
+                chains = {right: _icici_error(str(e)) for right in rights}
 
-            ltp_by_strike: dict[str, float | None] = {}
-            if isinstance(chain, dict) and chain.get("Status") == 200:
-                for row in chain.get("Success") or []:
-                    sk = _strike_key(row.get("strike_price"))
-                    ltp_raw = row.get("ltp")
-                    try:
-                        ltp_by_strike[sk] = float(ltp_raw) if ltp_raw is not None else None
-                    except (TypeError, ValueError):
-                        ltp_by_strike[sk] = None
+            for right, strikes in strikes_by_right.items():
+                chain = chains.get(right)
+                ltp_by_strike: dict[str, float | None] = {}
+                if isinstance(chain, dict) and chain.get("Status") == 200:
+                    for row in chain.get("Success") or []:
+                        sk = _strike_key(row.get("strike_price"))
+                        ltp_raw = row.get("ltp")
+                        try:
+                            ltp_by_strike[sk] = float(ltp_raw) if ltp_raw is not None else None
+                        except (TypeError, ValueError):
+                            ltp_by_strike[sk] = None
 
-            for strike in strikes:
-                strike_ltps[(stock_code, expiry_display, strike, right, exchange_code)] = ltp_by_strike.get(strike)
+                for strike in strikes:
+                    strike_ltps[(stock_code, expiry_display, strike, right, exchange_code)] = (
+                        ltp_by_strike.get(strike)
+                    )
 
         out: dict[str, float | None] = {}
         for group_id, contract_key in group_contract.items():

@@ -18,14 +18,85 @@ _stop = threading.Event()
 # not expected to ever bind in practice, just prevents an unbounded drain loop.
 _PUBSUB_DRAIN_LIMIT = 10_000
 
+# Serializes the two loops below and enforces the rebuild cadence: both the timer
+# and the tick feed funnel through `_maybe_refresh`, so a burst of ticks can never
+# rebuild more often than the configured interval, and the two loops can never
+# rebuild the same chains concurrently.
+_refresh_lock = threading.Lock()
+_last_refresh_monotonic: float = 0.0
+
+# The rebuild interval follows the user's P&L recalc setting, which lives in SQLite
+# and is read fresh on every call by design. Re-reading it per dirty-tick message
+# would trade the CPU we're saving for disk I/O, so it's cached for this long.
+_INTERVAL_CACHE_SECONDS = 30.0
+_interval_cache: tuple[float, float] | None = None  # (value, monotonic_expiry)
+
 
 def _poll_ms() -> int:
+    """How often the timer loop *wakes*, not how often it rebuilds -- the cadence
+    gate in `_maybe_refresh` decides that. Kept short so a change to the P&L recalc
+    setting takes effect within a wake rather than within a rebuild interval."""
     from icici_breeze_backend.core import config as cfg
 
     try:
         return int(getattr(cfg, "CHAIN_BUILDER_POLL_MS", 250) or 250)
     except (TypeError, ValueError):
         return 250
+
+
+def _refresh_interval_seconds() -> float:
+    """Minimum gap between chain rebuilds, following the user's P&L recalc interval
+    (Settings > Advanced).
+
+    Chains feed the screens, and the Portfolio already polls them at exactly this
+    interval, so rebuilding faster than it is pure waste. Note the stop-loss /
+    profit-booking engine does *not* read canonical chains -- it evaluates against
+    its own tick-fed quote buffer -- so this cadence never delays a rule hit.
+    """
+    global _interval_cache
+    now = time.monotonic()
+    cached = _interval_cache
+    if cached is not None and now < cached[1]:
+        return cached[0]
+    value = 2.0
+    try:
+        from icici_breeze_backend.app.services.pnl_engine_settings import (
+            load_pnl_engine_settings,
+        )
+
+        value = float(load_pnl_engine_settings()["pnl_recompute_interval_seconds"])
+    except Exception:
+        _logger.debug("P&L recalc interval lookup failed; using %.1fs", value, exc_info=True)
+    value = max(0.25, value)
+    _interval_cache = (value, now + _INTERVAL_CACHE_SECONDS)
+    return value
+
+
+def _maybe_refresh() -> None:
+    """Rebuild every active chain, at most once per `_refresh_interval_seconds`.
+
+    The elapsed check is against the *end* of the previous rebuild, so the interval
+    is genuine idle time between rebuilds rather than a start-to-start rate that a
+    slow rebuild could saturate.
+    """
+    global _last_refresh_monotonic
+    interval = _refresh_interval_seconds()
+    with _refresh_lock:
+        if time.monotonic() - _last_refresh_monotonic < interval:
+            return
+        try:
+            chains = list_active_chains()
+            if chains:
+                refresh_active_chains(
+                    chains,
+                    resolve_lot_size=_resolve_lot_size,
+                    resolve_freeze_quantity=_resolve_freeze_quantity,
+                    should_continue=_not_stopped,
+                )
+        except Exception:
+            _logger.exception("chain-builder refresh failed")
+        finally:
+            _last_refresh_monotonic = time.monotonic()
 
 
 def _load_env() -> None:
@@ -71,22 +142,15 @@ def _not_stopped() -> bool:
 
 
 def _refresh_loop() -> None:
-    interval = max(0.05, _poll_ms() / 1000.0)
+    """Safety net for when ticks are quiet: the tick feed drives rebuilds in the
+    common case, and this only wins the cadence gate when no tick has arrived for
+    a full interval (pre-open, a dead feed, an underlying that simply isn't trading)."""
+    wake = max(0.05, _poll_ms() / 1000.0)
     while not _stop.is_set():
         started = time.monotonic()
-        try:
-            chains = list_active_chains()
-            if chains:
-                refresh_active_chains(
-                    chains,
-                    resolve_lot_size=_resolve_lot_size,
-                    resolve_freeze_quantity=_resolve_freeze_quantity,
-                    should_continue=_not_stopped,
-                )
-        except Exception:
-            _logger.exception("chain-builder refresh failed")
+        _maybe_refresh()
         elapsed = time.monotonic() - started
-        _stop.wait(max(0.0, interval - elapsed))
+        _stop.wait(max(0.0, wake - elapsed))
 
 
 def _pubsub_loop() -> None:
@@ -116,15 +180,10 @@ def _pubsub_loop() -> None:
                 if pubsub.get_message(timeout=0) is None:
                     break
                 drained += 1
-            chains = list_active_chains()
-            if not chains:
-                continue
-            refresh_active_chains(
-                chains,
-                resolve_lot_size=_resolve_lot_size,
-                resolve_freeze_quantity=_resolve_freeze_quantity,
-                should_continue=_not_stopped,
-            )
+            # Draining alone still left this rebuilding back-to-back for as long as
+            # ticks kept arriving -- the drain bounds work *per burst*, not the rate
+            # at which bursts are serviced. The cadence gate is what bounds the rate.
+            _maybe_refresh()
     except Exception:
         _logger.debug("chain-builder pubsub unavailable; poll-only mode", exc_info=True)
 
@@ -146,7 +205,11 @@ def main() -> int:
     )
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
-    _logger.info("chain-builder worker starting (poll=%sms)", _poll_ms())
+    _logger.info(
+        "chain-builder worker starting (wake=%sms, rebuild interval=%.1fs)",
+        _poll_ms(),
+        _refresh_interval_seconds(),
+    )
     pubsub_thread = threading.Thread(target=_pubsub_loop, name="chain-builder-pubsub", daemon=True)
     pubsub_thread.start()
     _refresh_loop()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Callable
 
 import icici_breeze_backend.app.core.config as cfg
@@ -184,6 +185,10 @@ def build_canonical_chain(
     )
     if payload is None:
         return None
+    # Wall-clock, not monotonic: this is read back by a *different* process (the API
+    # reading what the chain_builder worker published), where monotonic clocks are
+    # not comparable. See `chain_readiness._payload_is_fresh`.
+    payload["built_at"] = time.time()
     cache_set_json(
         canonical_chain_key(exchange_code, stock_code, expiry_display),
         payload,

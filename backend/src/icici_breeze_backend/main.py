@@ -501,8 +501,18 @@ def start_application():
             run_price_feed_watchdog_loop()
         )
 
+        from icici_breeze_backend.app.services.reference_data.active_chains import (
+            run_active_chain_sweep_loop,
+        )
+
+        chain_sweep_task: asyncio.Task = asyncio.create_task(run_active_chain_sweep_loop())
+
         yield
-        for watchdog_task in (order_feed_watchdog_task, price_feed_watchdog_task):
+        for watchdog_task in (
+            order_feed_watchdog_task,
+            price_feed_watchdog_task,
+            chain_sweep_task,
+        ):
             watchdog_task.cancel()
             try:
                 await watchdog_task
