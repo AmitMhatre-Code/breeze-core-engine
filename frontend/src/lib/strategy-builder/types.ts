@@ -198,6 +198,17 @@ export type ProposedTrade = {
   risk_reward_ratio?: string | null;
   span_margin?: number | null;
   elm_requirement?: number | null;
+  /** Portfolio-aware (incremental) margin netting -- see
+   * docs/strategy-builder-portfolio-margin-plan.md (D1-D10). `span_margin` above
+   * IS the incremental figure (may be <= 0) when `netted_against_positions` is
+   * true; `standalone_span_margin` preserves the pre-netting number and
+   * `positions_margin_benefit` is standalone minus incremental. NOT the same as
+   * any other "margin benefit" field elsewhere in this app -- that name is taken
+   * by a different, intra-structure quantity (see leg-ui-helpers.ts). */
+  standalone_span_margin?: number | null;
+  positions_margin_benefit?: number | null;
+  netted_against_positions?: boolean;
+  margin_released?: boolean;
   pop_pct?: number | null;
   legs: ProposedTradeLeg[];
   variant_rank?: number | null;
@@ -234,6 +245,10 @@ export type ProposeTradesSuccess = {
   /** Server-side audit session id for downloading the build audit JSON. */
   audit_session_id?: string | null;
   user_report?: UserExplainabilityReport | null;
+  /** D7: set when this build's open-positions fetch (or the live M(P) call)
+   * failed, so every trade in this response is standalone-only even though
+   * portfolio-aware netting was requested. */
+  netting_unavailable_reason?: string | null;
 };
 
 export type UserInputsSummary = {

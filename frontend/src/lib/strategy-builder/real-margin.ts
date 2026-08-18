@@ -5,6 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import {
   parseElmFromResponse,
+  parsePositionsNettingFromResponse,
   parseSpanMarginFromResponse,
 } from "@/lib/strategy-builder/leg-ui-helpers";
 import type {
@@ -64,13 +65,27 @@ async function fetchRealMargin(
   return v;
 }
 
-/** Same as fetchRealMargin but also reads the basket-level ELM fields from the response.
- * Only call this for the whole-basket request — ELM is basket-level only, never per-leg. */
+/** Netting fields for the whole-basket margin call -- see
+ * docs/strategy-builder-portfolio-margin-plan.md (D1-D10). `standaloneSpan`
+ * falls back to `span` itself when the server did not net (no open positions,
+ * or netting unavailable) so `span === standaloneSpan` exactly reproduces
+ * pre-netting behaviour for every downstream computation. */
+export type PositionsNettingInfo = {
+  standaloneSpan: number;
+  positionsMarginBenefit: number | null;
+  nettedAgainstPositions: boolean;
+  nettedPositionCount: number;
+  nettingUnavailableReason: string | null;
+};
+
+/** Same as fetchRealMargin but also reads the basket-level ELM and portfolio-netting
+ * fields from the response. Only call this for the whole-basket request — ELM and
+ * positions netting are basket-level only, never per-leg. */
 async function fetchRealMarginWithElm(
   legs: MarginApiRequest["legs"],
   spot: number | null,
   signal?: AbortSignal,
-): Promise<{ span: number } & BasketElmInfo> {
+): Promise<{ span: number } & BasketElmInfo & PositionsNettingInfo> {
   const res = await apiClient.post<MarginApiResponse, MarginApiRequest>(
     "/strategy-builder/margin",
     { legs, margin_source: "breeze_api", spot: spot ?? undefined },
@@ -80,14 +95,28 @@ async function fetchRealMarginWithElm(
   if (span == null) {
     throw new Error(res.Error || "ICICI did not return a margin figure");
   }
-  return { span, ...parseElmFromResponse(res) };
+  const netting = parsePositionsNettingFromResponse(res);
+  return {
+    span,
+    ...parseElmFromResponse(res),
+    standaloneSpan: netting.standaloneSpan ?? span,
+    positionsMarginBenefit: netting.positionsMarginBenefit,
+    nettedAgainstPositions: netting.nettedAgainstPositions,
+    nettedPositionCount: netting.nettedPositionCount,
+    nettingUnavailableReason: netting.nettingUnavailableReason,
+  };
 }
 
 export type OnDemandMarginData = {
   perLegMargin: Record<string, number>;
   spanMargin: number;
+  /** Intra-structure netting benefit (this basket's own legs netted against each
+   * other) -- sumStandalone minus the basket's OWN standalone margin. Unrelated
+   * to positionsMarginBenefit below; see the parsePositionsNettingFromResponse
+   * doc comment for why these must not be conflated. */
   marginBenefit: number;
-} & BasketElmInfo;
+} & BasketElmInfo &
+  PositionsNettingInfo;
 
 /**
  * Real ICICI margin has no per-leg breakdown, so this fans out one call per
@@ -136,12 +165,21 @@ export async function fetchRealBasketMargins(
   }
 
   const sumStandalone = Object.values(perLegMargin).reduce((a, b) => a + b, 0);
-  const marginBenefit = Math.max(0, sumStandalone - basket.span);
+  // Intra-structure benefit compares like with like: sum of standalone SELL legs
+  // vs the basket's OWN standalone margin -- NOT basket.span, which becomes the
+  // incremental (netted-against-positions) figure once netting applies and would
+  // silently produce a meaningless number here (see PositionsNettingInfo doc).
+  const marginBenefit = Math.max(0, sumStandalone - basket.standaloneSpan);
 
   return {
     perLegMargin,
     spanMargin: basket.span,
     marginBenefit,
+    standaloneSpan: basket.standaloneSpan,
+    positionsMarginBenefit: basket.positionsMarginBenefit,
+    nettedAgainstPositions: basket.nettedAgainstPositions,
+    nettedPositionCount: basket.nettedPositionCount,
+    nettingUnavailableReason: basket.nettingUnavailableReason,
     elmRequirement: basket.elmRequirement,
     elmIsIndex: basket.elmIsIndex,
     elmApproximate: basket.elmApproximate,
@@ -207,17 +245,30 @@ export function useOnDemandBasketMargin(params: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const prefillSpanMargin = useCallback((spanMargin: number, forKey: string) => {
-    setLastResult({
-      forKey,
-      perLegMargin: {},
-      spanMargin,
-      marginBenefit: 0,
-      elmRequirement: null,
-      elmIsIndex: false,
-      elmApproximate: false,
-    });
-  }, []);
+  /** Seeds the calc state from data the caller already has (e.g. a selected
+   * propose-trades card's own margin fields) without a round-trip call.
+   * `standaloneSpan` defaults to `spanMargin` -- the same "no netting known"
+   * convention `fetchRealMarginWithElm` uses -- so a caller that hasn't been
+   * updated for netting yet (Phase 3) still produces a consistent state. */
+  const prefillMargin = useCallback(
+    (data: Partial<OnDemandMarginData> & { spanMargin: number }, forKey: string) => {
+      setLastResult({
+        forKey,
+        perLegMargin: data.perLegMargin ?? {},
+        spanMargin: data.spanMargin,
+        marginBenefit: data.marginBenefit ?? 0,
+        standaloneSpan: data.standaloneSpan ?? data.spanMargin,
+        positionsMarginBenefit: data.positionsMarginBenefit ?? null,
+        nettedAgainstPositions: data.nettedAgainstPositions ?? false,
+        nettedPositionCount: data.nettedPositionCount ?? 0,
+        nettingUnavailableReason: data.nettingUnavailableReason ?? null,
+        elmRequirement: data.elmRequirement ?? null,
+        elmIsIndex: data.elmIsIndex ?? false,
+        elmApproximate: data.elmApproximate ?? false,
+      });
+    },
+    [],
+  );
 
   const isFresh = lastResult != null && lastResult.forKey === currentKey;
 
@@ -240,6 +291,11 @@ export function useOnDemandBasketMargin(params: {
         isFresh && Object.keys(lastResult!.perLegMargin).length > 0
           ? lastResult!.marginBenefit
           : null,
+      standaloneSpan: isFresh ? lastResult!.standaloneSpan : null,
+      positionsMarginBenefit: isFresh ? lastResult!.positionsMarginBenefit : null,
+      nettedAgainstPositions: isFresh ? lastResult!.nettedAgainstPositions : false,
+      nettedPositionCount: isFresh ? lastResult!.nettedPositionCount : 0,
+      nettingUnavailableReason: isFresh ? lastResult!.nettingUnavailableReason : null,
       elmRequirement: isFresh ? lastResult!.elmRequirement : null,
       elmIsIndex: isFresh ? lastResult!.elmIsIndex : false,
       elmApproximate: isFresh ? lastResult!.elmApproximate : false,
@@ -260,6 +316,6 @@ export function useOnDemandBasketMargin(params: {
     calculate,
     calculateFor,
     calculateDisabled: !canCalculate || mutation.isPending,
-    prefillSpanMargin,
+    prefillMargin,
   };
 }

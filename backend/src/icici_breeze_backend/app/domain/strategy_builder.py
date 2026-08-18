@@ -26,6 +26,9 @@ class StrategyBuilderMarginRequest(BaseModel):
     spot: Optional[float] = None
     iv: Optional[float] = None
     time_years: Optional[float] = None
+    # Portfolio-aware (incremental) margin netting against the user's open positions
+    # in the same scrip -- see docs/strategy-builder-portfolio-margin-plan.md (D1-D10).
+    net_against_positions: bool = True
 
 
 class StrategyBuilderExecuteLeg(StrategyBuilderLegIn):

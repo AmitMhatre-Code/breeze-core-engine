@@ -671,7 +671,12 @@ function PlaceOrderPageInner() {
                       tolerancePct={aggressiveControls.tolerancePct}
                       onAggressiveChange={(checked) => {
                         setAggressiveLimit(checked);
-                        if (checked) setPrice("");
+                        if (checked) {
+                          setPrice("");
+                          // Re-arm the once-per-contract LTP auto-fill so switching the
+                          // bolt back off refills the price instead of leaving it blank.
+                          priceAutoFillKeyRef.current = null;
+                        }
                       }}
                       onPriceChange={setPrice}
                       onModeChange={aggressiveControls.setMode}

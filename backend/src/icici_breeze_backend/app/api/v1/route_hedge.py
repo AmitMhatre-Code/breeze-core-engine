@@ -16,6 +16,7 @@ from icici_breeze_backend.app.services.options_strategy_engine.strategy_hedger i
     flatten_chain_payload,
     generate_strategy_level_hedges,
 )
+from icici_breeze_backend.app.services.portfolio_margin_netting import normalize_stock
 from icici_breeze_backend.app.services.processor import _days_to_expiry, processor
 from icici_breeze_backend.app.services.quote_source_router import (
     _normalize_expiry_display,
@@ -40,22 +41,18 @@ def _positions_list(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _normalize_stock(raw: str) -> str:
-    return str(raw or "").strip().upper().split()[0]
-
-
 def _filter_bucket_positions(
     positions: list[dict[str, Any]],
     stock_code: str,
     expiry_display: str,
 ) -> list[dict[str, Any]]:
-    target_stock = _normalize_stock(stock_code)
+    target_stock = normalize_stock(stock_code)
     target_expiry = _normalize_expiry_display(expiry_display)
     out: list[dict[str, Any]] = []
     for row in positions:
         if not isinstance(row, dict):
             continue
-        row_stock = _normalize_stock(str(row.get("stock_code") or ""))
+        row_stock = normalize_stock(str(row.get("stock_code") or ""))
         row_expiry = _normalize_expiry_display(str(row.get("expiry_date") or ""))
         if row_stock == target_stock and row_expiry == target_expiry:
             out.append(row)

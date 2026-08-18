@@ -119,6 +119,21 @@ export function ProposedStrategyTradeCard({
     [trade, spot, atmIv, expiryDate, lotSize, sigmaSmiles],
   );
 
+  // Portfolio-aware (incremental) margin netting -- see
+  // docs/strategy-builder-portfolio-margin-plan.md (D1-D10). `margin_released`
+  // means this structure's incremental margin is <= 0 -- it caps enough of an
+  // existing open position that the trade costs no NEW margin. Released
+  // margin is not free money: the long legs are still paid for in premium, so
+  // the caption below shows the net premium impact alongside it.
+  const marginReleased = trade.status === "ok" && trade.margin_released === true;
+  const nettedBenefit =
+    trade.netted_against_positions &&
+    !marginReleased &&
+    trade.positions_margin_benefit != null &&
+    trade.positions_margin_benefit > 0
+      ? trade.positions_margin_benefit
+      : null;
+
   if (skipped) {
     return (
       <div className="w-full min-w-0 rounded-[12px] border border-border-soft bg-panel2 p-3.5 opacity-70">
@@ -149,17 +164,24 @@ export function ProposedStrategyTradeCard({
           <span className="text-sm font-bold text-foreground">
             {trade.strategy_name}
           </span>
-          {tone ? (
-            <span
-              className={`shrink-0 rounded-[5px] px-1.5 py-0.5 text-body font-bold uppercase tracking-wide ${
-                selected && !relaxed
-                  ? `${tone.solidBg} ${tone.solidText}`
-                  : `${tone.tint} ${tone.text}`
-              }`}
-            >
-              {outlook}
-            </span>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-1">
+            {marginReleased ? (
+              <span className="rounded-[5px] bg-up-tint px-1.5 py-0.5 text-body font-bold uppercase tracking-wide text-up">
+                Margin releasing
+              </span>
+            ) : null}
+            {tone ? (
+              <span
+                className={`rounded-[5px] px-1.5 py-0.5 text-body font-bold uppercase tracking-wide ${
+                  selected && !relaxed
+                    ? `${tone.solidBg} ${tone.solidText}`
+                    : `${tone.tint} ${tone.text}`
+                }`}
+              >
+                {outlook}
+              </span>
+            ) : null}
+          </div>
         </div>
 
         <div className="font-mono text-heading leading-[1.7] text-muted">
@@ -201,13 +223,34 @@ export function ProposedStrategyTradeCard({
           />
           <Stat
             label="Margin"
+            tone={marginReleased ? "up" : "foreground"}
             value={
-              trade.span_margin != null
-                ? formatIndianMoneyCompact(trade.span_margin)
-                : "—"
+              trade.span_margin == null ? (
+                "—"
+              ) : marginReleased ? (
+                <>+{formatIndianMoneyCompact(Math.abs(trade.span_margin))}</>
+              ) : (
+                formatIndianMoneyCompact(trade.span_margin)
+              )
             }
           />
         </div>
+
+        {marginReleased ? (
+          <p className="text-body text-faint">
+            Releases margin from your open positions — premium of{" "}
+            {trade.net_premium != null
+              ? formatIndianMoneyCompact(Math.abs(trade.net_premium))
+              : "this trade"}{" "}
+            {trade.net_premium != null && trade.net_premium < 0 ? "paid" : "collected"} in
+            cash.
+          </p>
+        ) : nettedBenefit != null ? (
+          <p className="text-body text-faint">
+            {formatIndianMoneyCompact(nettedBenefit)} less than standalone — netted against
+            your open positions.
+          </p>
+        ) : null}
       </div>
 
       <button

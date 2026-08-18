@@ -62,6 +62,17 @@ class ProposedTradeOut(BaseModel):
     risk_reward_ratio: Optional[str] = None
     span_margin: Optional[float] = None
     elm_requirement: Optional[float] = None
+    # Portfolio-aware (incremental) margin netting -- see
+    # docs/strategy-builder-portfolio-margin-plan.md (D1-D10). `span_margin`
+    # above IS the incremental figure (may be <= 0) when `netted_against_positions`
+    # is true; `standalone_span_margin` preserves the pre-netting number and
+    # `positions_margin_benefit` is standalone minus incremental (floored at 0).
+    # NOT the same as any pre-existing "margin_benefit" field elsewhere in this
+    # API -- that name is taken by a different, intra-structure quantity.
+    standalone_span_margin: Optional[float] = None
+    positions_margin_benefit: Optional[float] = None
+    netted_against_positions: bool = False
+    margin_released: bool = False
     pop_pct: Optional[float] = None
     legs: List[ProposedTradeLegOut] = Field(default_factory=list)
     variant_rank: Optional[int] = None
@@ -175,6 +186,11 @@ class ProposeTradesSuccess(BaseModel):
     relaxed_trades: List[ProposedTradeOut] = Field(default_factory=list)
     audit_session_id: Optional[str] = None
     user_report: Optional[UserExplainabilityReportOut] = None
+    # D7: set when this build's open-positions fetch (or the live M(P) call)
+    # failed, so every trade in this response is standalone-only even though
+    # portfolio-aware netting was requested -- frontend renders one fallback
+    # banner rather than a per-card explanation.
+    netting_unavailable_reason: Optional[str] = None
 
 
 class ProposeTradesResponse(BaseModel):

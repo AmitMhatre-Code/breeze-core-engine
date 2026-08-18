@@ -144,6 +144,14 @@ class StrategyResult:
     badges: list[str] = field(default_factory=list)
     compliance: Literal["recommended", "relaxed"] = "recommended"
     constraint_violations: list[str] = field(default_factory=list)
+    # Portfolio-aware (incremental) margin netting -- see
+    # docs/strategy-builder-portfolio-margin-plan.md (D1-D10). `span_margin`
+    # above becomes the incremental figure (may be <= 0) when netted;
+    # `standalone_span_margin` preserves the pre-netting number.
+    standalone_span_margin: float | None = None
+    positions_margin_benefit: float | None = None  # NOT margin_benefit -- see plan §6.3
+    netted_against_positions: bool = False
+    margin_released: bool = False  # True when incremental <= 0 (D8)
 
 
 @dataclass
@@ -181,8 +189,34 @@ class EngineContext:
     range_lower: float = 0.0
     range_upper: float = 0.0
     unit_span_by_structure: dict[tuple, float] = field(default_factory=dict)
+    # Netted one-lot INCREMENTAL SPAN, keyed by the same structural key as
+    # unit_span_by_structure but stored SEPARATELY -- the two answer
+    # different questions (standalone vs netted against open positions) for
+    # the same structure, and reusing one dict for both would silently let a
+    # netted lookup return a standalone number or vice versa.
+    unit_incremental_by_structure: dict[tuple, float] = field(default_factory=dict)
     progress: Any | None = None
     iv_smile_cache: dict[Right, list[tuple[float, float]]] | None = field(default=None, repr=False)
+    # Portfolio-aware margin netting (D1-D10). `positions` is a
+    # portfolio_margin_netting.PositionSet -- typed Any here to avoid a circular
+    # import (that module imports processor, which imports this one).
+    # `netting_legs` is positions_to_margin_input(positions.rows), precomputed
+    # once so every margin call in this build (unit-lot probes, the secant, the
+    # final full-quantity fetch) reuses it without recomputing or re-importing.
+    # `existing_span` is M(P) on the LIVE margin_calculator basis -- populated
+    # only for margin_source=breeze_api; the Exchange Risk Baseline path nets
+    # M(P) itself, offline, inside processor.strategy_builder_margin (D6), so
+    # this stays None there and that's fine -- callers pass `netting_legs`
+    # through and let strategy_builder_margin decide what to do with them.
+    # `netting_available` is False whenever the positions fetch (or, on the
+    # live path, the M(P) call) failed (D7) -- the whole build then runs the
+    # pre-netting standalone path, and `netting_unavailable_reason` explains
+    # why (surfaced to the frontend as one banner).
+    positions: Any | None = None
+    netting_legs: list[dict] = field(default_factory=list)
+    existing_span: float | None = None
+    netting_available: bool = False
+    netting_unavailable_reason: str | None = None
 
     def effective_max_loss_budget(self) -> float | None:
         if self.allow_infinite_loss or self.max_loss_rupees is None:

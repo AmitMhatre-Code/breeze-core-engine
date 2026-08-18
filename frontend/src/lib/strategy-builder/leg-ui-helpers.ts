@@ -34,6 +34,52 @@ export function parseSpanMarginFromResponse(
   return Number.isFinite(v) ? v : null;
 }
 
+/** Portfolio-aware (incremental) margin netting fields -- see
+ * docs/strategy-builder-portfolio-margin-plan.md (D1-D10). `standaloneSpan` is
+ * the pre-netting basket figure (always present when known); when netting
+ * applied, `span_margin_required` itself becomes the incremental figure and
+ * `positionsMarginBenefit` is standalone minus incremental. This is a
+ * different quantity from the basket's own intra-structure `marginBenefit`
+ * (this candidate's legs netted against each other) -- do not conflate them. */
+export function parsePositionsNettingFromResponse(
+  m: MarginApiResponse | undefined,
+): {
+  standaloneSpan: number | null;
+  positionsMarginBenefit: number | null;
+  nettedAgainstPositions: boolean;
+  nettedPositionCount: number;
+  nettingUnavailableReason: string | null;
+} {
+  const empty = {
+    standaloneSpan: null,
+    positionsMarginBenefit: null,
+    nettedAgainstPositions: false,
+    nettedPositionCount: 0,
+    nettingUnavailableReason: null,
+  };
+  if (m?.Status !== 200 || !m.Success) return empty;
+  const success = m.Success as {
+    standalone_span_margin?: unknown;
+    positions_margin_benefit?: unknown;
+    netted_against_positions?: unknown;
+    netted_position_count?: unknown;
+    netting_unavailable_reason?: unknown;
+  };
+  const standalone = parseNum(success.standalone_span_margin);
+  const benefit = parseNum(success.positions_margin_benefit);
+  const count = parseNum(success.netted_position_count);
+  return {
+    standaloneSpan: Number.isFinite(standalone) ? standalone : null,
+    positionsMarginBenefit: Number.isFinite(benefit) ? benefit : null,
+    nettedAgainstPositions: success.netted_against_positions === true,
+    nettedPositionCount: Number.isFinite(count) ? count : 0,
+    nettingUnavailableReason:
+      typeof success.netting_unavailable_reason === "string"
+        ? success.netting_unavailable_reason
+        : null,
+  };
+}
+
 export function parseElmFromResponse(
   m: MarginApiResponse | undefined,
 ): { elmRequirement: number | null; elmIsIndex: boolean; elmApproximate: boolean } {

@@ -386,6 +386,17 @@ def _safe_int(v: Any, default: int = 0) -> int:
         return default
 
 
+def _optional_float(v: Any) -> float | None:
+    """`_safe_float` for values whose absence must stay absent -- an unpriced leg
+    marked at 0.0 reads as a real quote and silently poisons P&L sums."""
+    try:
+        if v is None or v == "" or v == "Err" or isinstance(v, bool):
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _sum_leg_elm(legs: list) -> float | None:
     """Additive ELM across legs; None only when no leg carries an ELM figure."""
     total = 0.0
@@ -608,7 +619,19 @@ class processor():
         margin_source: str,
         action: str = cfg.SELL,
         product: str = cfg.OPTIONS,
+        existing_legs: list[dict] | None = None,
+        existing_span_value: float | None = None,
+        netting_position_count: int = 0,
     ) -> tuple[dict, list[dict]]:
+        """Portfolio-aware (incremental) margin netting -- see
+        docs/strategy-builder-portfolio-margin-plan.md (D1-D10). Only applied
+        on the LIVE margin_calculator path (this leg priced via breeze_api, or
+        falling back to it after a missed baseline lookup) -- scoped down from
+        the full design for this scan surface: the Exchange Risk Baseline
+        branch above uses a flat per-contract lookup, not the portfolio
+        risk-array scan `strategy_builder_margin` uses elsewhere, so netting
+        it properly would need that same portfolio-scan machinery duplicated
+        here. Left standalone-only for now (never worse than today)."""
         warnings: list[dict] = []
         if margin_source == MARGIN_SOURCE_EXCHANGE:
             baseline = resolve_exchange_baseline_margin(
@@ -641,23 +664,51 @@ class processor():
 
         breeze = self.get_session_breeze(user_id)
         expiry_api = _expiry_display_to_api(expiry_display)
+        candidate_leg = {
+            "strike_price": strike_for_broker(strike_price),
+            "quantity": int(quantity),
+            "product": product,
+            "action": action,
+            "expiry_date": expiry_api,
+            "stock_code": stock_code,
+            "right": right,
+        }
         try:
-            out = breeze.margin_calculator(
-                [
-                    {
-                        "strike_price": strike_for_broker(strike_price),
-                        "quantity": int(quantity),
-                        "product": product,
-                        "action": action,
-                        "expiry_date": expiry_api,
-                        "stock_code": stock_code,
-                        "right": right,
-                    }
-                ],
-                exchange_code=exchange_code,
-            )
+            out = breeze.margin_calculator([candidate_leg], exchange_code=exchange_code)
         except Exception as e:
             out = _icici_error(f"Error calling ICICI Breeze API margin_calculator: {e}")
+            return out, warnings
+
+        if (
+            existing_legs
+            and existing_span_value is not None
+            and isinstance(out, dict)
+            and out.get("Status") == 200
+        ):
+            standalone = float((out.get("Success") or {}).get("span_margin_required") or 0.0)
+            try:
+                combined_res = breeze.margin_calculator(
+                    existing_legs + [candidate_leg], exchange_code=exchange_code
+                )
+                if isinstance(combined_res, dict) and combined_res.get("Status") == 200:
+                    combined = float(
+                        (combined_res.get("Success") or {}).get("span_margin_required") or 0.0
+                    )
+                    incremental = combined - existing_span_value
+                    out.setdefault("Success", {})
+                    out["Success"]["span_margin_required"] = round(incremental, 2)
+                    out["Success"]["standalone_span_margin"] = round(standalone, 2)
+                    out["Success"]["existing_span_margin"] = round(existing_span_value, 2)
+                    out["Success"]["combined_span_margin"] = round(combined, 2)
+                    out["Success"]["positions_margin_benefit"] = round(
+                        max(0.0, standalone - incremental), 2
+                    )
+                    out["Success"]["netted_against_positions"] = True
+                    out["Success"]["netted_position_count"] = netting_position_count or len(
+                        existing_legs
+                    )
+            except Exception:
+                pass  # best-effort (D7): leave `out` as the standalone figure on any failure.
         return out, warnings
 
     def _get_full_secret_for_user(self, user_id: str, user_fragment: str = ""):
@@ -874,6 +925,34 @@ class processor():
         lot_size = self.fetch_lot_size(stock_code, expiry_date, exchange_code=exchange_code)
         expiry_date = _expiry_display_to_api(expiry_date)
 
+        # Portfolio-aware (incremental) margin netting -- see
+        # docs/strategy-builder-portfolio-margin-plan.md (D1-D10). Resolved
+        # ONCE for the whole scan (not per candidate strike). Scoped to
+        # margin_source=breeze_api for this surface -- see
+        # _resolve_leg_margin_with_source's docstring for why the Exchange
+        # Risk Baseline branch isn't netted here.
+        existing_legs: list[dict] | None = None
+        existing_span_value: float | None = None
+        netting_position_count = 0
+        if margin_source == MARGIN_SOURCE_BREEZE:
+            from icici_breeze_backend.app.services.portfolio_margin_netting import (
+                existing_span as _resolve_existing_span,
+                positions_for_underlying,
+                positions_to_margin_input,
+            )
+
+            position_set = positions_for_underlying(self, user_id, stock_code, exchange_code)
+            if position_set.available and position_set.rows:
+                session_breeze = self.get_session_breeze(user_id)
+                if session_breeze is not None:
+                    m_p = _resolve_existing_span(
+                        self, session_breeze, user_id, exchange_code, position_set
+                    )
+                    if m_p is not None:
+                        existing_legs = positions_to_margin_input(position_set.rows)
+                        existing_span_value = m_p
+                        netting_position_count = len(position_set.rows)
+
         # Getting OTM CALL chain
         right = cfg.CALL
         uncovered_shorts_result['ce_options'] = self.get_options(
@@ -889,6 +968,9 @@ class processor():
             top,
             exchange_code=exchange_code,
             margin_source=margin_source,
+            existing_legs=existing_legs,
+            existing_span_value=existing_span_value,
+            netting_position_count=netting_position_count,
         )
         if _is_icici_limit_exceeded(uncovered_shorts_result['ce_options'].get("Error")):
             uncovered_shorts_result['ce_options'] = _breeze_limit_error(user_id)
@@ -910,6 +992,9 @@ class processor():
             top,
             exchange_code=exchange_code,
             margin_source=margin_source,
+            existing_legs=existing_legs,
+            existing_span_value=existing_span_value,
+            netting_position_count=netting_position_count,
         )
         if _is_icici_limit_exceeded(uncovered_shorts_result['pe_options'].get("Error")):
             uncovered_shorts_result['pe_options'] = _breeze_limit_error(user_id)
@@ -1103,6 +1188,9 @@ class processor():
         top,
         exchange_code: str = cfg.NFO,
         margin_source: str = MARGIN_SOURCE_BREEZE,
+        existing_legs: list[dict] | None = None,
+        existing_span_value: float | None = None,
+        netting_position_count: int = 0,
     ):
         product_type = cfg.OPTIONS
         action = cfg.SELL
@@ -1144,6 +1232,9 @@ class processor():
                         margin_source=margin_source,
                         action=action,
                         product=product_type,
+                        existing_legs=existing_legs,
+                        existing_span_value=existing_span_value,
+                        netting_position_count=netting_position_count,
                     )
                     if _warnings:
                         sorted_options.setdefault("Warnings", [])
@@ -1960,6 +2051,10 @@ class processor():
                     fetch_quote_icici_response,
                 )
 
+                # Resolved once per response, not per leg, so every row in one payload
+                # judges its quote against the same session state.
+                market_open = is_market_open()
+
                 for i in positions["Success"]:
                     stock_code = i['stock_code']
                     exchange_code = i['exchange_code']
@@ -1979,6 +2074,10 @@ class processor():
                         quote = _icici_error(f"Error resolving quote via router({stock_code},{exchange_code},{expiry_date},{product_type},{right},{strike_price}): {e}")
                     quote_rows = _quote_success_rows(quote)
                     resolved_spot: float | None = None
+                    # Explicit rather than probing `i` for the key afterwards: the row is
+                    # the broker's dict, and inferring our own decision from its contents
+                    # would silently skip the fallback if ICICI ever sent that field.
+                    router_ltp_accepted = False
                     if quote.get("Status") == 200 and quote_rows:
                         try:
                             row_spot = float(quote_rows[0].get("spot_price"))
@@ -1992,12 +2091,45 @@ class processor():
                         # the same source already trusted for spot_price above and for the
                         # frontend's live overlay. Fall back to the broker's raw ltp only when
                         # the router has no usable quote for this contract.
+                        #
+                        # That preference has a hole while the market is open: on a websocket
+                        # cell that has not warmed yet -- which is *every* leg on the first
+                        # /portfolio/data after login, since the subscription is created by
+                        # this very call -- `_fetch_cell_from_cache` walks on to the previous
+                        # session's `snapshot` and `bhavcopy` tiers. Those are settlement
+                        # prices, not quotes. Accepting one overwrote a live broker ltp with
+                        # the prior close and left the summary tiles reporting a loss on a
+                        # profitable book for the rest of the session (the page-level tiles
+                        # never refetch; only the table's WS overlay self-corrects).
+                        #
+                        # So mid-session only a websocket cell may override. Once the market
+                        # closes the offline tiers are authoritative and all sources pass.
                         try:
                             router_ltp = float(quote_rows[0].get("ltp"))
                         except (TypeError, ValueError):
                             router_ltp = None
-                        if router_ltp is not None and router_ltp > 0:
+                        quote_source = quote.get("quote_source")
+                        if router_ltp is not None and router_ltp > 0 and (
+                            not market_open or quote_source == "websocket"
+                        ):
                             i["ltp"] = router_ltp
+                            i["quote_source"] = quote_source
+                            router_ltp_accepted = True
+
+                    # No accepted router quote: the row still carries whatever
+                    # get_portfolio_positions() reported. That is good enough on NFO -- it is
+                    # what this code marked against before the router preference landed -- but
+                    # the broker's own ltp is exactly the number the comment above distrusts
+                    # for BFO index options. Rather than mark a BFO leg at a price no source
+                    # stands behind, blank it: `_maybe_coerce_float`, `formatMtmCarry` and
+                    # `computePortfolioTotals` all render None as "—", and the frontend's WS
+                    # overlay fills the row in as soon as the first tick lands.
+                    if not router_ltp_accepted:
+                        if market_open and exchange_code == cfg.BFO:
+                            i["ltp"] = None
+                            i["quote_source"] = "unavailable"
+                        else:
+                            i["quote_source"] = "broker"
 
                     # The per-option quote can miss (deep OTM/ITM strike with no cached
                     # cell, bhavcopy row, or REST quote) even while the underlying's spot
@@ -2015,11 +2147,19 @@ class processor():
                             i['current_profit'] = 0
                             i['carry_profit'] = 0
                         else:
+                            # None only for a leg blanked above (no source stands behind a
+                            # price for it). Margin, ELM and DTE key off spot/quantity, so
+                            # they are still populated below -- only P&L goes blank.
+                            leg_ltp = _optional_float(i.get('ltp'))
                             if i['action'] == cfg.SELL:
-                                i['current_profit'] = (float(i['average_price']) - float(i['ltp'])) * int(i['quantity'])
-                                # Carry = P&L if this leg expires worthless (full premium kept) minus MTM already captured.
-                                worthless_value = float(i['average_price']) * int(i['quantity'])
-                                i['carry_profit'] = worthless_value - i['current_profit']
+                                if leg_ltp is None:
+                                    i['current_profit'] = None
+                                    i['carry_profit'] = None
+                                else:
+                                    i['current_profit'] = (float(i['average_price']) - leg_ltp) * int(i['quantity'])
+                                    # Carry = P&L if this leg expires worthless (full premium kept) minus MTM already captured.
+                                    worthless_value = float(i['average_price']) * int(i['quantity'])
+                                    i['carry_profit'] = worthless_value - i['current_profit']
 
                                 # SPAN is a portfolio risk model, not an additive per-leg number:
                                 # a single short's naked SPAN ignores the offsetting risk of the
@@ -2047,10 +2187,14 @@ class processor():
                                 else:
                                     i['elm_margin_required'] = None
                             else:
-                                i['current_profit'] = (float(i['ltp']) - float(i['average_price'])) * int(i['quantity'])
-                                # Carry = P&L if this leg expires worthless (full premium lost) minus MTM already captured.
-                                worthless_value = - float(i['average_price']) * int(i['quantity'])
-                                i['carry_profit'] = worthless_value - i['current_profit']
+                                if leg_ltp is None:
+                                    i['current_profit'] = None
+                                    i['carry_profit'] = None
+                                else:
+                                    i['current_profit'] = (leg_ltp - float(i['average_price'])) * int(i['quantity'])
+                                    # Carry = P&L if this leg expires worthless (full premium lost) minus MTM already captured.
+                                    worthless_value = - float(i['average_price']) * int(i['quantity'])
+                                    i['carry_profit'] = worthless_value - i['current_profit']
                                 i['span_margin_required'] = None
                                 i['elm_margin_required'] = None
                                 i['carry_margin_returns'] = None
@@ -2150,12 +2294,17 @@ class processor():
         for (exch, stock, expiry), grp_legs in groups_map.items():
             span = self._netted_span_for_legs(breeze, user_id, exch, grp_legs)
             elm = _sum_leg_elm(grp_legs)
-            carry = sum(_safe_float(l.get("carry_profit")) for l in grp_legs)
+            # An unpriced leg (see the quote guard in get_positions) has carry None.
+            # Summing it as 0.0 would understate the group's carry and hand the UI a
+            # partial figure that looks whole -- so the whole group's carry-return goes
+            # blank instead, matching how _netted_span_for_legs surfaces "—" on failure.
+            carry_vals = [_optional_float(l.get("carry_profit")) for l in grp_legs]
+            carry = None if any(c is None for c in carry_vals) else sum(carry_vals)
             total_margin = (span + (elm or 0.0)) if span is not None else None
             dte = max(1, _days_to_expiry(expiry))
             carry_ret = (
                 _annualized_carry_percent_on_span(carry, dte, total_margin)
-                if total_margin and total_margin > 0
+                if carry is not None and total_margin and total_margin > 0
                 else None
             )
             groups_out.append(
@@ -4012,11 +4161,38 @@ class processor():
         spot: float | None = None,
         iv: float | None = None,
         time_years: float | None = None,
+        existing_legs: list[dict] | None = None,
+        existing_span_value: float | None = None,
+        netting_position_count: int = 0,
+        netting_unavailable_reason: str | None = None,
         audit: "StrategyBuilderAuditSession | None" = None,
         audit_context: dict[str, Any] | None = None,
         audit_rationale: str | None = None,
     ):
-        """Compute SPAN margin for strategy-builder legs using selected source."""
+        """Compute SPAN margin for strategy-builder legs using selected source.
+
+        Portfolio-aware netting (see docs/strategy-builder-portfolio-margin-plan.md,
+        D1-D10) is opt-in via `existing_legs` -- the caller's raw
+        get_positions()-shaped rows for the same scrip across all open expiries,
+        already produced by portfolio_margin_netting.positions_to_margin_input().
+        When omitted (the default), behaviour is byte-identical to the pre-netting
+        implementation.
+
+        `existing_span_value` (M(P)) is used ONLY on the live breeze_api path,
+        where it must be measured on the same basis (a real margin_calculator
+        call) as the "combined" call this method makes when netting. The
+        Exchange Risk Baseline path computes its own M(P) locally from
+        `existing_legs` (filtered to the build's expiry per D6) via the offline
+        risk-array scan -- reusing the live-API M(P) there would mix two
+        different margin measurement systems and produce a meaningless
+        incremental figure, and would also spend API budget the user chose the
+        baseline source specifically to avoid.
+
+        `netting_unavailable_reason` is opaque here -- callers set it when their
+        own positions fetch failed (D7) and this method just echoes it into
+        Success so the frontend can render one fallback banner regardless of
+        which surface (Build-Your-Own, propose-trades, shorts scan) triggered it.
+        """
         breeze = self.get_session_breeze(user_id)
         if breeze is None:
             return {
@@ -4175,6 +4351,9 @@ class processor():
                     "margin_source": MARGIN_SOURCE_EXCHANGE,
                     "scanning_risk": portfolio_margin.get("scanning_risk"),
                     "net_option_value": portfolio_margin.get("net_option_value"),
+                    # Intra-structure netting benefit (this candidate's own legs
+                    # netted vs summed standalone) -- unrelated to, and computed
+                    # before, any netting against the user's open positions below.
                     "margin_benefit": portfolio_margin.get("margin_benefit"),
                 }
                 if warnings:
@@ -4186,17 +4365,89 @@ class processor():
                         success["warnings"].extend(
                             {"type": "portfolio_span", "message": w} for w in scan_warnings
                         )
+                # Portfolio-aware netting against open positions (D1-D10). Stays
+                # fully offline (risk-array baseline only, zero live API calls) --
+                # see the method docstring for why this must not reuse a live-API
+                # M(P). Same-expiry positions only (D6); the exchange-baseline
+                # sheet has no inter-month spread model, so anything else is
+                # reported via a warning instead of netted.
+                if existing_legs:
+                    standalone_value = portfolio_margin.get("span_margin_required")
+                    build_stock = str(legs[0].get("stock_code") or "").strip()
+                    build_expiry_raw = str(legs[0].get("expiry_date") or "").strip()
+                    build_expiry_display = (
+                        _expiry_api_to_display(build_expiry_raw)
+                        if "T" in build_expiry_raw
+                        else build_expiry_raw
+                    )
+                    same_expiry: list[dict] = []
+                    other_expiry: list[dict] = []
+                    for row in existing_legs:
+                        row_stock = str(row.get("stock_code") or "").strip()
+                        row_expiry_raw = str(row.get("expiry_date") or "").strip()
+                        row_expiry_display = (
+                            _expiry_api_to_display(row_expiry_raw)
+                            if "T" in row_expiry_raw
+                            else row_expiry_raw
+                        )
+                        if row_stock == build_stock and row_expiry_display == build_expiry_display:
+                            same_expiry.append(row)
+                        else:
+                            other_expiry.append(row)
+                    if same_expiry:
+                        existing_alone = self._portfolio_baseline_span_margin(
+                            exchange_code, same_expiry, spot=spot, iv=iv, time_years=time_years,
+                        )
+                        combined = self._portfolio_baseline_span_margin(
+                            exchange_code, same_expiry + legs, spot=spot, iv=iv, time_years=time_years,
+                        )
+                        if (
+                            existing_alone.get("found")
+                            and combined.get("found")
+                            and standalone_value is not None
+                        ):
+                            m_p = float(existing_alone.get("span_margin_required") or 0.0)
+                            m_combined = float(combined.get("span_margin_required") or 0.0)
+                            incremental = m_combined - m_p
+                            success["span_margin_required"] = round(incremental, 2)
+                            success["standalone_span_margin"] = standalone_value
+                            success["existing_span_margin"] = round(m_p, 2)
+                            success["combined_span_margin"] = round(m_combined, 2)
+                            success["positions_margin_benefit"] = round(
+                                max(0.0, standalone_value - incremental), 2
+                            )
+                            success["netted_against_positions"] = True
+                            success["netted_position_count"] = len(same_expiry)
+                    if other_expiry:
+                        success.setdefault("warnings", [])
+                        for row in other_expiry:
+                            success["warnings"].append(
+                                {
+                                    "type": "positions_not_netted_other_expiry",
+                                    "stock_code": row.get("stock_code"),
+                                    "expiry_date": row.get("expiry_date"),
+                                    "strike_price": row.get("strike_price"),
+                                    "right": row.get("right"),
+                                    "message": (
+                                        "Position in another expiry not netted — Exchange Risk "
+                                        "Baseline nets within one expiry only."
+                                    ),
+                                }
+                            )
+                if netting_unavailable_reason:
+                    success["netting_unavailable_reason"] = netting_unavailable_reason
                 return {"Status": 200, "Error": "", "Success": _attach_elm(success)}
+            fallback_success: dict[str, Any] = {
+                "span_margin_required": baseline_total,
+                "margin_source": MARGIN_SOURCE_EXCHANGE,
+                "warnings": warnings,
+            }
+            if netting_unavailable_reason:
+                fallback_success["netting_unavailable_reason"] = netting_unavailable_reason
             return {
                 "Status": 200,
                 "Error": "",
-                "Success": _attach_elm(
-                    {
-                        "span_margin_required": baseline_total,
-                        "margin_source": MARGIN_SOURCE_EXCHANGE,
-                        "warnings": warnings,
-                    }
-                ),
+                "Success": _attach_elm(fallback_success),
             }
         margin_rationale = (
             audit_rationale or "Batch SPAN margin for unique proposed leg structure."
@@ -4234,12 +4485,83 @@ class processor():
         self._maybe_evict_session(user_id, margins)
         if margins.get("Status") == 200:
             base_span = float((margins.get("Success") or {}).get("span_margin_required") or 0.0)
+            standalone_total = base_span + baseline_total
             margins.setdefault("Success", {})
-            margins["Success"]["span_margin_required"] = base_span + baseline_total
+            margins["Success"]["span_margin_required"] = standalone_total
             margins["Success"]["margin_source"] = margin_source
             if warnings:
                 margins["Success"]["warnings"] = warnings
             _attach_elm(margins["Success"])
+
+            # Portfolio-aware netting against open positions (D1-D10). This
+            # branch always spends a second live margin_calculator call, so
+            # M(P) (`existing_span_value`) must itself be measured on the live
+            # API -- see the method docstring. Best-effort: any failure here
+            # (exception, non-200) leaves the response exactly as the
+            # standalone figures computed above -- never partially netted.
+            if existing_legs and existing_span_value is not None:
+                combined_legs = existing_legs + margin_input
+                combined_request: dict[str, Any] = {
+                    "exchange_code": exchange_code,
+                    "margin_list": combined_legs,
+                }
+                if audit_context:
+                    combined_request.update(audit_context)
+                try:
+                    _t1 = time.perf_counter()
+                    combined_margins = breeze.margin_calculator(
+                        combined_legs, exchange_code=exchange_code
+                    )
+                    _combined_latency_ms = (time.perf_counter() - _t1) * 1000
+                    if audit:
+                        audit.record_icici_api_call(
+                            "margin_calculator",
+                            combined_request,
+                            combined_margins if isinstance(combined_margins, dict) else None,
+                            rationale="Netted SPAN including existing open positions.",
+                            latency_ms=_combined_latency_ms,
+                        )
+                    if (
+                        isinstance(combined_margins, dict)
+                        and combined_margins.get("Status") == 200
+                    ):
+                        m_combined = (
+                            float(
+                                (combined_margins.get("Success") or {}).get(
+                                    "span_margin_required"
+                                )
+                                or 0.0
+                            )
+                            + baseline_total
+                        )
+                        incremental = m_combined - existing_span_value
+                        margins["Success"]["span_margin_required"] = round(incremental, 2)
+                        margins["Success"]["standalone_span_margin"] = round(
+                            standalone_total, 2
+                        )
+                        margins["Success"]["existing_span_margin"] = round(
+                            existing_span_value, 2
+                        )
+                        margins["Success"]["combined_span_margin"] = round(m_combined, 2)
+                        margins["Success"]["positions_margin_benefit"] = round(
+                            max(0.0, standalone_total - incremental), 2
+                        )
+                        margins["Success"]["netted_against_positions"] = True
+                        margins["Success"]["netted_position_count"] = (
+                            netting_position_count or len(existing_legs)
+                        )
+                except Exception as e:
+                    if audit:
+                        audit.record_icici_api_call(
+                            "margin_calculator",
+                            combined_request,
+                            _icici_error(
+                                f"Error calling ICICI Breeze API margin_calculator (netted): {e}"
+                            ),
+                            rationale="Netted SPAN including existing open positions.",
+                        )
+            if netting_unavailable_reason:
+                margins["Success"]["netting_unavailable_reason"] = netting_unavailable_reason
         return margins
 
     # Real-time portfolio fetch for US3 (called by tests)

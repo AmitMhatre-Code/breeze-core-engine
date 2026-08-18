@@ -35,6 +35,7 @@ from icici_breeze_backend.app.domain.strategy_builder import (
     SpanPortfolioMarginSuccess,
     StrategyBuilderUnderlyingsResponse,
 )
+from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_EXCHANGE
 from icici_breeze_backend.app.services.options_strategy_engine import run_propose_trades
 from icici_breeze_backend.app.services.options_strategy_engine.build_progress import BuildProgress
 from icici_breeze_backend.app.services.options_strategy_engine.propose_trades_jobs import (
@@ -43,6 +44,11 @@ from icici_breeze_backend.app.services.options_strategy_engine.propose_trades_jo
     fail_job,
     get_job_for_user,
     job_to_status_dict,
+)
+from icici_breeze_backend.app.services.portfolio_margin_netting import (
+    existing_span,
+    positions_for_underlying,
+    positions_to_margin_input,
 )
 from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
@@ -385,6 +391,43 @@ async def post_margin(
     effective_margin_source = (
         body.margin_source or breeze.get_strategy_builder_margin_source(ctx.user_id)
     )
+
+    existing_legs: list[dict] | None = None
+    existing_span_value: float | None = None
+    netting_position_count = 0
+    netting_unavailable_reason: str | None = None
+    if body.net_against_positions:
+        stock_code = str(legs[0].get("stock_code") or "").strip()
+        position_set = positions_for_underlying(breeze, ctx.user_id, stock_code, ex0)
+        if not position_set.available:
+            netting_unavailable_reason = "Unable to load open positions — showing standalone margin."
+        elif position_set.rows:
+            existing_legs = positions_to_margin_input(position_set.rows)
+            netting_position_count = len(position_set.rows)
+            # The Exchange Risk Baseline path nets M(P) itself, fully offline, from
+            # `existing_legs` -- computing it here via a live margin_calculator call
+            # would spend the API budget the user chose that source specifically to
+            # avoid (D6), and would measure M(P) on a different basis than the
+            # candidate anyway.
+            if effective_margin_source != MARGIN_SOURCE_EXCHANGE:
+                session_breeze = breeze.get_session_breeze(ctx.user_id)
+                if session_breeze is None:
+                    netting_unavailable_reason = (
+                        "Unable to load open positions — showing standalone margin."
+                    )
+                    existing_legs = None
+                    netting_position_count = 0
+                else:
+                    m_p = existing_span(breeze, session_breeze, ctx.user_id, ex0, position_set)
+                    if m_p is None:
+                        netting_unavailable_reason = (
+                            "Unable to load open positions — showing standalone margin."
+                        )
+                        existing_legs = None
+                        netting_position_count = 0
+                    else:
+                        existing_span_value = m_p
+
     data = breeze.strategy_builder_margin(
         ctx.user_id,
         ex0,
@@ -394,6 +437,10 @@ async def post_margin(
         spot=body.spot,
         iv=body.iv,
         time_years=body.time_years,
+        existing_legs=existing_legs,
+        existing_span_value=existing_span_value,
+        netting_position_count=netting_position_count,
+        netting_unavailable_reason=netting_unavailable_reason,
     )
     if data.get("Status") == 200 and "Success" in data and isinstance(data.get("Success"), dict):
         data["Success"]["margin_source"] = effective_margin_source

@@ -23,6 +23,16 @@ from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     margin_key,
     normalize_expiry_display,
 )
+from icici_breeze_backend.app.services.options_strategy_engine.sizing import (
+    rescale_result_to_lots,
+    structural_margin_key,
+)
+from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_EXCHANGE
+from icici_breeze_backend.app.services.portfolio_margin_netting import (
+    existing_span as _resolve_existing_span,
+    positions_for_underlying,
+    positions_to_margin_input,
+)
 from icici_breeze_backend.app.services.reference_data.bhavcopy_store import _lookup_bhav_row
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.services.options_strategy_engine.budget_resize import resize_results_to_budgets
@@ -103,6 +113,114 @@ def _audit_status_from_result(status: str) -> str:
     return "success" if status == "ok" else status
 
 
+async def _resolve_positions_netting(
+    proc: processor, ctx: EngineContext, user_id: str, exchange_code: str
+) -> None:
+    """Portfolio-aware (incremental) margin netting setup -- see
+    docs/strategy-builder-portfolio-margin-plan.md (D1-D10). Best-effort:
+    any failure leaves ctx.netting_available False and the whole build runs
+    the pre-netting standalone path (D7) -- never raises.
+
+    For margin_source=exchange_baseline, M(P) is intentionally left
+    unresolved here (`ctx.existing_span` stays None) -- that path nets fully
+    offline, same-expiry-only, inside processor.strategy_builder_margin (D6);
+    computing a live M(P) here would spend the API budget that source exists
+    to avoid. `ctx.netting_legs` (the full cross-expiry row set) is still
+    populated so strategy_builder_margin can do that filtering itself.
+    """
+    position_set = await asyncio.to_thread(
+        positions_for_underlying, proc, user_id, ctx.stock_code, exchange_code
+    )
+    ctx.positions = position_set
+    if not position_set.available:
+        ctx.netting_available = False
+        ctx.netting_unavailable_reason = (
+            position_set.error or "Unable to load open positions — showing standalone margin."
+        )
+        return
+    if not position_set.rows:
+        ctx.netting_available = False  # nothing to net; not an error, no fallback banner
+        return
+
+    ctx.netting_legs = positions_to_margin_input(position_set.rows)
+    margin_source = proc.get_strategy_builder_margin_source(user_id)
+    if margin_source == MARGIN_SOURCE_EXCHANGE:
+        ctx.netting_available = True
+        return
+
+    session_breeze = await asyncio.to_thread(proc.get_session_breeze, user_id)
+    if session_breeze is None:
+        ctx.netting_available = False
+        ctx.netting_unavailable_reason = "Unable to connect to broker for margin netting."
+        ctx.netting_legs = []
+        return
+
+    m_p = await asyncio.to_thread(
+        _resolve_existing_span, proc, session_breeze, user_id, exchange_code, position_set
+    )
+    if m_p is None:
+        ctx.netting_available = False
+        ctx.netting_unavailable_reason = "Unable to compute margin for open positions."
+        ctx.netting_legs = []
+        return
+
+    ctx.existing_span = m_p
+    ctx.netting_available = True
+
+
+async def _shrink_and_refetch(
+    proc: processor,
+    user_id: str,
+    exchange_code: str,
+    stock_code: str,
+    expiry_display: str,
+    ctx: EngineContext,
+    r: StrategyResult,
+    span: float,
+    netting_position_count: int,
+) -> float | None:
+    """Shrink check (D3/§7.5): the secant in resize_results_to_budgets is a
+    two-point approximation, not an exact solve, so the FINAL full-quantity
+    netted margin fetched here is the authoritative number. If it exceeds
+    budget, shrink to what the budget actually affords and re-fetch exactly
+    once -- not a convergence loop. Returns the (possibly re-fetched) span,
+    or None if even one lot doesn't fit (caller skips the result)."""
+    L = ctx.lot_size
+    if not r.legs or L <= 0:
+        return span
+    old_qty = r.legs[0].quantity
+    old_lots = max(1, old_qty // L)
+    elm_now = r.elm_requirement or 0.0
+    if span + elm_now <= ctx.margin_rupees or old_lots <= 1:
+        return span
+
+    new_lots = max(1, int(old_lots * ctx.margin_rupees / (span + elm_now)))
+    if new_lots >= old_lots:
+        return span
+
+    rescale_result_to_lots(r, lot_size=L, lots=new_lots)
+    shrink_margin_input = legs_to_margin_input(r.legs, stock_code, exchange_code, expiry_display)
+    shrink_res = await asyncio.to_thread(
+        proc.strategy_builder_margin,
+        user_id,
+        exchange_code,
+        shrink_margin_input,
+        existing_legs=ctx.netting_legs,
+        existing_span_value=ctx.existing_span,
+        netting_position_count=netting_position_count,
+    )
+    if not isinstance(shrink_res, dict) or shrink_res.get("Status") != 200:
+        return None
+    try:
+        new_span = float((shrink_res.get("Success") or {}).get("span_margin_required"))
+    except (TypeError, ValueError):
+        return None
+    r.elm_requirement = elm_for_legs(ctx, r.legs)
+    if new_lots == 1 and new_span + (r.elm_requirement or 0.0) > ctx.margin_rupees:
+        return None
+    return new_span
+
+
 async def attach_margins_and_returns(
     proc: processor,
     user_id: str,
@@ -113,8 +231,12 @@ async def attach_margins_and_returns(
     ctx: EngineContext,
     audit: StrategyBuilderAuditSession | None = None,
 ) -> None:
+    netting_active = ctx.netting_available and bool(ctx.netting_legs)
+    netting_position_count = len(ctx.positions.rows) if ctx.positions is not None else 0
+
     unique: dict[tuple, list[TradeLeg]] = {}
     strategy_by_key: dict[tuple, str] = {}
+    netted_by_key: dict[tuple, bool] = {}
     for r in results:
         if r.status != "ok" or not r.legs:
             continue
@@ -122,10 +244,12 @@ async def attach_margins_and_returns(
         r.margin_key = key
         unique.setdefault(key, r.legs)
         strategy_by_key.setdefault(key, r.strategy_id)
+        netted_by_key.setdefault(key, netting_active and r.netted_against_positions)
 
     margin_requests: list[MarginFetchRequest] = []
     for key, legs in unique.items():
         margin_input = legs_to_margin_input(legs, stock_code, exchange_code, expiry_display)
+        is_netted = netted_by_key.get(key, False)
         margin_requests.append(
             MarginFetchRequest(
                 cache_key=key,
@@ -133,6 +257,9 @@ async def attach_margins_and_returns(
                 strategy_id=strategy_by_key.get(key, ""),
                 phase=None,
                 audit_rationale="Batch SPAN margin for unique proposed leg structure.",
+                existing_legs=ctx.netting_legs if is_netted else None,
+                existing_span_value=ctx.existing_span if is_netted else None,
+                netting_position_count=netting_position_count if is_netted else 0,
             )
         )
 
@@ -143,6 +270,7 @@ async def attach_margins_and_returns(
             message=f"Calculating margins (0/{len(margin_requests)})…",
         )
 
+    failed: set[tuple] = set()
     span_by_key = await fetch_margins_concurrent(
         proc,
         user_id,
@@ -150,6 +278,7 @@ async def attach_margins_and_returns(
         margin_requests,
         audit=audit,
         progress=ctx.progress,
+        failed_keys=failed,
     )
 
     dte = _days_to_expiry(expiry_display)
@@ -159,19 +288,79 @@ async def attach_margins_and_returns(
         r.elm_requirement = elm_for_legs(ctx, r.legs)
         if r.margin_key is None:
             continue
-        span = span_by_key.get(r.margin_key, 0.0)
-        r.span_margin = span if span > 0 else None
-        if r.net_premium and r.net_premium > 0 and span > 0:
+        key = r.margin_key
+        is_netted = netted_by_key.get(key, False)
+        span = span_by_key.get(key, 0.0)
+        span_ok = key not in failed
+
+        if is_netted and span_ok:
+            shrunk = await _shrink_and_refetch(
+                proc, user_id, exchange_code, stock_code, expiry_display, ctx, r, span,
+                netting_position_count,
+            )
+            if shrunk is None:
+                r.status = "skipped"
+                r.skip_reason = "Insufficient margin for one lot at netted SPAN."
+                r.legs = []
+                continue
+            span = shrunk
+
+        if not is_netted or not span_ok:
+            # Exact pre-netting behaviour: a non-netted result, or one whose
+            # netted fetch genuinely failed (D7 -- never show an unverified
+            # figure), gets the classic "None unless positive" treatment. The
+            # sizing decision may have used netting (budget_resize.py), but
+            # the DISPLAYED figure here could not be verified, so the flag
+            # must reflect what's actually shown, not how it was sized.
+            if is_netted and not span_ok:
+                r.netted_against_positions = False
+            r.span_margin = span if span > 0 else None
+            if r.net_premium and r.net_premium > 0 and span > 0:
+                r.annualized_return_pct = round(
+                    _annualized_carry_percent_on_span(r.net_premium, dte, span), 2
+                )
+                if audit:
+                    audit.record_calculation(
+                        f"Annualized return ({r.strategy_id})",
+                        {"net_premium": r.net_premium, "span_margin": span, "dte": dte},
+                        {"annualized_return_pct": r.annualized_return_pct},
+                        rationale="Carry return on SPAN for credit strategies.",
+                    )
+            continue
+
+        # Netted and successfully verified: span IS the incremental figure,
+        # kept even when <= 0 (D8 -- margin-releasing structures are the
+        # trades most worth surfacing, not the least informative).
+        r.span_margin = span
+        r.netted_against_positions = True
+        r.margin_released = span <= 0
+        struct_key = structural_margin_key(r.legs)
+        unit_span = ctx.unit_span_by_structure.get(struct_key, 0.0)
+        lots_now = max(1, r.legs[0].quantity // ctx.lot_size) if ctx.lot_size > 0 else 1
+        if unit_span > 0:
+            standalone_total = unit_span * lots_now
+            r.standalone_span_margin = round(standalone_total, 2)
+            r.positions_margin_benefit = round(max(0.0, standalone_total - span), 2)
+        if not r.margin_released and r.net_premium and r.net_premium > 0:
             r.annualized_return_pct = round(
                 _annualized_carry_percent_on_span(r.net_premium, dte, span), 2
             )
-            if audit:
-                audit.record_calculation(
-                    f"Annualized return ({r.strategy_id})",
-                    {"net_premium": r.net_premium, "span_margin": span, "dte": dte},
-                    {"annualized_return_pct": r.annualized_return_pct},
-                    rationale="Carry return on SPAN for credit strategies.",
-                )
+        if audit:
+            audit.record_calculation(
+                f"Annualized return ({r.strategy_id})",
+                {
+                    "net_premium": r.net_premium,
+                    "incremental_span_margin": span,
+                    "standalone_span_margin": r.standalone_span_margin,
+                    "dte": dte,
+                },
+                {
+                    "annualized_return_pct": r.annualized_return_pct,
+                    "margin_released": r.margin_released,
+                    "positions_margin_benefit": r.positions_margin_benefit,
+                },
+                rationale="Carry return on netted incremental SPAN for credit strategies (D1-D10).",
+            )
 
 
 def _result_to_trade_dict(r: StrategyResult, ctx: EngineContext) -> dict[str, Any]:
@@ -192,6 +381,10 @@ def _result_to_trade_dict(r: StrategyResult, ctx: EngineContext) -> dict[str, An
         "risk_reward_ratio": r.risk_reward_ratio,
         "span_margin": getattr(r, "span_margin", None),
         "elm_requirement": getattr(r, "elm_requirement", None),
+        "standalone_span_margin": r.standalone_span_margin,
+        "positions_margin_benefit": r.positions_margin_benefit,
+        "netted_against_positions": r.netted_against_positions,
+        "margin_released": r.margin_released,
         "pop_pct": r.pop_pct,
         "legs": [leg.to_out(ctx.cache) for leg in r.legs],
         "variant_rank": r.variant_rank,
@@ -376,6 +569,22 @@ async def run_propose_trades(
     if ctx.halted:
         return _fail(400, ctx.halt_reason or "Insufficient market depth.")
 
+    if progress is not None:
+        progress.tick(phase="setup", message="Checking open positions for margin offsets…")
+    await _resolve_positions_netting(proc, ctx, user_id, exchange_code)
+    if audit:
+        audit.record(
+            "positions_netting",
+            "Portfolio-aware margin netting setup",
+            {
+                "netting_available": ctx.netting_available,
+                "netting_unavailable_reason": ctx.netting_unavailable_reason,
+                "position_count": len(ctx.netting_legs),
+                "existing_span": ctx.existing_span,
+            },
+            rationale="Nets proposed structures against the user's open positions in this scrip (D1-D10).",
+        )
+
     results: list[StrategyResult] = []
     eval_total = len(calculators)
     for idx, calc in enumerate(calculators, start=1):
@@ -433,6 +642,17 @@ async def run_propose_trades(
 
     for res in all_ok:
         refresh_directional_tile_metrics(res)
+        if res.margin_released and "Margin releasing" not in res.badges:
+            res.badges.append("Margin releasing")
+
+    # D8: a margin-releasing structure (this build's own legs cap enough of an
+    # existing open position that the trade nets negative incremental margin)
+    # is the most capital-efficient thing on the board, not the least
+    # informative -- sort it to the top rather than let it land wherever its
+    # strategy module happened to run. Stable sort: ties (including every
+    # result when no netting applied) keep their original relative order.
+    recommended_results.sort(key=lambda r: (not r.margin_released, -(r.net_premium or 0.0)))
+    relaxed_results.sort(key=lambda r: (not r.margin_released, -(r.net_premium or 0.0)))
 
     atm_iv = compute_atm_iv(ctx)
     if audit:
@@ -460,6 +680,8 @@ async def run_propose_trades(
         "trades": trades_out,
         "relaxed_trades": relaxed_trades_out,
     }
+    if ctx.netting_unavailable_reason:
+        success_payload["netting_unavailable_reason"] = ctx.netting_unavailable_reason
 
     audit_summary = {
         "status": "ok",

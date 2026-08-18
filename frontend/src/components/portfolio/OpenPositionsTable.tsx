@@ -183,6 +183,41 @@ function formatPriceCell(raw: unknown): string {
   return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/**
+ * Provenance note under LTP. The backend stamps `quote_source` on every position row
+ * and the WS overlay restamps it with the chain's own source, so a price that isn't a
+ * live tick says so instead of passing as one — the failure that made a profitable
+ * book read as a loss was a previous session's settlement price rendered bare.
+ * Live ticks stay unlabelled (the norm needs no note) and an unpriced leg needs none
+ * either, since its LTP already reads "—".
+ */
+function quoteSourceNote(raw: unknown): string | null {
+  switch (typeof raw === "string" ? raw : "") {
+    case "snapshot":
+    case "bhavcopy":
+    case "icici_api":
+      return "prev close";
+    case "broker":
+      return "broker px";
+    default:
+      return null;
+  }
+}
+
+function LtpCellContent({ row }: { row: PortfolioPositionRecord }) {
+  const note = quoteSourceNote(row.quote_source);
+  return (
+    <>
+      {formatPriceCell(row.ltp)}
+      {note ? (
+        <span className="ml-1 text-micro app-text-muted" title="Not a live websocket tick">
+          · {note}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 /** Spot: no forced decimals — only shown when the price actually carries fractional paise. */
 function formatSpotPrice(raw: unknown): string {
   const n = coerceNum(raw);
@@ -898,7 +933,7 @@ function PortfolioGroupTableBlock({
                   {formatPriceCell(row.average_price)}
                 </td>
                 <td className={`${tdBase} text-right font-mono tabular-nums`}>
-                  {formatPriceCell(row.ltp)}
+                  <LtpCellContent row={row} />
                 </td>
                 <td className={`${tdBase} text-right font-mono tabular-nums ${spot.className}`}>
                   {spot.text}
@@ -1119,7 +1154,7 @@ function PortfolioGroupCardBlock({
                   <p>
                     <span className="app-text-muted">LTP:</span>{" "}
                     <span className="font-mono tabular-nums">
-                      {formatPriceCell(row.ltp)}
+                      <LtpCellContent row={row} />
                     </span>
                   </p>
                   <p>
@@ -1227,7 +1262,7 @@ function PortfolioLegTableBlock({
           {formatPriceCell(row.average_price)}
         </td>
         <td className={`${tdBase} text-right font-mono tabular-nums`}>
-          {formatPriceCell(row.ltp)}
+          <LtpCellContent row={row} />
         </td>
         <td className={`${tdBase} text-right font-mono tabular-nums ${spot.className}`}>
           {spot.text}
@@ -1337,7 +1372,7 @@ function PortfolioLegCardBlock({
           <p>
             <span className="app-text-muted">LTP:</span>{" "}
             <span className="font-mono tabular-nums">
-              {formatPriceCell(row.ltp)}
+              <LtpCellContent row={row} />
             </span>
           </p>
           <p>

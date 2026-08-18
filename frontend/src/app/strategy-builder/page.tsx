@@ -561,8 +561,13 @@ export default function StrategyBuilderPage() {
       const newLegs = proposedLegsToStrategyLegs(trade.legs, lotSize);
       setLegs(newLegs);
       if (trade.span_margin != null) {
-        marginCalc.prefillSpanMargin(
-          trade.span_margin,
+        marginCalc.prefillMargin(
+          {
+            spanMargin: trade.span_margin,
+            standaloneSpan: trade.standalone_span_margin ?? undefined,
+            positionsMarginBenefit: trade.positions_margin_benefit ?? undefined,
+            nettedAgainstPositions: trade.netted_against_positions ?? undefined,
+          },
           computeMarginsCalcKey(newLegs),
         );
       }
@@ -998,6 +1003,12 @@ export default function StrategyBuilderPage() {
               {generateError ? (
                 <p className="mt-4 text-sm text-down">
                   {generateError}
+                </p>
+              ) : null}
+              {proposedData?.netting_unavailable_reason ? (
+                <p className="mt-4 text-sm text-muted">
+                  {proposedData.netting_unavailable_reason} Margin figures below are standalone
+                  (not netted against your open positions).
                 </p>
               ) : null}
               {isGenerating &&
