@@ -323,7 +323,7 @@ export default function StrategyBuilderPage() {
   const minPopPctNum = (() => {
     const n = parseFloat(minPopPct.replace(/,/g, ""));
     if (!Number.isFinite(n)) return null;
-    return Math.min(99, Math.max(1, n));
+    return Math.round(Math.min(99.9, Math.max(1, n)) * 10) / 10;
   })();
   const minAnnReturnPctNum = (() => {
     const n = parseFloat(minAnnReturnPct.replace(/,/g, ""));
@@ -921,13 +921,13 @@ export default function StrategyBuilderPage() {
                             value={minPopPct}
                             onChange={(e) => setMinPopPct(e.target.value)}
                             min={1}
-                            max={99}
-                            step={1}
+                            max={99.9}
+                            step={0.1}
                           />
                         </label>
                         {minPopPctNum == null && minPopPct.trim() !== "" ? (
                           <p className="text-sm text-down">
-                            Minimum probability of profit must be between 1 and 99.
+                            Minimum probability of profit must be between 1 and 99.9.
                           </p>
                         ) : null}
                       </div>

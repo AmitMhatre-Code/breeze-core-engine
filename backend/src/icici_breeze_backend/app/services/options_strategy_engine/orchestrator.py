@@ -424,7 +424,7 @@ async def run_propose_trades(
     if progress is not None:
         progress.mark_running()
 
-    min_pop_pct = min(99.0, max(1.0, min_pop_pct))
+    min_pop_pct = min(99.9, max(1.0, min_pop_pct))
     min_ann_return_pct = min(100.0, max(0.0, min_ann_return_pct))
     if strategy_category not in CATEGORY_CALCULATORS:
         return {"Status": 400, "Error": f"Unknown strategy category: {strategy_category}", "Success": None}
