@@ -11,7 +11,7 @@ export function ApiLimitExhaustedBanner({ blocked }: { blocked: boolean }) {
   return (
     <div
       role="status"
-      className="border-b border-red-500/60 bg-red-500/10 px-4 py-2 text-center text-sm text-red-950 dark:text-red-100"
+      className="border-b border-red-500/60 bg-red-500/10 py-2 text-center text-sm ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] text-red-950 dark:text-red-100"
     >
       <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
         <span>

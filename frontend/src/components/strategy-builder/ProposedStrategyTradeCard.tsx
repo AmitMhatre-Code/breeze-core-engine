@@ -166,7 +166,7 @@ export function ProposedStrategyTradeCard({
           </span>
           <div className="flex shrink-0 items-center gap-1">
             {marginReleased ? (
-              <span className="rounded-[5px] bg-up-tint px-1.5 py-0.5 text-body font-bold uppercase tracking-wide text-up">
+              <span className="rounded-[5px] bg-up-tint px-1.5 py-0.5 text-body font-bold uppercase tracking-wide text-up-on-tint">
                 Margin releasing
               </span>
             ) : null}

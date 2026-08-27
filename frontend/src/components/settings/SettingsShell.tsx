@@ -145,14 +145,17 @@ function SettingsShellInner() {
       <div className="md:hidden">
         <nav
           aria-label="Settings"
-          className="flex gap-2 overflow-x-auto pb-1"
+          /* 11 pills = ~1590px of content in a ~330px strip on a phone, with no
+             affordance that 8 of them exist. The right-edge mask says "more this
+             way"; snap points stop a swipe mid-pill. Mobile-only container. */
+          className="flex snap-x snap-proximity gap-2 overflow-x-auto pb-1 [mask-image:linear-gradient(to_right,#000_calc(100%-2.5rem),transparent)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {FLAT_ITEMS.map((item) => (
             <button
               key={item.key}
               type="button"
               onClick={() => setActive(item.key)}
-              className={pillItemClass(active === item.key, DANGER_KEYS.has(item.key))}
+              className={`snap-start ${pillItemClass(active === item.key, DANGER_KEYS.has(item.key))}`}
             >
               <item.icon />
               {item.label}

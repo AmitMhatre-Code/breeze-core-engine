@@ -66,8 +66,26 @@ export function Modal({
   useEffect(() => {
     if (!open) return;
     previousFocusRef.current = document.activeElement as HTMLElement | null;
-    const prevOverflow = document.body.style.overflow;
+    // `overflow: hidden` on body is a no-op here (the scrolling element is <html>),
+    // and even on <html> it does not stop touch scrolling on iOS Safari. Pin the
+    // body at its current offset instead — the one technique that holds on both
+    // engines — and restore the scroll position on close. html gets
+    // scrollbar-gutter: stable (globals.css) so pinning cannot shift the page.
+    const scrollY = window.scrollY;
+    const prev = {
+      overflow: document.body.style.overflow,
+      position: document.body.style.position,
+      top: document.body.style.top,
+      left: document.body.style.left,
+      right: document.body.style.right,
+      width: document.body.style.width,
+    };
     document.body.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.left = "0";
+    document.body.style.right = "0";
+    document.body.style.width = "100%";
     const id = requestAnimationFrame(() => {
       if (initialFocusRef?.current) {
         initialFocusRef.current.focus();
@@ -80,7 +98,13 @@ export function Modal({
     });
     return () => {
       cancelAnimationFrame(id);
-      document.body.style.overflow = prevOverflow;
+      document.body.style.overflow = prev.overflow;
+      document.body.style.position = prev.position;
+      document.body.style.top = prev.top;
+      document.body.style.left = prev.left;
+      document.body.style.right = prev.right;
+      document.body.style.width = prev.width;
+      window.scrollTo(0, scrollY);
       if (returnFocus) {
         previousFocusRef.current?.focus?.();
       }
@@ -103,7 +127,7 @@ export function Modal({
       ? `fixed inset-0 ${zIndexClass} flex flex-col justify-end sm:items-center sm:justify-center sm:p-4`
       : variant === "drawer"
         ? `fixed inset-0 ${zIndexClass}`
-        : `fixed inset-0 ${zIndexClass} flex items-center justify-center p-4`;
+        : `fixed inset-0 ${zIndexClass} flex items-center justify-center p-4 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]`;
 
   const panelVariantClass =
     variant === "bottomSheet"

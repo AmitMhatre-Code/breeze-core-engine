@@ -28,6 +28,12 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Without this, env(safe-area-inset-*) resolves to 0px everywhere and the app can
+  // never paint edge-to-edge — Safari just letterboxes the page inside the safe area,
+  // leaving inert bars beside the notch in landscape. The ~20 call sites that already
+  // pad against the notch and home indicator (AppShell header/main/drawer, Modal,
+  // ChangelogDialog, the auth screens) only take effect once this is set.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

@@ -259,7 +259,10 @@ const ACCENT_OUTLINE_STYLE: CSSProperties = {
 };
 
 const pillOutlineTable =
-  "inline-flex shrink-0 items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition hover:bg-[var(--accent-tint)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent 2xl:px-3.5 2xl:py-2 2xl:text-sm";
+  // Square Off / Hedge / Exit Rule — a mis-tap here costs money. 44px (Apple HIG)
+  // below xl, which is exactly where the mobile/tablet CARD layout renders these;
+  // the xl+ desktop table keeps its dense 30px row chrome.
+  "inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-semibold xl:min-h-0 transition hover:bg-[var(--accent-tint)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent 2xl:px-3.5 2xl:py-2 2xl:text-sm";
 const pillOutlineCard =
   "inline-flex items-center justify-center rounded-lg border px-3 py-2.5 text-sm font-semibold transition hover:bg-[var(--accent-tint)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent";
 
@@ -648,7 +651,7 @@ function PnlTargetCta({ onClick }: { onClick: (e: MouseEvent) => void }) {
     <button
       type="button"
       onClick={onClick}
-      className={`${gaugeLineClass} text-accent-strong opacity-80 transition hover:opacity-100 hover:underline`}
+      className={`${gaugeLineClass} tap-expand text-accent-strong opacity-80 transition hover:opacity-100 hover:underline`}
     >
       + Set Profit Booking / Stop Loss
     </button>

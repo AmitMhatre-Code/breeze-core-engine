@@ -177,7 +177,7 @@ export function AppShell({
       >
         Skip to main content
       </a>
-      <aside className="hidden w-[236px] flex-col border-r border-border bg-panel md:flex">
+      <aside className="hidden w-[236px] flex-col border-r border-border bg-panel sidebar:flex">
         <div className="mb-4 flex items-center gap-2.5 px-3 pt-1">
           <BrandMark />
           <BrandWordmark />
@@ -235,7 +235,7 @@ export function AppShell({
           <button
             type="button"
             ref={menuButtonRef}
-            className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 md:hidden"
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 sidebar:hidden"
             aria-label="Open menu"
             aria-expanded={mobileNavOpen}
             aria-controls="mobile-app-nav"
@@ -288,7 +288,7 @@ export function AppShell({
             {homeDataReady && (
               <span
                 className={[
-                  "min-w-0 max-w-[6.25rem] shrink-0 truncate whitespace-nowrap font-mono text-heading tabular-nums sm:max-w-none sm:text-xs",
+                  "hidden min-w-0 max-w-[6.25rem] shrink-0 truncate whitespace-nowrap font-mono text-heading tabular-nums min-[340px]:block sm:max-w-none sm:text-xs",
                   apiCounterClass,
                 ].join(" ")}
                 title="Breeze REST calls from this app today (IST calendar day, ICICI daily cap 5,000)"
@@ -334,7 +334,7 @@ export function AppShell({
           variant="drawer"
           titleId={mobileNavTitleId}
           initialFocusRef={drawerCloseRef}
-          className="md:hidden"
+          className="sidebar:hidden"
           panelClassName="flex w-[min(18rem,85vw)] max-w-[calc(100vw-env(safe-area-inset-left)-0.5rem)] flex-col border-r border-border bg-panel pt-[env(safe-area-inset-top)] ps-[max(0.5rem,env(safe-area-inset-left))] shadow-xl"
         >
             <div

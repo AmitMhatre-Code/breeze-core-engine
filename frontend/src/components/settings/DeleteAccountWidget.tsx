@@ -111,7 +111,7 @@ export function DeleteAccountWidget({ variant, initialDirectUserId }: DeleteAcco
               className={
                 isStandalone
                   ? "w-full rounded-md border border-red-800 bg-red-950/40 py-2 text-sm font-medium text-red-200 hover:bg-red-950/60 disabled:cursor-not-allowed disabled:border-red-900 disabled:bg-red-900 disabled:text-red-400"
-                  : "inline-flex items-center justify-center self-start rounded-lg bg-down-btn px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+                  : "inline-flex items-center justify-center self-start rounded-lg bg-down-btn px-5 py-2.5 text-sm font-bold text-down-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
               }
             >
               <AsyncLabelSpan busy={busy} idleLabel="Delete account" busyLabel="Working…" />

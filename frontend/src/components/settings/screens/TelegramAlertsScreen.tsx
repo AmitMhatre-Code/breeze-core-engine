@@ -102,7 +102,7 @@ export function TelegramAlertsScreen() {
                 </button>
                 <button
                   type="button"
-                  className="rounded-sm bg-down-btn px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-[1.06] disabled:opacity-50"
+                  className="rounded-sm bg-down-btn px-3 py-1.5 text-xs font-semibold text-down-ink transition hover:brightness-[1.06] disabled:opacity-50"
                   disabled={unlinkMut.isPending}
                   onClick={() => {
                     if (!confirm("Deregister this Telegram account? You will stop receiving alerts.")) return;

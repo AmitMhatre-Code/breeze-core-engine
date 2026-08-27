@@ -26,7 +26,7 @@ export function LicenseStatusBanner({
     <div
       role="status"
       className={[
-        "border-b px-4 py-2 text-center text-sm",
+        "border-b py-2 text-center text-sm ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))]",
         isWarningOnly
           ? "border-amber-500/60 bg-amber-500/10 text-amber-950 dark:text-amber-100"
           : "border-red-500/60 bg-red-500/10 text-red-950 dark:text-red-100",
