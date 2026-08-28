@@ -20,6 +20,22 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.8.0",
+    date: "27-Aug-2026",
+    releaseKind: "minor",
+    summary:
+      "Strategy Builder margin now nets against the positions you already hold, Portfolio flags prices that aren't live ticks, and a batch of mobile layout fixes.",
+    changes: [
+      "Strategy Builder now prices a proposed structure against the positions you already hold, instead of as if your account were empty. When you already have options open in the same scrip, the margin shown — and the lot sizing done against your margin budget — is now the extra margin the new structure needs on top of your existing book (margin with both, minus the margin on what you hold today), which is what ICICI actually blocks. A structure that hedges or offsets something already open can therefore show a much smaller margin than before, or be tagged \"Margin releasing\" when it frees margin outright — that released margin isn't free money, so the trade's net premium is shown alongside it. Netting covers one scrip across all of its open expiries; if your open positions can't be fetched, the figure falls back to the old standalone number and says so. Applies to Build-Your-Own, generated strategies, and the covered/uncovered shorts scan.",
+      "Portfolio now marks any position price that isn't a live market tick. A price carried over from the previous session's close, a captured snapshot, or the broker's REST API now shows a small \"· prev close\" or \"· broker px\" note under the LTP, so a stale settlement price can't quietly read as the current market — the failure that once made a profitable book show as a loss. Live ticks are shown plain, as before.",
+      "Cut background CPU load during market hours. The option-chain builder was rebuilding every subscribed chain once per incoming tick — hundreds of times a second on a busy feed — even though nothing downstream reads chains faster than your P&L refresh interval (Settings → Advanced, default 2 seconds). It now rebuilds at most once per that interval. Separately, chains for expiries you'd only glanced at (viewing an older date range in the Order Book, for instance, pulls in past expiries) were kept live for the rest of the app's run and are now swept once they're clearly no longer in use. Neither change affects Profit Booking / Stop Loss timing, which runs off its own price buffer.",
+      "A screen waiting on a live option chain now falls back to end-of-day prices after about 2 seconds rather than up to 8. A chain's deep out-of-the-money strikes may never trade in a session, so the longer wait only ever stalled the screen for quotes that weren't coming; pricing a single contract for an order still uses the longer, more patient wait.",
+      "Strategy Builder's \"Min PoP %\" field now accepts values up to 99.9 in steps of 0.1, instead of capping at a whole 99 — so you can ask for, say, a 99.5% probability of profit.",
+      "iOS no longer zooms in when you tap a form field and stay zoomed after. Safari zooms the page whenever a focused field is under 16px and doesn't zoom back out on its own, which left you panning a magnified order form to reach Buy/Sell; phone form fields now render at 16px. Also on phones: the app paints edge-to-edge around the notch and home indicator instead of being letterboxed, landscape keeps the slide-out menu instead of switching to a sidebar that ate a third of the screen, and opening a dialog no longer lets the page scroll or jump behind it — or lets an accidental swipe trigger a pull-to-refresh that discards what you'd typed.",
+      "More small screen fixes: date pickers near the bottom of the viewport now open upward when there's no room below instead of running off-screen; payoff-chart axis labels stay a readable fixed size in a narrow phone column instead of shrinking with the chart; native controls (dropdowns, date wheels, scrollbars, text selection) now follow the app's light/dark theme; and the Order Book and Performance screens no longer overflow their layout on small widths.",
+    ],
+  },
+  {
     version: "2.7.1",
     date: "06-Aug-2026",
     releaseKind: "patch",

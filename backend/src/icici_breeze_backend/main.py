@@ -468,6 +468,12 @@ def start_application():
             pnl_flush_task = asyncio.create_task(run_pnl_quote_flush_loop())
             pnl_loop_task = asyncio.create_task(run_pnl_loop())
 
+            # Order-feed listener that keeps the Dashboard "Day's P&L" tile live
+            # between REST snapshots (recompute rides the P&L engine loop above).
+            from icici_breeze_backend.app.services import dashboard_day_pnl_live
+
+            dashboard_day_pnl_live.start()
+
             from icici_breeze_backend.app.services.squareoff_dispatcher import (
                 hydrate_group_rules_on_startup,
                 register_squareoff_dispatcher,
@@ -501,8 +507,18 @@ def start_application():
             run_price_feed_watchdog_loop()
         )
 
+        from icici_breeze_backend.app.services.reference_data.active_chains import (
+            run_active_chain_sweep_loop,
+        )
+
+        chain_sweep_task: asyncio.Task = asyncio.create_task(run_active_chain_sweep_loop())
+
         yield
-        for watchdog_task in (order_feed_watchdog_task, price_feed_watchdog_task):
+        for watchdog_task in (
+            order_feed_watchdog_task,
+            price_feed_watchdog_task,
+            chain_sweep_task,
+        ):
             watchdog_task.cancel()
             try:
                 await watchdog_task

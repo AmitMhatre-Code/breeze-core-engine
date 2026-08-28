@@ -21,7 +21,7 @@ const RISK_BADGE: Record<BreezeApiCatalogEntry["risk_level"], string> = {
   read: "bg-up-tint text-up-on-tint ring-up/25",
   funds: "bg-amber-tint text-amber-on-tint ring-amber-accent/25",
   trade: "bg-down-tint text-down-on-tint ring-down/25",
-  gtt: "bg-gtt-tint text-gtt ring-gtt/25",
+  gtt: "bg-gtt-tint text-gtt-on-tint ring-gtt/25",
 };
 
 const RISK_BADGE_SHORT: Record<BreezeApiCatalogEntry["risk_level"], string> = {

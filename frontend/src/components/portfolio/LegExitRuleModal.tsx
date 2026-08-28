@@ -243,7 +243,7 @@ export function LegExitRuleModal({
 
       {error ? <p className="text-sm text-down">{error}</p> : null}
 
-      <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2 sm:gap-3">
+      <div className={`${sb.modalActions} grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3`}>
         <button type="button" className={sb.btnSecondary} onClick={onClose}>
           Cancel
         </button>

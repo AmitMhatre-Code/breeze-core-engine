@@ -610,6 +610,18 @@ async def run_pnl_loop() -> None:
         except Exception:
             _logger.exception("Portfolio P&L tick failed")
 
+        # Dashboard "Day's P&L" live recompute rides the same clock and the same
+        # WS-tick quote cache. Isolated in its own try/except so a failure there
+        # can never stall portfolio repricing above.
+        try:
+            from icici_breeze_backend.app.services import dashboard_day_pnl_live
+
+            await asyncio.to_thread(dashboard_day_pnl_live.run_tick)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _logger.exception("Dashboard day-P&L live tick failed")
+
 
 def pnl_engine_stats() -> dict[str, Any]:
     with _registry_lock:

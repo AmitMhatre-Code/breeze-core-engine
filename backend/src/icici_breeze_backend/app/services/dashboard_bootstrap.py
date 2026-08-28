@@ -148,6 +148,20 @@ def build_dashboard_bootstrap(user_id: str, processor, *, broker_token: str) -> 
         success = portfolio.get("Success")
         if isinstance(success, dict) and isinstance(success.get("positions"), list):
             positions = success["positions"]
+
+    # Warm the P&L engine registry from a Dashboard-only visit too (it is
+    # otherwise only fed by /portfolio/data), so the Open P&L tile has a live
+    # figure without the user opening Portfolio first.
+    try:
+        from icici_breeze_backend.app.services.portfolio_pnl_engine import (
+            sync_positions_from_response,
+        )
+
+        if isinstance(portfolio, dict):
+            sync_positions_from_response(user_id, portfolio)
+    except Exception:  # pragma: no cover - best effort
+        _logger.debug("dashboard bootstrap: pnl engine sync failed", exc_info=True)
+
     days_pnl = compute_days_pnl(positions)
     recent_scrips = get_recently_traded_scrips(user_id, processor)
 

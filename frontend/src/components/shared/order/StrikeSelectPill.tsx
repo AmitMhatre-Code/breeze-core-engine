@@ -261,7 +261,7 @@ export function StrikeSelectPill({
         tableLayout
           ? `relative w-full min-w-0 max-w-[7.5rem] ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
           : toolbarLayout
-            ? `relative flex shrink-0 items-center gap-2 ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
+            ? `relative flex min-w-0 shrink sm:shrink-0 items-center gap-2 ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
             : `relative min-w-[min(100%,12rem)] flex-1 lg:max-w-md ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
       }
     >

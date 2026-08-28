@@ -4,9 +4,6 @@
 !legacy/
 !legacy/**
 
-!logs/
-!logs/**
-
 !backend/data/
 !backend/data/**
 

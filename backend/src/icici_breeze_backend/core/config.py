@@ -296,6 +296,16 @@ try:
 except ValueError:
     CHAIN_WS_WAIT_TIMEOUT_MS = 8000
 try:
+    # Whole-chain wait, deliberately much shorter than CHAIN_WS_WAIT_TIMEOUT_MS above:
+    # that one governs the single-contract lookup used while pricing an order, where
+    # patience is worth paying for. A chain's deep-OTM strikes may never trade all
+    # session, so waiting 8s for them only ever stalled the screen.
+    CHAIN_WS_CHAIN_WAIT_TIMEOUT_MS = int(
+        os.environ.get("CHAIN_WS_CHAIN_WAIT_TIMEOUT_MS", "2000") or "2000"
+    )
+except ValueError:
+    CHAIN_WS_CHAIN_WAIT_TIMEOUT_MS = 2000
+try:
     CHAIN_WS_WAIT_POLL_MS = int(os.environ.get("CHAIN_WS_WAIT_POLL_MS", "100") or "100")
 except ValueError:
     CHAIN_WS_WAIT_POLL_MS = 100

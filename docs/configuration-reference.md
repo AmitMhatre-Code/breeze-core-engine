@@ -255,10 +255,11 @@ Customer deployments (the current, active path) get their `.env` written by bree
 | `WS_QUOTE_SNAPSHOT_RETENTION_DAYS` | `5` | Sessions of snapshot history kept in SQLite before pruning. Only the latest concluded session is ever served. |
 | `WS_TICK_INGEST_QUEUE_SIZE` | `2000` | Max in-process WS tick ingest queue depth before coalescing drops oldest. |
 | `WS_TICK_COALESCE_MS` | `100` | Coalesce window (ms) before writing latest tick per token to Redis. |
-| `CHAIN_BUILDER_POLL_MS` | `250` | chain-builder worker poll interval when rebuilding active chains. |
+| `CHAIN_BUILDER_POLL_MS` | `250` | How often the chain-builder worker *wakes*, not how often it rebuilds — the rebuild cadence follows the P&L recalc interval (Settings → Advanced, default 2s). Ticks and this timer both funnel through one gate, so a live feed can never rebuild faster than that interval. |
 | `CANONICAL_CHAIN_TTL_SECONDS` | `5` | Redis TTL for assembled canonical option chains. |
-| `CHAIN_WS_WAIT_TIMEOUT_MS` | `8000` | How long a chain request blocks waiting for the live chain to become ready before falling back to offline sources. |
-| `CHAIN_WS_WAIT_POLL_MS` | `100` | Poll interval within that wait. |
+| `CHAIN_WS_WAIT_TIMEOUT_MS` | `8000` | How long a **single-contract** quote lookup blocks — the order-pricing path (`wait_for_strike_quote`). Deliberately patient, and it also skips the freshness reuse below so an order is never priced off a cached chain. |
+| `CHAIN_WS_CHAIN_WAIT_TIMEOUT_MS` | `2000` | How long a **whole-chain** request blocks before falling back to offline sources. Split from the setting above because a chain's deep-OTM strikes may never trade all session, so the patient window only ever stalled the screen. |
+| `CHAIN_WS_WAIT_POLL_MS` | `100` | Poll interval within either wait. |
 | `CHAIN_READY_ATM_STRIKE_WINDOW` | `5` | Strikes each side of ATM that must carry a real quote for a chain to count as ready. Raise it and far-dated or thin chains (BSESEN monthlies, single-stock options) become permanently un-ready — their deep wings may not trade at all in a session, so no wait length helps. |
 
 **Monitoring:** `GET /health` reports Redis connectivity (`status`: `ok` or `degraded`). `GET /metrics/runtime` reports Redis memory, WS tick pipeline queues, and active chain registry stats.

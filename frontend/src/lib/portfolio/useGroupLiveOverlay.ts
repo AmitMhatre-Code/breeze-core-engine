@@ -26,13 +26,19 @@ function annualizedCarryPercent(
 function overlayRowWithLiveLtp(
   row: PortfolioPositionRecord,
   liveLtp: number,
+  quoteSource: string | null,
 ): PortfolioPositionRecord {
   const qty = parseNum(row.quantity);
   const avg = parseNum(row.average_price);
   const action = String(row.action ?? "").trim().toUpperCase();
   const currentProfit = computeLegMtm(action, avg, qty, liveLtp);
+  // The overlaid price supersedes the backend's, so its provenance must too —
+  // otherwise a row refreshed from a live tick keeps the snapshot's "prev close"
+  // note (or vice versa) and the badge lies about the number beside it.
+  const sourced =
+    quoteSource != null ? { quote_source: quoteSource } : {};
   if (qty == null || avg == null || currentProfit == null) {
-    return { ...row, ltp: liveLtp };
+    return { ...row, ...sourced, ltp: liveLtp };
   }
   const isSell = action === "SELL";
   // Carry = P&L if this leg expires worthless (full premium kept/lost) minus MTM already captured.
@@ -40,6 +46,7 @@ function overlayRowWithLiveLtp(
   const carryProfit = worthlessValue - currentProfit;
   const next: PortfolioPositionRecord = {
     ...row,
+    ...sourced,
     ltp: liveLtp,
     current_profit: currentProfit,
     carry_profit: carryProfit,
@@ -104,7 +111,9 @@ export function useGroupLiveOverlay(
       const strike = parseNum(row.strike_price);
       if (!right || strike == null) return base;
       const liveLtp = lookup.get(`${right}|${strike}`);
-      return liveLtp == null ? base : overlayRowWithLiveLtp(base, liveLtp);
+      return liveLtp == null
+        ? base
+        : overlayRowWithLiveLtp(base, liveLtp, chainSuccess.quote_source ?? null);
     });
   }, [group.rows, chainSuccess]);
 

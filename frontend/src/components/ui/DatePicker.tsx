@@ -15,6 +15,7 @@ import {
   toIsoDate,
 } from "@/lib/format-iso-date";
 import { useCalendarKeyboard } from "@/lib/ui/use-calendar-keyboard";
+import { usePopoverPlacement } from "@/lib/ui/use-popover-placement";
 
 const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
@@ -84,6 +85,7 @@ export function DatePicker({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverId = useId();
   const [open, setOpen] = useState(false);
+  const { popoverRef, placeAbove } = usePopoverPlacement(open, triggerRef);
 
   const parsed = useMemo(() => parseIsoDateParts(value), [value]);
 
@@ -181,7 +183,7 @@ export function DatePicker({
         aria-expanded={open}
         aria-controls={popoverId}
         className={[
-          "flex h-10 w-full items-center gap-2.5 rounded-[9px] border border-border bg-panel2 px-3 text-left text-sm text-foreground transition",
+          "flex h-11 w-full items-center gap-2.5 rounded-[9px] border border-border bg-panel2 px-3 text-left text-sm text-foreground transition sm:h-10",
           "hover:border-accent/60 focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/25",
           "disabled:pointer-events-none disabled:opacity-45",
         ].join(" ")}
@@ -209,12 +211,15 @@ export function DatePicker({
           id={popoverId}
           role="dialog"
           aria-label="Choose date"
-          className="absolute left-0 top-[calc(100%+0.35rem)] z-50 w-[min(100%,18.5rem)] rounded-[10px] border border-border bg-elevated p-3 shadow-pop"
+          ref={popoverRef}
+          className={`absolute left-0 z-50 w-[min(100%,18.5rem)] rounded-[10px] border border-border bg-elevated p-3 shadow-pop ${
+            placeAbove ? "bottom-[calc(100%+0.35rem)]" : "top-[calc(100%+0.35rem)]"
+          }`}
         >
           <div className="mb-2 flex items-center justify-between gap-1">
             <button
               type="button"
-              className="inline-flex size-8 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground"
+              className="inline-flex size-11 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground sm:size-8"
               aria-label="Previous month"
               onClick={() =>
                 setView((v) => (v.m <= 1 ? { y: v.y - 1, m: 12 } : { ...v, m: v.m - 1 }))
@@ -229,7 +234,7 @@ export function DatePicker({
             </span>
             <button
               type="button"
-              className="inline-flex size-8 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground"
+              className="inline-flex size-11 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground sm:size-8"
               aria-label="Next month"
               onClick={() =>
                 setView((v) => (v.m >= 12 ? { y: v.y + 1, m: 1 } : { ...v, m: v.m + 1 }))

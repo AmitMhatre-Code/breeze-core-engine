@@ -451,7 +451,7 @@ export function SquareOffRuleModal({
       ) : null}
 
       <div
-        className={`grid grid-cols-1 gap-2 pt-1 sm:gap-3 ${
+        className={`${sb.modalActions} grid grid-cols-1 gap-2 sm:gap-3 ${
           existingRule && editable ? "sm:grid-cols-3" : "sm:grid-cols-2"
         }`}
       >

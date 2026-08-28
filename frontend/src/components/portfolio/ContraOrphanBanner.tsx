@@ -35,7 +35,7 @@ export function ContraOrphanBanner() {
   return (
     <div
       role="alert"
-      className="border-b border-down/40 bg-down-tint px-4 py-2 text-center text-sm text-down-on-tint"
+      className="border-b border-down/40 bg-down-tint py-2 text-center text-sm text-down-on-tint ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))]"
     >
       <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-center gap-x-2 gap-y-1">
         <svg

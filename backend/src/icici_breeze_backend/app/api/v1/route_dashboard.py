@@ -43,6 +43,39 @@ async def get_dashboard_index_quotes(ctx: RequestContext = Depends(get_request_c
     return get_index_quotes_status(breeze, ctx.user_id)
 
 
+@router.get("/live")
+@router.get("/live/")
+async def get_dashboard_live(ctx: RequestContext = Depends(get_request_context)):
+    """WS-fed live values for the Dashboard tiles: Open P&L (from the portfolio
+    P&L engine's ~2s repricing) and Day's P&L (from `dashboard_day_pnl_live`).
+
+    Pure process-state read -- no broker_token gate, no ICICI call. Returns nulls
+    for anything not warm yet; the frontend falls back to its REST snapshot then.
+    """
+    from icici_breeze_backend.app.services import dashboard_day_pnl_live
+    from icici_breeze_backend.app.services.portfolio_pnl_engine import (
+        is_tick_stream_stale,
+        latest_snapshot,
+    )
+
+    user_id = ctx.user_id
+    snap = latest_snapshot(user_id)
+    open_pnl = None
+    if snap and isinstance(snap.get("total_pnl"), (int, float)):
+        open_pnl = {
+            "total_pnl": snap["total_pnl"],
+            "leg_count": len(snap.get("legs") or []),
+            "stream_stale": bool(snap.get("stream_stale")),
+            "computed_at": snap.get("computed_at"),
+        }
+
+    return {
+        "open_pnl": open_pnl,
+        "day_pnl": dashboard_day_pnl_live.latest(user_id),
+        "tick_stale": is_tick_stream_stale(),
+    }
+
+
 @router.get("/bootstrap")
 @router.get("/bootstrap/")
 async def get_dashboard_bootstrap(ctx: RequestContext = Depends(get_request_context)):

@@ -671,7 +671,12 @@ function PlaceOrderPageInner() {
                       tolerancePct={aggressiveControls.tolerancePct}
                       onAggressiveChange={(checked) => {
                         setAggressiveLimit(checked);
-                        if (checked) setPrice("");
+                        if (checked) {
+                          setPrice("");
+                          // Re-arm the once-per-contract LTP auto-fill so switching the
+                          // bolt back off refills the price instead of leaving it blank.
+                          priceAutoFillKeyRef.current = null;
+                        }
                       }}
                       onPriceChange={setPrice}
                       onModeChange={aggressiveControls.setMode}
@@ -681,7 +686,7 @@ function PlaceOrderPageInner() {
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-up-btn px-4 py-3 text-[14.5px] font-bold tracking-[.02em] text-white transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-up/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-up-btn px-4 py-3 text-[14.5px] font-bold tracking-[.02em] text-up-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-up/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
                       disabled={!previewLeg || lockedOrderSide === "Sell"}
                       onClick={() => openPreview("Buy")}
                     >

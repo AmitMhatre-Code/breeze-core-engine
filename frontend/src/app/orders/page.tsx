@@ -1744,7 +1744,7 @@ function OrdersBody() {
             {parkedError ? (
               <div className="app-alert-error text-xs">{parkedError}</div>
             ) : null}
-            <div className="hidden -mx-[18px] md:block">
+            <div className="hidden -mx-[18px] xl:block">
               <div className="overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
                   <thead className="bg-panel2">
@@ -1874,7 +1874,7 @@ function OrdersBody() {
               </div>
             </div>
 
-            <div className="space-y-3 md:hidden">
+            <div className="space-y-3 xl:hidden">
               {parkedRows.length ? (
                 <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-panel2 px-3 py-2.5">
                   <span className="text-xs font-medium uppercase tracking-wide text-muted">
@@ -2097,7 +2097,7 @@ function OrdersBody() {
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="hidden min-w-0 -mx-[18px] overflow-x-auto md:block">
+              <div className="hidden min-w-0 -mx-[18px] overflow-x-auto xl:block">
                 <table className="min-w-full text-left text-sm text-foreground">
                   <thead className="sticky top-0 z-[1] border-b border-border bg-panel2">
                       <tr>
@@ -2382,7 +2382,7 @@ function OrdersBody() {
               ) : null}
 
               {/* Mobile: card layout */}
-              <div className="space-y-3 md:hidden">
+              <div className="space-y-3 xl:hidden">
                 {groups.map((g) => (
                   <div key={g.group} className="app-card-muted overflow-hidden">
                     <details>
@@ -2578,7 +2578,7 @@ function OrdersBody() {
           </div>
         ) : (
           <div className="px-[18px] pb-4">
-            <div className="hidden min-w-0 -mx-[18px] overflow-x-auto md:block">
+            <div className="hidden min-w-0 -mx-[18px] overflow-x-auto xl:block">
               <table className="min-w-full text-left text-sm text-foreground">
                 <thead className="border-b border-border bg-panel2">
                   <tr>
@@ -2922,7 +2922,7 @@ function OrdersBody() {
             ) : null}
 
             {/* Mobile: card layout */}
-            <div className="space-y-3 md:hidden">
+            <div className="space-y-3 xl:hidden">
               {exitRuleRowsForTab.map((row) => {
                 const rowKey = `${row.kind}:${row.id}`;
                 return (

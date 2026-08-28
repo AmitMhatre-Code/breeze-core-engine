@@ -5,6 +5,15 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /**
+ * The persistent sidebar needs both width AND height: `md` alone is width-only, so a
+ * phone in landscape (812x375 on an iPhone X, 780x360 on a Galaxy S23) cleared it and
+ * swapped the working drawer for a 236px rail eating 29% of the screen — with the nav
+ * running past the fold because <aside> does not scroll. Every phone landscape is under
+ * 500px tall; every tablet landscape is 744px or more.
+ */
+@custom-variant sidebar (@media (min-width: 768px) and (min-height: 500px));
+
+/**
  * "Terminal Pro" design tokens. Theme-swapping surfaces/text/semantic accents live here as plain
  * CSS custom properties (swap value per :root vs .dark), then get mapped into Tailwind's
  * --color-* namespace below via @theme inline — same pattern the app already used for
@@ -22,7 +31,16 @@
  * --accent 3.25:1, --down 4.05:1, --amber 4.45:1, all under the 4.5:1 small-text floor; only --gtt
  * passed at 4.87:1). Darkening the *base* tokens instead would have been wrong: they already clear
  * AA on --panel (--down 4.63:1, --amber 5.02:1), so it would recolour every P&L figure to fix a
- * problem those call sites don't have. Dark theme clears every pair already, so there `-on-tint`
+ * problem those call sites don't have.
+ *
+ * UPDATE (mobile audit, findings O/P): that last claim held for --down and --amber but --up was
+ * never checked against a panel at all — it was 3.47:1 on --panel and 3.23:1 on --panel2, i.e. it
+ * failed as ordinary text everywhere it was used. It is now #0c7a53, which is the same value as
+ * --up-on-tint, so the two collapse in light theme exactly the way --accent-on-tint already equals
+ * --accent-strong. Still outstanding: --down is 4.32:1 on --panel2 (it clears 4.63:1 on --panel
+ * only), so red text on the table surface remains just under AA.
+ *
+ * Dark theme clears every pair already, so there `-on-tint`
  * equals the base — they're still defined so components can follow ONE rule ("on a tint → use
  * -on-tint") that is correct in both themes. See docs/ui-revamp/DESIGN_LANGUAGE.md §2.4.
  *
@@ -44,19 +62,21 @@
   --accent-ink: #ffffff;
   --accent-tint: #e1f4fa;
   --accent-bar: #0891b2;
-  --up: #0f9d6b;
+  --up: #0c7a53; /* was #0f9d6b: 3.47:1 on --panel, 3.23:1 on --panel2 — both under AA */
   --up-tint: #e7f6f0;
-  --up-btn: #0f9d6b;
+  --up-btn: #0c7a53; /* kept equal to --up, as it was before */
+  --up-ink: #ffffff;
   --down: #dc2f44;
   --down-tint: #fcecee;
-  --down-btn: #dc2f44;
+  --down-btn: #dc2f44; /* white ink clears AA at 4.63:1 */
+  --down-ink: #ffffff;
   --amber: #b45309;
   --amber-tint: #fbf0de;
   --amber-ink: #ffffff;
   --gtt: #7c3aed;
   --gtt-tint: #f1eafe;
   /* Text on a -tint wash. Light theme REQUIRES these — the base tokens fail AA on their own tints. */
-  --up-on-tint: #0c7a53; /* 4.80:1 on --up-tint (--up itself was 3.11:1) */
+  --up-on-tint: #0c7a53; /* 4.80:1 on --up-tint — now identical to --up (see UPDATE above) */
   --down-on-tint: #c62a3d; /* 4.84:1 on --down-tint (--down itself was 4.05:1) */
   --amber-on-tint: #ab4f09; /* 4.83:1 on --amber-tint (--amber itself was 4.45:1) */
   /* Deliberately == --accent-strong, not a new darker value: every accent-tint call site in the
@@ -67,7 +87,7 @@
   --gtt-on-tint: #7c3aed; /* 4.87:1 — == --gtt, already passes */
   --track: #e3e8ee;
   --call-tint: #eaf7f0;
-  --call-head: #0f9d6b;
+  --call-head: #0c7a53; /* white text sits on this fill: 3.47:1 -> 5.35:1 */
   --put-tint: #fceef0;
   --put-head: #dc2f44;
   --atm-tint: #e1f4fa;
@@ -92,9 +112,11 @@
   --up: #34d399;
   --up-tint: #0f1f1b;
   --up-btn: #0ea371;
+  --up-ink: #021811; /* 5.69:1 on --up-btn; white was 3.23:1 */
   --down: #f87171;
   --down-tint: #231518;
   --down-btn: #e5484d;
+  --down-ink: #220b0c; /* 4.79:1 on --down-btn; white was 3.91:1 */
   --amber: #fbbf24;
   --amber-tint: #241d0e;
   --amber-ink: #241d0e;
@@ -135,9 +157,11 @@
   --color-up: var(--up);
   --color-up-tint: var(--up-tint);
   --color-up-btn: var(--up-btn);
+  --color-up-ink: var(--up-ink);
   --color-down: var(--down);
   --color-down-tint: var(--down-tint);
   --color-down-btn: var(--down-btn);
+  --color-down-ink: var(--down-ink);
   --color-amber-accent: var(--amber);
   --color-amber-tint: var(--amber-tint);
   --color-amber-ink: var(--amber-ink);
@@ -170,6 +194,12 @@
  * existing `zinc-*`/`sky-*`/etc. usage (including ~90 files outside the shared .app-* classes)
  * pick up the new Terminal Pro palette without per-file edits. Arbitrary-value utilities like
  * `bg-[#1b1c1f]` read a literal and are unaffected by this block.
+ *
+ * `--color-emerald-600` was darkened from #0f9d6b for the same reason: `moneyToneClass()` emits
+ * raw `text-emerald-600`/`text-red-600`, so the semantic `--up` fix did not reach the header
+ * free-margin readout or any positive P&L delta (3.47:1 on --panel). It is text in every call
+ * site but one border, so this does not disturb any fill. Its dark-mode counterpart
+ * (`--color-emerald-400`) already cleared AA and is untouched.
  *
  * `--color-zinc-500` was darkened from #7c8698 (a 3.2-3.7:1 fail against panel/panel2 as plain
  * `text-zinc-500` — the most common raw-Tailwind "muted caption" class in the pre-redesign
@@ -209,7 +239,7 @@
   --color-emerald-300: #8fe8c7;
   --color-emerald-400: #5edcae;
   --color-emerald-500: #34d399;
-  --color-emerald-600: #0f9d6b;
+  --color-emerald-600: #0c7a53;
   --color-emerald-700: #0ea371;
   --color-emerald-800: #0c6b4a;
   --color-emerald-900: #0f1f1b;
@@ -288,6 +318,19 @@
 @layer base {
   html {
     overflow-x: clip;
+    /* Tell the browser the document's actual theme, so OS-drawn UI (form controls,
+       scrollbars, selection handles, caret, autofill, iOS date wheels) follows it.
+       Without this the app's own colours flip but native chrome stays light. */
+    color-scheme: light;
+    /* Chrome on Android arms pull-to-refresh at scroll-top; combined with a modal
+       open that turns an in-sheet swipe into a full reload, discarding form state. */
+    overscroll-behavior-y: contain;
+    /* Reserve the scrollbar gutter so locking scroll for a dialog (Modal.tsx) can't
+       shift the page sideways on desktop. No effect where scrollbars overlay. */
+    scrollbar-gutter: stable;
+  }
+  html.dark {
+    color-scheme: dark;
   }
   body {
     background: var(--background);
@@ -341,7 +384,7 @@
   }
   /** Destructive confirm — solid red fill, white text (Terminal Pro §5.3). */
   .app-btn-danger {
-    @apply inline-flex items-center justify-center rounded-lg bg-down-btn px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center rounded-lg bg-down-btn px-3 py-1.5 text-xs font-bold text-down-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50;
   }
   /** Section titles inside cards */
   .app-text-heading {
@@ -633,5 +676,48 @@
     width: 13px;
     height: 13px;
     border-width: 2px;
+  }
+}
+
+/**
+ * iOS input zoom guard (docs/ui-revamp: mobile audit finding A).
+ *
+ * Safari zooms the viewport whenever a focused text field computes below 16px and
+ * does NOT zoom back out on blur — so tapping Quantity mid-order leaves the user
+ * panning a zoomed page to reach Buy/Sell. Every field in the app is 14px.
+ *
+ * Scoped to phones (< sm) so the dense desktop/tablet order form is untouched, and
+ * left UNLAYERED on purpose: `text-sm` is a Tailwind utility, and @layer utilities
+ * beats @layer base, so a base-layer rule would silently lose. Chrome/Android never
+ * had this behaviour; the rule is harmless there.
+ */
+@media (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="submit"]):not([type="button"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/**
+ * Expanded hit area without a bigger box (mobile audit finding G).
+ *
+ * For controls whose PAINTED size is load-bearing — e.g. the Profit Booking / Stop
+ * Loss CTA shares `gaugeLineClass`'s 18px line with the armed gauge so summary rows
+ * stay the same height either way — growing the button would shift the layout. This
+ * projects a 44px-tall pointer target from the centre instead. Phones only.
+ */
+@media (max-width: 639px) {
+  .tap-expand {
+    position: relative;
+  }
+  .tap-expand::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 44px;
+    transform: translateY(-50%);
   }
 }

@@ -16,11 +16,17 @@ import {
   pickTopGroupKey,
   type BackendGroupMargin,
   type NettedMargin,
+  type PortfolioPositionGroup,
 } from "@/lib/portfolio/groupPositions";
 import {
   computePortfolioTotals,
   formatSignedRupees,
 } from "@/lib/portfolio/totals";
+import {
+  createLiveGroupTotalsStore,
+  LiveGroupTotalsContext,
+  useLiveGroupTotals,
+} from "@/lib/portfolio/liveGroupTotals";
 import { formatMarginCompact } from "@/lib/format-money-in";
 import { MarginFiguresInfoTrigger } from "@/components/shared/MarginFiguresInfo";
 
@@ -62,11 +68,10 @@ export default function PortfolioPage() {
     const netted = nettedMarginByKey(data?.Success?.groups);
     return built.map((g) => ({ ...g, netted: netted.get(g.key) ?? null }));
   }, [positions, data?.Success?.groups]);
-  const totals = useMemo(
-    () => computePortfolioTotals(groups, data?.Success?.portfolio),
-    [groups, data?.Success?.portfolio],
-  );
   const topGroupKey = useMemo(() => pickTopGroupKey(groups), [groups]);
+  // Per-group live MTM/Carry sums land here (written by the group blocks) so the
+  // summary tiles can repaint at the WS cadence without re-rendering the table.
+  const [liveTotalsStore] = useState(() => createLiveGroupTotalsStore());
   const [liveGroupCount, setLiveGroupCount] = useState(0);
   const [positionsViewMode, setPositionsViewMode] =
     useState<PortfolioPositionsViewMode>("grouped");
@@ -99,65 +104,80 @@ export default function PortfolioPage() {
           {q.error instanceof Error ? q.error.message : "Unknown error"}
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h1 className="app-text-title">Portfolio</h1>
-              <p className="mt-0.5 text-sm app-text-muted">
-                Open positions in NFO/BFO options only
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              {data && data.Status !== 200 ? (
-                <span className="text-xs text-down">
-                  {data.Error || "Unable to load portfolio"}
-                </span>
-              ) : null}
-              {liveGroupCount > 0 ? (
-                <span className="flex items-center gap-1.5 text-xs text-muted">
-                  <span className="relative inline-flex size-2 shrink-0">
-                    <span className="absolute inline-flex size-full animate-ping rounded-full bg-up opacity-75" />
-                    <span className="relative inline-flex size-2 rounded-full bg-up" />
+        <LiveGroupTotalsContext.Provider value={liveTotalsStore}>
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h1 className="app-text-title">Portfolio</h1>
+                <p className="mt-0.5 text-sm app-text-muted">
+                  Open positions in NFO/BFO options only
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                {data && data.Status !== 200 ? (
+                  <span className="text-xs text-down">
+                    {data.Error || "Unable to load portfolio"}
                   </span>
-                  Live quotes · WebSocket
-                </span>
-              ) : null}
+                ) : null}
+                {liveGroupCount > 0 ? (
+                  <span className="flex items-center gap-1.5 text-xs text-muted">
+                    <span className="relative inline-flex size-2 shrink-0">
+                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-up opacity-75" />
+                      <span className="relative inline-flex size-2 rounded-full bg-up" />
+                    </span>
+                    Live quotes · WebSocket
+                  </span>
+                ) : null}
+              </div>
             </div>
+
+            <PortfolioSummaryPanel
+              groups={groups}
+              portfolio={data?.Success?.portfolio ?? null}
+            />
+
+            <section className="app-card min-w-0 overflow-hidden">
+              <header className="flex items-center justify-between border-b border-border-soft px-4 py-2.5">
+                <h2 className="text-heading font-semibold uppercase tracking-wide text-faint">
+                  Open positions
+                </h2>
+                <PositionsViewModeToggle
+                  value={positionsViewMode}
+                  onChange={setViewModeAndPersist}
+                />
+              </header>
+              <div className="p-0">
+                <OpenPositionsTable
+                  positions={positions}
+                  nettedGroups={data?.Success?.groups}
+                  defaultExpandedGroupKey={topGroupKey}
+                  onLiveGroupCountChange={setLiveGroupCount}
+                  viewMode={positionsViewMode}
+                />
+              </div>
+            </section>
           </div>
-
-          <PortfolioSummaryPanel totals={totals} />
-
-          <section className="app-card min-w-0 overflow-hidden">
-            <header className="flex items-center justify-between border-b border-border-soft px-4 py-2.5">
-              <h2 className="text-heading font-semibold uppercase tracking-wide text-faint">
-                Open positions
-              </h2>
-              <PositionsViewModeToggle
-                value={positionsViewMode}
-                onChange={setViewModeAndPersist}
-              />
-            </header>
-            <div className="p-0">
-              <OpenPositionsTable
-                positions={positions}
-                nettedGroups={data?.Success?.groups}
-                defaultExpandedGroupKey={topGroupKey}
-                onLiveGroupCountChange={setLiveGroupCount}
-                viewMode={positionsViewMode}
-              />
-            </div>
-          </section>
-        </div>
+        </LiveGroupTotalsContext.Provider>
       )}
     </AppShell>
   );
 }
 
 function PortfolioSummaryPanel({
-  totals,
+  groups,
+  portfolio,
 }: {
-  totals: ReturnType<typeof computePortfolioTotals>;
+  groups: PortfolioPositionGroup[];
+  portfolio: NettedMargin | null | undefined;
 }) {
+  // Subscribes this panel (and only this panel) to the per-group live sums, so
+  // the MTM/Carry tiles follow the WS cadence; groups without a live figure fall
+  // back to their `/portfolio/data` snapshot rows inside computePortfolioTotals.
+  const liveByGroup = useLiveGroupTotals();
+  const totals = useMemo(
+    () => computePortfolioTotals(groups, portfolio, liveByGroup),
+    [groups, portfolio, liveByGroup],
+  );
   const mtm = formatSignedRupees(totals.totalMtm);
   const carry = formatSignedRupees(totals.totalCarry);
   const legLabel = `${totals.legCount} leg${totals.legCount === 1 ? "" : "s"}`;

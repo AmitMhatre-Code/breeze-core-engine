@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import threading
+from collections.abc import Sequence
 from typing import Any, TYPE_CHECKING
 
 import icici_breeze_backend.app.core.config as cfg
@@ -1155,6 +1156,39 @@ def fetch_chain_side_icici_response(
             }
 
     return _quote_miss_response(exchange_code)
+
+
+def fetch_chain_sides_icici_response(
+    proc: "Processor",
+    user_id: str,
+    stock_code: str,
+    exchange_code: str,
+    expiry_raw: str,
+    rights: "Sequence[str]",
+) -> dict[str, dict[str, Any]]:
+    """Both sides of one chain from a *single* routed fetch, keyed by the caller's
+    own right strings.
+
+    `fetch_chain_side_icici_response` builds the whole chain and then discards one
+    side of it, so asking for CE and PE separately built the same chain twice. Any
+    caller that wants both sides of the same (stock, expiry, exchange) should use
+    this instead.
+    """
+    expiry_display = _normalize_expiry_display(expiry_raw)
+    payload = fetch_chain_payload_routed(proc, user_id, stock_code, exchange_code, expiry_display)
+    out: dict[str, dict[str, Any]] = {}
+    for right in rights:
+        rows = _flatten_chain_side_rows(payload, right) if payload else []
+        if rows:
+            out[right] = {
+                "Status": 200,
+                "Error": None,
+                "Success": rows,
+                "quote_source": payload.get("quote_source") if payload else None,
+            }
+        else:
+            out[right] = _quote_miss_response(exchange_code)
+    return out
 
 
 def fetch_quote_icici_response(
