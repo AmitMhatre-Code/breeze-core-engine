@@ -82,6 +82,10 @@ const nextConfig = {
         destination: `${backendUpstream}/dashboard/day-pnl`,
       },
       {
+        source: "/dashboard/live",
+        destination: `${backendUpstream}/dashboard/live`,
+      },
+      {
         source: "/dashboard/ws-health",
         destination: `${backendUpstream}/dashboard/ws-health`,
       },

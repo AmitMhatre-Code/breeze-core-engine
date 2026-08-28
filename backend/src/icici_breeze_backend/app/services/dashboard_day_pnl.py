@@ -293,4 +293,17 @@ def build_dashboard_day_pnl(user_id: str, processor, *, broker_token: str) -> di
     if not trades_ok:
         result["degraded"] = True
         result["error"] = result.get("error") or "Trade book unavailable; realized P&L excluded."
+
+    # Seed the live baseline off this same positions + trades data so the tile can
+    # stay live off the WS feeds afterwards without any further REST calls (see
+    # dashboard_day_pnl_live).
+    try:
+        from icici_breeze_backend.app.services import dashboard_day_pnl_live
+
+        dashboard_day_pnl_live.capture_baseline(
+            user_id, positions, list(trades), trades_source_ok=bool(trades_ok)
+        )
+    except Exception:  # pragma: no cover - best effort, never break the endpoint
+        _logger.debug("day-pnl live baseline seed failed", exc_info=True)
+
     return result

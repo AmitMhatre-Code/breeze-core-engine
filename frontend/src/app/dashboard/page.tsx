@@ -15,6 +15,8 @@ import { DashboardMetricSkeleton } from "@/components/dashboard/DashboardLoading
 import { MarketConnectionOverlay } from "@/components/dashboard/MarketConnectionOverlay";
 import { Vix30dChart } from "@/components/dashboard/Vix30dChart";
 import { useWsHealth } from "@/lib/use-ws-health";
+import { useIndexQuotes } from "@/lib/use-index-quotes";
+import { useDashboardLive } from "@/lib/use-dashboard-live";
 import {
   interpretAtmIvPercent,
   interpretIndiaVix,
@@ -307,6 +309,11 @@ export default function DashboardPage() {
     enabled: Boolean(bootstrapQ.data),
   });
 
+  // Live NIFTY spot (WS-fed, ~2s) for the volatility-card headline, and the
+  // WS-fed Open P&L / Day's P&L values. Both share feeds the app already runs.
+  const indexQuotesQ = useIndexQuotes();
+  const liveQ = useDashboardLive(Boolean(bootstrapQ.data));
+
   const marketOutlookQ = useQuery({
     queryKey: ["dashboard", "market-outlook"],
     queryFn: () => getMarketOutlook(false),
@@ -422,7 +429,10 @@ export default function DashboardPage() {
   const freeAfterElm =
     funds != null && portfolioElm != null ? funds - portfolioElm : null;
 
-  const openPnl = useMemo(() => sumOpenPositionsPnl(portData), [portData]);
+  const openPnlSnapshot = useMemo(
+    () => sumOpenPositionsPnl(portData),
+    [portData],
+  );
 
   const dashboardWarnings = useMemo(() => {
     if (bootstrapQ.isPending || portfolioStillRetrying) {
@@ -455,12 +465,20 @@ export default function DashboardPage() {
       : null;
 
   // Prefer spot from /dashboard/vix (same request as VIX) so NIFTY shows immediately; opts may trail.
+  // This value is deliberately NOT the live one — the "Expected range" rows below
+  // are pinned to the spot as of the options-payload load so they don't twitch
+  // every 2s. The headline number uses `niftySpotLive` instead.
   const niftySpot =
     typeof core?.nifty_spot === "number"
       ? core.nifty_spot
       : typeof opts?.nifty_spot === "number"
         ? opts.nifty_spot
         : null;
+
+  // Live NIFTY spot + day's change from the WS-fed index feed (navbar shares it).
+  const niftyLive = indexQuotesQ.data?.quotes.nifty ?? null;
+  const niftySpotLive =
+    typeof niftyLive?.ltp === "number" ? niftyLive.ltp : niftySpot;
 
   const vixInterp =
     typeof core?.current_vix === "number"
@@ -493,17 +511,39 @@ export default function DashboardPage() {
       queryClient.invalidateQueries({ queryKey: ["dashboard", "vix-options"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard", "vix-history"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard", "day-pnl"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard", "live"] }),
     ]);
   }, [queryClient]);
 
-  const dayPnl = dayPnlQ.data;
+  // WS-fed live tiles, with the REST snapshot as the fallback until each is warm.
+  const liveOpenPnl =
+    typeof liveQ.data?.open_pnl?.total_pnl === "number"
+      ? liveQ.data.open_pnl.total_pnl
+      : null;
+  const liveDayPnl = liveQ.data?.day_pnl ?? null;
+  const liveStale =
+    Boolean(liveQ.data?.tick_stale) &&
+    (liveOpenPnl != null || liveDayPnl != null);
+  const openPnl = liveOpenPnl ?? openPnlSnapshot;
+
+  const dayPnl = liveDayPnl ?? dayPnlQ.data;
   const dayPnlLoading =
-    bootstrapQ.isPending || (Boolean(bootstrapQ.data) && dayPnlQ.isPending);
+    bootstrapQ.isPending ||
+    (Boolean(bootstrapQ.data) && dayPnlQ.isPending && !liveDayPnl);
   const marginUsedPct =
     marginUsedDisplay != null && funds != null && marginUsedDisplay + funds > 0
       ? Math.min(100, Math.max(0, (marginUsedDisplay / (marginUsedDisplay + funds)) * 100))
       : null;
-  const niftyChangeAbs = absoluteChangeFromPct(niftySpot, core?.nifty_spot_trend_pct);
+  const niftyChangeAbs =
+    typeof niftyLive?.change === "number"
+      ? niftyLive.change
+      : absoluteChangeFromPct(niftySpot, core?.nifty_spot_trend_pct);
+  const niftyChangePct =
+    typeof niftyLive?.change_pct === "number"
+      ? niftyLive.change_pct
+      : typeof core?.nifty_spot_trend_pct === "number"
+        ? core.nifty_spot_trend_pct
+        : null;
   const vixChangeAbs = absoluteChangeFromPct(core?.current_vix, core?.vix_trend_pct);
   const expectedRange2Sigma = twoSigmaRange(opts?.expected_range, niftySpot);
   const expectedMove2SigmaPct =
@@ -558,6 +598,19 @@ export default function DashboardPage() {
               <span className="font-mono">
                 {formatDashboardTimestamp(bootstrapQ.dataUpdatedAt)}
               </span>
+              {liveOpenPnl != null || liveDayPnl != null ? (
+                <span
+                  className={liveStale ? "text-amber-accent" : "text-up-on-tint"}
+                  title={
+                    liveStale
+                      ? "Live P&L tiles may be delayed — the market data feed looks stale."
+                      : "Open P&L and Day's P&L update live from the market data feed."
+                  }
+                >
+                  {" · "}
+                  {liveStale ? "Live (delayed)" : "Live"}
+                </span>
+              ) : null}
             </p>
           </div>
           <button
@@ -685,7 +738,7 @@ export default function DashboardPage() {
                   <DashboardMetricSkeleton className="w-20" />
                 ) : (
                   <span className="font-mono text-lg font-semibold tabular-nums text-foreground">
-                    {formatNiftySpotDecimal(niftySpot)}
+                    {formatNiftySpotDecimal(niftySpotLive)}
                   </span>
                 )}
                 {!volatilityCoreLoading && niftyChangeAbs != null ? (
@@ -699,11 +752,10 @@ export default function DashboardPage() {
                     {niftyChangeAbs.toFixed(2)}
                   </span>
                 ) : null}
-                {!volatilityCoreLoading &&
-                typeof core?.nifty_spot_trend_pct === "number" ? (
+                {!volatilityCoreLoading && niftyChangePct != null ? (
                   <span className="app-text-muted text-xs">
-                    · {core.nifty_spot_trend_pct >= 0 ? "+" : ""}
-                    {core.nifty_spot_trend_pct.toFixed(2)}%
+                    · {niftyChangePct >= 0 ? "+" : ""}
+                    {niftyChangePct.toFixed(2)}%
                   </span>
                 ) : null}
               </div>
