@@ -55,6 +55,7 @@ import {
 import type { BackendGroupMargin } from "@/lib/portfolio/groupPositions";
 import type { PortfolioPositionGroup } from "@/lib/portfolio/groupPositions";
 import { formatSignedRupees } from "@/lib/portfolio/totals";
+import { useReportGroupLiveTotals } from "@/lib/portfolio/liveGroupTotals";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { useGroupLiveOverlay } from "@/lib/portfolio/useGroupLiveOverlay";
 import { useGroupSubscriptionHolders } from "@/lib/portfolio/useGroupSubscriptionHolders";
@@ -782,10 +783,11 @@ type GroupBlockProps = {
 };
 
 /**
- * One group's rows (desktop table). Owns the live-chain overlay hook so it's only
- * fetched/subscribed while `isOpen` — collapsed groups render straight from the
- * polled `/portfolio/data` snapshot passed in via `g.rows`. PoP, however, is fetched
- * unconditionally (see `useGroupPoP`) so the summary row can show it even collapsed.
+ * One group's rows (desktop table). Owns the live-chain overlay hook, which runs
+ * for every open group regardless of `isOpen` (see `useGroupLiveOverlay` /
+ * `useGroupSubscriptionHolders`) — collapsed groups still get live LTP/MTM off the
+ * WS chain rather than waiting on a `/portfolio/data` refetch. PoP is likewise
+ * fetched unconditionally (see `useGroupPoP`) so the summary row can show it collapsed.
  */
 function PortfolioGroupTableBlock({
   g,
@@ -811,6 +813,9 @@ function PortfolioGroupTableBlock({
   const spotAgg = formatSpot(liveRows[0]?.spot_price);
   const mtmSum = sumNumericField(liveRows, "current_profit");
   const carrySum = sumNumericField(liveRows, "carry_profit");
+  // Feed the page-level Total MTM / Total carry tiles this group's live sum so
+  // they repaint at the WS cadence instead of freezing at the last snapshot.
+  useReportGroupLiveTotals(g.key, mtmSum, carrySum);
   // SPAN + ELM (and its carry-return) are the server's netted group figure — one
   // multi-leg margin call for the whole group — not a per-leg sum. They don't tick
   // with live quotes (margin is composition-based), so they come from `g.netted`,
@@ -1013,6 +1018,9 @@ function PortfolioGroupCardBlock({
   const spotAgg = formatSpot(liveRows[0]?.spot_price);
   const mtmSum = sumNumericField(liveRows, "current_profit");
   const carrySum = sumNumericField(liveRows, "carry_profit");
+  // Feed the page-level Total MTM / Total carry tiles this group's live sum so
+  // they repaint at the WS cadence instead of freezing at the last snapshot.
+  useReportGroupLiveTotals(g.key, mtmSum, carrySum);
   // SPAN + ELM (and its carry-return) are the server's netted group figure — one
   // multi-leg margin call for the whole group — not a per-leg sum. They don't tick
   // with live quotes (margin is composition-based), so they come from `g.netted`,
