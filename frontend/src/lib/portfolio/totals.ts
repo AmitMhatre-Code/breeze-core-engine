@@ -3,6 +3,7 @@ import type {
   NettedMargin,
   PortfolioPositionGroup,
 } from "@/lib/portfolio/groupPositions";
+import type { GroupLiveTotal } from "@/lib/portfolio/liveGroupTotals";
 
 function coerceNum(v: unknown): number | null {
   if (v == null || v === "") return null;
@@ -38,10 +39,18 @@ export type PortfolioTotals = {
  * figure (`Success.portfolio`, netted per underlying then summed) — SPAN is a
  * portfolio risk model and cannot be summed per leg without over-stating it
  * (the bug this replaced).
+ *
+ * `liveByGroup` (keyed by `PortfolioPositionGroup.key`) lets the tiles follow the
+ * per-group WS live-overlay sums instead of the `/portfolio/data` snapshot: a
+ * group with a non-null live figure uses it, every other group falls back to its
+ * snapshot rows. The result is a blend while some chains are still warming up —
+ * the same per-row blend the group rows already show. Omit it for pure-snapshot
+ * behaviour (individual-legs view, first paint, tests).
  */
 export function computePortfolioTotals(
   groups: PortfolioPositionGroup[],
   portfolio?: NettedMargin | null,
+  liveByGroup?: ReadonlyMap<string, GroupLiveTotal> | null,
 ): PortfolioTotals {
   let mtm = 0;
   let mtmAny = false;
@@ -50,17 +59,32 @@ export function computePortfolioTotals(
   let legCount = 0;
 
   for (const g of groups) {
-    for (const row of g.rows as PortfolioPositionRecord[]) {
-      legCount += 1;
-      const rowMtm = coerceNum(row.current_profit);
-      if (rowMtm != null) {
-        mtm += rowMtm;
-        mtmAny = true;
+    legCount += g.rows.length;
+    const live = liveByGroup?.get(g.key) ?? null;
+
+    if (live?.mtm != null) {
+      mtm += live.mtm;
+      mtmAny = true;
+    } else {
+      for (const row of g.rows as PortfolioPositionRecord[]) {
+        const rowMtm = coerceNum(row.current_profit);
+        if (rowMtm != null) {
+          mtm += rowMtm;
+          mtmAny = true;
+        }
       }
-      const rowCarry = coerceNum(row.carry_profit);
-      if (rowCarry != null) {
-        carry += rowCarry;
-        carryAny = true;
+    }
+
+    if (live?.carry != null) {
+      carry += live.carry;
+      carryAny = true;
+    } else {
+      for (const row of g.rows as PortfolioPositionRecord[]) {
+        const rowCarry = coerceNum(row.carry_profit);
+        if (rowCarry != null) {
+          carry += rowCarry;
+          carryAny = true;
+        }
       }
     }
   }

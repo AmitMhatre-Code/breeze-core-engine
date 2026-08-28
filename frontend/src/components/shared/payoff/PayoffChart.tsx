@@ -812,40 +812,56 @@ export function PayoffChart({
             strokeWidth={0.9}
           />
         ) : null}
-        {!compact &&
-          yLabelTicks.map((t, i) => (
-            <text
-              key={`y-lab-${i}`}
-              x={PAD_L - 4}
-              y={yScaleFn(t)}
-              textAnchor="end"
-              dominantBaseline="middle"
-              className={
-                idle
-                  ? "fill-faint font-normal tabular-nums"
-                  : Math.abs(t) <= Math.max((maxY - minY || 1) * 0.015, 1e-9)
-                    ? "fill-foreground font-semibold tabular-nums"
-                    : "fill-muted font-normal tabular-nums"
-              }
-              fontSize={5.5}
+      </svg>
+      {/*
+        Full-mode axis labels are an HTML overlay rather than SVG <text>.
+        `fontSize` inside the 640x220 viewBox is in USER UNITS, so it scaled with the
+        container: at 5.5 units the labels rendered ~10px on a wide desktop panel but
+        ~2.3px in a 265px phone column — illegible. Compact already solved this with an
+        overlay; full mode uses the same trick, positioned in PERCENTAGES because its
+        viewBox scales uniformly (compact's is stretched to a fixed pixel height, so it
+        can position in px). Labels are now a constant 10px at every width, and the zoom
+        controls that compact drops are preserved.
+      */}
+      {!compact ? (
+        <div className="pointer-events-none absolute inset-0">
+          {yLabelTicks.map((t, i) => (
+            <span
+              key={`fl-yl-${i}`}
+              className={`absolute -translate-x-full -translate-y-1/2 whitespace-nowrap font-mono text-micro tabular-nums ${
+                Math.abs(t) <= Math.max((maxY - minY || 1) * 0.015, 1e-9)
+                  ? "font-semibold text-foreground"
+                  : idle
+                    ? "text-faint"
+                    : "text-muted"
+              }`}
+              style={{
+                left: `${((PAD_L - 4) / W) * 100}%`,
+                top: `${(yScaleFn(t) / H) * 100}%`,
+              }}
             >
               {t >= 1e5 || t <= -1e5 ? `${(t / 1e5).toFixed(1)}L` : t.toFixed(0)}
-            </text>
+            </span>
           ))}
-        {!compact &&
-          xAxisTicks.map(({ price, x }, i) => (
-            <text
-              key={`x-lab-${i}`}
-              x={x}
-              y={H - 5}
-              textAnchor="middle"
-              className="fill-muted font-normal tabular-nums"
-              fontSize={5.5}
+          {xAxisTicks.map(({ price, x }, i) => (
+            <span
+              key={`fl-xl-${i}`}
+              // 10 ticks at a constant 10px collide once the chart is narrow (they ran
+              // together at 390px). Thin to every other tick below lg, where the chart is
+              // under ~700px wide; the full set returns on desktop.
+              className={`absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap font-mono text-micro tabular-nums text-muted ${
+                i % 2 === 1 ? "max-lg:hidden" : ""
+              }`}
+              style={{
+                left: `${(x / W) * 100}%`,
+                top: `${((H - 5) / H) * 100}%`,
+              }}
             >
               {formatXAxisPrice(price)}
-            </text>
+            </span>
           ))}
-      </svg>
+        </div>
+      ) : null}
       {compact ? (
         <div className="pointer-events-none absolute inset-0">
           {yLabelTicks.map((t, i) => (

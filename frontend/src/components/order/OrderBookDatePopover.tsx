@@ -1,5 +1,6 @@
 "use client";
 
+import { usePopoverPlacement } from "@/lib/ui/use-popover-placement";
 import {
   useCallback,
   useEffect,
@@ -82,6 +83,7 @@ export function OrderBookDatePopover({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
+  const { popoverRef, placeAbove } = usePopoverPlacement(open, triggerRef);
 
   const parsed = useMemo(() => parseIsoDateParts(value), [value]);
 
@@ -200,7 +202,7 @@ export function OrderBookDatePopover({
         aria-expanded={open}
         aria-controls={listboxId}
         className={[
-          "flex h-[34px] items-center gap-2 rounded-[9px] border border-border bg-panel2 px-2.5 text-left font-mono text-heading tabular-nums text-foreground transition",
+          "flex h-11 items-center gap-2 rounded-[9px] border border-border bg-panel2 px-2.5 text-left font-mono text-heading tabular-nums text-foreground transition sm:h-[34px]",
           "hover:border-accent/60 focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/25",
         ].join(" ")}
         onClick={() => {
@@ -224,12 +226,15 @@ export function OrderBookDatePopover({
           id={listboxId}
           role="dialog"
           aria-label="Choose date"
-          className="absolute left-0 top-[calc(100%+0.25rem)] z-50 w-72 rounded-[10px] border border-border bg-elevated p-3 shadow-pop"
+          ref={popoverRef}
+          className={`absolute left-0 z-50 w-72 rounded-[10px] border border-border bg-elevated p-3 shadow-pop ${
+            placeAbove ? "bottom-[calc(100%+0.25rem)]" : "top-[calc(100%+0.25rem)]"
+          }`}
         >
           <div className="mb-2 flex items-center justify-between gap-1">
             <button
               type="button"
-              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground"
+              className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground sm:size-8"
               aria-label="Previous month"
               onClick={goPrevMonth}
             >
@@ -242,7 +247,7 @@ export function OrderBookDatePopover({
             </span>
             <button
               type="button"
-              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground"
+              className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-panel2 hover:text-foreground sm:size-8"
               aria-label="Next month"
               onClick={goNextMonth}
             >

@@ -468,6 +468,12 @@ def start_application():
             pnl_flush_task = asyncio.create_task(run_pnl_quote_flush_loop())
             pnl_loop_task = asyncio.create_task(run_pnl_loop())
 
+            # Order-feed listener that keeps the Dashboard "Day's P&L" tile live
+            # between REST snapshots (recompute rides the P&L engine loop above).
+            from icici_breeze_backend.app.services import dashboard_day_pnl_live
+
+            dashboard_day_pnl_live.start()
+
             from icici_breeze_backend.app.services.squareoff_dispatcher import (
                 hydrate_group_rules_on_startup,
                 register_squareoff_dispatcher,

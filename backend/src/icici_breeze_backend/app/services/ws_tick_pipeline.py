@@ -48,6 +48,11 @@ _cache_thread: threading.Thread | None = None
 _process_queue: queue.Queue[list[tuple[str, dict[str, Any]]]] | None = None
 _listeners: list[TickListener] = []
 _raw_listeners: list[TickListener] = []
+# Extra consumers of parsed order-notification events, alongside the hard-wired
+# `strategy_group_lifecycle.on_order_notification` call. Used by the dashboard
+# day-P&L live baseline; kept a plain list because registration happens once at
+# startup and dispatch is single-threaded on the SDK callback thread.
+_order_notification_listeners: list[Callable[[Any], None]] = []
 _dropped_ticks = 0
 _started = False
 _start_lock = threading.Lock()
@@ -207,6 +212,11 @@ def _route_order_notification(payload: Any) -> bool:
             )
 
             on_order_notification(parsed)
+            for cb in list(_order_notification_listeners):
+                try:
+                    cb(parsed)
+                except Exception:
+                    _logger.exception("Order-notification listener failed")
         # Consumed either way: an order event is never a price tick, even if the parse
         # rejected it (e.g. a cash-shape payload).
         return True
@@ -271,6 +281,19 @@ def register_raw_tick_listener(cb: TickListener) -> None:
 def unregister_raw_tick_listener(cb: TickListener) -> None:
     try:
         _raw_listeners.remove(cb)
+    except ValueError:
+        pass
+
+
+def register_order_notification_listener(cb: "Callable[[Any], None]") -> None:
+    """Subscribe to parsed `OrderNotification` events. Idempotent per callback."""
+    if cb not in _order_notification_listeners:
+        _order_notification_listeners.append(cb)
+
+
+def unregister_order_notification_listener(cb: "Callable[[Any], None]") -> None:
+    try:
+        _order_notification_listeners.remove(cb)
     except ValueError:
         pass
 

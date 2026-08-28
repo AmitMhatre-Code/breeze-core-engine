@@ -5,22 +5,22 @@ import type { InterpretTone } from "@/lib/dashboard-interpretation";
 const TONE_STYLE: Record<InterpretTone, CSSProperties> = {
   positive: {
     backgroundColor: "var(--up-tint)",
-    color: "var(--up)",
+    color: "var(--up-on-tint)",
     forcedColorAdjust: "none",
   },
   muted: {
     backgroundColor: "var(--accent-tint)",
-    color: "var(--accent)",
+    color: "var(--accent-on-tint)",
     forcedColorAdjust: "none",
   },
   caution: {
     backgroundColor: "var(--amber-tint)",
-    color: "var(--amber)",
+    color: "var(--amber-on-tint)",
     forcedColorAdjust: "none",
   },
   alarm: {
     backgroundColor: "var(--down-tint)",
-    color: "var(--down)",
+    color: "var(--down-on-tint)",
     forcedColorAdjust: "none",
   },
 };

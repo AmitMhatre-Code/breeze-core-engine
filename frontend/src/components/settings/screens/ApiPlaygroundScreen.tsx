@@ -647,7 +647,7 @@ export function ApiPlaygroundScreen() {
 
                 <button
                   type="button"
-                  className="inline-flex items-center justify-center rounded-lg bg-down-btn px-3.5 py-1.5 text-sm font-bold text-white transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center justify-center rounded-lg bg-down-btn px-3.5 py-1.5 text-sm font-bold text-down-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={invokeM.isPending || !riskQ.data?.accepted}
                   onClick={onFire}
                 >

@@ -221,7 +221,7 @@ function PerformancePageInner() {
     <AppShell>
       <div className="mx-auto max-w-[1200px]">
       {q.isPending ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2].map((i) => (
             <div key={i} className="app-card min-h-[180px] p-4">
               <div className="h-full min-h-[140px] w-full app-skeleton rounded-sm border-0" />
@@ -243,7 +243,7 @@ function PerformancePageInner() {
                 Bank balance, margins, and options P&amp;L
               </p>
             </div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
               {years.length > 0 ? (
                 <FinancialYearDropdown
                   labelId={fyLabelId}
@@ -277,8 +277,8 @@ function PerformancePageInner() {
             </div>
           </header>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <section className="app-card flex flex-col p-4">
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <section className="app-card flex min-w-0 flex-col p-4">
               <h2 className="text-heading font-bold uppercase tracking-[.07em] text-faint">
                 Bank balance
               </h2>
@@ -339,7 +339,7 @@ function PerformancePageInner() {
               )}
             </section>
 
-            <section className="app-card flex flex-col p-4">
+            <section className="app-card flex min-w-0 flex-col p-4">
               <h2 className="text-heading font-bold uppercase tracking-[.07em] text-faint">
                 Margins
               </h2>
@@ -377,7 +377,7 @@ function PerformancePageInner() {
               )}
             </section>
 
-            <section className="app-card flex flex-col p-4 md:col-span-2 xl:col-span-1">
+            <section className="app-card flex min-w-0 flex-col p-4 md:col-span-2 xl:col-span-1">
               <h2 className="text-heading font-bold uppercase tracking-[.07em] text-faint">
                 FY {data.fy || selectedFy || "—"}{" "}P&amp;L statement
               </h2>
@@ -461,7 +461,7 @@ function PerformancePageInner() {
                 {granularity === "week" ? "Weekly" : "Monthly"} financial
                 overview
               </h2>
-              <div className="flex items-center gap-2.5">
+              <div className="flex flex-wrap items-center gap-2.5">
               <div className="inline-flex rounded-[9px] border border-border bg-panel2 p-[3px]">
                 {(
                   [
@@ -552,7 +552,7 @@ export default function PerformancePage() {
     <Suspense
       fallback={
         <AppShell>
-          <div className="mx-auto max-w-[1200px] grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="mx-auto max-w-[1200px] grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-2 xl:grid-cols-3">
             {[0, 1, 2].map((i) => (
               <div key={i} className="app-card min-h-[180px] p-4">
               <div className="h-full min-h-[140px] w-full app-skeleton rounded-sm border-0" />

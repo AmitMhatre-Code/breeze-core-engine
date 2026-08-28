@@ -35,7 +35,7 @@ export const sb = {
   btnSecondary:
     "inline-flex items-center justify-center rounded-lg border border-border bg-transparent px-3.5 py-2 text-xs font-semibold text-foreground transition hover:bg-border-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
   btnDanger:
-    "inline-flex items-center justify-center rounded-lg bg-down-btn px-3.5 py-2 text-sm font-bold text-white transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
+    "inline-flex items-center justify-center rounded-lg bg-down-btn px-3.5 py-2 text-sm font-bold text-down-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
   tableSelect:
     "max-w-[8.5rem] cursor-pointer rounded-[7px] border border-border bg-panel2 px-2 py-1.5 font-mono text-xs text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/20",
   tableInput:
@@ -48,6 +48,15 @@ export const sb = {
     "rounded-[13px] border border-amber-accent/40 bg-amber-tint text-left text-xs text-foreground transition hover:border-amber-accent/70 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
   modalPanel:
     "max-h-[90vh] w-full space-y-4 overflow-y-auto rounded-[13px] border border-border bg-elevated p-5 shadow-pop",
+  /**
+   * Action row for dialogs built on `modalPanel`. That panel scrolls, so without this
+   * the buttons scroll away too — most visibly on Android, where opening the keyboard
+   * shrinks the layout viewport and re-clamps the panel mid-edit. Negative margins
+   * cancel the panel's p-5 so the bar spans the full width and its background hides
+   * content scrolling underneath.
+   */
+  modalActions:
+    "sticky bottom-0 z-[1] -mx-5 -mb-5 border-t border-border-soft bg-elevated px-5 pb-5 pt-3",
   radioRow:
     "flex cursor-pointer items-center gap-2.5 text-xs font-medium text-muted",
   radio: "size-4 shrink-0 border-border text-accent-strong focus:ring-accent/30",

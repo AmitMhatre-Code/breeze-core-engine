@@ -143,8 +143,10 @@ export function ExpirySelectPill({
 
   const buttonClass = (() => {
     if (toolbarLayout) {
-      const minWidth = fullDate ? "min-w-[12.5rem]" : "min-w-[11rem]";
-      return `flex ${minWidth} shrink-0 items-center justify-between gap-2 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel disabled:cursor-not-allowed disabled:opacity-50`;
+      const minWidth = fullDate
+        ? "min-w-0 sm:min-w-[12.5rem]"
+        : "min-w-0 sm:min-w-[11rem]";
+      return `flex ${minWidth} shrink sm:shrink-0 items-center justify-between gap-2 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel disabled:cursor-not-allowed disabled:opacity-50`;
     }
     return "flex w-full min-w-0 items-center justify-between gap-2 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3.5 py-2.5 text-left text-sm text-foreground outline-none transition hover:border-accent focus-within:border-accent-strong focus-within:bg-panel disabled:cursor-not-allowed disabled:opacity-50";
   })();
@@ -280,7 +282,7 @@ export function ExpirySelectPill({
       ref={rootRef}
       className={
         toolbarLayout
-          ? `relative flex shrink-0 items-center gap-2 ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
+          ? `relative flex min-w-0 shrink sm:shrink-0 items-center gap-2 ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
           : `relative min-w-[min(100%,12rem)] flex-1 lg:max-w-md ${open ? "z-[300]" : "z-0"} ${rootClassName ?? ""}`
       }
     >
