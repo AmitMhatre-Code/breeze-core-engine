@@ -328,9 +328,18 @@ def test_execute_upgrade_pulls_and_recreates_container(monkeypatch):
 
     with patch(
         "icici_breeze_backend.app.services.deployment_container_upgrade.schedule_recreate_via_helper",
-    ) as schedule:
+    ) as schedule, patch(
+        "icici_breeze_backend.app.services.deployment_container_upgrade.prune_repo_images_before_pull",
+    ) as prune:
         hb.execute_upgrade("latest")
 
+    # Superseded images are pruned before the pull, not after.
+    prune.assert_called_once_with(
+        mock_client,
+        image_ref="ghcr.io/org/breeze-core-engine:latest",
+        container_name="breeze-core-engine",
+    )
+    assert prune.call_count == 1
     mock_client.images.pull.assert_called_once_with("ghcr.io/org/breeze-core-engine:latest")
     schedule.assert_called_once_with(
         mock_client,

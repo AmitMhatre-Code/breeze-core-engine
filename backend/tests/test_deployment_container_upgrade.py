@@ -110,6 +110,12 @@ def test_upgrade_shell_script_uses_env_file():
     assert "stopped containers pruned successfully" in script
     assert "dangling images pruned successfully" in script
     assert "prune complete:" in script
+    # Pre-pull prune: superseded repo images dropped before the pull, running one kept.
+    assert "pre-pull prune: freeing space for $IMAGE" in script
+    assert 'PRUNE_REPO="${IMAGE%@*}"' in script
+    assert "docker images --no-trunc -q \"$PRUNE_REPO\"" in script
+    assert '[ "$_prune_img" != "$RUNNING_IMG_ID" ] && docker rmi -f "$_prune_img"' in script
+    assert script.index("pre-pull prune: freeing space") < script.index('docker pull "$IMAGE"')
     assert "-p 80:3000" in script
     assert "upgrade.log" in script
     assert "breeze-core-net" in script
@@ -288,6 +294,12 @@ def test_recreate_deployment_container_stops_and_runs_with_env(tmp_path, monkeyp
     monkeypatch.setattr(dcu, "deployment_publish_port", lambda: 80)
     monkeypatch.setattr(dcu, "ensure_redis_sidecar_sdk", lambda _c: None)
     monkeypatch.setattr(dcu, "write_host_file_via_docker", lambda _c, _p, _t, **_: None)
+    prune_calls: list[dict] = []
+    monkeypatch.setattr(
+        dcu,
+        "prune_repo_images_before_pull",
+        lambda _c, **kw: prune_calls.append(kw),
+    )
 
     mock_client = MagicMock()
     mock_old = MagicMock()
@@ -304,6 +316,9 @@ def test_recreate_deployment_container_stops_and_runs_with_env(tmp_path, monkeyp
     mock_client.containers.run.assert_called_once()
     mock_client.containers.prune.assert_called_once()
     mock_client.images.prune.assert_called_once_with(filters={"dangling": True})
+    assert prune_calls == [
+        {"image_ref": "ghcr.io/org/breeze-core-engine:latest", "container_name": "breeze-core-engine"}
+    ]
     _, kwargs = mock_client.containers.run.call_args
     assert kwargs["name"] == "breeze-core-engine"
     assert kwargs["environment"]["JWT_ACCESS_TOKEN_EXPIRE_MINUTES"] == "1440"
@@ -312,4 +327,99 @@ def test_recreate_deployment_container_stops_and_runs_with_env(tmp_path, monkeyp
     assert kwargs["ports"] == {"3000/tcp": 80}
     assert str(data_path) in kwargs["volumes"]
     assert str(env_path) in kwargs["volumes"]
+
+
+@pytest.mark.parametrize(
+    "ref, expected",
+    [
+        ("ghcr.io/org/breeze-core-engine:2.8.0", "ghcr.io/org/breeze-core-engine"),
+        ("ghcr.io/org/breeze-core-engine:latest", "ghcr.io/org/breeze-core-engine"),
+        ("ghcr.io/org/breeze-core-engine", "ghcr.io/org/breeze-core-engine"),
+        (
+            "ghcr.io/org/breeze-core-engine@sha256:" + "a" * 64,
+            "ghcr.io/org/breeze-core-engine",
+        ),
+        ("registry.local:5000/org/app:tag", "registry.local:5000/org/app"),
+        ("", ""),
+    ],
+)
+def test_image_repo_strips_tag_and_digest(ref, expected):
+    assert dcu._image_repo(ref) == expected
+
+
+def _fake_image(image_id, tags=None, size=0, digests=None):
+    img = MagicMock()
+    img.id = image_id
+    img.tags = tags or []
+    img.attrs = {"Size": size, "RepoDigests": digests or []}
+    return img
+
+
+def test_prune_repo_images_before_pull_removes_superseded_keeps_running():
+    repo = "ghcr.io/org/breeze-core-engine"
+    running = _fake_image(f"sha256:{'1' * 64}", tags=[f"{repo}:2.7.1"], size=740_000_000)
+    superseded_a = _fake_image(f"sha256:{'2' * 64}", tags=[f"{repo}:2.7.0"], size=740_000_000)
+    superseded_b = _fake_image(
+        f"sha256:{'3' * 64}", tags=[], digests=[f"{repo}@sha256:{'d' * 64}"], size=740_000_000
+    )
+    unrelated = _fake_image(f"sha256:{'4' * 64}", tags=["docker:cli"], size=5_000_000)
+
+    client = MagicMock()
+    container = MagicMock()
+    container.image.id = running.id
+    client.containers.get.return_value = container
+    client.images.list.return_value = [running, superseded_a, superseded_b, unrelated]
+    client.images.prune.return_value = {"SpaceReclaimed": 123}
+
+    dcu.prune_repo_images_before_pull(
+        client, image_ref=f"{repo}:2.8.0", container_name="breeze-core-engine"
+    )
+
+    removed = {c.args[0] for c in client.images.remove.call_args_list}
+    assert removed == {superseded_a.id, superseded_b.id}
+    for call in client.images.remove.call_args_list:
+        assert call.kwargs.get("force") is True
+    client.images.prune.assert_called_once_with(filters={"dangling": True})
+
+
+def test_prune_repo_images_before_pull_skips_when_running_image_unknown():
+    client = MagicMock()
+    client.containers.get.side_effect = sys.modules["docker.errors"].NotFound("nope")
+
+    dcu.prune_repo_images_before_pull(
+        client,
+        image_ref="ghcr.io/org/breeze-core-engine:2.8.0",
+        container_name="breeze-core-engine",
+    )
+
+    client.images.list.assert_not_called()
+    client.images.remove.assert_not_called()
+    client.images.prune.assert_not_called()
+
+
+def test_prune_repo_images_before_pull_skips_when_repo_unresolvable():
+    client = MagicMock()
+    dcu.prune_repo_images_before_pull(client, image_ref="", container_name="breeze-core-engine")
+    client.containers.get.assert_not_called()
+    client.images.remove.assert_not_called()
+
+
+def test_prune_repo_images_before_pull_survives_remove_error():
+    repo = "ghcr.io/org/breeze-core-engine"
+    running = _fake_image(f"sha256:{'1' * 64}", tags=[f"{repo}:2.7.1"])
+    superseded = _fake_image(f"sha256:{'2' * 64}", tags=[f"{repo}:2.7.0"])
+
+    client = MagicMock()
+    container = MagicMock()
+    container.image.id = running.id
+    client.containers.get.return_value = container
+    client.images.list.return_value = [running, superseded]
+    client.images.remove.side_effect = sys.modules["docker.errors"].APIError("in use")
+    client.images.prune.return_value = {"SpaceReclaimed": 0}
+
+    # Must not raise despite the remove failure.
+    dcu.prune_repo_images_before_pull(
+        client, image_ref=f"{repo}:2.8.0", container_name="breeze-core-engine"
+    )
+    client.images.prune.assert_called_once_with(filters={"dangling": True})
 

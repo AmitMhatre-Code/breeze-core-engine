@@ -448,6 +448,148 @@ def _post_upgrade_prune_shell_lines() -> list[str]:
     ]
 
 
+def _pre_pull_prune_shell_lines() -> list[str]:
+    """Free root-volume space before `docker pull "$IMAGE"` by removing superseded
+    images of this repo (every cached tag/digest except the one $NAME currently runs)
+    plus dangling layers left by an earlier failed pull. The docker-cli helper
+    counterpart of :func:`prune_repo_images_before_pull`.
+
+    Fail-safe: if the repo or the running image id can't be resolved, nothing is
+    removed. Never aborts the upgrade — every step is guarded even though `set -eu`
+    is active. Runs before `docker rm -f "$NAME"`, so $NAME is still inspectable.
+    """
+    return [
+        'echo "=== pre-pull prune: freeing space for $IMAGE ==="',
+        'PRUNE_REPO="${IMAGE%@*}"',
+        'PRUNE_REPO="${PRUNE_REPO%:*}"',
+        "RUNNING_IMG_ID=\"$(docker inspect -f '{{.Image}}' \"$NAME\" 2>/dev/null || true)\"",
+        'if [ -n "$PRUNE_REPO" ] && [ -n "$RUNNING_IMG_ID" ]; then',
+        '  for _prune_img in $(docker images --no-trunc -q "$PRUNE_REPO" 2>/dev/null | sort -u); do',
+        '    if [ "$_prune_img" != "$RUNNING_IMG_ID" ] && docker rmi -f "$_prune_img" >/dev/null 2>&1; then',
+        '      echo "pre-pull prune: removed $_prune_img"',
+        "    fi",
+        "  done",
+        "  docker image prune -f >/dev/null 2>&1 || true",
+        '  echo "pre-pull prune: done"',
+        "else",
+        '  echo "pre-pull prune: repo or running image id unresolved; skipped"',
+        "fi",
+    ]
+
+
+def _image_repo(image_ref: str) -> str:
+    """Registry path of an image ref without its tag or digest.
+
+    ``ghcr.io/org/breeze-core-engine:2.8.0``      -> ``ghcr.io/org/breeze-core-engine``
+    ``ghcr.io/org/breeze-core-engine@sha256:...`` -> ``ghcr.io/org/breeze-core-engine``
+
+    Returns ``""`` when nothing usable can be derived.
+    """
+    ref = (image_ref or "").strip()
+    ref = ref.split("@", 1)[0]
+    if ":" in ref:
+        head, _, tail = ref.rpartition(":")
+        if "/" not in tail:  # a ``:tag``, not a registry ``:port`` (which is followed by ``/``)
+            ref = head
+    return ref
+
+
+def prune_repo_images_before_pull(
+    client: Any, *, image_ref: str, container_name: str
+) -> None:
+    """Reclaim root-volume space before an upgrade pull.
+
+    Removes every locally cached image of the target repository *except* the one the
+    deployment container is currently running, then clears dangling layers left by an
+    earlier failed pull. Companion to :func:`_prune_docker_after_upgrade`, which only
+    runs *after* a successful recreate and never drops a superseded *tagged* release —
+    so on the 16 GiB root volume, old ``:2.7.0``/``:2.7.1`` images used to accumulate
+    until a fatter new image could no longer be pulled alongside them.
+
+    Best-effort and fail-safe: if the running image cannot be identified nothing is
+    removed (deleting the image we depend on is worse than a tight disk), and any
+    Docker error is logged rather than raised — a full disk is the failure this
+    prevents, not a reason to abort the upgrade.
+    """
+    from docker.errors import APIError, DockerException, NotFound
+
+    repo = _image_repo(image_ref)
+    if not repo:
+        logger.warning(
+            "deployment upgrade: could not derive a repo from %r; skipping pre-pull prune",
+            image_ref,
+        )
+        return
+
+    try:
+        container = client.containers.get(container_name)
+        running_id = getattr(getattr(container, "image", None), "id", None) or (
+            (getattr(container, "attrs", None) or {}).get("Image")
+        )
+    except (NotFound, APIError, DockerException) as exc:
+        logger.warning(
+            "deployment upgrade: running image for %s unresolved (%s); skipping pre-pull "
+            "image prune so an in-use image is never removed",
+            container_name,
+            exc,
+        )
+        return
+    if not running_id:
+        logger.warning(
+            "deployment upgrade: running image id empty for %s; skipping pre-pull image prune",
+            container_name,
+        )
+        return
+
+    try:
+        images = list(client.images.list())
+    except Exception as exc:  # noqa: BLE001 — opportunistic cleanup must never break an upgrade
+        logger.warning("deployment upgrade: could not list images for pre-pull prune: %s", exc)
+        images = []
+
+    removed = 0
+    reclaimed = 0
+    for image in images:
+        image_id = getattr(image, "id", None)
+        if not image_id or image_id == running_id:
+            continue
+        tags = list(getattr(image, "tags", None) or [])
+        digests = list((getattr(image, "attrs", None) or {}).get("RepoDigests") or [])
+        belongs = any(t.startswith(f"{repo}:") for t in tags) or any(
+            d.startswith(f"{repo}@") for d in digests
+        )
+        if not belongs:
+            continue
+        size = int((getattr(image, "attrs", None) or {}).get("Size") or 0)
+        label = (tags or digests or [image_id])[0]
+        try:
+            client.images.remove(image_id, force=True)
+            removed += 1
+            reclaimed += size
+            logger.info(
+                "deployment upgrade: pre-pull prune removed %s (%s)",
+                label,
+                _format_bytes_reclaimed(size),
+            )
+        except (APIError, DockerException) as exc:
+            logger.warning(
+                "deployment upgrade: pre-pull prune could not remove %s: %s", label, exc
+            )
+
+    try:
+        pruned = client.images.prune(filters={"dangling": True})
+        reclaimed += int((pruned or {}).get("SpaceReclaimed") or 0)
+    except (APIError, DockerException) as exc:
+        logger.warning("deployment upgrade: pre-pull dangling image prune failed: %s", exc)
+
+    logger.info(
+        "deployment upgrade: pre-pull prune complete for %s (%d image(s) removed, ~%s reclaimed)",
+        repo,
+        removed,
+        _format_bytes_reclaimed(reclaimed),
+    )
+
+
 def _format_bytes_reclaimed(n: int | float | None) -> str:
     """Human-readable byte size (similar to docker prune CLI output)."""
     try:
@@ -523,6 +665,7 @@ def upgrade_shell_script(
             'echo "=== breeze upgrade $(date -Iseconds 2>/dev/null || date) image=$IMAGE container=$NAME ==="',
             f"test -f \"$ENV_FILE\" || {{ echo \"ERROR: env file missing: $ENV_FILE\"; exit 1; }}",
             *_redis_sidecar_shell_lines(),
+            *_pre_pull_prune_shell_lines(),
             f"docker pull \"$IMAGE\"",
             "docker rm -f \"$NAME\" 2>/dev/null || true",
             "if docker ps -a --format '{{.Names}}' | grep -Fxq \"$NAME\"; then",
@@ -634,6 +777,10 @@ def recreate_deployment_container(client: Any, *, image: str, container_name: st
     env_file = deployment_env_file_path()
     data_host = deployment_data_host_path()
     host_port = deployment_publish_port()
+
+    # Before the old container is stopped (while its image is still identifiable),
+    # drop superseded images of this repo so the new one has room on the root volume.
+    prune_repo_images_before_pull(client, image_ref=image, container_name=container_name)
 
     ensure_redis_sidecar_sdk(client)
     environment = ensure_redis_url_in_env(

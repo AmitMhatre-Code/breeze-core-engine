@@ -106,6 +106,7 @@ def _resolve_upgrade_image(target_tag: str | None) -> str | None:
 def execute_upgrade(target_tag: str | None) -> None:
     """Pull target image and recreate the deployment container with the host .env file."""
     from icici_breeze_backend.app.services.deployment_container_upgrade import (
+        prune_repo_images_before_pull,
         schedule_recreate_via_helper,
     )
 
@@ -128,6 +129,14 @@ def execute_upgrade(target_tag: str | None) -> None:
     except DockerException as exc:
         logger.warning("portal heartbeat upgrade: docker connection failed: %s", exc)
         return
+
+    # Free root-volume space first: drop superseded images of this repo so a fatter
+    # new image can be pulled alongside the running one. Best-effort — never blocks
+    # the upgrade (an unguarded 8→16 GiB root still fills once a few tags accumulate).
+    try:
+        prune_repo_images_before_pull(client, image_ref=image, container_name=container_name)
+    except Exception as exc:  # noqa: BLE001 — cleanup must never abort an upgrade
+        logger.warning("portal heartbeat upgrade: pre-pull prune failed: %s", exc)
 
     try:
         logger.info("portal heartbeat upgrade: pulling %s", image)
