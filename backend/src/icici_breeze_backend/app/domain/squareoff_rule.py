@@ -36,6 +36,9 @@ class ArmSquareOffRuleRequest(BaseModel):
     stop_loss_premium_pct: int = Field(
         ..., ge=1, le=20, description="% above/below LTP for the stop-loss exit limit order"
     )
+    # NOTE: `target_option_price` is intentionally NOT on this request model. It is set only
+    # by the Expiry-Day Index Writer bot, which arms through the repository rather than this
+    # route, so there is no way for the manual PB/SL screen to reach it.
 
 
 class SquareOffRuleLegResult(BaseModel):
@@ -103,6 +106,10 @@ class SquareOffRuleRecord(BaseModel):
     loss_limit_pnl: float
     target_premium_pct: int
     stop_loss_premium_pct: int
+    target_option_price: Optional[float] = None
+    """Bot-only: book when the option itself trades at or below this price. Set by the
+    Expiry-Day Index Writer, never by the manual PB/SL screen, and never derived from
+    `profit_target_pnl` -- see the migration for why the two are not interchangeable."""
     status: SquareOffRuleStatus
     leg_results: Optional[List[SquareOffRuleLegResult]] = None
     live_legs: Optional[List[SquareOffRuleLiveLeg]] = None

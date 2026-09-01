@@ -392,12 +392,27 @@ class MockBreezeSdk:
         def _is(leg, prefix):
             return str(leg.get("action", "")).strip().lower().startswith(prefix)
 
+        def _notional_per_share(leg):
+            """SPAN scales with the underlying's value, so a flat per-share figure cannot
+            serve both a 75-share NIFTY lot and a 14,100-share SAIL lot -- the latter came
+            out at tens of lakhs per lot. Price off real spot where the bhavcopy has it,
+            else the strike, which is close enough for the OTM strikes bots actually write."""
+            spot = resolve_underlying_spot(str(leg.get("stock_code") or ""))
+            if spot and spot > 0:
+                return float(spot)
+            try:
+                return abs(float(leg.get("strike_price", 0) or 0))
+            except (TypeError, ValueError):
+                return 0.0
+
+        # ~8% of notional: lands near real SPAN for both an index lot and a stock lot.
+        span_rate = 0.08
         sells = [l for l in legs if _is(l, "s")]
         buys = [l for l in legs if _is(l, "b")]
-        naked = 1000.0 * sum(_qty(l) for l in sells)
+        naked = sum(_qty(l) * _notional_per_share(l) * span_rate for l in sells)
         rights = {str(l.get("right", "")).strip().lower()[:1] for l in sells}
         net_factor = 0.65 if {"c", "p"} <= rights else 1.0  # strangle/condor offset
-        hedge = 600.0 * sum(_qty(l) for l in buys)
+        hedge = sum(_qty(l) * _notional_per_share(l) * span_rate * 0.6 for l in buys)
         span = max(0.0, naked * net_factor - hedge)
         return {
             "Status": 200,
@@ -416,21 +431,19 @@ class MockBreezeSdk:
         return {"Status": 200, "Success": rows, "Error": None}
 
     def get_demat_holdings(self, **kwargs):
-        return {
-            "Status": 200,
-            "Success": [
-                {
-                    "stock_code": "UNITEC",
-                    "stock_ISIN": "INE694A01020",
-                    "quantity": "1",
-                    "demat_avail_quantity": "0",
-                }
-            ],
-            "Error": None,
-        }
+        """Faithful to ICICI: pledged quantities come back as 0. Not a holdings source --
+        see `fx.mock_demat_holding_rows` and use `get_portfolio_holdings` instead."""
+        return {"Status": 200, "Success": fx.mock_demat_holding_rows(), "Error": None}
 
     def get_portfolio_holdings(self, **kwargs):
-        return {"Status": 200, "Success": [], "Error": None}
+        return {
+            "Status": 200,
+            "Success": fx.mock_portfolio_holding_rows(
+                exchange_code=kwargs.get("exchange_code") or "",
+                stock_code=kwargs.get("stock_code") or "",
+            ),
+            "Error": None,
+        }
 
     def modify_order(self, **kwargs):
         return {

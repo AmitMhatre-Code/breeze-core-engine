@@ -168,6 +168,38 @@ const nextConfig = {
         destination: `${backendUpstream}/vertical-spread/data`,
       },
       {
+        source: "/bots/scan",
+        destination: `${backendUpstream}/bots/scan`,
+      },
+      {
+        source: "/bots/proposal/approve",
+        destination: `${backendUpstream}/bots/proposal/approve`,
+      },
+      {
+        source: "/bots/list",
+        destination: `${backendUpstream}/bots/list`,
+      },
+      {
+        source: "/bots/config",
+        destination: `${backendUpstream}/bots/config`,
+      },
+      {
+        source: "/bots/runs",
+        destination: `${backendUpstream}/bots/runs`,
+      },
+      {
+        source: "/bots/scrip-prefs",
+        destination: `${backendUpstream}/bots/scrip-prefs`,
+      },
+      {
+        source: "/bots/proposal",
+        destination: `${backendUpstream}/bots/proposal`,
+      },
+      {
+        source: "/bots/proposal/reject",
+        destination: `${backendUpstream}/bots/proposal/reject`,
+      },
+      {
         source: "/uncovered-shorts/data",
         destination: `${backendUpstream}/uncovered-shorts/data`,
       },

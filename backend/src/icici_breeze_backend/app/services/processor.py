@@ -2384,6 +2384,98 @@ class processor():
 
         return valid_hedge
 
+    def get_holdings(self, user_id):
+        """Equity holdings, with pledged quantity resolved.
+
+        Two broker calls, because neither alone is sufficient:
+          * `get_portfolio_holdings` reports the FULL holding (pledged included) but carries
+            no marker for what is pledged.
+          * `get_demat_holdings` reports 0 for pledged shares.
+
+        So `pledged = portfolio_qty - demat_qty`. Coverage sizing must use the portfolio
+        quantity -- sizing off demat silently undercounts every pledged scrip -- while the
+        pledged figure is surfaced so the user can see the settlement-timing obligation it
+        implies (pledged stock must be unpledged before it can be delivered on assignment).
+
+        Rows come back in the ICICI ShortName namespace (RELIND, not RELIANCE), the same
+        namespace as scrip_master. See docs/bots-mvp-plan.md section 5a.
+        """
+        breeze = self.get_session_breeze(user_id)
+        if breeze is None:
+            _logger.warning("get_holdings: no session for user_id=%s", user_id)
+            return {
+                "Status": 400,
+                "Error": "Unable to connect to broker. Please log out and log back in.",
+                "Success": None,
+            }
+        full_secret, cred_data = self._get_full_secret_for_user(user_id)
+        if full_secret is None and getattr(cfg, "ICICI_BROKER_MODE", "live") != "mock":
+            return {
+                "Status": cred_data.get("Status", 400),
+                "Error": cred_data.get("Error", "Could not fetch credentials"),
+                "Success": None,
+            }
+        try:
+            portfolio = breeze.get_portfolio_holdings(exchange_code=cfg.NSE)
+            demat = breeze.get_demat_holdings()
+        except Exception as e:
+            _logger.warning("get_holdings: exception user_id=%s: %s", user_id, e, exc_info=True)
+            return {
+                "Status": 400,
+                "Error": "Unable to fetch holdings. Please try again or re-login.",
+                "Success": None,
+            }
+        if not isinstance(portfolio, dict) or portfolio.get("Status") != 200:
+            return {
+                "Status": (portfolio or {}).get("Status", 400) if isinstance(portfolio, dict) else 400,
+                "Error": (portfolio or {}).get("Error") if isinstance(portfolio, dict) else "get_portfolio_holdings failed",
+                "Success": None,
+            }
+
+        demat_qty: dict[str, int] = {}
+        if isinstance(demat, dict) and demat.get("Status") == 200:
+            for row in demat.get("Success") or []:
+                code = str((row or {}).get("stock_code") or "").strip().upper()
+                if not code:
+                    continue
+                try:
+                    demat_qty[code] = int(float(row.get("quantity") or 0))
+                except (TypeError, ValueError):
+                    continue
+        else:
+            # Demat is an enrichment, not a dependency: without it we simply cannot say how
+            # much is pledged, which is very different from saying nothing is pledged. The
+            # `pledged_quantity=None` below carries that distinction to the UI.
+            demat_qty = {}
+        demat_known = bool(demat_qty)
+
+        rows = []
+        for row in portfolio.get("Success") or []:
+            code = str((row or {}).get("stock_code") or "").strip().upper()
+            if not code:
+                continue
+            try:
+                qty = int(float(row.get("quantity") or 0))
+            except (TypeError, ValueError):
+                continue
+            if qty <= 0:
+                continue
+            pledged = None
+            if demat_known:
+                pledged = max(0, qty - int(demat_qty.get(code, 0)))
+            rows.append(
+                {
+                    "stock_code": code,
+                    "exchange_code": str(row.get("exchange_code") or cfg.NSE),
+                    "quantity": qty,
+                    "pledged_quantity": pledged,
+                    "average_price": _safe_float(row.get("average_price")),
+                    # Populated by ICICI and usable as a spot fallback.
+                    "current_market_price": _safe_float(row.get("current_market_price")),
+                }
+            )
+        return {"Status": 200, "Success": rows, "Error": None}
+
     def hedge(self,user_id,right,action,stock_code,quantity,expiry_date,strike_price,top, exchange_code: str = cfg.NFO):
         sorted_hedges = {}
         hedgeable_set = (cfg.HEDGEABLE_UNDERLYINGS or {}).get(exchange_code or "", set())

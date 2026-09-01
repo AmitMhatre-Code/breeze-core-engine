@@ -50,6 +50,11 @@ def _row_to_record(row: sqlite3.Row) -> SquareOffRuleRecord:
         loss_limit_pnl=float(d["loss_limit_pnl"]),
         target_premium_pct=int(d["target_premium_pct"]),
         stop_loss_premium_pct=int(d["stop_loss_premium_pct"]),
+        target_option_price=(
+            float(d["target_option_price"])
+            if d.get("target_option_price") is not None
+            else None
+        ),
         status=d["status"],  # type: ignore[arg-type]
         leg_results=_json_or_none(d.get("leg_results")),
         created_at=str(d["created_at"]) if d.get("created_at") else None,
@@ -65,7 +70,7 @@ def _row_to_record(row: sqlite3.Row) -> SquareOffRuleRecord:
 _SELECT_COLUMNS = (
     "id, user_id, stock_code, expiry_display, exchange_code, profit_target_pnl, "
     "loss_limit_pnl, target_premium_pct, stop_loss_premium_pct, status, leg_results, "
-    "created_at, fired_at, resolved_at, reset_reason, legs_snapshot"
+    "created_at, fired_at, resolved_at, reset_reason, legs_snapshot, target_option_price"
 )
 
 
@@ -215,6 +220,7 @@ def arm_rule(
     target_premium_pct: int,
     stop_loss_premium_pct: int,
     legs_snapshot: dict[str, int] | None = None,
+    target_option_price: float | None = None,
 ) -> SquareOffRuleRecord:
     """Arm an SG, or edit an already-`armed` one's thresholds in place.
 
@@ -246,6 +252,7 @@ def arm_rule(
                 UPDATE portfolio_squareoff_rules
                 SET profit_target_pnl = ?, loss_limit_pnl = ?, exchange_code = ?,
                     target_premium_pct = ?, stop_loss_premium_pct = ?,
+                    target_option_price = ?,
                     legs_snapshot = COALESCE(?, legs_snapshot)
                 WHERE id = ?
                 """,
@@ -255,6 +262,10 @@ def arm_rule(
                     exchange_code,
                     target_premium_pct,
                     stop_loss_premium_pct,
+                    # Set unconditionally, not COALESCEd: an edit that omits it means "no
+                    # price target", and silently keeping a stale one would leave the SG
+                    # booking at a price the caller no longer intends.
+                    target_option_price,
                     snapshot_json,
                     rule_id,
                 ),
@@ -266,8 +277,9 @@ def arm_rule(
                 INSERT INTO portfolio_squareoff_rules (
                     id, user_id, stock_code, expiry_display, exchange_code,
                     profit_target_pnl, loss_limit_pnl, target_premium_pct,
-                    stop_loss_premium_pct, status, legs_snapshot, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'armed', ?, ?)
+                    stop_loss_premium_pct, status, legs_snapshot, created_at,
+                    target_option_price
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'armed', ?, ?, ?)
                 """,
                 (
                     rule_id,
@@ -284,6 +296,7 @@ def arm_rule(
                     # before the IST switch still carry `DEFAULT CURRENT_TIMESTAMP`
                     # (UTC), and SQLite has no ALTER COLUMN to correct it in place.
                     ist_timestamp(),
+                    target_option_price,
                 ),
             )
         conn.commit()

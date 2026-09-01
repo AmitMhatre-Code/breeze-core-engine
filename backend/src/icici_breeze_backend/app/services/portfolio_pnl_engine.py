@@ -120,6 +120,7 @@ class GroupRule:
     exchange_code: str
     target_pnl: float | None
     stop_loss_pnl: float | None
+    target_option_price: float | None
     target_premium_pct: int
     stop_loss_premium_pct: int
 
@@ -209,9 +210,17 @@ def set_group_rule(
     stop_loss_pnl: float | None = None,
     target_premium_pct: int = 1,
     stop_loss_premium_pct: int = 1,
+    target_option_price: float | None = None,
 ) -> None:
     """Arm (or re-arm) a profit/loss rule for one (stock_code, expiry_display)
-    group. Called both from the arm route and from startup hydration."""
+    group. Called both from the arm route and from startup hydration.
+
+    `target_option_price` is the bot-only price target: book when the option itself trades
+    at or below this. It is evaluated against the per-leg LTP the engine already computes,
+    NOT converted into a rupee P&L -- `_evaluate_user_pnl` derives P&L from the broker's
+    `average_price`, so a conversion would drift from the price the caller asked for
+    whenever that differs from the actual fill.
+    """
     rule = GroupRule(
         rule_id=rule_id,
         user_id=user_id,
@@ -220,6 +229,7 @@ def set_group_rule(
         exchange_code=exchange_code,
         target_pnl=target_pnl,
         stop_loss_pnl=stop_loss_pnl,
+        target_option_price=target_option_price,
         target_premium_pct=target_premium_pct,
         stop_loss_premium_pct=stop_loss_premium_pct,
     )
@@ -465,6 +475,34 @@ def _check_group_drift(user_id: str, group_rule: "GroupRule") -> bool:
         return False
 
 
+def _price_target_reached(
+    group_rule: "GroupRule",
+    matching: list[dict[str, Any]],
+    legs_by_key: dict[str, PositionLeg],
+) -> bool:
+    """True when every SHORT leg in the group trades at or below the rule's price target.
+
+    Only short legs count: the target means "buy this back cheaply", which is meaningless
+    for a leg we are long. Requiring *every* short leg to be at or below the target is the
+    honest generalisation of "exit at 10 paise" to more than one leg — booking a two-leg
+    group because one side collapsed would leave the other side naked, which is the
+    opposite of what a price target is for.
+    """
+    target = group_rule.target_option_price
+    if target is None:
+        return False
+    shorts = 0
+    for row in matching:
+        leg = legs_by_key.get(row["scrip_key"])
+        if leg is None or leg.action != cfg.SELL:
+            continue
+        shorts += 1
+        ltp = row.get("ltp")
+        if ltp is None or float(ltp) > float(target):
+            return False
+    return shorts > 0
+
+
 def _evaluate_rules(snapshot: dict[str, Any], legs_by_key: dict[str, PositionLeg]) -> None:
     user_id = snapshot["user_id"]
     for leg_result in snapshot["legs"]:
@@ -512,7 +550,9 @@ def _evaluate_rules(snapshot: dict[str, Any], legs_by_key: dict[str, PositionLeg
             continue
         group_total = sum(r["pnl"] for r in matching)
         reason: str | None = None
-        if group_rule.target_pnl is not None and group_total >= group_rule.target_pnl:
+        if _price_target_reached(group_rule, matching, legs_by_key):
+            reason = "group_target_hit"
+        elif group_rule.target_pnl is not None and group_total >= group_rule.target_pnl:
             reason = "group_target_hit"
         elif group_rule.stop_loss_pnl is not None and group_total <= -abs(group_rule.stop_loss_pnl):
             reason = "group_stop_loss_hit"
