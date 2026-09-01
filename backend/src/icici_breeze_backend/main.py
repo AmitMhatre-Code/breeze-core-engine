@@ -237,6 +237,16 @@ def _ensure_app_database() -> None:
             )
 
             ensure_broker_session_table(db_path)
+            from icici_breeze_backend.app.db.bots_migrate import ensure_bots_tables
+
+            ensure_bots_tables(db_path)
+            # Single backend process per deployment, so any run still marked `running` at
+            # startup is definitionally stale -- nothing else could be working on it.
+            from icici_breeze_backend.app.repositories import bots as _bots_repo
+
+            _reaped = _bots_repo.reap_stale_runs()
+            if _reaped:
+                _logger.info("Closed %d interrupted bot run(s) from a previous process.", _reaped)
             # Last: every table above must exist before their stamps can be shifted.
             from icici_breeze_backend.app.db.ist_timestamp_backfill import (
                 backfill_ist_timestamps_if_needed,
@@ -439,6 +449,13 @@ def start_application():
         reset_active_chains_registry()
         bootstrap_reference_data_on_startup()
 
+        # Drives Bot 2 (docs/bots-mvp-plan.md section 4). A daemon thread here rather than a
+        # separate process: it needs the broker session cache, the WS feed and the P&L
+        # engine, all of which live in this process.
+        from icici_breeze_backend.app.services.bots.scheduler import start_bot_scheduler
+
+        start_bot_scheduler()
+
         from icici_breeze_backend.app.services.ws_quote_snapshot import (
             load_snapshot_from_sqlite,
             run_snapshot_flush_loop,
@@ -514,6 +531,9 @@ def start_application():
         chain_sweep_task: asyncio.Task = asyncio.create_task(run_active_chain_sweep_loop())
 
         yield
+        from icici_breeze_backend.app.services.bots.scheduler import stop_bot_scheduler
+
+        stop_bot_scheduler()
         for watchdog_task in (
             order_feed_watchdog_task,
             price_feed_watchdog_task,

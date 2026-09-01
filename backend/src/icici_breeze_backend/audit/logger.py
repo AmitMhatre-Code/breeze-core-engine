@@ -40,6 +40,14 @@ class OperationType(str, Enum):
     GTT_EXIT_ORDER_PLACE_FAILED = "gtt_exit_order_place_failed"
     GTT_EXIT_ORDER_CANCELLED = "gtt_exit_order_cancelled"
 
+    # Bots section (docs/bots-mvp-plan.md)
+    BOT_CONFIG_UPDATED = "bot_config_updated"
+    BOT_ENABLED = "bot_enabled"
+    BOT_DISABLED = "bot_disabled"
+    BOT_PROPOSAL_APPROVED = "bot_proposal_approved"
+    BOT_PROPOSAL_REJECTED = "bot_proposal_rejected"
+    BOT_ORDERS_PLACED = "bot_orders_placed"
+
     # Credential operations
     CREDENTIAL_ROTATION = "credential_rotation"
     CREDENTIAL_REVOCATION = "credential_revocation"

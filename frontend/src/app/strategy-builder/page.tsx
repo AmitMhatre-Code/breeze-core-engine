@@ -134,6 +134,45 @@ function parsePositiveNum(v: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/** Blocks keystrokes a bounded-percent input never wants: exponent/sign chars, and a second decimal point. */
+function blockDisallowedNumericKeys(e: React.KeyboardEvent<HTMLInputElement>) {
+  if (e.key === "e" || e.key === "E" || e.key === "+" || e.key === "-") {
+    e.preventDefault();
+    return;
+  }
+  if (e.key === "." && e.currentTarget.value.includes(".")) {
+    e.preventDefault();
+  }
+}
+
+/**
+ * onChange handler for a bounded-percent <input type="number">: accepts an edit only if it keeps
+ * the value within `maxDecimals` decimal places and under `max` (exclusive or inclusive). A
+ * rejected edit is reverted on the DOM node directly (via `ref`) — since the last-accepted value
+ * is already the current React state, no re-render would otherwise happen to undo it.
+ */
+function handleBoundedPercentChange(
+  e: React.ChangeEvent<HTMLInputElement>,
+  ref: React.RefObject<HTMLInputElement | null>,
+  current: string,
+  setValue: (v: string) => void,
+  { maxDecimals, max, maxExclusive }: { maxDecimals: number; max: number; maxExclusive: boolean },
+) {
+  const next = e.target.value;
+  if (next === "") {
+    setValue(next);
+    return;
+  }
+  const decimals = next.includes(".") ? next.split(".")[1].length : 0;
+  const n = parseFloat(next);
+  const overMax = Number.isFinite(n) && (maxExclusive ? n >= max : n > max);
+  if (decimals > maxDecimals || overMax) {
+    if (ref.current) ref.current.value = current;
+    return;
+  }
+  setValue(next);
+}
+
 function parseNum(raw: unknown): number {
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
   if (typeof raw === "string") {
@@ -182,9 +221,11 @@ export default function StrategyBuilderPage() {
   const [stockCode, setStockCode] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [minPopPct, setMinPopPct] = useState(String(DEFAULT_MIN_POP_PCT));
+  const minPopInputRef = useRef<HTMLInputElement>(null);
   const [minAnnReturnPct, setMinAnnReturnPct] = useState(
     String(DEFAULT_MIN_ANN_RETURN_PCT),
   );
+  const minAnnReturnInputRef = useRef<HTMLInputElement>(null);
   const [marginLacs, setMarginLacs] = useState("");
   const [maxLossLacs, setMaxLossLacs] = useState("");
   const [provisionElm, setProvisionElm] = useState(false);
@@ -323,12 +364,15 @@ export default function StrategyBuilderPage() {
   const minPopPctNum = (() => {
     const n = parseFloat(minPopPct.replace(/,/g, ""));
     if (!Number.isFinite(n)) return null;
-    return Math.round(Math.min(99.9, Math.max(1, n)) * 10) / 10;
+    const rounded = Math.round(n * 10) / 10;
+    if (rounded < 1 || rounded >= 100) return null;
+    return rounded;
   })();
   const minAnnReturnPctNum = (() => {
     const n = parseFloat(minAnnReturnPct.replace(/,/g, ""));
     if (!Number.isFinite(n)) return null;
-    return Math.min(100, Math.max(0, n));
+    if (n < 0 || n > 100) return null;
+    return n;
   })();
 
   useEffect(() => {
@@ -916,10 +960,20 @@ export default function StrategyBuilderPage() {
                             {" (%)"}
                           </span>
                           <input
+                            ref={minPopInputRef}
                             type="number"
                             className={`${sb.input} !w-[9.5rem] max-w-full`}
                             value={minPopPct}
-                            onChange={(e) => setMinPopPct(e.target.value)}
+                            onChange={(e) =>
+                              handleBoundedPercentChange(
+                                e,
+                                minPopInputRef,
+                                minPopPct,
+                                setMinPopPct,
+                                { maxDecimals: 1, max: 100, maxExclusive: true },
+                              )
+                            }
+                            onKeyDown={blockDisallowedNumericKeys}
                             min={1}
                             max={99.9}
                             step={0.1}
@@ -940,10 +994,20 @@ export default function StrategyBuilderPage() {
                             <FieldHint text={MIN_ANN_RETURN_HINT} />
                           </span>
                           <input
+                            ref={minAnnReturnInputRef}
                             type="number"
                             className={`${sb.input} !w-[9.5rem] max-w-full`}
                             value={minAnnReturnPct}
-                            onChange={(e) => setMinAnnReturnPct(e.target.value)}
+                            onChange={(e) =>
+                              handleBoundedPercentChange(
+                                e,
+                                minAnnReturnInputRef,
+                                minAnnReturnPct,
+                                setMinAnnReturnPct,
+                                { maxDecimals: 2, max: 100, maxExclusive: false },
+                              )
+                            }
+                            onKeyDown={blockDisallowedNumericKeys}
                             min={0}
                             max={100}
                             step={0.5}

@@ -163,6 +163,9 @@ async def arm_rule(
         stop_loss_pnl=body.loss_limit_pnl,
         target_premium_pct=body.target_premium_pct,
         stop_loss_premium_pct=body.stop_loss_premium_pct,
+        # Always None from this route -- the manual screen has no price target. Passed from
+        # the record rather than hardcoded so the two never drift apart.
+        target_option_price=record.target_option_price,
     )
     AuditLogger(None).log_operation(
         ctx.user_id,

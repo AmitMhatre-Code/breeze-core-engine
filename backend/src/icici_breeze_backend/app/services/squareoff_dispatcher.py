@@ -146,6 +146,11 @@ def hydrate_group_rules_on_startup() -> None:
                 stop_loss_pnl=float(row["loss_limit_pnl"]),
                 target_premium_pct=int(row["target_premium_pct"]),
                 stop_loss_premium_pct=int(row["stop_loss_premium_pct"]),
+                target_option_price=(
+                    float(row["target_option_price"])
+                    if row.get("target_option_price") is not None
+                    else None
+                ),
             )
         rule = repo.get_rule(str(row["id"]))
         if rule is not None:

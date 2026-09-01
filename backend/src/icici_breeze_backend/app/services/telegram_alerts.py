@@ -320,3 +320,22 @@ def notify_squareoff_reset(user_id: str, rule: Any, reason: str, orphans: list[A
     if not status["alerts_enabled"] or not status["telegram_chat_id"]:
         return
     _send_async(status["telegram_chat_id"], _format_reset_message(rule, reason, orphans or []))
+
+
+def notify_bot_needs_login(user_id: str, text: str) -> None:
+    """Nag the user that an armed bot cannot trade without a broker session.
+
+    Sent from the deployment itself, so it only reaches the user while the app is running.
+    The portal-side reminder (`squareoff_watch`) is the complementary path that survives a
+    powered-off deployment; the two are deliberately separate rather than duplicated here.
+    """
+    from icici_breeze_backend.app.repositories.user_telegram import get_status
+
+    try:
+        status = get_status(user_id)
+    except Exception:  # noqa: BLE001 -- a nag must never break the scheduler tick
+        logger.warning("bot login nag: could not read telegram status", exc_info=True)
+        return
+    if not status.get("alerts_enabled") or not status.get("telegram_chat_id"):
+        return
+    _send_async(status["telegram_chat_id"], text)

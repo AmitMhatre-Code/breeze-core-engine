@@ -66,6 +66,17 @@ def ensure_squareoff_rules_table(db_path: str) -> None:
             conn.execute("ALTER TABLE portfolio_squareoff_rules ADD COLUMN reset_reason TEXT")
         if "resolved_at" not in cols:
             conn.execute("ALTER TABLE portfolio_squareoff_rules ADD COLUMN resolved_at TIMESTAMP")
+        if "target_option_price" not in cols:
+            # Bot-only (docs/bots-mvp-plan.md section 4). An absolute option price to book at
+            # -- "exit when this trades at or below Rs 0.10" -- which is NOT the same thing as
+            # `profit_target_pnl` and must not be converted into one: the engine derives P&L
+            # from the BROKER's average_price, so a partial fill or a broker average that
+            # folds in charges would silently move the trigger off the price the user asked
+            # for. NULL on every manually-armed rule, which keeps the manual PB/SL feature
+            # behaving exactly as before.
+            conn.execute(
+                "ALTER TABLE portfolio_squareoff_rules ADD COLUMN target_option_price REAL"
+            )
 
         # `fire_failed` predates the SG model: it only ever meant "placement failed", which
         # is one flavour of Reset. Fold it in so there is a single terminal-failure state.
