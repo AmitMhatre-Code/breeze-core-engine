@@ -178,6 +178,14 @@ _MOCK_EQUITY_HOLDINGS: tuple[tuple, ...] = (
 # Realized P&L only shows up on holdings that have been partly sold.
 _MOCK_BOOKED_PL = {"TCS": "710237.65", "CIPLA": "142392.31"}
 
+# Shares sitting in demat but earmarked -- a pending sale, a settlement hold -- so they are
+# NOT deliverable on assignment. A separate dict rather than another column on
+# _MOCK_EQUITY_HOLDINGS, which is unpacked positionally in several places.
+# ONGC is chosen deliberately: 5000 held is 2 lots of 2250 with a 500 remainder, and
+# blocking 2250 drops it to ONE deliverable lot -- so the blocked path changes a lot count
+# in mock rather than only a label.
+_MOCK_BLOCKED_QTY = {"ONGC": 2250}
+
 
 def mock_portfolio_holding_rows(
     exchange_code: str = "", stock_code: str = ""
@@ -231,17 +239,22 @@ def mock_demat_holding_rows() -> list[dict]:
     undersizing in production.
 
     It is still needed, though: since `get_portfolio_holdings` carries no pledge marker,
-    `portfolio_qty - demat_qty` is the ONLY way to learn what is pledged.
+    `portfolio_qty - demat_qty` is the ONLY way to learn what is pledged -- and
+    `demat_qty - demat_avail_quantity` is the only way to learn what is blocked for trade.
     """
     rows = []
     for code, _lot, qty, pledged, _avg, _ltp, _chg, _case in _MOCK_EQUITY_HOLDINGS:
-        free = max(0, qty - pledged)
+        in_demat = max(0, qty - pledged)
+        # `quantity` is what is in demat (pledged already excluded by ICICI);
+        # `demat_avail_quantity` is what is free to move within that. The gap is the
+        # blocked-for-trade quantity.
+        available = max(0, in_demat - _MOCK_BLOCKED_QTY.get(code, 0))
         rows.append(
             {
                 "stock_code": code,
                 "stock_ISIN": f"INE000{abs(hash(code)) % 10**5:05d}01",
-                "quantity": str(free),
-                "demat_avail_quantity": str(free),
+                "quantity": str(in_demat),
+                "demat_avail_quantity": str(available),
             }
         )
     return rows

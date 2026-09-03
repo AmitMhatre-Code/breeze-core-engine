@@ -10,18 +10,42 @@ export type BotType = typeof BOT_HOLDINGS_WRITER | typeof BOT_EXPIRY_INDEX_WRITE
 
 export type BotRunStatus = "running" | "completed" | "proposed" | "skipped" | "failed";
 
+/** How an unattended run commits. `auto` places straight away; `telegram` sends the priced
+ *  proposal to the linked chat and places nothing until the user taps Approve — silence
+ *  never trades. */
+export type ApprovalMode = "auto" | "telegram";
+
 export type HoldingsWriterConfig = {
   default_safety_pct_ce: number;
   default_safety_pct_pe: number;
   delivery_cash_budget: number;
   expiry_preference: "current" | "next";
   proposal_ttl_minutes: number;
+  /** Trading days, not calendar days — the bot never fires into a closed market. */
+  fire_days_before_expiry: number;
+  /** Doubles as the entry time: with a session in hand the bot fires here. */
+  nag_start_ist: string;
+  cutoff_ist: string;
+  nag_interval_minutes: number;
+  approval_mode: ApprovalMode;
+};
+
+export type IndexStrategy = "naked_ce" | "naked_pe" | "short_strangle";
+
+export const STRATEGY_LABEL: Record<IndexStrategy, string> = {
+  naked_ce: "Naked CE",
+  naked_pe: "Naked PE",
+  short_strangle: "Short strangle",
 };
 
 export type IndexWriterLeg = {
   enabled: boolean;
-  right: "call" | "put";
-  safety_pct: number;
+  /** A shortlist. With more than one entry the bot trades whichever yields the most
+   *  premium per rupee of margin — never the biggest absolute premium, which a strangle
+   *  would win every time it was shortlisted. */
+  strategies: IndexStrategy[];
+  safety_pct_ce: number;
+  safety_pct_pe: number;
   margin_pct_cap: number;
   priority: number;
 };
@@ -32,14 +56,20 @@ export type ExpiryIndexWriterConfig = {
   nag_start_ist: string;
   cutoff_ist: string;
   nag_interval_minutes: number;
+  approval_mode: ApprovalMode;
   loss_limit_premium_multiple: number;
-  profit_target_option_price: number;
+  /** Share of the premium to capture before booking. 100 means let it expire worthless —
+   *  no profit exit is armed at all, and only the stop-loss stands. */
+  profit_book_premium_pct: number;
 };
 
 export type Bot = {
   id: string;
   bot_type: BotType;
   enabled: boolean;
+  /** Cross-bot ordering. On a day both fire, the lower number sizes and places first and
+   *  the other sizes against what is left. */
+  priority: number;
   config: Record<string, unknown>;
   created_at: string | null;
   updated_at: string | null;
@@ -57,22 +87,21 @@ export type BotRun = {
   finished_at: string | null;
 };
 
-/** Display metadata. Descriptions state each bot's *constraint model*, because that is the
- *  part a user cannot infer from the name — calls are capped by stock, puts by cash. */
-export const BOT_META: Record<BotType, { title: string; blurb: string; mode: string }> = {
+/** Display metadata. Blurbs state each bot's *constraint model* — the part a user cannot
+ *  infer from the name — in one line, because on a square card every wrapped line is space
+ *  taken from the state and controls below it. */
+export const BOT_META: Record<BotType, { title: string; blurb: string }> = {
   [BOT_HOLDINGS_WRITER]: {
     title: "Holdings Option Writer",
-    blurb:
-      "Writes options against your NSE holdings. Calls are capped by the stock you hold; puts are opt-in and capped by your delivery-cash budget.",
-    mode: "Proposes — you approve before anything is placed",
+    blurb: "Calls capped by stock held, puts by delivery cash.",
   },
   [BOT_EXPIRY_INDEX_WRITER]: {
     title: "Expiry-Day Index Writer",
-    blurb:
-      "On NIFTY and SENSEX expiry days, sizes a short position against available margin and arms a stop on fill.",
-    mode: "Trades unattended within your configured caps",
+    blurb: "Sizes a short index leg against free margin, arms its stop on fill.",
   },
 };
+
+export const INDEX_LABEL: Record<string, string> = { NIFTY: "NIFTY", BSESEN: "SENSEX" };
 
 export function useBots() {
   return useQuery({
@@ -108,9 +137,51 @@ export type ProposalLeg = {
   held_quantity: number | null;
   pledged_quantity: number | null;
   existing_short_lots: number;
+  scrip_priority: number;
   selected: boolean;
   note: string | null;
+  strategy: IndexStrategy | null;
+  /** Both sides of a strangle share this, so selecting one selects both. */
+  group_key: string | null;
+  margin_yield: number | null;
 };
+
+export type ScripPref = {
+  stock_code: string;
+  ce_enabled: boolean;
+  pe_enabled: boolean;
+  /** null means "every lot the holding covers" for calls, "one lot" for puts. */
+  ce_lots: number | null;
+  pe_lots: number | null;
+  safety_pct_ce: number | null;
+  safety_pct_pe: number | null;
+  priority: number;
+};
+
+export type HoldingRow = {
+  stock_code: string;
+  /** A holding splits three ways, exhaustively: available + blocked + pledged = quantity.
+   *  Only `blocked` is excluded from call coverage — it is already earmarked elsewhere.
+   *  Pledged stock IS coverage; it just has to be unpledged before expiry to deliver. */
+  quantity: number;
+  available_quantity: number;
+  blocked_quantity: number;
+  pledged_quantity: number;
+  deliverable_quantity: number;
+  lot_size: number | null;
+  lots_held: number;
+  available_lots: number;
+  blocked_lots: number;
+  pledged_lots: number;
+  deliverable_lots: number;
+  existing_short_ce_lots: number;
+  existing_short_pe_lots: number;
+  fno_eligible: boolean;
+  ineligible_reason: string | null;
+  current_market_price: number | null;
+};
+
+export type LegEdit = { lots?: number; strike_price?: number };
 
 export type ProposalTotals = {
   premium_total: number;
@@ -182,10 +253,14 @@ export function useScan() {
 export function useApproveProposal() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { botType: BotType; legIndexes: number[] }) =>
+    mutationFn: (vars: {
+      botType: BotType;
+      legIndexes: number[];
+      edits?: Record<number, LegEdit>;
+    }) =>
       apiClient.post<ApprovalResult>(
         `/bots/proposal/approve?bot_type=${vars.botType}`,
-        { leg_indexes: vars.legIndexes },
+        { leg_indexes: vars.legIndexes, edits: vars.edits ?? {} },
       ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["bots"] });
@@ -210,14 +285,76 @@ export function useUpdateBot() {
     mutationFn: (vars: {
       botType: BotType;
       enabled?: boolean;
+      priority?: number;
       config?: Record<string, unknown>;
     }) =>
       apiClient.patch<Bot>(`/bots/config?bot_type=${vars.botType}`, {
         enabled: vars.enabled,
+        priority: vars.priority,
         config: vars.config,
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["bots"] });
     },
+  });
+}
+
+/** Live holdings for Bot 1's scrip settings. Fetched when the drawer opens rather than
+ *  cached: what the user holds changes without the bot being told, and configuring lots
+ *  against a scrip they sold last week is worse than showing nothing. */
+export function useBotHoldings(enabled: boolean) {
+  return useQuery({
+    queryKey: ["bots", "holdings"],
+    queryFn: ({ signal }) => apiClient.get<HoldingRow[]>("/bots/holdings", signal),
+    enabled,
+    staleTime: 0,
+  });
+}
+
+export function useScripPrefs(enabled: boolean) {
+  return useQuery({
+    queryKey: ["bots", "scrip-prefs"],
+    queryFn: ({ signal }) => apiClient.get<ScripPref[]>("/bots/scrip-prefs", signal),
+    enabled,
+  });
+}
+
+export function useSaveScripPrefs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (prefs: ScripPref[]) =>
+      apiClient.put<ScripPref[]>("/bots/scrip-prefs", { prefs }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["bots", "scrip-prefs"] });
+    },
+  });
+}
+
+/** Bot 2's manual run: size today's trade without placing it. */
+export function usePlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (botType: BotType) =>
+      apiClient.post<ScanResponse>(`/bots/plan?bot_type=${botType}`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["bots"] });
+    },
+  });
+}
+
+/** Re-price the proposal with the user's edits applied. Places nothing.
+ *  Margin is not linear in lot count — it comes from the broker, not multiplication — so
+ *  an edited size has to go back to the source rather than being scaled in the browser. */
+export function useReprice() {
+  return useMutation({
+    mutationFn: (vars: {
+      botType: BotType;
+      legIndexes: number[];
+      edits: Record<number, LegEdit>;
+    }) =>
+      apiClient.post<Proposal>(`/bots/proposal/reprice?bot_type=${vars.botType}`, {
+        leg_indexes: vars.legIndexes,
+        edits: vars.edits,
+      }),
   });
 }

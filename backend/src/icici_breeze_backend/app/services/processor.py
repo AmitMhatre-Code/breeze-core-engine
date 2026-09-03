@@ -2433,6 +2433,7 @@ class processor():
             }
 
         demat_qty: dict[str, int] = {}
+        demat_avail: dict[str, int] = {}
         if isinstance(demat, dict) and demat.get("Status") == 200:
             for row in demat.get("Success") or []:
                 code = str((row or {}).get("stock_code") or "").strip().upper()
@@ -2442,6 +2443,13 @@ class processor():
                     demat_qty[code] = int(float(row.get("quantity") or 0))
                 except (TypeError, ValueError):
                     continue
+                # `demat_avail_quantity` is what is genuinely free to move. The gap between
+                # it and `quantity` is stock sitting in demat but earmarked -- a pending
+                # sale, a settlement hold -- which cannot be delivered on assignment.
+                try:
+                    demat_avail[code] = int(float(row.get("demat_avail_quantity") or 0))
+                except (TypeError, ValueError):
+                    demat_avail[code] = demat_qty[code]
         else:
             # Demat is an enrichment, not a dependency: without it we simply cannot say how
             # much is pledged, which is very different from saying nothing is pledged. The
@@ -2460,15 +2468,30 @@ class processor():
                 continue
             if qty <= 0:
                 continue
-            pledged = None
+            # A holding splits three ways, exhaustively:
+            #   pledged   = portfolio - demat        (collateral; deliverable only after
+            #                                         unpledging, which takes a settlement
+            #                                         cycle -- so it counts as coverage, but
+            #                                         carries an obligation)
+            #   blocked   = demat - demat_available  (earmarked; NOT deliverable)
+            #   available = demat_available          (free)
+            # All three are None when demat could not be read: "unknown" is not "zero", and
+            # treating it as zero would silently claim stock is free to deliver.
+            pledged = blocked = available = None
             if demat_known:
-                pledged = max(0, qty - int(demat_qty.get(code, 0)))
+                in_demat = int(demat_qty.get(code, 0))
+                free = int(demat_avail.get(code, in_demat))
+                pledged = max(0, qty - in_demat)
+                blocked = max(0, in_demat - free)
+                available = max(0, qty - pledged - blocked)
             rows.append(
                 {
                     "stock_code": code,
                     "exchange_code": str(row.get("exchange_code") or cfg.NSE),
                     "quantity": qty,
                     "pledged_quantity": pledged,
+                    "blocked_quantity": blocked,
+                    "available_quantity": available,
                     "average_price": _safe_float(row.get("average_price")),
                     # Populated by ICICI and usable as a spot fallback.
                     "current_market_price": _safe_float(row.get("current_market_price")),

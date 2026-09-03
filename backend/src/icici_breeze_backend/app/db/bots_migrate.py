@@ -6,6 +6,7 @@ Four tables, one migration, because they are meaningless apart:
   bot_scrip_prefs Bot 1's per-scrip overrides (CE opt-out, PE opt-in, safety %)
   bot_runs        the shared cross-bot run log
   bot_proposals   Bot 1's propose -> approve -> place artefacts
+  bot_approval_tokens  single-use tokens backing Telegram approve/reject taps
 
 Why `bot_runs` is a first-class table rather than log lines
 -----------------------------------------------------------
@@ -127,4 +128,57 @@ def ensure_bots_tables(db_path: str) -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_bot_proposals_one_pending "
             "ON bot_proposals(user_id, bot_type) WHERE status = 'pending'"
         )
+
+        # Single-use approval tokens for the Telegram HITL path. The portal routes a
+        # callback to this deployment by token, but only this table decides whether the
+        # token is still good -- the same split as `user_telegram`'s link tokens, and for
+        # the same reason: the router must never be able to authorise a trade.
+        #
+        # `chat_id` is stored so an approval can be checked against the chat it was sent
+        # to, rather than trusting whichever chat the callback claims to come from.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_approval_tokens (
+                token TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT NOT NULL,
+                bot_type TEXT NOT NULL,
+                proposal_id TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+                expires_at TIMESTAMP NOT NULL,
+                consumed_at TIMESTAMP
+            )
+            """
+        )
+        # The claim loop asks "is anything outstanding?" on every wake, so this is the
+        # index that keeps an idle deployment's wake cheap.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bot_approval_tokens_live "
+            "ON bot_approval_tokens(consumed_at, expires_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bot_approval_tokens_proposal "
+            "ON bot_approval_tokens(proposal_id)"
+        )
+
+        # Added after the MVP shipped, so they go on as ALTERs rather than into the CREATE
+        # above -- an existing deployment already has these tables and never re-runs it.
+        _add_column(conn, "bots", "priority", "INTEGER NOT NULL DEFAULT 1")
+        _add_column(conn, "bot_scrip_prefs", "ce_lots", "INTEGER")
+        _add_column(conn, "bot_scrip_prefs", "pe_lots", "INTEGER")
+        _add_column(conn, "bot_scrip_prefs", "priority", "INTEGER NOT NULL DEFAULT 1")
         conn.commit()
+
+
+def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    """Add a column if it isn't there yet.
+
+    SQLite has no `ADD COLUMN IF NOT EXISTS`, and this migration runs on every boot, so the
+    existence check has to be explicit. `ce_lots` is deliberately nullable with no default:
+    NULL means "write every lot the holding covers", which is exactly what the bot did
+    before the column existed -- so a deployment upgrading into this keeps its behaviour
+    without a backfill.
+    """
+    cols = {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")

@@ -1,13 +1,22 @@
-"""Telegram account linking via the portal, replacing per-deployment polling.
+"""Telegram inbound via the portal, replacing per-deployment polling.
+
+Two kinds of inbound event ride the same three hops: account-linking handshakes
+(`/start <token>`) and bot approval taps (an inline button's `callback_data`).
+They share the register/claim machinery because they share the constraint that
+produced it -- one bot token, one consumer, N deployments -- and they share the
+rule that matters: the portal answers only "whose token is this", while every
+question of whether the token is still good is settled here, against this
+deployment's own database. For an approval that rule is what stops the router
+from being able to authorise a trade.
 
 Telegram allows exactly one `getUpdates` consumer per bot token, and the token
 is shared across the whole fleet, so a deployment that polls for itself either
 409s forever or steals another deployment's `/start` handshake and answers it
 from the wrong SQLite. The portal is the single consumer; this module registers
-our link tokens with it and claims the handshakes it routes back:
+our tokens with it and claims the events it routes back:
 
-  1. register  -- when a user asks for a deep link, tell the portal the token is ours
-  2. claim     -- poll for handshakes the portal has routed to us
+  1. register  -- a deep-link token, or a bot proposal's approval token, is ours
+  2. claim     -- poll for the handshakes and taps the portal has routed to us
 
 Validation stays here, not in the portal. `consume_link_token`'s single-use and
 expiry semantics live in this deployment's own database, so it is the only
@@ -105,6 +114,35 @@ async def register_link_token(token: str) -> None:
     notify_link_pending()
 
 
+def register_approval_token(token: str, ttl_seconds: int) -> bool:
+    """Tell the portal an approval token is ours, so it can route the tap back.
+
+    Synchronous because its caller is the bot scheduler, which is a daemon thread with no
+    event loop. Unlike `register_link_token` this returns a bool rather than raising: the
+    proposal has already been persisted by the time we get here, and a routing failure
+    should leave the user with an in-app proposal they can still approve, not an exception
+    that loses the run.
+    """
+    url = _portal_url("/api/public/telegram/approval-register")
+    if not url:
+        logger.warning("telegram approval register: portal not configured")
+        return False
+    try:
+        with httpx.Client(timeout=_TIMEOUT_SEC) as client:
+            resp = client.post(
+                url,
+                json={**_identity(), "token": token, "ttl_seconds": int(ttl_seconds)},
+            )
+    except httpx.HTTPError as exc:
+        logger.warning("telegram approval register failed: %s", exc)
+        return False
+    if resp.status_code >= 400:
+        logger.warning("telegram approval register failed: HTTP %s", resp.status_code)
+        return False
+    notify_link_pending()
+    return True
+
+
 async def claim_link_events() -> list[dict[str, Any]] | None:
     """Drain handshakes the portal has routed to us. None signals failure."""
     url = _portal_url("/api/public/telegram/link-claim")
@@ -150,6 +188,17 @@ def handle_link_event(event: dict[str, Any]) -> None:
     )
 
 
+def _dispatch(event: dict[str, Any]) -> None:
+    """One claimed event, on a worker thread. `kind` defaults to a link handshake so a
+    portal that predates approvals keeps working unchanged."""
+    if str(event.get("kind") or "link") == "approval":
+        from icici_breeze_backend.app.services.bots import hitl
+
+        hitl.handle_callback(event)
+        return
+    handle_link_event(event)
+
+
 async def _claim_once() -> bool:
     """Returns False if the claim itself failed, so the caller can back off."""
     events = await claim_link_events()
@@ -159,20 +208,34 @@ async def _claim_once() -> bool:
         if not isinstance(event, dict):
             continue
         try:
-            await asyncio.to_thread(handle_link_event, event)
+            await asyncio.to_thread(_dispatch, event)
         except Exception:  # noqa: BLE001 - one bad event must not kill the loop
-            logger.exception("telegram link event handling failed")
+            logger.exception("telegram inbound event handling failed")
     return True
 
 
+def _anything_outstanding() -> bool:
+    from icici_breeze_backend.app.repositories.bots import has_outstanding_approval_token
+
+    if has_outstanding_link_token():
+        return True
+    try:
+        return has_outstanding_approval_token()
+    except Exception:  # noqa: BLE001 - a bots table that isn't there yet must not stop linking
+        logger.warning("telegram inbound: approval token check failed", exc_info=True)
+        return False
+
+
 async def run_link_claim_loop() -> None:
-    logger.info("telegram link claim loop started")
+    logger.info("telegram inbound claim loop started")
     backoff = 0.0
     while True:
         await _link_pending.wait()
-        if not await asyncio.to_thread(has_outstanding_link_token):
+        if not await asyncio.to_thread(_anything_outstanding):
             # Every outstanding token was consumed or expired; sleep until the
-            # next deep link is generated instead of polling an empty queue.
+            # next deep link or proposal is generated instead of polling an empty
+            # queue. An approval token counts: a proposal awaiting a tap is
+            # exactly the state in which a claim can return something.
             _link_pending.clear()
             continue
         if await _claim_once():
@@ -185,6 +248,7 @@ async def run_link_claim_loop() -> None:
 
 __all__ = [
     "PortalLinkUnavailable",
+    "register_approval_token",
     "claim_link_events",
     "handle_link_event",
     "notify_link_pending",

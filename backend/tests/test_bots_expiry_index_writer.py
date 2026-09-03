@@ -188,14 +188,22 @@ def test_only_indices_expiring_today_are_traded():
 
 class FakeProc:
     def __init__(self, *, span_per_lot=120000.0, lot=75, bid=42.0, spot=24000.0,
-                 verified=None, place_ok=True):
+                 verified=None, place_ok=True, strangle_margin_multiple=1.6,
+                 bid_by_right=None):
         self.span_per_lot = span_per_lot
         self.lot = lot
         self.bid = bid
         self.spot = spot
         self.verified = verified
         self.place_ok = place_ok
+        # A strangle's two sides net at the exchange, so it costs less than twice a naked
+        # leg -- which is exactly what gives it a fair shot in the yield ranking.
+        self.strangle_margin_multiple = strangle_margin_multiple
+        self.bid_by_right = bid_by_right or {}
         self.placed = []
+
+    def bid_for(self, right):
+        return self.bid_by_right.get(right, self.bid)
 
     def fetch_lot_size(self, stock_code, expiry_date, exchange_code=cfg.NFO):
         return self.lot
@@ -212,6 +220,21 @@ class FakeProc:
             [],
         )
 
+    def margin_calculator(self, payload, exchange_code=cfg.NFO):
+        """Stands in for the broker's netted multi-leg call.
+
+        Both sides of a strangle arrive in ONE call, so the fake has to net them the way
+        the exchange does -- pricing them additively here would hide the very bias the
+        yield ranking exists to correct.
+        """
+        lots = max(int(row["quantity"]) for row in payload) // self.lot
+        if lots > 1 and self.verified is not None:
+            return {"Status": 200, "Success": {"span_margin_required": self.verified}}
+        span = self.span_per_lot * lots
+        if len({row["right"] for row in payload}) > 1:
+            span *= self.strangle_margin_multiple
+        return {"Status": 200, "Success": {"span_margin_required": span}}
+
     def place_order(self, user_id, product_type, stock_code, action, strike_price, right,
                     price, expiry_date, quantity, exchange_code=cfg.NFO, aggressive_limit=False):
         self.placed.append({"quantity": quantity, "price": price, "right": right})
@@ -220,7 +243,7 @@ class FakeProc:
         return {"Status": 200, "Success": {"order_id": f"OID{len(self.placed)}"}}
 
     def get_session_breeze(self, user_id):
-        return object()
+        return self
 
 
 @pytest.fixture
@@ -232,7 +255,7 @@ def patch_chain(monkeypatch):
                 "Error": None,
                 "Success": [
                     {"strike_price": s, "spot_price": proc.spot,
-                     "best_bid_price": proc.bid, "ltp": proc.bid + 1}
+                     "best_bid_price": proc.bid_for(right), "ltp": proc.bid_for(right) + 1}
                     for s in strikes
                 ],
             }
@@ -334,6 +357,37 @@ def test_a_failed_arm_is_reported_as_an_open_unprotected_position(patch_chain, m
 def test_exit_uses_a_price_target_and_a_premium_multiple(patch_chain, monkeypatch):
     captured = {}
 
+    _stub_arming(monkeypatch, captured)
+    proc = FakeProc(span_per_lot=120000.0, bid=42.0)
+    patch_chain(proc)
+    result = fire(proc, loss_limit_premium_multiple=1.5, profit_book_premium_pct=60.0)
+
+    premium = 42.0 * result.quantity
+    assert captured["loss_limit_pnl"] == pytest.approx(1.5 * premium)
+    # Profit booking is a share of the premium, expressed as a per-leg PRICE target --
+    # never converted into a rupee P&L, because the engine computes P&L from the broker's
+    # average_price, which need not equal the price the bot sold at.
+    assert captured["target_option_price"] == pytest.approx(42.0 * 0.40)
+    # And the rupee profit target is pushed out of reach so it cannot front-run it.
+    assert captured["profit_target_pnl"] > premium * 10
+
+
+def test_booking_the_whole_premium_arms_no_profit_target(monkeypatch, patch_chain):
+    """100% means "let it expire worthless", and the only honest way to express that is to
+    arm no profit exit at all -- a limit order at zero does not exist, and the tick floor
+    makes anything near it degenerate."""
+    captured = {}
+    _stub_arming(monkeypatch, captured)
+    proc = FakeProc(span_per_lot=120000.0, bid=42.0)
+    patch_chain(proc)
+    fire(proc, profit_book_premium_pct=100.0)
+
+    assert captured["target_option_price"] is None
+    # The stop-loss is still live -- expiring worthless is not the same as unprotected.
+    assert captured["loss_limit_pnl"] > 0
+
+
+def _stub_arming(monkeypatch, captured):
     def fake_arm(user_id, **kw):
         captured.update(kw)
 
@@ -358,13 +412,99 @@ def test_exit_uses_a_price_target_and_a_premium_multiple(patch_chain, monkeypatc
         "icici_breeze_backend.app.services.portfolio_pnl_engine.set_group_rule",
         lambda *a, **k: None,
     )
-    proc = FakeProc(span_per_lot=120000.0, bid=42.0)
-    patch_chain(proc)
-    result = fire(proc, loss_limit_premium_multiple=1.5, profit_target_option_price=0.05)
 
-    premium = 42.0 * result.quantity
-    assert captured["loss_limit_pnl"] == pytest.approx(1.5 * premium)
-    # The price target is passed through, never converted into a rupee P&L.
-    assert captured["target_option_price"] == 0.05
-    # And the rupee profit target is pushed out of reach so it cannot front-run it.
-    assert captured["profit_target_pnl"] > premium * 10
+
+# --- strategy shortlist ---------------------------------------------------------------
+
+
+# Spot is 24000 and the safety distance is 2%, so a shortlist that includes a call needs
+# strikes above 24480 as well as below 23520 -- the default ladder is one-sided.
+BOTH_SIDES = (23000, 23500, 24000, 24500, 25000)
+
+
+def _fire_with(proc, strategies, **cfg_kw):
+    return bot2.fire_index(
+        proc, "u1", "NIFTY",
+        expiry_display=EXPIRY,
+        config=config(
+            indices={
+                "NIFTY": IndexWriterLeg(
+                    enabled=True, strategies=strategies, safety_pct_ce=2.0,
+                    safety_pct_pe=2.0, margin_pct_cap=30.0,
+                )
+            },
+            **cfg_kw,
+        ),
+        available_margin=1_000_000.0,
+        margin_source="breeze_api",
+    )
+
+
+def test_a_single_shortlisted_strategy_is_simply_traded(patch_chain, no_arm):
+    proc = FakeProc(span_per_lot=120000.0)
+    patch_chain(proc, strikes=BOTH_SIDES)
+    result = _fire_with(proc, ["naked_ce"])
+    assert result.strategy == "naked_ce"
+    assert [leg["right"] for leg in result.legs] == ["call"]
+
+
+def test_the_better_paying_side_wins_when_both_nakeds_are_shortlisted(patch_chain, no_arm):
+    """Same margin either side, so the richer book decides."""
+    proc = FakeProc(span_per_lot=120000.0, bid_by_right={cfg.CALL: 20.0, cfg.PUT: 55.0})
+    patch_chain(proc, strikes=BOTH_SIDES)
+    result = _fire_with(proc, ["naked_ce", "naked_pe"])
+    assert result.strategy == "naked_pe"
+
+
+def test_strategies_are_ranked_by_yield_not_by_absolute_premium(patch_chain, no_arm):
+    """The load-bearing test for the whole shortlist feature.
+
+    A strangle collects both premiums, so on ABSOLUTE premium it wins every time it is
+    shortlisted -- which would silently retire the other two options the moment a user
+    ticked all three. Here the strangle collects 75 against the put's 55, and still loses,
+    because the extra 20 does not pay for the extra margin it ties up.
+    """
+    proc = FakeProc(
+        span_per_lot=120000.0,
+        bid_by_right={cfg.CALL: 20.0, cfg.PUT: 55.0},
+        strangle_margin_multiple=1.9,
+    )
+    patch_chain(proc, strikes=BOTH_SIDES)
+    result = _fire_with(proc, ["naked_ce", "naked_pe", "short_strangle"])
+
+    considered = {c["strategy"]: c for c in result.considered}
+    assert considered["short_strangle"]["premium_per_lot"] > considered["naked_pe"]["premium_per_lot"]
+    assert result.strategy == "naked_pe"
+
+
+def test_a_strangle_wins_when_netting_makes_it_pay(patch_chain, no_arm):
+    proc = FakeProc(
+        span_per_lot=120000.0,
+        bid_by_right={cfg.CALL: 40.0, cfg.PUT: 55.0},
+        strangle_margin_multiple=1.15,
+    )
+    patch_chain(proc, strikes=BOTH_SIDES)
+    result = _fire_with(proc, ["naked_ce", "naked_pe", "short_strangle"])
+    assert result.strategy == "short_strangle"
+    assert [leg["right"] for leg in result.legs] == ["call", "put"]
+    assert len(proc.placed) == 2, "both sides of a strangle must be placed"
+
+
+def test_a_strangle_books_only_when_both_legs_are_cheap(monkeypatch, patch_chain):
+    """One price target for the group, taken from the cheaper leg.
+
+    Booking the group because one side collapsed would leave the other side naked, which is
+    strictly worse than holding both.
+    """
+    captured = {}
+    _stub_arming(monkeypatch, captured)
+    proc = FakeProc(
+        span_per_lot=120000.0,
+        bid_by_right={cfg.CALL: 40.0, cfg.PUT: 60.0},
+        strangle_margin_multiple=1.1,
+    )
+    patch_chain(proc, strikes=BOTH_SIDES)
+    result = _fire_with(proc, ["short_strangle"], profit_book_premium_pct=50.0)
+
+    assert result.strategy == "short_strangle"
+    assert captured["target_option_price"] == pytest.approx(20.0)  # min(40, 60) x 50%

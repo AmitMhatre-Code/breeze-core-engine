@@ -12,6 +12,7 @@ propagate into the order-execution path.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import httpx
 
@@ -32,14 +33,21 @@ def _bot_url(method: str) -> str:
     return f"{_API_BASE}/bot{token}/{method}"
 
 
-def send_message_sync(chat_id: str, text: str) -> bool:
-    """Synchronous send — deliberately not async, see telegram_alerts.py for why."""
+def send_message_sync(
+    chat_id: str, text: str, *, reply_markup: dict[str, Any] | None = None
+) -> bool:
+    """Synchronous send — deliberately not async, see telegram_alerts.py for why.
+
+    `reply_markup` carries an inline keyboard for the bot-proposal approval message. The
+    buttons' `callback_data` is a single-use token minted by `repositories/bots`; nothing
+    here interprets it, and nothing here can authorise a trade.
+    """
+    payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
         with httpx.Client(timeout=_SEND_TIMEOUT_SEC) as client:
-            resp = client.post(
-                _bot_url("sendMessage"),
-                json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-            )
+            resp = client.post(_bot_url("sendMessage"), json=payload)
             resp.raise_for_status()
             body = resp.json()
             return isinstance(body, dict) and bool(body.get("ok"))

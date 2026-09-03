@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 BotType = Literal["holdings_writer", "expiry_index_writer"]
 
@@ -23,6 +23,12 @@ BotRunTrigger = Literal["schedule", "manual", "session_arrival"]
 BotRunStatus = Literal["running", "completed", "proposed", "skipped", "failed"]
 
 ProposalStatus = Literal["pending", "approved", "rejected", "expired", "superseded", "placed"]
+
+# How an unattended run commits. `auto` places straight away; `telegram` sends the priced
+# proposal to the user's linked chat and places nothing until they tap Approve. Silence
+# never trades -- which is the whole point, so the default stays `auto` and an upgraded
+# deployment keeps the behaviour it already had.
+ApprovalMode = Literal["auto", "telegram"]
 
 
 class ReasonCode:
@@ -48,6 +54,16 @@ class ReasonCode:
     ALREADY_RAN_TODAY = "already_ran_today"
     BOT_DISABLED = "bot_disabled"
     TRADING_READ_ONLY = "trading_read_only"
+    NOT_A_FIRING_DAY = "not_a_firing_day"
+    MARGIN_EXHAUSTED = "margin_exhausted"
+    # Semi-autonomous (`approval_mode="telegram"`) outcomes. A proposal sent and still
+    # unanswered is deliberately NOT a terminal state -- see `has_committed_run_today`.
+    AWAITING_APPROVAL = "awaiting_approval"
+    APPROVAL_REJECTED = "approval_rejected"
+    APPROVAL_TIMEOUT = "approval_timeout"
+    # Asked to ask, but with no way of asking: Telegram unlinked or alerts switched off.
+    # A bot that cannot reach the user must say so rather than look like a quiet day.
+    APPROVAL_UNREACHABLE = "approval_unreachable"
 
     # Failures -- something went wrong
     INTERRUPTED = "interrupted"
@@ -66,7 +82,14 @@ class ReasonCode:
 
 
 class HoldingsWriterConfig(BaseModel):
-    """Bot 1 config. CE is capped by holdings; PE is capped by delivery cash."""
+    """Bot 1 config. CE is capped by holdings; PE is capped by delivery cash.
+
+    The clock fields mirror Bot 2's, deliberately: on its firing day this bot has the same
+    problem -- the ICICI session lapses overnight, so an unattended entry depends on a human
+    having logged in. `nag_start_ist` doubles as the entry time (there is no separate one),
+    so with a session in hand it fires at that moment, and without one it nags until the
+    session appears or `cutoff_ist` ends the day.
+    """
 
     default_safety_pct_ce: float = Field(
         5.0, gt=0, le=50, description="Default distance above spot for written calls"
@@ -75,7 +98,8 @@ class HoldingsWriterConfig(BaseModel):
         5.0, gt=0, le=50, description="Default distance below spot for written puts"
     )
     # The PE side has no natural cap from holdings -- assignment buys shares, so the real
-    # constraint is cash. One global ceiling, allocated manually at approval time.
+    # constraint is cash. One global ceiling; in manual mode the user allocates it across
+    # scrips, and in autonomous mode per-scrip priority spends it in order.
     delivery_cash_budget: float = Field(
         0.0, ge=0, description="Rupee ceiling on total PE assignment exposure"
     )
@@ -84,15 +108,50 @@ class HoldingsWriterConfig(BaseModel):
         15, ge=1, le=240, description="How long a priced proposal stays valid"
     )
 
+    # --- autonomous firing -------------------------------------------------------------
+    # Counted in TRADING days against the monthly stock-option expiry, not calendar days:
+    # calendar arithmetic drifts onto weekends and holidays and would fire into a closed
+    # market. 0 means the expiry day itself.
+    fire_days_before_expiry: int = Field(
+        3, ge=0, le=30, description="Trading days before expiry on which to fire"
+    )
+    nag_start_ist: str = Field("09:20", pattern=r"^[0-2]\d:[0-5]\d$")
+    cutoff_ist: str = Field("12:00", pattern=r"^[0-2]\d:[0-5]\d$")
+    nag_interval_minutes: int = Field(15, ge=5, le=120)
+    # `nag_interval_minutes` doubles as the re-proposal cadence in `telegram` mode: an
+    # unanswered proposal goes stale long before `cutoff_ist`, so it is re-sent at fresh
+    # prices rather than surrendering the rest of the window on one missed message.
+    approval_mode: ApprovalMode = "auto"
+
 
 class ScripPref(BaseModel):
-    """Per-scrip deviation from policy. Absence of a row means policy defaults apply."""
+    """Per-scrip deviation from policy. Absence of a row means policy defaults apply.
+
+    Both lot fields are None by default, meaning "whatever the bot did before this field
+    existed" -- every covered lot for calls, one lot for puts -- so a deployment upgrading
+    into this keeps its behaviour without a backfill. A number is a *target*, and for calls
+    it is still hard-capped by coverage: asking for 5 lots on a 3-lot holding writes 3 and
+    says so, rather than refusing outright. 0 means write nothing on that side.
+    """
 
     stock_code: str
     ce_enabled: bool = True
     pe_enabled: bool = False
+    ce_lots: Optional[int] = Field(None, ge=0, le=999)
+    pe_lots: Optional[int] = Field(None, ge=0, le=999)
     safety_pct_ce: Optional[float] = Field(None, gt=0, le=50)
     safety_pct_pe: Optional[float] = Field(None, gt=0, le=50)
+    # Order in which scrips are funded when free margin or the delivery budget cannot cover
+    # everything. Lower goes first.
+    priority: int = Field(1, ge=1, le=999)
+
+    @property
+    def writes_ce(self) -> bool:
+        return self.ce_enabled and (self.ce_lots is None or self.ce_lots > 0)
+
+    @property
+    def writes_pe(self) -> bool:
+        return self.pe_enabled and (self.pe_lots is None or self.pe_lots > 0)
 
 
 # --------------------------------------------------------------------------------------
@@ -100,18 +159,64 @@ class ScripPref(BaseModel):
 # --------------------------------------------------------------------------------------
 
 
+IndexStrategy = Literal["naked_ce", "naked_pe", "short_strangle"]
+
+
 class IndexWriterLeg(BaseModel):
     """Per-index settings. NIFTY and SENSEX are configured independently so that a
     same-day expiry collision is bounded by construction rather than arbitrated at
-    runtime; `priority` only breaks the tie on the day they do collide."""
+    runtime; `priority` only breaks the tie on the day they do collide.
+
+    `strategies` is a shortlist, not a single choice: with more than one entry the bot
+    prices all of them and trades whichever yields the most premium **per rupee of margin**.
+    Ranking on absolute premium instead would be no contest at all -- a strangle is both
+    legs, so it always collects more than either alone, and shortlisting it would silently
+    retire the other two options.
+    """
 
     enabled: bool = False
-    right: Literal["call", "put"] = "put"
-    safety_pct: float = Field(2.0, gt=0, le=50)
+    strategies: List[IndexStrategy] = Field(default_factory=lambda: ["naked_pe"])
+    # Separate distances per side: index skew means the same distance rarely fetches
+    # comparable premium on a call and a put.
+    safety_pct_ce: float = Field(2.0, gt=0, le=50)
+    safety_pct_pe: float = Field(2.0, gt=0, le=50)
     margin_pct_cap: float = Field(
         30.0, gt=0, le=100, description="Share of free margin this index may consume"
     )
     priority: int = Field(1, ge=1, le=9, description="Lower fires first on a collision")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_shape(cls, data: Any) -> Any:
+        """Carry a pre-rework config forward instead of silently resetting it.
+
+        Configs written before this change carry `right` and a single `safety_pct`. The
+        repository validates stored blobs on read, so without this an existing user's chosen
+        side would quietly become the default one the first time their bot loaded.
+        """
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if "strategies" not in data and "right" in data:
+            data["strategies"] = ["naked_ce" if data.get("right") == "call" else "naked_pe"]
+        legacy_pct = data.pop("safety_pct", None)
+        if legacy_pct is not None:
+            data.setdefault("safety_pct_ce", legacy_pct)
+            data.setdefault("safety_pct_pe", legacy_pct)
+        data.pop("right", None)
+        return data
+
+    @field_validator("strategies")
+    @classmethod
+    def _at_least_one(cls, v: List[str]) -> List[str]:
+        # De-duplicate but keep the user's order, so the UI round-trips what they picked.
+        seen: List[str] = []
+        for s in v:
+            if s not in seen:
+                seen.append(s)
+        if not seen:
+            raise ValueError("Pick at least one of naked CE, naked PE or short strangle.")
+        return seen
 
 
 class ExpiryIndexWriterConfig(BaseModel):
@@ -133,16 +238,54 @@ class ExpiryIndexWriterConfig(BaseModel):
     nag_start_ist: str = Field("08:00", pattern=r"^[0-2]\d:[0-5]\d$")
     cutoff_ist: str = Field("12:00", pattern=r"^[0-2]\d:[0-5]\d$")
     nag_interval_minutes: int = Field(15, ge=5, le=120)
+    # See `HoldingsWriterConfig.approval_mode`. On this bot the window is the expiry
+    # morning itself, so the re-proposal loop runs from `entry_time_ist` to `cutoff_ist`.
+    approval_mode: ApprovalMode = "auto"
 
-    # Exit policy. The loss limit is genuinely a P&L quantity and maps onto the SG rule's
-    # rupee `loss_limit_pnl`. The profit target is an absolute OPTION PRICE and must not be
-    # converted into rupees -- see docs/bots-mvp-plan.md section 4.
+    # Exit policy, both sides now expressed against the premium collected.
+    #
+    # The loss limit is genuinely a rupee P&L quantity and maps onto the SG rule's
+    # `loss_limit_pnl` on the group -- which is the right shape for a strangle, where the
+    # risk is net across both legs and a per-leg price stop would fire on the losing side
+    # while the winning side was paying for it.
+    #
+    # Profit booking used to be an absolute option price (the "paisa limit"). It is now a
+    # share of the premium, which the engine still evaluates as a per-leg PRICE target of
+    # `entry x (1 - pct/100)` -- never as rupees, because `_evaluate_user_pnl` computes P&L
+    # from the BROKER's average_price, which need not equal the price the bot sold at.
+    # 100% is the special case: the target price is zero, which no limit order can reach, so
+    # no profit exit is armed at all and the position is left to expire worthless with only
+    # the stop-loss live. See `profit_target_price_for`.
     loss_limit_premium_multiple: float = Field(
         1.0, gt=0, le=10, description="Stop at N x the premium collected"
     )
-    profit_target_option_price: float = Field(
-        0.10, gt=0, le=100, description="Exit when the option trades at or below this price"
+    profit_book_premium_pct: float = Field(
+        50.0,
+        gt=0,
+        le=100,
+        description="Book once this share of the premium is captured; 100 = let it expire",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_exit(cls, data: Any) -> Any:
+        """Drop the retired absolute price target rather than failing validation on it."""
+        if isinstance(data, dict) and "profit_target_option_price" in data:
+            data = dict(data)
+            data.pop("profit_target_option_price", None)
+        return data
+
+    def profit_target_price_for(self, entry_price: float) -> Optional[float]:
+        """The per-leg buy-back price this policy implies, or None to let it expire.
+
+        Returns None at 100% because there is no such thing as a limit order at zero. The
+        tick floor makes anything near it degenerate too, so the honest reading of "book
+        100% of the premium" is "hold to expiry", not "chase the last five paise".
+        """
+        if self.profit_book_premium_pct >= 100:
+            return None
+        target = float(entry_price) * (1 - self.profit_book_premium_pct / 100.0)
+        return round(target, 2) if target > 0 else None
 
     @field_validator("indices")
     @classmethod
@@ -163,6 +306,10 @@ class BotRecord(BaseModel):
     id: str
     bot_type: BotType
     enabled: bool
+    # Cross-BOT ordering, distinct from the per-index and per-scrip priorities inside
+    # config. On a day both bots fire, the lower number sizes and places first and the
+    # other sizes against whatever margin and delivery cash is left.
+    priority: int = 1
     config: Dict[str, Any]
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -205,8 +352,19 @@ class ProposalLeg(BaseModel):
     held_quantity: Optional[int] = None
     pledged_quantity: Optional[int] = None
     existing_short_lots: int = 0
+    # Funding order. Copied onto the leg at scan time so the proposal can be read and
+    # allocated top-down without re-joining against the prefs table.
+    scrip_priority: int = 1
     selected: bool = True
     note: Optional[str] = None
+    # Bot 2 only. `strategy` is the shortlisted shape this leg was priced for and
+    # `group_key` ties a strangle's two legs together, so selecting one selects both --
+    # half a strangle is a naked short, which is not what the user picked.
+    strategy: Optional[str] = None
+    group_key: Optional[str] = None
+    margin_yield: Optional[float] = Field(
+        None, description="Premium per rupee of margin -- how strategies are ranked"
+    )
 
 
 class ProposalRecord(BaseModel):
@@ -255,6 +413,7 @@ class ScanResponse(BaseModel):
 
 class UpdateBotRequest(BaseModel):
     enabled: Optional[bool] = None
+    priority: Optional[int] = Field(None, ge=1, le=99)
     config: Optional[Dict[str, Any]] = None
 
 
@@ -262,8 +421,63 @@ class UpdateScripPrefsRequest(BaseModel):
     prefs: List[ScripPref] = Field(default_factory=list)
 
 
+class LegEdit(BaseModel):
+    """A user's change to one proposed leg, made in the manual review before executing.
+
+    Only size and strike are editable. Changing the underlying or the side would make it a
+    different trade from the one the bot proposed, at which point Strategy Builder is the
+    right screen -- and a bot's run log would be recording something the bot never decided.
+    """
+
+    lots: Optional[int] = Field(None, ge=1, le=999)
+    strike_price: Optional[float] = Field(None, gt=0)
+
+
 class ApproveProposalRequest(BaseModel):
     """Approval names the legs to place. Anything omitted is dropped, which is how the
-    manual delivery-cash allocation is expressed -- the user keeps what fits."""
+    manual delivery-cash allocation is expressed -- the user keeps what fits.
+
+    `edits` is keyed by the same index, so an edited leg is still identifiably the leg the
+    bot proposed rather than a free-form order.
+    """
 
     leg_indexes: List[int] = Field(..., description="Indexes into the proposal's legs list")
+    edits: Dict[int, LegEdit] = Field(default_factory=dict)
+
+
+class RepriceRequest(BaseModel):
+    """Re-price the proposal with the user's edits applied, without placing anything."""
+
+    leg_indexes: List[int] = Field(default_factory=list)
+    edits: Dict[int, LegEdit] = Field(default_factory=dict)
+
+
+class HoldingRow(BaseModel):
+    """One row of the settings drawer's scrip list.
+
+    Read live from the broker on every open, never from a stored list: what the user holds
+    changes without the bot being told, and a stale list would offer to write calls against
+    stock that has since been sold.
+    """
+
+    stock_code: str
+    # A holding splits three ways, exhaustively: available + blocked + pledged = quantity.
+    # Only `blocked` is excluded from call coverage -- it is already earmarked and not the
+    # user's to deliver. Pledged stock IS coverage; it just has to be unpledged before
+    # expiry, which is an obligation to surface, not a reason to leave it unwritten.
+    quantity: int
+    available_quantity: int = 0
+    blocked_quantity: int = 0
+    pledged_quantity: int = 0
+    deliverable_quantity: int = 0
+    lot_size: Optional[int] = None
+    lots_held: int = 0
+    available_lots: int = 0
+    blocked_lots: int = 0
+    pledged_lots: int = 0
+    deliverable_lots: int = 0
+    existing_short_ce_lots: int = 0
+    existing_short_pe_lots: int = 0
+    fno_eligible: bool = True
+    ineligible_reason: Optional[str] = None
+    current_market_price: Optional[float] = None

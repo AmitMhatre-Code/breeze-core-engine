@@ -1,8 +1,9 @@
 # Bots — MVP design
 
-Status: **MVP built.** Both bots and the section are implemented and tested. All decisions were settled
-2026-08-31 and are the contract for implementation. Delivered so far: the mock holdings
-fixture (§6) and the `/bots` section itself (§8). Two bots ship in the MVP; the section is built to hold more.
+Status: **MVP built, then reworked.** Both bots and the section are implemented and tested.
+The original decisions were settled 2026-08-31; **section 9 records the 2026-09-02 rework,
+which reverses several of them.** Where the two disagree, section 9 wins.
+Two bots ship today; the section is built to hold more.
 
 This document records *decisions and their reasons*. Route shapes, schemas, and file
 layout are deliberately left to implementation except where a decision constrains them.
@@ -19,7 +20,8 @@ does not hold up under Indian F&O mechanics, and the MVP is scoped around the co
   A short **CE** is what holdings genuinely cover: you deliver stock you own.
 * **Margin:** a short PE requires full SPAN + Exposure. Holdings reduce that only when
   **pledged**. `breeze_connect` exposes no pledge API — `get_demat_holdings` reports
-  `quantity` vs `demat_avail_quantity` (the gap ≈ pledged/blocked) and pledged collateral
+  `quantity` vs `demat_avail_quantity` (see §9.6: the two gaps are *pledged* and *blocked
+  for trade*, and they are separable) and pledged collateral
   surfaces as an undifferentiated lump in `get_funds` / `get_margin`. Per-scrip margin
   attribution to a pledge is therefore **not available and must not be claimed in the UI**.
 
@@ -66,6 +68,9 @@ the guard is where arm-time validation lives.
 
 ## 3. Bot 1 — Holdings Option Writer
 
+> **Superseded in part by section 9.** Bot 1 now also runs autonomously. The constraint
+> models below (CE capped by holdings, PE by delivery cash) are unchanged and still binding.
+
 **Mode: propose → user approves → place.** This is a monthly, considered decision; there is
 no time pressure that justifies unattended firing, and the delivery-cash allocation step
 (below) is explicitly a human decision.
@@ -80,8 +85,11 @@ never weeklies.
 The genuinely covered trade. Hard cap:
 
 ```
-max_ce_lots = floor(held_qty / lot_size) - existing_short_ce_lots
+max_ce_lots = floor(deliverable_qty / lot_size) - existing_short_ce_lots
 ```
+
+*(§9.6 refined `held_qty` to `deliverable_qty` — the full holding minus what is blocked for
+trade. Pledged stock stays in.)*
 
 **`held_qty` comes from `get_portfolio_holdings`, never `get_demat_holdings`.** Demat
 reports **0 quantity for pledged shares**, so any pledged scrip would silently undercount
@@ -179,6 +187,10 @@ while keeping full gamma risk. Judged acceptable in exchange for one less config
 * If even one lot exceeds the cap → skip with a logged reason. Never partial-fund.
 
 ### Entry
+
+> **Superseded by section 9:** the side is now a shortlist ranked by margin yield, and may
+> be a short strangle.
+
 CE **or** PE — a static per-bot preference. No directional inference in the MVP.
 Strike from the safety % against spot at fire time. Freeze-qty chunking as in
 `squareoff_dispatcher._leg_qty_per_order`.
@@ -193,6 +205,8 @@ policy is expressed as:
   `loss_limit_pnl = N x entry_price x qty`.
 * **Profit target — an absolute option price** the user sets (e.g. exit when the option
   touches Rs 0.10 or Rs 0.05). This is **not** a rupee P&L and must not be converted into one.
+  *(Superseded by section 9: the user now sets a share of the premium, from which this price
+  is derived. It is still a price target on the rule, and still never a rupee P&L.)*
 
 **Required change: an optional price-based target on the SG rule.**
 Converting a price target into `profit_target_pnl` at fill time looks equivalent but is not.
@@ -483,3 +497,238 @@ Nothing is blocking. Remaining known items:
 2. Bot 2 UI beyond config and the run log: there is no "what is my bot holding right now"
    panel, since the position surfaces in Portfolio and its stop in the Exit Board.
 3. No re-entry after a stop-loss, per §7.
+
+
+---
+
+## 9. The 2026-09-02 rework
+
+Driven by a full redesign of the `/bots` page. Every assumption below was put to the user
+and confirmed before any code changed; the three UI layouts were chosen from mock-ups.
+
+### 9.1 Reversed decisions
+
+| Was | Now | Why |
+|---|---|---|
+| Bot 1 proposes only; unattended firing is "not justified" (§3) | Bot 1 also runs **autonomously**, on a firing day N trading days before expiry | The delivery-cash allocation step that made it a human decision is now expressed as a **per-scrip priority**, so the bot has a rule where it previously had none |
+| Bot 2's side is a static `right` (§4) | A **shortlist** of naked CE / naked PE / short strangle | The user wanted to shortlist and let the bot pick |
+| Profit booking is an absolute option price (§4) | A **share of the premium**; 100% means let it expire | Symmetry with the loss limit, which was already a premium multiple |
+| Strangles are out of scope (§7) | In scope for Bot 2 | The exit model already supported multi-leg; §7 said so |
+
+### 9.2 The strangle ranking trap
+
+A shortlist needs a comparison rule, and **absolute premium is the wrong one**: a strangle
+is both legs, so it collects more than either alone *every time*. Shortlisting all three
+with an absolute-premium rule would silently retire naked CE and naked PE.
+
+Ranking is therefore **premium per rupee of margin**. Both sides go to
+`margin_calculator` in a single call so the exchange's netting is real — pricing each side
+alone and summing would overstate a strangle's cost by the whole netting benefit and bias
+the contest against the shape the netting exists to reward.
+
+`test_strategies_are_ranked_by_yield_not_by_absolute_premium` is the load-bearing test: a
+strangle collecting more premium than the naked put still loses, because the extra premium
+does not pay for the extra margin.
+
+### 9.3 Profit booking at 100%
+
+`profit_book_premium_pct` sets a per-leg price target of `entry × (1 − pct/100)`, still
+passed to the rule as `target_option_price` and never converted into rupees — the §4
+reasoning about `average_price` is unchanged.
+
+**At 100% the target price is zero, which no limit order can reach**, so no profit target is
+armed at all and the position runs to expiry with only the stop-loss live. That is the
+honest reading of "let it expire worthless"; the alternative — buying back at the ₹0.05 tick
+floor — is a different trade from the one the user asked for.
+
+On a strangle the group takes **one** target, the minimum across its legs, so it books only
+when both sides are cheap. Booking because one side collapsed would leave the other naked.
+
+### 9.4 Cross-bot priority
+
+A `priority` column on `bots` (not in the config blob — it is cross-bot, and ordering wants
+to be queryable). The scheduler now sweeps **users**, not bot types: for each user, bots run
+in priority order and each returns the margin it committed, which is subtracted from what
+the next one sees.
+
+Ordering alone would have been nearly a no-op — both bots size off free margin, so whoever
+ran first would take what it needed regardless. Sizing-first is what makes the number mean
+something.
+
+### 9.5 Per-scrip sizing
+
+`bot_scrip_prefs` gains `ce_lots`, `pe_lots` and `priority`. Both lot columns are
+**nullable, and NULL means the pre-rework behaviour** — every covered lot for calls, one lot
+for puts — so a deployment upgrading into this keeps writing exactly what it wrote before,
+with no backfill.
+
+A call lot count is a **target inside the coverage cap**, never a way past it: asking for 5
+lots on a 3-lot holding writes 3 and says so on the row. The alternative — honouring the
+number — would sell naked calls off a bot whose entire premise is that its calls are covered.
+
+Allocation walks legs in priority order against two independent budgets (SPAN + ELM against
+free margin; delivery exposure against the user's own budget figure). A leg that does not fit
+is skipped and **the walk continues** — priority orders funding, it does not gate it, and
+punishing a cheap scrip for sitting behind an expensive one would leave margin unused.
+
+### 9.6 A holding splits three ways, and only one of them is not coverage
+
+The original design tracked one encumbrance, pledging, and treated the rest of a holding as
+deliverable. That is one category short. `get_demat_holdings` returns **both** `quantity` and
+`demat_avail_quantity`, and the real response carries a genuine gap between them
+(`quantity: "1", demat_avail_quantity: "0"`). So:
+
+```
+pledged   = portfolio_qty - demat_qty          (collateral)
+blocked   = demat_qty - demat_avail_quantity   (earmarked: pending sale, settlement hold)
+available = demat_avail_quantity               (free)
+```
+
+exhaustively, and `available + blocked + pledged = portfolio_qty`.
+
+**Only `blocked` is excluded from call coverage.** Pledged stock is genuinely owned; it has
+to be unpledged before expiry to deliver, which is a step the user takes and an obligation to
+surface — not a reason to leave the coverage unwritten. Blocked stock is already committed
+elsewhere and is not the user's to deliver at all. `deliverable_quantity()` is the single
+place this is decided, and the drawer renders the same split so the lot cap is explainable
+from the row above it.
+
+When the demat call fails, all three are `None` — **unknown, not zero** — and the full
+holding is used. Erring the other way would stop the bot writing anything across the whole
+portfolio the moment one broker call failed. The `pledged_quantity=None` convention that
+already carried this distinction now carries it for all three.
+
+The mock fixture gained a blocked case (ONGC, 2250 of 5000 blocked) chosen so the path
+changes a *lot count* in mock — 2 lots to 1 — rather than only a label.
+
+### 9.7 UI
+
+Chosen from mock-ups: square cards in a two-up grid (identity and state above, the
+autonomous pill and a manual Start pinned to the bottom edge); a **tabbed right-hand
+drawer** for settings, extending the existing `Modal` rather than a second implementation of
+focus-trapping and scroll-locking; and a **full-screen sheet** for the manual run, whose
+lifetime matches a priced snapshot you act on or abandon.
+
+The manual run is now shared by both bots (`POST /bots/plan` sizes Bot 2 without placing).
+Editing a leg re-prices through `POST /bots/proposal/reprice` rather than scaling in the
+browser: margin is not linear in lot count, and a figure nobody quoted is not a figure to
+decide on.
+
+The scrip list in the drawer is read live from `get_portfolio_holdings` +
+`get_demat_holdings` on every open, never stored — holdings change without the bot being
+told. Prefs for a scrip the user has since sold are **kept**, so selling and rebuying a name
+does not wipe its configuration.
+
+### 9.8 Deliberately unchanged
+
+* The manual PB/SL screen keeps its rupee targets and % limit bands. The absolute paise
+  target only ever existed inside Bot 2's config and was never exposed there.
+* Bot 1's stop-loss on approval: re-price before placing, abort above 10% bid drift, and
+  refuse outright on off-market indicative prices. The unattended path fails closed the same
+  way.
+* The Exchange Risk Baseline stock alias bug (§5a) — still deferred, still independent.
+
+---
+
+## 10. Semi-autonomous bots — Telegram approval (2026-09-03)
+
+A third run mode, between "I approve every trade in the app" and "trade without me". The bot
+still runs on its own schedule and still sizes the trade itself, but instead of placing it,
+it sends the priced legs to the user's linked Telegram chat with Approve / Reject buttons.
+**Silence never trades.**
+
+Set per bot: `approval_mode: "auto" | "telegram"`, on both configs, defaulting to `auto` so
+an upgraded deployment keeps exactly the behaviour it had.
+
+### 10.1 Why this was cheap
+
+Almost none of it is new machinery. The portal has been the fleet's single Telegram consumer
+since the link rearchitecture (§ `telegram_link_routing.py`), and approvals ride the same
+three hops one token namespace along — `approval-register` → webhook → `link-claim` — so
+there is no chat-id-to-deployment table, no migration, and no backfill for users who linked
+before this existed. Both bots already had a plan/execute split (`plan_index` +
+`execute_plan`; Bot 1's allocation then `place_short_legs`), so a proposal is an insertion
+between two halves that were already separate. `bot_proposals` already had the full
+pending → approved/rejected/expired/superseded lifecycle with a TTL.
+
+### 10.2 Proposing is not acting
+
+The one real obstacle. `has_terminal_run_today` counts **any** run row today, which is
+correct for the autonomous path — a run row there really does resolve the day. But a
+semi-autonomous bot writes a `proposed` run the moment it asks, so under that rule the first
+proposal would end the day: no re-ask, no eventual placement, ever.
+
+`has_committed_run_today` is the narrower predicate, used **only** on the new path:
+`running`, `completed`, `failed` and `skipped` count; `proposed` does not.
+`has_terminal_run_today` is deliberately untouched, so nothing changes for a user who never
+turns this on.
+
+Run-log shape: one `proposed` run per day (finished immediately, so the stale-run reaper
+never sees a run that is waiting on a human), N proposals against it — `create_proposal`
+already supersedes — and a second run row when an approval actually places.
+
+### 10.3 Decisions taken
+
+| Question | Answer | Why |
+|---|---|---|
+| Unanswered when the proposal expires | Re-propose at fresh prices every `nag_interval_minutes` until `cutoff_ist` | A 15-minute TTL against a 09:30–12:00 window would surrender the morning on one missed message |
+| What the message offers | Approve all / Reject / Review in app | Per-leg selection and the lots/strike edits need reprice; that stays where reprice lives |
+| Rejection | Terminal for the day | A rejection is a decision, not a deferral |
+| Approval refused on drift | Report what moved, then re-propose | Same reasoning as the timeout |
+| Scope | Per bot | Bot 2 can be gated on expiry morning while Bot 1 trades on its own |
+
+### 10.4 Safety properties worth not breaking
+
+* **The portal routes; the deployment decides.** A callback arrives because the portal
+  matched a token to us, but `consume_approval_token` alone decides whether it still
+  authorises anything. That split is what keeps a router incapable of placing a trade.
+* **A tap is not a placement.** Approval goes through `services/bots/proposals`, the same
+  re-price-and-refuse path as the app's review screen, which is why the approve logic was
+  lifted out of `route_bots` first. An approved proposal whose bid has moved past
+  `MATERIAL_DRIFT_PCT` places nothing — and the outcome message says so rather than "done".
+* **Tokens are single-use and burned by supersession.** A new proposal burns the old
+  token, so a user scrolling back cannot approve prices the bot has already replaced.
+  Approve and Reject share one token, so the first tap wins.
+* **Read-only mode is checked explicitly.** `require_trading_not_revoked` is an HTTP
+  dependency and there is no request on this path.
+* **A bot that cannot ask says so.** `telegram` mode with no linked chat logs
+  `approval_unreachable` rather than failing as a quiet no-trade day; the settings drawer
+  warns about it up front.
+
+### 10.5 The portal trap
+
+`set_webhook` sent `allowed_updates: ["message"]`, so callback queries were not delivered at
+all — there is no error for this, the buttons simply do nothing. Adding `"callback_query"`
+is not sufficient on its own: `reconcile_telegram_webhook` returned early whenever the URL
+matched, and the fleet's webhook is already armed, so the new subscription would never have
+been applied. The reconcile now compares `allowed_updates` too, and re-arms on drift with
+`drop_pending_updates=False` (a re-point must never discard live handshakes).
+
+### 10.6 Rollout order
+
+Portal first — the new endpoint and the subscription are inert without engine support.
+Reversed, the engine sends buttons the portal drops on the floor and the user taps a dead
+control on an expiry morning.
+
+### 10.7 The re-price scan's leftovers
+
+`_approve_holdings` re-prices by running a **real scan**, and a scan legitimately creates a
+proposal — superseding the very one being approved. That has two quite different meanings
+depending on how the approval ends, and the two were previously conflated:
+
+* **On the drift path it is the point.** The refusal message says "a fresh proposal is
+  ready", and it is: the new proposal carries the prices the market actually moved to.
+* **On the success path it is debris.** The orders are out. A proposal still sitting there
+  offers the user the same trade a second time.
+
+So the success path now calls `repo.supersede_other_pending(user_id, bot_type, approved_id)`
+and the drift path keeps its proposal — but in `telegram` mode it no longer strands it.
+`hitl._ask_again` mints a token for the fresh proposal and sends it straight away.
+
+That second half fixes a real stall, not just tidiness. `next_action` reads any pending
+proposal as "already asked", so an unadopted one would block the scheduler's re-ask for its
+whole TTL *and then* the nag interval — around half an hour of an expiry morning — while the
+user, having tapped Approve and been told the price moved, was never shown what it moved to.
+
+Bot 2 re-derives its plan without persisting one, so there is nothing to adopt and its own
+cadence takes over. The invariant is "never strand a proposal", not "always re-ask instantly".

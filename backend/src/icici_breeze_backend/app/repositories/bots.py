@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import secrets
 import sqlite3
 import uuid
 from typing import Any, Optional
@@ -78,6 +79,7 @@ def _row_to_bot(row: sqlite3.Row) -> BotRecord:
         id=str(d["id"]),
         bot_type=d["bot_type"],
         enabled=bool(d["enabled"]),
+        priority=int(d["priority"] or 1) if d.get("priority") is not None else 1,
         config=normalize_config(d["bot_type"], _json_or({}, d.get("config"))),
         created_at=str(d["created_at"]) if d.get("created_at") else None,
         updated_at=str(d["updated_at"]) if d.get("updated_at") else None,
@@ -102,9 +104,20 @@ def get_or_create_bot(user_id: str, bot_type: str) -> BotRecord:
         if row is not None:
             return _row_to_bot(row)
         bot_id = str(uuid.uuid4())
+        # Seed distinct priorities so two freshly-created bots are never tied. Bot 1 leads
+        # because it is the one with a hard external constraint -- its calls are capped by
+        # stock actually held, so margin it does not take is margin nothing else can use.
+        default_priority = 1 if bot_type == BOT_HOLDINGS_WRITER else 2
         conn.execute(
-            "INSERT INTO bots (id, user_id, bot_type, enabled, config) VALUES (?, ?, ?, 0, ?)",
-            (bot_id, user_id, bot_type, json.dumps(normalize_config(bot_type, {}))),
+            "INSERT INTO bots (id, user_id, bot_type, enabled, priority, config) "
+            "VALUES (?, ?, ?, 0, ?, ?)",
+            (
+                bot_id,
+                user_id,
+                bot_type,
+                default_priority,
+                json.dumps(normalize_config(bot_type, {})),
+            ),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM bots WHERE id = ?", (bot_id,)).fetchone()
@@ -122,6 +135,24 @@ def list_enabled_bots(bot_type: str) -> list[BotRecord]:
             "SELECT * FROM bots WHERE bot_type = ? AND enabled = 1", (bot_type,)
         ).fetchall()
     return [_row_to_bot(r) for r in rows]
+
+
+def list_enabled_bots_by_user() -> dict[str, list[BotRecord]]:
+    """Every enabled bot, grouped by owner and ordered by cross-bot priority.
+
+    The scheduler needs this shape rather than one query per bot type: on a day both bots
+    want to trade, the lower-priority number must size and place FIRST and the other must
+    then size against what is actually left. That sequencing is per user, so the sweep has
+    to iterate users, not bot types.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM bots WHERE enabled = 1 ORDER BY user_id, priority, bot_type"
+        ).fetchall()
+    out: dict[str, list[BotRecord]] = {}
+    for row in rows:
+        out.setdefault(str(row["user_id"]), []).append(_row_to_bot(row))
+    return out
 
 
 def bot_owner(bot_id: str) -> Optional[str]:
@@ -147,15 +178,39 @@ def has_terminal_run_today(user_id: str, bot_type: str) -> bool:
     return row is not None
 
 
+def has_committed_run_today(user_id: str, bot_type: str) -> bool:
+    """Has this bot done something today that it must not do twice?
+
+    Deliberately narrower than `has_terminal_run_today`, which treats *any* run row as
+    resolving the day. That is right for the autonomous path, but a semi-autonomous bot
+    writes a `proposed` run the moment it asks the user -- and asking is not acting. If
+    proposing counted, the first proposal would block the re-proposal loop and the eventual
+    placement, and the bot would never trade.
+
+    `proposed` is therefore the one status excluded here. `running` still counts, so a run
+    in flight is never started alongside itself.
+    """
+    today = now_ist().date().isoformat()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM bot_runs WHERE user_id = ? AND bot_type = ? "
+            "AND date(started_at) = ? AND status != 'proposed' LIMIT 1",
+            (user_id, bot_type, today),
+        ).fetchone()
+    return row is not None
+
+
 def update_bot(
     user_id: str,
     bot_type: str,
     *,
     enabled: Optional[bool] = None,
+    priority: Optional[int] = None,
     config: Optional[dict[str, Any]] = None,
 ) -> BotRecord:
     current = get_or_create_bot(user_id, bot_type)
     new_enabled = current.enabled if enabled is None else bool(enabled)
+    new_priority = current.priority if priority is None else max(1, int(priority))
     # Merge rather than replace: the UI edits one panel at a time, and a partial PATCH
     # must not silently reset the fields it did not send.
     merged = dict(current.config)
@@ -164,9 +219,16 @@ def update_bot(
     new_config = normalize_config(bot_type, merged)
     with _connect() as conn:
         conn.execute(
-            "UPDATE bots SET enabled = ?, config = ?, updated_at = ? "
+            "UPDATE bots SET enabled = ?, priority = ?, config = ?, updated_at = ? "
             "WHERE user_id = ? AND bot_type = ?",
-            (1 if new_enabled else 0, json.dumps(new_config), ist_timestamp(), user_id, bot_type),
+            (
+                1 if new_enabled else 0,
+                new_priority,
+                json.dumps(new_config),
+                ist_timestamp(),
+                user_id,
+                bot_type,
+            ),
         )
         conn.commit()
     return get_or_create_bot(user_id, bot_type)
@@ -180,15 +242,19 @@ def update_bot(
 def list_scrip_prefs(user_id: str) -> list[ScripPref]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM bot_scrip_prefs WHERE user_id = ? ORDER BY stock_code", (user_id,)
+            "SELECT * FROM bot_scrip_prefs WHERE user_id = ? ORDER BY priority, stock_code",
+            (user_id,),
         ).fetchall()
     return [
         ScripPref(
             stock_code=str(r["stock_code"]),
             ce_enabled=bool(r["ce_enabled"]),
             pe_enabled=bool(r["pe_enabled"]),
+            ce_lots=r["ce_lots"],
+            pe_lots=r["pe_lots"],
             safety_pct_ce=r["safety_pct_ce"],
             safety_pct_pe=r["safety_pct_pe"],
+            priority=int(r["priority"] or 1),
         )
         for r in rows
     ]
@@ -200,13 +266,17 @@ def upsert_scrip_prefs(user_id: str, prefs: list[ScripPref]) -> list[ScripPref]:
             conn.execute(
                 """
                 INSERT INTO bot_scrip_prefs
-                    (user_id, stock_code, ce_enabled, pe_enabled, safety_pct_ce, safety_pct_pe, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (user_id, stock_code, ce_enabled, pe_enabled, ce_lots, pe_lots,
+                     safety_pct_ce, safety_pct_pe, priority, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id, stock_code) DO UPDATE SET
                     ce_enabled = excluded.ce_enabled,
                     pe_enabled = excluded.pe_enabled,
+                    ce_lots = excluded.ce_lots,
+                    pe_lots = excluded.pe_lots,
                     safety_pct_ce = excluded.safety_pct_ce,
                     safety_pct_pe = excluded.safety_pct_pe,
+                    priority = excluded.priority,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -214,8 +284,11 @@ def upsert_scrip_prefs(user_id: str, prefs: list[ScripPref]) -> list[ScripPref]:
                     p.stock_code.strip().upper(),
                     1 if p.ce_enabled else 0,
                     1 if p.pe_enabled else 0,
+                    p.ce_lots,
+                    p.pe_lots,
                     p.safety_pct_ce,
                     p.safety_pct_pe,
+                    int(p.priority or 1),
                     ist_timestamp(),
                 ),
             )
@@ -437,6 +510,26 @@ def get_proposal(user_id: str, proposal_id: str) -> Optional[ProposalRecord]:
     return _row_to_proposal(row) if row is not None else None
 
 
+def supersede_other_pending(user_id: str, bot_type: str, keep_id: str) -> int:
+    """Retire any pending proposal for this bot other than `keep_id`.
+
+    Exists because approving is not a read-only act: `_approve_holdings` re-prices by
+    running a full scan, and a scan legitimately *creates* a proposal. On the drift path
+    that new proposal is the point -- it is the fresh one the user is told to look at. On
+    the success path it is debris: the trade is placed, and a proposal left pending behind
+    it invites the user to place it a second time.
+    """
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE bot_proposals SET status = 'superseded', resolved_at = ?, "
+            "resolution_note = 'Replaced by the trade you approved.' "
+            "WHERE user_id = ? AND bot_type = ? AND status = 'pending' AND id != ?",
+            (ist_timestamp(), user_id, bot_type, keep_id),
+        )
+        conn.commit()
+        return cur.rowcount or 0
+
+
 def resolve_proposal(
     user_id: str, proposal_id: str, *, status: str, note: Optional[str] = None
 ) -> Optional[ProposalRecord]:
@@ -448,3 +541,100 @@ def resolve_proposal(
         )
         conn.commit()
     return get_proposal(user_id, proposal_id)
+
+
+def last_proposal_at(user_id: str, bot_type: str) -> Optional[datetime.datetime]:
+    """When this bot last asked, in any state. Drives the re-proposal cadence.
+
+    Reads across every status, not just `pending`: the whole point is to know how long ago
+    the user was last bothered, and a proposal they let expire bothered them just as much
+    as one still outstanding.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT created_at FROM bot_proposals WHERE user_id = ? AND bot_type = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (user_id, bot_type),
+        ).fetchone()
+    if row is None or not row["created_at"]:
+        return None
+    try:
+        return datetime.datetime.strptime(str(row["created_at"])[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def issue_approval_token(
+    *,
+    user_id: str,
+    bot_type: str,
+    proposal_id: str,
+    chat_id: str,
+    ttl_minutes: int,
+) -> str:
+    """Mint the single-use token behind a Telegram Approve/Reject tap.
+
+    Superseding proposals supersede their tokens: a token for a proposal that is no longer
+    pending must not survive to authorise a trade at prices the user never saw. Rather than
+    leave that to a later expiry check, every earlier live token for this bot is burned
+    here, so at most one tap can ever be live per bot.
+    """
+    token = secrets.token_urlsafe(24)
+    expires = (
+        now_ist() + datetime.timedelta(minutes=max(1, int(ttl_minutes)))
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE bot_approval_tokens SET consumed_at = ? "
+            "WHERE user_id = ? AND bot_type = ? AND consumed_at IS NULL",
+            (ist_timestamp(), user_id, bot_type),
+        )
+        conn.execute(
+            "INSERT INTO bot_approval_tokens "
+            "(token, user_id, bot_type, proposal_id, chat_id, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (token, user_id, bot_type, proposal_id, str(chat_id), expires),
+        )
+        conn.commit()
+    return token
+
+
+def consume_approval_token(token: str) -> Optional[dict[str, Any]]:
+    """Burn `token` and return what it authorises, or None if it is no longer good.
+
+    Single-use is enforced by the UPDATE's own WHERE clause rather than by a read followed
+    by a write: two callbacks arriving together must not both find the token unconsumed.
+    The row is returned only when this call is the one that burned it.
+    """
+    if not token:
+        return None
+    now = now_ist().strftime("%Y-%m-%d %H:%M:%S")
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE bot_approval_tokens SET consumed_at = ? "
+            "WHERE token = ? AND consumed_at IS NULL AND expires_at >= ?",
+            (ist_timestamp(), token, now),
+        )
+        if not cur.rowcount:
+            conn.commit()
+            return None
+        row = conn.execute(
+            "SELECT user_id, bot_type, proposal_id, chat_id FROM bot_approval_tokens "
+            "WHERE token = ?",
+            (token,),
+        ).fetchone()
+        conn.commit()
+    return dict(row) if row is not None else None
+
+
+def has_outstanding_approval_token() -> bool:
+    """Any live token, for any user. Mirrors `has_outstanding_link_token` -- the claim loop
+    uses it to decide whether there is anything a claim could usefully return."""
+    now = now_ist().strftime("%Y-%m-%d %H:%M:%S")
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM bot_approval_tokens WHERE consumed_at IS NULL AND expires_at >= ? "
+            "LIMIT 1",
+            (now,),
+        ).fetchone()
+    return row is not None

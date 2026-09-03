@@ -200,6 +200,18 @@ const nextConfig = {
         destination: `${backendUpstream}/bots/proposal/reject`,
       },
       {
+        source: "/bots/holdings",
+        destination: `${backendUpstream}/bots/holdings`,
+      },
+      {
+        source: "/bots/plan",
+        destination: `${backendUpstream}/bots/plan`,
+      },
+      {
+        source: "/bots/proposal/reprice",
+        destination: `${backendUpstream}/bots/proposal/reprice`,
+      },
+      {
         source: "/uncovered-shorts/data",
         destination: `${backendUpstream}/uncovered-shorts/data`,
       },

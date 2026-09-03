@@ -13,14 +13,9 @@ import {
   type MouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import {
-  OrderExecutionConfirmDialog,
-  type ExecutionPreviewLeg,
-} from "@/components/shared/order/OrderExecutionConfirmDialog";
 import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
 import { OrderSideBadge } from "@/components/shared/badges/OrderSideBadge";
 import { PortfolioGroupPayoffPanel } from "@/components/shared/payoff/PortfolioGroupPayoffPanel";
-import { HedgeCandidatesModal } from "@/components/portfolio/HedgeCandidatesModal";
 import { SquareOffLegsModal } from "@/components/portfolio/SquareOffLegsModal";
 import { SquareOffRuleModal } from "@/components/portfolio/SquareOffRuleModal";
 import {
@@ -43,11 +38,6 @@ import {
   useInvalidateSquareOffRules,
   useSquareOffRulesByGroup,
 } from "@/lib/portfolio/useSquareOffRules";
-import type { StrategyHedgeCandidate } from "@/lib/hedge/api";
-import {
-  candidateToExecutionLeg,
-  candidateToStrategyLeg,
-} from "@/lib/hedge/legs";
 import {
   buildPortfolioPositionGroups,
   nettedMarginByKey,
@@ -63,7 +53,6 @@ import { useGroupPoP } from "@/lib/portfolio/useGroupPoP";
 import { useLegPoP } from "@/lib/portfolio/useLegPoP";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { formatOptionSymbolLabel } from "@/lib/strategy-builder/leg-ui-helpers";
-import type { StrategyLeg } from "@/lib/strategy-builder/types";
 
 export type PortfolioPositionsViewMode = "grouped" | "individual";
 
@@ -259,13 +248,35 @@ const ACCENT_OUTLINE_STYLE: CSSProperties = {
   color: "var(--accent-strong)",
 };
 
+/** A pill that is disabled *with* a hint is greyed rather than faded: the standard 40%
+ * disabled opacity would wash out the very line explaining why it can't be clicked. */
+const MUTED_OUTLINE_STYLE: CSSProperties = {
+  borderColor: "var(--border)",
+  color: "var(--muted)",
+};
+
 const pillOutlineTable =
-  // Square Off / Hedge / Exit Rule — a mis-tap here costs money. 44px (Apple HIG)
+  // Square Off / Exit Rule — a mis-tap here costs money. 44px (Apple HIG)
   // below xl, which is exactly where the mobile/tablet CARD layout renders these;
   // the xl+ desktop table keeps its dense 30px row chrome.
   "inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-semibold xl:min-h-0 transition hover:bg-[var(--accent-tint)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent 2xl:px-3.5 2xl:py-2 2xl:text-sm";
 const pillOutlineCard =
   "inline-flex items-center justify-center rounded-lg border px-3 py-2.5 text-sm font-semibold transition hover:bg-[var(--accent-tint)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent";
+
+/**
+ * Row indices a group PB/SL rule can actually act on. A qty-0 row is a leg that has
+ * already been closed but is still returned by `/portfolio/data` (and still gets its
+ * own checkbox), and `portfolio_pnl_engine` never places an exit order for it — so
+ * requiring it to be ticked would demand a gesture the rule ignores.
+ */
+function openLegIndices(rows: PortfolioPositionRecord[]): number[] {
+  const out: number[] = [];
+  rows.forEach((row, idx) => {
+    const qty = coerceNum(row.quantity);
+    if (qty != null && qty !== 0) out.push(idx);
+  });
+  return out;
+}
 
 function childRowKey(groupKey: string, localIdx: number): string {
   return `${groupKey}-${localIdx}`;
@@ -334,31 +345,47 @@ type OpenPositionsTableProps = {
   viewMode?: PortfolioPositionsViewMode;
 };
 
-/** One-shot pill trigger (Exit Rule / Square Off Selected / Hedge) — always the outline style, never a toggle. */
+/** One-shot pill trigger (Exit Rule / Square Off Selected) — always the outline style, never a toggle.
+ * `hint` renders a second, smaller line inside the pill stating the action's scope — the
+ * button label alone can't say "this ignores your leg selection", and that ambiguity is
+ * exactly what a PB/SL mis-scope costs money on. */
 function GroupPillButton({
   variant,
   label,
+  hint,
   onClick,
   disabled = false,
   title,
 }: {
   variant: "table" | "card";
   label: string;
+  hint?: string;
   onClick: (e: MouseEvent) => void;
   disabled?: boolean;
   title?: string;
 }) {
-  const className = variant === "table" ? pillOutlineTable : pillOutlineCard;
+  const base = variant === "table" ? pillOutlineTable : pillOutlineCard;
+  const gated = disabled && Boolean(hint);
+  const className = `${base}${gated ? " disabled:!opacity-100" : ""}`;
   return (
     <button
       type="button"
       className={className}
-      style={ACCENT_OUTLINE_STYLE}
+      style={gated ? MUTED_OUTLINE_STYLE : ACCENT_OUTLINE_STYLE}
       onClick={onClick}
       disabled={disabled}
       title={title}
     >
-      {label}
+      {hint ? (
+        <span className="flex flex-col items-center leading-tight">
+          <span>{label}</span>
+          <span className="mt-0.5 text-[10px] font-normal text-muted 2xl:text-[11px]">
+            {hint}
+          </span>
+        </span>
+      ) : (
+        label
+      )}
     </button>
   );
 }
@@ -395,9 +422,9 @@ const LEG_TABLE_COL_COUNT = 13;
 
 /**
  * Compact status chip for a Strategy Group's PB/SL rule — shown next to the group title
- * whether the group is collapsed or expanded (unlike Hedge, which only surfaces once you
- * expand the row). Purely a status indicator; editing/disarming happens via the "Edit
- * Exit Rule" pill and its modal.
+ * whether the group is collapsed or expanded (unlike the action pills, which only surface
+ * once you expand the row). Purely a status indicator; editing/disarming happens via the
+ * "Edit Exit Rule" pill and its modal.
  *
  * A Reset chip is tiered by hazard (see `lib/portfolio/reset-warning`) rather than being
  * one uniform red — a benign Reset shouldn't shout, and a contra-risk one must.
@@ -668,25 +695,43 @@ function SeeActionsHint() {
   );
 }
 
+/**
+ * A group's expanded panel: payoff chart + the group-scoped action pills.
+ *
+ * PB/SL is gated on every *open* leg being selected. The rule the engine arms is keyed
+ * (user, stock_code, expiry) and closes the whole group when it fires — so a partial
+ * selection sitting next to an enabled button reads as "this applies to my selection",
+ * which it never did. Requiring the full set makes the button's scope and the checkboxes
+ * agree. An already-armed group is never gated: this modal is also the only way to view
+ * or disarm a live rule, and that is the worst moment to add friction.
+ */
 function GroupExpandedExtras({
   g,
   holderId,
-  proposedLeg,
   squareOffRule,
-  selectedCount,
+  selectedLegs,
   onOpenExitRuleModal,
   onSquareOffSelectedClick,
-  onOpenHedgeModal,
 }: {
   g: PortfolioPositionGroup;
   holderId: string;
-  proposedLeg: StrategyLeg | null;
   squareOffRule: SquareOffRuleRecord | null;
-  selectedCount: number;
+  selectedLegs: ReadonlySet<number>;
   onOpenExitRuleModal: (e: MouseEvent) => void;
   onSquareOffSelectedClick: (e: MouseEvent) => void;
-  onOpenHedgeModal: (e: MouseEvent) => void;
 }) {
+  const selectedCount = selectedLegs.size;
+  const openLegs = openLegIndices(g.rows);
+  const allOpenSelected =
+    openLegs.length > 0 && openLegs.every((idx) => selectedLegs.has(idx));
+  const pbslGated = !squareOffRule && !allOpenSelected;
+  const legWord = openLegs.length === 1 ? "leg" : "legs";
+  const pbslHint =
+    openLegs.length === 0
+      ? "No open legs in this group"
+      : pbslGated
+        ? `Select all ${openLegs.length} ${legWord} to apply`
+        : `Applies to all ${openLegs.length} ${legWord}`;
   return (
     <div className="border-t border-border-soft bg-panel2">
       <div className="grid min-w-0 divide-y divide-border-soft md:grid-cols-[3fr_2fr] md:divide-x md:divide-y-0">
@@ -695,7 +740,6 @@ function GroupExpandedExtras({
           exchangeCode={g.exchangeCode}
           expiryDisplay={g.expiryDate}
           rows={g.rows}
-          proposedLeg={proposedLeg}
           holderId={holderId}
         />
         <div className="flex min-w-0 items-center justify-center p-6">
@@ -707,18 +751,15 @@ function GroupExpandedExtras({
                   ? "Edit Profit Booking / Stop Loss"
                   : "Profit Booking / Stop Loss"
               }
+              hint={pbslHint}
               onClick={onOpenExitRuleModal}
+              disabled={pbslGated || openLegs.length === 0}
             />
             <GroupPillButton
               variant="table"
               label="Square Off Selected"
               onClick={onSquareOffSelectedClick}
               disabled={selectedCount === 0}
-            />
-            <GroupPillButton
-              variant="table"
-              label="Hedge"
-              onClick={onOpenHedgeModal}
             />
           </div>
         </div>
@@ -730,8 +771,9 @@ function GroupExpandedExtras({
 /**
  * Individual-leg counterpart of `GroupExpandedExtras` — no payoff panel (a single
  * naked leg's isolated payoff/breakevens aren't a very meaningful chart, and the
- * PoP number alone is already shown on the row), and Hedge is disabled since
- * `PortfolioHedgePanel` computes net delta/margin across a whole group's rows.
+ * PoP number alone is already shown on the row). No selection gate either: this
+ * view has no checkboxes, and its PB/SL is a per-leg GTT exit order rather than the
+ * group rule the engine evaluates.
  */
 function LegExpandedActions({
   onOpenExitRuleModal,
@@ -753,13 +795,6 @@ function LegExpandedActions({
           label="Square Off"
           onClick={onSquareOffClick}
         />
-        <GroupPillButton
-          variant="table"
-          label="Hedge"
-          onClick={() => {}}
-          disabled
-          title="Hedge is only available in grouped view"
-        />
       </div>
     </div>
   );
@@ -770,16 +805,19 @@ type GroupBlockProps = {
   isOpen: boolean;
   onToggle: () => void;
   holderId: string;
-  proposedLeg: StrategyLeg | null;
   startNumber: number;
   onLiveChange: (groupKey: string, live: boolean) => void;
   squareOffRule: SquareOffRuleRecord | null;
   onOpenExitRuleModal: (e: MouseEvent) => void;
+  /** Summary-row "+ Set Profit Booking / Stop Loss" CTA. Unlike the panel button it can
+   * fire while the group is collapsed — where no leg can be ticked — so it expands the
+   * group and selects every leg on the way in, making the rule's scope visible rather
+   * than letting the CTA slip past the panel button's selection gate. */
+  onOpenExitRuleModalFromRow: (e: MouseEvent) => void;
   selectedLegs: ReadonlySet<number>;
   onToggleLeg: (idx: number) => void;
   onToggleGroupAll: () => void;
   onSquareOffSelectedClick: (e: MouseEvent) => void;
-  onOpenHedgeModal: (e: MouseEvent) => void;
 };
 
 /**
@@ -794,16 +832,15 @@ function PortfolioGroupTableBlock({
   isOpen,
   onToggle,
   holderId,
-  proposedLeg,
   startNumber,
   onLiveChange,
   squareOffRule,
   onOpenExitRuleModal,
+  onOpenExitRuleModalFromRow,
   selectedLegs,
   onToggleLeg,
   onToggleGroupAll,
   onSquareOffSelectedClick,
-  onOpenHedgeModal,
 }: GroupBlockProps) {
   const { rows: liveRows, isLive } = useGroupLiveOverlay(g, holderId);
   const pop = useGroupPoP(g);
@@ -871,7 +908,7 @@ function PortfolioGroupTableBlock({
             <ExitRuleSummaryLine
               rule={squareOffRule}
               currentMtm={mtmSum}
-              onOpenExitRuleModal={onOpenExitRuleModal}
+              onOpenExitRuleModal={onOpenExitRuleModalFromRow}
             />
           </div>
         </td>
@@ -967,8 +1004,8 @@ function PortfolioGroupTableBlock({
         <tr className="app-table-row">
           {/*
             w-px + min-w-full: table-auto sizes columns from each cell's natural
-            content width, and the hedge-active grid's own natural width (payoff
-            chart + candidates panel side by side) is wider than the table's other
+            content width, and the expanded panel's own natural width (payoff
+            chart + action pills side by side) is wider than the table's other
             rows need — without this, that grid drags the whole table wider than
             its wrapper, pushing the candidates panel off-screen behind horizontal
             scroll. w-px tells the auto-layout pass "ignore my content, I only
@@ -980,12 +1017,10 @@ function PortfolioGroupTableBlock({
             <GroupExpandedExtras
               g={g}
               holderId={holderId}
-              proposedLeg={proposedLeg}
               squareOffRule={squareOffRule}
-              selectedCount={selectedLegs.size}
+              selectedLegs={selectedLegs}
               onOpenExitRuleModal={onOpenExitRuleModal}
               onSquareOffSelectedClick={onSquareOffSelectedClick}
-              onOpenHedgeModal={onOpenHedgeModal}
             />
           </td>
         </tr>
@@ -1000,15 +1035,14 @@ function PortfolioGroupCardBlock({
   isOpen,
   onToggle,
   holderId,
-  proposedLeg,
   onLiveChange,
   squareOffRule,
   onOpenExitRuleModal,
+  onOpenExitRuleModalFromRow,
   selectedLegs,
   onToggleLeg,
   onToggleGroupAll,
   onSquareOffSelectedClick,
-  onOpenHedgeModal,
 }: GroupBlockProps) {
   const { rows: liveRows, isLive } = useGroupLiveOverlay(g, holderId);
   const pop = useGroupPoP(g);
@@ -1079,7 +1113,7 @@ function PortfolioGroupCardBlock({
           <ExitRuleSummaryLine
             rule={squareOffRule}
             currentMtm={mtmSum}
-            onOpenExitRuleModal={onOpenExitRuleModal}
+            onOpenExitRuleModal={onOpenExitRuleModalFromRow}
             noteVariant="full"
           />
           <p>
@@ -1189,12 +1223,10 @@ function PortfolioGroupCardBlock({
           <GroupExpandedExtras
             g={g}
             holderId={holderId}
-            proposedLeg={proposedLeg}
             squareOffRule={squareOffRule}
-            selectedCount={selectedLegs.size}
+            selectedLegs={selectedLegs}
             onOpenExitRuleModal={onOpenExitRuleModal}
             onSquareOffSelectedClick={onSquareOffSelectedClick}
-            onOpenHedgeModal={onOpenHedgeModal}
           />
         </div>
       ) : null}
@@ -1453,12 +1485,6 @@ export function OpenPositionsTable({
   const [selectedLegsByGroup, setSelectedLegsByGroup] = useState<
     Map<string, Set<number>>
   >(() => new Map());
-  const [hedgeGroupKey, setHedgeGroupKey] = useState<string | null>(null);
-  const [hedgeModalOpen, setHedgeModalOpen] = useState(false);
-  const [selectedCandidate, setSelectedCandidate] =
-    useState<StrategyHedgeCandidate | null>(null);
-  const [hedgeLotSize, setHedgeLotSize] = useState(1);
-  const [executeOpen, setExecuteOpen] = useState(false);
   const [squareOffRows, setSquareOffRows] = useState<
     PortfolioPositionRecord[] | null
   >(null);
@@ -1527,29 +1553,6 @@ export function OpenPositionsTable({
     });
   }, []);
 
-  const hedgeActiveGroup = useMemo(
-    () => groups.find((g) => g.key === hedgeGroupKey) ?? null,
-    [groups, hedgeGroupKey],
-  );
-
-  const proposedLegForActive = useMemo(() => {
-    if (!selectedCandidate || hedgeLotSize <= 0) return null;
-    return candidateToStrategyLeg(selectedCandidate, hedgeLotSize);
-  }, [selectedCandidate, hedgeLotSize]);
-
-  const executeLegs: ExecutionPreviewLeg[] = useMemo(
-    () => (selectedCandidate ? [candidateToExecutionLeg(selectedCandidate)] : []),
-    [selectedCandidate],
-  );
-
-  const clearHedgeState = useCallback(() => {
-    setHedgeGroupKey(null);
-    setHedgeModalOpen(false);
-    setSelectedCandidate(null);
-    setHedgeLotSize(1);
-    setExecuteOpen(false);
-  }, []);
-
   const toggleGroup = useCallback(
     (key: string) => {
       setExpandedGroups((prev) => {
@@ -1557,16 +1560,13 @@ export function OpenPositionsTable({
         if (next.has(key)) {
           next.delete(key);
           clearGroupSelection(key);
-          if (hedgeGroupKey === key) {
-            clearHedgeState();
-          }
         } else {
           next.add(key);
         }
         return next;
       });
     },
-    [hedgeGroupKey, clearGroupSelection, clearHedgeState],
+    [clearGroupSelection],
   );
 
   // WS holders are registered per open-position group regardless of expand
@@ -1576,23 +1576,6 @@ export function OpenPositionsTable({
     const liveKeys = new Set(groups.map((g) => g.key));
     releaseStaleGroups(liveKeys);
   }, [groups, releaseStaleGroups]);
-
-  const openHedgeModalForGroup = useCallback(
-    (key: string) => {
-      if (hedgeGroupKey !== key) {
-        setSelectedCandidate(null);
-        setHedgeLotSize(1);
-      }
-      setHedgeGroupKey(key);
-      setExecuteOpen(false);
-      setHedgeModalOpen(true);
-    },
-    [hedgeGroupKey],
-  );
-
-  const handleCloseHedgeModal = useCallback(() => {
-    setHedgeModalOpen(false);
-  }, []);
 
   const handleSquareOffSelectedClick = useCallback(
     (e: MouseEvent, groupKey: string, rows: PortfolioPositionRecord[]) => {
@@ -1610,6 +1593,25 @@ export function OpenPositionsTable({
     e.stopPropagation();
     setExitRuleModalGroupKey(groupKey);
   }, []);
+
+  /** Summary-row CTA: expand the group and tick every leg, then open the modal — the rule
+   * is group-scoped either way, so the selection is made to match it rather than left
+   * silently contradicting it. */
+  const handleOpenExitRuleModalFromRow = useCallback(
+    (e: MouseEvent, groupKey: string, rowCount: number) => {
+      e.stopPropagation();
+      setExpandedGroups((prev) =>
+        prev.has(groupKey) ? prev : new Set(prev).add(groupKey),
+      );
+      setSelectedLegsByGroup((prev) => {
+        const next = new Map(prev);
+        next.set(groupKey, new Set(Array.from({ length: rowCount }, (_, i) => i)));
+        return next;
+      });
+      setExitRuleModalGroupKey(groupKey);
+    },
+    [],
+  );
 
   const exitRuleModalGroup = useMemo(
     () => groups.find((g) => g.key === exitRuleModalGroupKey) ?? null,
@@ -1643,15 +1645,6 @@ export function OpenPositionsTable({
     },
     [],
   );
-
-  const handleExecuteHedge = useCallback(() => {
-    if (!selectedCandidate || !hedgeActiveGroup) return;
-    setExecuteOpen(true);
-  }, [hedgeActiveGroup, selectedCandidate]);
-
-  const handleExecuteClose = useCallback(() => {
-    setExecuteOpen(false);
-  }, []);
 
   const groupStartNumbers = useMemo(() => {
     const starts: number[] = [];
@@ -1731,21 +1724,19 @@ export function OpenPositionsTable({
                       isOpen={expandedGroups.has(g.key)}
                       onToggle={() => toggleGroup(g.key)}
                       holderId={getHolderId(g.key)}
-                      proposedLeg={hedgeGroupKey === g.key ? proposedLegForActive : null}
                       startNumber={groupStartNumbers[gi]}
                       onLiveChange={handleLiveChange}
                       squareOffRule={squareOffRulesByGroup.get(squareOffRuleGroupKey(g.stockCode, g.expiryDate)) ?? null}
                       onOpenExitRuleModal={(e) => handleOpenExitRuleModal(e, g.key)}
+                      onOpenExitRuleModalFromRow={(e) =>
+                        handleOpenExitRuleModalFromRow(e, g.key, g.rows.length)
+                      }
                       selectedLegs={getSelectedLegs(g.key)}
                       onToggleLeg={(idx) => toggleLeg(g.key, idx)}
                       onToggleGroupAll={() => toggleGroupAll(g.key, g.rows.length)}
                       onSquareOffSelectedClick={(e) =>
                         handleSquareOffSelectedClick(e, g.key, g.rows)
                       }
-                      onOpenHedgeModal={(e) => {
-                        e.stopPropagation();
-                        openHedgeModalForGroup(g.key);
-                      }}
                     />
                   ))
                 )}
@@ -1838,21 +1829,19 @@ export function OpenPositionsTable({
                 isOpen={expandedGroups.has(g.key)}
                 onToggle={() => toggleGroup(g.key)}
                 holderId={getHolderId(g.key)}
-                proposedLeg={hedgeGroupKey === g.key ? proposedLegForActive : null}
                 startNumber={0}
                 onLiveChange={handleLiveChange}
                 squareOffRule={squareOffRulesByGroup.get(squareOffRuleGroupKey(g.stockCode, g.expiryDate)) ?? null}
                 onOpenExitRuleModal={(e) => handleOpenExitRuleModal(e, g.key)}
+                onOpenExitRuleModalFromRow={(e) =>
+                  handleOpenExitRuleModalFromRow(e, g.key, g.rows.length)
+                }
                 selectedLegs={getSelectedLegs(g.key)}
                 onToggleLeg={(idx) => toggleLeg(g.key, idx)}
                 onToggleGroupAll={() => toggleGroupAll(g.key, g.rows.length)}
                 onSquareOffSelectedClick={(e) =>
                   handleSquareOffSelectedClick(e, g.key, g.rows)
                 }
-                onOpenHedgeModal={(e) => {
-                  e.stopPropagation();
-                  openHedgeModalForGroup(g.key);
-                }}
               />
             ))
           )}
@@ -1881,27 +1870,6 @@ export function OpenPositionsTable({
           )}
         </div>
       )}
-
-      <HedgeCandidatesModal
-        group={hedgeActiveGroup}
-        open={hedgeModalOpen}
-        onClose={handleCloseHedgeModal}
-        selectedCandidate={selectedCandidate}
-        onSelectCandidate={setSelectedCandidate}
-        onExecute={handleExecuteHedge}
-        onLotSizeChange={setHedgeLotSize}
-      />
-
-      {hedgeActiveGroup && selectedCandidate ? (
-        <OrderExecutionConfirmDialog
-          open={executeOpen}
-          onClose={handleExecuteClose}
-          stockCode={hedgeActiveGroup.stockCode}
-          exchangeCode={hedgeActiveGroup.exchangeCode}
-          expiryDisplay={hedgeActiveGroup.expiryDate}
-          legs={executeLegs}
-        />
-      ) : null}
 
       <SquareOffLegsModal
         rows={squareOffRows ?? []}

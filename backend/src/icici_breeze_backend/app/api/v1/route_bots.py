@@ -21,14 +21,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
-from icici_breeze_backend.app.db.bots_migrate import BOT_HOLDINGS_WRITER, BOT_TYPES
+from icici_breeze_backend.app.db.bots_migrate import (
+    BOT_EXPIRY_INDEX_WRITER,
+    BOT_HOLDINGS_WRITER,
+    BOT_TYPES,
+)
 from icici_breeze_backend.app.domain.bots import (
     ApprovalResult,
     ApproveProposalRequest,
     BotRecord,
     BotRunRecord,
+    ExpiryIndexWriterConfig,
+    HoldingRow,
     HoldingsWriterConfig,
-    PlacedLegResult,
+    ProposalLeg,
+    RepriceRequest,
     ProposalRecord,
     ReasonCode,
     ScanResponse,
@@ -37,6 +44,7 @@ from icici_breeze_backend.app.domain.bots import (
     ScripPref,
 )
 from icici_breeze_backend.app.repositories import bots as repo
+from icici_breeze_backend.app.services.bots import proposals
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
 _logger = logging.getLogger(__name__)
@@ -117,7 +125,11 @@ async def update_bot(
 
     before = repo.get_or_create_bot(ctx.user_id, bot_type)
     updated = repo.update_bot(
-        ctx.user_id, bot_type, enabled=payload.enabled, config=payload.config
+        ctx.user_id,
+        bot_type,
+        enabled=payload.enabled,
+        priority=payload.priority,
+        config=payload.config,
     )
     if payload.enabled is not None and payload.enabled != before.enabled:
         AuditLogger(None).log_operation(
@@ -162,87 +174,22 @@ async def reject_pending_proposal(
 # Bot 1 — Holdings Option Writer: scan and approve
 # --------------------------------------------------------------------------------------
 
-# A proposal is a priced snapshot. If the bid has moved more than this by the time the user
-# approves, the orders would go out at prices they never agreed to — so re-scan and make
-# them look again rather than filling on stale numbers.
-MATERIAL_DRIFT_PCT = 10.0
-
-
-def _leg_key(leg) -> tuple:
-    return (leg.stock_code, leg.right, leg.expiry_display, round(float(leg.strike_price), 4))
-
-
 def _run_scan(user_id: str, trigger: str):
-    """Scan, and record the outcome in the run log whatever happens."""
-    from icici_breeze_backend.app.services.bots import holdings_writer
-    from icici_breeze_backend.app.services.processor import processor
+    """Thin wrapper over the shared runner, translating its failures into HTTP.
 
-    proc = processor()
-    bot = repo.get_or_create_bot(user_id, BOT_HOLDINGS_WRITER)
-    config = HoldingsWriterConfig(**bot.config)
-    prefs = {p.stock_code: p for p in repo.list_scrip_prefs(user_id)}
-    run_id = repo.start_run(user_id, BOT_HOLDINGS_WRITER, trigger)
+    The orchestration itself lives in `services/bots/holdings_runner` so the unattended
+    path cannot drift from this one.
+    """
+    from icici_breeze_backend.app.services.bots import holdings_runner, holdings_writer
 
     try:
-        result = holdings_writer.scan(
-            proc,
-            user_id,
-            config=config,
-            prefs=prefs,
-            margin_source=proc.get_strategy_builder_margin_source(user_id),
-        )
+        return holdings_runner.run_scan(user_id, trigger)
     except holdings_writer.BotScanError as e:
-        repo.finish_run(
-            run_id, status="failed", reason_code=ReasonCode.BROKER_ERROR, reason_text=str(e)
-        )
         raise HTTPException(status_code=502, detail=str(e)) from e
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
-        _logger.exception("holdings-writer scan failed for user=%s", user_id)
-        repo.finish_run(
-            run_id,
-            status="failed",
-            reason_code=ReasonCode.INTERNAL_ERROR,
-            reason_text="The scan failed unexpectedly.",
-        )
         raise HTTPException(status_code=500, detail="The scan failed unexpectedly.") from e
-
-    skipped = [
-        {"stock_code": s.stock_code, "reason_code": s.reason_code, "reason": s.reason}
-        for s in result.skipped
-    ]
-    if not result.legs:
-        repo.finish_run(
-            run_id,
-            status="skipped",
-            reason_code=ReasonCode.NOTHING_ELIGIBLE,
-            reason_text=(
-                f"No writable contracts found across {len(skipped)} holding(s)."
-                if skipped
-                else "No F&O-eligible holdings."
-            ),
-            detail={"skipped": skipped},
-        )
-        return run_id, None, skipped, result.warnings
-
-    proposal = repo.create_proposal(
-        run_id=run_id,
-        user_id=user_id,
-        bot_type=BOT_HOLDINGS_WRITER,
-        legs=result.legs,
-        totals=result.totals,
-        ttl_minutes=config.proposal_ttl_minutes,
-    )
-    repo.finish_run(
-        run_id,
-        status="proposed",
-        reason_code=ReasonCode.PROPOSAL_READY,
-        reason_text=(
-            f"{len(result.legs)} contract(s) proposed; "
-            f"{len(skipped)} holding(s) produced nothing."
-        ),
-        detail={"skipped": skipped, "proposal_id": proposal.id},
-    )
-    return run_id, proposal, skipped, result.warnings
 
 
 @router.post("/scan", response_model=ScanResponse)
@@ -270,115 +217,223 @@ async def approve_proposal(
 ):
     """Place the approved legs, after confirming their prices still hold.
 
-    Approval names the legs to keep — anything omitted is dropped, which is how the manual
-    delivery-cash allocation is expressed.
+    The rules themselves live in `services/bots/proposals` because the Telegram approval
+    path shares them; this handler only turns a refusal back into the HTTP status it has
+    always returned.
     """
     _validate_bot_type(bot_type)
-    if bot_type != BOT_HOLDINGS_WRITER:
-        raise HTTPException(status_code=400, detail="This bot does not use proposals.")
-
-    pending = repo.get_pending_proposal(ctx.user_id, bot_type)
-    if pending is None:
-        raise HTTPException(
-            status_code=404, detail="No proposal awaiting approval — run a scan first."
-        )
     try:
-        chosen = [pending.legs[i] for i in sorted(set(payload.leg_indexes))]
-    except IndexError as e:
-        raise HTTPException(status_code=400, detail="Unknown leg in approval.") from e
-    if not chosen:
-        raise HTTPException(status_code=400, detail="No legs selected.")
+        return proposals.approve(ctx.user_id, bot_type, payload)
+    except proposals.ApprovalRefused as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
 
-    # Re-price before committing. A proposal that cannot be re-priced fails closed.
-    _, fresh, _, _ = _run_scan(ctx.user_id, "manual")
-    fresh_by_key = {_leg_key(leg): leg for leg in (fresh.legs if fresh else [])}
-    drifted: list[str] = []
-    indicative: list[str] = []
-    repriced = []
-    for leg in chosen:
-        current = fresh_by_key.get(_leg_key(leg))
-        if current is None:
-            drifted.append(f"{leg.stock_code} {leg.strike_price:g} is no longer available")
-            continue
-        if current.premium_basis != "bid":
-            # An indicative price is planning information, not something to sell into. There
-            # is no order book outside market hours, so this is the honest stopping point.
-            indicative.append(f"{leg.stock_code} {leg.strike_price:g}")
-            continue
-        if leg.premium_per_share > 0:
-            move = (current.premium_per_share - leg.premium_per_share) / leg.premium_per_share
-            if move * 100 <= -MATERIAL_DRIFT_PCT:
-                drifted.append(
-                    f"{leg.stock_code} {leg.strike_price:g} bid fell "
-                    f"{abs(move) * 100:.1f}% to {current.premium_per_share:g}"
-                )
-                continue
-        repriced.append(current)
 
-    if indicative:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "No live bid for " + ", ".join(indicative) + ". These premiums are "
-                "indicative (priced off the last trade because the market is closed), so "
-                "nothing was placed. Approve again while the market is open."
-            ),
-        )
+# --------------------------------------------------------------------------------------
+# The settings drawer's scrip list
+# --------------------------------------------------------------------------------------
 
-    if drifted:
-        # `_run_scan` above already superseded the old proposal with fresh prices, so the
-        # user is re-approving against what the market is actually showing now.
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Prices moved before approval, so nothing was placed. "
-                "A fresh proposal is ready. " + "; ".join(drifted)
-            ),
-        )
 
-    from icici_breeze_backend.app.services.bots import placement
+@router.get("/holdings", response_model=list[HoldingRow])
+async def list_holdings(ctx: RequestContext = Depends(get_request_context)):
+    """Live holdings, F&O eligibility resolved, for Bot 1's per-scrip settings.
+
+    Read on every open rather than stored: holdings change without the bot being told, and
+    configuring lots against a scrip the user sold last week is worse than showing nothing.
+    """
+    from icici_breeze_backend.app.services.bots import holdings_writer
     from icici_breeze_backend.app.services.processor import processor
-    import icici_breeze_backend.app.core.config as cfg
 
-    results = placement.place_short_legs(
-        processor(),
-        ctx.user_id,
-        [leg.model_dump() for leg in repriced],
-        tolerance_pct=float(cfg.AGGRESSIVE_LIMIT_DEFAULT_TOLERANCE_PCT),
-    )
-    placed = [
-        PlacedLegResult(
-            stock_code=r.stock_code,
-            right=r.right,
-            strike_price=r.strike_price,
-            expiry_display=r.expiry_display,
-            quantity=r.quantity,
-            limit_price=r.limit_price,
-            order_ids=r.order_ids,
-            error=r.error,
+    bot = repo.get_or_create_bot(ctx.user_id, BOT_HOLDINGS_WRITER)
+    config = HoldingsWriterConfig(**bot.config)
+    try:
+        rows = holdings_writer.list_holdings(processor(), ctx.user_id, config)
+    except holdings_writer.BotScanError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return [HoldingRow(**row) for row in rows]
+
+
+# --------------------------------------------------------------------------------------
+# Bot 2 — manual run
+# --------------------------------------------------------------------------------------
+
+
+def _index_expiring_today(proc, index_code: str) -> Optional[str]:
+    from icici_breeze_backend.app.services.bots import scheduler
+
+    return scheduler._expiring_today(proc).get(index_code)
+
+
+@router.post("/plan", response_model=ScanResponse)
+async def plan_bot(
+    bot_type: str = Query(...),
+    ctx: RequestContext = Depends(get_request_context),
+    _: None = Depends(require_trading_not_revoked),
+):
+    """Size Bot 2's trade for today without placing it — the manual run's first step.
+
+    Deliberately allowed on any day. Off an expiry day it reports that nothing expires,
+    rather than the button being greyed out with no explanation: "is it broken?" is the
+    single most common question a disabled control produces.
+    """
+    _validate_bot_type(bot_type)
+    if bot_type != BOT_EXPIRY_INDEX_WRITER:
+        raise HTTPException(
+            status_code=400, detail="This bot plans through a scan, not a plan."
         )
-        for r in results
-    ]
-    ok_count = sum(1 for r in results if r.ok)
-    all_ok = ok_count == len(results)
 
-    AuditLogger(None).log_operation(
-        ctx.user_id, OperationType.BOT_ORDERS_PLACED, "BotProposal", pending.id
+    from icici_breeze_backend.app.services.bots import expiry_index_writer as bot2
+    from icici_breeze_backend.app.services.processor import processor
+
+    proc = processor()
+    bot = repo.get_or_create_bot(ctx.user_id, BOT_EXPIRY_INDEX_WRITER)
+    config = ExpiryIndexWriterConfig(**bot.config)
+    run_id = repo.start_run(ctx.user_id, BOT_EXPIRY_INDEX_WRITER, "manual")
+
+    enabled = [code for code, leg in config.indices.items() if leg.enabled]
+    if not enabled:
+        repo.finish_run(
+            run_id,
+            status="skipped",
+            reason_code=ReasonCode.NOTHING_ELIGIBLE,
+            reason_text="No index is enabled on this bot.",
+        )
+        return ScanResponse(run_id=run_id, proposal=None, skipped=[], warnings=[])
+
+    expiring = {}
+    for code in enabled:
+        display = _index_expiring_today(proc, code)
+        if display:
+            expiring[code] = display
+    if not expiring:
+        repo.finish_run(
+            run_id,
+            status="skipped",
+            reason_code=ReasonCode.NOT_AN_EXPIRY_DAY,
+            reason_text="Neither NIFTY nor SENSEX expires today.",
+        )
+        return ScanResponse(
+            run_id=run_id,
+            proposal=None,
+            skipped=[
+                {
+                    "stock_code": bot2.INDEX_LABEL.get(c, c),
+                    "reason_code": ReasonCode.NOT_AN_EXPIRY_DAY,
+                    "reason": "Does not expire today.",
+                }
+                for c in enabled
+            ],
+            warnings=[],
+        )
+
+    available = bot2._available_margin(proc, ctx.user_id)
+    if not available or available <= 0:
+        repo.finish_run(
+            run_id,
+            status="failed",
+            reason_code=ReasonCode.BROKER_ERROR,
+            reason_text="Could not read available margin from the broker.",
+        )
+        raise HTTPException(status_code=502, detail="Could not read available margin.")
+
+    margin_source = proc.get_strategy_builder_margin_source(ctx.user_id)
+    # Priority order, same as the unattended sweep, so the manual review shows what the bot
+    # would actually have done rather than a differently-ordered version of it.
+    ordered = sorted(expiring, key=lambda c: config.indices[c].priority)
+    legs: list[ProposalLeg] = []
+    skipped: list[dict] = []
+    for code in ordered:
+        plan = bot2.plan_index(
+            proc,
+            ctx.user_id,
+            code,
+            expiry_display=expiring[code],
+            config=config,
+            available_margin=available,
+            margin_source=margin_source,
+        )
+        if plan.error or not plan.legs:
+            skipped.append(
+                {
+                    "stock_code": bot2.INDEX_LABEL.get(code, code),
+                    "reason_code": plan.reason_code or ReasonCode.NOTHING_ELIGIBLE,
+                    "reason": plan.error or "Nothing to trade.",
+                }
+            )
+            continue
+        legs.extend(proposals.plan_to_legs(plan, code))
+
+    if not legs:
+        repo.finish_run(
+            run_id,
+            status="skipped",
+            reason_code=ReasonCode.NOTHING_ELIGIBLE,
+            reason_text="Nothing could be sized today.",
+            detail={"skipped": skipped},
+        )
+        return ScanResponse(run_id=run_id, proposal=None, skipped=skipped, warnings=[])
+
+    proposal = repo.create_proposal(
+        run_id=run_id,
+        user_id=ctx.user_id,
+        bot_type=BOT_EXPIRY_INDEX_WRITER,
+        legs=legs,
+        totals=proposals.index_totals(legs),
+        ttl_minutes=5,
     )
-    run_id = repo.start_run(ctx.user_id, BOT_HOLDINGS_WRITER, "manual")
     repo.finish_run(
         run_id,
-        status="completed" if all_ok else "failed",
-        reason_code=ReasonCode.ORDERS_PLACED if all_ok else ReasonCode.ORDER_REJECTED,
-        reason_text=f"{ok_count} of {len(results)} leg(s) placed.",
-        detail={"legs": [p.model_dump() for p in placed]},
+        status="proposed",
+        reason_code=ReasonCode.PROPOSAL_READY,
+        reason_text=f"{len(legs)} leg(s) proposed for review.",
+        detail={"skipped": skipped, "proposal_id": proposal.id},
     )
-    # The *approved* proposal is resolved, not the freshly-scanned one, so the run log shows
-    # which snapshot the user actually acted on.
-    repo.resolve_proposal(
-        ctx.user_id,
-        pending.id,
-        status="placed",
-        note=f"{ok_count} of {len(results)} leg(s) placed.",
+    return ScanResponse(run_id=run_id, proposal=proposal, skipped=skipped, warnings=[])
+
+
+@router.post("/proposal/reprice", response_model=ProposalRecord)
+async def reprice_proposal(
+    payload: RepriceRequest,
+    bot_type: str = Query(...),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Re-price the pending proposal with the user's edits applied. Places nothing.
+
+    The manual review shows margin and premium *before* the user commits, and a margin
+    number is not linear in lot count -- it comes from the broker, not from multiplication.
+    So an edited size has to go back to the source rather than being scaled in the browser,
+    or the figure the user decides on is one nobody ever quoted.
+    """
+    _validate_bot_type(bot_type)
+    pending = repo.get_pending_proposal(ctx.user_id, bot_type)
+    if pending is None:
+        raise HTTPException(status_code=404, detail="No proposal to re-price.")
+
+    from icici_breeze_backend.app.services.processor import processor
+
+    proc = processor()
+    legs: list[ProposalLeg] = []
+    for index, leg in enumerate(pending.legs):
+        edit = payload.edits.get(index)
+        if edit is None or (edit.lots is None and edit.strike_price is None):
+            legs.append(leg)
+            continue
+        if bot_type == BOT_HOLDINGS_WRITER:
+            priced = proposals.price_edited_leg(ctx.user_id, leg, edit, {})
+        else:
+            priced = proposals.reprice_index_leg(proc, ctx.user_id, leg, edit)
+        legs.append(priced or leg)
+
+    if payload.leg_indexes:
+        wanted = set(payload.leg_indexes)
+        for index, leg in enumerate(legs):
+            leg.selected = index in wanted
+
+    bot = repo.get_or_create_bot(ctx.user_id, bot_type)
+    totals = (
+        proposals.index_totals(legs)
+        if bot_type == BOT_EXPIRY_INDEX_WRITER
+        else proposals.holdings_totals(legs, HoldingsWriterConfig(**bot.config))
     )
-    return ApprovalResult(proposal_id=pending.id, placed=placed, all_succeeded=all_ok)
+    return pending.model_copy(update={"legs": legs, "totals": totals})
+
+

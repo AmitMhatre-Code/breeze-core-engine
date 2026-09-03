@@ -24,7 +24,11 @@ from typing import Any, Literal, Optional
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import parse_strike
-from icici_breeze_backend.app.domain.bots import ExpiryIndexWriterConfig, ReasonCode
+from icici_breeze_backend.app.domain.bots import (
+    ExpiryIndexWriterConfig,
+    IndexWriterLeg,
+    ReasonCode,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -146,6 +150,215 @@ def decide(ctx: TickContext) -> TickDecision:
 
 
 # --------------------------------------------------------------------------------------
+# Candidates -- pricing each shortlisted strategy so they can be compared
+# --------------------------------------------------------------------------------------
+
+
+@dataclass
+class CandidateLeg:
+    right: str  # cfg.CALL / cfg.PUT
+    strike_price: float
+    bid: float
+
+
+@dataclass
+class Candidate:
+    """One shortlisted strategy, priced for a single lot so shapes compare like for like."""
+
+    strategy: str
+    legs: list[CandidateLeg]
+    premium_per_lot: float
+    margin_per_lot: float
+
+    @property
+    def margin_yield(self) -> float:
+        """Premium collected per rupee of margin committed.
+
+        This, not absolute premium, is how the shortlist is ranked -- and the distinction is
+        the whole reason the ranking needs stating. A strangle is both legs, so on absolute
+        premium it wins every time it is shortlisted, which would quietly retire naked CE and
+        naked PE the moment a user ticked all three. Per rupee of margin it has to earn the
+        extra capital it ties up, and the exchange's own netting of the two sides is what
+        gives it a fair chance of doing so.
+        """
+        return self.premium_per_lot / self.margin_per_lot if self.margin_per_lot > 0 else 0.0
+
+    @property
+    def label(self) -> str:
+        return STRATEGY_LABEL.get(self.strategy, self.strategy)
+
+
+STRATEGY_LABEL = {
+    "naked_ce": "Naked CE",
+    "naked_pe": "Naked PE",
+    "short_strangle": "Short strangle",
+}
+
+# Which sides each shortlisted shape sells.
+STRATEGY_RIGHTS: dict[str, tuple[str, ...]] = {
+    "naked_ce": (cfg.CALL,),
+    "naked_pe": (cfg.PUT,),
+    "short_strangle": (cfg.CALL, cfg.PUT),
+}
+
+
+def _chain_rows(proc: Any, user_id: str, index_code: str, exchange: str, expiry: str, right: str):
+    from icici_breeze_backend.app.services.quote_source_router import (
+        fetch_chain_side_icici_response,
+    )
+
+    chain = fetch_chain_side_icici_response(proc, user_id, index_code, exchange, expiry, right)
+    if (chain or {}).get("Status") != 200 or not chain.get("Success"):
+        return []
+    return [r for r in chain["Success"] if isinstance(r, dict)]
+
+
+def _spot_from(rows: list[dict]) -> float:
+    for r in rows:
+        try:
+            spot = float(r.get("spot_price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if spot > 0:
+            return spot
+    return 0.0
+
+
+def _bid(row: dict) -> float:
+    try:
+        return float(row.get("best_bid_price") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def margin_for_legs(
+    proc: Any,
+    user_id: str,
+    *,
+    exchange_code: str,
+    stock_code: str,
+    expiry_display: str,
+    legs: list[tuple[str, float, int]],
+) -> Optional[float]:
+    """SPAN for a set of short legs priced together in ONE margin_calculator call.
+
+    Sending both sides of a strangle in a single call is what makes the comparison honest:
+    the exchange nets the two, and pricing each side alone and adding them would overstate a
+    strangle's cost by the whole netting benefit -- biasing the yield ranking against the
+    very shape the netting exists to reward.
+
+    `legs` is (right, strike, quantity). Returns None on any failure; callers treat that as
+    "cannot price", never as zero.
+    """
+    from icici_breeze_backend.app.core.strike import strike_for_broker
+    from icici_breeze_backend.app.services.processor import _expiry_display_to_api
+
+    if not legs:
+        return None
+    try:
+        breeze = proc.get_session_breeze(user_id)
+        expiry_api = _expiry_display_to_api(expiry_display)
+        payload = [
+            {
+                "strike_price": strike_for_broker(strike),
+                "quantity": int(quantity),
+                "product": cfg.OPTIONS,
+                "action": cfg.SELL,
+                "expiry_date": expiry_api,
+                "stock_code": stock_code,
+                "right": right,
+            }
+            for right, strike, quantity in legs
+        ]
+        out = breeze.margin_calculator(payload, exchange_code=exchange_code)
+    except Exception:  # noqa: BLE001 -- an unpriceable shape drops out of the shortlist
+        _logger.warning("bot2: margin_calculator failed for %s", stock_code, exc_info=True)
+        return None
+    if not isinstance(out, dict) or out.get("Status") != 200:
+        return None
+    try:
+        value = float((out.get("Success") or {}).get("span_margin_required") or 0)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def build_candidates(
+    proc: Any,
+    user_id: str,
+    index_code: str,
+    *,
+    exchange: str,
+    expiry_display: str,
+    leg_cfg: IndexWriterLeg,
+    lot_size: int,
+) -> tuple[list[Candidate], Optional[str]]:
+    """Price every shortlisted strategy for one lot. Returns (candidates, error)."""
+    rights_needed = {r for s in leg_cfg.strategies for r in STRATEGY_RIGHTS.get(s, ())}
+    rows_by_right: dict[str, list[dict]] = {}
+    spot = 0.0
+    for right in rights_needed:
+        rows = _chain_rows(proc, user_id, index_code, exchange, expiry_display, right)
+        if not rows:
+            return [], "No option chain available."
+        rows_by_right[right] = rows
+        spot = spot or _spot_from(rows)
+    if spot <= 0:
+        return [], "No spot price available."
+
+    # Pick each side once and reuse it: a strangle's call leg is the same contract the
+    # naked-CE candidate would sell, so pricing it twice would only invite them to drift.
+    picked: dict[str, CandidateLeg] = {}
+    for right in rights_needed:
+        safety = leg_cfg.safety_pct_ce if right == cfg.CALL else leg_cfg.safety_pct_pe
+        row = _pick_strike(rows_by_right[right], spot, right, safety)
+        if row is None:
+            continue
+        strike = float(parse_strike(row.get("strike_price")) or 0)
+        bid = _bid(row)
+        # Unlike Bot 1 there is no indicative fallback: this bot only runs during market
+        # hours, so a missing bid means the book really is empty.
+        if strike <= 0 or bid <= 0:
+            continue
+        picked[right] = CandidateLeg(right=right, strike_price=strike, bid=bid)
+
+    candidates: list[Candidate] = []
+    for strategy in leg_cfg.strategies:
+        rights = STRATEGY_RIGHTS.get(strategy, ())
+        legs = [picked[r] for r in rights if r in picked]
+        if len(legs) != len(rights):
+            continue
+        margin = margin_for_legs(
+            proc,
+            user_id,
+            exchange_code=exchange,
+            stock_code=index_code,
+            expiry_display=expiry_display,
+            legs=[(leg.right, leg.strike_price, lot_size) for leg in legs],
+        )
+        if margin is None:
+            continue
+        candidates.append(
+            Candidate(
+                strategy=strategy,
+                legs=legs,
+                premium_per_lot=round(sum(leg.bid for leg in legs) * lot_size, 2),
+                margin_per_lot=round(margin, 2),
+            )
+        )
+    if not candidates:
+        return [], "None of the shortlisted strategies could be priced."
+    return candidates, None
+
+
+def choose(candidates: list[Candidate]) -> Optional[Candidate]:
+    """Best premium per rupee of margin. Ties break towards the cheaper shape."""
+    if not candidates:
+        return None
+    return max(candidates, key=lambda c: (c.margin_yield, -c.margin_per_lot))
+
+
+# --------------------------------------------------------------------------------------
 # Execution
 # --------------------------------------------------------------------------------------
 
@@ -156,11 +369,17 @@ class FireResult:
     exchange_code: str
     expiry_display: str
     right: str
+    strategy: Optional[str] = None
     strike_price: Optional[float] = None
+    legs: list[dict] = field(default_factory=list)
     lots: int = 0
     quantity: int = 0
     entry_price: Optional[float] = None
     span_per_lot: Optional[float] = None
+    margin_total: Optional[float] = None
+    premium_total: Optional[float] = None
+    margin_yield: Optional[float] = None
+    considered: list[dict] = field(default_factory=list)
     budget: Optional[float] = None
     order_ids: list[str] = field(default_factory=list)
     rule_id: Optional[str] = None
@@ -207,7 +426,7 @@ def _pick_strike(rows: list[dict], spot: float, right: str, safety_pct: float) -
     return best
 
 
-def fire_index(
+def plan_index(
     proc: Any,
     user_id: str,
     index_code: str,
@@ -217,66 +436,22 @@ def fire_index(
     available_margin: float,
     margin_source: str,
 ) -> FireResult:
-    """Size and place one index's short leg, then arm its exit."""
-    from icici_breeze_backend.app.services.bots import placement
-    from icici_breeze_backend.app.services.quote_source_router import (
-        fetch_chain_side_icici_response,
-    )
+    """Decide *what* to trade and *how big*, without placing anything.
 
+    Split out from `fire_index` so the manual run and the unattended run size identically --
+    a manual review that showed different numbers from what the bot would have done on its
+    own would be worse than no review at all.
+    """
     leg_cfg = config.indices[index_code]
     exchange = INDEX_EXCHANGE.get(index_code, cfg.NFO)
-    right = cfg.CALL if leg_cfg.right == "call" else cfg.PUT
     result = FireResult(
         index_code=index_code,
         exchange_code=exchange,
         expiry_display=expiry_display,
-        right=leg_cfg.right,
+        right="",
     )
-
     budget = available_margin * leg_cfg.margin_pct_cap / 100.0
     result.budget = round(budget, 2)
-
-    chain = fetch_chain_side_icici_response(
-        proc, user_id, index_code, exchange, expiry_display, right
-    )
-    if (chain or {}).get("Status") != 200 or not chain.get("Success"):
-        result.reason_code = ReasonCode.CHAIN_NOT_READY
-        result.error = "No option chain available."
-        return result
-    rows = [r for r in chain["Success"] if isinstance(r, dict)]
-
-    spot = 0.0
-    for r in rows:
-        try:
-            spot = float(r.get("spot_price") or 0)
-        except (TypeError, ValueError):
-            spot = 0.0
-        if spot > 0:
-            break
-    if spot <= 0:
-        result.reason_code = ReasonCode.QUOTE_UNAVAILABLE
-        result.error = "No spot price available."
-        return result
-
-    row = _pick_strike(rows, spot, right, leg_cfg.safety_pct)
-    if row is None:
-        result.reason_code = ReasonCode.QUOTE_UNAVAILABLE
-        result.error = f"No strike at least {leg_cfg.safety_pct}% from spot."
-        return result
-    strike = float(parse_strike(row.get("strike_price")) or 0)
-    result.strike_price = strike
-
-    try:
-        bid = float(row.get("best_bid_price") or 0)
-    except (TypeError, ValueError):
-        bid = 0.0
-    if bid <= 0:
-        # Unlike Bot 1, there is no indicative fallback here: this bot only ever runs
-        # during market hours, so a missing bid means the book really is empty.
-        result.reason_code = ReasonCode.QUOTE_UNAVAILABLE
-        result.error = f"No bid on the {strike:g} strike."
-        return result
-    result.entry_price = bid
 
     lot_size = proc.fetch_lot_size(index_code, expiry_display, exchange_code=exchange)
     try:
@@ -288,83 +463,171 @@ def fire_index(
         result.error = "No lot size in the scrip master."
         return result
 
-    # Estimate from the baseline first -- one cheap lookup rather than a margin call per
-    # candidate lot count.
-    margin, _warnings = proc._resolve_leg_margin_with_source(
-        user_id=user_id, exchange_code=exchange, stock_code=index_code,
-        expiry_display=expiry_display, strike_price=strike, right=right,
-        quantity=lot_size, margin_source=margin_source,
-        action=cfg.SELL, product=cfg.OPTIONS,
+    candidates, error = build_candidates(
+        proc,
+        user_id,
+        index_code,
+        exchange=exchange,
+        expiry_display=expiry_display,
+        leg_cfg=leg_cfg,
+        lot_size=lot_size,
     )
-    if (margin or {}).get("Status") != 200:
-        result.reason_code = ReasonCode.MARGIN_LOOKUP_FAILED
-        result.error = "Could not price the margin for one lot."
+    if error:
+        result.reason_code = (
+            ReasonCode.CHAIN_NOT_READY
+            if "chain" in error.lower()
+            else ReasonCode.QUOTE_UNAVAILABLE
+        )
+        result.error = error
         return result
-    span_per_lot = float(margin["Success"]["span_margin_required"])
-    if span_per_lot <= 0:
-        result.reason_code = ReasonCode.MARGIN_LOOKUP_FAILED
-        result.error = "Margin for one lot came back as zero."
-        return result
-    result.span_per_lot = round(span_per_lot, 2)
 
-    lots = int(math.floor(budget / span_per_lot))
+    # Every shortlisted shape is recorded, not just the winner. A user who ticked three
+    # strategies and got a strangle needs to see what the other two would have yielded,
+    # otherwise the choice is unexplainable after the fact.
+    result.considered = [
+        {
+            "strategy": c.strategy,
+            "label": c.label,
+            "premium_per_lot": c.premium_per_lot,
+            "margin_per_lot": c.margin_per_lot,
+            "margin_yield": round(c.margin_yield, 6),
+        }
+        for c in candidates
+    ]
+
+    best = choose(candidates)
+    if best is None:
+        result.reason_code = ReasonCode.QUOTE_UNAVAILABLE
+        result.error = "No strategy could be priced."
+        return result
+
+    result.strategy = best.strategy
+    result.span_per_lot = best.margin_per_lot
+    result.margin_yield = round(best.margin_yield, 6)
+    # `right` and `strike_price` describe the single-leg case and stay populated for it;
+    # `legs` is the full picture and is what placement and the exit arming read.
+    result.right = "call" if best.legs[0].right == cfg.CALL else "put"
+    result.strike_price = best.legs[0].strike_price if len(best.legs) == 1 else None
+
+    lots = int(math.floor(budget / best.margin_per_lot))
     if lots < 1:
         result.reason_code = ReasonCode.MARGIN_CAP_TOO_SMALL
         result.error = (
-            f"One lot needs about Rs {span_per_lot:,.0f}, above the "
+            f"One lot of {best.label} needs about Rs {best.margin_per_lot:,.0f}, above the "
             f"Rs {budget:,.0f} this index is allowed."
         )
         return result
 
-    # Verify the estimate against a real margin call before committing capital. The
-    # baseline is a per-contract lookup; the real number can differ, and over-committing an
-    # unattended trade is exactly what the cap exists to prevent.
-    verified, _ = proc._resolve_leg_margin_with_source(
-        user_id=user_id, exchange_code=exchange, stock_code=index_code,
-        expiry_display=expiry_display, strike_price=strike, right=right,
-        quantity=lots * lot_size, margin_source=margin_source,
-        action=cfg.SELL, product=cfg.OPTIONS,
+    # Verify against a real margin call at the full size before committing capital. The
+    # per-lot figure does not always scale linearly, and over-committing an unattended trade
+    # is exactly what the cap exists to prevent.
+    verified = margin_for_legs(
+        proc,
+        user_id,
+        exchange_code=exchange,
+        stock_code=index_code,
+        expiry_display=expiry_display,
+        legs=[(leg.right, leg.strike_price, lots * lot_size) for leg in best.legs],
     )
-    if (verified or {}).get("Status") == 200:
-        verified_total = float(verified["Success"]["span_margin_required"])
-        while lots > 1 and verified_total > budget:
+    if verified is not None:
+        while lots > 1 and verified > budget:
             lots -= 1
-            verified_total = span_per_lot * lots
-        if verified_total > budget:
+            verified = best.margin_per_lot * lots
+        if verified > budget:
             result.reason_code = ReasonCode.MARGIN_CAP_TOO_SMALL
             result.error = (
-                f"Verified margin Rs {verified_total:,.0f} for one lot exceeds the "
-                f"Rs {budget:,.0f} cap."
+                f"Verified margin Rs {verified:,.0f} for one lot of {best.label} exceeds "
+                f"the Rs {budget:,.0f} cap."
             )
             return result
+        result.margin_total = round(verified, 2)
+    else:
+        result.margin_total = round(best.margin_per_lot * lots, 2)
 
     result.lots = lots
     result.quantity = lots * lot_size
+    result.premium_total = round(best.premium_per_lot * lots, 2)
+    result.entry_price = best.legs[0].bid if len(best.legs) == 1 else None
+    result.legs = [
+        {
+            "right": "call" if leg.right == cfg.CALL else "put",
+            "strike_price": leg.strike_price,
+            "bid": leg.bid,
+            "quantity": result.quantity,
+            "premium_total": round(leg.bid * result.quantity, 2),
+        }
+        for leg in best.legs
+    ]
+    return result
 
+
+def fire_index(
+    proc: Any,
+    user_id: str,
+    index_code: str,
+    *,
+    expiry_display: str,
+    config: ExpiryIndexWriterConfig,
+    available_margin: float,
+    margin_source: str,
+) -> FireResult:
+    """Size and place one index's short position, then arm its exit."""
+    result = plan_index(
+        proc,
+        user_id,
+        index_code,
+        expiry_display=expiry_display,
+        config=config,
+        available_margin=available_margin,
+        margin_source=margin_source,
+    )
+    if result.error or not result.legs:
+        return result
+    return execute_plan(proc, user_id, result, config=config)
+
+
+def execute_plan(
+    proc: Any, user_id: str, result: FireResult, *, config: ExpiryIndexWriterConfig
+) -> FireResult:
+    """Place a plan's legs and arm the exit. Shared by the scheduler and the manual run."""
+    from icici_breeze_backend.app.services.bots import placement
+
+    exchange = result.exchange_code
     placed = placement.place_short_legs(
         proc,
         user_id,
-        [{
-            "stock_code": index_code,
-            "exchange_code": exchange,
-            "right": leg_cfg.right,
-            "expiry_display": expiry_display,
-            "strike_price": strike,
-            "quantity": result.quantity,
-            "premium_per_share": bid,
-        }],
+        [
+            {
+                "stock_code": result.index_code,
+                "exchange_code": exchange,
+                "right": leg["right"],
+                "expiry_display": result.expiry_display,
+                "strike_price": leg["strike_price"],
+                "quantity": leg["quantity"],
+                "premium_per_share": leg["bid"],
+            }
+            for leg in result.legs
+        ],
         tolerance_pct=float(cfg.AGGRESSIVE_LIMIT_DEFAULT_TOLERANCE_PCT),
     )
-    leg_result = placed[0]
-    result.order_ids = list(leg_result.order_ids)
-    if leg_result.error:
+    errors = []
+    for leg_result in placed:
+        result.order_ids.extend(leg_result.order_ids)
+        if leg_result.error:
+            errors.append(leg_result.error)
+    if errors:
         result.reason_code = ReasonCode.ORDER_REJECTED
-        result.error = leg_result.error
+        result.error = "; ".join(errors)
         if not result.order_ids:
             return result
 
     result.rule_id = _arm_exit(
-        proc, user_id, result, config=config, exchange=exchange, expiry_display=expiry_display
+        proc,
+        user_id,
+        result,
+        config=config,
+        exchange=exchange,
+        expiry_display=result.expiry_display,
     )
     return result
 
@@ -381,9 +644,14 @@ def _arm_exit(
     """Arm the SG that will close this position.
 
     The loss limit genuinely is a rupee P&L (N x the premium collected) so it maps onto
-    `loss_limit_pnl`. The profit target is an absolute option price and is passed through
-    as `target_option_price` — never converted — because the engine's P&L uses the broker's
-    average_price, which need not equal the price we just sold at.
+    `loss_limit_pnl` on the group -- the right shape for a strangle, whose risk is net
+    across both legs.
+
+    Profit booking is a share of the premium, applied as a per-leg PRICE target of
+    `entry x (1 - pct/100)` and never converted into rupees: the engine's P&L uses the
+    broker's `average_price`, which need not equal the price the bot sold at. At 100% the
+    target price is zero, which no limit order can reach, so no profit target is armed at
+    all and only the stop-loss stands -- the honest reading of "let it expire worthless".
     """
     from icici_breeze_backend.app.repositories import squareoff_rules as sq_repo
     from icici_breeze_backend.app.services import portfolio_pnl_engine
@@ -392,10 +660,23 @@ def _arm_exit(
         assert_can_arm,
     )
 
-    premium_collected = float(result.entry_price or 0) * result.quantity
+    premium_collected = float(result.premium_total or 0)
     loss_limit = config.loss_limit_premium_multiple * premium_collected
     if loss_limit <= 0:
         return None
+
+    # One target price for the group, so the rule fires only when EVERY short leg is at or
+    # below it. On a strangle the cheapest leg would otherwise book the whole group and
+    # leave the other side naked, which is strictly worse than holding both.
+    leg_targets = [
+        config.profit_target_price_for(float(leg.get("bid") or 0)) for leg in result.legs
+    ]
+    target_option_price = (
+        min(t for t in leg_targets if t is not None)
+        if leg_targets and all(t is not None for t in leg_targets)
+        else None
+    )
+
     try:
         breeze = proc.get_session_breeze(user_id)
         assert_can_arm(breeze, user_id, result.index_code, expiry_display)
@@ -404,14 +685,15 @@ def _arm_exit(
             stock_code=result.index_code,
             expiry_display=expiry_display,
             exchange_code=exchange,
-            # `profit_target_pnl` is NOT NULL and must stay positive, but the real profit
-            # exit is the price target below. Set it beyond anything reachable so it never
-            # front-runs the price target; the two are alternatives, not a pair.
+            # `profit_target_pnl` is NOT NULL and must stay positive. Where a price target
+            # exists the two are alternatives, not a pair, so this is pushed out of reach so
+            # it cannot front-run it. Where the user asked to let the position expire, it is
+            # pushed out of reach for the same reason -- the stop-loss is the only live exit.
             profit_target_pnl=max(premium_collected * 100.0, 1.0),
             loss_limit_pnl=loss_limit,
             target_premium_pct=5,
             stop_loss_premium_pct=5,
-            target_option_price=config.profit_target_option_price,
+            target_option_price=target_option_price,
         )
         portfolio_pnl_engine.set_group_rule(
             user_id,

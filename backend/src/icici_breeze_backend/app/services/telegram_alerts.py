@@ -339,3 +339,98 @@ def notify_bot_needs_login(user_id: str, text: str) -> None:
     if not status.get("alerts_enabled") or not status.get("telegram_chat_id"):
         return
     _send_async(status["telegram_chat_id"], text)
+
+
+# --------------------------------------------------------------------------------------
+# Semi-autonomous bots: the proposal, and what came of it
+# --------------------------------------------------------------------------------------
+
+_BOT_LABEL = {
+    "holdings_writer": "Holdings Option Writer",
+    "expiry_index_writer": "Expiry-Day Index Writer",
+}
+
+
+def _leg_line(leg: Any) -> str:
+    side = "CE" if str(getattr(leg, "right", "")).lower().startswith("c") else "PE"
+    return (
+        f"• SELL {leg.stock_code} {leg.strike_price:g} {side} ×{leg.quantity} "
+        f"@ ₹{leg.premium_per_share:g}"
+    )
+
+
+def _format_proposal_message(bot_type: str, proposal: Any, deadline: str) -> str:
+    """The message a tap acts on, so every number it shows must be one the tap will honour.
+
+    Premium and margin are stated because they are what the decision turns on, and the
+    deadline because an approval arriving after it will place nothing — a user who taps a
+    stale message and sees no orders would reasonably conclude the bot is broken.
+    """
+    totals = proposal.totals or {}
+    lines = [
+        f"🤖 *{_BOT_LABEL.get(bot_type, 'Bot')} — approval needed*",
+        "",
+        *[_leg_line(leg) for leg in proposal.legs],
+    ]
+    premium = totals.get("premium_total")
+    margin = totals.get("span_total")
+    if premium is not None:
+        lines += ["", f"Premium collected: ₹{float(premium):,.0f}"]
+    if margin:
+        lines.append(f"Margin required: ₹{float(margin):,.0f}")
+    lines += [
+        "",
+        f"_Valid until {deadline}. Nothing is placed unless you approve._",
+        "_Prices are re-checked at approval — if they have moved, nothing goes out._",
+    ]
+    return "\n".join(lines)
+
+
+def _approval_keyboard(token: str, app_url: str) -> dict[str, Any]:
+    """Two actions on one single-use token. Whichever is tapped first wins, and the second
+    tap finds the token already burned — which is the behaviour we want anyway."""
+    row = [
+        {"text": "✅ Approve all", "callback_data": f"a:{token}"},
+        {"text": "❌ Reject", "callback_data": f"r:{token}"},
+    ]
+    keyboard = [row]
+    if app_url:
+        keyboard.append([{"text": "⚙️ Review in app", "url": app_url}])
+    return {"inline_keyboard": keyboard}
+
+
+def notify_bot_proposal(
+    user_id: str, *, bot_type: str, proposal: Any, deadline: str, token: str
+) -> bool:
+    """Send a proposal with its Approve/Reject keyboard. False if it could not be sent.
+
+    The return value matters: a bot in `telegram` mode that cannot deliver its proposal has
+    not asked anyone, and the caller has to log that rather than sit waiting for an answer
+    that can never arrive.
+    """
+    import icici_breeze_backend.app.core.config as cfg
+
+    try:
+        status = get_status(user_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("bot proposal alert: status lookup failed for user_id=%s", user_id)
+        return False
+    if not status["alerts_enabled"] or not status["telegram_chat_id"]:
+        return False
+
+    origin = (getattr(cfg, "PUBLIC_FRONTEND_ORIGIN", "") or "").strip().rstrip("/")
+    text = _format_proposal_message(bot_type, proposal, deadline)
+    markup = _approval_keyboard(token, f"{origin}/bots" if origin else "")
+    # Sent inline rather than on a daemon thread, unlike every other alert here: the caller
+    # must know whether the ask actually went out before it records the run as waiting.
+    return send_message_sync(status["telegram_chat_id"], text, reply_markup=markup)
+
+
+def notify_bot_approval_outcome(user_id: str, text: str) -> None:
+    """What actually happened after a tap.
+
+    Deliberately a plain send with the text decided by the caller: an approval that
+    re-priced into a refusal placed *nothing*, and a generic "approved" here would be the
+    single most misleading message this module could produce.
+    """
+    _notify(user_id, text, kind="bot approval outcome")

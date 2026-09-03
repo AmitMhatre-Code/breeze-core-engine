@@ -52,7 +52,9 @@ def test_bots_are_created_lazily_disabled_with_policy_defaults(db_path):
 
     index = next(b for b in bots if b.bot_type == BOT_EXPIRY_INDEX_WRITER)
     assert index.config["cutoff_ist"] == "12:00"
-    assert index.config["profit_target_option_price"] == 0.10
+    # Profit booking is a share of the premium now, not an absolute paise price.
+    assert index.config["profit_book_premium_pct"] == 50.0
+    assert "profit_target_option_price" not in index.config
     assert set(index.config["indices"]) == {"NIFTY", "BSESEN"}
 
 

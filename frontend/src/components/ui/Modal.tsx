@@ -11,7 +11,7 @@ import { createPortal } from "react-dom";
 import { getFocusableElements } from "@/lib/ui/focusable";
 import { useFocusTrap } from "@/lib/ui/use-focus-trap";
 
-export type ModalVariant = "centered" | "bottomSheet" | "drawer";
+export type ModalVariant = "centered" | "bottomSheet" | "drawer" | "fullscreen";
 
 export type ModalProps = {
   open: boolean;
@@ -26,6 +26,12 @@ export type ModalProps = {
   /** When true, dismiss is blocked (e.g. pending submit). */
   pending?: boolean;
   variant?: ModalVariant;
+  /** Which edge a drawer is anchored to. Settings drawers open from the right, where the
+   *  trigger that opened them lives; the nav drawer stays on the left. */
+  drawerSide?: "left" | "right";
+  /** Drawer width. A Tailwind width class, so the caller sizes the panel to its content
+   *  rather than every drawer inheriting one width that fits none of them. */
+  drawerWidthClass?: string;
   initialFocusRef?: RefObject<HTMLElement | null>;
   returnFocus?: boolean;
   className?: string;
@@ -44,6 +50,8 @@ export function Modal({
   closeOnEscape,
   pending = false,
   variant = "centered",
+  drawerSide = "left",
+  drawerWidthClass = "w-[min(100%,18rem)]",
   initialFocusRef,
   returnFocus = true,
   className,
@@ -127,7 +135,9 @@ export function Modal({
       ? `fixed inset-0 ${zIndexClass} flex flex-col justify-end sm:items-center sm:justify-center sm:p-4`
       : variant === "drawer"
         ? `fixed inset-0 ${zIndexClass}`
-        : `fixed inset-0 ${zIndexClass} flex items-center justify-center p-4 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]`;
+        : variant === "fullscreen"
+          ? `fixed inset-0 ${zIndexClass} flex flex-col`
+          : `fixed inset-0 ${zIndexClass} flex items-center justify-center p-4 ps-[max(1rem,env(safe-area-inset-left))] pe-[max(1rem,env(safe-area-inset-right))] pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]`;
 
   const panelVariantClass =
     variant === "bottomSheet"
@@ -137,8 +147,16 @@ export function Modal({
           "mb-[max(0px,env(safe-area-inset-bottom))]",
         ].join(" ")
       : variant === "drawer"
-        ? "absolute inset-y-0 left-0 z-[1] flex w-[min(100%,18rem)] flex-col border-r border-border bg-elevated shadow-pop"
-        : "relative z-[1] w-full max-w-lg";
+        ? [
+            "absolute inset-y-0 z-[1] flex flex-col bg-elevated shadow-pop",
+            drawerWidthClass,
+            drawerSide === "right"
+              ? "right-0 border-l border-border"
+              : "left-0 border-r border-border",
+          ].join(" ")
+        : variant === "fullscreen"
+          ? "relative z-[1] flex h-full w-full flex-col overflow-hidden bg-background"
+          : "relative z-[1] w-full max-w-lg";
 
   const backdrop = canDismiss ? (
     <button
@@ -157,7 +175,7 @@ export function Modal({
 
   return createPortal(
     <div className={[shellClass, className].filter(Boolean).join(" ")}>
-      {variant === "drawer" ? (
+      {variant === "drawer" || variant === "fullscreen" ? (
         <>
           {backdrop}
           <div
