@@ -104,6 +104,7 @@ def plan_to_legs(plan, index_code: str) -> list[ProposalLeg]:
                 premium_per_share=leg["bid"],
                 premium_total=leg["premium_total"],
                 premium_basis="bid",
+                spot=plan.spot,
                 # The whole shape's netted margin is a property of the pair, so it is
                 # attributed to the first leg rather than split arbitrarily across both.
                 span_margin=plan.margin_total if leg is plan.legs[0] else 0.0,
@@ -174,6 +175,9 @@ def price_edited_leg(user_id: str, leg, edit, fresh_by_scrip: dict):
         strike_price=float(
             edit.strike_price if edit.strike_price is not None else leg.strike_price
         ),
+        # A distance the user typed re-picks the strike against the current spot; it takes
+        # precedence over any absolute strike on the same edit.
+        distance_pct=edit.distance_pct,
         lots=lots,
         lot_size=int(leg.lot_size),
         margin_source=proc.get_strategy_builder_margin_source(user_id),
@@ -185,11 +189,10 @@ def price_edited_leg(user_id: str, leg, edit, fresh_by_scrip: dict):
 
 
 def reprice_index_leg(proc, user_id: str, leg: ProposalLeg, edit) -> Optional[ProposalLeg]:
-    """Bot 2 legs are re-priced by size only.
+    """Bot 2 leg re-priced by size only — the lots-only fast path.
 
-    The strike is not the user's to move here: it is derived from the safety distance
-    against the spot at fire time, and a strike pinned against a stale spot is no longer the
-    distance the user configured. Size is genuinely theirs.
+    A distance change re-picks the strike and so needs the whole proposal in hand (a
+    strangle's two sides net against each other); `reprice_index_legs` handles that.
     """
     if edit.lots is None:
         return None
@@ -215,6 +218,95 @@ def reprice_index_leg(proc, user_id: str, leg: ProposalLeg, edit) -> Optional[Pr
             "span_margin": round(margin, 2) if margin is not None else leg.span_margin,
         }
     )
+
+
+def reprice_index_legs(
+    proc, user_id: str, pending, edits: dict[int, Any]
+) -> list[ProposalLeg]:
+    """Re-price every Bot 2 leg with the user's lot and distance edits applied.
+
+    Distance edits re-pick the strike against the *current* spot, using the same rule the
+    scan does. The proposed strategy (naked or strangle) and the leg order are left alone --
+    the user asked to move a distance on the shape the bot proposed, not to re-open the
+    shortlist. A group's netted SPAN is re-quoted once, over both re-picked sides, and
+    attributed to the group's first leg exactly as `plan_to_legs` does.
+    """
+    from icici_breeze_backend.app.services.bots import expiry_index_writer as bot2
+
+    legs = list(pending.legs)
+
+    # 1. Size and strike, leg by leg. Strike/bid for a distance edit come from a fresh chain.
+    chain_cache: dict[tuple[str, str], tuple[list[dict], float]] = {}
+
+    def _rows_and_spot(leg: ProposalLeg) -> tuple[list[dict], float]:
+        key = (leg.stock_code, leg.right)
+        if key not in chain_cache:
+            rows = bot2._chain_rows(
+                proc, user_id, leg.stock_code, leg.exchange_code,
+                leg.expiry_display, cfg_right(leg.right),
+            )
+            chain_cache[key] = (rows, bot2._spot_from(rows) if rows else 0.0)
+        return chain_cache[key]
+
+    worked: list[ProposalLeg] = []
+    for index, leg in enumerate(legs):
+        edit = edits.get(index)
+        lots = max(1, int(edit.lots)) if edit and edit.lots is not None else leg.lots
+        strike = leg.strike_price
+        bid = leg.premium_per_share
+        spot = leg.spot
+        if edit and edit.distance_pct is not None:
+            rows, fresh_spot = _rows_and_spot(leg)
+            picked = bot2._pick_strike(
+                rows, fresh_spot, cfg_right(leg.right), float(edit.distance_pct)
+            ) if rows else None
+            if picked is not None:
+                from icici_breeze_backend.app.core.strike import parse_strike
+
+                new_strike = parse_strike(picked.get("strike_price"))
+                new_bid = bot2._bid(picked)
+                if new_strike is not None and new_bid > 0:
+                    strike = float(new_strike)
+                    bid = new_bid
+                    spot = round(fresh_spot, 2) if fresh_spot > 0 else spot
+        quantity = lots * int(leg.lot_size)
+        worked.append(
+            leg.model_copy(
+                update={
+                    "lots": lots,
+                    "quantity": quantity,
+                    "strike_price": strike,
+                    "premium_per_share": bid,
+                    "premium_total": round(bid * quantity, 2),
+                    "spot": spot,
+                }
+            )
+        )
+
+    # 2. Re-quote SPAN per group (a lone leg is a group of one), once, over its real sides.
+    groups: dict[str, list[int]] = {}
+    for i, leg in enumerate(worked):
+        groups.setdefault(leg.group_key or f"__{i}", []).append(i)
+    for members in groups.values():
+        first = worked[members[0]]
+        margin = bot2.margin_for_legs(
+            proc,
+            user_id,
+            exchange_code=first.exchange_code,
+            stock_code=first.stock_code,
+            expiry_display=first.expiry_display,
+            legs=[
+                (cfg_right(worked[i].right), worked[i].strike_price, worked[i].quantity)
+                for i in members
+            ],
+        )
+        if margin is None:
+            continue
+        for pos, i in enumerate(members):
+            worked[i] = worked[i].model_copy(
+                update={"span_margin": round(margin, 2) if pos == 0 else 0.0}
+            )
+    return worked
 
 
 # --------------------------------------------------------------------------------------
@@ -269,7 +361,11 @@ def _approve_holdings(user_id: str, payload: ApproveProposalRequest) -> Approval
     repriced = []
     for order, leg in zip(sorted(set(payload.leg_indexes)), chosen):
         edit = payload.edits.get(order)
-        if edit is not None and (edit.lots is not None or edit.strike_price is not None):
+        if edit is not None and (
+            edit.lots is not None
+            or edit.strike_price is not None
+            or edit.distance_pct is not None
+        ):
             # An edited leg is a contract the scan never priced, so it is priced directly
             # rather than matched against the fresh scan. It still goes through the same
             # bid-not-LTP and margin rules, and it is still capped by coverage below.
@@ -402,6 +498,28 @@ def _approve_index_plan(user_id: str, payload: ApproveProposalRequest) -> Approv
     proc = processor()
     bot = repo.get_or_create_bot(user_id, BOT_EXPIRY_INDEX_WRITER)
     config = ExpiryIndexWriterConfig(**bot.config)
+
+    # A distance the user set in the review overrides the configured one for this run only,
+    # per index and per side. `plan_index` re-derives the strike from it against the live
+    # spot, exactly as it would have on an autonomous fire.
+    distance_by_index: dict[str, dict[str, float]] = {}
+    for i in chosen_indexes:
+        edit = payload.edits.get(i)
+        if edit is None or edit.distance_pct is None:
+            continue
+        leg = pending.legs[i]
+        distance_by_index.setdefault(leg.stock_code, {})[leg.right] = float(edit.distance_pct)
+    if distance_by_index:
+        config = config.model_copy(deep=True)
+        for code, sides in distance_by_index.items():
+            index_cfg = config.indices.get(code)
+            if index_cfg is None:
+                continue
+            if "call" in sides:
+                index_cfg.safety_pct_ce = sides["call"]
+            if "put" in sides:
+                index_cfg.safety_pct_pe = sides["put"]
+
     available = bot2._available_margin(proc, user_id)
     if not available or available <= 0:
         raise ApprovalRefused(

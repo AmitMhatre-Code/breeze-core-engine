@@ -131,6 +131,8 @@ export type ProposalLeg = {
   premium_per_share: number;
   premium_total: number;
   premium_basis: "bid" | "ltp_indicative";
+  /** Underlying price the strike was picked against — what the distance % is a percentage of. */
+  spot: number | null;
   span_margin: number | null;
   elm_margin: number | null;
   delivery_exposure: number | null;
@@ -181,7 +183,10 @@ export type HoldingRow = {
   current_market_price: number | null;
 };
 
-export type LegEdit = { lots?: number; strike_price?: number };
+/** A user's change to one proposed leg in the manual run. `distance_pct` re-derives the
+ *  strike from the current spot the same way the scan does; it is how the UI moves a strike
+ *  (the raw `strike_price` is still accepted by the backend but the sheet no longer sends it). */
+export type LegEdit = { lots?: number; strike_price?: number; distance_pct?: number };
 
 export type ProposalTotals = {
   premium_total: number;

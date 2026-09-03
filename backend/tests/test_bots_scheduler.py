@@ -54,6 +54,9 @@ class FakeProc:
 
 def enable_bot(user_id="u1", **cfg_kw):
     indices = cfg_kw.pop("indices", {"NIFTY": IndexWriterLeg(enabled=True, priority=1).model_dump()})
+    # These tests cover the autonomous auto-fire path; the config default is now the
+    # Telegram-approval path, so opt in explicitly. HITL routing has its own tests.
+    cfg_kw.setdefault("approval_mode", "auto")
     repo.update_bot(user_id, BOT_EXPIRY_INDEX_WRITER,
                     enabled=True, config={"indices": indices, **cfg_kw})
 

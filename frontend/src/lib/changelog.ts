@@ -20,6 +20,20 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.10.1",
+    date: "03-Sep-2026",
+    releaseKind: "patch",
+    summary:
+      "Bots polish: spot price on every proposed leg, a distance-from-spot you can nudge per leg in a manual run, number fields that don't reset to zero when you clear them, and a settings drawer that closes when you save.",
+    changes: [
+      "Every leg in a bot's manual run now shows the spot price it was worked out against, next to the strike — and Bot 1's settings drawer shows spot per scrip in the scrip table, so the CE/PE distance-% columns read against a number you can see.",
+      "You can now override the distance from spot per leg when you run a bot by hand. The manual run sheet no longer lets you type a raw strike; instead each leg has an editable \"Dist %\" (above spot for calls, below for puts), and changing it re-prices the leg with the strike re-picked against the current spot — the same way the bot picks it on a scheduled run — rather than pinning a strike against a price that has since moved. A strangle's two sides are re-quoted together so the margin still reflects the exchange's netting.",
+      "Number fields across the Bots screens no longer snap to 0 the moment you clear them to type a new value — so deleting \"5\" to enter \"15\" no longer strands you editing \"05\". A field left empty or out of range is highlighted and holds back Save (or Execute) until it has a valid value, instead of silently saving a zero.",
+      "The bot settings drawer now closes when you press Save. It previously stayed open with every control greyed out, which left it unclear whether the save had taken.",
+      "A newly created bot now starts in Manual with \"Ask me on Telegram\" as its approval mode, so switching it to autonomous sends you an Approve/Reject message first rather than placing orders unattended by default. Bots you have already configured keep whatever mode you set them to.",
+    ],
+  },
+  {
     version: "2.10.0",
     date: "03-Sep-2026",
     releaseKind: "minor",

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotRunSheet } from "@/components/bots/BotRunSheet";
+import { NumberInput } from "@/components/ui/NumberInput";
 import {
   BOT_HOLDINGS_WRITER,
   BOT_META,
@@ -187,15 +188,14 @@ export function BotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
                 badge so the card's top line reads as a single label. */}
             <span className="inline-flex items-center gap-1.5 rounded border border-gtt/30 bg-gtt-tint px-2 py-0.5 font-mono text-micro font-bold uppercase tracking-[0.06em] text-gtt-on-tint focus-within:ring-2 focus-within:ring-accent/45">
               Priority
-              <input
-                type="number"
+              <NumberInput
                 min={1}
                 max={99}
                 aria-label={`Priority for ${meta.title}`}
                 value={bot.priority}
                 disabled={readOnly || update.isPending}
-                onChange={(e) => void setPriority(Number(e.target.value))}
-                className="w-4 border-0 bg-transparent p-0 text-center font-mono text-micro font-bold text-gtt-on-tint focus:outline-none disabled:opacity-50 [-moz-appearance:textfield] [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none"
+                onChange={(v) => void setPriority(v)}
+                className="w-5 border-0 bg-transparent p-0 text-center font-mono text-micro font-bold text-gtt-on-tint focus:outline-none disabled:opacity-50 [-moz-appearance:textfield] [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none"
               />
             </span>
             <h2 className="app-text-heading mt-1.5">{meta.title}</h2>

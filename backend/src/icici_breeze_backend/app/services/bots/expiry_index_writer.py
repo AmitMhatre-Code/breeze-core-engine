@@ -292,19 +292,19 @@ def build_candidates(
     expiry_display: str,
     leg_cfg: IndexWriterLeg,
     lot_size: int,
-) -> tuple[list[Candidate], Optional[str]]:
-    """Price every shortlisted strategy for one lot. Returns (candidates, error)."""
+) -> tuple[list[Candidate], Optional[str], float]:
+    """Price every shortlisted strategy for one lot. Returns (candidates, error, spot)."""
     rights_needed = {r for s in leg_cfg.strategies for r in STRATEGY_RIGHTS.get(s, ())}
     rows_by_right: dict[str, list[dict]] = {}
     spot = 0.0
     for right in rights_needed:
         rows = _chain_rows(proc, user_id, index_code, exchange, expiry_display, right)
         if not rows:
-            return [], "No option chain available."
+            return [], "No option chain available.", 0.0
         rows_by_right[right] = rows
         spot = spot or _spot_from(rows)
     if spot <= 0:
-        return [], "No spot price available."
+        return [], "No spot price available.", 0.0
 
     # Pick each side once and reuse it: a strangle's call leg is the same contract the
     # naked-CE candidate would sell, so pricing it twice would only invite them to drift.
@@ -347,8 +347,8 @@ def build_candidates(
             )
         )
     if not candidates:
-        return [], "None of the shortlisted strategies could be priced."
-    return candidates, None
+        return [], "None of the shortlisted strategies could be priced.", spot
+    return candidates, None, spot
 
 
 def choose(candidates: list[Candidate]) -> Optional[Candidate]:
@@ -380,6 +380,7 @@ class FireResult:
     premium_total: Optional[float] = None
     margin_yield: Optional[float] = None
     considered: list[dict] = field(default_factory=list)
+    spot: Optional[float] = None
     budget: Optional[float] = None
     order_ids: list[str] = field(default_factory=list)
     rule_id: Optional[str] = None
@@ -463,7 +464,7 @@ def plan_index(
         result.error = "No lot size in the scrip master."
         return result
 
-    candidates, error = build_candidates(
+    candidates, error, spot = build_candidates(
         proc,
         user_id,
         index_code,
@@ -472,6 +473,7 @@ def plan_index(
         leg_cfg=leg_cfg,
         lot_size=lot_size,
     )
+    result.spot = round(spot, 2) if spot > 0 else None
     if error:
         result.reason_code = (
             ReasonCode.CHAIN_NOT_READY

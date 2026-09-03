@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Modal } from "@/components/ui/Modal";
+import { NumberInput } from "@/components/ui/NumberInput";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import {
   BOT_HOLDINGS_WRITER,
@@ -53,26 +54,44 @@ function useTimeLeft(expiresAt: string | null | undefined) {
   return { seconds, text: `${mm}:${ss}` };
 }
 
+const CELL_INPUT =
+  "w-16 rounded-t-[3px] border-0 border-b border-muted bg-panel2 px-2 py-1 text-right " +
+  "font-mono text-table font-semibold text-text hover:border-accent focus:border-accent-strong " +
+  "focus:outline-none disabled:opacity-50 [-moz-appearance:textfield] [appearance:textfield] " +
+  "[&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none";
+
+function inr(n: number | null | undefined) {
+  return n == null ? "—" : n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+}
+
+/** The leg's current strike as a distance from spot, which is what the editable field
+ *  shows and lets the user nudge. `null` when there is no spot to measure against. */
+function distancePct(leg: ProposalLeg): number | null {
+  if (!leg.spot || leg.spot <= 0) return null;
+  return Math.round(Math.abs(leg.strike_price / leg.spot - 1) * 1000) / 10;
+}
+
 function LegRow({
   leg,
   index,
   checked,
   edit,
-  editableStrike,
   disabled,
   onToggle,
   onEdit,
+  onValidity,
 }: {
   leg: ProposalLeg;
   index: number;
   checked: boolean;
   edit: LegEdit | undefined;
-  editableStrike: boolean;
   disabled: boolean;
   onToggle: (index: number, checked: boolean) => void;
   onEdit: (index: number, patch: LegEdit) => void;
+  onValidity: (key: string, valid: boolean) => void;
 }) {
   const isPut = leg.right === "put";
+  const shownDistance = edit?.distance_pct ?? distancePct(leg) ?? undefined;
   return (
     <tr className="app-table-row align-top">
       <td className="px-3 py-2">
@@ -95,32 +114,44 @@ function LegRow({
         )}
         {leg.note && <div className="mt-1 text-micro text-amber-on-tint">{leg.note}</div>}
       </td>
-      <td className="px-3 py-2 text-right">
-        {editableStrike ? (
-          <input
-            type="number"
-            step="0.05"
-            min="0"
-            aria-label={`${leg.stock_code} strike`}
-            disabled={disabled}
-            value={edit?.strike_price ?? leg.strike_price}
-            onChange={(e) => onEdit(index, { strike_price: Number(e.target.value) })}
-            className="w-24 rounded-t-[3px] border-0 border-b border-muted bg-panel2 px-2 py-1 text-right font-mono text-table font-semibold text-text hover:border-accent focus:border-accent-strong focus:outline-none disabled:opacity-50 [-moz-appearance:textfield] [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none"
-          />
-        ) : (
-          <span className="font-mono text-table tabular-nums">{leg.strike_price}</span>
-        )}
+      <td className="px-3 py-2 text-right font-mono text-table tabular-nums text-muted">
+        {inr(leg.spot)}
       </td>
       <td className="px-3 py-2 text-right">
-        <input
-          type="number"
+        {/* The strike itself is not typed any more — it follows the distance below it,
+            snapped to a real strike against the current spot, exactly as the bot does. */}
+        <span className="font-mono text-table tabular-nums">{leg.strike_price}</span>
+      </td>
+      <td className="px-3 py-2 text-right">
+        {shownDistance === undefined ? (
+          <span className="font-mono text-table text-faint">—</span>
+        ) : (
+          <NumberInput
+            value={shownDistance}
+            min={0.25}
+            max={50}
+            step={0.25}
+            disabled={disabled}
+            aria-label={`${leg.stock_code} distance from spot %`}
+            className={CELL_INPUT}
+            onValidityChange={(v) => onValidity(`dist-${index}`, v)}
+            onChange={(v) => onEdit(index, { distance_pct: v })}
+          />
+        )}
+        <div className="font-mono text-micro text-faint">
+          {isPut ? "below" : "above"} spot
+        </div>
+      </td>
+      <td className="px-3 py-2 text-right">
+        <NumberInput
+          value={edit?.lots ?? leg.lots}
           min={1}
           max={999}
-          aria-label={`${leg.stock_code} lots`}
           disabled={disabled}
-          value={edit?.lots ?? leg.lots}
-          onChange={(e) => onEdit(index, { lots: Number(e.target.value) })}
-          className="w-16 rounded-t-[3px] border-0 border-b border-muted bg-panel2 px-2 py-1 text-right font-mono text-table font-semibold text-text hover:border-accent focus:border-accent-strong focus:outline-none disabled:opacity-50 [-moz-appearance:textfield] [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none"
+          aria-label={`${leg.stock_code} lots`}
+          className={CELL_INPUT}
+          onValidityChange={(v) => onValidity(`lots-${index}`, v)}
+          onChange={(v) => onEdit(index, { lots: v })}
         />
         <div className="font-mono text-micro text-faint">× {leg.lot_size}</div>
       </td>
@@ -173,9 +204,18 @@ export function BotRunSheet({
   const [skipped, setSkipped] = useState<SkippedScrip[]>([]);
   const [overrides, setOverrides] = useState<Record<number, boolean>>({});
   const [edits, setEdits] = useState<Record<number, LegEdit>>({});
+  const [invalidFields, setInvalidFields] = useState<Record<string, boolean>>({});
   const [placed, setPlaced] = useState<PlacedLeg[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
+
+  const handleValidity = useCallback((key: string, valid: boolean) => {
+    setInvalidFields((current) => {
+      if (Boolean(current[key]) === !valid) return current;
+      return { ...current, [key]: !valid };
+    });
+  }, []);
+  const anyInvalid = Object.values(invalidFields).some(Boolean);
 
   // Memoised because `?? []` yields a fresh array each render, which would re-create
   // every dependent callback and re-fire the debounced re-price on unrelated renders.
@@ -188,6 +228,7 @@ export function BotRunSheet({
     setPlaced(null);
     setOverrides({});
     setEdits({});
+    setInvalidFields({});
     try {
       const result = isHoldings
         ? await scan.mutateAsync(bot.bot_type)
@@ -246,7 +287,7 @@ export function BotRunSheet({
   const editsRef = useRef(edits);
   editsRef.current = edits;
   useEffect(() => {
-    if (!open || Object.keys(edits).length === 0) return;
+    if (!open || anyInvalid || Object.keys(edits).length === 0) return;
     const id = setTimeout(() => {
       reprice
         .mutateAsync({ botType: bot.bot_type, legIndexes: chosen, edits: editsRef.current })
@@ -257,7 +298,7 @@ export function BotRunSheet({
     }, 700);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edits, open, bot.bot_type]);
+  }, [edits, open, anyInvalid, bot.bot_type]);
 
   const totals = useMemo(() => {
     const premium = chosen.reduce((sum, i) => sum + legs[i].premium_total, 0);
@@ -276,7 +317,12 @@ export function BotRunSheet({
   const anyIndicative = chosen.some((i) => legs[i].premium_basis !== "bid");
   const expired = timeLeft?.seconds === 0;
   const blocked =
-    readOnly || chosen.length === 0 || overBudget || anyIndicative || expired;
+    readOnly ||
+    chosen.length === 0 ||
+    overBudget ||
+    anyIndicative ||
+    expired ||
+    anyInvalid;
 
   async function execute() {
     setError(null);
@@ -377,7 +423,13 @@ export function BotRunSheet({
                     Contract
                   </th>
                   <th className="px-3 py-2 text-right text-micro font-bold uppercase tracking-[0.07em]">
+                    Spot
+                  </th>
+                  <th className="px-3 py-2 text-right text-micro font-bold uppercase tracking-[0.07em]">
                     Strike
+                  </th>
+                  <th className="px-3 py-2 text-right text-micro font-bold uppercase tracking-[0.07em]">
+                    Dist %
                   </th>
                   <th className="px-3 py-2 text-right text-micro font-bold uppercase tracking-[0.07em]">
                     Lots
@@ -404,12 +456,9 @@ export function BotRunSheet({
                     index={i}
                     checked={isChecked(i)}
                     edit={edits[i]}
-                    // Bot 2's strike comes from the safety distance against the spot at
-                    // fire time; pinning it against a stale spot is no longer the distance
-                    // the user configured, so only size is theirs to change.
-                    editableStrike={isHoldings}
                     disabled={readOnly || approve.isPending}
                     onToggle={toggle}
+                    onValidity={handleValidity}
                     onEdit={(index, patch) =>
                       setEdits((current) => ({
                         ...current,
@@ -453,6 +502,12 @@ export function BotRunSheet({
         {expired && (
           <p className="mt-3 rounded-lg border border-amber/30 bg-amber-tint p-3 text-hint text-text">
             These prices have expired. Re-price before executing.
+          </p>
+        )}
+
+        {anyInvalid && (
+          <p className="mt-3 rounded-lg border border-down/30 bg-down-tint p-3 text-hint text-text">
+            A highlighted field is empty or out of range. Enter a value to continue.
           </p>
         )}
 

@@ -1,9 +1,10 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useCallback, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Modal } from "@/components/ui/Modal";
 import { Checkbox } from "@/components/ui/Checkbox";
+import { NumberInput, FieldValidityContext } from "@/components/ui/NumberInput";
 import { Select, type SelectOption } from "@/components/ui/Select";
 import {
   fetchTelegramStatus,
@@ -348,9 +349,18 @@ function ScripTable({
                 <tr key={holding.stock_code} className="app-table-row align-top">
                   <td className="px-2 py-2">
                     <div className="text-body font-semibold">{holding.stock_code}</div>
+                    {holding.current_market_price != null && (
+                      <div className="font-mono text-micro text-faint">
+                        spot{" "}
+                        {holding.current_market_price.toLocaleString("en-IN", {
+                          maximumFractionDigits: 2,
+                        })}
+                      </div>
+                    )}
                     {/* Why the cap lands where it does. Typing a number into the CE column
                         is only defensible if the coverage behind it is visible — and a
-                        total alone hides that some of it cannot be delivered. */}
+                        total alone hides that some of it cannot be delivered. Spot is shown
+                        because the CE/PE % columns are distances from it. */}
                     <LotBreakdown holding={holding} />
                   </td>
                   <td className="px-2 py-2 text-right">
@@ -503,16 +513,14 @@ function HoldingsSettings({
             label="Days before expiry"
             hint="Trading days, so it never lands on a weekend or a holiday. 0 is expiry day itself."
           >
-            <input
-              type="number"
+            <NumberInput
+              className="app-input"
+              validityKey="fire_days_before_expiry"
               min={0}
               max={30}
               disabled={disabled}
-              className="app-input"
               value={config.fire_days_before_expiry}
-              onChange={(e) =>
-                onConfig({ fire_days_before_expiry: Number(e.target.value) })
-              }
+              onChange={(v) => onConfig({ fire_days_before_expiry: v })}
             />
           </Field>
           <SelectField
@@ -544,14 +552,14 @@ function HoldingsSettings({
             />
           </Field>
           <Field label="Remind every (min)">
-            <input
-              type="number"
+            <NumberInput
+              className="app-input"
+              validityKey="hw_nag_interval_minutes"
               min={5}
               max={120}
-              className="app-input"
               disabled={disabled}
               value={config.nag_interval_minutes}
-              onChange={(e) => onConfig({ nag_interval_minutes: Number(e.target.value) })}
+              onChange={(v) => onConfig({ nag_interval_minutes: v })}
             />
           </Field>
         </div>
@@ -568,27 +576,27 @@ function HoldingsSettings({
     <div className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Default call distance %" hint="Above spot. Per-scrip values override it.">
-          <input
-            type="number"
-            step="0.5"
-            min="0.5"
-            max="50"
+          <NumberInput
             className="app-input"
+            validityKey="default_safety_pct_ce"
+            step={0.5}
+            min={0.5}
+            max={50}
             disabled={disabled}
             value={config.default_safety_pct_ce}
-            onChange={(e) => onConfig({ default_safety_pct_ce: Number(e.target.value) })}
+            onChange={(v) => onConfig({ default_safety_pct_ce: v })}
           />
         </Field>
         <Field label="Default put distance %" hint="Below spot. Per-scrip values override it.">
-          <input
-            type="number"
-            step="0.5"
-            min="0.5"
-            max="50"
+          <NumberInput
             className="app-input"
+            validityKey="default_safety_pct_pe"
+            step={0.5}
+            min={0.5}
+            max={50}
             disabled={disabled}
             value={config.default_safety_pct_pe}
-            onChange={(e) => onConfig({ default_safety_pct_pe: Number(e.target.value) })}
+            onChange={(v) => onConfig({ default_safety_pct_pe: v })}
           />
         </Field>
       </div>
@@ -596,28 +604,28 @@ function HoldingsSettings({
         label="Delivery-cash budget (₹)"
         hint="Ceiling on what every written put would cost if all were assigned. Spent in scrip-priority order."
       >
-        <input
-          type="number"
-          step="10000"
-          min="0"
+        <NumberInput
           className="app-input"
+          validityKey="delivery_cash_budget"
+          step={10000}
+          min={0}
           disabled={disabled}
           value={config.delivery_cash_budget}
-          onChange={(e) => onConfig({ delivery_cash_budget: Number(e.target.value) })}
+          onChange={(v) => onConfig({ delivery_cash_budget: v })}
         />
       </Field>
       <Field
         label="Proposal validity (minutes)"
         hint="A manual run is a priced snapshot; after this it must be re-run."
       >
-        <input
-          type="number"
+        <NumberInput
+          className="app-input"
+          validityKey="proposal_ttl_minutes"
           min={1}
           max={240}
-          className="app-input"
           disabled={disabled}
           value={config.proposal_ttl_minutes}
-          onChange={(e) => onConfig({ proposal_ttl_minutes: Number(e.target.value) })}
+          onChange={(v) => onConfig({ proposal_ttl_minutes: v })}
         />
       </Field>
     </div>
@@ -703,53 +711,53 @@ function IndexPanel({
       <div className="mt-3 grid gap-3 sm:grid-cols-4">
         {showCe && (
           <Field label="CE distance %">
-            <input
-              type="number"
-              step="0.25"
-              min="0.25"
-              max="50"
+            <NumberInput
               className="app-input"
+              validityKey={`${code}_safety_pct_ce`}
+              step={0.25}
+              min={0.25}
+              max={50}
               disabled={disabled}
               value={leg.safety_pct_ce}
-              onChange={(e) => onChange({ safety_pct_ce: Number(e.target.value) })}
+              onChange={(v) => onChange({ safety_pct_ce: v })}
             />
           </Field>
         )}
         {showPe && (
           <Field label="PE distance %">
-            <input
-              type="number"
-              step="0.25"
-              min="0.25"
-              max="50"
+            <NumberInput
               className="app-input"
+              validityKey={`${code}_safety_pct_pe`}
+              step={0.25}
+              min={0.25}
+              max={50}
               disabled={disabled}
               value={leg.safety_pct_pe}
-              onChange={(e) => onChange({ safety_pct_pe: Number(e.target.value) })}
+              onChange={(v) => onChange({ safety_pct_pe: v })}
             />
           </Field>
         )}
         <Field label="Margin cap %">
-          <input
-            type="number"
-            step="5"
-            min="1"
-            max="100"
+          <NumberInput
             className="app-input"
+            validityKey={`${code}_margin_pct_cap`}
+            step={5}
+            min={1}
+            max={100}
             disabled={disabled}
             value={leg.margin_pct_cap}
-            onChange={(e) => onChange({ margin_pct_cap: Number(e.target.value) })}
+            onChange={(v) => onChange({ margin_pct_cap: v })}
           />
         </Field>
         <Field label="Priority">
-          <input
-            type="number"
-            min="1"
-            max="9"
+          <NumberInput
             className="app-input"
+            validityKey={`${code}_priority`}
+            min={1}
+            max={9}
             disabled={disabled}
             value={leg.priority}
-            onChange={(e) => onChange({ priority: Number(e.target.value) })}
+            onChange={(v) => onChange({ priority: v })}
           />
         </Field>
       </div>
@@ -832,14 +840,14 @@ function IndexSettings({
           </Field>
         </div>
         <Field label="Remind every (min)">
-          <input
-            type="number"
+          <NumberInput
+            className="app-input"
+            validityKey="idx_nag_interval_minutes"
             min={5}
             max={120}
-            className="app-input"
             disabled={disabled}
             value={config.nag_interval_minutes}
-            onChange={(e) => onConfig({ nag_interval_minutes: Number(e.target.value) })}
+            onChange={(v) => onConfig({ nag_interval_minutes: v })}
           />
         </Field>
         <p className="text-hint text-faint">
@@ -857,15 +865,15 @@ function IndexSettings({
         label="Book at % of premium"
         hint="How much of the premium to capture before buying the position back."
       >
-        <input
-          type="number"
-          step="5"
-          min="5"
-          max="100"
+        <NumberInput
           className="app-input"
+          validityKey="profit_book_premium_pct"
+          step={5}
+          min={5}
+          max={100}
           disabled={disabled}
           value={config.profit_book_premium_pct}
-          onChange={(e) => onConfig({ profit_book_premium_pct: Number(e.target.value) })}
+          onChange={(v) => onConfig({ profit_book_premium_pct: v })}
         />
       </Field>
       {bookAll ? (
@@ -885,17 +893,15 @@ function IndexSettings({
         label="Stop at N × premium"
         hint="1 means stop once the loss equals the premium collected."
       >
-        <input
-          type="number"
-          step="0.25"
-          min="0.25"
-          max="10"
+        <NumberInput
           className="app-input"
+          validityKey="loss_limit_premium_multiple"
+          step={0.25}
+          min={0.25}
+          max={10}
           disabled={disabled}
           value={config.loss_limit_premium_multiple}
-          onChange={(e) =>
-            onConfig({ loss_limit_premium_multiple: Number(e.target.value) })
-          }
+          onChange={(v) => onConfig({ loss_limit_premium_multiple: v })}
         />
       </Field>
     </div>
@@ -937,6 +943,15 @@ export function BotSettingsDrawer({
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, unknown>>(bot.config);
   const [prefDraft, setPrefDraft] = useState<Record<string, ScripPref>>({});
+  const [invalidFields, setInvalidFields] = useState<Record<string, boolean>>({});
+
+  const reportValidity = useCallback((key: string, valid: boolean) => {
+    setInvalidFields((current) => {
+      if (Boolean(current[key]) === !valid) return current;
+      return { ...current, [key]: !valid };
+    });
+  }, []);
+  const anyInvalid = Object.values(invalidFields).some(Boolean);
 
   // The server normalizes config on save, so the draft resyncs from the response rather
   // than keeping what was typed. Keyed on the serialized *values*: react-query hands back a
@@ -979,6 +994,10 @@ export function BotSettingsDrawer({
         await savePrefs.mutateAsync(Object.values(prefDraft));
         setPrefDraft({});
       }
+      // Close on success: the drawer's own copy is "changes apply to the next run", so
+      // there is nothing more to do here, and a drawer that stays open with everything
+      // greyed out reads as "did that work?".
+      onClose();
     } catch (e) {
       setError((e as Error)?.message ?? "Could not save.");
     }
@@ -1053,36 +1072,40 @@ export function BotSettingsDrawer({
         })}
       </div>
 
-      <div className="flex-1 overflow-auto p-4">
-        {isHoldings ? (
-          <HoldingsSettings
-            tab={tab}
-            config={draft as unknown as HoldingsWriterConfig}
-            onConfig={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-            prefs={prefs}
-            onPref={patchPref}
-            disabled={readOnly || pending}
-            telegramConnected={telegramConnected}
-          />
-        ) : (
-          <IndexSettings
-            tab={tab}
-            config={draft as unknown as ExpiryIndexWriterConfig}
-            onConfig={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-            disabled={readOnly || pending}
-            telegramConnected={telegramConnected}
-          />
-        )}
-        {error && <p className="mt-4 text-body text-down">{error}</p>}
-      </div>
+      <FieldValidityContext.Provider value={reportValidity}>
+        <div className="flex-1 overflow-auto p-4">
+          {isHoldings ? (
+            <HoldingsSettings
+              tab={tab}
+              config={draft as unknown as HoldingsWriterConfig}
+              onConfig={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+              prefs={prefs}
+              onPref={patchPref}
+              disabled={readOnly || pending}
+              telegramConnected={telegramConnected}
+            />
+          ) : (
+            <IndexSettings
+              tab={tab}
+              config={draft as unknown as ExpiryIndexWriterConfig}
+              onConfig={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+              disabled={readOnly || pending}
+              telegramConnected={telegramConnected}
+            />
+          )}
+          {error && <p className="mt-4 text-body text-down">{error}</p>}
+        </div>
+      </FieldValidityContext.Provider>
 
       <div className="flex items-center justify-between gap-3 border-t border-border bg-panel p-3">
-        <span className="text-hint text-faint">
+        <span className={`text-hint ${anyInvalid && !readOnly ? "text-down" : "text-faint"}`}>
           {readOnly
             ? "Read-only mode — settings cannot be changed."
-            : dirty
-              ? "Unsaved changes"
-              : "All changes saved"}
+            : anyInvalid
+              ? "A highlighted field is empty or out of range."
+              : dirty
+                ? "Unsaved changes"
+                : "All changes saved"}
         </span>
         <div className="flex gap-2">
           <button
@@ -1097,7 +1120,7 @@ export function BotSettingsDrawer({
             type="button"
             className="app-btn-primary"
             onClick={() => void save()}
-            disabled={readOnly || !dirty || pending}
+            disabled={readOnly || !dirty || pending || anyInvalid}
           >
             {pending ? "Saving…" : "Save"}
           </button>

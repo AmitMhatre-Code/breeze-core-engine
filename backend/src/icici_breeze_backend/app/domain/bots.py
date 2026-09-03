@@ -26,8 +26,11 @@ ProposalStatus = Literal["pending", "approved", "rejected", "expired", "supersed
 
 # How an unattended run commits. `auto` places straight away; `telegram` sends the priced
 # proposal to the user's linked chat and places nothing until they tap Approve. Silence
-# never trades -- which is the whole point, so the default stays `auto` and an upgraded
-# deployment keeps the behaviour it already had.
+# never trades. A freshly created bot defaults to `telegram` -- arming a bot that will
+# place real orders with no human in the loop should be a deliberate choice, not the
+# out-of-the-box state. A config a build older than this wrote and never re-saved omits the
+# field and so inherits the new default on read; anything saved through the settings drawer
+# carries an explicit value and is left exactly as the user left it.
 ApprovalMode = Literal["auto", "telegram"]
 
 
@@ -121,7 +124,7 @@ class HoldingsWriterConfig(BaseModel):
     # `nag_interval_minutes` doubles as the re-proposal cadence in `telegram` mode: an
     # unanswered proposal goes stale long before `cutoff_ist`, so it is re-sent at fresh
     # prices rather than surrendering the rest of the window on one missed message.
-    approval_mode: ApprovalMode = "auto"
+    approval_mode: ApprovalMode = "telegram"
 
 
 class ScripPref(BaseModel):
@@ -240,7 +243,7 @@ class ExpiryIndexWriterConfig(BaseModel):
     nag_interval_minutes: int = Field(15, ge=5, le=120)
     # See `HoldingsWriterConfig.approval_mode`. On this bot the window is the expiry
     # morning itself, so the re-proposal loop runs from `entry_time_ist` to `cutoff_ist`.
-    approval_mode: ApprovalMode = "auto"
+    approval_mode: ApprovalMode = "telegram"
 
     # Exit policy, both sides now expressed against the premium collected.
     #
@@ -344,6 +347,9 @@ class ProposalLeg(BaseModel):
     # (0 of ~30k NFO rows have one). `ltp_indicative` marks a premium priced off the last
     # trade so the user can *plan* off-market; placement still requires a real bid.
     premium_basis: Literal["bid", "ltp_indicative"] = "bid"
+    # Underlying price the strike was picked against, shown next to the strike so a user
+    # changing the distance % can see what it is a percentage *of*.
+    spot: Optional[float] = None
     span_margin: Optional[float] = None
     elm_margin: Optional[float] = None
     # PE only: strike x quantity, the cash needed if assigned. Drives the delivery budget.
@@ -424,13 +430,20 @@ class UpdateScripPrefsRequest(BaseModel):
 class LegEdit(BaseModel):
     """A user's change to one proposed leg, made in the manual review before executing.
 
-    Only size and strike are editable. Changing the underlying or the side would make it a
-    different trade from the one the bot proposed, at which point Strategy Builder is the
-    right screen -- and a bot's run log would be recording something the bot never decided.
+    Size and the distance from spot are editable; the side and the underlying are not --
+    changing those would make it a different trade from the one the bot proposed, at which
+    point Strategy Builder is the right screen, and a bot's run log would be recording
+    something the bot never decided.
+
+    `distance_pct` re-derives the strike from the *current* spot, `strike x (1 -/+ pct/100)`
+    snapped away from spot, exactly as the scan does. It is how the manual UI moves a
+    strike: an absolute `strike_price` is still accepted (older clients, tests) but the two
+    are alternatives, and `distance_pct` wins if both arrive.
     """
 
     lots: Optional[int] = Field(None, ge=1, le=999)
     strike_price: Optional[float] = Field(None, gt=0)
+    distance_pct: Optional[float] = Field(None, gt=0, le=50)
 
 
 class ApproveProposalRequest(BaseModel):

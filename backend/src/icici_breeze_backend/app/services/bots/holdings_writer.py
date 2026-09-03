@@ -418,6 +418,7 @@ def _build_leg(
         premium_per_share=bid,
         premium_total=round(bid * quantity, 2),
         premium_basis=basis,
+        spot=round(spot, 2) if spot > 0 else None,
         span_margin=round(span_margin, 2) if span_margin is not None else None,
         elm_margin=round(elm_margin, 2),
         delivery_exposure=round(strike * quantity, 2) if right == cfg.PUT else None,
@@ -818,12 +819,14 @@ def price_contract(
     lots: int,
     lot_size: int,
     margin_source: str,
+    distance_pct: Optional[float] = None,
     held_quantity: Optional[int] = None,
     pledged_quantity: Optional[int] = None,
     existing_short_lots: int = 0,
     scrip_priority: int = 1,
 ) -> Optional[ProposalLeg]:
-    """Price one EXPLICIT contract — the strike and size the user edited to.
+    """Price one EXPLICIT contract — the size the user edited to, at either the strike they
+    named or the one `distance_pct` implies against the *current* spot.
 
     The scan proposes exactly one strike per scrip and side, so a user who moves the strike
     in the manual review has asked for a contract the scan never priced. Re-deriving it from
@@ -838,15 +841,6 @@ def price_contract(
         return None
     rows = [r for r in chain["Success"] if isinstance(r, dict)]
 
-    match = None
-    for row in rows:
-        value = parse_strike(row.get("strike_price"))
-        if value is not None and abs(float(value) - float(strike_price)) < 1e-6:
-            match = row
-            break
-    if match is None:
-        return None
-
     spot = 0.0
     for r in rows:
         try:
@@ -855,6 +849,26 @@ def price_contract(
             spot = 0.0
         if spot > 0:
             break
+
+    if distance_pct is not None:
+        # Re-pick the strike the same way the scan does, so a distance the user typed lands
+        # on exactly the strike an autonomous run at this spot would have chosen.
+        picked = _pick_strike(rows, spot, rights, float(distance_pct))
+        if picked is None:
+            return None
+        picked_strike = parse_strike(picked.get("strike_price"))
+        if picked_strike is None:
+            return None
+        strike_price = float(picked_strike)
+
+    match = None
+    for row in rows:
+        value = parse_strike(row.get("strike_price"))
+        if value is not None and abs(float(value) - float(strike_price)) < 1e-6:
+            match = row
+            break
+    if match is None:
+        return None
 
     bid, basis = _premium(match)
     if bid <= 0:
@@ -896,6 +910,7 @@ def price_contract(
         premium_per_share=bid,
         premium_total=round(bid * quantity, 2),
         premium_basis=basis,
+        spot=round(spot, 2) if spot > 0 else None,
         span_margin=round(span_margin, 2) if span_margin is not None else None,
         elm_margin=round(spot * quantity * elm_rate, 2) if spot > 0 else 0.0,
         delivery_exposure=(

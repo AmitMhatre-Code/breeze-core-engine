@@ -14,6 +14,8 @@ import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.domain.bots import (
     ExpiryIndexWriterConfig,
     IndexWriterLeg,
+    LegEdit,
+    ProposalLeg,
     ReasonCode,
 )
 from icici_breeze_backend.app.services.bots import expiry_index_writer as bot2
@@ -321,6 +323,52 @@ def test_put_strike_is_chosen_away_from_spot(patch_chain, no_arm):
     patch_chain(proc)
     # 2% below 24000 = 23520; rounding away from spot gives 23500, not 23600.
     assert fire(proc).strike_price == 23500
+
+
+def test_reprice_index_legs_moves_the_strike_to_a_new_distance(patch_chain):
+    """The one thing a Bot 2 manual run lets you change about the strike: a distance %,
+    which re-picks it against the current spot exactly as an autonomous fire would."""
+    import types
+
+    from icici_breeze_backend.app.services.bots import proposals
+
+    proc = FakeProc(spot=24000.0, bid=42.0, span_per_lot=120000.0)
+    patch_chain(proc)
+    leg = ProposalLeg(
+        stock_code="NIFTY", exchange_code=cfg.NFO, right="put", expiry_display=EXPIRY,
+        strike_price=23700.0, lots=1, lot_size=75, quantity=75,
+        premium_per_share=30.0, premium_total=2250.0, premium_basis="bid",
+        span_margin=120000.0, strategy="naked_pe", group_key="NIFTY:naked_pe", spot=24000.0,
+    )
+    pending = types.SimpleNamespace(legs=[leg])
+
+    out = proposals.reprice_index_legs(proc, "u1", pending, {0: LegEdit(distance_pct=2.0)})
+
+    assert out[0].strike_price == 23500  # 2% below 24000, snapped away from spot
+    assert out[0].premium_per_share == 42.0  # re-quoted at the fresh bid
+    assert out[0].spot == 24000.0
+
+
+def test_reprice_index_legs_lots_only_edit_leaves_the_strike_alone(patch_chain):
+    import types
+
+    from icici_breeze_backend.app.services.bots import proposals
+
+    proc = FakeProc(spot=24000.0, bid=42.0, span_per_lot=120000.0)
+    patch_chain(proc)
+    leg = ProposalLeg(
+        stock_code="NIFTY", exchange_code=cfg.NFO, right="put", expiry_display=EXPIRY,
+        strike_price=23700.0, lots=1, lot_size=75, quantity=75,
+        premium_per_share=30.0, premium_total=2250.0, premium_basis="bid",
+        span_margin=120000.0, strategy="naked_pe", group_key="NIFTY:naked_pe", spot=24000.0,
+    )
+    pending = types.SimpleNamespace(legs=[leg])
+
+    out = proposals.reprice_index_legs(proc, "u1", pending, {0: LegEdit(lots=3)})
+
+    assert out[0].strike_price == 23700.0
+    assert out[0].lots == 3
+    assert out[0].quantity == 225
 
 
 def test_no_bid_refuses_to_trade(patch_chain, no_arm):

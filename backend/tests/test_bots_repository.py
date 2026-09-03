@@ -50,7 +50,11 @@ def test_bots_are_created_lazily_disabled_with_policy_defaults(db_path):
     assert holdings.config["default_safety_pct_ce"] == 5.0
     assert holdings.config["expiry_preference"] == "current"
 
+    # A new bot asks before it trades: autonomous placement is opt-in, not the default.
+    assert holdings.config["approval_mode"] == "telegram"
+
     index = next(b for b in bots if b.bot_type == BOT_EXPIRY_INDEX_WRITER)
+    assert index.config["approval_mode"] == "telegram"
     assert index.config["cutoff_ist"] == "12:00"
     # Profit booking is a share of the premium now, not an absolute paise price.
     assert index.config["profit_book_premium_pct"] == 50.0

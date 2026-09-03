@@ -411,17 +411,23 @@ async def reprice_proposal(
     from icici_breeze_backend.app.services.processor import processor
 
     proc = processor()
-    legs: list[ProposalLeg] = []
-    for index, leg in enumerate(pending.legs):
-        edit = payload.edits.get(index)
-        if edit is None or (edit.lots is None and edit.strike_price is None):
-            legs.append(leg)
-            continue
-        if bot_type == BOT_HOLDINGS_WRITER:
+    if bot_type == BOT_EXPIRY_INDEX_WRITER:
+        # A distance edit re-picks the strike, and a strangle's two sides net against each
+        # other, so Bot 2 re-prices the whole proposal at once rather than leg by leg.
+        legs = proposals.reprice_index_legs(proc, ctx.user_id, pending, payload.edits)
+    else:
+        legs = []
+        for index, leg in enumerate(pending.legs):
+            edit = payload.edits.get(index)
+            if edit is None or (
+                edit.lots is None
+                and edit.strike_price is None
+                and edit.distance_pct is None
+            ):
+                legs.append(leg)
+                continue
             priced = proposals.price_edited_leg(ctx.user_id, leg, edit, {})
-        else:
-            priced = proposals.reprice_index_leg(proc, ctx.user_id, leg, edit)
-        legs.append(priced or leg)
+            legs.append(priced or leg)
 
     if payload.leg_indexes:
         wanted = set(payload.leg_indexes)

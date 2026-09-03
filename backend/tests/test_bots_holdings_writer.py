@@ -255,6 +255,28 @@ def test_put_strike_rounds_away_from_spot(patch_chain):
     assert result.legs[0].strike_price == 940
 
 
+def test_scan_leg_carries_the_spot_it_was_priced_against(patch_chain):
+    patch_chain({cfg.CALL: chain_rows(1000.0, [1050, 1100])})
+    proc = FakeProcessor([holding("NTPC", 3000)], {"NTPC": [FUTURE_EXPIRY]}, {"NTPC": 1500})
+    assert run_scan(proc).legs[0].spot == 1000.0
+
+
+def test_price_contract_distance_pct_repicks_the_strike_against_current_spot(patch_chain):
+    """A user typing 10% must land on the same strike an autonomous run at this spot would:
+    1100, snapped away from spot, not the 1050 the scan first proposed at 5%."""
+    patch_chain({cfg.CALL: chain_rows(1000.0, [1050, 1100, 1150])})
+    proc = FakeProcessor([holding("NTPC", 3000)], {"NTPC": [FUTURE_EXPIRY]}, {"NTPC": 1500})
+    leg = hw.price_contract(
+        proc, "u1", stock_code="NTPC", right="call", expiry_display=FUTURE_EXPIRY,
+        strike_price=1050.0, lots=2, lot_size=1500, margin_source="breeze_api",
+        distance_pct=10.0,
+    )
+    assert leg is not None
+    assert leg.strike_price == 1100
+    assert leg.spot == 1000.0
+    assert leg.quantity == 3000
+
+
 def test_premium_uses_the_bid_not_the_ltp(patch_chain):
     patch_chain({cfg.CALL: chain_rows(1000.0, [1050], bid=4.25, ltp=99.0)})
     proc = FakeProcessor([holding("NTPC", 3000)], {"NTPC": [FUTURE_EXPIRY]}, {"NTPC": 1500})
