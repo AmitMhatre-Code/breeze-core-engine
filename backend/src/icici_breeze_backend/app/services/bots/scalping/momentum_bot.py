@@ -421,7 +421,7 @@ def execute(
     candles: list,
     session_vwap: Optional[float],
 ) -> None:
-    """Carry out one decision. Paper mode only -- live dispatch is step 9."""
+    """Carry out one decision."""
     from icici_breeze_backend.app.repositories import bots as repo
     from icici_breeze_backend.app.services.bots.scalping.signal import evaluate_momentum
 
@@ -430,16 +430,21 @@ def execute(
         # must not lose the stop the position had already earned.
         _persist_ladder(context.cycle, context.state)
 
-    if config.mode == "live":
-        if not live.LIVE_DISPATCH_ENABLED:
-            # The gate, not an oversight: step 9's precondition is a full session of paper
-            # evidence on the production instance. Saying so beats behaving as paper, which
-            # would look identical to a bot that was trading.
-            _logger.warning(
-                "momentum bot: live dispatch is gated off (LIVE_DISPATCH_ENABLED=False); "
-                "no orders placed"
-            )
-            return
+    # **An open position is managed the way it was opened, not the way the bot is set now.**
+    #
+    # Routing this on `config.mode` alone was a latent way to strand a real position: a user
+    # who moved a holding bot from Live back to Paper would send its exit to
+    # `close_paper_cycle`, which marks the cycle closed at a simulated price while the actual
+    # position sits at the exchange with nothing managing it. The same hole opens on the
+    # exit-only tick (`entries_suspended`), where the bot is switched off entirely and its
+    # config reads `paper` by then.
+    #
+    # The cycle's own `paper` flag is the durable fact about what was actually placed, so it
+    # is what decides. Only an *entry* -- where there is no position yet to contradict -- may
+    # be routed by the config.
+    live_path = context.cycle.paper is False if context is not None else config.mode == "live"
+
+    if live_path:
         _execute_live(proc, user_id, bot_type, config, run_id, decision, context, charges,
                       candles, session_vwap)
         return
@@ -539,7 +544,10 @@ def _open(
 
 
 # --------------------------------------------------------------------------------------
-# Live dispatch (build-order step 9) -- gated by `live.LIVE_DISPATCH_ENABLED`
+# Live dispatch. The gate is no longer a constant in this file: a scalper reaches `live`
+# only by completing a paper trading day on the settings it will trade with
+# (`scalping/evidence.py`), enforced server-side in the PATCH path, and then by the user
+# confirming the dialog that shows what that day actually did.
 # --------------------------------------------------------------------------------------
 
 

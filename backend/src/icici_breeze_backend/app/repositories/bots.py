@@ -520,6 +520,108 @@ def open_session_run(user_id: str, bot_type: str) -> str:
     return run_id
 
 
+def stamp_session_config(run_id: str, config_hash: str, mode: str) -> None:
+    """Record which settings a session ran on -- and void the record if they changed.
+
+    The paper-evidence gate (`scalping/evidence.py`) counts *completed paper trading days on
+    the current settings*. A session stamped at 09:15 and then edited at 11:00 ran half a day
+    on each, and is honest evidence for neither: crediting it to the settings it started with
+    would let a user paper-prove one configuration, switch to another mid-morning, and arm
+    that one on the first configuration's record.
+
+    So the stamp is written once, and any later disagreement -- a different hash, or paper
+    turning into live -- clears `config_hash` to NULL and marks the mode `mixed`. NULL matches
+    no hash, so the day simply stops counting. It is never restored: once a day is mixed it
+    stays mixed, even if the user puts the old settings back.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT config_hash, mode FROM bot_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            return
+        stored_hash, stored_mode = row["config_hash"], row["mode"]
+        if stored_hash is None and stored_mode is None:
+            new_hash, new_mode = config_hash, mode  # first stamp of the day
+        elif stored_hash == config_hash and stored_mode == mode:
+            return  # unchanged; the common case, and it writes nothing
+        else:
+            new_hash, new_mode = None, "mixed"
+        conn.execute(
+            "UPDATE bot_runs SET config_hash = ?, mode = ? WHERE id = ?",
+            (new_hash, new_mode, run_id),
+        )
+        conn.commit()
+
+
+def completed_paper_sessions(
+    user_id: str, bot_type: str, config_hash: str
+) -> list["EvidenceSession"]:
+    """Completed paper trading days carrying exactly these settings, newest first.
+
+    `status = 'completed'` is the whole liveness test: `reap_stale_runs` marks an interrupted
+    session `failed`, so anything still `completed` reached a real end of day -- whether that
+    was the last window closing or the daily stop firing. Both are a day's evidence, and the
+    reason code travels with the row so the confirmation dialog can say which it was.
+    """
+    from icici_breeze_backend.app.services.bots.scalping.evidence import EvidenceSession
+
+    with _connect() as conn:
+        runs = conn.execute(
+            "SELECT id, started_at, reason_code, reason_text FROM bot_runs "
+            "WHERE user_id = ? AND bot_type = ? AND config_hash = ? AND mode = 'paper' "
+            "AND status = 'completed' AND trigger = 'session' "
+            "ORDER BY started_at DESC",
+            (user_id, bot_type, config_hash),
+        ).fetchall()
+        out: list[EvidenceSession] = []
+        for run in runs:
+            cycles = [
+                _row_to_cycle(r)
+                for r in conn.execute(
+                    "SELECT * FROM bot_cycles WHERE run_id = ? ORDER BY cycle_no ASC",
+                    (run["id"],),
+                ).fetchall()
+            ]
+            closed = [c for c in cycles if c.closed_at is not None]
+            started = str(run["started_at"] or "")
+            out.append(
+                EvidenceSession(
+                    run_id=str(run["id"]),
+                    trading_day=started[:10],
+                    reason_code=run["reason_code"],
+                    reason_text=run["reason_text"],
+                    cycles=len(cycles),
+                    closed_cycles=len(closed),
+                    wins=sum(1 for c in closed if (c.net_pnl or 0.0) > 0),
+                    losses=sum(1 for c in closed if c.is_loss),
+                    net_pnl=round(sum(c.net_pnl or 0.0 for c in closed), 2),
+                    friction=round(sum(c.friction or 0.0 for c in cycles), 2),
+                )
+            )
+    return out
+
+
+def bots_with_open_live_cycles() -> list[tuple[str, str]]:
+    """`(user_id, bot_type)` for every bot holding an OPEN LIVE position, armed or not.
+
+    The driver ticks enabled bots. A live position outlives that: a user who sets a bot to
+    Off or Paper while it holds one would, without this, strand a real position at the
+    exchange with nothing evaluating its stop. This is what lets the loop keep managing such
+    a position to its exit -- entries stopped, exits still running (plan section 5.5's rule,
+    extended past the arming switch itself).
+
+    Paper cycles are excluded deliberately: an abandoned simulation costs nothing and has no
+    exchange side to reconcile.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT user_id, bot_type FROM bot_cycles "
+            "WHERE closed_at IS NULL AND paper = 0"
+        ).fetchall()
+    return [(str(r["user_id"]), str(r["bot_type"])) for r in rows]
+
+
 def _row_to_cycle(row: sqlite3.Row) -> BotCycleRecord:
     d = dict(row)
     return BotCycleRecord(
@@ -568,9 +670,16 @@ def open_cycle(
         ).fetchone()
         cycle_no = int(row["n"]) + 1
         cycle_id = str(uuid.uuid4())
+        # `config_hash` is copied from the session run inside the INSERT rather than passed
+        # in: every caller would otherwise have to thread the same value through, and the one
+        # that forgot would produce a cycle silently attributed to no settings at all. The
+        # subquery also means a run voided mid-day (see `stamp_session_config`) yields NULL
+        # here too, so the cycle inherits the voiding for free.
         conn.execute(
             "INSERT INTO bot_cycles (id, run_id, user_id, bot_type, cycle_no, structure, "
-            "legs, lots, entry_value, detail, paper) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "legs, lots, entry_value, detail, paper, config_hash) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "(SELECT config_hash FROM bot_runs WHERE id = ?))",
             (
                 cycle_id,
                 run_id,
@@ -583,6 +692,7 @@ def open_cycle(
                 entry_value,
                 json.dumps(detail) if detail else None,
                 1 if paper else 0,
+                run_id,
             ),
         )
         conn.commit()

@@ -240,24 +240,58 @@ def test_the_hard_square_off_closes_an_open_paper_position(env, monkeypatch):
     assert not closed.is_open and closed.exit_reason_code == ReasonCode.SQUARE_OFF
 
 
-def test_a_live_mode_bot_places_nothing_while_dispatch_is_gated(env, monkeypatch, caplog):
-    """The gate, and it must be loud.
+def test_an_open_live_position_is_never_closed_at_a_simulated_price(env, monkeypatch):
+    """An open position is managed the way it was OPENED, not the way the bot is set now.
 
-    Live dispatch is written but switched off until a full session of paper evidence exists
-    (build-order step 9). A gated bot must SAY it is gated rather than quietly behave as
-    paper, which would look identical to one that was trading.
+    The hazard this pins: a user moves a bot holding a real position from Live back to Paper
+    (or switches it off entirely, which is the `entries_suspended` tick). Routing the exit on
+    `config.mode` would send it to `close_paper_cycle`, marking the cycle closed at a
+    simulated price while the actual position sits at the exchange with nothing managing it
+    -- the row would say "done" and the money would still be at risk.
     """
-    from icici_breeze_backend.app.services.bots.scalping import live
-
-    assert live.LIVE_DISPATCH_ENABLED is False, "step 9's gate must ship closed"
-
     _set_quotes(monkeypatch, bid=100.0, ask=101.0)
     _feed(monkeypatch, _bullish_candles())
-    cfg = MomentumLongScalperConfig(mode="live")
-    with caplog.at_level("WARNING"):
-        runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
+
+    run_id = repo.open_session_run(USER, BOT_MOMENTUM_LONG_SCALPER)
+    repo.open_cycle(
+        USER, BOT_MOMENTUM_LONG_SCALPER, run_id,
+        structure="long_ce",
+        legs=[{"right": "call", "strike_price": 24000.0, "quantity": 75,
+               "stock_code": "NIFTY", "expiry_date": "2026-09-10", "action": "buy"}],
+        lots=1, entry_value=7500.0, paper=False,
+    )
+
+    dispatched: list[str] = []
+    monkeypatch.setattr(
+        momentum_bot, "_close_live",
+        lambda *a, **k: dispatched.append("live"),
+    )
+    monkeypatch.setattr(
+        momentum_bot, "_close",
+        lambda *a, **k: dispatched.append("paper"),
+    )
+
+    # The bot is set to paper and switched off -- the exact state that used to strand it.
+    cfg = MomentumLongScalperConfig(mode="paper")
+    monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 8, 15, 20))
+    runtime.tick_bot(
+        USER, BOT_MOMENTUM_LONG_SCALPER, cfg, entries_suspended=True
+    )
+
+    assert dispatched == ["live"], "a real position must exit through the live path"
+
+
+def test_a_suspended_bot_opens_nothing_once_it_is_flat(env, monkeypatch):
+    """The other half of exit-only: entries are refused the instant the user switches off."""
+    _set_quotes(monkeypatch, bid=100.0, ask=101.0)
+    _feed(monkeypatch, _bullish_candles())
+    cfg = MomentumLongScalperConfig(mode="paper")
+    decision = runtime.tick_bot(
+        USER, BOT_MOMENTUM_LONG_SCALPER, cfg, entries_suspended=True
+    )
+    assert decision.action == "idle"
+    assert decision.reason_code == ReasonCode.ENTRIES_SUSPENDED
     assert repo.list_cycles(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER) == []
-    assert any("gated off" in r.message for r in caplog.records)
 
 
 def test_no_signal_means_no_cycle_and_no_noise(env, monkeypatch):

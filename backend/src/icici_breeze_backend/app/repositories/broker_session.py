@@ -104,6 +104,31 @@ def get_broker_session_token(user_id: str) -> Optional[str]:
     return decrypt_broker_session_token(encrypted, key)
 
 
+def list_users_with_session() -> list[str]:
+    """Users holding a broker session that has not lapsed, oldest first.
+
+    Added for the scalping candle feed, which has to subscribe from the 09:15 open whether or
+    not any bot is armed (docs/bots-scalping-plan.md section 5.6) and so cannot resolve a user
+    from the enabled-bot list the way the rest of the loop does.
+
+    Expiry is filtered in SQL against the same stored `expires_at` `get_broker_session_token`
+    checks, so a lapsed row never comes back as a candidate. The token itself is not decrypted
+    here -- callers want to know *who* to try, and the caller that actually needs the token
+    goes through `get_broker_session_token`, which is the one place that owns decryption.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with sqlite3.connect(_db_path()) as conn:
+            rows = conn.execute(
+                "SELECT user_id FROM user_broker_session WHERE expires_at > ? "
+                "ORDER BY created_at ASC",
+                (now,),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [str(r[0]) for r in rows if r and r[0]]
+
+
 def get_broker_session_expiry(user_id: str) -> Optional[str]:
     """Raw ISO expires_at for user_id regardless of whether it has already
     lapsed -- used to report `broker_session_valid_until` in the portal

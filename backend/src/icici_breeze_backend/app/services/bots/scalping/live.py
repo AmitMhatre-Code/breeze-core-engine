@@ -1,9 +1,12 @@
 """Live order dispatch for the scalpers (docs/bots-scalping-plan.md, build-order step 9).
 
-**Gated.** `LIVE_DISPATCH_ENABLED` ships False and the UI's Live segment is not selectable.
-Step 9's precondition is a full session of paper evidence on the production instance, which
-is an operational fact rather than a code one -- so the path is written and tested, and
-turning it on stays a deliberate act.
+**Gated, but not by a constant in this file.** Step 9's precondition used to be a sentence
+in a document -- "a full session of paper evidence on the production instance, which no code
+can assert" -- held up by a hardcoded flag a developer flipped by hand. It is now a real
+precondition: `scalping/evidence.py` requires a *completed paper trading day on the settings
+the bot would trade with*, enforced server-side in the PATCH path, and the user then confirms
+a dialog showing what that day actually did. Editing any P&L-bearing setting invalidates the
+evidence automatically, because the fingerprint it is counted against just changed.
 
 What live adds over paper, and why each part exists
 ---------------------------------------------------
@@ -37,10 +40,6 @@ from typing import Any, Callable, Optional
 import icici_breeze_backend.app.core.config as cfg
 
 _logger = logging.getLogger(__name__)
-
-# Step 9's gate. Flipping this is what enables real orders; the UI's Live segment is
-# disabled independently, so both have to be changed deliberately.
-LIVE_DISPATCH_ENABLED = False
 
 # Terminal broker states. `executed_quantity` is what actually decides a fill; these only
 # say the order will not change again.
@@ -344,9 +343,29 @@ def exit_price_ladder(bid: float, band_pct: float, *, widen: float = 1.0) -> Cal
 
     An exit has to complete -- there is a live position with no stop behind it -- so unlike
     an entry this one does get progressively more aggressive, bounded by the retry count.
+
+    `widen=0.0` turns it back into a flat marketable-sell limit, which is what an *entry*
+    short wants: Bot 4 sells its ATM legs to open, and an opening order has no reason to
+    chase (plan section 3.6's rule, applied to the fly's short legs).
     """
     return lambda attempt: max(
         0.05, float(bid) * (1 - (max(0.0, band_pct) * (1 + widen * attempt)) / 100.0)
+    )
+
+
+def buyback_price_ladder(
+    ask: float, band_pct: float, *, widen: float = 1.0
+) -> Callable[[int], float]:
+    """Buy limits that pay progressively more, for closing a SHORT leg.
+
+    The mirror of `exit_price_ladder` and needed for the same reason: Bot 4 unwinds by buying
+    its short legs back, and a flat limit that will not fill leaves a short option open with
+    the hedge being sold out from under it. `entry_price_ladder` cannot serve here -- it
+    ignores the attempt number by design, because an entry that does not fill is a trade not
+    taken, whereas an exit that does not fill is a position nobody is managing.
+    """
+    return lambda attempt: max(
+        0.05, float(ask) * (1 + (max(0.0, band_pct) * (1 + widen * attempt)) / 100.0)
     )
 
 

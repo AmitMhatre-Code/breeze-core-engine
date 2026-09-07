@@ -536,15 +536,21 @@ def execute(
     now: datetime.datetime,
     vix: Optional[float] = None,
 ) -> None:
-    """Carry out one decision. Paper mode only -- live dispatch is step 9."""
+    """Carry out one decision."""
     from icici_breeze_backend.app.repositories import bots as repo
 
-    if config.mode != "paper":
-        _logger.warning("iron fly: mode=%s is not implemented yet; no orders placed", config.mode)
-        return
+    # An open position is managed the way it was OPENED, not the way the bot is set now --
+    # the same invariant `momentum_bot.execute` documents. Routing a real fly's unwind on
+    # `config.mode` would let a user who stepped the bot back to Paper (or switched it off,
+    # which is the `entries_suspended` tick) close four legs at simulated prices while the
+    # actual position stayed at the exchange.
+    live_path = context.cycle.paper is False if context is not None else config.mode == "live"
 
     if decision.action == "exit" and context is not None:
-        _close(repo, context, decision, charges)
+        if live_path:
+            _close_live(proc, user_id, config, context, decision, charges)
+        else:
+            _close(repo, context, decision, charges)
         return
 
     if decision.action != "enter":
@@ -562,6 +568,10 @@ def execute(
     if plan is None:
         code, text = problem or (ReasonCode.INTERNAL_ERROR, "Entry could not be planned.")
         _logger.info("iron fly: entry skipped -- %s: %s", code, text)
+        return
+
+    if live_path:
+        _open_live(proc, user_id, bot_type, config, run_id, plan, charges)
         return
 
     fills = simulate_entry(plan, charges)
@@ -651,3 +661,416 @@ def _close(repo: Any, context: FlyContext, decision: Any, charges: ChargesModel)
         "iron fly: closed cycle %s -- %s, gross %+.2f", context.cycle.cycle_no,
         decision.reason_code, gross,
     )
+
+
+# --------------------------------------------------------------------------------------
+# Live dispatch
+#
+# Four legs, one at a time, wings first (plan section 4.3). Everything below exists because
+# a four-leg structure fails differently from Bot 3's single leg:
+#
+# * **A partial fill on any leg is a failure, not a smaller position.** Bot 3 adopts a
+#   partial and manages it -- the ladder works the same on 25 units as on 75. A fly with 75
+#   units on one wing and 50 on a short is not a fly at all: the wing no longer covers the
+#   short it was bought to cover, and no exit rule in this module describes what it is. So a
+#   partial is unwound with everything else.
+# * **The unwind has an order, and it is not the entry's reverse by accident.** Shorts are
+#   bought back before wings are sold. Selling the hedge while a short is still open leaves,
+#   for the duration of one order, exactly the naked short the wings-first rule exists to
+#   prevent.
+# * **A failed unwind is the worst state this bot can reach** and is never retried silently.
+#   It alerts, disarms, and leaves the cycle open for a human, because the alternative --
+#   firing more orders at a market that is refusing them -- spends friction to make an
+#   unaccounted position worse.
+# --------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _LegFill:
+    """One leg that actually reached the exchange, at the size it actually filled."""
+
+    leg: FlyLeg
+    quantity: int
+    price: float
+    order_id: str
+
+
+def _leg_order(plan: FlyPlan, leg: FlyLeg, *, action: str, quantity: int) -> Any:
+    from icici_breeze_backend.app.services.bots.scalping import live
+
+    return live.LegOrder(
+        stock_code=INDEX_STOCK_CODE,
+        exchange_code=INDEX_EXCHANGE,
+        right=leg.right,
+        strike_price=leg.strike,
+        expiry_display=plan.expiry_display,
+        action=action,
+        quantity=int(quantity),
+    )
+
+
+def _entry_ladder(leg: FlyLeg, config: IronFlyScalperConfig) -> Any:
+    """A marketable limit on the correct side, and deliberately not a chasing one.
+
+    An entry that does not fill is a trade not taken, which costs nothing -- so neither side
+    widens on retry (`widen=0.0`). Only exits chase, because an exit that does not fill is a
+    position with nothing behind it.
+    """
+    from icici_breeze_backend.app.services.bots.scalping import live
+
+    tol = config.execution.entry_limit_tolerance_pct
+    if leg.is_short:
+        return live.exit_price_ladder(float(leg.quote.bid or 0), tol, widen=0.0)
+    return live.entry_price_ladder(float(leg.quote.ask or 0), tol)
+
+
+def _place_leg(proc, user_id, plan, leg, config, *, action, quantity, ladder) -> Any:
+    from icici_breeze_backend.app.services.bots.scalping import live
+
+    return live.place_and_confirm(
+        proc,
+        user_id,
+        _leg_order(plan, leg, action=action, quantity=quantity),
+        price_for_attempt=ladder,
+        timeout_seconds=config.execution.entry_fill_timeout_seconds,
+        attempts=max(1, config.execution.entry_retries),
+    )
+
+
+def _open_live(
+    proc: Any,
+    user_id: str,
+    bot_type: str,
+    config: IronFlyScalperConfig,
+    run_id: str,
+    plan: FlyPlan,
+    charges: ChargesModel,
+) -> None:
+    """Build the fly for real: wings, then shorts, one order at a time."""
+    from icici_breeze_backend.app.repositories import bots as repo
+    from icici_breeze_backend.app.services.bots.scalping import guards
+
+    # An unresolved intent means an order exists that nothing can account for. Building a
+    # second four-leg structure on top of that is how one crash becomes two positions.
+    if guards.has_unresolved_intent(user_id, bot_type):
+        _logger.warning("iron fly [LIVE]: an unreconciled order is outstanding; not entering")
+        return
+
+    # The row goes in BEFORE any order does, so a crash between `place_order` returning and
+    # the row being written leaves a question `reconcile_pending_cycles` can answer rather
+    # than four legs nobody knows about.
+    cycle = repo.open_cycle(
+        user_id, bot_type, run_id,
+        structure="iron_fly", legs=plan.as_legs(), lots=plan.lots,
+        entry_value=None, paper=False,
+        detail={
+            "pending": True, "order_ids": [],
+            "atm_strike": plan.atm_strike, "wing_width": plan.wing_width,
+            "margin_required": plan.margin_required,
+        },
+    )
+
+    placed: list[_LegFill] = []
+    order_ids: list[str] = []
+    failed_leg: Optional[FlyLeg] = None
+    failure_text = ""
+
+    for leg in plan.entry_sequence():
+        result = _place_leg(
+            proc, user_id, plan, leg, config,
+            action=leg.action, quantity=plan.quantity, ladder=_entry_ladder(leg, config),
+        )
+        if result.order_id:
+            order_ids.append(result.order_id)
+
+        if result.cancel_failed:
+            # The one case that must NOT unwind. An order believed dead but still live will
+            # fill later; unwinding around it would build a position out of a guess. Freeze
+            # everything and hand it to a human.
+            repo.mark_cycle_placed(
+                cycle.id, order_ids=order_ids,
+                detail={"cancel_failed": True, "filled_legs": len(placed)},
+            )
+            guards.disarm_bot(
+                user_id, bot_type, result.error or "An order could not be cancelled."
+            )
+            _alert_stuck(user_id, "an order could not be cancelled mid-entry", result.error)
+            return
+
+        if result.filled_quantity > 0:
+            placed.append(
+                _LegFill(
+                    leg=leg,
+                    quantity=int(result.filled_quantity),
+                    price=float(result.average_price or 0.0),
+                    order_id=str(result.order_id or ""),
+                )
+            )
+
+        # A partial counts as a failure here even though units did fill -- see the section
+        # header. `result.ok` is already full-quantity-only, so this is just naming it.
+        if not result.ok:
+            failed_leg = leg
+            failure_text = result.error or "The leg did not fill."
+            break
+
+    if failed_leg is not None:
+        _abort_live_entry(
+            proc, user_id, bot_type, config, cycle, plan, placed, order_ids,
+            failed_leg, failure_text, charges,
+        )
+        return
+
+    _record_live_entry(repo, cycle, plan, placed, order_ids, config, charges)
+
+
+def _abort_live_entry(
+    proc, user_id, bot_type, config, cycle, plan, placed, order_ids,
+    failed_leg, failure_text, charges,
+) -> None:
+    """Unwind whatever reached the exchange, then close the row as an abandoned attempt."""
+    from icici_breeze_backend.app.repositories import bots as repo
+    from icici_breeze_backend.app.services.bots.scalping import guards
+
+    shorts_on = [f for f in placed if f.leg.is_short]
+    code, text = unwind_reason(
+        FlyFills(filled=[(f.leg, None) for f in placed], net_credit_per_unit=0.0, charges=0.0,
+                 failed_leg=failed_leg)
+    )
+
+    unwound, stuck = _unwind_legs(proc, user_id, config, plan, placed)
+
+    detail = dict(cycle.detail or {})
+    detail.update({
+        "aborted": True,
+        "filled_legs": len(placed),
+        "failed_leg": {"right": failed_leg.right, "strike": failed_leg.strike},
+        "failure": failure_text,
+        "unwound_legs": len(unwound),
+        "stuck_legs": [
+            {"right": f.leg.right, "strike": f.leg.strike, "quantity": f.quantity} for f in stuck
+        ],
+    })
+
+    if stuck:
+        # Legs are still on and could not be closed. This is the state that must never be
+        # tidied away: the row stays OPEN so the exit loop keeps trying to manage it, the bot
+        # is disarmed so it opens nothing else, and the user is told exactly what is live.
+        repo.mark_cycle_placed(cycle.id, order_ids=order_ids, detail=detail)
+        guards.disarm_bot(user_id, bot_type, "An entry could not be unwound cleanly.")
+        _alert_stuck(
+            user_id,
+            "an entry failed and could not be fully unwound",
+            "; ".join(
+                f"{f.leg.right} {int(f.leg.strike)} x{f.quantity} still open" for f in stuck
+            ),
+        )
+        return
+
+    friction = round(
+        sum(
+            charges.leg_charges(f.price, f.quantity, is_buy=not f.leg.is_short)
+            for f in placed
+        )
+        * 2,  # each unwound leg paid charges on the way in AND on the way back out
+        2,
+    )
+    repo.close_cycle(
+        cycle.id, exit_reason_code=code, exit_reason_text=text,
+        gross_pnl=0.0, friction=friction, detail=detail,
+    )
+    _logger.warning(
+        "iron fly [LIVE]: %s (%d leg(s) unwound, %d short(s) had filled)",
+        text, len(unwound), len(shorts_on),
+    )
+
+
+def _unwind_legs(proc, user_id, config, plan, placed: list[_LegFill]):
+    """Close filled legs, shorts first. Returns `(unwound, stuck)`.
+
+    Shorts first is the whole reason this is not a loop over `placed` in fill order: selling
+    a wing while its short is still open leaves a naked short for the life of one order, and
+    that is exactly what the wings-first entry rule exists to avoid.
+    """
+    from icici_breeze_backend.app.services.bots.scalping import live
+
+    ordered = [f for f in placed if f.leg.is_short] + [f for f in placed if not f.leg.is_short]
+    unwound: list[_LegFill] = []
+    stuck: list[_LegFill] = []
+    for fill in ordered:
+        quote = live_quote(
+            proc, user_id, plan.expiry_display, fill.leg.strike, fill.leg.right
+        )
+        band = config.execution.exit_limit_band_pct
+        if fill.leg.is_short:
+            action, ladder = cfg.BUY, live.buyback_price_ladder(
+                float(quote.ask or fill.price or 0.05), band
+            )
+        else:
+            action, ladder = cfg.SELL, live.exit_price_ladder(
+                float(quote.bid or fill.price or 0.05), band
+            )
+        result = _place_leg(
+            proc, user_id, plan, fill.leg, config,
+            action=action, quantity=fill.quantity, ladder=ladder,
+        )
+        (unwound if result.ok else stuck).append(fill)
+    return unwound, stuck
+
+
+def _record_live_entry(repo, cycle, plan, placed, order_ids, config, charges) -> None:
+    """A complete fly. Credit is computed from the prices that actually filled."""
+    quantity = plan.quantity
+    credit = round(
+        sum(f.price if f.leg.is_short else -f.price for f in placed), 2
+    )
+    entry_charges = round(
+        sum(
+            charges.leg_charges(f.price, f.quantity, is_buy=not f.leg.is_short)
+            for f in placed
+        ),
+        2,
+    )
+    detail = dict(cycle.detail or {})
+    # `pending` is not set False here -- `mark_cycle_placed` removes the key outright, which
+    # is what makes the row stop being a reconciliation question.
+    detail.update({
+        "net_credit_per_unit": credit,
+        "net_credit_inr": round(credit * quantity, 2),
+        "entry_charges": entry_charges,
+        "loss_limit_inr": config.exits.loss_limit_inr(credit * quantity),
+        "entry_fills": [
+            {
+                "right": f.leg.right, "strike": f.leg.strike, "action": f.leg.action,
+                "price": f.price, "quantity": f.quantity, "order_id": f.order_id,
+            }
+            for f in placed
+        ],
+    })
+    repo.mark_cycle_placed(cycle.id, order_ids=order_ids, detail=detail)
+    _logger.info(
+        "iron fly [LIVE]: opened cycle %s -- %d lots, centre %d, credit %.0f",
+        cycle.cycle_no, plan.lots, int(plan.atm_strike), credit * quantity,
+    )
+
+
+def _close_live(
+    proc: Any,
+    user_id: str,
+    config: IronFlyScalperConfig,
+    context: FlyContext,
+    decision: Any,
+    charges: ChargesModel,
+) -> None:
+    """Unwind a real fly: buy the shorts back, then sell the wings."""
+    from icici_breeze_backend.app.repositories import bots as repo
+    from icici_breeze_backend.app.services.bots.scalping import guards, live
+
+    legs = context.cycle.legs or []
+    if not legs:
+        _logger.warning("iron fly [LIVE]: cycle %s has no legs to close", context.cycle.id)
+        return
+
+    detail = dict(context.cycle.detail or {})
+    expiry = str((legs[0] or {}).get("expiry_display") or "")
+    shorts = [l for l in legs if l.get("action") == cfg.SELL]
+    longs = [l for l in legs if l.get("action") != cfg.SELL]
+
+    closed: list[dict[str, Any]] = []
+    stuck: list[dict[str, Any]] = []
+    exit_cost = 0.0
+    exit_charges = 0.0
+
+    for leg in shorts + longs:
+        quantity = int(leg.get("quantity") or 0)
+        if quantity <= 0:
+            continue
+        right = str(leg.get("right") or "call")
+        strike = float(leg.get("strike_price") or 0)
+        quote = context.quotes.get(_leg_key(leg)) or live_quote(
+            proc, user_id, expiry, strike, right
+        )
+        is_short = leg.get("action") == cfg.SELL
+        band = config.execution.exit_limit_band_pct
+        if is_short:
+            action = cfg.BUY
+            ladder = live.buyback_price_ladder(float(quote.ask or 0.05), band)
+        else:
+            action = cfg.SELL
+            ladder = live.exit_price_ladder(float(quote.bid or 0.05), band)
+
+        result = live.place_and_confirm(
+            proc, user_id,
+            live.LegOrder(
+                stock_code=INDEX_STOCK_CODE, exchange_code=INDEX_EXCHANGE, right=right,
+                strike_price=strike, expiry_display=expiry, action=action, quantity=quantity,
+            ),
+            price_for_attempt=ladder,
+            timeout_seconds=config.execution.entry_fill_timeout_seconds,
+            # An exit gets more attempts than an entry: there is a position behind it.
+            attempts=3,
+        )
+        if not result.ok:
+            stuck.append({"right": right, "strike": strike, "quantity": quantity,
+                          "error": result.error})
+            continue
+        price = float(result.average_price or 0.0)
+        # Closing reverses the leg: a short is bought back (a cost), a long is sold (a credit).
+        exit_cost += price if is_short else -price
+        exit_charges += charges.leg_charges(price, quantity, is_buy=is_short)
+        closed.append({"right": right, "strike": strike, "price": price,
+                       "order_id": result.order_id})
+
+    if stuck:
+        # Some legs are still on. Do NOT close the row -- the position is real and the exit
+        # loop must keep trying on later passes. Alert once and stand the bot down; firing
+        # more orders this pass into a market that just refused them buys nothing.
+        detail["exit_partial"] = {"closed": closed, "stuck": stuck}
+        repo.update_cycle_detail(context.cycle.id, detail)
+        guards.disarm_bot(user_id, context.cycle.bot_type, "A fly could not be fully closed.")
+        _alert_stuck(
+            user_id, "a fly could not be fully closed",
+            "; ".join(f"{s['right']} {int(s['strike'])} x{s['quantity']}" for s in stuck),
+        )
+        return
+
+    quantity = int((legs[0] or {}).get("quantity") or 0)
+    net_credit = float(detail.get("net_credit_per_unit") or 0)
+    gross = round((net_credit - exit_cost) * quantity, 2)
+    detail["exit"] = {
+        "close_cost_per_unit": round(exit_cost, 2),
+        "spot": context.spot,
+        "charges": round(exit_charges, 2),
+        "legs": closed,
+    }
+    repo.close_cycle(
+        context.cycle.id,
+        exit_reason_code=decision.reason_code,
+        exit_reason_text=decision.reason_text,
+        exit_value=round(exit_cost * quantity, 2),
+        gross_pnl=gross,
+        friction=round(float(detail.get("entry_charges") or 0) + exit_charges, 2),
+        detail=detail,
+    )
+    _logger.info(
+        "iron fly [LIVE]: closed cycle %s -- %s, gross %+.2f",
+        context.cycle.cycle_no, decision.reason_code, gross,
+    )
+
+
+def _alert_stuck(user_id: str, what: str, detail: Optional[str]) -> None:
+    """Tell the user a real position needs their hands. Never silent, never retried away."""
+    from icici_breeze_backend.app.services.telegram_alerts import _notify
+
+    try:
+        _notify(
+            user_id,
+            "\U0001f6d1 <b>Iron fly needs checking</b>\n\n"
+            f"The bot stopped because {what}.\n\n"
+            f"{detail or ''}\n\n"
+            "<b>Check the Order Book for open legs.</b> The bot has been disarmed and will "
+            "not open anything new.",
+            kind="scalping_fly_stuck",
+        )
+    except Exception:  # noqa: BLE001 -- an alert failure must not mask the original problem
+        _logger.exception("iron fly: could not send the stuck-position alert")

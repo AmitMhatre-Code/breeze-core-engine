@@ -294,6 +294,28 @@ def ensure_bots_tables(db_path: str) -> None:
         _add_column(conn, "bot_scrip_prefs", "ce_lots", "INTEGER")
         _add_column(conn, "bot_scrip_prefs", "pe_lots", "INTEGER")
         _add_column(conn, "bot_scrip_prefs", "priority", "INTEGER NOT NULL DEFAULT 1")
+        # The paper-evidence gate (docs/bots-scalping-plan.md section 11.3). A scalper may
+        # only be set `live` once a paper session has run a full trading day *on the settings
+        # it will trade with*, so a run has to record which settings it was.
+        #
+        # `config_hash` is the fingerprint of the material config (evidence.py); `mode` is
+        # paper/live at the time the session opened. Both NULL on every pre-existing row and
+        # on every Bot 1/2 run, which is correct -- a run that predates the gate is not
+        # evidence for it, and the readers filter on an exact hash match, so NULL never
+        # satisfies anything.
+        _add_column(conn, "bot_runs", "config_hash", "TEXT")
+        _add_column(conn, "bot_runs", "mode", "TEXT")
+        # On the cycle too, so the dialog can attribute a cycle to the settings that produced
+        # it even after the user has edited them -- the run's hash alone would make every
+        # cycle in a session look like it belonged to whatever the session started as.
+        _add_column(conn, "bot_cycles", "config_hash", "TEXT")
+        # The gate reads "completed paper sessions carrying this exact hash", which is a scan
+        # of one bot's runs filtered by hash; without this it is a full table scan on every
+        # card render.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bot_runs_type_hash "
+            "ON bot_runs(user_id, bot_type, config_hash)"
+        )
         conn.commit()
 
 

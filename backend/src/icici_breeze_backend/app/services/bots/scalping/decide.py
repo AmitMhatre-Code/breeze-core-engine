@@ -63,6 +63,10 @@ class Snapshot:
     # knowable with a live quote -- folding them together would make the terminal-for-the-day
     # verdict depend on the feed being up.
     unrealized_pnl: float = 0.0
+    # The bot has been switched Off (or back to Paper) while a real position is still open,
+    # so the driver is ticking it purely to run the exit path. Entries are refused; the exit
+    # half of the stack is untouched, which is the whole point -- see `_decide_entry`.
+    entries_suspended: bool = False
 
 
 @dataclass(frozen=True)
@@ -171,6 +175,19 @@ def _decide_exit(snapshot: Snapshot, config: Any, *, stale_exit_seconds: float) 
 def _decide_entry(snapshot: Snapshot, config: Any) -> Decision:
     now = snapshot.now_ist
     risk = config.risk
+
+    # First, because it is the most direct answer to "why is this not opening anything": the
+    # user switched it off. Everything below is a reason the bot itself found; this is the
+    # one the user created, and it outranks them all.
+    #
+    # Reached only while the last position is being closed out -- once flat, the driver stops
+    # ticking a disarmed bot entirely and this gate is unreachable.
+    if snapshot.entries_suspended:
+        return Decision(
+            "idle",
+            ReasonCode.ENTRIES_SUSPENDED,
+            "Switched off; closing the open position and opening nothing new.",
+        )
 
     # Terminal for the day comes first so that everything after it can assume the bot is
     # still allowed to trade at all.

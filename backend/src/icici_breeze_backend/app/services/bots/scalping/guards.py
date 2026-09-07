@@ -226,6 +226,27 @@ def reconcile_pending_cycles(proc: Any, user_id: str, bot_type: str) -> int:
             continue
 
         if filled > 0:
+            # **A multi-leg structure is never adopted from a total.** Bot 3 holds one leg,
+            # so "some units filled" fully describes what is live. Bot 4's fly has four, and
+            # a sum cannot say *which* -- 75 units could be one wing, which is not a fly and
+            # is not something any exit rule in `iron_fly_bot` describes. Adopting it would
+            # hand the exit loop a structure it would then misprice and mis-sequence.
+            #
+            # So a multi-leg cycle is adopted only when every leg is accounted for; anything
+            # short of that goes to a human, which is the same fail-closed answer `unknown`
+            # already gets.
+            expected_legs = [l for l in (cycle.legs or []) if int(l.get("quantity") or 0) > 0]
+            if len(expected_legs) > 1:
+                wanted = sum(int(l.get("quantity") or 0) for l in expected_legs)
+                if filled < wanted or len(order_ids) < len(expected_legs):
+                    _alert_orphan(
+                        user_id, bot_type, cycle,
+                        f"only {filled} of {wanted} units across "
+                        f"{len(order_ids)}/{len(expected_legs)} legs can be accounted for, "
+                        f"so what is open is not the structure the bot intended",
+                    )
+                    resolved += 1
+                    continue
             detail["pending"] = False
             detail["reconciled"] = True
             repo.mark_cycle_placed(cycle.id, order_ids=order_ids, detail=detail)

@@ -171,6 +171,17 @@ def feed(monkeypatch):
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.processor.processor", lambda: object()
     )
+    # The feed now runs on the session clock rather than as a side effect of an armed bot
+    # (plan section 5.6), so a test that wants it serviced has to be inside market hours with
+    # a broker session to subscribe with.
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_trading_day", lambda now=None: True
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open", lambda now=None: True
+    )
+    monkeypatch.setattr(runtime, "_feed_owner", lambda: USER)
+    monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 8, 10, 0))
     return fake
 
 
@@ -185,7 +196,9 @@ def armed(db_path):
 def decisions(monkeypatch):
     """Records `tick_bot` calls so the feed wiring can be tested on its own."""
     seen: list[tuple[str, str]] = []
-    monkeypatch.setattr(runtime, "tick_bot", lambda uid, bt, cfg: seen.append((uid, bt)))
+    monkeypatch.setattr(
+        runtime, "tick_bot", lambda uid, bt, cfg, **kw: seen.append((uid, bt))
+    )
     return seen
 
 
@@ -204,7 +217,9 @@ def test_a_pass_subscribes_the_futures_feed(armed, feed, decisions):
 def test_the_feed_is_serviced_before_any_bot_decides(armed, feed, monkeypatch):
     """A bot must never read a builder that this same pass was about to feed."""
     order: list[str] = []
-    monkeypatch.setattr(runtime, "tick_bot", lambda uid, bt, cfg: order.append("decide"))
+    monkeypatch.setattr(
+        runtime, "tick_bot", lambda uid, bt, cfg, **kw: order.append("decide")
+    )
     original = feed.ensure_subscribed
 
     def _record(proc, user_id, option_expiries):
@@ -247,6 +262,108 @@ def test_a_dead_feed_does_not_stop_the_gate_stack(armed, feed, decisions):
     feed.raises = True
     runtime.tick()  # must not raise
     assert decisions == [(USER, BOT_MOMENTUM_LONG_SCALPER)]
+
+
+# --- the feed runs the whole session, armed or not (plan section 5.6) -------------------
+
+
+def test_the_feed_subscribes_with_every_bot_switched_off(db_path, feed, decisions):
+    """The point of section 5.6.
+
+    As first built the feed was a side effect of iterating armed bots, so it subscribed only
+    when one was armed -- and a user who armed a bot at 11:00 got one that could not act
+    until ~11:20, because the EMA and volume MA build from live ticks with no backfill.
+    """
+    runtime.tick()
+    assert feed.subscribes == [(USER, ["08-Sep-2026"])]
+    assert decisions == [], "nothing armed, so nothing decided -- but the candles are building"
+
+
+def test_the_feed_stays_quiet_outside_market_hours(db_path, feed, decisions, monkeypatch):
+    """Nothing prints before 09:15 or after the close; subscribing then buys nothing."""
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open", lambda now=None: False
+    )
+    runtime.tick()
+    assert feed.subscribes == [] and feed.flushes == 0
+
+
+def test_the_feed_stays_quiet_on_a_holiday(db_path, feed, decisions, monkeypatch):
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_trading_day", lambda now=None: False
+    )
+    runtime.tick()
+    assert feed.subscribes == []
+
+
+def test_no_broker_session_means_nothing_to_subscribe_with(db_path, feed, monkeypatch):
+    """Unchanged behaviour, just reached earlier in the day: without an ICICI login there is
+    no session to open a socket with, and the feed simply waits."""
+    monkeypatch.setattr(runtime, "_feed_owner", lambda: None)
+    runtime.tick()
+    assert feed.subscribes == []
+
+
+def test_read_only_mode_still_builds_candles(db_path, feed, decisions, monkeypatch):
+    """Building candles is reading data, not trading. Stopping the feed when a licence
+    lapses would mean a licence restored at 13:00 left the bot standing down on `not_warm`
+    until 13:20 -- punishing the user twice for one lapse."""
+    monkeypatch.setattr(runtime, "_trading_allowed", lambda: False)
+    runtime.tick()
+    assert feed.subscribes == [(USER, ["08-Sep-2026"])]
+
+
+# --- a real position outlives the switch that opened it --------------------------------
+
+
+def test_a_switched_off_bot_holding_a_live_position_is_still_ticked(db_path, feed, monkeypatch):
+    """Section 5.5's rule, extended past the arming switch itself.
+
+    `tick` walks *enabled* bots, so setting a bot to Off with a real position open used to
+    stop the only thing evaluating its stop -- stranding it at the exchange, unmanaged.
+    """
+    seen: list[tuple[str, str, bool]] = []
+    monkeypatch.setattr(
+        runtime, "tick_bot",
+        lambda uid, bt, cfg, **kw: seen.append((uid, bt, kw.get("entries_suspended", False))),
+    )
+    run_id = repo.open_session_run(USER, BOT_MOMENTUM_LONG_SCALPER)
+    repo.open_cycle(
+        USER, BOT_MOMENTUM_LONG_SCALPER, run_id,
+        structure="long_ce", legs=[], lots=1, entry_value=1.0, paper=False,
+    )
+    # Deliberately NOT enabled -- this is the user having switched it off.
+    runtime.tick()
+    assert seen == [(USER, BOT_MOMENTUM_LONG_SCALPER, True)]
+
+
+def test_an_armed_bot_is_not_also_ticked_as_exit_only(armed, feed, monkeypatch):
+    """One pass per bot. A bot that is both armed and holding must not decide twice."""
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        runtime, "tick_bot", lambda uid, bt, cfg, **kw: seen.append((uid, bt))
+    )
+    run_id = repo.open_session_run(USER, BOT_MOMENTUM_LONG_SCALPER)
+    repo.open_cycle(
+        USER, BOT_MOMENTUM_LONG_SCALPER, run_id,
+        structure="long_ce", legs=[], lots=1, entry_value=1.0, paper=False,
+    )
+    runtime.tick()
+    assert seen == [(USER, BOT_MOMENTUM_LONG_SCALPER)]
+
+
+def test_an_abandoned_paper_position_is_not_chased(db_path, feed, monkeypatch):
+    """A simulation has no exchange side. Ticking a switched-off bot for it would keep a
+    disarmed bot running all day over a position that does not exist."""
+    seen: list = []
+    monkeypatch.setattr(runtime, "tick_bot", lambda uid, bt, cfg, **kw: seen.append(bt))
+    run_id = repo.open_session_run(USER, BOT_MOMENTUM_LONG_SCALPER)
+    repo.open_cycle(
+        USER, BOT_MOMENTUM_LONG_SCALPER, run_id,
+        structure="long_ce", legs=[], lots=1, entry_value=1.0, paper=True,
+    )
+    runtime.tick()
+    assert seen == []
 
 
 # --- the audit trail ------------------------------------------------------------------

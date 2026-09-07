@@ -76,9 +76,21 @@ def _clock():
 # --- the gate --------------------------------------------------------------------------
 
 
-def test_live_dispatch_ships_switched_off():
-    """Step 9's precondition is paper evidence on production, which no code can assert."""
-    assert live.LIVE_DISPATCH_ENABLED is False
+def test_there_is_no_module_level_bypass_of_the_evidence_gate():
+    """The gate lives in `evidence.py` and the PATCH path, not in a constant here.
+
+    A regression guard with a specific failure in mind: re-introducing a module-level
+    boolean that enables live dispatch would move the decision back out of the user's hands
+    and past the paper-evidence requirement, which is the thing that stopped being a comment
+    in a document. If a flag like this is ever wanted again it should fail this test first
+    and be argued for deliberately.
+    """
+    suspicious = [
+        name
+        for name in dir(live)
+        if name.isupper() and "LIVE" in name and isinstance(getattr(live, name), bool)
+    ]
+    assert suspicious == []
 
 
 # --- placing ---------------------------------------------------------------------------
@@ -289,6 +301,64 @@ def test_a_row_with_no_order_id_is_escalated(db, monkeypatch):
     _intent(run_id, order_ids=())
     guards.reconcile_pending_cycles(FakeBroker(), USER, BOT_MOMENTUM_LONG_SCALPER)
     assert sent == ["scalping_orphan"]
+
+
+def _fly_intent(run_id, order_ids):
+    """A four-leg intent row, as Bot 4's live entry writes one before dispatching."""
+    from icici_breeze_backend.app.db.bots_migrate import BOT_IRON_FLY_SCALPER
+
+    return repo.open_cycle(
+        USER, BOT_IRON_FLY_SCALPER, run_id, structure="iron_fly",
+        legs=[
+            {"right": "call", "strike_price": 24_150.0, "quantity": 75, "action": cfg.BUY},
+            {"right": "put", "strike_price": 23_850.0, "quantity": 75, "action": cfg.BUY},
+            {"right": "call", "strike_price": 24_000.0, "quantity": 75, "action": cfg.SELL},
+            {"right": "put", "strike_price": 24_000.0, "quantity": 75, "action": cfg.SELL},
+        ],
+        lots=1, paper=False, detail={"pending": True, "order_ids": list(order_ids)},
+    )
+
+
+def test_a_partly_filled_fly_is_escalated_rather_than_adopted(db, monkeypatch):
+    """A sum of fills cannot describe a four-leg structure.
+
+    Bot 3 holds one leg, so "some units filled" says everything. 75 of 300 units across a fly
+    could be a single wing -- which is not a fly, is not what any exit rule in
+    `iron_fly_bot` describes, and would be mispriced and mis-sequenced by the exit loop that
+    adopted it. Anything short of every leg accounted for goes to a human.
+    """
+    from icici_breeze_backend.app.db.bots_migrate import BOT_IRON_FLY_SCALPER
+
+    sent = []
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.telegram_alerts._notify",
+        lambda user_id, text, *, kind: sent.append(kind),
+    )
+    run_id = repo.open_session_run(USER, BOT_IRON_FLY_SCALPER)
+    _fly_intent(run_id, ["OID1"])
+    broker = FakeBroker(fills={"OID1": {"quantity_executed": 75, "status": "Executed"}})
+
+    guards.reconcile_pending_cycles(broker, USER, BOT_IRON_FLY_SCALPER)
+
+    assert sent == ["scalping_orphan"]
+    assert guards.has_unresolved_intent(USER, BOT_IRON_FLY_SCALPER) is True
+
+
+def test_a_fully_filled_fly_is_adopted(db):
+    """Every leg accounted for is the one case where adopting is honest."""
+    from icici_breeze_backend.app.db.bots_migrate import BOT_IRON_FLY_SCALPER
+
+    run_id = repo.open_session_run(USER, BOT_IRON_FLY_SCALPER)
+    ids = ["OID1", "OID2", "OID3", "OID4"]
+    _fly_intent(run_id, ids)
+    broker = FakeBroker(
+        fills={i: {"quantity_executed": 75, "status": "Executed"} for i in ids}
+    )
+
+    guards.reconcile_pending_cycles(broker, USER, BOT_IRON_FLY_SCALPER)
+
+    open_now = repo.open_cycles(USER, BOT_IRON_FLY_SCALPER)
+    assert len(open_now) == 1 and open_now[0].detail["reconciled"] is True
 
 
 def test_reconciliation_is_a_no_op_when_nothing_is_pending(db):

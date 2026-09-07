@@ -2,11 +2,16 @@
 
 import { useState } from "react";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
+import { BotStatusRow } from "@/components/bots/BotStatusRow";
+import { LiveConfirmDialog } from "@/components/bots/LiveConfirmDialog";
 import { NumberInput } from "@/components/ui/NumberInput";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import { describeFeed, feedToneClass } from "@/lib/scalper-audit";
 import {
   BOT_META,
+  isScalper,
+  useBots,
+  useLiveEligibility,
   useTodaysCycles,
   useTodaysRun,
   useUpdateBot,
@@ -48,11 +53,6 @@ const MODE_BLURB: Record<ScalperCardMode, string> = {
   live: "Places real orders on the exchange, unattended, within the limits you set.",
 };
 
-/** Live dispatch is not built yet (build-order step 9, gated on the circuit-breaker tests).
- *  The segment is rendered but not selectable: a switch that looks armed and is not would be
- *  the worst possible state for this particular control. */
-const LIVE_AVAILABLE = false;
-
 function cardMode(bot: Bot): ScalperCardMode {
   if (!bot.enabled) return "off";
   const mode = (bot.config as { mode?: ScalperMode }).mode;
@@ -64,10 +64,18 @@ function cardMode(bot: Bot): ScalperCardMode {
 function ModePill({
   mode,
   disabled,
+  liveLocked,
+  liveLockedReason,
   onChange,
 }: {
   mode: ScalperCardMode;
   disabled: boolean;
+  /** The paper-evidence gate's answer. Live is not selectable until this bot has completed
+   *  a paper trading day on its current settings — the same check the server enforces on
+   *  PATCH, read from the same source, so the card can never offer a control that would
+   *  then be refused. */
+  liveLocked: boolean;
+  liveLockedReason: string | null;
   onChange: (next: ScalperCardMode) => void;
 }) {
   return (
@@ -78,18 +86,14 @@ function ModePill({
     >
       {(["off", "paper", "live"] as const).map((value) => {
         const active = mode === value;
-        const blocked = value === "live" && !LIVE_AVAILABLE;
+        const blocked = value === "live" && liveLocked;
         return (
           <button
             key={value}
             type="button"
             aria-pressed={active}
             disabled={disabled || blocked}
-            title={
-              blocked
-                ? "Live trading is not available yet — the bot runs in paper mode until real order placement ships."
-                : undefined
-            }
+            title={blocked ? liveLockedReason ?? undefined : undefined}
             onClick={() => onChange(value)}
             className={[
               "rounded-full px-1.5 py-1.5 text-micro font-bold uppercase tracking-[0.03em] transition",
@@ -134,10 +138,40 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [confirmLiveOpen, setConfirmLiveOpen] = useState(false);
+
   const mode = cardMode(bot);
-  const { data: cycles } = useTodaysCycles(bot.bot_type, bot.enabled);
+  const { data: eligibility } = useLiveEligibility(bot.bot_type);
+  // Cycles are read even when the bot is Off: a real position outlives the switch that
+  // opened it, and the card has to be able to say so.
+  const { data: cycles } = useTodaysCycles(bot.bot_type, true);
   const { data: todaysRun } = useTodaysRun(bot.bot_type, bot.enabled);
   const feed = describeFeed(todaysRun?.detail ?? null);
+
+  // A switched-off bot still holding a REAL position is not idle — the loop keeps ticking it
+  // for its exits until it is flat. Saying "Off" alone there would be a lie about money that
+  // is still at risk.
+  const closingOut =
+    mode === "off" && (cycles ?? []).some((c) => c.closed_at === null && c.paper === false);
+  const liveLocked = !eligibility?.unlocked;
+
+  // Separate stops mean the deployment's real daily downside is the SUM of the two, not the
+  // number set on either (plan section 5.2). Shown in the dialog only when the other scalper
+  // is ALSO live — otherwise it would inflate the figure with a bot that cannot lose today.
+  const { data: allBots } = useBots();
+  const sibling = (allBots ?? []).find(
+    (b) => isScalper(b.bot_type) && b.bot_type !== bot.bot_type,
+  );
+  const siblingIsLive =
+    Boolean(sibling?.enabled) &&
+    (sibling?.config as { mode?: ScalperMode } | undefined)?.mode === "live";
+  const ownCap =
+    ((bot.config as { risk?: { cumulative_stop_inr?: number } }).risk?.cumulative_stop_inr) ?? 0;
+  const combinedDownside = siblingIsLive
+    ? ownCap +
+      (((sibling?.config as { risk?: { cumulative_stop_inr?: number } })?.risk
+        ?.cumulative_stop_inr) ?? 0)
+    : null;
 
   const closed = (cycles ?? []).filter((c) => c.closed_at !== null);
   const net = closed.reduce((sum, c) => sum + (c.net_pnl ?? 0), 0);
@@ -146,8 +180,7 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
   // still should say so on its face rather than in a report nobody opens.
   const friction = (cycles ?? []).reduce((sum, c) => sum + (c.friction ?? 0), 0);
 
-  async function setMode(next: ScalperCardMode) {
-    if (next === mode) return;
+  async function applyMode(next: ScalperCardMode) {
     setError(null);
     try {
       // Both fields in one PATCH. Sent separately there would be a window in which the bot
@@ -158,9 +191,23 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
         enabled: next !== "off",
         config: { mode: next === "live" ? "live" : "paper" },
       });
+      setConfirmLiveOpen(false);
     } catch (e) {
       setError((e as Error)?.message ?? "Could not save.");
     }
+  }
+
+  function setMode(next: ScalperCardMode) {
+    if (next === mode) return;
+    setError(null);
+    // Only the step INTO live is confirmed. Not Paper (which places nothing), not Off, and
+    // not Live → Paper — that is the user stepping back, and putting a dialog in front of it
+    // would train them to click through dialogs on this control.
+    if (next === "live") {
+      setConfirmLiveOpen(true);
+      return;
+    }
+    void applyMode(next);
   }
 
   async function setPriority(next: number) {
@@ -180,7 +227,9 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
 
   return (
     <>
-      <section className="app-card flex aspect-square flex-col p-4 max-sm:aspect-auto">
+      {/* `h-full` + the grid's default stretch, not `aspect-square` — matches BotCard so
+          all four cards in a row share a height and their mode switches line up. */}
+      <section className="app-card flex h-full min-h-[21rem] flex-col p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <span className="inline-flex items-center gap-1.5 rounded border border-gtt/30 bg-gtt-tint px-2 py-0.5 font-mono text-micro font-bold uppercase tracking-[0.06em] text-gtt-on-tint focus-within:ring-2 focus-within:ring-accent/45">
@@ -196,7 +245,9 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
               />
             </span>
             <h2 className="app-text-heading mt-1.5">{meta.title}</h2>
-            <p className="app-text-muted mt-1 text-hint">{meta.blurb}</p>
+            {/* Two lines reserved whether the blurb fills them or not, so the status row
+                starts at the same Y as the writer cards. */}
+            <p className="app-text-muted mt-1 line-clamp-2 min-h-[2lh] text-hint">{meta.blurb}</p>
           </div>
           <button
             type="button"
@@ -209,29 +260,24 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
         </div>
 
         <div className="mt-4 flex flex-col gap-1.5">
-          <div className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className={`size-[7px] rounded-full ${
-                mode === "live" ? "bg-up" : mode === "paper" ? "bg-amber-accent" : "bg-faint"
-              }`}
-            />
-            <span
-              className={`text-xl font-bold tracking-tight ${
-                mode === "live" ? "text-up" : mode === "paper" ? "text-amber-accent" : "text-faint"
-              }`}
-            >
-              {mode === "off" ? "Idle" : "Armed"}
-            </span>
-            {/* Unmissable, and deliberately so: a paper bot is otherwise indistinguishable
-                from a live one at a glance, which is the whole risk of having both. */}
-            {mode === "paper" && (
-              <span className="rounded border border-amber-accent/40 bg-amber-tint px-1.5 py-0.5 font-mono text-micro font-bold uppercase tracking-[0.06em] text-amber-accent">
-                Paper
-              </span>
-            )}
-          </div>
-          <p className="font-mono text-hint text-muted">{windowSummary(bot)}</p>
+          <BotStatusRow
+            tone={
+              closingOut
+                ? "guarded"
+                : mode === "live"
+                  ? "live"
+                  : mode === "paper"
+                    ? "guarded"
+                    : "idle"
+            }
+            label={closingOut ? "Closing" : mode === "off" ? "Idle" : "Armed"}
+            badge={closingOut ? "Live position" : mode === "paper" ? "Paper" : undefined}
+          />
+          <p className="font-mono text-hint text-muted">
+            {closingOut
+              ? "Switched off with a real position still open. Opening nothing new; managing this one to its exit."
+              : windowSummary(bot)}
+          </p>
           {feed && (
             /* Why nothing is happening, where the user is already looking. A scalper can
                sit at `not_warm` for a whole session and look perfectly healthy otherwise;
@@ -253,12 +299,15 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
         <ModePill
           mode={mode}
           disabled={readOnly || update.isPending}
-          onChange={(next) => void setMode(next)}
+          liveLocked={liveLocked}
+          liveLockedReason={eligibility?.blocked_reason ?? null}
+          onChange={setMode}
         />
         {/* Stacked in one grid cell with the inactive blurbs `invisible` rather than
             unmounted, so the block is always as tall as the longest one and the control
-            above it never shifts under the cursor mid-choice. Same reasoning as BotCard. */}
-        <div className="mt-1.5 grid">
+            above it never shifts under the cursor mid-choice. Same reasoning as BotCard.
+            `min-h-[3lh]` matches BotCard so the mode switch lands at the same Y there. */}
+        <div className="mt-1.5 grid min-h-[3lh]">
           {(["off", "paper", "live"] as const).map((value) => (
             <p
               key={value}
@@ -273,7 +322,12 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
         </div>
         {/* No "Start a run": a scalper's decision is a signal on a one-minute candle, so
             there is nothing a manual run could mean. The honest control is the mode switch
-            above, and the run log below is where its work shows up. */}
+            above, and the run log below is where its work shows up. The slot is still
+            reserved (same classes, `invisible`) so the mode switch sits at the same height
+            as it does on the writer cards, which do carry the button. */}
+        <div aria-hidden className="app-btn-outline invisible mt-2 w-full">
+          Start a run
+        </div>
 
         {error && <p className="mt-2 text-hint text-down">{error}</p>}
       </section>
@@ -283,6 +337,23 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
         open={settingsOpen}
         readOnly={readOnly}
         onClose={() => setSettingsOpen(false)}
+      />
+      <LiveConfirmDialog
+        open={confirmLiveOpen}
+        botTitle={meta.title}
+        evidence={eligibility}
+        dailyLossCapInr={
+          ((bot.config as { risk?: { cumulative_stop_inr?: number } }).risk
+            ?.cumulative_stop_inr) ?? 0
+        }
+        combinedDownsideInr={combinedDownside}
+        pending={update.isPending}
+        error={error}
+        onConfirm={() => void applyMode("live")}
+        onCancel={() => {
+          setConfirmLiveOpen(false);
+          setError(null);
+        }}
       />
     </>
   );

@@ -285,6 +285,56 @@ export function useTodaysCycles(botType: BotType, enabled = true) {
   });
 }
 
+export type PaperEvidenceDay = {
+  trading_day: string;
+  reason_code: string | null;
+  reason_text: string | null;
+  cycles: number;
+  closed_cycles: number;
+  wins: number;
+  losses: number;
+  net_pnl: number;
+  friction: number;
+};
+
+export type LiveEligibility = {
+  bot_type: BotType;
+  unlocked: boolean;
+  config_hash: string;
+  days: number;
+  cycles: number;
+  closed_cycles: number;
+  wins: number;
+  losses: number;
+  net_pnl: number;
+  friction: number;
+  sessions: PaperEvidenceDay[];
+  blocked_reason: string | null;
+};
+
+/** Whether this scalper may be armed Live, and the paper record behind that answer.
+ *
+ *  Read from the SAME `evidence.gather` the PATCH path enforces with, so the card can never
+ *  offer a control the server would then refuse. `unlocked` is only the gate's half of the
+ *  decision -- one completed paper trading day on the current settings; whether that day was
+ *  any good is the user's call, which is why every number travels with it for the
+ *  confirmation dialog to show.
+ *
+ *  Invalidated by `useUpdateBot`, because editing a P&L-bearing setting changes the config
+ *  fingerprint and therefore this answer.
+ */
+export function useLiveEligibility(botType: BotType, enabled = true) {
+  return useQuery({
+    queryKey: ["bots", "live-eligibility", botType],
+    enabled,
+    queryFn: ({ signal }) =>
+      apiClient.get<LiveEligibility>(
+        `/bots/live-eligibility?bot_type=${botType}`,
+        signal,
+      ),
+  });
+}
+
 /** The shared cost model. Deployment-wide, so it is not keyed by bot. */
 export function useTradingCharges() {
   return useQuery({
@@ -517,6 +567,9 @@ export function useUpdateBot() {
         config: vars.config,
       }),
     onSuccess: () => {
+      // `["bots"]` is a prefix, so this also refreshes live-eligibility -- which it must:
+      // any material config edit changes the fingerprint the paper evidence is counted
+      // against, and a stale "unlocked" would offer a Live switch the server now refuses.
       void qc.invalidateQueries({ queryKey: ["bots"] });
     },
   });

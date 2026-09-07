@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotRunSheet } from "@/components/bots/BotRunSheet";
+import { BotStatusRow } from "@/components/bots/BotStatusRow";
 import { ScalperCard } from "@/components/bots/ScalperCard";
 import { NumberInput } from "@/components/ui/NumberInput";
 import {
@@ -268,7 +269,12 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
 
   return (
     <>
-      <section className="app-card flex aspect-square flex-col p-4 max-sm:aspect-auto">
+      {/* `h-full` + the grid's default stretch, not `aspect-square`: the scalper cards
+          carry a row more of stats and can outgrow a square, and a per-card square left
+          each card its own height — so the bottom-pinned mode switch landed at a different
+          Y on each. Stretching every card in a row to the tallest one puts all four
+          switches on one line. `min-h` keeps the card shape when every card is short. */}
+      <section className="app-card flex h-full min-h-[21rem] flex-col p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             {/* One chip, not a chip plus a spinner: the number is editable inside the
@@ -286,7 +292,9 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
               />
             </span>
             <h2 className="app-text-heading mt-1.5">{meta.title}</h2>
-            <p className="app-text-muted mt-1 text-hint">{meta.blurb}</p>
+            {/* Height reserved for two lines whether the blurb fills them or not, so the
+                status row below starts at the same Y on every bot card. */}
+            <p className="app-text-muted mt-1 line-clamp-2 min-h-[2lh] text-hint">{meta.blurb}</p>
           </div>
           <button
             type="button"
@@ -302,32 +310,11 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
             card's slack collects in ONE place. Centring this block instead put a void
             above AND below it, which is what made the square read as empty. */}
         <div className="mt-4 flex flex-col gap-1.5">
-          {/* Three states, three colours. Semi-auto is deliberately NOT green: it is armed,
-              but nothing reaches the exchange without the user, and colouring it the same
-              as unattended trading would flatten the one distinction the card exists to
-              make. */}
-          <div className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className={`size-[7px] rounded-full ${
-                mode === "auto" ? "bg-up" : mode === "semi" ? "bg-amber-accent" : "bg-faint"
-              }`}
-            />
-            <span
-              className={`text-xl font-bold tracking-tight ${
-                mode === "auto"
-                  ? "text-up"
-                  : mode === "semi"
-                    ? "text-amber-accent"
-                    : "text-faint"
-              }`}
-            >
-              {mode === "manual" ? "Idle" : "Armed"}
-              {mode === "semi" && (
-                <span className="ms-1.5 text-sm font-semibold">· asks first</span>
-              )}
-            </span>
-          </div>
+          <BotStatusRow
+            tone={mode === "auto" ? "live" : mode === "semi" ? "guarded" : "idle"}
+            label={mode === "manual" ? "Idle" : "Armed"}
+            badge={mode === "semi" ? "Asks first" : undefined}
+          />
           <p className="font-mono text-hint text-muted">{nextAction(bot, mode)}</p>
           <dl className="mt-3 grid gap-1.5">
             {summaryRows(bot, lastRun).map(([label, value]) => (
@@ -356,8 +343,12 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
             the bottom, so a blurb that wrapped to one line in Manual and two in Auto moved
             the mode switch itself between clicks — the one control that must not shift
             under the cursor while you are choosing how much a bot may trade unattended.
-            A fixed min-height would hold only at the width it was measured at. */}
-        <div className="mt-1.5 grid">
+            A fixed min-height would hold only at the width it was measured at.
+
+            `min-h-[3lh]` reserves three text lines (the longest blurb any bot card shows,
+            width permitting) so the mode switch lands at the same Y on writers and
+            scalpers alike — `lh` scales with the line height, unlike a rem value. */}
+        <div className="mt-1.5 grid min-h-[3lh]">
           {(["manual", "semi", "auto"] as const).map((value) => (
             <p
               key={value}

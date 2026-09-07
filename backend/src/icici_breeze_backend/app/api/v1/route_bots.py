@@ -26,6 +26,7 @@ from icici_breeze_backend.app.db.bots_migrate import (
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
     BOT_TYPES,
+    SCALPER_BOT_TYPES,
 )
 from icici_breeze_backend.app.domain.bots import (
     ApprovalResult,
@@ -36,6 +37,8 @@ from icici_breeze_backend.app.domain.bots import (
     ExpiryIndexWriterConfig,
     HoldingRow,
     HoldingsWriterConfig,
+    LiveEligibility,
+    PaperEvidenceDay,
     ProposalLeg,
     RepriceRequest,
     ProposalRecord,
@@ -61,6 +64,53 @@ def _validate_bot_type(bot_type: str) -> str:
     if bot_type not in BOT_TYPES:
         raise HTTPException(status_code=404, detail=f"Unknown bot: {bot_type}")
     return bot_type
+
+
+def _guard_scalper_live_transition(
+    user_id: str, bot_type: str, current: dict, merged: dict
+) -> None:
+    """The two refusals that stand between a scalper and unattended real orders.
+
+    Enforced **here, on the server**, not only in the card: the same reasoning that put
+    `validate_session_windows` inside the pydantic model rather than in the drawer. A gate a
+    direct PATCH walks past is decoration.
+
+    1. **Arming `live` needs paper evidence on these exact settings.** One completed paper
+       trading day on the current material config (`scalping/evidence.py`). What that day
+       actually produced is handed back to the client so the confirmation dialog can show it;
+       the gate decides *whether* the user may choose, not whether they should.
+
+    2. **A live bot's material settings are frozen.** Editing the signal, the exits, the
+       sizing or the execution parameters of a bot that is trading real money would leave it
+       trading a configuration nothing has ever tested -- and would silently invalidate the
+       evidence that unlocked it. The user is told to step it back to Paper first, which
+       makes the demotion their deliberate act rather than a side effect of pressing Save.
+       Mirrors `guards.disarm_conflicting_rule`'s "stop the scalping bot first".
+    """
+    from icici_breeze_backend.app.services.bots.scalping import evidence as evidence_mod
+
+    was_live = str(current.get("mode") or "paper") == "live"
+    wants_live = str(merged.get("mode") or "paper") == "live"
+
+    if was_live:
+        before_hash = evidence_mod.material_config_hash(bot_type, current)
+        after_hash = evidence_mod.material_config_hash(bot_type, merged)
+        if before_hash != after_hash:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Set this bot to Paper before changing settings that affect its P&L. "
+                    "It is placing real orders on the settings it was armed with, and the "
+                    "new ones have no paper evidence behind them."
+                ),
+            )
+
+    if wants_live and not was_live:
+        found = evidence_mod.gather(user_id, bot_type, merged)
+        if not found.unlocked:
+            raise HTTPException(
+                status_code=409, detail=evidence_mod.refusal_text(bot_type)
+            )
 
 
 @router.get("/list", response_model=list[BotRecord])
@@ -176,6 +226,8 @@ async def update_bot(
             model(**merged)
         except Exception as e:  # noqa: BLE001 -- surfaced to the user as a 400
             raise HTTPException(status_code=400, detail=f"Invalid bot configuration: {e}") from e
+        if bot_type in SCALPER_BOT_TYPES:
+            _guard_scalper_live_transition(ctx.user_id, bot_type, current, merged)
 
     before = repo.get_or_create_bot(ctx.user_id, bot_type)
     updated = repo.update_bot(
@@ -197,6 +249,53 @@ async def update_bot(
             ctx.user_id, OperationType.BOT_CONFIG_UPDATED, "Bot", bot_type
         )
     return updated
+
+
+@router.get("/live-eligibility", response_model=LiveEligibility)
+async def live_eligibility(
+    bot_type: str = Query(...), ctx: RequestContext = Depends(get_request_context)
+):
+    """Whether this scalper may be armed `live`, and the paper record behind that answer.
+
+    Read by the card (to decide whether the Live segment is selectable, and to say why not)
+    and by the confirmation dialog (to show what the paper day actually did). The same
+    `evidence.gather` the PATCH path enforces with, so the UI cannot show an unlocked control
+    the server would then refuse.
+    """
+    _validate_bot_type(bot_type)
+    if bot_type not in SCALPER_BOT_TYPES:
+        raise HTTPException(status_code=404, detail="Only scalpers have a live mode.")
+    from icici_breeze_backend.app.services.bots.scalping import evidence as evidence_mod
+
+    record = repo.get_or_create_bot(ctx.user_id, bot_type)
+    found = evidence_mod.gather(ctx.user_id, bot_type, record.config)
+    return LiveEligibility(
+        bot_type=bot_type,
+        unlocked=found.unlocked,
+        config_hash=found.config_hash,
+        days=found.days,
+        cycles=found.cycles,
+        closed_cycles=found.closed_cycles,
+        wins=found.wins,
+        losses=found.losses,
+        net_pnl=found.net_pnl,
+        friction=found.friction,
+        sessions=[
+            PaperEvidenceDay(
+                trading_day=s.trading_day,
+                reason_code=s.reason_code,
+                reason_text=s.reason_text,
+                cycles=s.cycles,
+                closed_cycles=s.closed_cycles,
+                wins=s.wins,
+                losses=s.losses,
+                net_pnl=s.net_pnl,
+                friction=s.friction,
+            )
+            for s in found.sessions
+        ],
+        blocked_reason=None if found.unlocked else evidence_mod.refusal_text(bot_type),
+    )
 
 
 @router.get("/proposal", response_model=Optional[ProposalRecord])

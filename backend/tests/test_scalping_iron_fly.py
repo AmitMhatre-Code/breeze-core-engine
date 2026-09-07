@@ -450,7 +450,22 @@ def test_the_window_closing_flattens_the_fly(env, monkeypatch):
     assert closed.friction > 0
 
 
-def test_a_live_mode_fly_places_nothing(env, monkeypatch):
+def test_a_live_mode_fly_dispatches_real_orders_not_simulated_fills(env, monkeypatch):
+    """Bot 4's live path exists now, and paper must never stand in for it.
+
+    Supersedes the earlier `test_a_live_mode_fly_places_nothing`, which pinned the guard that
+    returned before placing anything. That guard was the honest state while the path was
+    unwritten; leaving it in place now would mean a bot set Live quietly simulating -- the
+    one behaviour the mode switch exists to make impossible. `test_scalping_iron_fly_live.py`
+    covers the sequencing and unwind paths in full.
+    """
     _drive(monkeypatch, env)
+    simulated: list = []
+    monkeypatch.setattr(fly, "simulate_entry", lambda *a, **k: simulated.append(1))
+    dispatched: list = []
+    monkeypatch.setattr(fly, "_open_live", lambda *a, **k: dispatched.append(1))
+
     runtime.tick_bot(USER, BOT_IRON_FLY_SCALPER, IronFlyScalperConfig(mode="live"))
-    assert repo.list_cycles(USER, bot_type=BOT_IRON_FLY_SCALPER) == []
+
+    assert dispatched == [1], "live mode must take the live path"
+    assert simulated == [], "live mode must never fall through to paper fills"

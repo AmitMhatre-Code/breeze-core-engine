@@ -89,6 +89,12 @@ class ReasonCode:
     TERMINATED_FOR_DAY = "terminated_for_day"
     OUTSIDE_SESSION_WINDOW = "outside_session_window"
     REENTRY_GATE_CLOSED = "reentry_gate_closed"
+    # The user set the bot Off (or back to Paper) while a real position was still open. The
+    # loop keeps ticking it so the exit path runs -- section 5.5's "a gate that blocks
+    # entering never blocks leaving", extended past the arming switch itself -- but nothing
+    # new may be opened. Distinct from BOT_DISABLED, which means the bot is doing nothing
+    # at all; this one is a bot that is still working, on its way out.
+    ENTRIES_SUSPENDED = "entries_suspended"
     # The tick feed went quiet while a position was open. Entries freeze the moment the
     # stream is stale; an exit only fires once it has stayed stale, so a WS blip cannot
     # flatten a good position at the cost of a round trip of friction.
@@ -793,6 +799,44 @@ class ScalperDayTotals(BaseModel):
     friction: float = 0.0
     consecutive_losses: int = 0
     last_closed_at: Optional[str] = None
+
+
+class PaperEvidenceDay(BaseModel):
+    """One completed paper trading day, as the confirmation dialog shows it."""
+
+    trading_day: str
+    reason_code: Optional[str] = None
+    reason_text: Optional[str] = None
+    cycles: int = 0
+    closed_cycles: int = 0
+    wins: int = 0
+    losses: int = 0
+    net_pnl: float = 0.0
+    friction: float = 0.0
+
+
+class LiveEligibility(BaseModel):
+    """Whether a scalper may be set `live`, and the evidence the user judges it on.
+
+    `unlocked` is the gate's answer and nothing more: one completed paper trading day on the
+    current settings. Whether that day was GOOD is the user's call, which is why every number
+    behind it travels with the verdict rather than being reduced to a boolean here.
+    """
+
+    bot_type: BotType
+    unlocked: bool = False
+    config_hash: str = ""
+    days: int = 0
+    cycles: int = 0
+    closed_cycles: int = 0
+    wins: int = 0
+    losses: int = 0
+    net_pnl: float = 0.0
+    friction: float = 0.0
+    sessions: List[PaperEvidenceDay] = Field(default_factory=list)
+    # Present only when locked, so the card can say what is missing rather than just
+    # disabling a segment with no explanation.
+    blocked_reason: Optional[str] = None
 
 
 class ProposalLeg(BaseModel):

@@ -153,6 +153,7 @@ def build_snapshot(
     proc: Any = None,
     *,
     unrealized: float = 0.0,
+    entries_suspended: bool = False,
 ) -> Snapshot:
     """Gather the world for one bot. No judgement here -- see the module docstring."""
     from icici_breeze_backend.app.services.market_calendar import is_trading_day
@@ -186,6 +187,7 @@ def build_snapshot(
         position_exit=None,
         exit_at_window_end=_EXIT_AT_WINDOW_END.get(bot_type, False),
         unrealized_pnl=float(unrealized),
+        entries_suspended=bool(entries_suspended),
     )
 
 
@@ -289,12 +291,18 @@ def _publish_verdict(
         _logger.exception("scalping[%s]: could not record the run reason", bot_type)
 
 
-def tick_bot(user_id: str, bot_type: str, config: Any) -> Decision:
+def tick_bot(
+    user_id: str, bot_type: str, config: Any, *, entries_suspended: bool = False
+) -> Decision:
     """One pass for one bot. Returns the decision so tests can assert on it directly.
 
     The order matters: the position is inspected *before* the gate stack runs, so the
     ladder's verdict is one input the stack weighs rather than something that bypasses it.
     An obligation -- square-off, the daily stop, a dark feed -- still outranks it.
+
+    `entries_suspended` is the exit-only pass: the bot has been switched off while holding a
+    real position, so it is still ticked -- the stop has to keep being evaluated against
+    something -- but nothing new may be opened.
     """
     from icici_breeze_backend.app.services.processor import processor
 
@@ -307,7 +315,10 @@ def tick_bot(user_id: str, bot_type: str, config: Any) -> Decision:
         _logger.exception("scalping[%s]: position inspection failed", bot_type)
 
     unrealized = _unrealized_from(context)
-    snapshot = build_snapshot(user_id, bot_type, config, proc, unrealized=unrealized)
+    snapshot = build_snapshot(
+        user_id, bot_type, config, proc,
+        unrealized=unrealized, entries_suspended=entries_suspended,
+    )
     if context is not None and context.verdict is not None:
         snapshot = replace(snapshot, position_exit=context.verdict)
 
@@ -325,6 +336,7 @@ def tick_bot(user_id: str, bot_type: str, config: Any) -> Decision:
     # Opened before the verdict is published, because the verdict is written onto this row.
     run_id = repo.open_session_run(user_id, bot_type)
     repo.touch_run_heartbeat(run_id)
+    _stamp_session(run_id, bot_type, config)
     _publish_verdict(user_id, bot_type, run_id, snapshot, decision)
 
     feed = futures_feed.get_feed()
@@ -460,9 +472,108 @@ def _ensure_feed(user_id: str) -> None:
         _logger.debug("scalping: candle flush failed", exc_info=True)
 
 
+_stamped: dict[str, tuple[str, str]] = {}
+
+
+def _stamp_session(run_id: str, bot_type: str, config: Any) -> None:
+    """Record which settings today's session is running on, for the paper-evidence gate.
+
+    Cached in-process because the loop calls this every two seconds and the answer changes at
+    most a handful of times a day; without the cache this is a read-and-write per bot per
+    pass for a value that is almost always identical.
+
+    The cache is keyed on the run, so a restart simply re-reads once and agrees with itself.
+    """
+    from icici_breeze_backend.app.services.bots.scalping import evidence as evidence_mod
+
+    try:
+        stamp = (
+            evidence_mod.material_config_hash(bot_type, config),
+            str(getattr(config, "mode", "paper") or "paper"),
+        )
+        if _stamped.get(run_id) == stamp:
+            return
+        repo.stamp_session_config(run_id, stamp[0], stamp[1])
+        _stamped[run_id] = stamp
+    except Exception:  # noqa: BLE001 -- an evidence write must never stop the bot trading
+        _logger.exception("scalping[%s]: could not stamp the session config", bot_type)
+
+
+def _feed_owner() -> Optional[str]:
+    """Whose broker session the always-on candle feed subscribes with.
+
+    Resolved from the persisted broker session rather than from the enabled-bot list, which
+    is the whole point of plan section 5.6: the feed has to be running from 09:15 *before*
+    anyone arms a bot, so that a bot armed at 11:00 reads warm indicators instead of standing
+    down on `not_warm` through the move that prompted it.
+
+    One trader per deployment (docs/bots-mvp-plan.md section 5), so "the" session is
+    unambiguous; if a deployment ever held more, the first is as good as any -- the feed is
+    one process-wide subscription to one contract, not per-user state.
+    """
+    try:
+        from icici_breeze_backend.app.repositories.broker_session import (
+            list_users_with_session,
+        )
+
+        users = list_users_with_session()
+        return users[0] if users else None
+    except Exception:  # noqa: BLE001 -- no session simply means nothing to subscribe with
+        _logger.debug("scalping: could not resolve a feed owner", exc_info=True)
+        return None
+
+
+def _service_feed_for_the_session() -> None:
+    """Keep candles building for the whole trading day, armed bots or not (section 5.6).
+
+    Deliberately outside the enabled-bot loop. As first built this ran only as a side effect
+    of iterating armed bots, so the feed subscribed when a bot was armed -- and a user who
+    armed one at 11:00 got a bot that could not act until ~11:20, because the EMA and volume
+    MA build from live ticks with no historical backfill.
+
+    Read-only licence mode does NOT stop this: building candles is reading data, not trading.
+    The entry gates still refuse every trade (section 5.5); what they no longer also do is
+    throw away the warm-up, so a licence restored at 13:00 leaves the bot able to trade its
+    afternoon window immediately.
+    """
+    from icici_breeze_backend.app.services.market_calendar import is_market_open, is_trading_day
+
+    now = now_ist()
+    if not is_trading_day(now) or not is_market_open(now):
+        return
+    user_id = _feed_owner()
+    if not user_id:
+        return
+    _ensure_feed(user_id)
+
+
+def _exit_only_bots(armed: set[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Bots holding a real position that the user has since switched off.
+
+    Without this the position is stranded: `tick()` walks enabled bots, so setting a bot to
+    Off with a live position open would stop the only thing evaluating its stop. Section 5.5
+    says a gate that blocks entering never blocks leaving; this extends that past the arming
+    switch itself, which is the one "gate" that used to escape it.
+    """
+    try:
+        holding = repo.bots_with_open_live_cycles()
+    except Exception:  # noqa: BLE001
+        _logger.exception("scalping: could not list bots holding live positions")
+        return []
+    return [pair for pair in holding if pair not in armed and pair[1] in SCALPER_BOT_TYPES]
+
+
 def tick() -> None:
-    """One pass over every enabled scalper. Never raises -- the loop must survive a bad bot."""
-    feed_serviced = False
+    """One pass over every scalper that needs one. Never raises -- the loop must survive a
+    bad bot.
+
+    Three groups, in order: the feed (always, so nothing reads a builder this pass was about
+    to fill), the armed bots, and then any bot still holding a real position after being
+    switched off, which is ticked for its exits alone.
+    """
+    _service_feed_for_the_session()
+
+    armed: set[tuple[str, str]] = set()
     for bot_type in SCALPER_BOT_TYPES:
         try:
             bots = repo.list_enabled_bots(bot_type)
@@ -473,16 +584,22 @@ def tick() -> None:
             user_id = repo.bot_owner(record.id)
             if not user_id:
                 continue
-            if not feed_serviced:
-                # Before the first decision of the pass, so a bot never reads a builder that
-                # this pass was about to feed.
-                feed_serviced = True
-                _ensure_feed(user_id)
+            armed.add((user_id, bot_type))
             try:
                 config = _config_model(bot_type, record.config)
                 tick_bot(user_id, bot_type, config)
             except Exception:  # noqa: BLE001
                 _logger.exception("scalping: %s tick failed for %s", bot_type, user_id)
+
+    for user_id, bot_type in _exit_only_bots(armed):
+        try:
+            record = repo.get_or_create_bot(user_id, bot_type)
+            config = _config_model(bot_type, record.config)
+            tick_bot(user_id, bot_type, config, entries_suspended=True)
+        except Exception:  # noqa: BLE001
+            _logger.exception(
+                "scalping: exit-only %s tick failed for %s", bot_type, user_id
+            )
 
 
 def _config_model(bot_type: str, raw: dict[str, Any]) -> Any:
