@@ -21,7 +21,8 @@ export default function BotsPage() {
           <h1 className="app-text-heading text-lg">Bots</h1>
           <p className="app-text-muted mt-1 max-w-prose text-sm">
             Automations that scan and trade on your behalf, within limits you set. Every bot
-            can be run by hand; switching one to autonomous lets it trade without you.
+            can be run by hand, ask you to approve each trade on Telegram, or place them on
+            its own — set on the card.
           </p>
         </header>
 

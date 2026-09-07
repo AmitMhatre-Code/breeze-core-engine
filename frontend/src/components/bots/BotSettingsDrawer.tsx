@@ -1,15 +1,10 @@
 "use client";
 
 import { useCallback, useId, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Modal } from "@/components/ui/Modal";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { NumberInput, FieldValidityContext } from "@/components/ui/NumberInput";
 import { Select, type SelectOption } from "@/components/ui/Select";
-import {
-  fetchTelegramStatus,
-  TELEGRAM_STATUS_QUERY_KEY,
-} from "@/lib/telegram/telegram-alerts";
 import {
   BOT_HOLDINGS_WRITER,
   BOT_META,
@@ -22,14 +17,22 @@ import {
   type Bot,
   type ExpiryIndexWriterConfig,
   type HoldingRow,
+  isScalper,
+  BOT_IRON_FLY_SCALPER,
   type HoldingsWriterConfig,
+  type MomentumLongScalperConfig,
   type IndexStrategy,
   type IndexWriterLeg,
-  type ApprovalMode,
   type ScripPref,
 } from "@/lib/use-bots";
 
-type Tab = { id: string; label: string };
+import {
+  IRON_FLY_TABS,
+  MOMENTUM_TABS,
+  ScalperSettings,
+  type Tab,
+} from "@/components/bots/ScalperSettings";
+
 
 const HOLDINGS_TABS: Tab[] = [
   { id: "scrips", label: "Scrips" },
@@ -104,51 +107,6 @@ function SelectField<T extends string>({
         />
       </div>
       {hint && <span className="mt-1 block text-hint text-faint">{hint}</span>}
-    </div>
-  );
-}
-
-const APPROVAL_OPTIONS = [
-  { value: "auto", label: "Trade on its own" },
-  { value: "telegram", label: "Ask me on Telegram" },
-] as const;
-
-/** The mode selector, plus the one warning that matters.
- *
- *  A bot set to ask on Telegram with no chat linked cannot ask, so it cannot trade — and
- *  it fails as a quiet no-trade day rather than an error. That is the state worth shouting
- *  about here, because by the time it shows up in the run log the expiry has passed. */
-function ApprovalModeField({
-  value,
-  connected,
-  disabled,
-  onChange,
-}: {
-  value: ApprovalMode;
-  connected: boolean;
-  disabled: boolean;
-  onChange: (mode: ApprovalMode) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      <SelectField
-        label="When it fires"
-        hint={
-          value === "telegram"
-            ? "It sizes the trade, sends it to Telegram, and places nothing until you tap Approve."
-            : "It sizes the trade and places it unattended."
-        }
-        value={value}
-        options={APPROVAL_OPTIONS}
-        disabled={disabled}
-        onChange={onChange}
-      />
-      {value === "telegram" && !connected && (
-        <p className="text-hint text-rose-600 dark:text-rose-400">
-          No Telegram chat is linked, so this bot cannot ask — and will not trade. Connect
-          one in Settings › Telegram Alerts.
-        </p>
-      )}
     </div>
   );
 }
@@ -456,7 +414,6 @@ function ScripTable({
 }
 
 function HoldingsSettings({
-  telegramConnected,
   tab,
   config,
   onConfig,
@@ -470,7 +427,6 @@ function HoldingsSettings({
   prefs: ScripPref[];
   onPref: (code: string, patch: Partial<ScripPref>) => void;
   disabled: boolean;
-  telegramConnected: boolean;
 }) {
   const holdings = useBotHoldings(tab === "scrips");
 
@@ -502,12 +458,6 @@ function HoldingsSettings({
   if (tab === "schedule") {
     return (
       <div className="space-y-4">
-        <ApprovalModeField
-          value={config.approval_mode}
-          connected={telegramConnected}
-          disabled={disabled}
-          onChange={(approval_mode) => onConfig({ approval_mode })}
-        />
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="Days before expiry"
@@ -766,7 +716,6 @@ function IndexPanel({
 }
 
 function IndexSettings({
-  telegramConnected,
   tab,
   config,
   onConfig,
@@ -776,7 +725,6 @@ function IndexSettings({
   config: ExpiryIndexWriterConfig;
   onConfig: (patch: Partial<ExpiryIndexWriterConfig>) => void;
   disabled: boolean;
-  telegramConnected: boolean;
 }) {
   if (tab === "indices") {
     return (
@@ -804,12 +752,6 @@ function IndexSettings({
   if (tab === "schedule") {
     return (
       <div className="space-y-4">
-        <ApprovalModeField
-          value={config.approval_mode}
-          connected={telegramConnected}
-          disabled={disabled}
-          onChange={(approval_mode) => onConfig({ approval_mode })}
-        />
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Entry (IST)" hint="Fires here if a broker session exists.">
             <input
@@ -923,21 +865,19 @@ export function BotSettingsDrawer({
 }) {
   const meta = BOT_META[bot.bot_type];
   const isHoldings = bot.bot_type === BOT_HOLDINGS_WRITER;
-  const tabs = isHoldings ? HOLDINGS_TABS : INDEX_TABS;
+  const scalper = isScalper(bot.bot_type);
+  const tabs = scalper
+    ? bot.bot_type === BOT_IRON_FLY_SCALPER
+      ? IRON_FLY_TABS
+      : MOMENTUM_TABS
+    : isHoldings
+      ? HOLDINGS_TABS
+      : INDEX_TABS;
   const titleId = useId();
 
   const update = useUpdateBot();
   const savePrefs = useSaveScripPrefs();
   const storedPrefs = useScripPrefs(open && isHoldings);
-
-  // Only while the drawer is open: nothing outside it depends on the link status, and the
-  // approval-mode warning is the only thing that reads it.
-  const telegram = useQuery({
-    queryKey: TELEGRAM_STATUS_QUERY_KEY,
-    queryFn: fetchTelegramStatus,
-    enabled: open,
-  });
-  const telegramConnected = Boolean(telegram.data?.connected && telegram.data?.alerts_enabled);
 
   const [tab, setTab] = useState(tabs[0].id);
   const [error, setError] = useState<string | null>(null);
@@ -1074,7 +1014,15 @@ export function BotSettingsDrawer({
 
       <FieldValidityContext.Provider value={reportValidity}>
         <div className="flex-1 overflow-auto p-4">
-          {isHoldings ? (
+          {scalper ? (
+            <ScalperSettings
+              bot={bot}
+              tab={tab}
+              config={draft as unknown as MomentumLongScalperConfig}
+              onConfig={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+              disabled={readOnly || pending}
+            />
+          ) : isHoldings ? (
             <HoldingsSettings
               tab={tab}
               config={draft as unknown as HoldingsWriterConfig}
@@ -1082,7 +1030,6 @@ export function BotSettingsDrawer({
               prefs={prefs}
               onPref={patchPref}
               disabled={readOnly || pending}
-              telegramConnected={telegramConnected}
             />
           ) : (
             <IndexSettings
@@ -1090,7 +1037,6 @@ export function BotSettingsDrawer({
               config={draft as unknown as ExpiryIndexWriterConfig}
               onConfig={(patch) => setDraft((d) => ({ ...d, ...patch }))}
               disabled={readOnly || pending}
-              telegramConnected={telegramConnected}
             />
           )}
           {error && <p className="mt-4 text-body text-down">{error}</p>}

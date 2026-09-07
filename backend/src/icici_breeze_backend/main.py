@@ -456,6 +456,15 @@ def start_application():
 
         start_bot_scheduler()
 
+        # Drives the intraday scalpers (docs/bots-scalping-plan.md). Separate from the
+        # scheduler above because the cadence is different in kind: that one ticks every 30s
+        # to make one decision a day, this one runs at the user's PB/SL recompute interval
+        # because it is watching an open position. Inert unless a scalper is enabled, and it
+        # places no orders at all until step 4 of the build order.
+        from icici_breeze_backend.app.services.bots.scalping.runtime import start_scalper_loop
+
+        start_scalper_loop()
+
         from icici_breeze_backend.app.services.ws_quote_snapshot import (
             load_snapshot_from_sqlite,
             run_snapshot_flush_loop,
@@ -532,8 +541,10 @@ def start_application():
 
         yield
         from icici_breeze_backend.app.services.bots.scheduler import stop_bot_scheduler
+        from icici_breeze_backend.app.services.bots.scalping.runtime import stop_scalper_loop
 
         stop_bot_scheduler()
+        stop_scalper_loop()
         for watchdog_task in (
             order_feed_watchdog_task,
             price_feed_watchdog_task,

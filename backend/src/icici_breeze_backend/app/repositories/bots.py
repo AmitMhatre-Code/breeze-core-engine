@@ -19,20 +19,39 @@ from icici_breeze_backend.app.core.timezone import ist_timestamp, now_ist
 from icici_breeze_backend.app.db.bots_migrate import (
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
+    BOT_IRON_FLY_SCALPER,
+    BOT_MOMENTUM_LONG_SCALPER,
 )
 from icici_breeze_backend.app.domain.bots import (
+    BotCycleRecord,
     BotRecord,
     BotRunRecord,
     ExpiryIndexWriterConfig,
     HoldingsWriterConfig,
+    IronFlyScalperConfig,
+    MomentumLongScalperConfig,
     ProposalLeg,
     ProposalRecord,
+    ScalperDayTotals,
     ScripPref,
 )
 
 _CONFIG_MODEL = {
     BOT_HOLDINGS_WRITER: HoldingsWriterConfig,
     BOT_EXPIRY_INDEX_WRITER: ExpiryIndexWriterConfig,
+    BOT_MOMENTUM_LONG_SCALPER: MomentumLongScalperConfig,
+    BOT_IRON_FLY_SCALPER: IronFlyScalperConfig,
+}
+
+# Cross-bot ordering seeded so no two bots are ever tied on creation. Bot 1 leads because it
+# is the one with a hard external constraint -- its calls are capped by stock actually held,
+# so margin it does not take is margin nothing else can use. The scalpers come last: they
+# size off what is left, and both are capped by their own rupee budgets anyway.
+_DEFAULT_PRIORITY = {
+    BOT_HOLDINGS_WRITER: 1,
+    BOT_EXPIRY_INDEX_WRITER: 2,
+    BOT_MOMENTUM_LONG_SCALPER: 3,
+    BOT_IRON_FLY_SCALPER: 4,
 }
 
 
@@ -104,10 +123,7 @@ def get_or_create_bot(user_id: str, bot_type: str) -> BotRecord:
         if row is not None:
             return _row_to_bot(row)
         bot_id = str(uuid.uuid4())
-        # Seed distinct priorities so two freshly-created bots are never tied. Bot 1 leads
-        # because it is the one with a hard external constraint -- its calls are capped by
-        # stock actually held, so margin it does not take is margin nothing else can use.
-        default_priority = 1 if bot_type == BOT_HOLDINGS_WRITER else 2
+        default_priority = _DEFAULT_PRIORITY.get(bot_type, 9)
         conn.execute(
             "INSERT INTO bots (id, user_id, bot_type, enabled, priority, config) "
             "VALUES (?, ?, ?, 0, ?, ?)",
@@ -124,8 +140,19 @@ def get_or_create_bot(user_id: str, bot_type: str) -> BotRecord:
         return _row_to_bot(row)
 
 
+# All four bots are listed as of step 8. `get_or_create_bot` makes each lazily on first
+# sight, disabled and in paper mode, so a deployment upgrading into this needs no backfill --
+# the scalpers simply appear, switched off.
+_LISTED_BOT_TYPES = (
+    BOT_HOLDINGS_WRITER,
+    BOT_EXPIRY_INDEX_WRITER,
+    BOT_MOMENTUM_LONG_SCALPER,
+    BOT_IRON_FLY_SCALPER,
+)
+
+
 def list_bots(user_id: str) -> list[BotRecord]:
-    return [get_or_create_bot(user_id, t) for t in (BOT_HOLDINGS_WRITER, BOT_EXPIRY_INDEX_WRITER)]
+    return [get_or_create_bot(user_id, t) for t in _LISTED_BOT_TYPES]
 
 
 def list_enabled_bots(bot_type: str) -> list[BotRecord]:
@@ -359,6 +386,10 @@ def reap_stale_runs(*, older_than_minutes: int | None = None) -> int:
     already have placed orders before it died, so it points at the order book instead of
     implying the day was a no-op.
     """
+    # COALESCE(heartbeat_at, started_at): Bots 1 and 2 never beat, so for them this is
+    # `started_at` and the semantics are exactly what they were. A scalper session is
+    # legitimately `running` for hours, so ageing it from `started_at` would reap a healthy
+    # bot mid-trade; ageing it from its heartbeat still catches one that has hung.
     sql = "UPDATE bot_runs SET status = 'failed', reason_code = ?, reason_text = ?, finished_at = ? WHERE status = 'running'"
     args: list[Any] = [
         "interrupted",
@@ -370,7 +401,7 @@ def reap_stale_runs(*, older_than_minutes: int | None = None) -> int:
         cutoff = (now_ist() - datetime.timedelta(minutes=int(older_than_minutes))).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
-        sql += " AND started_at < ?"
+        sql += " AND COALESCE(heartbeat_at, started_at) < ?"
         args.append(cutoff)
     with _connect() as conn:
         cur = conn.execute(sql, args)
@@ -404,6 +435,321 @@ def list_runs(
         )
         for r in rows
     ]
+
+
+# --------------------------------------------------------------------------------------
+# Scalper sessions and cycles (docs/bots-scalping-plan.md sections 6 and 9)
+# --------------------------------------------------------------------------------------
+
+
+def touch_run_heartbeat(run_id: str) -> None:
+    """Mark a long-lived run as still alive.
+
+    Only the scalpers call this. A row that has never been beaten keeps `heartbeat_at` NULL,
+    and `reap_stale_runs` coalesces to `started_at`, so nothing changes for the bots that
+    finish in one pass.
+    """
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE bot_runs SET heartbeat_at = ? WHERE id = ? AND status = 'running'",
+            (ist_timestamp(), run_id),
+        )
+        conn.commit()
+
+
+def open_session_run(user_id: str, bot_type: str) -> str:
+    """The session run for today, reusing one that is already open.
+
+    Idempotent because the caller is a loop, not a scheduler tick: it asks for its session on
+    every wake, and a second row would split one day's cycles across two runs and quietly
+    reset the consecutive-loss counter that reads them.
+    """
+    today = now_ist().strftime("%Y-%m-%d")
+    with _connect() as conn:
+        # `completed` counts as well as `running`: once the day has been finalised the loop
+        # keeps ticking, and matching only `running` would mint a fresh session row on every
+        # pass -- each of which then never gets finalised and is reaped as "interrupted".
+        # One session row per bot per day is the whole point.
+        #
+        # `failed` deliberately does NOT count. That is a run the reaper closed because the
+        # process died mid-session; the interruption is a real record worth keeping, and what
+        # follows it is genuinely a new session rather than a continuation.
+        row = conn.execute(
+            "SELECT id FROM bot_runs WHERE user_id = ? AND bot_type = ? "
+            "AND status IN ('running', 'completed') AND trigger = 'session' "
+            "AND DATE(started_at) = ? ORDER BY started_at DESC LIMIT 1",
+            (user_id, bot_type, today),
+        ).fetchone()
+        if row is not None:
+            return str(row["id"])
+        run_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO bot_runs (id, user_id, bot_type, trigger, status, heartbeat_at) "
+            "VALUES (?, ?, ?, 'session', 'running', ?)",
+            (run_id, user_id, bot_type, ist_timestamp()),
+        )
+        conn.commit()
+    return run_id
+
+
+def _row_to_cycle(row: sqlite3.Row) -> BotCycleRecord:
+    d = dict(row)
+    return BotCycleRecord(
+        id=str(d["id"]),
+        run_id=str(d["run_id"]),
+        bot_type=d["bot_type"],
+        cycle_no=int(d["cycle_no"]),
+        structure=d["structure"],
+        legs=_json_or([], d.get("legs")),
+        lots=d.get("lots"),
+        opened_at=str(d["opened_at"]) if d.get("opened_at") else None,
+        closed_at=str(d["closed_at"]) if d.get("closed_at") else None,
+        entry_value=d.get("entry_value"),
+        exit_value=d.get("exit_value"),
+        gross_pnl=d.get("gross_pnl"),
+        friction=d.get("friction"),
+        net_pnl=d.get("net_pnl"),
+        exit_reason_code=d.get("exit_reason_code"),
+        exit_reason_text=d.get("exit_reason_text"),
+        detail=_json_or(None, d.get("detail")),
+        paper=bool(d.get("paper", 1)),
+    )
+
+
+def open_cycle(
+    user_id: str,
+    bot_type: str,
+    run_id: str,
+    *,
+    structure: str,
+    legs: list[dict[str, Any]],
+    lots: Optional[int] = None,
+    entry_value: Optional[float] = None,
+    paper: bool = True,
+    detail: Optional[dict[str, Any]] = None,
+) -> BotCycleRecord:
+    """Record a cycle at the moment a position exists.
+
+    `cycle_no` is per session and allocated inside the write, so the run log reads in the
+    order things happened even if a caller ever opens cycles off more than one thread.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(cycle_no), 0) AS n FROM bot_cycles WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        cycle_no = int(row["n"]) + 1
+        cycle_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO bot_cycles (id, run_id, user_id, bot_type, cycle_no, structure, "
+            "legs, lots, entry_value, detail, paper) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                cycle_id,
+                run_id,
+                user_id,
+                bot_type,
+                cycle_no,
+                structure,
+                json.dumps(legs or []),
+                lots,
+                entry_value,
+                json.dumps(detail) if detail else None,
+                1 if paper else 0,
+            ),
+        )
+        conn.commit()
+        return _row_to_cycle(
+            conn.execute("SELECT * FROM bot_cycles WHERE id = ?", (cycle_id,)).fetchone()
+        )
+
+
+def pending_cycles(user_id: str, bot_type: str) -> list[BotCycleRecord]:
+    """Cycles written before an order went out that never recorded a fill.
+
+    These exist because a live entry writes its row BEFORE calling the broker: a crash
+    between `place_order` returning and the row being updated would otherwise leave a real
+    position that nothing knows about. A pending row is the marker that says "an order may
+    exist for this" -- it is a question for startup to resolve, not a position to assume.
+    """
+    return [
+        c
+        for c in open_cycles(user_id, bot_type)
+        if bool((c.detail or {}).get("pending"))
+    ]
+
+
+def replace_cycle_legs(cycle_id: str, legs: list[dict[str, Any]]) -> None:
+    """Rewrite an open cycle's legs to what actually filled.
+
+    A partial fill means the position is smaller than the one that was planned. The exit has
+    to sell what is held, not what was asked for, so the leg is corrected at the moment the
+    broker's answer is known rather than reconciled later.
+    """
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE bot_cycles SET legs = ? WHERE id = ? AND closed_at IS NULL",
+            (json.dumps(legs), cycle_id),
+        )
+        conn.commit()
+
+
+def mark_cycle_placed(
+    cycle_id: str, *, order_ids: list[str], detail: dict[str, Any]
+) -> None:
+    """Resolve an intent row once the broker has answered.
+
+    Clears `pending`, so the row stops being a reconciliation question and becomes an
+    ordinary open cycle the exit loop will manage.
+    """
+    merged = dict(detail or {})
+    merged.pop("pending", None)
+    merged["order_ids"] = list(order_ids)
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE bot_cycles SET detail = ?, paper = 0 WHERE id = ?",
+            (json.dumps(merged), cycle_id),
+        )
+        conn.commit()
+
+
+def abandon_cycle(cycle_id: str, *, reason_code: str, reason_text: str) -> None:
+    """Close an intent row that never became a position.
+
+    Zeroed rather than left open: nothing was traded, so it must not read as a loss, count
+    towards the consecutive-loss cooldown, or leave the bot believing it holds something.
+    """
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE bot_cycles SET closed_at = ?, gross_pnl = 0, friction = 0, net_pnl = 0, "
+            "exit_reason_code = ?, exit_reason_text = ? WHERE id = ?",
+            (ist_timestamp(), reason_code, reason_text, cycle_id),
+        )
+        conn.commit()
+
+
+def close_cycle(
+    cycle_id: str,
+    *,
+    exit_reason_code: str,
+    exit_reason_text: str,
+    exit_value: Optional[float] = None,
+    gross_pnl: Optional[float] = None,
+    friction: Optional[float] = None,
+    detail: Optional[dict[str, Any]] = None,
+) -> None:
+    """Close a cycle. `net_pnl` is derived here, never passed in.
+
+    Deriving it is the point: net is what the cumulative stop and the consecutive-loss
+    counter both read, and letting callers supply it separately from its own components is
+    how the two drift apart. Friction is subtracted whether or not the caller tracked it,
+    which is what keeps `docs/bots-scalping-plan.md` section 6.4 honest -- friction is the
+    binding constraint, so a cycle that omitted it must not read as break-even.
+    """
+    net = None
+    if gross_pnl is not None:
+        net = float(gross_pnl) - float(friction or 0.0)
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE bot_cycles SET closed_at = ?, exit_value = ?, gross_pnl = ?, "
+            "friction = ?, net_pnl = ?, exit_reason_code = ?, exit_reason_text = ?, "
+            "detail = COALESCE(?, detail) WHERE id = ?",
+            (
+                ist_timestamp(),
+                exit_value,
+                gross_pnl,
+                friction,
+                net,
+                exit_reason_code,
+                exit_reason_text,
+                json.dumps(detail) if detail else None,
+                cycle_id,
+            ),
+        )
+        conn.commit()
+
+
+def update_cycle_detail(cycle_id: str, detail: dict[str, Any]) -> None:
+    """Replace an open cycle's detail blob -- how the trailing ladder survives a restart.
+
+    Called only when the ladder's STOP moves, not on every new peak: the peak changes
+    constantly in a rising market and changes nothing about what the position will do, while
+    the stop is what a restart must not lose (docs/bots-scalping-plan.md section 5.5).
+    """
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE bot_cycles SET detail = ? WHERE id = ? AND closed_at IS NULL",
+            (json.dumps(detail), cycle_id),
+        )
+        conn.commit()
+
+
+def list_cycles(
+    user_id: str, *, run_id: Optional[str] = None, bot_type: Optional[str] = None, limit: int = 200
+) -> list[BotCycleRecord]:
+    sql = "SELECT * FROM bot_cycles WHERE user_id = ?"
+    args: list[Any] = [user_id]
+    if run_id:
+        sql += " AND run_id = ?"
+        args.append(run_id)
+    if bot_type:
+        sql += " AND bot_type = ?"
+        args.append(bot_type)
+    sql += " ORDER BY opened_at DESC, cycle_no DESC LIMIT ?"
+    args.append(max(1, min(1000, int(limit))))
+    with _connect() as conn:
+        return [_row_to_cycle(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def open_cycles(user_id: str, bot_type: str) -> list[BotCycleRecord]:
+    """Cycles with a live position. Bot 3 holds at most one; Bot 4 holds one fly.
+
+    Read on every decision, and on startup: a cycle still open after a restart is a position
+    the broker is holding that this process has forgotten about, which the runtime has to
+    reconcile rather than open a second one alongside.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM bot_cycles WHERE user_id = ? AND bot_type = ? AND closed_at IS NULL "
+            "ORDER BY opened_at ASC",
+            (user_id, bot_type),
+        ).fetchall()
+    return [_row_to_cycle(r) for r in rows]
+
+
+def scalper_day_totals(user_id: str, bot_type: str) -> ScalperDayTotals:
+    """Today's running totals, recomputed from the cycle rows rather than accumulated.
+
+    Recomputed on purpose: an in-memory counter and a restart are how a cumulative stop
+    silently resets mid-session and lets a bot that has already lost its limit carry on
+    trading. The rows are the truth, and they survive the process.
+
+    `consecutive_losses` counts backwards from the most recent CLOSED cycle and stops at the
+    first non-loss, so an aborted entry -- a cycle that never opened a position, and so was
+    never a loss -- neither counts toward the cooldown nor clears it.
+    """
+    today = now_ist().strftime("%Y-%m-%d")
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM bot_cycles WHERE user_id = ? AND bot_type = ? "
+            "AND DATE(opened_at) = ? ORDER BY cycle_no ASC",
+            (user_id, bot_type, today),
+        ).fetchall()
+    cycles = [_row_to_cycle(r) for r in rows]
+    closed = [c for c in cycles if c.closed_at is not None]
+    consecutive = 0
+    for cycle in reversed(closed):
+        if cycle.is_loss:
+            consecutive += 1
+        else:
+            break
+    return ScalperDayTotals(
+        cycles=len(cycles),
+        open_cycles=sum(1 for c in cycles if c.is_open),
+        realized_net_pnl=round(sum(c.net_pnl or 0.0 for c in closed), 2),
+        friction=round(sum(c.friction or 0.0 for c in cycles), 2),
+        consecutive_losses=consecutive,
+        last_closed_at=closed[-1].closed_at if closed else None,
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -448,6 +794,13 @@ def create_proposal(
     Supersede rather than reject-the-new: a fresh scan reflects fresher prices, and leaving
     the user to choose between two sets of stale numbers is worse than losing the old one.
     """
+    # Annotated here rather than at each call site: this is the one choke point every
+    # proposal passes through -- the app scan, the Telegram path and a reprice alike -- so a
+    # user can never be shown a gross premium on one surface and a net one on another.
+    from icici_breeze_backend.app.services.bots.net_premium import annotate_legs
+
+    annotate_legs(legs)
+
     expires = (now_ist() + datetime.timedelta(minutes=max(1, int(ttl_minutes)))).strftime(
         "%Y-%m-%d %H:%M:%S"
     )

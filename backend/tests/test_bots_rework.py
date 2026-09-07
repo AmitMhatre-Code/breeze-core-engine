@@ -196,7 +196,9 @@ def test_it_never_acts_twice_in_a_day():
 def test_bots_are_created_with_distinct_priorities(db_path):
     bots = repo.list_bots("u1")
     priorities = sorted(b.priority for b in bots)
-    assert priorities == [1, 2], "two freshly-created bots must never be tied"
+    # The invariant is that no two bots share a priority, not that there are exactly two:
+    # the scalpers joined the list at step 8 and seed 3 and 4.
+    assert priorities == sorted(set(priorities)), "freshly-created bots must never be tied"
 
 
 def test_priority_is_editable_and_orders_the_sweep(db_path):

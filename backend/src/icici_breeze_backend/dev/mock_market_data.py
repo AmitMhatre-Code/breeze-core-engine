@@ -88,6 +88,33 @@ def enrich_contract_fields(symbol: str) -> dict:
         return {}
 
 
+# Symbol -> contract identity for synthetic FUTURES tokens, which by construction are
+# absent from `ws_token_index` (it ingests `Series = "OPTION"` only). Populated by
+# `MockBreezeSdk.get_stock_token_value` at resolution time, i.e. always before the first
+# tick for that symbol.
+_MOCK_FUTURES_CONTRACTS: dict[str, dict] = {}
+
+
+def register_mock_futures_contract(symbol: str, stock_code: str, expiry_display: str) -> None:
+    _MOCK_FUTURES_CONTRACTS[str(symbol)] = {
+        "exchange": "NSE Futures & Options",
+        "stock_name": stock_code,
+        "product_type": "Futures",
+        "expiry_date": expiry_display,
+        "strike_price": "",
+        "right": "",
+    }
+
+
+def futures_identity(symbol: str) -> dict:
+    """Identity for a synthetic futures token, or {} if `symbol` is not one."""
+    return dict(_MOCK_FUTURES_CONTRACTS.get(str(symbol), {}))
+
+
+def is_mock_futures_symbol(symbol: str) -> bool:
+    return str(symbol) in _MOCK_FUTURES_CONTRACTS
+
+
 def seed_running_state(seed_key: str, *, base_price: float | None = None) -> dict:
     """Starting point for a token's random walk.
 
@@ -99,14 +126,33 @@ def seed_running_state(seed_key: str, *, base_price: float | None = None) -> dic
     """
     if base_price is None:
         base_price = round(20 + (abs(hash(seed_key)) % 28000) / 100, 2)
+    ttq = random.randint(500_000, 2_000_000)
     return {
         "last": base_price, "high": base_price, "low": base_price,
         "open": base_price, "prev_close": base_price,
-        "ttq": random.randint(500_000, 2_000_000),
+        "ttq": ttq,
+        # Turnover must be consistent with quantity or the VWAP cross-check in
+        # `services/bots/scalping/candles.py` fires on every mock tick. Seeding it as
+        # qty x price makes ttv/ttq land on the opening price, as it does on a real feed.
+        "ttv": float(ttq) * base_price,
     }
 
 
-def step_live_tick_fields(symbol: str, state: dict, *, lot_size: int = 25) -> dict:
+# Per-tick volatility as a fraction of price. The default suits an option premium, where a
+# 0.25% step on Rs 100 is a few paise. It is badly wrong for an index level: 0.25% of 24,000
+# is 60 points per tick, which would make any EMA/VWAP signal fire on pure noise. Callers
+# pricing an underlying pass `sigma_pct` explicitly.
+OPTION_SIGMA_PCT = 0.0025
+INDEX_SIGMA_PCT = 0.0002
+
+
+def step_live_tick_fields(
+    symbol: str,
+    state: dict,
+    *,
+    lot_size: int = 25,
+    sigma_pct: float = OPTION_SIGMA_PCT,
+) -> dict:
     """Advance `state` one random-walk step in place; return a real-SDK-shaped tick dict.
 
     Field names match what `breeze_connect`'s own `parse_data()` produces for
@@ -114,13 +160,17 @@ def step_live_tick_fields(symbol: str, state: dict, *, lot_size: int = 25) -> di
     `app/services/ws_tick_normalize.py`), so callers of `on_ticks` can't tell
     this apart from a real tick's field names.
     """
-    sigma = max(0.05, abs(state["last"]) * 0.0025)
+    sigma = max(0.05, abs(state["last"]) * sigma_pct)
     delta = random.gauss(0, sigma)
     floor, ceiling = state["prev_close"] * 0.7, state["prev_close"] * 1.3
     state["last"] = round(min(max(state["last"] + delta, floor), ceiling), 2)
     state["high"] = round(max(state["high"], state["last"]), 2)
     state["low"] = round(min(state["low"], state["last"]), 2)
-    state["ttq"] += random.randint(1, 50) * lot_size
+    traded_qty = random.randint(1, 50) * lot_size
+    state["ttq"] += traded_qty
+    # Accumulate turnover from the same quantity at the tick's own price, so that
+    # `ttv / ttq` remains a genuine volume-weighted average rather than a free variable.
+    state["ttv"] = state.get("ttv", 0.0) + traded_qty * state["last"]
     spread = max(0.05, state["last"] * 0.001)
     return {
         "symbol": symbol, "open": state["open"], "last": state["last"],
@@ -129,9 +179,10 @@ def step_live_tick_fields(symbol: str, state: dict, *, lot_size: int = 25) -> di
         "bPrice": round(state["last"] - spread, 2), "bQty": random.randint(50, 800),
         "sPrice": round(state["last"] + spread, 2), "sQty": random.randint(50, 800),
         "ltq": random.randint(1, 100) * lot_size,
-        "avgPrice": round((state["high"] + state["low"]) / 2, 2),
+        "avgPrice": round(state["ttv"] / state["ttq"], 2) if state["ttq"] else state["last"],
         "ttq": state["ttq"], "totalBuyQt": int(state["ttq"] * 0.55), "totalSellQ": int(state["ttq"] * 0.45),
-        "ttv": "", "trend": "+" if delta >= 0 else "-",
+        # Crore-suffixed string, matching the real captures rather than a bare number.
+        "ttv": f"{state['ttv'] / 1e7:.2f}C", "trend": "+" if delta >= 0 else "-",
         "lowerCktLm": round(state["prev_close"] * 0.9, 2), "upperCktLm": round(state["prev_close"] * 1.1, 2),
         "ltt": int(time.time()), "close": state["prev_close"],
         "OI": random.randint(1_000_000, 20_000_000), "CHNGOI": random.randint(-50_000, 50_000),

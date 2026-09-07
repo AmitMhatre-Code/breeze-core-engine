@@ -237,6 +237,19 @@ def set_group_rule(
         _group_rules.setdefault(user_id, {})[_group_key(stock_code, expiry_display)] = rule
 
 
+def group_rule_for(user_id: str, stock_code: str, expiry_display: str) -> "GroupRule | None":
+    """The live group rule for one (stock_code, expiry), or None.
+
+    Read-only accessor added for the scalping bots. A group rule is keyed on the pair alone
+    and squares off *every* leg in that group, so a bot opening a position on an expiry that
+    already carries a rule would have its legs absorbed into someone else's P&L and closed
+    with it. The bots need to see that before they trade, which they cannot do against a
+    private dict.
+    """
+    with _registry_lock:
+        return _group_rules.get(user_id, {}).get(_group_key(stock_code, expiry_display))
+
+
 def clear_group_rule(user_id: str, stock_code: str, expiry_display: str) -> None:
     with _registry_lock:
         user_rules = _group_rules.get(user_id)

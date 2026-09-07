@@ -1,6 +1,16 @@
 "use client";
 
-import { useBotRuns, type BotRun, type BotRunStatus, BOT_META } from "@/lib/use-bots";
+import { useState } from "react";
+import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import {
+  isScalper,
+  useBotCycles,
+  useBotRuns,
+  type BotCycle,
+  type BotRun,
+  type BotRunStatus,
+  BOT_META,
+} from "@/lib/use-bots";
 
 /** A run's outcome, not its severity. `skipped` is deliberately neutral rather than a
  *  warning colour: a bot correctly declining to trade is a normal day, and colouring it
@@ -23,26 +33,148 @@ function StatusBadge({ status }: { status: BotRunStatus }) {
   );
 }
 
-function RunRow({ run }: { run: BotRun }) {
+function cycleTime(iso: string | null): string {
+  return iso ? String(iso).slice(11, 19) : "—";
+}
+
+function legLabel(cycle: BotCycle): string {
+  const leg = (cycle.legs ?? [])[0] as
+    | { right?: string; strike_price?: number }
+    | undefined;
+  if (cycle.structure === "iron_fly") {
+    const centre = (cycle.detail as { atm_strike?: number } | null)?.atm_strike;
+    return centre ? `Fly ${Math.round(centre)}` : "Fly";
+  }
+  if (!leg) return cycle.structure;
+  const right = String(leg.right ?? "").toUpperCase() === "PUT" ? "PE" : "CE";
+  return `${right} ${Math.round(Number(leg.strike_price ?? 0))}`;
+}
+
+/** A session's round trips.
+ *
+ *  Nested under the run rather than listed alongside it: a scalper produces dozens a day,
+ *  and flattening them into the run log would bury the record of *why nothing happened*
+ *  that the log exists to preserve. Fetched only when expanded, so a collapsed month costs
+ *  nothing.
+ */
+function CycleTable({ runId }: { runId: string }) {
+  const { data, isLoading, isError, error } = useBotCycles(runId);
+
+  if (isLoading) return <p className="app-text-muted px-3 py-2 text-xs">Loading cycles…</p>;
+  if (isError) {
+    return (
+      <p className="px-3 py-2 text-xs text-down">
+        Could not load cycles: {(error as Error)?.message ?? "unknown error"}
+      </p>
+    );
+  }
+  if (!data || data.length === 0) {
+    return <p className="app-text-muted px-3 py-2 text-xs">No cycles in this session.</p>;
+  }
+
+  const ordered = [...data].sort((a, b) => a.cycle_no - b.cycle_no);
   return (
-    <tr className="app-table-row align-top">
-      <td className="whitespace-nowrap px-3 py-2 tabular-nums text-xs">
-        {run.started_at ?? "—"}
-      </td>
-      <td className="px-3 py-2 text-xs">{BOT_META[run.bot_type]?.title ?? run.bot_type}</td>
-      <td className="px-3 py-2 text-xs capitalize">{run.trigger.replace("_", " ")}</td>
-      <td className="px-3 py-2">
-        <StatusBadge status={run.status} />
-      </td>
-      <td className="px-3 py-2 text-xs">
-        {/* Both halves matter: the text is for the user, the code is what support and
-            tests can rely on when the text is later reworded. */}
-        <div>{run.reason_text ?? "—"}</div>
-        {run.reason_code && (
-          <code className="app-text-muted text-[11px]">{run.reason_code}</code>
-        )}
-      </td>
-    </tr>
+    <div className="app-table-wrap m-2">
+      <table className="w-full text-left">
+        <thead className="app-table-head">
+          <tr>
+            <th className="px-2 py-1.5 text-[11px] font-medium">#</th>
+            <th className="px-2 py-1.5 text-[11px] font-medium">In</th>
+            <th className="px-2 py-1.5 text-[11px] font-medium">Out</th>
+            <th className="px-2 py-1.5 text-[11px] font-medium">Contract</th>
+            <th className="px-2 py-1.5 text-[11px] font-medium">Lots</th>
+            <th className="px-2 py-1.5 text-right text-[11px] font-medium">Gross</th>
+            <th className="px-2 py-1.5 text-right text-[11px] font-medium">Friction</th>
+            <th className="px-2 py-1.5 text-right text-[11px] font-medium">Net</th>
+            <th className="px-2 py-1.5 text-[11px] font-medium">Exit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ordered.map((cycle) => (
+            <tr key={cycle.id} className="app-table-row">
+              <td className="px-2 py-1.5 tabular-nums text-[11px]">{cycle.cycle_no}</td>
+              <td className="px-2 py-1.5 tabular-nums text-[11px]">{cycleTime(cycle.opened_at)}</td>
+              <td className="px-2 py-1.5 tabular-nums text-[11px]">{cycleTime(cycle.closed_at)}</td>
+              <td className="px-2 py-1.5 text-[11px]">{legLabel(cycle)}</td>
+              <td className="px-2 py-1.5 tabular-nums text-[11px]">{cycle.lots ?? "—"}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums text-[11px]">
+                {cycle.gross_pnl === null ? "—" : formatIndianMoneyCompact(cycle.gross_pnl)}
+              </td>
+              {/* Friction gets its own column rather than being netted away silently: it is
+                  the constraint that decides whether this strategy works at all. */}
+              <td className="px-2 py-1.5 text-right tabular-nums text-[11px] text-faint">
+                {cycle.friction === null ? "—" : formatIndianMoneyCompact(cycle.friction)}
+              </td>
+              <td
+                className={`px-2 py-1.5 text-right tabular-nums text-[11px] ${
+                  cycle.net_pnl === null ? "" : moneyToneClass(cycle.net_pnl)
+                }`}
+              >
+                {cycle.net_pnl === null ? "—" : formatIndianMoneyCompact(cycle.net_pnl)}
+              </td>
+              <td className="px-2 py-1.5 text-[11px]">
+                <code className="app-text-muted text-[11px]">
+                  {cycle.exit_reason_code ?? (cycle.closed_at ? "—" : "open")}
+                </code>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RunRow({ run }: { run: BotRun }) {
+  const [expanded, setExpanded] = useState(false);
+  // Only a scalper session has cycles beneath it; the writers resolve in one pass and have
+  // nothing to expand into.
+  const expandable = isScalper(run.bot_type) && run.trigger === "session";
+
+  return (
+    <>
+      <tr className="app-table-row align-top">
+        <td className="whitespace-nowrap px-3 py-2 tabular-nums text-xs">
+          {run.started_at ?? "—"}
+        </td>
+        <td className="px-3 py-2 text-xs">
+          {expandable ? (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded text-left transition hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+            >
+              <span aria-hidden className="font-mono text-[10px]">
+                {expanded ? "▾" : "▸"}
+              </span>
+              {BOT_META[run.bot_type]?.title ?? run.bot_type}
+            </button>
+          ) : (
+            BOT_META[run.bot_type]?.title ?? run.bot_type
+          )}
+        </td>
+        <td className="px-3 py-2 text-xs capitalize">{run.trigger.replace("_", " ")}</td>
+        <td className="px-3 py-2">
+          <StatusBadge status={run.status} />
+        </td>
+        <td className="px-3 py-2 text-xs">
+          {/* Both halves matter: the text is for the user, the code is what support and
+              tests can rely on when the text is later reworded. */}
+          <div>{run.reason_text ?? "—"}</div>
+          {run.reason_code && (
+            <code className="app-text-muted text-[11px]">{run.reason_code}</code>
+          )}
+        </td>
+      </tr>
+      {expandable && expanded && (
+        <tr>
+          <td colSpan={5} className="bg-panel2 p-0">
+            <CycleTable runId={run.id} />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 

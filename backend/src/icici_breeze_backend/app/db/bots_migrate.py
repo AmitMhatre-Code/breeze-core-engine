@@ -5,6 +5,7 @@ Four tables, one migration, because they are meaningless apart:
   bots            one row per (user_id, bot_type) -- the bot instance and its config
   bot_scrip_prefs Bot 1's per-scrip overrides (CE opt-out, PE opt-in, safety %)
   bot_runs        the shared cross-bot run log
+  bot_cycles      one row per scalper round trip, hanging off a session's bot_runs row
   bot_proposals   Bot 1's propose -> approve -> place artefacts
   bot_approval_tokens  single-use tokens backing Telegram approve/reject taps
 
@@ -29,7 +30,18 @@ import sqlite3
 # Bot type discriminators. Stable strings -- they are persisted and appear in the run log.
 BOT_HOLDINGS_WRITER = "holdings_writer"
 BOT_EXPIRY_INDEX_WRITER = "expiry_index_writer"
-BOT_TYPES = (BOT_HOLDINGS_WRITER, BOT_EXPIRY_INDEX_WRITER)
+# The intraday scalpers (docs/bots-scalping-plan.md). They differ from the two above in
+# shape, not just in strategy: many cycles per session rather than one decision per day, so
+# they own `bot_cycles` and the `heartbeat_at` column below.
+BOT_MOMENTUM_LONG_SCALPER = "momentum_long_scalper"
+BOT_IRON_FLY_SCALPER = "iron_fly_scalper"
+SCALPER_BOT_TYPES = (BOT_MOMENTUM_LONG_SCALPER, BOT_IRON_FLY_SCALPER)
+BOT_TYPES = (
+    BOT_HOLDINGS_WRITER,
+    BOT_EXPIRY_INDEX_WRITER,
+    BOT_MOMENTUM_LONG_SCALPER,
+    BOT_IRON_FLY_SCALPER,
+)
 
 
 def ensure_bots_tables(db_path: str) -> None:
@@ -161,13 +173,173 @@ def ensure_bots_tables(db_path: str) -> None:
             "ON bot_approval_tokens(proposal_id)"
         )
 
+        # Renamed from `scalping_charges` when the model stopped being scalper-specific.
+        # Rename rather than create-and-abandon: a deployment that had already edited its
+        # rates would otherwise keep them in an orphaned table while the app read defaults
+        # from a new empty one -- silently reverting a number the user had corrected.
+        _rename_table_if_needed(conn, "scalping_charges", "trading_charges")
+
+        # Round-trip cost model for EVERY bot, plus the backtest harness. A singleton row
+        # (the `pnl_engine_settings` pattern) rather than per-bot config: no two bots should
+        # ever disagree about what a trade costs, and the backtest must use the identical
+        # numbers as paper mode or the two describe the same trade differently. Edited in
+        # exactly one place -- Settings > Trading Costs.
+        #
+        # Editable because these are set by regulation and change without notice. The shipped
+        # defaults were CALIBRATED against a real ICICI contract note (140 F&O fills,
+        # 2026-08-03 to 2026-09-03) -- see `services/bots/scalping/charges.py` -- rather than
+        # taken from published summaries, three of which turned out to be wrong.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trading_charges (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                brokerage_per_order_inr REAL NOT NULL DEFAULT 20.0,
+                brokerage_pct_of_premium REAL NOT NULL DEFAULT 0.0,
+                brokerage_cap_inr REAL,
+                stt_sell_pct REAL NOT NULL DEFAULT 0.15,
+                exchange_txn_pct REAL NOT NULL DEFAULT 0.03545,
+                exchange_txn_pct_bse REAL NOT NULL DEFAULT 0.0325,
+                sebi_pct REAL NOT NULL DEFAULT 0.0001,
+                ipft_pct REAL NOT NULL DEFAULT 0.0,
+                stamp_buy_pct REAL NOT NULL DEFAULT 0.003,
+                gst_pct REAL NOT NULL DEFAULT 18.0,
+                slippage_spread_fraction REAL NOT NULL DEFAULT 0.5,
+                updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+            )
+            """
+        )
+        conn.execute("INSERT OR IGNORE INTO trading_charges (id) VALUES (1)")
+
+        # Observed bid-ask spreads, sampled by paper mode so the backtest can model the
+        # spread from what this deployment actually sees rather than from a guess. Stored as
+        # (premium, spread) pairs because spread scales with premium: a median in rupees
+        # alone would be meaningless across a Rs 30 option and a Rs 180 one.
+        #
+        # Sampling is throttled to one row per contract per minute (see
+        # `record_spread_sample`), so a full session is hundreds of rows, not tens of
+        # thousands, and old rows are pruned by date.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scalping_spread_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_code TEXT NOT NULL,
+                expiry_display TEXT NOT NULL,
+                strike_price REAL NOT NULL,
+                right TEXT NOT NULL,
+                premium REAL NOT NULL,
+                spread REAL NOT NULL,
+                observed_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes'))
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_spread_samples_observed "
+            "ON scalping_spread_samples(observed_at DESC)"
+        )
+
+        # Added after the MVP shipped, so they go on as ALTERs rather than into the CREATE
+        # above -- an existing deployment already has these tables and never re-runs it.
+        # One row per scalper round trip. Deliberately NOT a `bot_runs` row each: a scalper
+        # can cycle dozens of times a session, and `bot_runs` exists to make a single
+        # no-trade day explicable -- 80 rows a day there would drown the thing it is for.
+        # So a session gets one run row and its cycles hang off it.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_cycles (
+                id TEXT PRIMARY KEY NOT NULL,
+                run_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                bot_type TEXT NOT NULL,
+                cycle_no INTEGER NOT NULL,
+                structure TEXT NOT NULL,
+                legs TEXT NOT NULL DEFAULT '[]',
+                lots INTEGER,
+                opened_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+                closed_at TIMESTAMP,
+                entry_value REAL,
+                exit_value REAL,
+                gross_pnl REAL,
+                friction REAL,
+                net_pnl REAL,
+                exit_reason_code TEXT,
+                exit_reason_text TEXT,
+                detail TEXT,
+                paper INTEGER NOT NULL DEFAULT 1
+            )
+            """
+        )
+        # Reads are "this session's cycles, in order" (the run log) and "today's cycles for
+        # this bot" (the cumulative stop, the consecutive-loss counter and the friction
+        # total, all of which are recomputed on every cycle decision).
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bot_cycles_run ON bot_cycles(run_id, cycle_no)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bot_cycles_user_type_opened "
+            "ON bot_cycles(user_id, bot_type, opened_at DESC)"
+        )
+
         # Added after the MVP shipped, so they go on as ALTERs rather than into the CREATE
         # above -- an existing deployment already has these tables and never re-runs it.
         _add_column(conn, "bots", "priority", "INTEGER NOT NULL DEFAULT 1")
+        # Liveness for the stale-run reaper. NULL means "never beat", and every reader uses
+        # COALESCE(heartbeat_at, started_at), so Bots 1 and 2 -- which never touch it -- keep
+        # exactly the reap semantics they had. Only a long-lived scalper session updates it,
+        # which is what lets the reaper tell a healthy all-day session from a hung one.
+        _add_column(conn, "bot_runs", "heartbeat_at", "TIMESTAMP")
+        # Added when the cost model was calibrated against a real contract note: BSE and NSE
+        # charge different transaction rates, and one column could only ever be right for one.
+        _add_column(conn, "trading_charges", "exchange_txn_pct_bse", "REAL NOT NULL DEFAULT 0.0325")
+        _correct_superseded_charge_defaults(conn)
         _add_column(conn, "bot_scrip_prefs", "ce_lots", "INTEGER")
         _add_column(conn, "bot_scrip_prefs", "pe_lots", "INTEGER")
         _add_column(conn, "bot_scrip_prefs", "priority", "INTEGER NOT NULL DEFAULT 1")
         conn.commit()
+
+
+# Values the cost model shipped with before it was calibrated against a real contract note.
+# Each was simply wrong -- not a preference someone might legitimately hold -- so a row still
+# carrying one is a row that has never been corrected rather than one somebody chose.
+_SUPERSEDED_CHARGE_DEFAULTS = {
+    "stt_sell_pct": (0.10, 0.15),
+    "exchange_txn_pct": (0.0495, 0.03545),
+    "ipft_pct": (0.0005, 0.0),
+}
+
+
+def _correct_superseded_charge_defaults(conn: sqlite3.Connection) -> None:
+    """Replace the pre-calibration defaults, and ONLY those exact values.
+
+    A CREATE TABLE default cannot reach a row that already exists, so a deployment that
+    booted before the calibration would keep rates that were never right -- silently, and in
+    a number that decides whether the strategy is viable.
+
+    Matching on the exact superseded value is what makes this safe: anything else is a figure
+    the user or a later calibration put there deliberately, and is left alone. Idempotent by
+    construction, since the corrected value no longer matches.
+    """
+    for column, (old, new) in _SUPERSEDED_CHARGE_DEFAULTS.items():
+        conn.execute(
+            f"UPDATE trading_charges SET {column} = ? "
+            f"WHERE id = 1 AND ABS({column} - ?) < 1e-9",
+            (new, old),
+        )
+
+
+def _rename_table_if_needed(conn: sqlite3.Connection, old: str, new: str) -> None:
+    """Rename `old` to `new`, but only when that is unambiguous.
+
+    Does nothing if the old table is absent (a fresh install) or the new one already exists
+    (already migrated, or a re-run). Idempotent, and it never merges two tables -- if both
+    somehow exist, the newer one wins and the old is left in place for inspection rather
+    than silently dropped.
+    """
+    names = {
+        str(r[0])
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    }
+    if old in names and new not in names:
+        conn.execute(f"ALTER TABLE {old} RENAME TO {new}")
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:

@@ -376,6 +376,14 @@ def _format_proposal_message(bot_type: str, proposal: Any, deadline: str) -> str
     margin = totals.get("span_total")
     if premium is not None:
         lines += ["", f"Premium collected: ₹{float(premium):,.0f}"]
+    # Net of estimated brokerage and taxes on entry. Shown because the gross figure is not
+    # what lands: Rs 20 brokerage plus GST against a few hundred rupees of premium is not a
+    # rounding error, and this message is what the user approves the trade on.
+    charges = sum(
+        float(getattr(leg, "estimated_charges", 0) or 0) for leg in proposal.legs
+    )
+    if premium is not None and charges > 0:
+        lines.append(f"Est. charges: −₹{charges:,.0f}  →  net ₹{float(premium) - charges:,.0f}")
     if margin:
         lines.append(f"Margin required: ₹{float(margin):,.0f}")
     lines += [

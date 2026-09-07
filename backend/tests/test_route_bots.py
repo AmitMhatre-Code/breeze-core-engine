@@ -11,6 +11,8 @@ from icici_breeze_backend.app.auth.context import RequestContext, get_request_co
 from icici_breeze_backend.app.db.bots_migrate import (
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
+    BOT_IRON_FLY_SCALPER,
+    BOT_MOMENTUM_LONG_SCALPER,
     ensure_bots_tables,
 )
 from icici_breeze_backend.app.domain.bots import ProposalLeg, ReasonCode
@@ -44,7 +46,12 @@ def test_list_returns_both_bots_disabled(client):
     r = client.get("/bots/list")
     assert r.status_code == 200
     body = r.json()
-    assert {b["bot_type"] for b in body} == {BOT_HOLDINGS_WRITER, BOT_EXPIRY_INDEX_WRITER}
+    assert {b["bot_type"] for b in body} == {
+        BOT_HOLDINGS_WRITER,
+        BOT_EXPIRY_INDEX_WRITER,
+        BOT_MOMENTUM_LONG_SCALPER,
+        BOT_IRON_FLY_SCALPER,
+    }
     assert all(b["enabled"] is False for b in body)
 
 

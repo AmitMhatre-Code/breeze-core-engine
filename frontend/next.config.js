@@ -188,6 +188,14 @@ const nextConfig = {
         destination: `${backendUpstream}/bots/runs`,
       },
       {
+        source: "/bots/cycles",
+        destination: `${backendUpstream}/bots/cycles`,
+      },
+      {
+        source: "/bots/charges",
+        destination: `${backendUpstream}/bots/charges`,
+      },
+      {
         source: "/bots/scrip-prefs",
         destination: `${backendUpstream}/bots/scrip-prefs`,
       },

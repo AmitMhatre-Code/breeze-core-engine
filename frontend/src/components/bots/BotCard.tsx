@@ -1,18 +1,26 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotRunSheet } from "@/components/bots/BotRunSheet";
+import { ScalperCard } from "@/components/bots/ScalperCard";
 import { NumberInput } from "@/components/ui/NumberInput";
+import {
+  fetchTelegramStatus,
+  TELEGRAM_STATUS_QUERY_KEY,
+} from "@/lib/telegram/telegram-alerts";
 import {
   BOT_HOLDINGS_WRITER,
   BOT_META,
+  isScalper,
   INDEX_LABEL,
   useBotRuns,
   useUpdateBot,
   type Bot,
   type BotRun,
   type BotRunStatus,
+  type ApprovalMode,
   type ExpiryIndexWriterConfig,
   type HoldingsWriterConfig,
 } from "@/lib/use-bots";
@@ -26,45 +34,91 @@ function GearIcon() {
   );
 }
 
-/** The enable control. A two-word segmented switch rather than a knob, because the state
+/** The three ways a bot can be left, as one value.
+ *
+ *  The backend keeps this as two fields — `enabled` arms the scheduler, `approval_mode`
+ *  decides what an unattended run does when it has sized a trade. They are only
+ *  independent on paper: `approval_mode` is read nowhere but the scheduler, so a disabled
+ *  bot's copy of it is dormant and the pair collapses to three states a user can act on.
+ *  Deriving the mode here rather than storing a third column keeps that collapse in the
+ *  one place that needs it. */
+type BotMode = "manual" | "semi" | "auto";
+
+const MODE_LABEL: Record<BotMode, string> = {
+  manual: "Manual",
+  semi: "Semi-auto",
+  auto: "Auto",
+};
+
+/** Why the subtext is not optional: "Semi-auto" and "Auto" name a *degree* of automation,
+ *  which says nothing about the only difference that matters — whether real orders can be
+ *  placed while you are not looking. One line, always visible, says it outright. */
+const MODE_BLURB: Record<BotMode, string> = {
+  manual: "Runs only when you start a run here. It never fires on its own.",
+  semi: "Sizes the trade on schedule and asks on Telegram — nothing is placed until you approve.",
+  auto: "Sizes and places the trade on schedule, without waiting for your approval.",
+};
+
+function botMode(bot: Bot): BotMode {
+  if (!bot.enabled) return "manual";
+  const mode = (bot.config as { approval_mode?: ApprovalMode }).approval_mode;
+  // Defaults to asking, exactly as the backend model does: an unrecognised or missing
+  // value must never resolve to the setting that trades unattended.
+  return mode === "auto" ? "auto" : "semi";
+}
+
+/** The enable control. A three-word segmented switch rather than a knob, because the state
  *  has to be readable at a glance on a control that arms unattended trading — "which side
  *  is the dot on?" is not a question worth asking about a bot that places real orders. */
-function AutonomousPill({
-  enabled,
+function ModePill({
+  mode,
   disabled,
+  telegramConnected,
   onChange,
 }: {
-  enabled: boolean;
+  mode: BotMode;
   disabled: boolean;
-  onChange: (next: boolean) => void;
+  telegramConnected: boolean;
+  onChange: (next: BotMode) => void;
 }) {
   return (
     <div
-      className="grid grid-cols-2 gap-[3px] rounded-full border border-border bg-panel2 p-[3px]"
+      className="grid grid-cols-3 gap-[3px] rounded-full border border-border bg-panel2 p-[3px]"
       role="group"
-      aria-label="Autonomous mode"
+      aria-label="Bot mode"
     >
-      {[false, true].map((value) => {
-        const active = enabled === value;
+      {(["manual", "semi", "auto"] as const).map((value) => {
+        const active = mode === value;
+        // Semi-auto asks on Telegram, so with no chat linked it cannot ask and therefore
+        // cannot trade — it would sit proposing into the void and read as a broken bot.
+        // Refusing the selection is honest; a warning after the fact is not.
+        const blocked = value === "semi" && !telegramConnected;
         return (
           <button
-            key={String(value)}
+            key={value}
             type="button"
             aria-pressed={active}
-            disabled={disabled}
+            disabled={disabled || blocked}
+            title={
+              blocked
+                ? "Link a Telegram chat in Settings › Telegram Alerts — semi-auto has no way to ask you without one."
+                : undefined
+            }
             onClick={() => onChange(value)}
             className={[
-              "rounded-full px-2 py-1.5 text-micro font-bold uppercase tracking-[0.05em] transition",
+              "rounded-full px-1.5 py-1.5 text-micro font-bold uppercase tracking-[0.03em] transition",
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
               "disabled:pointer-events-none disabled:opacity-50",
               active
-                ? value
+                ? value === "auto"
                   ? "bg-up-btn text-up-ink"
-                  : "bg-elevated text-text"
+                  : value === "semi"
+                    ? "bg-amber-accent text-amber-ink"
+                    : "bg-elevated text-text"
                 : "text-faint hover:text-text",
             ].join(" ")}
           >
-            {value ? "Autonomous" : "Manual"}
+            {MODE_LABEL[value]}
           </button>
         );
       })}
@@ -73,24 +127,26 @@ function AutonomousPill({
 }
 
 /** What the bot will do next, in the user's terms. A bot that says only "enabled" leaves
- *  the one question that matters — when does this actually trade? — unanswered. */
-function nextAction(bot: Bot): string {
+ *  the one question that matters — when does this actually trade? — unanswered. The verb
+ *  tracks the mode: a semi-auto bot does not fire on its schedule, it *asks* on it, and
+ *  saying "fires" would promise a trade the user still has to authorise. */
+function nextAction(bot: Bot, mode: BotMode): string {
   if (bot.bot_type === BOT_HOLDINGS_WRITER) {
     const config = bot.config as unknown as HoldingsWriterConfig;
     const days = config.fire_days_before_expiry;
     const when = days === 0 ? "on expiry day" : `${days} trading day${days === 1 ? "" : "s"} before expiry`;
-    return bot.enabled
-      ? `Fires ${when}, from ${config.nag_start_ist}`
-      : `Would fire ${when}`;
+    if (mode === "manual") return `Would fire ${when}`;
+    const verb = mode === "semi" ? "Asks" : "Fires";
+    return `${verb} ${when}, from ${config.nag_start_ist}`;
   }
   const config = bot.config as unknown as ExpiryIndexWriterConfig;
   const indices = Object.entries(config.indices ?? {})
     .filter(([, leg]) => leg.enabled)
     .map(([code]) => INDEX_LABEL[code] ?? code);
   if (indices.length === 0) return "No index enabled";
-  return bot.enabled
-    ? `${indices.join(", ")} expiry days, from ${config.nag_start_ist}`
-    : `Would trade ${indices.join(", ")} expiry days`;
+  if (mode === "manual") return `Would trade ${indices.join(", ")} expiry days`;
+  const suffix = mode === "semi" ? ", asks first" : "";
+  return `${indices.join(", ")} expiry days, from ${config.nag_start_ist}${suffix}`;
 }
 
 const RUN_WORD: Record<BotRunStatus, string> = {
@@ -151,6 +207,16 @@ function summaryRows(bot: Bot, lastRun: BotRun | undefined): Array<[string, stri
 }
 
 export function BotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
+  // The scalpers have a different state axis — paper vs live, not who approves — so they
+  // get their own card rather than a third meaning bolted onto `botMode`. Delegating here
+  // keeps one entry point for the page while the two shapes stay honest about themselves.
+  if (isScalper(bot.bot_type)) {
+    return <ScalperCard bot={bot} readOnly={readOnly} />;
+  }
+  return <WriterCard bot={bot} readOnly={readOnly} />;
+}
+
+function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
   const meta = BOT_META[bot.bot_type];
   const update = useUpdateBot();
   // Identical args to the run log's own query, so react-query serves both from one fetch.
@@ -160,11 +226,32 @@ export function BotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
   const [runOpen, setRunOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function setEnabled(next: boolean) {
-    if (next === bot.enabled) return;
+  // Shared query key with the settings screen, so both cards and any open drawer resolve
+  // from one fetch. Read here rather than in the drawer because the mode control — the
+  // only thing that cares whether a chat exists — now lives on the card.
+  const telegram = useQuery({
+    queryKey: TELEGRAM_STATUS_QUERY_KEY,
+    queryFn: fetchTelegramStatus,
+  });
+  const telegramConnected = Boolean(telegram.data?.connected && telegram.data?.alerts_enabled);
+
+  const mode = botMode(bot);
+
+  async function setMode(next: BotMode) {
+    if (next === mode) return;
     setError(null);
     try {
-      await update.mutateAsync({ botType: bot.bot_type, enabled: next });
+      // Both fields in one PATCH: the backend merges `config`, and sending them separately
+      // would leave a visible window in which the bot is armed on the *previous* approval
+      // mode — i.e. briefly authorised to place unattended when the user asked for the
+      // opposite. `approval_mode` is written even for Manual so the stored value always
+      // matches what the card claims, rather than lying dormant at some older setting that
+      // takes effect the moment the bot is armed again.
+      await update.mutateAsync({
+        botType: bot.bot_type,
+        enabled: next !== "manual",
+        config: { approval_mode: next === "auto" ? "auto" : "telegram" },
+      });
     } catch (e) {
       setError((e as Error)?.message ?? "Could not save.");
     }
@@ -215,20 +302,33 @@ export function BotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
             card's slack collects in ONE place. Centring this block instead put a void
             above AND below it, which is what made the square read as empty. */}
         <div className="mt-4 flex flex-col gap-1.5">
+          {/* Three states, three colours. Semi-auto is deliberately NOT green: it is armed,
+              but nothing reaches the exchange without the user, and colouring it the same
+              as unattended trading would flatten the one distinction the card exists to
+              make. */}
           <div className="flex items-center gap-2">
             <span
               aria-hidden
-              className={`size-[7px] rounded-full ${bot.enabled ? "bg-up" : "bg-faint"}`}
+              className={`size-[7px] rounded-full ${
+                mode === "auto" ? "bg-up" : mode === "semi" ? "bg-amber-accent" : "bg-faint"
+              }`}
             />
             <span
               className={`text-xl font-bold tracking-tight ${
-                bot.enabled ? "text-up" : "text-faint"
+                mode === "auto"
+                  ? "text-up"
+                  : mode === "semi"
+                    ? "text-amber-accent"
+                    : "text-faint"
               }`}
             >
-              {bot.enabled ? "Armed" : "Idle"}
+              {mode === "manual" ? "Idle" : "Armed"}
+              {mode === "semi" && (
+                <span className="ms-1.5 text-sm font-semibold">· asks first</span>
+              )}
             </span>
           </div>
-          <p className="font-mono text-hint text-muted">{nextAction(bot)}</p>
+          <p className="font-mono text-hint text-muted">{nextAction(bot, mode)}</p>
           <dl className="mt-3 grid gap-1.5">
             {summaryRows(bot, lastRun).map(([label, value]) => (
               <div key={label} className="flex items-baseline justify-between gap-3 text-hint">
@@ -241,11 +341,35 @@ export function BotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
 
         <div className="flex-1" />
 
-        <AutonomousPill
-          enabled={bot.enabled}
+        <ModePill
+          mode={mode}
           disabled={readOnly || update.isPending}
-          onChange={(next) => void setEnabled(next)}
+          telegramConnected={telegramConnected}
+          onChange={(next) => void setMode(next)}
         />
+        {/* Under the control, not above it: the sentence describes what the selected
+            segment does, so it has to sit where the eye lands after choosing.
+
+            All three blurbs are rendered stacked in one grid cell and the inactive two are
+            hidden with `invisible` (which still reserves layout) rather than unmounted, so
+            the block is always as tall as the LONGEST blurb. The card pins its controls to
+            the bottom, so a blurb that wrapped to one line in Manual and two in Auto moved
+            the mode switch itself between clicks — the one control that must not shift
+            under the cursor while you are choosing how much a bot may trade unattended.
+            A fixed min-height would hold only at the width it was measured at. */}
+        <div className="mt-1.5 grid">
+          {(["manual", "semi", "auto"] as const).map((value) => (
+            <p
+              key={value}
+              aria-hidden={value !== mode}
+              className={`col-start-1 row-start-1 text-hint text-faint ${
+                value === mode ? "" : "invisible"
+              }`}
+            >
+              {MODE_BLURB[value]}
+            </p>
+          ))}
+        </div>
         <button
           type="button"
           className="app-btn-outline mt-2 w-full"

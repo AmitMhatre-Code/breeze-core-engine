@@ -14,10 +14,12 @@ import { ExchangeCalendarScreen } from "./screens/ExchangeCalendarScreen";
 import { QuantityLimitsScreen } from "./screens/QuantityLimitsScreen";
 import { ReferenceDataLoadsScreen } from "./screens/ReferenceDataLoadsScreen";
 import { TelegramAlertsScreen } from "./screens/TelegramAlertsScreen";
+import { TradingCostsScreen } from "./screens/TradingCostsScreen";
 
 type ScreenKey =
   | "credentials"
   | "quantity-limits"
+  | "trading-costs"
   | "api-usage"
   | "reference-data-loads"
   | "exchange-calendar"
@@ -43,6 +45,7 @@ type NavGroup = {
 const SCREENS: Record<ScreenKey, ComponentType> = {
   credentials: BrokerCredentialsScreen,
   "quantity-limits": QuantityLimitsScreen,
+  "trading-costs": TradingCostsScreen,
   "api-usage": ApiUsageScreen,
   "reference-data-loads": ReferenceDataLoadsScreen,
   "exchange-calendar": ExchangeCalendarScreen,
@@ -60,6 +63,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "credentials", label: "Broker Credentials", icon: LockIcon },
       { key: "quantity-limits", label: "Quantity Limits", icon: GaugeIcon },
+      { key: "trading-costs", label: "Trading Costs", icon: GaugeIcon },
       { key: "api-usage", label: "API Usage", icon: ActivityIcon },
     ],
   },

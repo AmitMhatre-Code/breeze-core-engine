@@ -10,6 +10,10 @@ import threading
 from icici_breeze_backend.dev.fixtures import responses as fx
 from icici_breeze_backend.dev.mock_market_data import (
     enrich_contract_fields,
+    futures_identity,
+    INDEX_SIGMA_PCT,
+    is_mock_futures_symbol,
+    register_mock_futures_contract,
     resolve_underlying_spot,
     seed_running_state,
     step_live_tick_fields,
@@ -171,7 +175,68 @@ class MockBreezeSdk:
             return [str(t) for t in stock_token if t]
         return [str(stock_token)] if stock_token else []
 
+    @staticmethod
+    def _futures_symbol(stock_code: str, expiry_date: str) -> str:
+        """Deterministic synthetic token for a futures contract.
+
+        Kept in a high range so it cannot collide with a real scrip-master option token
+        (observed real NFO tokens are 5-6 digits), which would otherwise make the mock tick
+        a genuine option contract under a futures identity.
+        """
+        digest = abs(hash(f"FUT-{stock_code.upper()}-{expiry_date}")) % 100_000
+        return f"4.1!{9_000_000 + digest}"
+
+    def get_stock_token_value(
+        self,
+        exchange_code: str = "",
+        stock_code: str = "",
+        product_type: str = "",
+        expiry_date: str = "",
+        strike_price: str = "",
+        right: str = "",
+        get_exchange_quotes: bool = True,
+        get_market_depth: bool = True,
+        **kwargs,
+    ):
+        """Resolve a subscribable token, **futures only**.
+
+        Scoped deliberately. `index_spot_feed` also calls this method, and today it fails in
+        mock (no such attribute) so index spot stays cold. Answering for cash indices here
+        would newly start a random-walk feed that the dashboard would render as a live NIFTY
+        spot -- a wrong number where there is currently an obviously absent one. Returning a
+        falsy value for everything else preserves that, and matches the caller's own
+        `if not exch_token: continue` guard.
+
+        Real futures tokens are absent from `ws_token_index` (it keeps `Series = "OPTION"`
+        rows only), which is exactly why the live path resolves them from the SDK's
+        SecurityMaster rather than locally -- see `services/bots/scalping/futures_feed`.
+        """
+        if not str(product_type or "").lower().startswith("fut"):
+            return False, False
+        if not stock_code or not expiry_date:
+            return False, False
+        symbol = self._futures_symbol(str(stock_code), str(expiry_date))
+        register_mock_futures_contract(symbol, str(stock_code).upper(), str(expiry_date))
+        quotes_token = symbol if get_exchange_quotes else False
+        depth_token = symbol.replace("!", "2!", 1) if get_market_depth else False
+        return quotes_token, depth_token
+
     def subscribe_feeds(self, stock_token: str | list[str] = "", **kwargs):
+        if not stock_token and str(kwargs.get("product_type") or "").lower().startswith("fut"):
+            # The futures path subscribes by contract, not by token (the live code has no
+            # local token to pass), so resolve it here the same way the SDK would.
+            token, _depth = self.get_stock_token_value(
+                exchange_code=str(kwargs.get("exchange_code") or ""),
+                stock_code=str(kwargs.get("stock_code") or ""),
+                product_type="futures",
+                expiry_date=str(kwargs.get("expiry_date") or ""),
+                get_exchange_quotes=True,
+                get_market_depth=False,
+            )
+            if not token:
+                return {"message": "Stock  subscribed successfully"}
+            self._ws_tokens.add(token)
+            return {"message": f"Stock {token} subscribed successfully"}
         if kwargs.get("get_order_notification"):
             # Real ICICI opens a separate socket.io channel that still dispatches through
             # on_ticks. Nothing to poll here -- events are injected via
@@ -229,9 +294,25 @@ class MockBreezeSdk:
         stop = self._ws_stop
         while stop is not None and not stop.is_set():
             for token in list(self._ws_tokens):
-                state = running_state.setdefault(token, seed_running_state(token))
-                tick = step_live_tick_fields(token, state)
-                tick.update(enrich_contract_fields(token))
+                if is_mock_futures_symbol(token):
+                    # Seed from the real local bhavcopy spot rather than a hash: the signal
+                    # under test keys off NIFTY price structure, so a plausible level and a
+                    # realistic lot size make the mock candles worth looking at.
+                    if token not in running_state:
+                        running_state[token] = seed_running_state(
+                            token, base_price=resolve_underlying_spot("NIFTY") or 24000.0
+                        )
+                    tick = step_live_tick_fields(
+                        token,
+                        running_state[token],
+                        lot_size=75,
+                        sigma_pct=INDEX_SIGMA_PCT,
+                    )
+                    tick.update(futures_identity(token))
+                else:
+                    state = running_state.setdefault(token, seed_running_state(token))
+                    tick = step_live_tick_fields(token, state)
+                    tick.update(enrich_contract_fields(token))
                 if self.on_ticks is not None:
                     try:
                         self.on_ticks(tick)

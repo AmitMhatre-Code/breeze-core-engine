@@ -5,8 +5,23 @@ import { apiClient } from "@/lib/api-client";
 
 export const BOT_HOLDINGS_WRITER = "holdings_writer" as const;
 export const BOT_EXPIRY_INDEX_WRITER = "expiry_index_writer" as const;
+export const BOT_MOMENTUM_LONG_SCALPER = "momentum_long_scalper" as const;
+export const BOT_IRON_FLY_SCALPER = "iron_fly_scalper" as const;
 
-export type BotType = typeof BOT_HOLDINGS_WRITER | typeof BOT_EXPIRY_INDEX_WRITER;
+export type BotType =
+  | typeof BOT_HOLDINGS_WRITER
+  | typeof BOT_EXPIRY_INDEX_WRITER
+  | typeof BOT_MOMENTUM_LONG_SCALPER
+  | typeof BOT_IRON_FLY_SCALPER;
+
+export const SCALPER_BOT_TYPES: BotType[] = [
+  BOT_MOMENTUM_LONG_SCALPER,
+  BOT_IRON_FLY_SCALPER,
+];
+
+export function isScalper(botType: BotType): boolean {
+  return SCALPER_BOT_TYPES.includes(botType);
+}
 
 export type BotRunStatus = "running" | "completed" | "proposed" | "skipped" | "failed";
 
@@ -63,6 +78,129 @@ export type ExpiryIndexWriterConfig = {
   profit_book_premium_pct: number;
 };
 
+/** Paper runs the full logic against live prices and places nothing; live places real
+ *  orders. A different axis from Bots 1 and 2's `approval_mode` — a scalper never asks
+ *  before a trade, because approving dozens of scalps a day is not a workflow. */
+export type ScalperMode = "paper" | "live";
+
+export type SessionWindow = { start: string; end: string };
+
+export type ScalperRiskConfig = {
+  cumulative_stop_inr: number;
+  consecutive_loss_limit: number;
+  cooldown_minutes: number;
+  /** Broker calls held back so scalping can never starve the dashboard, the other bots,
+   *  or — the one that matters — a manual square-off. */
+  api_budget_reserve_calls: number;
+};
+
+export type ScalperExecutionConfig = {
+  entry_limit_tolerance_pct: number;
+  entry_fill_timeout_seconds: number;
+  entry_retries: number;
+  exit_limit_band_pct: number;
+};
+
+export type MomentumLongScalperConfig = {
+  index: string;
+  trade_on_expiry_day: boolean;
+  mode: ScalperMode;
+  sessions: SessionWindow[];
+  hard_square_off_ist: string;
+  /** Capital deployed, not risked. Lots = floor(outlay / cost), and an ATM option cheapens
+   *  towards expiry, so this buys more lots the nearer expiry gets. */
+  premium_outlay_inr: number;
+  signal: {
+    candle_seconds: number;
+    ema_period: number;
+    volume_ma_period: number;
+    volume_multiplier: number;
+    require_vwap: boolean;
+  };
+  exits: {
+    /** A trailing trigger, not a take-profit: reaching it starts the runner. */
+    target_pts: number;
+    stop_loss_pts: number;
+    time_invalidation_seconds: number;
+    time_invalidation_min_move_pts: number;
+    level_1_trigger_pts: number;
+    level_1_lock_pts: number;
+    level_2_trigger_pts: number;
+    level_2_lock_pts: number;
+    level_3_runner_step_pts: number;
+  };
+  execution: ScalperExecutionConfig;
+  risk: ScalperRiskConfig;
+};
+
+export type IronFlyScalperConfig = {
+  index: string;
+  trade_on_expiry_day: boolean;
+  mode: ScalperMode;
+  sessions: SessionWindow[];
+  hard_square_off_ist: string;
+  margin_ceiling_inr: number;
+  min_lots: number;
+  structure: {
+    wing_width_points: number;
+    widen_above_vix: number | null;
+    widened_wing_width_points: number;
+  };
+  exits: {
+    target_decay_pct: number;
+    /** Both stops are live and the tighter binds; either can be null to switch it off. */
+    hard_stop_loss_inr: number | null;
+    stop_loss_credit_pct: number | null;
+    max_spot_drift_pct: number;
+  };
+  reentry: {
+    cooldown_minutes: number;
+    range_window_minutes: number;
+    max_range_pct: number;
+  };
+  execution: ScalperExecutionConfig;
+  risk: ScalperRiskConfig;
+};
+
+/** One scalper round trip. `friction` is a first-class field, not a derived one: at roughly
+ *  a hundred rupees a cycle it is the constraint that decides whether the strategy works. */
+export type BotCycle = {
+  id: string;
+  run_id: string;
+  bot_type: BotType;
+  cycle_no: number;
+  structure: string;
+  legs: Record<string, unknown>[];
+  lots: number | null;
+  opened_at: string | null;
+  closed_at: string | null;
+  entry_value: number | null;
+  exit_value: number | null;
+  gross_pnl: number | null;
+  friction: number | null;
+  net_pnl: number | null;
+  exit_reason_code: string | null;
+  exit_reason_text: string | null;
+  detail: Record<string, unknown> | null;
+  paper: boolean;
+};
+
+export type TradingCharges = {
+  brokerage_per_order_inr: number;
+  brokerage_pct_of_premium: number;
+  brokerage_cap_inr: number | null;
+  stt_sell_pct: number;
+  /** NSE (NFO). BSE charges a different rate, so one field could only ever be right
+   *  for one exchange. */
+  exchange_txn_pct: number;
+  exchange_txn_pct_bse: number;
+  sebi_pct: number;
+  ipft_pct: number;
+  stamp_buy_pct: number;
+  gst_pct: number;
+  slippage_spread_fraction: number;
+};
+
 export type Bot = {
   id: string;
   bot_type: BotType;
@@ -78,7 +216,10 @@ export type Bot = {
 export type BotRun = {
   id: string;
   bot_type: BotType;
-  trigger: "schedule" | "manual" | "session_arrival";
+  /** `session` is the scalpers': one row covering a whole trading day, with its round
+   *  trips in `bot_cycles` beneath it — a different unit of work, not a fourth way to
+   *  start a run. */
+  trigger: "schedule" | "manual" | "session_arrival" | "session";
   status: BotRunStatus;
   reason_code: string | null;
   reason_text: string | null;
@@ -99,6 +240,14 @@ export const BOT_META: Record<BotType, { title: string; blurb: string }> = {
     title: "Expiry-Day Index Writer",
     blurb: "Sizes a short index leg against free margin, arms its stop on fill.",
   },
+  [BOT_MOMENTUM_LONG_SCALPER]: {
+    title: "Momentum Long Scalper",
+    blurb: "Buys one ATM option on a 1-minute NIFTY futures signal, trails it out.",
+  },
+  [BOT_IRON_FLY_SCALPER]: {
+    title: "Iron Fly Scalper",
+    blurb: "Sells an ATM fly under a margin ceiling, books it on credit decay.",
+  },
 };
 
 export const INDEX_LABEL: Record<string, string> = { NIFTY: "NIFTY", BSESEN: "SENSEX" };
@@ -107,6 +256,51 @@ export function useBots() {
   return useQuery({
     queryKey: ["bots"],
     queryFn: ({ signal }) => apiClient.get<Bot[]>("/bots/list", signal),
+  });
+}
+
+/** A session's round trips. Fetched only when a run is expanded: a scalper can produce
+ *  dozens a day, and loading every session's cycles to render a collapsed list would pull
+ *  the whole month for nothing. */
+export function useBotCycles(runId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["bots", "cycles", runId],
+    enabled: Boolean(runId) && enabled,
+    queryFn: ({ signal }) =>
+      apiClient.get<BotCycle[]>(`/bots/cycles?run_id=${encodeURIComponent(runId!)}`, signal),
+  });
+}
+
+/** Today's cycles for one bot, for the card's counters. */
+export function useTodaysCycles(botType: BotType, enabled = true) {
+  return useQuery({
+    queryKey: ["bots", "cycles", "today", botType],
+    enabled,
+    queryFn: ({ signal }) =>
+      apiClient.get<BotCycle[]>(`/bots/cycles?bot_type=${botType}&limit=500`, signal),
+    select: (cycles: BotCycle[]) => {
+      const today = new Date().toISOString().slice(0, 10);
+      return cycles.filter((c) => (c.opened_at ?? "").slice(0, 10) === today);
+    },
+  });
+}
+
+/** The shared cost model. Deployment-wide, so it is not keyed by bot. */
+export function useTradingCharges() {
+  return useQuery({
+    queryKey: ["bots", "charges"],
+    queryFn: ({ signal }) => apiClient.get<TradingCharges>("/bots/charges", signal),
+  });
+}
+
+export function useUpdateTradingCharges() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<TradingCharges>) =>
+      apiClient.patch<TradingCharges>("/bots/charges", patch),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["bots", "charges"] });
+    },
   });
 }
 

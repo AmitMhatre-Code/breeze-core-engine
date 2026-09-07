@@ -15,6 +15,7 @@ namespace and the API namespace disjoint, which is the same shape `/strategy-bui
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -28,6 +29,7 @@ from icici_breeze_backend.app.db.bots_migrate import (
 )
 from icici_breeze_backend.app.domain.bots import (
     ApprovalResult,
+    BotCycleRecord,
     ApproveProposalRequest,
     BotRecord,
     BotRunRecord,
@@ -38,12 +40,15 @@ from icici_breeze_backend.app.domain.bots import (
     RepriceRequest,
     ProposalRecord,
     ReasonCode,
+    TradingCharges,
+    TradingChargesUpdate,
     ScanResponse,
     UpdateBotRequest,
     UpdateScripPrefsRequest,
     ScripPref,
 )
 from icici_breeze_backend.app.repositories import bots as repo
+from icici_breeze_backend.app.services.bots.charges import load_charges, save_charges
 from icici_breeze_backend.app.services.bots import proposals
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
@@ -74,6 +79,55 @@ async def list_runs(
     if bot_type is not None:
         _validate_bot_type(bot_type)
     return repo.list_runs(ctx.user_id, bot_type=bot_type, limit=limit)
+
+
+@router.get("/cycles", response_model=list[BotCycleRecord])
+async def list_cycles(
+    run_id: Optional[str] = Query(None),
+    bot_type: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """A scalper session's round trips, nested under its run rather than in the run log.
+
+    Separate from `/runs` because the two have different cardinality: one run row a day
+    against dozens of cycles. Flattening cycles into the run log would drown the record of
+    *why nothing happened* that the log exists to preserve.
+    """
+    if bot_type is not None:
+        _validate_bot_type(bot_type)
+    return repo.list_cycles(ctx.user_id, run_id=run_id, bot_type=bot_type, limit=limit)
+
+
+@router.get("/charges", response_model=TradingCharges)
+async def get_charges(ctx: RequestContext = Depends(get_request_context)):
+    """The shared round-trip cost model.
+
+    Deployment-wide rather than per-bot or per-user: both scalpers and the backtest harness
+    must price the same trade identically, or they describe different strategies.
+    """
+    del ctx
+    return TradingCharges(**asdict(load_charges()))
+
+
+@router.patch("/charges", response_model=TradingCharges)
+async def update_charges(
+    payload: TradingChargesUpdate,
+    ctx: RequestContext = Depends(get_request_context),
+    _: None = Depends(require_trading_not_revoked),
+):
+    """Edit the statutory rates.
+
+    Editable because they are set by regulation and change without notice -- STT on option
+    sales went 0.0625% to 0.1% in October 2024. The shipped values are defaults to be checked
+    against a real contract note, not facts.
+    """
+    del ctx
+    updates = payload.model_dump(exclude_unset=True, exclude_none=True)
+    try:
+        return TradingCharges(**asdict(save_charges(**updates)))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/scrip-prefs", response_model=list[ScripPref])

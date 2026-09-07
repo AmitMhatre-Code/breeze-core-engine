@@ -1,0 +1,371 @@
+"""NIFTY futures tick feed for the scalping signal (docs/bots-scalping-plan.md section 3.2).
+
+Why futures rather than the index
+---------------------------------
+The signal needs a volume surge filter and a session VWAP. The NIFTY *index* has neither --
+an index has no traded quantity at all -- so both are only computable against the futures
+contract. The source specification said "NIFTY spot" while also requiring a volume filter;
+this is that contradiction resolved.
+
+Why this bypasses the local scrip master
+----------------------------------------
+`scrip_master` holds only CE/PE rows and `ws_token_index.populate_ws_token_index_from_raw`
+filters to `Series = "OPTION"` with a parseable strike, so there is **no futures token in
+local reference data** and `subscribe_option`'s token path cannot reach one. The way out is
+the one `index_spot_feed` already uses for the cash index: ask the SDK for the token from its
+own SecurityMaster (`get_stock_token_value`), then subscribe. No reference-data change, no
+new ingest, nothing to keep in sync.
+
+The consequence is that an arriving futures tick is *unidentifiable* to the normal pipeline:
+`ws_tick_normalize.parse_icici_tick` requires a strike and returns None without one, so the
+chain path ignores these ticks entirely. That is why this module listens on
+`register_raw_tick_listener`, which fires before any parsing
+(`ws_tick_pipeline.ingest_tick`), and matches ticks by the token symbol it subscribed.
+
+The `sdk.interval` hazard
+-------------------------
+`subscribe_feeds(interval=...)` would give broker-computed OHLCV bars directly, and is NOT
+used. It sets `self.interval` on the shared SDK, and `get_stock_token_value` reads that:
+
+    if self.interval == "" or self.interval == None:
+        exchange_code_list["BFO"] = "8."
+
+so a non-empty interval silently flips BFO token resolution from `8.` to `2.`, while this app
+hard-codes `BFO: "8.1"` in `ws_token_index.EXCHANGE_TO_WS_PREFIX`. One OHLCV subscribe would
+break every SENSEX subscription and tick route in the process, with no error raised. Building
+candles from plain quote ticks avoids the whole class of problem -- see `candles`.
+"""
+from __future__ import annotations
+
+import datetime
+import logging
+import threading
+from dataclasses import dataclass
+from typing import Any, Optional
+
+import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.timezone import now_ist
+from icici_breeze_backend.app.services.bots.scalping.candles import CandleBuilder
+
+_logger = logging.getLogger(__name__)
+
+INDEX_STOCK_CODE = "NIFTY"
+INDEX_EXCHANGE = cfg.NFO
+
+# The SDK keys its SecurityMaster as `FUT-{underlying}-{expiry}` with the expiry copied
+# verbatim from the FONSE CSV column. This app normalises the same column to `DD-MMM-YYYY`,
+# but the raw file's casing/format is not observable off the production static IP, so the
+# token is resolved by trying candidates in order and remembering the one that worked.
+# Cheap (a dict lookup inside the SDK, no network) and self-correcting.
+_EXPIRY_FORMAT_CANDIDATES = ("%d-%b-%Y", "%d-%B-%Y", "%Y-%m-%d", "%d%b%Y")
+
+
+@dataclass(frozen=True)
+class FuturesContract:
+    stock_code: str
+    expiry_display: str  # DD-MMM-YYYY, this app's canonical form
+    expiry_date: datetime.date
+
+
+def _parse_display(display: str) -> Optional[datetime.date]:
+    try:
+        return datetime.datetime.strptime(str(display).strip(), "%d-%b-%Y").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def monthly_expiries(option_expiries: list[str]) -> list[datetime.date]:
+    """Monthly expiries derived from the option expiry list: the last one in each month.
+
+    NIFTY futures are monthly-only and expire alongside the month's final weekly option
+    expiry, so the options list -- which this app *does* hold -- yields the futures calendar
+    without a futures scrip master. Deriving it beats hardcoding "last Thursday": SEBI has
+    moved expiry weekdays before, which is the same reason `scheduler._expiring_today` reads
+    the scrip master rather than a weekday rule.
+    """
+    by_month: dict[tuple[int, int], datetime.date] = {}
+    for raw in option_expiries or []:
+        d = _parse_display(raw)
+        if d is None:
+            continue
+        key = (d.year, d.month)
+        if key not in by_month or d > by_month[key]:
+            by_month[key] = d
+    return sorted(by_month.values())
+
+
+def near_month_contract(
+    option_expiries: list[str], *, today: Optional[datetime.date] = None
+) -> Optional[FuturesContract]:
+    """The contract the signal reads: near-month, rolling on expiry day.
+
+    "Roll on expiry day" means the near month stays current *through* its own expiry session
+    and the next month is used from the following day, so `>= today` is the right comparison.
+    The known cost, accepted when this was chosen over a days-before roll: in the final
+    sessions liquidity migrates to the next series, so the volume filter is reading a
+    thinning contract exactly then.
+    """
+    today = today or now_ist().date()
+    for expiry in monthly_expiries(option_expiries):
+        if expiry >= today:
+            return FuturesContract(
+                stock_code=INDEX_STOCK_CODE,
+                expiry_display=expiry.strftime("%d-%b-%Y"),
+                expiry_date=expiry,
+            )
+    return None
+
+
+def _expiry_candidates(contract: FuturesContract) -> list[str]:
+    seen: list[str] = []
+    for fmt in _EXPIRY_FORMAT_CANDIDATES:
+        value = contract.expiry_date.strftime(fmt)
+        for variant in (value, value.upper()):
+            if variant not in seen:
+                seen.append(variant)
+    return seen
+
+
+class NiftyFuturesFeed:
+    """Owns the subscription, the raw-tick listener and the candle builder for one contract.
+
+    One instance per process. Thread-safety matters here and not in `candles`: the SDK's tick
+    callback runs on the socket thread while the bot's decision loop reads indicators from
+    its own, so every touch of the builder is under `_lock`.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._builder = CandleBuilder()
+        self._contract: Optional[FuturesContract] = None
+        self._token_symbol: Optional[str] = None
+        self._expiry_format: Optional[str] = None
+        self._listener_registered = False
+        self._subscribed_date: Optional[datetime.date] = None
+        self._last_error: Optional[str] = None
+        self._ticks_seen = 0
+
+    # ------------------------------------------------------------ subscription
+
+    def _resolve_token(self, sdk: Any, contract: FuturesContract) -> Optional[str]:
+        """Ask the SDK for the futures token, trying each expiry format until one resolves.
+
+        `get_stock_token_value` reports a miss by calling `subscribe_exception`, which raises,
+        so a wrong format surfaces as an exception rather than a falsy return -- both are
+        treated as "try the next candidate".
+        """
+        # The SDK reads `self.interval` while resolving BFO tokens and never initialises it
+        # in __init__ (see module docstring, and the same guard in `index_spot_feed`).
+        if not hasattr(sdk, "interval"):
+            sdk.interval = ""
+        for candidate in _expiry_candidates(contract):
+            try:
+                result = sdk.get_stock_token_value(
+                    exchange_code=INDEX_EXCHANGE,
+                    stock_code=contract.stock_code,
+                    product_type="futures",
+                    expiry_date=candidate,
+                    get_exchange_quotes=True,
+                    get_market_depth=False,
+                )
+            except Exception:  # noqa: BLE001
+                _logger.debug("futures feed: expiry %r raised during lookup", candidate)
+                continue
+            # The SDK swallows its own failures and *returns* the exception object rather
+            # than raising (`except Exception as e: return e`), so an unresolved contract
+            # arrives as a non-tuple. `index_spot_feed` documents the same hazard. Check the
+            # shape explicitly instead of relying on the tuple unpack to blow up.
+            if not isinstance(result, tuple) or len(result) != 2:
+                _logger.debug(
+                    "futures feed: expiry format %r did not resolve a token (%r)",
+                    candidate,
+                    type(result).__name__,
+                )
+                continue
+            exch_token, _depth = result
+            if exch_token:
+                self._expiry_format = candidate
+                _logger.info(
+                    "futures feed: resolved %s %s token=%s (expiry format %r)",
+                    contract.stock_code,
+                    contract.expiry_display,
+                    exch_token,
+                    candidate,
+                )
+                return str(exch_token)
+        return None
+
+    def ensure_subscribed(self, proc: Any, user_id: str, option_expiries: list[str]) -> bool:
+        """Idempotent per trading day. False means no feed -- the caller must not latch.
+
+        Returns False rather than raising when there is no session, mirroring
+        `index_spot_feed.sync_index_spot_subscriptions`: a subscribe that never happened must
+        not be recorded as today's success, or a session that was dead at market open leaves
+        the feed cold until the process restarts.
+        """
+        from icici_breeze_backend.app.services.breeze_websocket_manager import (
+            _ensure_ws,
+            _reset_stale_auth_latch,
+            _subscribe_feeds_error,
+        )
+        from icici_breeze_backend.app.services import ws_tick_pipeline
+
+        today = now_ist().date()
+        contract = near_month_contract(option_expiries, today=today)
+        if contract is None:
+            self._last_error = "No monthly NIFTY expiry available from the scrip master."
+            _logger.warning("futures feed: %s", self._last_error)
+            return False
+
+        with self._lock:
+            same_contract = self._contract == contract
+            if self._subscribed_date == today and same_contract and self._token_symbol:
+                return True
+            if not same_contract and self._contract is not None:
+                # Rolling to a new series: the old contract's cumulative counters have no
+                # relationship to the new one's, so the history must go rather than produce
+                # one absurd bar across the boundary.
+                _logger.info(
+                    "futures feed: rolling %s -> %s, resetting candles",
+                    self._contract.expiry_display,
+                    contract.expiry_display,
+                )
+                self._builder = CandleBuilder()
+                self._token_symbol = None
+
+        sdk = _ensure_ws(proc, user_id)
+        if sdk is None:
+            self._last_error = "No live broker session; futures feed not subscribed."
+            return False
+        _reset_stale_auth_latch(sdk)
+
+        token = self._resolve_token(sdk, contract)
+        if token is None:
+            self._last_error = (
+                f"Could not resolve a futures token for {contract.stock_code} "
+                f"{contract.expiry_display} in any known expiry format."
+            )
+            _logger.warning("futures feed: %s", self._last_error)
+            return False
+
+        try:
+            err = _subscribe_feeds_error(
+                sdk.subscribe_feeds(
+                    exchange_code=INDEX_EXCHANGE,
+                    stock_code=contract.stock_code,
+                    product_type="futures",
+                    expiry_date=self._expiry_format,
+                    get_exchange_quotes=True,
+                    get_market_depth=False,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._last_error = f"subscribe_feeds raised: {exc}"
+            _logger.warning("futures feed: %s", self._last_error, exc_info=True)
+            return False
+        if err is not None:
+            # `subscribe_feeds` reports failure by *returning* an error string rather than
+            # raising -- see the breeze_connect subscribe hazards noted in the WS manager.
+            self._last_error = f"Broker rejected the futures subscribe: {err}"
+            _logger.warning("futures feed: %s", self._last_error)
+            return False
+
+        with self._lock:
+            self._contract = contract
+            self._token_symbol = self._format_symbol(token)
+            self._subscribed_date = today
+            self._last_error = None
+            if not self._listener_registered:
+                ws_tick_pipeline.register_raw_tick_listener(self._on_raw_tick)
+                self._listener_registered = True
+        return True
+
+    @staticmethod
+    def _format_symbol(token: str) -> str:
+        from icici_breeze_backend.app.services.reference_data.ws_token_index import (
+            EXCHANGE_TO_WS_PREFIX,
+        )
+
+        raw = str(token).strip()
+        # The SDK may hand back a bare token or an already-prefixed `4.1!nnnn`.
+        if "!" in raw:
+            return raw
+        return f"{EXCHANGE_TO_WS_PREFIX[INDEX_EXCHANGE]}!{raw}"
+
+    # ------------------------------------------------------------ ticks
+
+    def _on_raw_tick(self, payload: Any) -> None:
+        """Raw listener. Must never raise -- `ingest_tick` swallows, but silently."""
+        try:
+            if not isinstance(payload, dict):
+                return
+            with self._lock:
+                wanted = self._token_symbol
+            if wanted is None:
+                return
+            symbol = str(payload.get("symbol") or "").strip()
+            if symbol != wanted:
+                return
+            import time
+
+            with self._lock:
+                self._ticks_seen += 1
+                self._builder.ingest(
+                    time.time(),
+                    payload.get("last"),
+                    payload.get("ttq"),
+                    payload.get("ttv"),
+                    payload.get("avgPrice"),
+                )
+        except Exception:  # noqa: BLE001
+            _logger.debug("futures feed: raw tick handling failed", exc_info=True)
+
+    def flush(self, now_ts: float) -> None:
+        """Close a bar the clock has left even if the contract did not print."""
+        with self._lock:
+            self._builder.flush(now_ts)
+
+    # ------------------------------------------------------------ read
+
+    @property
+    def builder(self) -> CandleBuilder:
+        return self._builder
+
+    @property
+    def contract(self) -> Optional[FuturesContract]:
+        return self._contract
+
+    def status(self, *, ema_period: int, volume_ma_period: int) -> dict[str, Any]:
+        """Everything a run-log entry needs to explain a no-signal session."""
+        with self._lock:
+            status = self._builder.warmup_status(
+                ema_period=ema_period, volume_ma_period=volume_ma_period
+            )
+            status.update(
+                {
+                    "contract": self._contract.expiry_display if self._contract else None,
+                    "token_symbol": self._token_symbol,
+                    "expiry_format": self._expiry_format,
+                    "ticks_seen": self._ticks_seen,
+                    "last_error": self._last_error,
+                }
+            )
+            return status
+
+
+_feed: Optional[NiftyFuturesFeed] = None
+_feed_lock = threading.Lock()
+
+
+def get_feed() -> NiftyFuturesFeed:
+    global _feed
+    with _feed_lock:
+        if _feed is None:
+            _feed = NiftyFuturesFeed()
+        return _feed
+
+
+def reset_feed_for_tests() -> None:
+    global _feed
+    with _feed_lock:
+        _feed = None

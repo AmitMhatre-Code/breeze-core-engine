@@ -1,4 +1,18 @@
-"""Universal per-user ICICI Breeze API gate (spacing, concurrency, 429/503 retry)."""
+"""Universal per-user ICICI Breeze API gate (spacing, concurrency, 429/503 retry).
+
+The per-user lock below serializes *all* outbound Breeze calls: at most one in flight per
+user, always. That is deliberate and load-bearing — see design decision #24 in
+`docs/design-decisions.md` before removing it or dispatching order calls concurrently.
+Short version: ICICI limits a count per rolling minute (not concurrency) and its cooldown
+outlasts the minute boundary, so bursting spends the same budget faster for a multi-minute
+penalty; and serialization is the only reason a throttle is unambiguously a *refusal*,
+which is what lets `squareoff_dispatcher` retry a failed exit leg without risking a double
+fill. Concurrent dispatch was built and reverted twice (2026-06-13, 2026-07-11).
+
+The reactive backoff here is intentionally short (~4s total). It is the last resort for
+throttles the proactive window failed to predict, not the primary defence — lengthening it
+is not the fix for a flow that keeps getting throttled; cutting that flow's call count is.
+"""
 from __future__ import annotations
 
 import logging

@@ -6,6 +6,8 @@ import pytest
 from icici_breeze_backend.app.db.bots_migrate import (
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
+    BOT_IRON_FLY_SCALPER,
+    BOT_MOMENTUM_LONG_SCALPER,
     ensure_bots_tables,
 )
 from icici_breeze_backend.app.domain.bots import ProposalLeg, ReasonCode, ScripPref
@@ -42,7 +44,12 @@ def _leg(stock_code="ITC", right="call", lots=1, **kw):
 
 def test_bots_are_created_lazily_disabled_with_policy_defaults(db_path):
     bots = repo.list_bots("u1")
-    assert {b.bot_type for b in bots} == {BOT_HOLDINGS_WRITER, BOT_EXPIRY_INDEX_WRITER}
+    assert {b.bot_type for b in bots} == {
+        BOT_HOLDINGS_WRITER,
+        BOT_EXPIRY_INDEX_WRITER,
+        BOT_MOMENTUM_LONG_SCALPER,
+        BOT_IRON_FLY_SCALPER,
+    }
     assert all(b.enabled is False for b in bots), "a new bot must never start armed"
 
     holdings = next(b for b in bots if b.bot_type == BOT_HOLDINGS_WRITER)
