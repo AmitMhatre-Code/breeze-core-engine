@@ -47,9 +47,11 @@ const MODE_LABEL: Record<ScalperCardMode, string> = {
   live: "Live",
 };
 
+// Each blurb is written to fit two lines at the 22rem card width — the card clamps to two
+// and holds that height, so anything longer is silently cut.
 const MODE_BLURB: Record<ScalperCardMode, string> = {
   off: "Not running. No signals are evaluated and nothing is recorded.",
-  paper: "Runs the full strategy on live prices and places no orders. Fills are simulated at the touch, with slippage and charges.",
+  paper: "Runs on live prices but places no orders. Fills are simulated at the touch, with slippage and charges.",
   live: "Places real orders on the exchange, unattended, within the limits you set.",
 };
 
@@ -219,17 +221,13 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
     }
   }
 
-  const rows: Array<[string, string, string]> = [
-    ["Cycles today", String((cycles ?? []).length), "text-text"],
-    ["Net P&L", closed.length ? formatIndianMoneyCompact(net) : "—", closed.length ? moneyToneClass(net) : "text-text"],
-    ["Friction", friction ? formatIndianMoneyCompact(friction) : "—", "text-text"],
-  ];
 
   return (
     <>
-      {/* `h-full` + the grid's default stretch, not `aspect-square` — matches BotCard so
-          all four cards in a row share a height and their mode switches line up. */}
-      <section className="app-card flex h-full min-h-[21rem] flex-col p-4">
+      {/* `h-full` + the grid's default stretch — matches BotCard so all four cards in a row
+          share one height. No `min-h` floor or `flex-1` filler: the lines above the mode
+          switch are all clamped, so the cards reach the same natural height without padding. */}
+      <section className="app-card flex h-full flex-col p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <span className="inline-flex items-center gap-1.5 rounded border border-gtt/30 bg-gtt-tint px-2 py-0.5 font-mono text-micro font-bold uppercase tracking-[0.06em] text-gtt-on-tint focus-within:ring-2 focus-within:ring-accent/45">
@@ -253,7 +251,7 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
             type="button"
             aria-label={`${meta.title} settings`}
             onClick={() => setSettingsOpen(true)}
-            className="grid size-8 shrink-0 place-items-center rounded-lg border border-border bg-panel2 text-muted transition hover:border-accent/45 hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted transition hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
           >
             <GearIcon />
           </button>
@@ -273,7 +271,8 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
             label={closingOut ? "Closing" : mode === "off" ? "Idle" : "Armed"}
             badge={closingOut ? "Live position" : mode === "paper" ? "Paper" : undefined}
           />
-          <p className="font-mono text-hint text-muted">
+          {/* Two lines reserved so the summary rows below line up with the writer cards'. */}
+          <p className="line-clamp-2 min-h-[2lh] font-mono text-hint text-muted">
             {closingOut
               ? "Switched off with a real position still open. Opening nothing new; managing this one to its exit."
               : windowSummary(bot)}
@@ -285,34 +284,50 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
             <p className={`mt-1 font-mono text-hint ${feedToneClass(feed.tone)}`}>{feed.text}</p>
           )}
           <dl className="mt-3 grid gap-1.5">
-            {rows.map(([label, value, tone]) => (
-              <div key={label} className="flex items-baseline justify-between gap-3 text-hint">
-                <dt className="text-faint">{label}</dt>
-                <dd className={`m-0 font-mono tabular-nums ${tone}`}>{value}</dd>
-              </div>
-            ))}
+            <div className="flex items-baseline justify-between gap-3 text-hint">
+              <dt className="text-faint">Cycles today</dt>
+              <dd className="m-0 font-mono tabular-nums text-text">{(cycles ?? []).length}</dd>
+            </div>
+            {/* P&L and friction on one line: friction is roughly a hundred rupees a cycle and
+                is what decides whether the strategy clears its own costs, so it rides right
+                next to the number it eats into rather than in a row of its own. */}
+            <div className="flex items-baseline justify-between gap-3 text-hint">
+              <dt className="text-faint">Net P&L</dt>
+              <dd className="m-0 font-mono tabular-nums">
+                {closed.length ? (
+                  <>
+                    <span className={moneyToneClass(net)}>{formatIndianMoneyCompact(net)}</span>
+                    {friction ? (
+                      <span className="text-faint"> · {formatIndianMoneyCompact(friction)} fr</span>
+                    ) : null}
+                  </>
+                ) : (
+                  <span className="text-text">—</span>
+                )}
+              </dd>
+            </div>
           </dl>
         </div>
 
-        <div className="flex-1" />
-
-        <ModePill
-          mode={mode}
-          disabled={readOnly || update.isPending}
-          liveLocked={liveLocked}
-          liveLockedReason={eligibility?.blocked_reason ?? null}
-          onChange={setMode}
-        />
+        <div className="mt-4">
+          <ModePill
+            mode={mode}
+            disabled={readOnly || update.isPending}
+            liveLocked={liveLocked}
+            liveLockedReason={eligibility?.blocked_reason ?? null}
+            onChange={setMode}
+          />
+        </div>
         {/* Stacked in one grid cell with the inactive blurbs `invisible` rather than
-            unmounted, so the block is always as tall as the longest one and the control
-            above it never shifts under the cursor mid-choice. Same reasoning as BotCard.
-            `min-h-[3lh]` matches BotCard so the mode switch lands at the same Y there. */}
-        <div className="mt-1.5 grid min-h-[3lh]">
+            unmounted, so the control above never shifts under the cursor mid-choice. Same
+            reasoning as BotCard: every blurb is written to two lines and clamped to two, so
+            `min-h-[2lh]` fixes the block height and matches the writer cards. */}
+        <div className="mt-1.5 grid min-h-[2lh]">
           {(["off", "paper", "live"] as const).map((value) => (
             <p
               key={value}
               aria-hidden={value !== mode}
-              className={`col-start-1 row-start-1 text-hint text-faint ${
+              className={`col-start-1 row-start-1 line-clamp-2 text-hint text-faint ${
                 value === mode ? "" : "invisible"
               }`}
             >
@@ -322,13 +337,9 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
         </div>
         {/* No "Start a run": a scalper's decision is a signal on a one-minute candle, so
             there is nothing a manual run could mean. The honest control is the mode switch
-            above, and the run log below is where its work shows up. The slot is still
-            reserved (same classes, `invisible`) so the mode switch sits at the same height
-            as it does on the writer cards, which do carry the button. */}
-        <div aria-hidden className="app-btn-outline invisible mt-2 w-full">
-          Start a run
-        </div>
-
+            above, and the run log below is where its work shows up. The writer cards no
+            longer carry a bottom button either (their run trigger moved to the header play
+            icon), so nothing needs reserving here for them to line up against. */}
         {error && <p className="mt-2 text-hint text-down">{error}</p>}
       </section>
 

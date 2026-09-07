@@ -35,6 +35,19 @@ function GearIcon() {
   );
 }
 
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="size-4" aria-hidden>
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+
+/** Header icon buttons (play, gear) share one look: a plain icon, no box or border, colour
+ *  the only hover affordance. `size-8` keeps a comfortable hit target around the 16px glyph. */
+const HEADER_ICON_BTN =
+  "grid size-8 shrink-0 place-items-center rounded-lg text-muted transition hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:pointer-events-none disabled:opacity-40";
+
 /** The three ways a bot can be left, as one value.
  *
  *  The backend keeps this as two fields — `enabled` arms the scheduler, `approval_mode`
@@ -269,12 +282,12 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
 
   return (
     <>
-      {/* `h-full` + the grid's default stretch, not `aspect-square`: the scalper cards
-          carry a row more of stats and can outgrow a square, and a per-card square left
-          each card its own height — so the bottom-pinned mode switch landed at a different
-          Y on each. Stretching every card in a row to the tallest one puts all four
-          switches on one line. `min-h` keeps the card shape when every card is short. */}
-      <section className="app-card flex h-full min-h-[21rem] flex-col p-4">
+      {/* `h-full` + the grid's default stretch keeps the four cards in a row the same
+          height as each other. No `min-h` floor and no `flex-1` filler any more: every
+          fixed-height line above the mode switch (blurb, schedule, mode blurb) is clamped,
+          so all four cards land on the same natural height with no dead space to pad — a
+          genuinely sparse card just carries a little trailing slack. */}
+      <section className="app-card flex h-full flex-col p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             {/* One chip, not a chip plus a spinner: the number is editable inside the
@@ -296,26 +309,38 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
                 status row below starts at the same Y on every bot card. */}
             <p className="app-text-muted mt-1 line-clamp-2 min-h-[2lh] text-hint">{meta.blurb}</p>
           </div>
-          <button
-            type="button"
-            aria-label={`${meta.title} settings`}
-            onClick={() => setSettingsOpen(true)}
-            className="grid size-8 shrink-0 place-items-center rounded-lg border border-border bg-panel2 text-muted transition hover:border-accent/45 hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
-          >
-            <GearIcon />
-          </button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              aria-label={`Start a run for ${meta.title}`}
+              disabled={readOnly}
+              onClick={() => setRunOpen(true)}
+              className={HEADER_ICON_BTN}
+            >
+              <PlayIcon />
+            </button>
+            <button
+              type="button"
+              aria-label={`${meta.title} settings`}
+              onClick={() => setSettingsOpen(true)}
+              className={HEADER_ICON_BTN}
+            >
+              <GearIcon />
+            </button>
+          </div>
         </div>
 
-        {/* Content flows from the top and the controls are pinned to the bottom, so the
-            card's slack collects in ONE place. Centring this block instead put a void
-            above AND below it, which is what made the square read as empty. */}
         <div className="mt-4 flex flex-col gap-1.5">
           <BotStatusRow
             tone={mode === "auto" ? "live" : mode === "semi" ? "guarded" : "idle"}
             label={mode === "manual" ? "Idle" : "Armed"}
             badge={mode === "semi" ? "Asks first" : undefined}
           />
-          <p className="font-mono text-hint text-muted">{nextAction(bot, mode)}</p>
+          {/* Two lines reserved whether the sentence fills them or not, so the summary
+              rows below start at the same Y on every card and read across as a table. */}
+          <p className="line-clamp-2 min-h-[2lh] font-mono text-hint text-muted">
+            {nextAction(bot, mode)}
+          </p>
           <dl className="mt-3 grid gap-1.5">
             {summaryRows(bot, lastRun).map(([label, value]) => (
               <div key={label} className="flex items-baseline justify-between gap-3 text-hint">
@@ -326,34 +351,29 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
           </dl>
         </div>
 
-        <div className="flex-1" />
-
-        <ModePill
-          mode={mode}
-          disabled={readOnly || update.isPending}
-          telegramConnected={telegramConnected}
-          onChange={(next) => void setMode(next)}
-        />
+        <div className="mt-4">
+          <ModePill
+            mode={mode}
+            disabled={readOnly || update.isPending}
+            telegramConnected={telegramConnected}
+            onChange={(next) => void setMode(next)}
+          />
+        </div>
         {/* Under the control, not above it: the sentence describes what the selected
             segment does, so it has to sit where the eye lands after choosing.
 
             All three blurbs are rendered stacked in one grid cell and the inactive two are
-            hidden with `invisible` (which still reserves layout) rather than unmounted, so
-            the block is always as tall as the LONGEST blurb. The card pins its controls to
-            the bottom, so a blurb that wrapped to one line in Manual and two in Auto moved
-            the mode switch itself between clicks — the one control that must not shift
-            under the cursor while you are choosing how much a bot may trade unattended.
-            A fixed min-height would hold only at the width it was measured at.
-
-            `min-h-[3lh]` reserves three text lines (the longest blurb any bot card shows,
-            width permitting) so the mode switch lands at the same Y on writers and
-            scalpers alike — `lh` scales with the line height, unlike a rem value. */}
-        <div className="mt-1.5 grid min-h-[3lh]">
+            hidden with `invisible` (which still reserves layout) rather than unmounted.
+            Every blurb is written to fit two lines at the 22rem card width and clamped to
+            two, so `min-h-[2lh]` holds the block at exactly that height — the mode switch
+            above it never shifts as you click between segments, and it lands at the same Y
+            on writers and scalpers alike (`lh` scales with line height, unlike a rem). */}
+        <div className="mt-1.5 grid min-h-[2lh]">
           {(["manual", "semi", "auto"] as const).map((value) => (
             <p
               key={value}
               aria-hidden={value !== mode}
-              className={`col-start-1 row-start-1 text-hint text-faint ${
+              className={`col-start-1 row-start-1 line-clamp-2 text-hint text-faint ${
                 value === mode ? "" : "invisible"
               }`}
             >
@@ -361,15 +381,6 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
             </p>
           ))}
         </div>
-        <button
-          type="button"
-          className="app-btn-outline mt-2 w-full"
-          disabled={readOnly}
-          onClick={() => setRunOpen(true)}
-        >
-          Start a run
-        </button>
-
         {error && <p className="mt-2 text-hint text-down">{error}</p>}
       </section>
 
