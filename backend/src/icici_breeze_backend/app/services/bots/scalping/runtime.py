@@ -19,8 +19,10 @@ The thread holds no judgement of its own: it gathers a `Snapshot`, hands it to t
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
+import time
 from dataclasses import replace
 from typing import Any, Optional
 
@@ -60,11 +62,25 @@ STALE_EXIT_SECONDS = 60.0
 # own exit or the hard square-off.
 _EXIT_AT_WINDOW_END = {BOT_IRON_FLY_SCALPER: True, BOT_MOMENTUM_LONG_SCALPER: False}
 
+# How long to wait before re-attempting a futures subscribe that failed. The feed cannot be
+# subscribed before the user has a broker session, so a failure early in the day is ordinary
+# and self-correcting -- but retrying it at the PB/SL cadence would spend an SDK token lookup
+# and a warning line every two seconds for as long as the session is missing.
+FEED_RETRY_SECONDS = 30.0
+
 _stop = threading.Event()
 _thread: Optional[threading.Thread] = None
+# Monotonic timestamp of the last futures-subscribe attempt, successful or not.
+_last_feed_attempt = 0.0
 # (user_id, bot_type) -> last decision reason, so an unchanged verdict is logged once rather
 # than every two seconds for a whole session.
 _last_reason: dict[tuple[str, str], str] = {}
+# (user_id, bot_type) -> monotonic time the verdict was last published. An unchanged verdict
+# is re-stated on this cadence so a quiet session leaves a timeline rather than one line: the
+# whole point of the record is telling a bot that stood down all day from one that stopped
+# being asked, and a single line at 09:57 cannot do that.
+_last_published: dict[tuple[str, str], float] = {}
+PUBLISH_INTERVAL_SECONDS = 60.0
 # (user_id, bot_type) -> date already finalised, so the summary is written once a day.
 _finalised: dict[tuple[str, str], Any] = {}
 
@@ -185,24 +201,92 @@ def _is_expiry_day(config: Any) -> bool:
     return contract.expiry_date == now_ist().date()
 
 
-def _log_decision(user_id: str, bot_type: str, decision: Decision) -> None:
-    """Log a verdict once, then only when it changes.
+def _audit_detail(snapshot: Snapshot, decision: Decision) -> dict[str, Any]:
+    """Everything needed to tell two identical-looking stand-downs apart.
 
-    A scalper spends most of a session repeating the same reason -- outside its window, not
-    warm, no signal -- and at a two-second cadence that is thousands of identical lines an
-    hour. Deduplicating keeps the interesting transitions findable.
+    `not_warm` on its own is ambiguous in the worst way: it reads as "give it twenty
+    minutes" whether the feed is filling normally or was never subscribed at all. The
+    difference is visible only in `ticks_seen` and `token_symbol`, so those travel with the
+    verdict -- into the log line and onto the run row -- rather than staying inside a feed
+    object nothing else can see.
+    """
+    feed = dict(snapshot.feed.detail or {})
+    stale_seconds = snapshot.feed.stale_seconds
+    return {
+        "action": decision.action,
+        "feed": {
+            "warm": snapshot.feed.warm,
+            "stale": snapshot.feed.stale,
+            # inf is not JSON, and "never seen a tick" is what it means here.
+            "stale_seconds": (
+                None if stale_seconds == float("inf") else round(float(stale_seconds), 1)
+            ),
+            "subscribed": bool(feed.get("token_symbol")),
+            "contract": feed.get("contract"),
+            "token_symbol": feed.get("token_symbol"),
+            "ticks_seen": feed.get("ticks_seen"),
+            "candles": feed.get("candles"),
+            "candles_required": feed.get("candles_required"),
+            "last_error": feed.get("last_error"),
+        },
+        "gates": {
+            "trading_allowed": snapshot.trading_allowed,
+            "is_trading_day": snapshot.is_trading_day,
+            "is_expiry_day": snapshot.is_expiry_day,
+            "has_open_position": snapshot.has_open_position,
+            "api_calls_remaining": snapshot.api_calls_remaining,
+            "sg_rule_conflict": snapshot.sg_rule_conflict,
+            "realized_net_pnl": snapshot.totals.realized_net_pnl,
+            "unrealized_pnl": round(float(snapshot.unrealized_pnl), 2),
+        },
+        # Whatever the decision itself attached (warm-up status, cooldown counts, budget).
+        "decision": dict(decision.detail or {}),
+    }
+
+
+def _publish_verdict(
+    user_id: str,
+    bot_type: str,
+    run_id: str,
+    snapshot: Snapshot,
+    decision: Decision,
+) -> None:
+    """Log the verdict and record it on the open run row.
+
+    Written on change, and re-stated every `PUBLISH_INTERVAL_SECONDS` so an unchanged verdict
+    still leaves a trail. At the two-second loop cadence, publishing every pass would be
+    thousands of identical lines an hour and a SQLite write behind each one.
+
+    The run row is what the Bots screen reads, so this is the difference between a user
+    seeing "Indicators warming up -- 0 ticks, futures feed not subscribed" and seeing "—".
     """
     key = (user_id, bot_type)
-    if _last_reason.get(key) == decision.reason_code:
+    now = time.monotonic()
+    changed = _last_reason.get(key) != decision.reason_code
+    due = now - _last_published.get(key, 0.0) >= PUBLISH_INTERVAL_SECONDS
+    if not changed and not due:
         return
     _last_reason[key] = decision.reason_code
+    _last_published[key] = now
+
+    detail = _audit_detail(snapshot, decision)
     _logger.info(
-        "scalping[%s]: %s -> %s (%s)",
+        "scalping[%s]: %s -> %s (%s) %s",
         bot_type,
         decision.action,
         decision.reason_code,
         decision.reason_text,
+        json.dumps(detail, default=str, sort_keys=True),
     )
+    try:
+        repo.update_run_reason(
+            run_id,
+            reason_code=decision.reason_code,
+            reason_text=decision.reason_text,
+            detail=detail,
+        )
+    except Exception:  # noqa: BLE001 -- an audit write must never stop the bot
+        _logger.exception("scalping[%s]: could not record the run reason", bot_type)
 
 
 def tick_bot(user_id: str, bot_type: str, config: Any) -> Decision:
@@ -234,13 +318,14 @@ def tick_bot(user_id: str, bot_type: str, config: Any) -> Decision:
         _resolve_sg_conflict(proc, user_id, bot_type, context)
 
     decision = decide(snapshot, config, stale_exit_seconds=STALE_EXIT_SECONDS)
-    _log_decision(user_id, bot_type, decision)
 
     # A session run exists as soon as the bot is doing anything at all, including standing
     # down -- an unexplained quiet day is exactly what the run log is for. The heartbeat is
     # what keeps `reap_stale_runs` from mistaking an all-day session for a stalled one.
+    # Opened before the verdict is published, because the verdict is written onto this row.
     run_id = repo.open_session_run(user_id, bot_type)
     repo.touch_run_heartbeat(run_id)
+    _publish_verdict(user_id, bot_type, run_id, snapshot, decision)
 
     feed = futures_feed.get_feed()
     _finalise_if_day_is_over(user_id, bot_type, config, run_id, snapshot, decision)
@@ -342,8 +427,42 @@ def _current_vix(proc: Any, user_id: str, config: Any) -> Optional[float]:
         return None
 
 
+def _ensure_feed(user_id: str) -> None:
+    """Keep the NIFTY futures feed subscribed and its bars closing. Never raises.
+
+    Nothing else in the process subscribes futures: `index_spot_feed` covers the cash index
+    only, and the chain path drops futures ticks outright because they carry no strike. So
+    this call is the *whole* supply of candles -- without it `is_warm` is false forever and
+    every scalper stands down on `not_warm` for an entire session while looking healthy in
+    the run log.
+
+    Called once a pass rather than once a bot: the feed is a single process-wide
+    subscription to one contract, and any enabled bot's owner has the broker session it
+    needs. The flush is unconditional because a bar the clock has left must close even when
+    the contract has not printed -- otherwise a quiet minute stalls the indicators.
+    """
+    from icici_breeze_backend.app.services.processor import processor
+
+    global _last_feed_attempt
+    feed = futures_feed.get_feed()
+    if not feed.subscribed_today:
+        now = time.monotonic()
+        if now - _last_feed_attempt >= FEED_RETRY_SECONDS:
+            _last_feed_attempt = now
+            try:
+                proc = processor()
+                feed.ensure_subscribed(proc, user_id, momentum_bot.option_expiries(proc))
+            except Exception:  # noqa: BLE001 -- a dead feed must not stop the gate stack
+                _logger.exception("scalping: futures feed subscribe failed")
+    try:
+        feed.flush(time.time())
+    except Exception:  # noqa: BLE001
+        _logger.debug("scalping: candle flush failed", exc_info=True)
+
+
 def tick() -> None:
     """One pass over every enabled scalper. Never raises -- the loop must survive a bad bot."""
+    feed_serviced = False
     for bot_type in SCALPER_BOT_TYPES:
         try:
             bots = repo.list_enabled_bots(bot_type)
@@ -354,6 +473,11 @@ def tick() -> None:
             user_id = repo.bot_owner(record.id)
             if not user_id:
                 continue
+            if not feed_serviced:
+                # Before the first decision of the pass, so a bot never reads a builder that
+                # this pass was about to feed.
+                feed_serviced = True
+                _ensure_feed(user_id)
             try:
                 config = _config_model(bot_type, record.config)
                 tick_bot(user_id, bot_type, config)
@@ -425,5 +549,8 @@ def stop_scalper_loop() -> None:
 
 
 def reset_state_for_tests() -> None:
+    global _last_feed_attempt
     _last_reason.clear()
+    _last_published.clear()
     _finalised.clear()
+    _last_feed_attempt = 0.0

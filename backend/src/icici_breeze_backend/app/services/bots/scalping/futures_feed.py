@@ -335,6 +335,19 @@ class NiftyFuturesFeed:
     def contract(self) -> Optional[FuturesContract]:
         return self._contract
 
+    @property
+    def subscribed_today(self) -> bool:
+        """True when this trading day's subscribe has already succeeded.
+
+        Public so the driver can skip the expiry lookup on the overwhelming majority of
+        passes. `ensure_subscribed` is idempotent, but the caller has to *build* the option
+        expiry list before it can ask, and that read falls back to a DISTINCT over the whole
+        NFO scrip master whenever the reference-data cache is cold -- not something to pay
+        every two seconds for an answer that changes once a day.
+        """
+        with self._lock:
+            return self._subscribed_date == now_ist().date() and self._token_symbol is not None
+
     def status(self, *, ema_period: int, volume_ma_period: int) -> dict[str, Any]:
         """Everything a run-log entry needs to explain a no-signal session."""
         with self._lock:

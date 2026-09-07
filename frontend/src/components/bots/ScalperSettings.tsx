@@ -1,23 +1,38 @@
 "use client";
 
+import { useContext, useEffect } from "react";
+
 import { Checkbox } from "@/components/ui/Checkbox";
-import { NumberInput } from "@/components/ui/NumberInput";
+import { FieldValidityContext, NumberInput } from "@/components/ui/NumberInput";
+import {
+  MARKET_CLOSE,
+  MAX_SESSION_WINDOWS,
+  suggestWindow,
+  validateSessions,
+  warmupWarning,
+} from "@/lib/scalper-sessions";
 import {
   BOT_IRON_FLY_SCALPER,
   type Bot,
   type IronFlyScalperConfig,
   type MomentumLongScalperConfig,
+  type SessionWindow,
 } from "@/lib/use-bots";
 
 export type Tab = { id: string; label: string };
 
+// "schedule" first, and the same id the other two bots already use for their timing tab.
+// When a bot trades is the first thing a user wants to change and the last thing they want
+// to hunt for.
 export const MOMENTUM_TABS: Tab[] = [
+  { id: "schedule", label: "Schedule" },
   { id: "signal", label: "Signal" },
   { id: "exits", label: "Exits" },
   { id: "risk", label: "Risk" },
 ];
 
 export const IRON_FLY_TABS: Tab[] = [
+  { id: "schedule", label: "Schedule" },
   { id: "structure", label: "Structure" },
   { id: "exits", label: "Exits" },
   { id: "reentry", label: "Re-entry" },
@@ -97,6 +112,165 @@ function Check({
   );
 }
 
+function Time({
+  label,
+  value,
+  onChange,
+  disabled,
+  min,
+  max,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  disabled: boolean;
+  min?: string;
+  max?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-micro font-semibold uppercase tracking-[0.06em] text-faint">
+        {label}
+      </span>
+      <input
+        type="time"
+        className="app-input mt-1 w-32 font-mono tabular-nums"
+        aria-label={label}
+        value={value}
+        min={min}
+        max={max}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
+  );
+}
+
+/** When the bot is allowed to open a position, and when it must be flat.
+ *
+ *  Both bots evaluate continuously inside their windows, so "start and stop" is a list of
+ *  windows rather than one pair. The square-off sits alongside them because it is the rule
+ *  the windows have to satisfy -- editing one without the other is how you get a window the
+ *  backend refuses.
+ */
+function ScheduleTab({
+  config,
+  onConfig,
+  disabled,
+  isFly,
+}: {
+  config: MomentumLongScalperConfig | IronFlyScalperConfig;
+  onConfig: (patch: Record<string, unknown>) => void;
+  disabled: boolean;
+  isFly: boolean;
+}) {
+  const sessions = config.sessions ?? [];
+  const squareOff = config.hard_square_off_ist;
+  const error = validateSessions(sessions, squareOff);
+  // The iron fly has no signal block of its own -- the runtime falls back to the default
+  // 9/20 periods for it -- so its warm-up is always the 20 minutes the floor already covers.
+  const warning = warmupWarning(
+    sessions,
+    isFly ? null : (config as MomentumLongScalperConfig).signal,
+  );
+
+  // Save is disabled while this is red, through the same context the number fields use.
+  const reportValidity = useContext(FieldValidityContext);
+  useEffect(() => {
+    reportValidity?.("scalper_sessions", error === null);
+    return () => reportValidity?.("scalper_sessions", true);
+  }, [reportValidity, error]);
+
+  function patchWindow(index: number, patch: Partial<SessionWindow>) {
+    onConfig({
+      sessions: sessions.map((w, i) => (i === index ? { ...w, ...patch } : w)),
+    });
+  }
+
+  const next = suggestWindow(sessions, squareOff);
+  const canAdd = sessions.length < MAX_SESSION_WINDOWS && next !== null;
+
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3">
+        {sessions.map((w, i) => (
+          <div key={i} className="flex items-end gap-3">
+            <Time
+              label={i === 0 ? "Trades from" : "…and from"}
+              value={w.start}
+              disabled={disabled}
+              max={w.end}
+              onChange={(start) => patchWindow(i, { start })}
+            />
+            <Time
+              label="Until"
+              value={w.end}
+              disabled={disabled}
+              min={w.start}
+              max={squareOff < MARKET_CLOSE ? squareOff : MARKET_CLOSE}
+              onChange={(end) => patchWindow(i, { end })}
+            />
+            <button
+              type="button"
+              className="app-btn-outline mb-1 text-hint"
+              // One window is the minimum: a bot with none is armed with nowhere to trade.
+              disabled={disabled || sessions.length <= 1}
+              onClick={() => onConfig({ sessions: sessions.filter((_, j) => j !== i) })}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <button
+          type="button"
+          className="app-btn-secondary text-hint"
+          disabled={disabled || !canAdd}
+          // Sorted on insert, not on every keystroke: a suggestion can land in a gap
+          // between two existing windows, and rows that reorder while you type are worse.
+          onClick={() =>
+            next &&
+            onConfig({
+              sessions: [...sessions, next].sort((a, b) => a.start.localeCompare(b.start)),
+            })
+          }
+        >
+          Add window
+        </button>
+        <span className="ml-2 text-hint text-faint">
+          {sessions.length} of {MAX_SESSION_WINDOWS}
+          {!canAdd && sessions.length < MAX_SESSION_WINDOWS
+            ? " — no room left before the square-off"
+            : ""}
+        </span>
+      </div>
+
+      <Time
+        label="Flat by (square-off)"
+        value={squareOff}
+        disabled={disabled}
+        max={MARKET_CLOSE}
+        onChange={(hard_square_off_ist) => onConfig({ hard_square_off_ist })}
+      />
+
+      {error && (
+        <p role="alert" className="text-hint text-down">
+          {error}
+        </p>
+      )}
+      {!error && warning && <p className="text-hint text-faint">{warning}</p>}
+
+      <p className="app-card-muted p-3 text-hint">
+        {isFly
+          ? "The bot flattens when a window closes, and squares off everything at the time above whatever happens."
+          : "A position opened inside a window is allowed to run past it — the ladder decides when to leave. The square-off above is the hard backstop."}
+      </p>
+    </div>
+  );
+}
+
 export function ScalperSettings({
   bot,
   tab,
@@ -111,6 +285,12 @@ export function ScalperSettings({
   disabled: boolean;
 }) {
   const isFly = bot.bot_type === BOT_IRON_FLY_SCALPER;
+
+  if (tab === "schedule") {
+    return (
+      <ScheduleTab config={config} onConfig={onConfig} disabled={disabled} isFly={isFly} />
+    );
+  }
 
   if (tab === "risk") {
     const risk = config.risk;

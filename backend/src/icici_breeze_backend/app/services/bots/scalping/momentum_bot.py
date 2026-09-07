@@ -88,34 +88,51 @@ def _f(raw: Any) -> Optional[float]:
     return value if value > 0 else None
 
 
-def nearest_expiry(proc: Any, *, today: Optional[datetime.date] = None) -> Optional[str]:
-    """The nearest NIFTY option expiry on or after today, as DD-MMM-YYYY.
+def option_expiries(proc: Any) -> list[str]:
+    """Every NIFTY option expiry the scrip master knows, as DD-MMM-YYYY.
 
-    Read from the scrip master, never a weekday rule -- SEBI has moved expiry days before,
-    which is the same reason `bots/scheduler._expiring_today` reads it too.
+    Shared with the futures feed, which has no scrip master of its own: local reference data
+    holds only CE/PE rows, so `futures_feed.monthly_expiries` derives the futures calendar
+    from this options list rather than from a futures universe that is not there.
     """
     from icici_breeze_backend.app.services.reference_data.scrip_master_sql import (
         _expiry_api_to_display,
     )
 
-    today = today or now_ist().date()
-    best: Optional[datetime.date] = None
     try:
         universe = proc.fetch_stock_codes(INDEX_EXCHANGE) or []
     except Exception:  # noqa: BLE001
         _logger.warning("momentum bot: could not read the %s universe", INDEX_EXCHANGE, exc_info=True)
-        return None
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
     for entry in universe:
         if str(entry.get("stock_code") or "").strip().upper() != INDEX_STOCK_CODE:
             continue
         for raw in entry.get("expiry_dates") or []:
             try:
                 display = _expiry_api_to_display(str(raw))
-                parsed = datetime.datetime.strptime(display, "%d-%b-%Y").date()
+                datetime.datetime.strptime(display, "%d-%b-%Y")
             except (ValueError, TypeError):
                 continue
-            if parsed >= today and (best is None or parsed < best):
-                best = parsed
+            if display not in seen:
+                seen.add(display)
+                out.append(display)
+    return out
+
+
+def nearest_expiry(proc: Any, *, today: Optional[datetime.date] = None) -> Optional[str]:
+    """The nearest NIFTY option expiry on or after today, as DD-MMM-YYYY.
+
+    Read from the scrip master, never a weekday rule -- SEBI has moved expiry days before,
+    which is the same reason `bots/scheduler._expiring_today` reads it too.
+    """
+    today = today or now_ist().date()
+    best: Optional[datetime.date] = None
+    for display in option_expiries(proc):
+        parsed = datetime.datetime.strptime(display, "%d-%b-%Y").date()
+        if parsed >= today and (best is None or parsed < best):
+            best = parsed
     return best.strftime("%d-%b-%Y") if best else None
 
 

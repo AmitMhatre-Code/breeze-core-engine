@@ -442,6 +442,34 @@ def list_runs(
 # --------------------------------------------------------------------------------------
 
 
+def update_run_reason(
+    run_id: str,
+    *,
+    reason_code: str,
+    reason_text: str,
+    detail: Optional[dict[str, Any]] = None,
+) -> None:
+    """Record what a *still-running* session is currently doing, and why.
+
+    Only the scalpers call this. Every other bot resolves in one pass and writes its reason
+    once, at the end; a scalper holds one row open all day, so without this the run log's
+    Reason column reads "—" for the whole session -- which is exactly the question the run
+    log exists to answer (a bot that traded nothing looks identical to one that was never
+    running at all).
+
+    Guarded on `status = 'running'` so it can never overwrite the verdict a finished session
+    settled on: the loop keeps ticking after `finalise_session` has closed the day, and the
+    last word must stay the one that closed it.
+    """
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE bot_runs SET reason_code = ?, reason_text = ?, detail = ? "
+            "WHERE id = ? AND status = 'running'",
+            (reason_code, reason_text, json.dumps(detail or {}), run_id),
+        )
+        conn.commit()
+
+
 def touch_run_heartbeat(run_id: str) -> None:
     """Mark a long-lived run as still alive.
 

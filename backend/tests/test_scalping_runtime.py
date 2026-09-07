@@ -136,3 +136,227 @@ def test_one_failing_bot_does_not_kill_the_pass(db_path, monkeypatch):
         lambda bot_type: (_ for _ in ()).throw(RuntimeError("db gone")),
     )
     runtime.tick()  # must not raise
+
+
+# --- the futures feed the whole gate stack depends on ---------------------------------
+
+
+class _FakeFeed:
+    """Stands in for the process-wide `NiftyFuturesFeed`, recording what the driver asks."""
+
+    def __init__(self, *, subscribed: bool = False) -> None:
+        self.subscribed_today = subscribed
+        self.subscribes: list[tuple[str, list[str]]] = []
+        self.flushes = 0
+        self.raises = False
+
+    def ensure_subscribed(self, proc, user_id, option_expiries):
+        self.subscribes.append((user_id, list(option_expiries)))
+        if self.raises:
+            raise RuntimeError("no broker session")
+        self.subscribed_today = True
+        return True
+
+    def flush(self, now_ts):
+        self.flushes += 1
+
+
+@pytest.fixture
+def feed(monkeypatch):
+    from icici_breeze_backend.app.services.bots.scalping import futures_feed, momentum_bot
+
+    fake = _FakeFeed()
+    monkeypatch.setattr(futures_feed, "get_feed", lambda: fake)
+    monkeypatch.setattr(momentum_bot, "option_expiries", lambda proc: ["08-Sep-2026"])
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.processor.processor", lambda: object()
+    )
+    return fake
+
+
+@pytest.fixture
+def armed(db_path):
+    """One enabled scalper, so `tick` has something to sweep."""
+    repo.update_bot(USER, BOT_MOMENTUM_LONG_SCALPER, enabled=True)
+    return db_path
+
+
+@pytest.fixture
+def decisions(monkeypatch):
+    """Records `tick_bot` calls so the feed wiring can be tested on its own."""
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setattr(runtime, "tick_bot", lambda uid, bt, cfg: seen.append((uid, bt)))
+    return seen
+
+
+def test_a_pass_subscribes_the_futures_feed(armed, feed, decisions):
+    """The regression this exists for.
+
+    `ensure_subscribed` was written, documented and unit-tested but never called, so the
+    candle builder never received a tick, `is_warm` was false forever, and both scalpers
+    stood down on `not_warm` for a whole session while the run log showed them running.
+    """
+    runtime.tick()
+    assert feed.subscribes == [(USER, ["08-Sep-2026"])]
+    assert decisions == [(USER, BOT_MOMENTUM_LONG_SCALPER)]
+
+
+def test_the_feed_is_serviced_before_any_bot_decides(armed, feed, monkeypatch):
+    """A bot must never read a builder that this same pass was about to feed."""
+    order: list[str] = []
+    monkeypatch.setattr(runtime, "tick_bot", lambda uid, bt, cfg: order.append("decide"))
+    original = feed.ensure_subscribed
+
+    def _record(proc, user_id, option_expiries):
+        order.append("subscribe")
+        return original(proc, user_id, option_expiries)
+
+    feed.ensure_subscribed = _record
+    runtime.tick()
+    assert order[0] == "subscribe"
+
+
+def test_bars_are_flushed_every_pass_even_when_already_subscribed(armed, feed, decisions):
+    """A bar the clock has left must close even when the contract has not printed."""
+    feed.subscribed_today = True
+    runtime.tick()
+    runtime.tick()
+    assert feed.flushes == 2
+    # An idempotent re-subscribe would be harmless, but building the expiry list to ask is a
+    # whole-table scan on a cold cache -- not something to pay at the PB/SL cadence.
+    assert feed.subscribes == []
+
+
+def test_a_failed_subscribe_is_retried_but_not_on_every_pass(armed, feed, decisions, monkeypatch):
+    """Before the broker session exists, failure is ordinary -- and must stay quiet."""
+    feed.raises = True
+    clock = [1000.0]
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: clock[0])
+
+    for _ in range(5):
+        runtime.tick()
+    assert len(feed.subscribes) == 1, "retried at the 2s loop cadence"
+
+    clock[0] += runtime.FEED_RETRY_SECONDS + 1
+    runtime.tick()
+    assert len(feed.subscribes) == 2
+
+
+def test_a_dead_feed_does_not_stop_the_gate_stack(armed, feed, decisions):
+    """Exits still have to run when the feed is down; the stack must reach the bots."""
+    feed.raises = True
+    runtime.tick()  # must not raise
+    assert decisions == [(USER, BOT_MOMENTUM_LONG_SCALPER)]
+
+
+# --- the audit trail ------------------------------------------------------------------
+#
+# A scalper holds one run row open all day. Without a live verdict on it, a bot standing
+# down for a whole session is indistinguishable from one nobody ever asked -- which is the
+# state that hid an unsubscribed futures feed for an entire trading day.
+
+
+def _feed_detail(**kw):
+    detail = {
+        "candles": 0,
+        "candles_required": 20,
+        "ticks_seen": 0,
+        "contract": None,
+        "token_symbol": None,
+        "last_error": None,
+    }
+    detail.update(kw)
+    return detail
+
+
+def test_the_running_row_carries_the_current_verdict(db_path, stubbed, monkeypatch):
+    """The Reason column answers "why is nothing happening" while it is happening."""
+    monkeypatch.setattr(
+        runtime, "_feed_health",
+        lambda cfg: FeedHealth(
+            warm=False, stale=False, stale_seconds=1.0, detail=_feed_detail()
+        ),
+    )
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+
+    run = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0]
+    assert run.status == "running"
+    assert run.reason_code == ReasonCode.NOT_WARM
+    assert run.reason_text  # the sentence a user reads, not just the code
+    assert run.detail["feed"]["ticks_seen"] == 0
+    # The fact that separates "warming up normally" from "never subscribed".
+    assert run.detail["feed"]["subscribed"] is False
+
+
+def test_the_detail_distinguishes_a_live_feed_from_an_unsubscribed_one(db_path, stubbed, monkeypatch):
+    monkeypatch.setattr(
+        runtime, "_feed_health",
+        lambda cfg: FeedHealth(
+            warm=False, stale=False, stale_seconds=2.0,
+            detail=_feed_detail(ticks_seen=812, candles=6, token_symbol="4.1!35001",
+                                contract="24-Sep-2026"),
+        ),
+    )
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    feed = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].detail["feed"]
+    assert feed["subscribed"] is True and feed["ticks_seen"] == 812
+    assert feed["candles"] == 6 and feed["candles_required"] == 20
+
+
+def test_an_unchanged_verdict_is_republished_on_a_cadence_not_every_pass(db_path, stubbed, monkeypatch):
+    """Two seconds apart would be a SQLite write and a log line per bot per tick; never
+    re-stating would leave a whole quiet session as one line at 09:57."""
+    writes: list[str] = []
+    original = repo.update_run_reason
+    monkeypatch.setattr(
+        repo, "update_run_reason",
+        lambda run_id, **kw: (writes.append(kw["reason_code"]), original(run_id, **kw))[1],
+    )
+    clock = [1000.0]
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: clock[0])
+
+    cfg = MomentumLongScalperConfig()
+    for _ in range(5):
+        runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
+    assert len(writes) == 1
+
+    clock[0] += runtime.PUBLISH_INTERVAL_SECONDS + 1
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
+    assert len(writes) == 2
+
+
+def test_a_changed_verdict_publishes_immediately(db_path, stubbed, monkeypatch):
+    """A transition is the interesting moment; it must not wait out the cadence."""
+    clock = [1000.0]
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: clock[0])
+    cfg = MomentumLongScalperConfig()
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
+    assert repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].reason_code == "gates_clear"
+
+    monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 8, 12, 0))
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)  # same second, new verdict
+    run = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0]
+    assert run.reason_code == ReasonCode.OUTSIDE_SESSION_WINDOW
+
+
+def test_publishing_never_overwrites_a_finished_session(db_path, stubbed):
+    """The loop keeps ticking after the day is closed; the last word stays the closing one."""
+    run_id = repo.open_session_run(USER, BOT_MOMENTUM_LONG_SCALPER)
+    repo.finish_run(
+        run_id, status="completed", reason_code="session_complete",
+        reason_text="The day's last trading window has closed.",
+    )
+    runtime.reset_state_for_tests()
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+
+    run = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0]
+    assert run.status == "completed" and run.reason_code == "session_complete"
+
+
+def test_an_audit_write_failure_does_not_stop_the_bot(db_path, stubbed, monkeypatch):
+    """Recording why is worth less than continuing to manage a position."""
+    monkeypatch.setattr(
+        repo, "update_run_reason",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db locked")),
+    )
+    assert runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())

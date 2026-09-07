@@ -123,3 +123,127 @@ def test_the_two_bots_carry_independent_stops():
     b3, b4 = MomentumLongScalperConfig(), IronFlyScalperConfig()
     combined = b3.risk.cumulative_stop_inr + b4.risk.cumulative_stop_inr
     assert combined == 20000.0
+
+
+# --- session windows ------------------------------------------------------------------
+#
+# Configurable start/stop times, up to four windows per bot. The rules exist because every
+# invalid shape here is silent at runtime: a bot with a window it can never trade in looks
+# exactly like a bot having a quiet day.
+
+
+def _momentum(**kw):
+    return MomentumLongScalperConfig(**kw)
+
+
+def test_both_bots_ship_with_valid_windows():
+    """The defaults have to satisfy the rules, or `normalize_config`'s fallback is a trap."""
+    assert [(w.start, w.end) for w in MomentumLongScalperConfig().sessions] == [
+        ("09:35", "11:30"),
+        ("13:30", "15:10"),
+    ]
+    assert [(w.start, w.end) for w in IronFlyScalperConfig().sessions] == [("11:30", "13:30")]
+
+
+def test_multiple_windows_and_a_custom_square_off_are_accepted():
+    """The feature itself: four windows, user-chosen bounds, user-chosen square-off."""
+    c = _momentum(
+        sessions=[
+            {"start": "09:35", "end": "10:30"},
+            {"start": "10:45", "end": "11:30"},
+            {"start": "13:30", "end": "14:15"},
+            {"start": "14:20", "end": "14:45"},
+        ],
+        hard_square_off_ist="14:50",
+    )
+    assert len(c.sessions) == 4
+    assert c.hard_square_off_ist == "14:50"
+
+
+def test_a_window_may_start_where_the_previous_one_ends():
+    """Adjacent is not overlapping -- `in_window` uses start <= now < end, so they abut."""
+    c = _momentum(
+        sessions=[{"start": "09:35", "end": "11:30"}, {"start": "11:30", "end": "13:00"}]
+    )
+    assert len(c.sessions) == 2
+
+
+def test_overlapping_windows_are_refused():
+    """`in_window` returns the first match, so the second could never be reached."""
+    with pytest.raises(ValidationError, match="overlap"):
+        _momentum(
+            sessions=[{"start": "09:35", "end": "11:30"}, {"start": "11:00", "end": "13:00"}]
+        )
+
+
+def test_windows_are_refused_out_of_order_too():
+    """The overlap test sorts first: the user's typing order is not the schedule."""
+    with pytest.raises(ValidationError, match="overlap"):
+        _momentum(
+            sessions=[{"start": "13:00", "end": "14:00"}, {"start": "09:35", "end": "13:30"}]
+        )
+
+
+def test_a_window_before_the_warmup_floor_is_refused():
+    """Indicators are built from live ticks with no backfill -- 09:20 can only be not_warm."""
+    with pytest.raises(ValidationError, match="09:35"):
+        _momentum(sessions=[{"start": "09:20", "end": "11:30"}])
+
+
+def test_a_window_ending_after_the_square_off_is_refused():
+    """Otherwise the bot enters at 15:20 and is flattened on the next pass, paying friction
+    for a position it never had a chance to hold."""
+    with pytest.raises(ValidationError, match="square-off"):
+        _momentum(sessions=[{"start": "13:30", "end": "15:25"}], hard_square_off_ist="15:15")
+
+
+def test_moving_the_square_off_later_is_what_makes_a_later_window_legal():
+    """The two settings are edited together, so the rule has to be satisfiable."""
+    c = _momentum(sessions=[{"start": "13:30", "end": "15:25"}], hard_square_off_ist="15:28")
+    assert c.sessions[0].end == "15:25"
+
+
+def test_a_window_past_the_market_close_is_refused():
+    with pytest.raises(ValidationError, match="market close"):
+        _momentum(sessions=[{"start": "14:00", "end": "15:45"}], hard_square_off_ist="15:50")
+
+
+def test_at_least_one_and_at_most_four_windows():
+    with pytest.raises(ValidationError):
+        _momentum(sessions=[])
+    with pytest.raises(ValidationError):
+        _momentum(sessions=[{"start": "09:35", "end": "10:00"}] * 5)
+
+
+def test_an_impossible_clock_time_is_refused():
+    """The old pattern accepted 25:00, which passes the model and then compares as a plain
+    string against the clock -- a window that is simply never open."""
+    with pytest.raises(ValidationError):
+        SessionWindow(start="25:00", end="26:00")
+    with pytest.raises(ValidationError):
+        _momentum(hard_square_off_ist="29:59")
+
+
+def test_the_iron_fly_enforces_the_same_rules():
+    """Shared validator, not a copy: both bots take windows and both must refuse the same
+    shapes."""
+    with pytest.raises(ValidationError, match="square-off"):
+        IronFlyScalperConfig(
+            sessions=[{"start": "11:30", "end": "15:20"}], hard_square_off_ist="15:15"
+        )
+    c = IronFlyScalperConfig(
+        sessions=[{"start": "09:35", "end": "11:00"}, {"start": "13:30", "end": "14:30"}]
+    )
+    assert len(c.sessions) == 2
+
+
+def test_a_stored_config_that_fails_the_new_rules_falls_back_rather_than_bricking():
+    """Validating on read is what lets policy tighten; the fallback is what keeps the bot
+    list loading when it does."""
+    from icici_breeze_backend.app.repositories.bots import normalize_config
+    from icici_breeze_backend.app.db.bots_migrate import BOT_MOMENTUM_LONG_SCALPER
+
+    stored = MomentumLongScalperConfig().model_dump()
+    stored["sessions"] = [{"start": "09:20", "end": "11:30"}]  # legal before, refused now
+    out = normalize_config(BOT_MOMENTUM_LONG_SCALPER, stored)
+    assert out["sessions"][0]["start"] == "09:35"

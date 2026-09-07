@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import { describeFeed, feedToneClass } from "@/lib/scalper-audit";
 import {
   isScalper,
   useBotCycles,
@@ -130,6 +131,7 @@ function RunRow({ run }: { run: BotRun }) {
   // Only a scalper session has cycles beneath it; the writers resolve in one pass and have
   // nothing to expand into.
   const expandable = isScalper(run.bot_type) && run.trigger === "session";
+  const feed = describeFeed(run.detail);
 
   return (
     <>
@@ -164,6 +166,14 @@ function RunRow({ run }: { run: BotRun }) {
           <div>{run.reason_text ?? "—"}</div>
           {run.reason_code && (
             <code className="app-text-muted text-[11px]">{run.reason_code}</code>
+          )}
+          {feed && (
+            /* The scalpers' reason codes are ambiguous on their own -- `not_warm` covers
+               both a feed that is filling and one that was never subscribed. This is the
+               half that tells them apart, kept in the log so it is still there tomorrow. */
+            <div className={`mt-0.5 font-mono text-[11px] ${feedToneClass(feed.tone)}`}>
+              {feed.text}
+            </div>
           )}
         </td>
       </tr>

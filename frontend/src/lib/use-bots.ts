@@ -313,6 +313,30 @@ export function useBotRuns(botType?: BotType, limit = 50) {
   });
 }
 
+/** Today's open session run for one scalper — the row carrying the live verdict.
+ *
+ *  Polled while the bot is enabled: the reason on it is the answer to "why is nothing
+ *  happening", and an answer that only refreshes on a page load is not much of an answer.
+ *  The backend re-states an unchanged verdict once a minute, so polling faster than that
+ *  buys nothing. */
+export function useTodaysRun(botType: BotType, enabled = true) {
+  return useQuery({
+    queryKey: ["bots", "runs", "today", botType],
+    enabled,
+    refetchInterval: enabled ? 60_000 : false,
+    queryFn: ({ signal }) =>
+      apiClient.get<BotRun[]>(`/bots/runs?bot_type=${botType}&limit=5`, signal),
+    select: (runs: BotRun[]) => {
+      const today = new Date().toISOString().slice(0, 10);
+      return (
+        runs.find(
+          (r) => r.trigger === "session" && (r.started_at ?? "").slice(0, 10) === today,
+        ) ?? null
+      );
+    },
+  });
+}
+
 export type ProposalLeg = {
   stock_code: string;
   exchange_code: string;

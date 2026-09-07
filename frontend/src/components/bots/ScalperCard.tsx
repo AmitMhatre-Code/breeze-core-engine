@@ -4,9 +4,11 @@ import { useState } from "react";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { NumberInput } from "@/components/ui/NumberInput";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import { describeFeed, feedToneClass } from "@/lib/scalper-audit";
 import {
   BOT_META,
   useTodaysCycles,
+  useTodaysRun,
   useUpdateBot,
   type Bot,
   type IronFlyScalperConfig,
@@ -117,8 +119,13 @@ function windowSummary(bot: Bot): string {
   const config = bot.config as unknown as MomentumLongScalperConfig | IronFlyScalperConfig;
   const windows = config.sessions ?? [];
   if (windows.length === 0) return "No trading window configured.";
-  const spans = windows.map((w) => `${w.start}–${w.end}`).join(" and ");
-  return `Trades ${spans}, flat by ${config.hard_square_off_ist}.`;
+  // Up to four windows are configurable, so "A and B and C" needs to become "A, B and C".
+  const spans = windows.map((w) => `${w.start}–${w.end}`);
+  const list =
+    spans.length > 1
+      ? `${spans.slice(0, -1).join(", ")} and ${spans[spans.length - 1]}`
+      : spans[0];
+  return `Trades ${list}, flat by ${config.hard_square_off_ist}.`;
 }
 
 export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
@@ -129,6 +136,8 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
 
   const mode = cardMode(bot);
   const { data: cycles } = useTodaysCycles(bot.bot_type, bot.enabled);
+  const { data: todaysRun } = useTodaysRun(bot.bot_type, bot.enabled);
+  const feed = describeFeed(todaysRun?.detail ?? null);
 
   const closed = (cycles ?? []).filter((c) => c.closed_at !== null);
   const net = closed.reduce((sum, c) => sum + (c.net_pnl ?? 0), 0);
@@ -223,6 +232,12 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
             )}
           </div>
           <p className="font-mono text-hint text-muted">{windowSummary(bot)}</p>
+          {feed && (
+            /* Why nothing is happening, where the user is already looking. A scalper can
+               sit at `not_warm` for a whole session and look perfectly healthy otherwise;
+               this is the line that says whether it is filling or was never subscribed. */
+            <p className={`mt-1 font-mono text-hint ${feedToneClass(feed.tone)}`}>{feed.text}</p>
+          )}
           <dl className="mt-3 grid gap-1.5">
             {rows.map(([label, value, tone]) => (
               <div key={label} className="flex items-baseline justify-between gap-3 text-hint">

@@ -351,18 +351,90 @@ class ExpiryIndexWriterConfig(BaseModel):
 ScalperMode = Literal["paper", "live"]
 
 
-class SessionWindow(BaseModel):
-    """A trading window in IST. Both bots take a list; overlapping windows are the user's
-    business, since the two bots are deliberately independent (plan section 5.2)."""
+# HH:MM in IST, 00:00-23:59. Tighter than the `[0-2]\d` this used to carry, which accepted
+# "25:00" and "29:59" -- times that pass the model and then compare as ordinary strings
+# against the clock, so a window bounded by one is simply never open.
+HHMM_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
 
-    start: str = Field(pattern=r"^[0-2]\d:[0-5]\d$")
-    end: str = Field(pattern=r"^[0-2]\d:[0-5]\d$")
+# NSE's cash/derivatives session. Windows outside it can only ever log
+# `outside_session_window`, so they are refused rather than saved.
+MARKET_OPEN_IST = "09:15"
+MARKET_CLOSE_IST = "15:30"
+
+# The earliest a scalper can usefully start. At the default signal settings the volume MA
+# needs 20 one-minute bars built from live ticks -- there is no historical backfill -- so
+# nothing before this can return anything but `not_warm`. It is a floor, not the whole
+# truth: Bot 3's signal periods are user-editable, and a slower one pushes the real warm-up
+# later still. The UI warns about that case; blocking on it would make the Signal tab
+# invalidate windows saved on the Schedule tab.
+EARLIEST_SESSION_START_IST = "09:35"
+
+# Enough for a morning, an afternoon and a split around a known event, without turning the
+# gate stack into a list walk or the drawer into a form nobody can read.
+MAX_SESSION_WINDOWS = 4
+
+
+class SessionWindow(BaseModel):
+    """A trading window in IST.
+
+    Overlaps *between* the two bots are the user's business -- they are deliberately
+    independent (plan section 5.2) -- but overlaps within one bot's own list are refused by
+    `validate_session_windows`, because `in_window` returns the first match and a config
+    whose second window can never be reached is not one anybody means.
+    """
+
+    start: str = Field(pattern=HHMM_PATTERN)
+    end: str = Field(pattern=HHMM_PATTERN)
 
     @model_validator(mode="after")
     def _ordered(self) -> "SessionWindow":
         if self.start >= self.end:
             raise ValueError("A session window must end after it starts.")
         return self
+
+
+def validate_session_windows(
+    sessions: List["SessionWindow"], hard_square_off_ist: str
+) -> List["SessionWindow"]:
+    """Shared window rules for both scalpers. Raises ValueError with a user-facing message.
+
+    Zero-padded HH:MM compares correctly as a string, which is why every bound here is a
+    plain comparison and there is no time parsing anywhere on this path.
+
+    The messages are the UI's error text: `PATCH /bots/config` surfaces them verbatim, so
+    they name the offending window and say what would happen, not just what is disallowed.
+    """
+    if not sessions:
+        raise ValueError("A bot needs at least one trading window.")
+    if len(sessions) > MAX_SESSION_WINDOWS:
+        raise ValueError(f"At most {MAX_SESSION_WINDOWS} trading windows.")
+
+    for w in sessions:
+        span = f"{w.start}-{w.end}"
+        if w.start < EARLIEST_SESSION_START_IST:
+            raise ValueError(
+                f"Window {span} starts before {EARLIEST_SESSION_START_IST}. The indicators "
+                f"are built from live ticks with no backfill, so nothing before that can do "
+                f"anything but warm up."
+            )
+        if w.end > MARKET_CLOSE_IST:
+            raise ValueError(
+                f"Window {span} runs past the {MARKET_CLOSE_IST} market close."
+            )
+        if w.end > hard_square_off_ist:
+            raise ValueError(
+                f"Window {span} ends after the {hard_square_off_ist} square-off. The bot "
+                f"would open a position and flatten it on the next pass, paying a round "
+                f"trip of friction for nothing."
+            )
+
+    ordered = sorted(sessions, key=lambda w: w.start)
+    for prev, nxt in zip(ordered, ordered[1:]):
+        if nxt.start < prev.end:
+            raise ValueError(
+                f"Windows {prev.start}-{prev.end} and {nxt.start}-{nxt.end} overlap."
+            )
+    return sessions
 
 
 class ScalperRiskConfig(BaseModel):
@@ -465,9 +537,11 @@ class MomentumLongScalperConfig(BaseModel):
         default_factory=lambda: [
             SessionWindow(start="09:35", end="11:30"),
             SessionWindow(start="13:30", end="15:10"),
-        ]
+        ],
+        min_length=1,
+        max_length=MAX_SESSION_WINDOWS,
     )
-    hard_square_off_ist: str = Field("15:15", pattern=r"^[0-2]\d:[0-5]\d$")
+    hard_square_off_ist: str = Field("15:15", pattern=HHMM_PATTERN)
     # The literal reading of "a fixed premium outlay": one position at a time, so this is the
     # maximum capital *deployed* at any instant.
     #
@@ -488,6 +562,11 @@ class MomentumLongScalperConfig(BaseModel):
     exits: TrailingLadderConfig = Field(default_factory=TrailingLadderConfig)
     execution: ScalperExecutionConfig = Field(default_factory=ScalperExecutionConfig)
     risk: ScalperRiskConfig = Field(default_factory=ScalperRiskConfig)
+
+    @model_validator(mode="after")
+    def _windows_are_tradeable(self) -> "MomentumLongScalperConfig":
+        validate_session_windows(self.sessions, self.hard_square_off_ist)
+        return self
 
 
 class IronFlyStructureConfig(BaseModel):
@@ -567,9 +646,11 @@ class IronFlyScalperConfig(BaseModel):
     trade_on_expiry_day: bool = False
     mode: ScalperMode = "paper"
     sessions: List[SessionWindow] = Field(
-        default_factory=lambda: [SessionWindow(start="11:30", end="13:30")]
+        default_factory=lambda: [SessionWindow(start="11:30", end="13:30")],
+        min_length=1,
+        max_length=MAX_SESSION_WINDOWS,
     )
-    hard_square_off_ist: str = Field("15:15", pattern=r"^[0-2]\d:[0-5]\d$")
+    hard_square_off_ist: str = Field("15:15", pattern=HHMM_PATTERN)
     # A rupee ceiling rather than a lot count (adapts to VIX-driven margin changes) or a
     # share of free margin (which would drift with the day's P&L). The bot takes the largest
     # whole-lot fly that fits, verified through `margin_calculator` on all four legs at once
@@ -581,6 +662,11 @@ class IronFlyScalperConfig(BaseModel):
     reentry: IronFlyReentryConfig = Field(default_factory=IronFlyReentryConfig)
     execution: ScalperExecutionConfig = Field(default_factory=ScalperExecutionConfig)
     risk: ScalperRiskConfig = Field(default_factory=ScalperRiskConfig)
+
+    @model_validator(mode="after")
+    def _windows_are_tradeable(self) -> "IronFlyScalperConfig":
+        validate_session_windows(self.sessions, self.hard_square_off_ist)
+        return self
 
     @model_validator(mode="after")
     def _widened_is_wider(self) -> "IronFlyScalperConfig":
