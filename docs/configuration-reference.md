@@ -248,6 +248,12 @@ Customer deployments (the current, active path) get their `.env` written by bree
 | `REFERENCE_DATA_LOOKBACK_DAYS` | `10` | Trading-day lookback when downloading NSE/BSE FO bhavcopy. |
 | `NSE_FO_BHAVCOPY_URL_TEMPLATE` | NSE archives FO zip URL | `{yyyymmdd}` placeholder. |
 | `BSE_FO_BHAVCOPY_URL_TEMPLATE` | BSE derivative CSV URL | `{yyyymmdd}` placeholder. |
+| `SPAN_INTRADAY_REFRESH_ENABLED` | `true` | Intraday SPAN baseline refresh at 09:15, 11:15, 12:45, 14:15, 15:45 and 18:00 IST. The slot times themselves are fixed in code, chosen against the exchanges' own publish schedule. |
+| `NSE_SPAN_ARCHIVE_URL_TEMPLATE` | NSCCL SPAN zip URL | `{yyyymmdd}` and `{version}` placeholders. |
+| `NSE_SPAN_MAX_INTRADAY_VERSION` | `6` | Highest `i{n}` revision probed. NSE publishes through `i5`; the extra slot is headroom. |
+| `BSE_SPAN_MAXDATE_API_URL` | BSE `getmaxdate/w` | Latest date holding BSE risk files. |
+| `BSE_SPAN_INDEX_API_URL` | BSE `LoadData/w` | Lists one file per mode (B/I/J/K/L/Z) for a date. |
+| `BSE_SPAN_DOWNLOAD_PREFIX` | `https://www.bseindia.com/bsedata/` | Replaces the `notices.bseindia.com` prefix the BSE index returns, which does not resolve publicly. |
 | `WEBSOCKET_QUOTE_TTL_SECONDS` | `120` | Redis TTL for normalized WebSocket quote cells. |
 | `WS_RAW_QUOTE_TTL_SECONDS` | `120` | Redis TTL for raw WebSocket tick payloads. |
 | `WS_QUOTE_SNAPSHOT_ENABLED` | `true` | Capture the last live tick per contract to a durable snapshot, used as the first post-close quote source. Disable and BFO chains fall back to bhavcopy/REST, which carry no market depth after close. |

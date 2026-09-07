@@ -16,7 +16,10 @@ from icici_breeze_backend.app.services.reference_data.keys import (
     span_baseline_meta_key,
     span_baseline_sheet_key,
 )
-from icici_breeze_backend.app.services.reference_data.scrip_index import current_version
+from icici_breeze_backend.app.services.reference_data.scrip_index import (
+    current_version,
+    get_exchange_ticker,
+)
 from icici_breeze_backend.app.services.reference_data.versioning import bump_refdata_version
 
 _logger = logging.getLogger(__name__)
@@ -124,7 +127,18 @@ def publish_span_baseline_from_db(version: int | None = None) -> int:
     from icici_breeze_backend.app.services.reference_data.scrip_index import _next_version
 
     ensure_exchange_margin_baseline_table()
-    ver = version if version is not None else _next_version()
+    live = current_version()
+    if version is not None:
+        # Part of a coordinated batch: the caller allocated one version for every source.
+        ver = version
+    elif live > 0:
+        # Standalone SPAN publish -- an intraday slot, the admin refresh, or a manual upload.
+        # Publish into the live generation rather than allocating a new one: bumping the
+        # pointer purges the previous generation, and only SPAN sheets would have been written
+        # to the new one, so the scrip index, strikes and bhavcopy would go with it.
+        ver = live
+    else:
+        ver = _next_version()
     sheets: dict[str, dict[str, dict[str, float | int]]] = {}
     meta_by_exchange: dict[str, dict[str, Any]] = {}
 
@@ -195,7 +209,8 @@ def publish_span_baseline_from_db(version: int | None = None) -> int:
         _local["meta"] = dict(meta_by_exchange)
         _local["by_sheet"] = by_sheet
 
-    bump_refdata_version(ver)
+    if ver != live:
+        bump_refdata_version(ver)
     _logger.info(
         "Published SPAN baseline version %s sheets=%s rows=%s",
         ver,
@@ -267,13 +282,21 @@ def _get_span_baseline_sheet_raw(
     if not expiry:
         return {"found": False, "contracts": {}, "source_date": None, "source_file": None}
 
-    aliases = underlying_aliases(stock_code)
-    short_candidates = [scrip_short_name(stock_code)] + list(aliases)
+    # Callers pass ICICI's stock code; SPAN sheets are keyed on the exchange symbol the file's
+    # pfCode carries. `get_exchange_ticker` is the bridge (ADATRA -> ADANIENSOL) and is the only
+    # candidate that resolves a stock -- the alias table covers indices only, so without it every
+    # stock lookup missed and silently fell back to Breeze.
+    short_candidates: list[str] = []
+    for candidate in (
+        scrip_short_name(stock_code),
+        get_exchange_ticker(stock_code),
+        *underlying_aliases(stock_code),
+    ):
+        name = str(candidate or "").strip().upper()
+        if name and name not in short_candidates:
+            short_candidates.append(name)
 
-    for short in short_candidates:
-        short_u = str(short or "").strip().upper()
-        if not short_u:
-            continue
+    for short_u in short_candidates:
         sheet_key = _sheet_local_key(ex, short_u, expiry)
         with _lock:
             contracts = (_local.get("by_sheet") or {}).get(sheet_key)

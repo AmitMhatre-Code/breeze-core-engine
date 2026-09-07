@@ -8,15 +8,16 @@ import logging
 import math
 import re
 import sqlite3
-import urllib.error
-import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
+from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, parse_strike
 from icici_breeze_backend.app.core.timezone import now_ist
+from icici_breeze_backend.app.services.reference_data import span_sources
+from icici_breeze_backend.app.services.reference_data.aliases import underlying_aliases
 from icici_breeze_backend.app.services.reference_data.state import append_ingest_history
 
 _logger = logging.getLogger(__name__)
@@ -146,6 +147,18 @@ def _scrip_conn() -> sqlite3.Connection:
     return sqlite3.connect(cfg.DATA_PATH + cfg.SCRIP_DB)
 
 
+def _underlying_lookup_names(short_name: Any, exchange_ticker: Any = None) -> set[str]:
+    """Every name one underlying can be addressed by across scrip master and SPAN.
+
+    `ShortName` is ICICI's code, `ExchangeCode` the exchange symbol a SPAN pfCode uses, and the
+    alias table bridges the indices where the two share nothing.
+    """
+    names = {str(short_name or "").strip().upper(), str(exchange_ticker or "").strip().upper()}
+    names.update(underlying_aliases(short_name))
+    names.discard("")
+    return names
+
+
 def _ymd_to_display(ymd: str) -> str:
     if len(ymd) != 8 or not ymd.isdigit() or ymd == "00000000":
         return ""
@@ -154,33 +167,6 @@ def _ymd_to_display(ymd: str) -> str:
     except ValueError:
         return ""
     return d.strftime("%d-%b-%Y")
-
-
-def _fetch_zip(url: str) -> bytes | None:
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            if resp.status != 200:
-                return None
-            return resp.read()
-    except urllib.error.HTTPError as e:
-        if e.code in (403, 404):
-            return None
-        raise
-
-
-def _latest_archive(max_lookback_days: int = 14) -> tuple[str, str, int, bytes] | None:
-    today = dt.datetime.now(dt.timezone.utc).date()
-    for day_offset in range(max_lookback_days + 1):
-        d = today - dt.timedelta(days=day_offset)
-        ymd = d.strftime("%Y%m%d")
-        for ver in (4, 3, 2, 1):
-            filename = f"nsccl.{ymd}.i{ver}.zip"
-            url = f"https://nsearchives.nseindia.com/archives/nsccl/span/{filename}"
-            payload = _fetch_zip(url)
-            if payload:
-                return filename, ymd, ver, payload
-    return None
 
 
 def _default_source_date_ymd() -> str:
@@ -254,20 +240,34 @@ def _ingest_span_xml_stream(
 ) -> tuple[int, int]:
     """Replace all baseline rows for ``exchange_code`` from one SPAN XML stream."""
     conn.execute("DELETE FROM exchange_margin_baseline WHERE exchange_code = ?", (exchange_code,))
+    # ExchangeCode is written by every scrip-master load, but guard anyway: losing the column
+    # must degrade to the old ShortName-only join, not fail the whole ingest.
+    scrip_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(scrip_master)")}
+    ticker_expr = "ExchangeCode" if "ExchangeCode" in scrip_columns else "NULL"
     lot_rows = conn.execute(
-        """
-        SELECT ShortName, ExpiryDate, StrikePrice, OptionType, LotSize
+        f"""
+        SELECT ShortName, {ticker_expr}, ExpiryDate, StrikePrice, OptionType, LotSize
         FROM scrip_master
         """
     ).fetchall()
+    # A SPAN pfCode is the exchange's own symbol for the underlying (NSE: HDFCBANK, ADANIENT),
+    # which is `scrip_master.ExchangeCode` -- not `ShortName`, ICICI's private code (HDFBAN,
+    # ADAENT). Index pfCodes match neither (BANKNIFTY vs CNXBAN vs "NIFTY BANK"), so the alias
+    # table covers those. Registering every name a row can be reached by is what lets this join
+    # hit for stocks at all; keyed on ShortName alone it only ever matched the ~28 underlyings
+    # whose two codes happen to be identical, and every other contract was stored lot-less and
+    # therefore unusable downstream.
     lot_by_contract: dict[tuple[str, str, Strike, str], int] = {}
-    for sn, ed, sp, ot, ls in lot_rows:
+    for sn, ex, ed, sp, ot, ls in lot_rows:
         try:
             strike_f = parse_strike(sp)
             if strike_f is None:
                 continue
-            key = (str(sn).strip().upper(), str(ed).strip(), strike_f, str(ot).strip().upper())
-            lot_by_contract[key] = int(ls)
+            lot_size = int(ls)
+            expiry = str(ed).strip()
+            option_type = str(ot).strip().upper()
+            for name in _underlying_lookup_names(sn, ex):
+                lot_by_contract[(name, expiry, strike_f, option_type)] = lot_size
         except Exception:
             continue
     current_underlying = ""
@@ -501,69 +501,127 @@ def ingest_exchange_baseline_upload(
     }
 
 
-def refresh_exchange_risk_baseline() -> dict:
+def _baseline_db_healthy() -> str:
+    """Empty string when the scrip DB is usable, else the reason it is not."""
     try:
         ensure_exchange_margin_baseline_table()
     except Exception as e:
-        return {"Status": 400, "Error": f"Baseline table init failed: {e}", "Success": None}
+        return f"Baseline table init failed: {e}"
     try:
         with _scrip_conn() as conn:
             row = conn.execute("PRAGMA quick_check").fetchone()
             quick_check = str(row[0]) if row and row[0] is not None else "unknown"
-        if quick_check.lower() != "ok":
-            return {
-                "Status": 400,
-                "Error": "scrips.sqlite3 is corrupted (quick_check failed). Rebuild master data before refreshing baseline.",
-                "Success": None,
-            }
     except Exception as e:
-        return {"Status": 400, "Error": f"Scrip DB check failed: {e}", "Success": None}
-    latest = _latest_archive()
-    if not latest:
+        return f"Scrip DB check failed: {e}"
+    if quick_check.lower() != "ok":
+        return (
+            "scrips.sqlite3 is corrupted (quick_check failed). "
+            "Rebuild master data before refreshing baseline."
+        )
+    return ""
+
+
+def current_baseline_archive_name(exchange_code: str) -> str:
+    """Archive the rows currently in the baseline came from, or '' if there are none.
+
+    ``source_file`` is stored as ``archive.zip:inner.xml``; the archive half alone identifies
+    the publication (both exchanges encode the date and the intraday revision in the name).
+    """
+    try:
+        with _scrip_conn() as conn:
+            row = conn.execute(
+                "SELECT source_file FROM exchange_margin_baseline WHERE exchange_code = ? LIMIT 1",
+                (exchange_code.upper(),),
+            ).fetchone()
+    except sqlite3.Error:
+        return ""
+    if not row or not row[0]:
+        return ""
+    return str(row[0]).split(":", 1)[0].strip()
+
+
+def refresh_span_baseline(market: str, *, force: bool = False) -> dict:
+    """Download and ingest the newest published SPAN file for one market.
+
+    Returns ``Status`` 200 with ``Success.skipped`` set when the newest published archive is
+    already the one loaded -- the common outcome for a scheduled slot, and the reason a slot
+    that fires a few seconds before the exchange stamps its file is harmless rather than
+    wasteful.
+    """
+    market_l = (market or "").strip().lower()
+    if market_l not in (span_sources.MARKET_NSE, span_sources.MARKET_BSE):
+        return {"Status": 400, "Error": "market must be nse or bse", "Success": None}
+    problem = _baseline_db_healthy()
+    if problem:
+        return {"Status": 400, "Error": problem, "Success": None}
+
+    ref = span_sources.resolve_latest_span_archive(market_l)
+    if not ref:
         return {
             "Status": 400,
-            "Error": "Could not find NSCCL SPAN archive in recent days.",
+            "Error": f"Could not find a published {market_l.upper()} SPAN archive in recent days.",
             "Success": None,
         }
-    archive_name, source_date, source_version, payload = latest
-    display_file = archive_name
-    inserted = skipped = 0
+
+    if not force and current_baseline_archive_name(ref.exchange_code) == ref.archive_name:
+        return {
+            "Status": 200,
+            "Error": "",
+            "Success": {
+                "market": market_l,
+                "skipped": True,
+                "source_file": ref.archive_name,
+                "source_date": ref.source_date,
+                "source_version": ref.source_version,
+                "source_url": ref.url,
+                "inserted_rows": 0,
+                "skipped_rows": 0,
+            },
+        }
+
+    payload = span_sources.download_span_archive(ref)
+    if not payload:
+        return {
+            "Status": 400,
+            "Error": f"Download failed for {ref.archive_name}.",
+            "Success": None,
+        }
+    opened = open_span_xml_payload(payload, ref.archive_name)
+    if not opened:
+        return {
+            "Status": 400,
+            "Error": f"Could not read SPAN XML from {ref.archive_name} (ZIP/XML expected).",
+            "Success": None,
+        }
+    stream, display_file, _inner = opened
+    allowed = None if market_l == span_sources.MARKET_NSE else BSE_BASELINE_PF_CODES
+
     try:
-        with zipfile.ZipFile(io.BytesIO(payload)) as zf:
-            names = zf.namelist()
-            xml_names = [
-                n for n in zf.namelist() if n.lower().endswith(".xml") or n.lower().endswith(".spn")
-            ]
-            if not xml_names:
-                first_name = names[0] if names else ""
-                first_prefix = ""
-                if first_name:
-                    try:
-                        with zf.open(first_name) as f0:
-                            first_prefix = f0.read(120).decode("utf-8", errors="replace")
-                    except Exception:
-                        first_prefix = ""
-                if first_name and first_prefix.lstrip().startswith("<?xml"):
-                    xml_names = [first_name]
-                else:
-                    return {"Status": 400, "Error": "SPAN ZIP does not contain XML/SPN.", "Success": None}
-            xml_name = xml_names[0]
-            display_file = f"{archive_name}:{xml_name}"
-            with zf.open(xml_name) as fh, _scrip_conn() as conn:
-                inserted, skipped = _ingest_span_xml_stream(
-                    conn,
-                    fh,
-                    exchange_code=cfg.NFO,
-                    source_file=display_file[:512],
-                    source_date=source_date,
-                    source_version=int(source_version),
-                    allowed_pf_codes=None,
-                )
+        with _scrip_conn() as conn:
+            inserted, skipped = _ingest_span_xml_stream(
+                conn,
+                stream,
+                exchange_code=ref.exchange_code,
+                source_file=display_file[:512],
+                source_date=ref.source_date,
+                source_version=int(ref.source_version),
+                allowed_pf_codes=allowed,
+            )
     except Exception as e:
         return {"Status": 400, "Error": f"Baseline refresh failed: {e}", "Success": None}
+
+    if inserted == 0:
+        return {
+            "Status": 400,
+            "Error": f"No option margin rows were ingested from {ref.archive_name}.",
+            "Success": None,
+        }
+
     _logger.info(
-        "Exchange baseline refreshed from %s: inserted=%s skipped=%s",
+        "Exchange baseline refreshed from %s (%s %s): inserted=%s skipped=%s",
         display_file,
+        market_l.upper(),
+        ref.label or ref.source_version,
         inserted,
         skipped,
     )
@@ -572,12 +630,25 @@ def refresh_exchange_risk_baseline() -> dict:
         "Status": 200,
         "Error": "",
         "Success": {
+            "market": market_l,
+            "skipped": False,
             "source_file": display_file,
-            "source_date": source_date,
-            "source_version": source_version,
+            "source_date": ref.source_date,
+            "source_version": ref.source_version,
+            "source_url": ref.url,
+            "source_label": ref.label,
+            "exchange_code": ref.exchange_code,
             "inserted_rows": inserted,
             "skipped_rows": skipped,
         },
+    }
+
+
+def refresh_all_span_baselines(*, force: bool = False) -> dict[str, dict]:
+    """Refresh both markets. One market failing does not stop the other."""
+    return {
+        market: refresh_span_baseline(market, force=force)
+        for market in (span_sources.MARKET_NSE, span_sources.MARKET_BSE)
     }
 
 
@@ -619,16 +690,25 @@ def resolve_exchange_baseline_margin(
         _logger.debug("SPAN baseline store lookup failed; falling back to SQLite", exc_info=True)
 
     option_type = "CE" if right == cfg.CALL else "PE"
+    # Same bridge as the store: the row is keyed on the SPAN pfCode, not the caller's stock code.
+    from icici_breeze_backend.app.services.reference_data.scrip_index import get_exchange_ticker
+
+    try:
+        exchange_ticker = get_exchange_ticker(stock_code)
+    except Exception:
+        exchange_ticker = ""
+    names = sorted(_underlying_lookup_names(stock_code, exchange_ticker))
+    placeholders = ",".join("?" for _ in names)
     with _scrip_conn() as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT margin_per_lot, lot_size
             FROM exchange_margin_baseline
-            WHERE exchange_code = ? AND short_name = ? AND expiry_date = ?
+            WHERE exchange_code = ? AND short_name IN ({placeholders}) AND expiry_date = ?
               AND strike_price = ? AND option_type = ?
             LIMIT 1
             """,
-            (exchange_code, stock_code, expiry_display, parse_strike(strike_price), option_type),
+            (exchange_code, *names, expiry_display, parse_strike(strike_price), option_type),
         ).fetchone()
     if not row:
         return {"found": False}

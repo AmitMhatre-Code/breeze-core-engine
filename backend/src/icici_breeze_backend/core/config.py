@@ -242,6 +242,56 @@ try:
     )
 except ValueError:
     REFERENCE_DATA_CONNECT_TIMEOUT_SECONDS = 15.0
+
+# Intraday SPAN baseline refresh. Both exchanges publish a fresh risk file several times a
+# session, so the baseline is refreshed on its own cadence rather than only with the daily
+# reference-data load (bhavcopy and the scrip master only change end-of-day).
+SPAN_INTRADAY_REFRESH_ENABLED = (
+    os.environ.get("SPAN_INTRADAY_REFRESH_ENABLED", "true").strip().lower()
+    in ("1", "true", "yes")
+)
+# IST slot times. Deliberately fixed rather than env-tunable: they are chosen against the
+# exchanges' own publish schedule (BSE stamps its intraday files at 11:15, 12:45, 14:10 and
+# 15:45; NSE at roughly 11:00, 12:30, 14:00 and 15:30), and a slot that finds nothing new
+# skips the download, so a mistimed run costs one HTTP request.
+SPAN_REFRESH_SLOTS_IST: tuple[tuple[int, int], ...] = (
+    (9, 15),
+    (11, 15),
+    (12, 45),
+    (14, 15),
+    (15, 45),
+    (18, 0),
+)
+NSE_SPAN_ARCHIVE_URL_TEMPLATE = (
+    os.environ.get("NSE_SPAN_ARCHIVE_URL_TEMPLATE")
+    or "https://nsearchives.nseindia.com/archives/nsccl/span/nsccl.{yyyymmdd}.i{version}.zip"
+).strip()
+# NSE publishes i1 (end of the previous evening) through i5 (~15:30). The extra slot is
+# headroom -- probing is a cheap streamed request that is abandoned before the body.
+try:
+    NSE_SPAN_MAX_INTRADAY_VERSION = int(
+        os.environ.get("NSE_SPAN_MAX_INTRADAY_VERSION", "6") or "6"
+    )
+except ValueError:
+    NSE_SPAN_MAX_INTRADAY_VERSION = 6
+# BSE's risk-parameter page is an Angular app with no server-rendered form; the dropdown and
+# radio selections it posts are really these two JSON calls. getmaxdate returns the latest
+# date holding files, LoadData lists that date's files (flag=0 is the SPAN XML set, flag=1
+# the binary PC-SPAN set we don't use).
+BSE_SPAN_MAXDATE_API_URL = (
+    os.environ.get("BSE_SPAN_MAXDATE_API_URL")
+    or "https://api.bseindia.com/BseIndiaAPI/api/getmaxdate/w"
+).strip()
+BSE_SPAN_INDEX_API_URL = (
+    os.environ.get("BSE_SPAN_INDEX_API_URL")
+    or "https://api.bseindia.com/BseIndiaAPI/api/LoadData/w"
+).strip()
+# LoadData hands back File_Path on notices.bseindia.com, a host that does not resolve on the
+# public internet. The page rewrites it to this prefix before downloading; so do we.
+BSE_SPAN_NOTICES_PREFIX = "http://notices.bseindia.com/"
+BSE_SPAN_DOWNLOAD_PREFIX = (
+    os.environ.get("BSE_SPAN_DOWNLOAD_PREFIX") or "https://www.bseindia.com/bsedata/"
+).strip()
 try:
     WEBSOCKET_QUOTE_TTL_SECONDS = int(os.environ.get("WEBSOCKET_QUOTE_TTL_SECONDS", "120") or "120")
 except ValueError:

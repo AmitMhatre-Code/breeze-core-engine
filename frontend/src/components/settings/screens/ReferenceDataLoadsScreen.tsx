@@ -287,7 +287,7 @@ export function ReferenceDataLoadsScreen() {
 
   const bseSpanStatusText = server?.bse_span_source_date
     ? `Data date: ${formatSourceFileDate(server.bse_span_source_date)}`
-    : "Not loaded — upload required";
+    : "Not yet loaded";
 
   const ingestHistory = server?.ingest_history ?? [];
   const displayedIngestHistory = useMemo(() => {
@@ -359,6 +359,11 @@ export function ReferenceDataLoadsScreen() {
                 <span className="text-xs text-amber-accent">Unsaved schedule changes</span>
               )}
             </div>
+            <p className="text-xs text-muted">
+              Bhavcopy and the scrip master only change end-of-day, so they follow this time. SPAN
+              baselines track the exchanges&apos; intraday risk files instead and refresh at 09:15,
+              11:15, 12:45, 14:15, 15:45 and 18:00 IST.
+            </p>
           </div>
 
           <div className="space-y-3 rounded-[10px] border border-border px-4 py-3.5">
@@ -420,7 +425,7 @@ export function ReferenceDataLoadsScreen() {
               {[
                 ...SOURCES,
                 {
-                  label: "NSE SPAN Baseline",
+                  label: "SPAN Baselines (NSE + BSE)",
                   inKey: "span_refresh_in_progress" as const,
                   pctKey: "span_progress_pct" as const,
                   msgKey: "span_message" as const,
@@ -480,7 +485,7 @@ export function ReferenceDataLoadsScreen() {
           <div className="space-y-2 rounded-[10px] border border-amber-accent/40 bg-amber-tint p-4">
             <h3 className="text-heading font-bold text-foreground">BSE SPAN Baseline</h3>
             <p className="text-table leading-relaxed text-muted">
-              BSE does not publish a direct archive URL like NSE. Download the SPAN XML (or ZIP containing it)
+              Downloaded automatically alongside NSE at 09:15, 11:15, 12:45, 14:15, 15:45 and 18:00 IST,
               from the{" "}
               <a
                 href="https://www.bseindia.com/markets/Derivatives/DeriReports/Riskparameternew.aspx"
@@ -489,8 +494,9 @@ export function ReferenceDataLoadsScreen() {
                 className="app-link"
               >
                 BSE Risk Parameter report
-              </a>{" "}
-              and upload it here. Only <strong className="text-foreground">BSXOPT</strong> and{" "}
+              </a>
+              . Upload a SPAN XML (or ZIP containing it) here only to load a file the scheduled
+              download could not reach. Only <strong className="text-foreground">BSXOPT</strong> and{" "}
               <strong className="text-foreground">BKXOPT</strong> portfolios (Sensex / BANKEX on BFO) are
               ingested.
             </p>

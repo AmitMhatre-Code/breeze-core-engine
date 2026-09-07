@@ -87,15 +87,20 @@ def test_malformed_ticks_return_none():
 
 
 def test_bse_exchange_maps_to_bfo():
+    """Field-path mapping, so the tick carries no `symbol`: when one resolves, the
+    segment comes from the token index rather than this string."""
     raw = _load_fixture("nifty_call_25000_raw.json")
     raw = dict(raw)
+    raw.pop("symbol", None)
     raw["exchange"] = "BSE Futures & Options"
     parsed = parse_icici_tick(raw)
     assert parsed is not None
     assert parsed.exchange_code == cfg.BFO
 
 
-def _seed_bfo_token_index(monkeypatch, tmp_path) -> None:
+def _seed_token_index(monkeypatch, tmp_path, rows) -> None:
+    """Point the ws_token_index lookup at a temp scrip DB holding exactly `rows`
+    (Token, SegmentCode, ShortName, ExpiryDate, StrikePrice, OptionType)."""
     import sqlite3
 
     monkeypatch.setattr(cfg, "DATA_PATH", str(tmp_path) + "/")
@@ -113,15 +118,94 @@ def _seed_bfo_token_index(monkeypatch, tmp_path) -> None:
             )
             """
         )
-        conn.execute(
+        conn.executemany(
             """
             INSERT INTO ws_token_index (Token, SegmentCode, ShortName, ExpiryDate, StrikePrice, OptionType)
-            VALUES (820390, 'BFO', 'BSESEN', '2026-07-02', 77000, 'CE')
-            """
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            rows,
         )
     from icici_breeze_backend.app.services.reference_data.ws_token_index import clear_token_lookup_cache
 
     clear_token_lookup_cache()
+
+
+def _seed_bfo_token_index(monkeypatch, tmp_path) -> None:
+    _seed_token_index(
+        monkeypatch,
+        tmp_path,
+        [(820390, "BFO", "BSESEN", "2026-07-02", 77000, "CE")],
+    )
+
+
+def test_stock_option_tick_identified_by_scrip_short_name(monkeypatch, tmp_path):
+    """A single-stock tick carries the SecurityMaster *company name* ("INFOSYS LTD"),
+    which is not the ShortName every chain/quote key in this app is built from. Taking
+    identity from the token index instead is what stops these ticks being discarded by
+    `chain_build_service._parsed_matches_contract` -- the failure that left INFTEC and
+    TCS priced off the previous close all session."""
+    _seed_token_index(
+        monkeypatch,
+        tmp_path,
+        [(115689, "NFO", "INFTEC", "2026-09-29", 1140, "CE")],
+    )
+    raw = _load_fixture("infy_call_1140_raw.json")
+    assert raw["stock_name"] == "INFOSYS LTD"
+
+    result = normalize_icici_tick(raw, updated_at=5.0)
+    assert result is not None
+    parsed, cell = result
+    assert parsed.exchange_code == cfg.NFO
+    assert parsed.stock_code == "INFTEC"
+    assert parsed.expiry_display == "29-Sep-2026"
+    assert parsed.strike == 1140.0
+    assert parsed.right == "call"
+    assert cell["stock_code"] == "INFTEC"
+    assert cell["right"] == cfg.CALL
+    assert cell["ltp"] == 22.15
+    assert cell["best_bid_price"] == 22.1
+    assert cell["best_offer_price"] == 22.35
+
+
+def test_non_nifty_index_tick_not_collapsed_to_nifty(monkeypatch, tmp_path):
+    """"NIFTY BANK".split()[0] is "NIFTY", so the field path labels a BANKNIFTY tick as
+    a NIFTY contract -- staging it into the P&L buffer and quote snapshot under another
+    underlying's key. The token index keeps the two apart."""
+    _seed_token_index(
+        monkeypatch,
+        tmp_path,
+        [(35000, "NFO", "CNXBAN", "2026-09-29", 72600, "CE")],
+    )
+    raw = _load_fixture("infy_call_1140_raw.json")
+    raw = dict(raw)
+    raw.update(
+        {
+            "symbol": "4.1!35000",
+            "stock_name": "NIFTY BANK",
+            "expiry_date": "29-Sep-2026",
+            "strike_price": "72600",
+        }
+    )
+    parsed = parse_icici_tick(raw)
+    assert parsed is not None
+    assert parsed.stock_code == "CNXBAN"
+
+
+def test_fields_still_parse_when_symbol_is_unknown(monkeypatch, tmp_path):
+    """The field path remains the fallback: a token missing from the index (a cold or
+    mid-refresh map) must still yield a usable contract rather than dropping the tick."""
+    _seed_token_index(
+        monkeypatch,
+        tmp_path,
+        [(820390, "BFO", "BSESEN", "2026-07-02", 77000, "CE")],
+    )
+    raw = dict(_load_fixture("nifty_call_25000_raw.json"))
+    raw["symbol"] = "4.1!999999999"  # well-formed, absent from the seeded index
+    parsed = parse_icici_tick(raw)
+    assert parsed is not None
+    assert parsed.stock_code == "NIFTY"
+    assert parsed.expiry_display == "30-Jun-2026"
+    assert parsed.strike == 25000.0
 
 
 def test_bfo_symbol_only_tick_normalization(monkeypatch, tmp_path):

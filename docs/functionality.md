@@ -42,7 +42,7 @@ Paths below are relative to the site root (e.g. `http://localhost:3000` in devel
 | `/settings/quantity-limits` | Quantity limit configuration. |
 | `/settings/margin-source` | Breeze vs exchange margin baseline source. |
 | `/settings/scrip-master` | Scrip master refresh. |
-| `/settings/reference-data-loads` | Reference-data pipeline status/schedule: NSE/BSE bhavcopy, scrip, and SPAN load progress and history; edit the daily IST refresh time or trigger an immediate load. |
+| `/settings/reference-data-loads` | Reference-data pipeline status/schedule: NSE/BSE bhavcopy, scrip, and SPAN load progress and history; edit the daily IST refresh time or trigger an immediate load. SPAN baselines additionally refresh at six fixed IST slots through the session (see [Architecture](./architecture.md#reference-data-pipeline)). |
 | `/settings/exchange-calendar` | Per-user trading-day holidays and session hours; can sync from Breeze Console when `PORTAL_API_BASE_URL` is configured. |
 | `/settings/api-usage` | API usage statistics. |
 | `/settings/breeze-api-playground` | Interactively call raw ICICI Breeze API methods (including WS subscribe) against the signed-in session — for diagnosing broker-side issues. |

@@ -10,7 +10,10 @@ from typing import Any
 import icici_breeze_backend.app.core.config as cfg
 
 _logger = logging.getLogger(__name__)
-_MAX_HISTORY = 80
+# Six intraday SPAN slots across two exchanges can add a dozen rows a day; the window has to
+# be wide enough that a week of them cannot push the daily bhavcopy and scrip-master entries
+# off the reference-data screen.
+_MAX_HISTORY = 300
 
 
 def _db_path() -> str:

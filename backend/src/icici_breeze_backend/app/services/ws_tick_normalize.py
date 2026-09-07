@@ -93,13 +93,32 @@ def _parse_tick_from_symbol(ticks: dict[str, Any]) -> ParsedTick | None:
 
 
 def parse_icici_tick(ticks: Any) -> ParsedTick | None:
-    """Extract contract identity from a raw ICICI tick dict, or None if unusable."""
+    """Extract contract identity from a raw ICICI tick dict, or None if unusable.
+
+    The `symbol`/token path runs FIRST, even though the tick's own fields look like
+    the more direct source. `stock_name` is filled in by `breeze_connect` from its
+    SecurityMaster *company name* ("INFOSYS LTD", "NIFTY BANK"), while every contract
+    identity in this app is keyed by the scrip master's ShortName ("INFTEC", "CNXBAN").
+    `_resolve_stock_short`'s first-word reduction bridges that gap for exactly one
+    underlying -- "NIFTY 50" -> "NIFTY" -- and only 17 of 181 NFO underlyings have a
+    company name whose first word is their ShortName. The rest either lose every tick
+    (`chain_build_service._parsed_matches_contract` rejects them, so INFTEC/TCS chains
+    built zero cells all session and fell back to the previous close) or, worse, get
+    *mislabelled*: every non-NIFTY NFO index reduces to "NIFTY" too, so a BANKNIFTY
+    tick would be staged into the P&L buffer and the quote snapshot under a NIFTY key.
+
+    The symbol carries the WS token, which `ws_token_index` -- built from the same
+    scrip master the subscription tokens come from -- resolves straight into the
+    ShortName namespace. The field path stays as the fallback for ticks whose token
+    isn't in the index (and it is what the BFO ticks, which carry no `stock_name`
+    at all, already relied on in reverse).
+    """
     if not isinstance(ticks, dict):
         return None
-    parsed = _parse_tick_from_fields(ticks)
+    parsed = _parse_tick_from_symbol(ticks)
     if parsed is not None:
         return parsed
-    return _parse_tick_from_symbol(ticks)
+    return _parse_tick_from_fields(ticks)
 
 
 def normalize_tick_cell(

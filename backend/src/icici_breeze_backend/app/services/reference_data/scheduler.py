@@ -70,12 +70,17 @@ def stop_reference_data_scheduler() -> None:
 
 
 def bootstrap_reference_data_schedule() -> None:
+    from icici_breeze_backend.app.services.reference_data.span_scheduler import start_span_scheduler
     from icici_breeze_backend.app.services.reference_data.state import ensure_reference_data_tables
 
     ensure_reference_data_tables()
     sch = load_schedule()
     if sch.get("enabled", True):
         start_reference_data_scheduler()
+    # The SPAN slots run on their own fixed cadence and are not covered by the daily
+    # schedule's enabled flag -- disabling the once-a-day full load should not silently stop
+    # margins tracking the exchanges' intraday risk files.
+    start_span_scheduler()
 
 
 def bootstrap_reference_data_on_startup() -> None:

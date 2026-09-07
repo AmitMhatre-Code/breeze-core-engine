@@ -86,7 +86,7 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
     MARGIN_SOURCE_EXCHANGE,
     ensure_exchange_margin_baseline_table,
     ingest_exchange_baseline_upload,
-    refresh_exchange_risk_baseline,
+    refresh_all_span_baselines,
 )
 from icici_breeze_backend.app.repositories import exchange_calendar as ec_repo
 from icici_breeze_backend.app.services.portal_exchange_calendar import (
@@ -459,10 +459,25 @@ async def settings_margin_source_post(
 
 @router.post("/margin-source/refresh-baseline")
 async def settings_margin_source_refresh_baseline(ctx: RequestContext = Depends(get_request_context)):
-    out = refresh_exchange_risk_baseline()
-    if out.get("Status") != 200:
-        raise HTTPException(status_code=400, detail=out.get("Error") or "Baseline refresh failed")
-    return JSONResponse({"ok": True, "message": "Exchange Risk Baseline refreshed.", "result": out.get("Success")})
+    """Pull the newest published SPAN file for both exchanges. Forced: an operator clicking
+    refresh wants the download attempted, not the scheduler's already-current shortcut."""
+    results = refresh_all_span_baselines(force=True)
+    failed = {m: (out.get("Error") or "refresh failed") for m, out in results.items() if out.get("Status") != 200}
+    if len(failed) == len(results):
+        raise HTTPException(
+            status_code=400,
+            detail="; ".join(f"{m.upper()}: {err}" for m, err in failed.items()) or "Baseline refresh failed",
+        )
+    message = "Exchange Risk Baseline refreshed."
+    if failed:
+        message += " " + "; ".join(f"{m.upper()} failed: {err}" for m, err in failed.items())
+    return JSONResponse(
+        {
+            "ok": True,
+            "message": message,
+            "result": {m: out.get("Success") for m, out in results.items()},
+        }
+    )
 
 
 @router.post("/margin-source/upload-baseline")

@@ -8,7 +8,7 @@ from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import now_ist
-from icici_breeze_backend.app.services.nsccl_baseline import refresh_exchange_risk_baseline
+from icici_breeze_backend.app.services.nsccl_baseline import refresh_all_span_baselines
 from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.services.reference_data import bhavcopy_bse, bhavcopy_nse, bhavcopy_store, scrip_index
 from icici_breeze_backend.app.services.reference_data.state import (
@@ -26,6 +26,7 @@ _SOURCE_LABELS = {
     "bse_fo": ("bse_fo_bhavcopy", "BSE FO BhavCopy"),
     "scrip": ("icici_scrip_master", "ICICI Scrip Master"),
     "span": ("nse_span_baseline", "NSE SPAN Baseline"),
+    "span_bse": ("bse_span_baseline", "BSE SPAN Baseline"),
 }
 
 
@@ -43,6 +44,7 @@ def _set_source(source: str, **updates: Any) -> None:
         "bse_fo": "bse_fo",
         "scrip": "scrip",
         "span": "span",
+        "span_bse": "span",
     }.get(source)
     if not prefix:
         return
@@ -174,26 +176,35 @@ def run_reference_data_load(*, force: bool = False, trigger_mode: str = "manual"
                 notes=str(exc),
             )
 
-        # SPAN baseline
-        _set_source("span", in_progress=True, progress_pct=20, message="Refreshing NSE SPAN baseline")
-        span_out = refresh_exchange_risk_baseline()
-        span_ok = span_out.get("Status") == 200
-        if not span_ok:
-            ok_all = False
+        # SPAN baselines (both exchanges). The intraday scheduler refreshes these on its own
+        # cadence too; this keeps the full load self-contained for a manual or startup run.
+        _set_source("span", in_progress=True, progress_pct=20, message="Refreshing SPAN baselines")
+        span_results = refresh_all_span_baselines()
+        span_messages: list[str] = []
+        for market, span_out in span_results.items():
+            span_ok = span_out.get("Status") == 200
+            if not span_ok:
+                ok_all = False
+            success = span_out.get("Success") if isinstance(span_out.get("Success"), dict) else {}
+            if span_ok and success.get("skipped"):
+                span_messages.append(f"{market.upper()} already current")
+                continue
+            span_messages.append(
+                f"{market.upper()} refreshed" if span_ok else f"{market.upper()}: {span_out.get('Error') or 'failed'}"
+            )
+            _record_ingest(
+                "span" if market == "nse" else "span_bse",
+                ok=span_ok,
+                source_date=str(success.get("source_date") or "") or None,
+                row_count=int(success.get("inserted_rows") or 0),
+                url=str(success.get("source_url") or success.get("source_file") or "") or None,
+                notes=None if span_ok else str(span_out.get("Error") or ""),
+            )
         _set_source(
             "span",
             in_progress=False,
             progress_pct=100,
-            message="SPAN baseline refreshed" if span_ok else (span_out.get("Error") or "SPAN refresh failed"),
-        )
-        success = span_out.get("Success") if isinstance(span_out.get("Success"), dict) else {}
-        _record_ingest(
-            "span",
-            ok=span_ok,
-            source_date=str(success.get("source_date") or success.get("archive_date") or "") or None,
-            row_count=int(success.get("inserted_rows") or success.get("contracts_loaded") or 0),
-            url=str(success.get("source_url") or success.get("source_file") or "") or None,
-            notes=None if span_ok else str(span_out.get("Error") or ""),
+            message="; ".join(span_messages) or "SPAN baselines unchanged",
         )
 
         msg = "Reference data load completed" if ok_all else "Reference data load completed with errors"
