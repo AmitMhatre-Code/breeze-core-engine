@@ -519,6 +519,70 @@ async def settings_margin_source_upload_baseline(
     return JSONResponse({"ok": True, "message": "Exchange Risk Baseline updated from file.", "result": out.get("Success")})
 
 
+@router.get("/margin-harness/runs")
+async def margin_harness_runs(ctx: RequestContext = Depends(get_request_context)):
+    """Past comparison runs, newest first, with each run's method ranking."""
+    from icici_breeze_backend.app.services.margin_harness import runner, store
+
+    return JSONResponse(
+        {
+            "running": runner.is_running() or bool(store.active_run_id()),
+            "broker_mode": cfg.ICICI_BROKER_MODE,
+            "runs": store.list_runs(),
+        }
+    )
+
+
+@router.post("/margin-harness/run")
+async def margin_harness_run(
+    include_open_positions: bool = True,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Start a comparison run.
+
+    Live broker calls only, so this is a production-instance action: on a developer machine or
+    any host without the registered static IP, ICICI refuses the session and the run reports
+    that rather than inventing numbers.
+    """
+    from icici_breeze_backend.app.services.margin_harness import runner
+
+    if str(cfg.ICICI_BROKER_MODE or "").strip().lower() != "live":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Margin harness needs live broker calls; this instance is in "
+                f"'{cfg.ICICI_BROKER_MODE}' mode."
+            ),
+        )
+    out = runner.start_harness_run(ctx.user_id, include_open_positions=include_open_positions)
+    if not out.get("started"):
+        raise HTTPException(status_code=409, detail="A margin harness run is already in progress.")
+    return JSONResponse({"ok": True, "message": "Margin comparison run started."})
+
+
+@router.get("/margin-harness/runs/{run_id}/download")
+async def margin_harness_download(
+    run_id: str,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """The full run as JSON, method catalog included so it stays readable later."""
+    import json as _json
+
+    from icici_breeze_backend.app.services.margin_harness import store
+
+    payload = store.get_run_payload(run_id.strip())
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Run not found or produced no payload")
+    return Response(
+        content=_json.dumps(payload, indent=2, default=str),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="margin-harness-{run_id[:8]}.json"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @router.get("/scrip-master/data", response_model=ScripMasterStateResponse)
 async def settings_scrip_master_data(ctx: RequestContext = Depends(get_request_context)):
     meta = _scrip_master_meta()

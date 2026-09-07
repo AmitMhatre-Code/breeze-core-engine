@@ -11,6 +11,7 @@ from icici_breeze_backend.app.services.iv_compute import DEFAULT_R, bs_price_cal
 from icici_breeze_backend.app.services.reference_data.span_baseline_store import (
     compute_span_margin_required,
     get_span_baseline_sheet,
+    get_underlying_facts_for,
 )
 
 DEFAULT_SIGMA = 0.20
@@ -111,6 +112,65 @@ def compute_portfolio_scanning_risk(
     return max(0.0, worst), warnings
 
 
+def compute_net_option_value_from_file(
+    contracts: dict[str, Any],
+    legs: list[SpanLeg],
+) -> tuple[float | None, list[str]]:
+    """NOV from the exchange's own settlement premiums (`<p>` in the SPAN file).
+
+    SPAN's final step subtracts the portfolio's net option value, and the file states the
+    premium it was computed against. Returns None when any leg's contract predates the
+    settle-price column, so the caller can fall back rather than silently mix a modelled
+    premium into an otherwise exact figure.
+    """
+    warnings: list[str] = []
+    long_mtm = 0.0
+    short_mtm = 0.0
+    for leg in legs:
+        if leg.quantity <= 0:
+            continue
+        opt = _right_to_option_type(leg.right)
+        entry = contracts.get(_contract_key(leg.strike, opt))
+        if not isinstance(entry, dict):
+            warnings.append(f"Contract missing in baseline: {leg.strike} {opt}")
+            return None, warnings
+        raw = entry.get("settle_price")
+        if raw is None:
+            warnings.append("Settlement premium missing from baseline; refresh the SPAN baseline.")
+            return None, warnings
+        try:
+            premium = float(raw)
+        except (TypeError, ValueError):
+            warnings.append("Invalid settlement premium in baseline.")
+            return None, warnings
+        mtm = premium * leg.quantity
+        if str(leg.side or "").strip().lower() == "buy":
+            long_mtm += mtm
+        else:
+            short_mtm += mtm
+    return long_mtm - short_mtm, warnings
+
+
+def compute_short_option_minimum(
+    legs: list[SpanLeg],
+    som_rate: float | None,
+) -> float:
+    """`som_rate` × short option units. Zero in every NSCCL/ICCL file seen so far, but the
+    term is real SPAN and the rate is per-underlying and per-day, so it is read, not assumed."""
+    try:
+        rate = float(som_rate or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if rate <= 0:
+        return 0.0
+    short_units = sum(
+        leg.quantity
+        for leg in legs
+        if leg.quantity > 0 and str(leg.side or "").strip().lower() == "sell"
+    )
+    return rate * short_units
+
+
 def compute_net_option_value(
     legs: list[SpanLeg],
     *,
@@ -119,7 +179,11 @@ def compute_net_option_value(
     r: float = DEFAULT_R,
     sigma: float = DEFAULT_SIGMA,
 ) -> float:
-    """MTM(long options) − MTM(short options) using Black–Scholes."""
+    """MTM(long options) − MTM(short options) using Black–Scholes.
+
+    The fallback for contracts with no settlement premium on file; prefer
+    `compute_net_option_value_from_file`, which needs no vol assumption.
+    """
     if spot <= 0 or time_years < 0:
         return 0.0
     sig = sigma if sigma > 0 else DEFAULT_SIGMA
@@ -152,8 +216,13 @@ def compute_portfolio_span_margin(
     spot: float | None = None,
     time_years: float | None = None,
     sigma: float | None = None,
+    som_rate: float | None = None,
 ) -> dict[str, Any]:
-    """Full portfolio SPAN: scanning risk minus NOV when spot/time are provided."""
+    """Portfolio SPAN: max(scanning risk, short option minimum) − net option value.
+
+    Scoped to one underlying and one expiry (design-decisions #23) -- the calendar-spread
+    charge and cross-expiry netting are deliberately not modelled here.
+    """
     warnings: list[str] = []
     active = [leg for leg in legs if leg.quantity > 0]
     if not active:
@@ -162,6 +231,8 @@ def compute_portfolio_span_margin(
             "span_margin_required": None,
             "scanning_risk": None,
             "net_option_value": None,
+            "net_option_value_source": "none",
+            "short_option_minimum": None,
             "margin_benefit": None,
             "per_leg_standalone": {},
             "warnings": warnings,
@@ -175,23 +246,36 @@ def compute_portfolio_span_margin(
             "span_margin_required": None,
             "scanning_risk": None,
             "net_option_value": None,
+            "net_option_value_source": "none",
+            "short_option_minimum": None,
             "margin_benefit": None,
             "per_leg_standalone": {},
             "warnings": warnings,
         }
 
-    nov = 0.0
-    if spot is not None and spot > 0 and time_years is not None and time_years >= 0:
+    # Prefer the exchange's own settlement premiums; Black-Scholes is only a fallback for
+    # contracts ingested before the settle-price column existed.
+    nov, nov_source = 0.0, "none"
+    file_nov, _file_warnings = compute_net_option_value_from_file(contracts, active)
+    if file_nov is not None:
+        nov, nov_source = file_nov, "span_file"
+    elif spot is not None and spot > 0 and time_years is not None and time_years >= 0:
         nov = compute_net_option_value(
             active,
             spot=float(spot),
             time_years=float(time_years),
             sigma=float(sigma) if sigma and sigma > 0 else DEFAULT_SIGMA,
         )
+        nov_source = "black_scholes"
+        warnings.append(
+            "Settlement premium missing from baseline; NOV estimated with Black-Scholes."
+        )
     elif spot is not None and spot > 0:
         warnings.append("Time to expiry missing; NOV adjustment skipped.")
 
-    span_margin = max(0.0, scanning_risk - nov)
+    short_option_minimum = compute_short_option_minimum(active, som_rate)
+    risk_charge = max(scanning_risk, short_option_minimum)
+    span_margin = max(0.0, risk_charge - nov)
 
     per_leg_standalone: dict[str, float] = {}
     sell_standalone_sum = 0.0
@@ -209,6 +293,8 @@ def compute_portfolio_span_margin(
         "span_margin_required": round(span_margin, 2),
         "scanning_risk": round(scanning_risk, 2),
         "net_option_value": round(nov, 2),
+        "net_option_value_source": nov_source,
+        "short_option_minimum": round(short_option_minimum, 2),
         "margin_benefit": round(margin_benefit, 2) if margin_benefit is not None else None,
         "per_leg_standalone": per_leg_standalone,
         "warnings": warnings,
@@ -260,15 +346,19 @@ def resolve_portfolio_span_margin(
             "span_margin_required": None,
             "scanning_risk": None,
             "net_option_value": None,
+            "net_option_value_source": "none",
+            "short_option_minimum": None,
             "margin_benefit": None,
             "per_leg_standalone": {},
             "warnings": ["Contract missing in Exchange Risk Baseline."],
         }
     span_legs = span_legs_from_margin_input(legs)
+    facts = get_underlying_facts_for(exchange_code, stock_code) or {}
     return compute_portfolio_span_margin(
         sheet.get("contracts") or {},
         span_legs,
         spot=spot,
         time_years=time_years,
         sigma=sigma,
+        som_rate=facts.get("som_rate"),
     )

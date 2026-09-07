@@ -28,6 +28,9 @@ MARGIN_SOURCE_EXCHANGE = "exchange_baseline"
 # BSE SPAN uses pfCode BSXOPT / BKXOPT; scrip_master / Strategy Builder use BSESEN and BANKEX on BFO (ICICI codes).
 BSE_BASELINE_PF_CODES = frozenset({"BSXOPT", "BKXOPT"})
 BSE_SPAN_PF_CODE_TO_SHORT_NAME = {"BSXOPT": "BSESEN", "BKXOPT": "BANKEX"}
+# The same two underlyings under the codes the physical portfolio and combined commodity use
+# (the option portfolio appends OPT; `phyPf`/`ccDef` do not).
+BSE_SPAN_UNDERLYING_TO_SHORT_NAME = {"BSX": "BSESEN", "BKX": "BANKEX"}
 
 _MAX_BASELINE_UPLOAD_BYTES = 120 * 1024 * 1024
 
@@ -40,6 +43,7 @@ _BASELINE_DB_COLUMNS = (
     "margin_per_lot",
     "lot_size",
     "risk_array",
+    "settle_price",
     "source_file",
     "source_date",
     "source_version",
@@ -56,6 +60,7 @@ CREATE TABLE {name} (
     margin_per_lot REAL NOT NULL,
     lot_size INTEGER,
     risk_array TEXT,
+    settle_price REAL,
     source_file TEXT NOT NULL,
     source_date TEXT NOT NULL,
     source_version INTEGER NOT NULL,
@@ -129,6 +134,53 @@ def _migrate_exchange_margin_baseline_add_risk_array(conn: sqlite3.Connection) -
     conn.commit()
 
 
+def _baseline_has_column(conn: sqlite3.Connection, column: str) -> bool:
+    rows = conn.execute("PRAGMA table_info(exchange_margin_baseline)").fetchall()
+    return any(str(name) == column for _cid, name, *_rest in rows)
+
+
+def _migrate_exchange_margin_baseline_add_settle_price(conn: sqlite3.Connection) -> None:
+    """The SPAN file's own settlement premium per option (`<p>`).
+
+    Net Option Value is a premium sum, and the exchange states the premium it used. Pricing it
+    with Black-Scholes at an assumed vol -- which is what this app did before the column
+    existed -- introduces an error the file was never missing.
+    """
+    if _baseline_has_column(conn, "settle_price"):
+        return
+    _logger.info("Adding exchange_margin_baseline.settle_price column")
+    conn.execute("ALTER TABLE exchange_margin_baseline ADD COLUMN settle_price REAL")
+    conn.commit()
+
+
+_EXCHANGE_MARGIN_UNDERLYING_DDL = """
+CREATE TABLE IF NOT EXISTS exchange_margin_underlying (
+    exchange_code TEXT NOT NULL,
+    short_name TEXT NOT NULL,
+    spot_price REAL,
+    som_rate REAL,
+    price_scan REAL,
+    source_file TEXT NOT NULL,
+    source_date TEXT NOT NULL,
+    refreshed_at TEXT NOT NULL,
+    PRIMARY KEY (exchange_code, short_name)
+)
+"""
+
+
+def ensure_exchange_margin_underlying_table() -> None:
+    """Per-underlying SPAN facts that do not belong on a contract row.
+
+    Spot comes from the `phyPf` portfolio and the short-option-minimum rate from the combined
+    commodity's `somTiers`; both are stated once per underlying, not per strike. Spot is what
+    exposure margin is a percentage of, so without it ELM has to be reconstructed from a live
+    quote the SPAN file already answered.
+    """
+    with _scrip_conn() as conn:
+        conn.execute(_EXCHANGE_MARGIN_UNDERLYING_DDL)
+        conn.commit()
+
+
 def ensure_exchange_margin_baseline_table() -> None:
     with _scrip_conn() as conn:
         conn.execute(_EXCHANGE_MARGIN_BASELINE_DDL.format(name="IF NOT EXISTS exchange_margin_baseline"))
@@ -141,6 +193,9 @@ def ensure_exchange_margin_baseline_table() -> None:
         conn.commit()
         _migrate_exchange_margin_baseline_strike_to_real(conn)
         _migrate_exchange_margin_baseline_add_risk_array(conn)
+        _migrate_exchange_margin_baseline_add_settle_price(conn)
+        conn.execute(_EXCHANGE_MARGIN_UNDERLYING_DDL)
+        conn.commit()
 
 
 def _scrip_conn() -> sqlite3.Connection:
@@ -228,6 +283,87 @@ def open_span_xml_payload(
     return None
 
 
+def _safe_float_text(raw: Any) -> float | None:
+    try:
+        return float(str(raw or "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _underlying_key(exchange_code: str, pf_code: str) -> str:
+    """Map a SPAN portfolio/commodity code onto the short name the baseline is keyed by."""
+    if exchange_code == cfg.BFO:
+        return BSE_SPAN_UNDERLYING_TO_SHORT_NAME.get(pf_code, pf_code)
+    return pf_code
+
+
+def _replace_underlying_facts(
+    conn: sqlite3.Connection,
+    *,
+    exchange_code: str,
+    source_file: str,
+    source_date: str,
+    spot_by_underlying: dict[str, float],
+    scan_by_underlying: dict[str, float],
+    som_by_underlying: dict[str, float],
+    keep_only: set[str] | None,
+) -> int:
+    conn.execute("DELETE FROM exchange_margin_underlying WHERE exchange_code = ?", (exchange_code,))
+    names = set(spot_by_underlying) | set(scan_by_underlying) | set(som_by_underlying)
+    if keep_only is not None:
+        names &= keep_only
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    rows = [
+        (
+            exchange_code,
+            name,
+            spot_by_underlying.get(name),
+            som_by_underlying.get(name),
+            scan_by_underlying.get(name),
+            source_file,
+            source_date,
+            now,
+        )
+        for name in sorted(names)
+    ]
+    if rows:
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO exchange_margin_underlying (
+                exchange_code, short_name, spot_price, som_rate, price_scan,
+                source_file, source_date, refreshed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    return len(rows)
+
+
+def get_underlying_facts(exchange_code: str, short_name: str) -> dict[str, Any] | None:
+    """Spot, short-option-minimum rate and price-scan range for one underlying."""
+    try:
+        with _scrip_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT spot_price, som_rate, price_scan, source_file, source_date
+                FROM exchange_margin_underlying
+                WHERE exchange_code = ? AND short_name = ?
+                """,
+                (exchange_code.upper(), short_name.upper()),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    return {
+        "spot_price": row[0],
+        "som_rate": row[1],
+        "price_scan": row[2],
+        "source_file": row[3],
+        "source_date": row[4],
+    }
+
+
 def _ingest_span_xml_stream(
     conn: sqlite3.Connection,
     fh,
@@ -278,8 +414,75 @@ def _ingest_span_xml_stream(
     batch_rows: list[tuple] = []
     matched_lot = 0
     missing_lot = 0
+    # Underlying-level facts, collected in the same pass. `phyPf` (spot, price-scan range) sits
+    # near the top of the file and `ccDef` (short-option-minimum rate) at the very bottom, so
+    # both are free here and would each cost a second 50 MB parse if collected separately.
+    spot_by_underlying: dict[str, float] = {}
+    scan_by_underlying: dict[str, float] = {}
+    som_by_underlying: dict[str, float] = {}
+    inside_phy_pf = False
+    phy_pf_code = ""
+    inside_cc_def = False
+    cc_code = ""
+    inside_som_tiers = False
     for event, elem in ET.iterparse(fh, events=("start", "end")):
         tag = elem.tag
+        if event == "start" and tag == "phyPf":
+            inside_phy_pf = True
+            phy_pf_code = ""
+            continue
+        if event == "start" and tag == "ccDef":
+            inside_cc_def = True
+            cc_code = ""
+            continue
+        if event == "start" and tag == "somTiers":
+            inside_som_tiers = True
+            continue
+        if inside_phy_pf:
+            # `<pfCode>` recurs inside nested `undPf`/`pfLink` blocks; the portfolio's own code
+            # is the first one, so only take it while the slot is still empty.
+            if event == "end" and tag == "pfCode" and not phy_pf_code:
+                phy_pf_code = _underlying_key(exchange_code, (elem.text or "").strip().upper())
+                elem.clear()
+                continue
+            if event == "end" and tag == "p" and phy_pf_code and phy_pf_code not in spot_by_underlying:
+                spot = _safe_float_text(elem.text)
+                if spot is not None and spot > 0:
+                    spot_by_underlying[phy_pf_code] = spot
+                elem.clear()
+                continue
+            if event == "end" and tag == "priceScan" and phy_pf_code and phy_pf_code not in scan_by_underlying:
+                scan = _safe_float_text(elem.text)
+                if scan is not None and scan > 0:
+                    scan_by_underlying[phy_pf_code] = scan
+                elem.clear()
+                continue
+            if event == "end" and tag == "phyPf":
+                inside_phy_pf = False
+                phy_pf_code = ""
+                elem.clear()
+                continue
+        if inside_cc_def:
+            # `<cc>` recurs in every `dSpread`'s `pLeg`; the commodity's own code comes first.
+            if event == "end" and tag == "cc" and not cc_code:
+                cc_code = _underlying_key(exchange_code, (elem.text or "").strip().upper())
+                elem.clear()
+                continue
+            if event == "end" and tag == "val" and inside_som_tiers and cc_code:
+                rate = _safe_float_text(elem.text)
+                if rate is not None:
+                    som_by_underlying[cc_code] = max(som_by_underlying.get(cc_code, 0.0), rate)
+                elem.clear()
+                continue
+            if event == "end" and tag == "somTiers":
+                inside_som_tiers = False
+                elem.clear()
+                continue
+            if event == "end" and tag == "ccDef":
+                inside_cc_def = False
+                cc_code = ""
+                elem.clear()
+                continue
         if event == "start" and tag == "oopPf":
             inside_oop = True
             current_underlying = ""
@@ -343,6 +546,9 @@ def _ingest_span_xml_stream(
                     missing_lot += 1
                 margin_per_lot = per_unit * (lot_size if lot_size and lot_size > 0 else 1)
                 risk_array_json = json.dumps(a_vals)
+                # The exchange's own settlement premium for this option. Net Option Value is a
+                # sum of these; deriving it from a pricing model instead is avoidable error.
+                settle_price = _safe_float_text(elem.findtext("p"))
                 batch_rows.append(
                     (
                         exchange_code,
@@ -353,6 +559,7 @@ def _ingest_span_xml_stream(
                         float(margin_per_lot),
                         lot_size,
                         risk_array_json,
+                        settle_price,
                         source_file,
                         source_date,
                         int(source_version),
@@ -365,8 +572,9 @@ def _ingest_span_xml_stream(
                         """
                         INSERT OR REPLACE INTO exchange_margin_baseline (
                             exchange_code, short_name, expiry_date, strike_price, option_type, margin_per_lot,
-                            lot_size, risk_array, source_file, source_date, source_version, refreshed_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            lot_size, risk_array, settle_price, source_file, source_date, source_version,
+                            refreshed_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         batch_rows,
                     )
@@ -391,20 +599,41 @@ def _ingest_span_xml_stream(
             """
             INSERT OR REPLACE INTO exchange_margin_baseline (
                 exchange_code, short_name, expiry_date, strike_price, option_type, margin_per_lot,
-                lot_size, risk_array, source_file, source_date, source_version, refreshed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                lot_size, risk_array, settle_price, source_file, source_date, source_version,
+                refreshed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             batch_rows,
         )
+    # For BSE only the two index portfolios are ingested, so the underlying table is scoped to
+    # match -- carrying spot for ~590 underlyings whose contracts were skipped would invite a
+    # lookup that silently succeeds against a baseline that has no rows.
+    keep_only = (
+        {BSE_SPAN_PF_CODE_TO_SHORT_NAME[c] for c in allowed_pf_codes if c in BSE_SPAN_PF_CODE_TO_SHORT_NAME}
+        if allowed_pf_codes is not None
+        else None
+    )
+    underlying_rows = _replace_underlying_facts(
+        conn,
+        exchange_code=exchange_code,
+        source_file=source_file,
+        source_date=source_date,
+        spot_by_underlying=spot_by_underlying,
+        scan_by_underlying=scan_by_underlying,
+        som_by_underlying=som_by_underlying,
+        keep_only=keep_only,
+    )
     conn.commit()
     _logger.info(
-        "Exchange baseline ingested %s %s: inserted=%s skipped=%s matched_lot=%s missing_lot=%s",
+        "Exchange baseline ingested %s %s: inserted=%s skipped=%s matched_lot=%s missing_lot=%s "
+        "underlyings=%s",
         exchange_code,
         source_file,
         inserted,
         skipped,
         matched_lot,
         missing_lot,
+        underlying_rows,
     )
     return inserted, skipped
 

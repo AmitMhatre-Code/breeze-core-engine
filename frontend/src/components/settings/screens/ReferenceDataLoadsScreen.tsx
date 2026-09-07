@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HelpLink } from "@/components/help/HelpLink";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { SettingsScreenHeader } from "@/components/settings/SettingsScreenHeader";
+import { MarginHarnessPanel } from "@/components/settings/MarginHarnessPanel";
 import { apiClient } from "@/lib/api-client";
 import { formatApiDateTime, formatSourceFileDate } from "@/lib/format-iso-date";
 
@@ -548,6 +549,8 @@ export function ReferenceDataLoadsScreen() {
               </div>
             ) : null}
           </div>
+
+          <MarginHarnessPanel />
 
           <div className="space-y-2">
             <div className="flex flex-wrap items-baseline justify-between gap-2">

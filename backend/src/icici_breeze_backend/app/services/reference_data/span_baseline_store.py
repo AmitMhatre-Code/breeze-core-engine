@@ -67,10 +67,22 @@ def _parse_risk_array(raw: Any) -> list[float] | None:
     return None
 
 
+def _safe_settle_price(raw: Any) -> float | None:
+    """The exchange's settlement premium; absent on rows ingested before it was captured."""
+    if raw is None:
+        return None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return val if val >= 0 else None
+
+
 def _contract_entry(
     margin_per_lot: float,
     lot_size: int,
     risk_array: list[float] | None = None,
+    settle_price: float | None = None,
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "margin_per_lot": margin_per_lot,
@@ -78,6 +90,8 @@ def _contract_entry(
     }
     if risk_array:
         entry["risk_array"] = risk_array
+    if settle_price is not None:
+        entry["settle_price"] = settle_price
     return entry
 
 
@@ -147,7 +161,7 @@ def publish_span_baseline_from_db(version: int | None = None) -> int:
             rows = conn.execute(
                 """
                 SELECT exchange_code, short_name, expiry_date, strike_price, option_type,
-                       margin_per_lot, lot_size, risk_array, source_file, source_date
+                       margin_per_lot, lot_size, risk_array, settle_price, source_file, source_date
                 FROM exchange_margin_baseline
                 """
             ).fetchall()
@@ -155,7 +169,7 @@ def publish_span_baseline_from_db(version: int | None = None) -> int:
         _logger.warning("SPAN baseline publish failed reading SQLite: %s", exc)
         return ver
 
-    for ex, short, expiry, strike, opt_type, mpl, ls, risk_raw, src_file, src_date in rows:
+    for ex, short, expiry, strike, opt_type, mpl, ls, risk_raw, settle_raw, src_file, src_date in rows:
         ex_u = str(ex or "").strip().upper()
         short_u = str(short or "").strip().upper()
         expiry_s = str(expiry or "").strip()
@@ -179,6 +193,7 @@ def publish_span_baseline_from_db(version: int | None = None) -> int:
             margin_per_lot,
             lot_size,
             risk_array,
+            _safe_settle_price(settle_raw),
         )
         m = meta_by_exchange.setdefault(
             ex_u,
@@ -252,6 +267,38 @@ def _load_sheet_into_local(exchange_code: str, short_name: str, expiry_display: 
     return data
 
 
+def short_name_candidates(stock_code: str) -> list[str]:
+    """Every name a SPAN sheet for this stock could be keyed under, best first.
+
+    Callers pass ICICI's stock code; SPAN rows are keyed on the exchange symbol the file's
+    pfCode carries. `get_exchange_ticker` is the bridge (ADATRA -> ADANIENSOL) and is the only
+    candidate that resolves a stock -- the alias table covers indices only, so without it every
+    stock lookup missed and silently fell back to Breeze.
+    """
+    candidates: list[str] = []
+    for candidate in (
+        scrip_short_name(stock_code),
+        get_exchange_ticker(stock_code),
+        *underlying_aliases(stock_code),
+    ):
+        name = str(candidate or "").strip().upper()
+        if name and name not in candidates:
+            candidates.append(name)
+    return candidates
+
+
+def get_underlying_facts_for(exchange_code: str, stock_code: str) -> dict[str, Any] | None:
+    """Spot / SOM rate / price-scan range for an ICICI stock code, via the same alias chain."""
+    from icici_breeze_backend.app.services.nsccl_baseline import get_underlying_facts
+
+    ex = str(exchange_code or cfg.NFO).strip().upper()
+    for name in short_name_candidates(stock_code):
+        facts = get_underlying_facts(ex, name)
+        if facts:
+            return {**facts, "short_name": name}
+    return None
+
+
 def get_span_baseline_sheet(
     exchange_code: str,
     stock_code: str,
@@ -286,15 +333,7 @@ def _get_span_baseline_sheet_raw(
     # pfCode carries. `get_exchange_ticker` is the bridge (ADATRA -> ADANIENSOL) and is the only
     # candidate that resolves a stock -- the alias table covers indices only, so without it every
     # stock lookup missed and silently fell back to Breeze.
-    short_candidates: list[str] = []
-    for candidate in (
-        scrip_short_name(stock_code),
-        get_exchange_ticker(stock_code),
-        *underlying_aliases(stock_code),
-    ):
-        name = str(candidate or "").strip().upper()
-        if name and name not in short_candidates:
-            short_candidates.append(name)
+    short_candidates = short_name_candidates(stock_code)
 
     for short_u in short_candidates:
         sheet_key = _sheet_local_key(ex, short_u, expiry)
@@ -339,7 +378,7 @@ def _load_sheet_from_sqlite(
             placeholders = ",".join("?" for _ in names)
             rows = conn.execute(
                 f"""
-                SELECT strike_price, option_type, margin_per_lot, lot_size, risk_array
+                SELECT strike_price, option_type, margin_per_lot, lot_size, risk_array, settle_price
                 FROM exchange_margin_baseline
                 WHERE exchange_code = ? AND expiry_date = ? AND short_name IN ({placeholders})
                 """,
@@ -350,7 +389,7 @@ def _load_sheet_from_sqlite(
     if not rows:
         return None
     out: dict[str, dict[str, Any]] = {}
-    for strike, opt_type, mpl, ls, risk_raw in rows:
+    for strike, opt_type, mpl, ls, risk_raw, settle_raw in rows:
         try:
             lot_size = int(ls) if ls else 0
             risk_array = _parse_risk_array(risk_raw) if include_risk_arrays else None
@@ -358,6 +397,7 @@ def _load_sheet_from_sqlite(
                 float(mpl),
                 lot_size,
                 risk_array,
+                _safe_settle_price(settle_raw),
             )
         except (TypeError, ValueError):
             continue

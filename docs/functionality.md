@@ -42,7 +42,7 @@ Paths below are relative to the site root (e.g. `http://localhost:3000` in devel
 | `/settings/quantity-limits` | Quantity limit configuration. |
 | `/settings/margin-source` | Breeze vs exchange margin baseline source. |
 | `/settings/scrip-master` | Scrip master refresh. |
-| `/settings/reference-data-loads` | Reference-data pipeline status/schedule: NSE/BSE bhavcopy, scrip, and SPAN load progress and history; edit the daily IST refresh time or trigger an immediate load. SPAN baselines additionally refresh at six fixed IST slots through the session (see [Architecture](./architecture.md#reference-data-pipeline)). |
+| `/settings/reference-data-loads` | Reference-data pipeline status/schedule: NSE/BSE bhavcopy, scrip, and SPAN load progress and history; edit the daily IST refresh time or trigger an immediate load. Also hosts the margin comparison harness (prices structures with ICICI and with every local SPAN/ELM method, then ranks them; live broker mode only, JSON export per run). SPAN baselines additionally refresh at six fixed IST slots through the session (see [Architecture](./architecture.md#reference-data-pipeline)). |
 | `/settings/exchange-calendar` | Per-user trading-day holidays and session hours; can sync from Breeze Console when `PORTAL_API_BASE_URL` is configured. |
 | `/settings/api-usage` | API usage statistics. |
 | `/settings/breeze-api-playground` | Interactively call raw ICICI Breeze API methods (including WS subscribe) against the signed-in session — for diagnosing broker-side issues. |
@@ -90,7 +90,7 @@ The UI uses **React Query** for server state and **Chart.js** where charts are s
 
 ### Settings API
 
-- **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline upload/refresh), scrip master refresh, API usage aggregates, exchange-calendar preferences, and the reference-data pipeline (`/reference-data-loads/status`, `/schedule`, `/load-now` — see [Architecture — Reference data pipeline](./architecture.md#reference-data-pipeline)).
+- **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline upload/refresh), scrip master refresh, API usage aggregates, exchange-calendar preferences, the margin comparison harness (`/margin-harness/run`, `/runs`, `/runs/{id}/download`), and the reference-data pipeline (`/reference-data-loads/status`, `/schedule`, `/load-now` — see [Architecture — Reference data pipeline](./architecture.md#reference-data-pipeline)).
 
 ### Outlook (market narrative)
 
