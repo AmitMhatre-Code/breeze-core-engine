@@ -1,8 +1,9 @@
 """The scalper driver (docs/bots-scalping-plan.md section 5.1).
 
-**Bot 3 runs end to end in PAPER mode; nothing here places a real order.** Bot 4's executor
-arrives in step 6, and live dispatch in step 9 -- a bot configured `live` before then logs a
-warning and does nothing, rather than quietly behaving as paper.
+Both scalpers run end to end here. A bot in `paper` mode runs the full strategy against live
+prices and places nothing; a bot in `live` mode places real orders. Reaching `live` requires a
+completed paper trading day on the same material config -- enforced when the mode is saved,
+not here (`scalping/evidence.py`), so by the time this loop sees `live` the evidence exists.
 
 A daemon thread, not an asyncio task. Both design documents say "asyncio task", but
 `bots/scheduler.py` and `reference_data/scheduler.py` are both threads and the tick source is
@@ -648,6 +649,25 @@ def reconcile_on_startup() -> None:
             _logger.exception("scalping: startup reconciliation failed for %s", bot_type)
 
 
+def _armed_summary() -> str:
+    """What is actually armed, for the startup log.
+
+    A static sentence cannot answer the only question an operator reads this line for -- can
+    this deployment place real orders right now? Naming each enabled scalper and its mode
+    can, and it is the one moment where saying so costs nothing.
+    """
+    try:
+        armed = [
+            f"{bot_type}={str((record.config or {}).get('mode') or 'paper')}"
+            for bot_type in SCALPER_BOT_TYPES
+            for record in repo.list_enabled_bots(bot_type)
+        ]
+    except Exception:  # noqa: BLE001 -- a log line must never stop the loop starting
+        _logger.debug("scalping: could not summarise armed bots", exc_info=True)
+        return "armed bots unknown"
+    return ", ".join(armed) if armed else "no scalper enabled"
+
+
 def start_scalper_loop() -> None:
     global _thread
     if _thread and _thread.is_alive():
@@ -656,7 +676,7 @@ def start_scalper_loop() -> None:
     _stop.clear()
     _thread = threading.Thread(target=_loop, name="scalper-loop", daemon=True)
     _thread.start()
-    _logger.info("Scalper loop started (decisions only; no orders until step 4).")
+    _logger.info("Scalper loop started (%s).", _armed_summary())
 
 
 def stop_scalper_loop() -> None:
