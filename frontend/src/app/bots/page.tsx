@@ -15,7 +15,7 @@ export default function BotsPage() {
   const bots = [...(data ?? [])].sort((a, b) => a.priority - b.priority);
 
   return (
-    <AppShell>
+    <AppShell contentWidth="wide">
       <div className="space-y-4">
         <header>
           <h1 className="app-text-heading text-lg">Bots</h1>
@@ -42,9 +42,10 @@ export default function BotsPage() {
           </p>
         )}
 
-        {/* Capped near 22rem: a square card stretched to half a wide viewport turns
-            its own aspect ratio into dead space. */}
-        <div className="grid gap-4 sm:grid-cols-[repeat(2,minmax(0,22rem))]">
+        {/* Cards capped near 22rem: a square card stretched to fill a wide viewport turns
+            its own aspect ratio into dead space. Columns step up (2/3/4) as the window
+            widens instead of stretching the cards, and back down as it narrows. */}
+        <div className="grid gap-4 sm:grid-cols-[repeat(2,minmax(0,22rem))] lg:grid-cols-[repeat(3,minmax(0,22rem))] 2xl:grid-cols-[repeat(4,minmax(0,22rem))]">
           {bots.map((bot) => (
             <BotCard key={bot.id} bot={bot} readOnly={tradingReadOnly} />
           ))}
