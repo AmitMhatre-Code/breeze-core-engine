@@ -13,6 +13,7 @@ import json
 import secrets
 import sqlite3
 import uuid
+from collections.abc import Iterable
 from typing import Any, Optional
 
 from icici_breeze_backend.app.core.timezone import ist_timestamp, now_ist
@@ -205,7 +206,13 @@ def has_terminal_run_today(user_id: str, bot_type: str) -> bool:
     return row is not None
 
 
-def has_committed_run_today(user_id: str, bot_type: str) -> bool:
+def has_committed_run_today(
+    user_id: str,
+    bot_type: str,
+    *,
+    retryable_reason_codes: Iterable[str] = (),
+    retry_after_minutes: float = 0.0,
+) -> bool:
     """Has this bot done something today that it must not do twice?
 
     Deliberately narrower than `has_terminal_run_today`, which treats *any* run row as
@@ -214,17 +221,62 @@ def has_committed_run_today(user_id: str, bot_type: str) -> bool:
     proposing counted, the first proposal would block the re-proposal loop and the eventual
     placement, and the bot would never trade.
 
-    `proposed` is therefore the one status excluded here. `running` still counts, so a run
-    in flight is never started alongside itself.
+    `proposed` is therefore the one status excluded unconditionally. `running` still counts,
+    so a run in flight is never started alongside itself.
+
+    `retryable_reason_codes` (with `retry_after_minutes`) extends the same reasoning one
+    step further, to runs that *finished* without deciding anything: a chain that had not
+    warmed, a quote that had not arrived. Those rows stay in the log -- an unexplained
+    no-trade day is the failure the log exists to prevent -- but they stop blocking once the
+    retry interval has passed, so the bot gets the rest of its window instead of standing
+    down on the first pricing miss. Both arguments default to the old behaviour, so callers
+    that have a real answer (Bot 1's autonomous path, every existing test) are unaffected.
     """
     today = now_ist().date().isoformat()
+    codes = tuple(retryable_reason_codes)
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT 1 FROM bot_runs WHERE user_id = ? AND bot_type = ? "
-            "AND date(started_at) = ? AND status != 'proposed' LIMIT 1",
+        rows = conn.execute(
+            "SELECT status, reason_code, finished_at FROM bot_runs "
+            "WHERE user_id = ? AND bot_type = ? AND date(started_at) = ? "
+            "AND status != 'proposed'",
             (user_id, bot_type, today),
-        ).fetchone()
-    return row is not None
+        ).fetchall()
+
+    for row in rows:
+        if not _is_retryable_run(row, codes, retry_after_minutes):
+            return True
+    return False
+
+
+def _is_retryable_run(row: Any, codes: tuple[str, ...], retry_after_minutes: float) -> bool:
+    """True when this row is a finished, retryable pricing miss whose cooling-off has passed.
+
+    A row still `running` is never retryable however it is coded -- something is working on
+    it right now, and starting a second attempt alongside it is the double-fire this gate
+    exists to prevent.
+    """
+    if not codes:
+        return False
+    if str(row["status"]) == "running":
+        return False
+    if str(row["reason_code"] or "") not in codes:
+        return False
+    finished_at = _parse_ist_timestamp(row["finished_at"])
+    if finished_at is None:
+        return False
+    elapsed_minutes = (now_ist().replace(tzinfo=None) - finished_at).total_seconds() / 60.0
+    return elapsed_minutes >= float(retry_after_minutes)
+
+
+def _parse_ist_timestamp(raw: Any) -> Optional[datetime.datetime]:
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.datetime.strptime(str(raw), fmt)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def update_bot(

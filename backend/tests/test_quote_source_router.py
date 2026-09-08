@@ -93,6 +93,87 @@ def test_flatten_chain_side_rows():
     assert calls[0]["buy_sell_ratio"] == 0.5
 
 
+# A cell built from a real production NIFTY option tick. The full tick carries symbol,
+# open/last/high/low, bPrice/sPrice, OI, ttq, ltt, strike_price, right, expiry_date -- and
+# NO spot_price field, because the underlying is a separate instrument ("4.1!NIFTY 50") on
+# the same feed. Every websocket- and snapshot-sourced cell therefore reaches the flattener
+# without a spot, which is what this pair of tests pins down.
+def _ws_cell(strike, bid):
+    return {
+        "strike_price": strike,
+        "ltp": bid,
+        "best_bid_price": bid,
+        "best_offer_price": bid + 0.05,
+        "total_buy_qty": 1,
+        "total_sell_qty": 1,
+        "open_interest": 19654050,
+    }
+
+
+def test_flatten_stamps_the_chain_spot_onto_websocket_rows():
+    """Live option ticks carry no spot, so without this the whole chain reads as spotless.
+
+    This is the defect that stood Bot 2 down for an entire expiry day: it reported "No spot
+    price available" at 09:30 with a fully warm chain, because it looked for the spot on the
+    rows while the only copy of it sat at the payload level.
+    """
+    payload = {
+        "spot_price": 23640.3,
+        "chain_rows": [
+            {"strike_price": 23600, "call": _ws_cell(23600, 15.6), "put": _ws_cell(23600, 9.15)},
+            {"strike_price": 24350, "call": _ws_cell(24350, 0.3), "put": None},
+        ],
+    }
+
+    calls = _flatten_chain_side_rows(payload, "Call")
+
+    assert [r["spot_price"] for r in calls] == [23640.3, 23640.3]
+    assert _flatten_chain_side_rows(payload, "Put")[0]["spot_price"] == 23640.3
+
+
+def test_flatten_leaves_a_cells_own_spot_alone():
+    """Bhavcopy and REST cells carry a real per-row spot; the stamp must not overwrite it."""
+    payload = {
+        "spot_price": 23640.3,
+        "chain_rows": [
+            {
+                "strike_price": 23600,
+                "call": {**_ws_cell(23600, 15.6), "spot_price": 23779.15},
+                "put": None,
+            }
+        ],
+    }
+
+    assert _flatten_chain_side_rows(payload, "Call")[0]["spot_price"] == 23779.15
+
+
+def test_flatten_reports_no_spot_when_the_chain_could_not_resolve_one():
+    """A true negative stays a true negative — callers must still be able to fail closed."""
+    payload = {
+        "spot_price": None,
+        "chain_rows": [{"strike_price": 23600, "call": _ws_cell(23600, 15.6), "put": None}],
+    }
+
+    assert _flatten_chain_side_rows(payload, "Call")[0]["spot_price"] is None
+
+
+@patch("icici_breeze_backend.app.services.quote_source_router.fetch_chain_payload_routed")
+def test_chain_side_response_carries_the_spot_through_to_callers(mock_payload):
+    """The end of the path Bot 2, the scalpers and the hedge scan all read."""
+    mock_payload.return_value = {
+        "spot_price": 23640.3,
+        "quote_source": "websocket",
+        "chain_rows": [
+            {"strike_price": 23600, "call": _ws_cell(23600, 15.6), "put": None}
+        ],
+    }
+
+    out = fetch_chain_side_icici_response(MagicMock(), "u1", "NIFTY", "NFO", "08-Sep-2026", "Call")
+
+    assert out["Status"] == 200
+    assert out["Success"][0]["spot_price"] == 23640.3
+
+
 def test_cell_to_icici_row_computes_ratio():
     row = _cell_to_icici_row(
         {

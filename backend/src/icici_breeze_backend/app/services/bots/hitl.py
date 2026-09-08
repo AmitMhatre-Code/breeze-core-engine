@@ -28,6 +28,8 @@ from icici_breeze_backend.app.db.bots_migrate import (
     BOT_HOLDINGS_WRITER,
 )
 from icici_breeze_backend.app.domain.bots import (
+    TRANSIENT_REASON_CODES,
+    TRANSIENT_RETRY_MINUTES,
     ApproveProposalRequest,
     ExpiryIndexWriterConfig,
     HoldingsWriterConfig,
@@ -204,6 +206,10 @@ def next_action(user_id: str, bot_type: str, config: Any, *, now: datetime.datet
     1. **Already committed today** — placed, failed, or definitively stood down. This uses
        `has_committed_run_today`, *not* `has_terminal_run_today`: a `proposed` run is an ask,
        not an act, and treating it as terminal would end the day at the first proposal.
+       Transient pricing misses are excused on the same principle — a chain that had not
+       warmed decided nothing either — so the retryable set is passed through here as well.
+       It has to be: `decide()` and this function are two gates in series, and a retry the
+       scheduler allows would be silently cancelled if this one still called the day over.
     2. **Past the cutoff** — the window has shut. Logged once, here, so the run log's last
        word is not `awaiting_approval` hours after the chance was gone.
     3. **A proposal is still outstanding.** Reading it retires it first if it has expired,
@@ -211,7 +217,12 @@ def next_action(user_id: str, bot_type: str, config: Any, *, now: datetime.datet
     4. **The last ask is younger than the nag interval** — the user is asked on the cadence
        they configured for nags, not once every thirty-second tick.
     """
-    if repo.has_committed_run_today(user_id, bot_type):
+    if repo.has_committed_run_today(
+        user_id,
+        bot_type,
+        retryable_reason_codes=TRANSIENT_REASON_CODES,
+        retry_after_minutes=TRANSIENT_RETRY_MINUTES,
+    ):
         return "wait"
     if now.time() >= _hhmm(config.cutoff_ist):
         _note_timeout(user_id, bot_type, config, now=now)

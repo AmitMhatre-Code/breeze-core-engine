@@ -10,6 +10,7 @@ import datetime
 
 import pytest
 
+from icici_breeze_backend.app.core.timezone import now_ist
 from icici_breeze_backend.app.db.bots_migrate import (
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
@@ -207,19 +208,85 @@ def test_waits_until_the_nag_interval_has_passed(db_path):
 
 
 def test_reproposes_once_the_interval_has_passed(db_path):
+    # Both times are fixed and inside the window. This used to backdate against
+    # `datetime.datetime.now()` and pass it as `now`, so the test failed outright whenever
+    # the suite ran after the config's 12:00 cutoff -- and, off IST, compared a local
+    # timestamp against the IST one the repo writes.
     _propose_row()
     pending = repo.get_pending_proposal("u1", BOT_HOLDINGS_WRITER)
     repo.resolve_proposal("u1", pending.id, status="expired")
     with repo._connect() as conn:
         conn.execute(
             "UPDATE bot_proposals SET created_at = ? WHERE id = ?",
-            ((datetime.datetime.now() - datetime.timedelta(minutes=40)).strftime(
-                "%Y-%m-%d %H:%M:%S"), pending.id),
+            (_at(9, 0).strftime("%Y-%m-%d %H:%M:%S"), pending.id),
         )
         conn.commit()
 
     config = _config(nag_interval_minutes=15)
-    assert hitl.next_action("u1", BOT_HOLDINGS_WRITER, config, now=datetime.datetime.now()) == "propose"
+    assert hitl.next_action("u1", BOT_HOLDINGS_WRITER, config, now=_at(9, 40)) == "propose"
+
+
+def _finished_run(bot_type, reason_code, *, status="skipped", minutes_ago=0.0, user_id="u1"):
+    """A closed run, optionally backdated, in the shape the scheduler leaves behind."""
+    run_id = repo.start_run(user_id, bot_type, "schedule")
+    repo.finish_run(run_id, status=status, reason_code=reason_code, reason_text="t")
+    if minutes_ago:
+        # Backdated against the same IST clock `finish_run` stamps with, not the local one:
+        # under any other TZ those differ by hours and the interval under test would be
+        # whatever the offset happened to be.
+        stamp = (
+            now_ist().replace(tzinfo=None) - datetime.timedelta(minutes=minutes_ago)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        with repo._connect() as conn:
+            conn.execute("UPDATE bot_runs SET finished_at = ? WHERE id = ?", (stamp, run_id))
+            conn.commit()
+    return run_id
+
+
+def test_a_pricing_miss_does_not_end_the_day(db_path):
+    """The bug this guards: one "No spot price available" at 09:30 used to be terminal.
+
+    A chain that had not warmed decided nothing about the market, so once the short retry
+    interval has passed the bot must get the rest of its window back.
+    """
+    _finished_run(BOT_HOLDINGS_WRITER, ReasonCode.QUOTE_UNAVAILABLE, minutes_ago=5)
+
+    assert (
+        hitl.next_action("u1", BOT_HOLDINGS_WRITER, _config(), now=_at(9, 40)) == "propose"
+    )
+
+
+def test_a_pricing_miss_still_waits_out_its_retry_interval(db_path):
+    """Retrying is not the same as retrying every thirty-second tick."""
+    _finished_run(BOT_HOLDINGS_WRITER, ReasonCode.QUOTE_UNAVAILABLE, minutes_ago=0)
+
+    assert hitl.next_action("u1", BOT_HOLDINGS_WRITER, _config(), now=_at(9, 40)) == "wait"
+
+
+def test_a_real_answer_still_ends_the_day(db_path):
+    """Only pricing misses are excused. "Nothing eligible" is a finding, not a hiccup —
+    re-asking a question the bot already answered would be its own kind of broken."""
+    _finished_run(BOT_HOLDINGS_WRITER, ReasonCode.NOTHING_ELIGIBLE, minutes_ago=90)
+
+    assert hitl.next_action("u1", BOT_HOLDINGS_WRITER, _config(), now=_at(9, 40)) == "wait"
+
+
+def test_a_run_still_in_flight_is_never_retried(db_path):
+    """However it is coded, something is working on it right now — starting a second
+    attempt alongside it is exactly the double-fire the day-gate exists to prevent."""
+    repo.start_run("u1", BOT_HOLDINGS_WRITER, "schedule")
+
+    assert hitl.next_action("u1", BOT_HOLDINGS_WRITER, _config(), now=_at(9, 40)) == "wait"
+
+
+def test_a_pricing_miss_does_not_excuse_a_later_real_run(db_path):
+    """A retryable row plus a committed one is still a committed day."""
+    _finished_run(BOT_HOLDINGS_WRITER, ReasonCode.QUOTE_UNAVAILABLE, minutes_ago=30)
+    _finished_run(
+        BOT_HOLDINGS_WRITER, ReasonCode.ORDERS_PLACED, status="completed", minutes_ago=10
+    )
+
+    assert hitl.next_action("u1", BOT_HOLDINGS_WRITER, _config(), now=_at(9, 40)) == "wait"
 
 
 def test_stands_down_after_a_committed_run(db_path):

@@ -119,6 +119,40 @@ class ReasonCode:
     INTERNAL_ERROR = "internal_error"
 
 
+# Outcomes that mean "not yet", not "not today".
+#
+# The scheduled bots resolve a day once and then go quiet, which is right for a real
+# decision -- a skipped day must not re-log on every thirty-second tick, and a fired day
+# must never fire twice. It is wrong for a *pricing* miss. A chain that has not finished
+# warming, a strike whose first tick has not arrived, a margin call that blipped: none of
+# those are findings about the market, and treating one as terminal costs the whole
+# remaining window. This is exactly how an expiry morning was lost -- a single
+# "No spot price available" at 09:30:07 stood the bot down until the 12:00 cutoff.
+#
+# Membership is deliberately narrow. Anything that is a genuine answer -- no session, not
+# an expiry day, margin cap too small, nothing eligible, an order rejected -- stays
+# terminal, because re-asking a question already answered is its own kind of broken.
+TRANSIENT_REASON_CODES: frozenset[str] = frozenset(
+    {
+        ReasonCode.CHAIN_NOT_READY,
+        ReasonCode.QUOTE_UNAVAILABLE,
+        ReasonCode.MARGIN_LOOKUP_FAILED,
+        ReasonCode.BROKER_ERROR,
+        ReasonCode.RATE_LIMITED,
+    }
+)
+
+# How long one of those stands a bot down before it tries again. Short, because what it is
+# waiting for -- a chain finishing its warm-up, a strike's first tick -- clears in seconds to
+# a minute, and the entry window is finite: waiting a full nag interval would spend a sixth
+# of an expiry morning on a condition that had already passed. Not as short as the tick
+# either, so a genuinely dead feed leaves a readable handful of run-log rows rather than one
+# every thirty seconds. It lives here rather than in the scheduler because `hitl.next_action`
+# is the second gate in the same series and must agree with it; importing the scheduler from
+# `hitl` would be a cycle.
+TRANSIENT_RETRY_MINUTES = 2.0
+
+
 # --------------------------------------------------------------------------------------
 # Bot 1 -- Holdings Option Writer
 # --------------------------------------------------------------------------------------

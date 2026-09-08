@@ -19,6 +19,8 @@ from icici_breeze_backend.app.db.bots_migrate import (
     BOT_HOLDINGS_WRITER,
 )
 from icici_breeze_backend.app.domain.bots import (
+    TRANSIENT_REASON_CODES,
+    TRANSIENT_RETRY_MINUTES,
     ExpiryIndexWriterConfig,
     HoldingsWriterConfig,
     ReasonCode,
@@ -180,10 +182,23 @@ def _tick_holdings_writer(
 
     # In `telegram` mode a proposal is an ask, not an act, so the day-gate has to be the
     # narrower one -- otherwise the first proposal would count as the bot having run and
-    # neither the re-ask nor the eventual placement could ever happen.
+    # neither the re-ask nor the eventual placement could ever happen. It also carries the
+    # transient-retry allowance, so this gate agrees with `hitl.next_action` immediately
+    # below it; two gates in series that disagree would silently cancel each other.
+    #
+    # Bot 1's scan is far heavier than Bot 2's -- every holding, both sides, a margin call
+    # apiece -- so a retry loop here would matter to the ICICI call budget if it ran often.
+    # It should not: this bot resolves spot from the holdings row when the chain cannot
+    # supply one, so it rarely reaches a transient failure at all, and when it does the scan
+    # bails early rather than spending its full complement of calls.
     telegram_mode = hitl.is_telegram_mode(config)
     ran_today = (
-        repo.has_committed_run_today(user_id, BOT_HOLDINGS_WRITER)
+        repo.has_committed_run_today(
+            user_id,
+            BOT_HOLDINGS_WRITER,
+            retryable_reason_codes=TRANSIENT_REASON_CODES,
+            retry_after_minutes=TRANSIENT_RETRY_MINUTES,
+        )
         if telegram_mode
         else repo.has_terminal_run_today(user_id, BOT_HOLDINGS_WRITER)
     )
@@ -297,10 +312,17 @@ def _tick_index_writer(
     # See `_tick_holdings_writer`: proposing is not acting, so semi-autonomous mode gates
     # the day on what was actually committed.
     telegram_mode = hitl.is_telegram_mode(config)
-    ran_today = (
-        repo.has_committed_run_today(user_id, BOT_EXPIRY_INDEX_WRITER)
-        if telegram_mode
-        else repo.has_terminal_run_today(user_id, BOT_EXPIRY_INDEX_WRITER)
+    # One predicate for both paths. `has_committed_run_today` differs from
+    # `has_terminal_run_today` only by ignoring `proposed` rows, and the autonomous path
+    # never writes one -- so using it here costs that path nothing and buys it the same
+    # transient retry. An unattended bot that stood down at 09:30 because the chain had not
+    # warmed is exactly as broken as a semi-autonomous one that never got to ask. `running`
+    # still blocks on either path, so a second fire remains structurally impossible.
+    ran_today = repo.has_committed_run_today(
+        user_id,
+        BOT_EXPIRY_INDEX_WRITER,
+        retryable_reason_codes=TRANSIENT_REASON_CODES,
+        retry_after_minutes=TRANSIENT_RETRY_MINUTES,
     )
     decision = bot2.decide(
         bot2.TickContext(
@@ -395,6 +417,7 @@ def _propose_index(
 
         legs = []
         errors = []
+        failed_codes = []
         for index_code in decision.indices:
             plan = bot2.plan_index(
                 proc,
@@ -407,14 +430,25 @@ def _propose_index(
             )
             if plan.error or not plan.legs:
                 errors.append(f"{index_code}: {plan.error or 'nothing sized'}")
+                failed_codes.append(plan.reason_code or ReasonCode.NOTHING_ELIGIBLE)
                 continue
             legs.extend(svc.plan_to_legs(plan, index_code))
 
         if not legs:
+            # Carry the plan's own reason code through instead of flattening everything to
+            # `nothing_eligible`. The distinction is what lets the day-gate tell "the chain
+            # was not warm yet" from "there was nothing worth selling" -- the first earns
+            # another attempt inside the window, the second does not. Only when EVERY index
+            # failed transiently is the run retryable; a single real answer settles the day.
+            retryable = bool(failed_codes) and all(
+                code in TRANSIENT_REASON_CODES for code in failed_codes
+            )
             repo.finish_run(
                 run_id,
                 status="skipped",
-                reason_code=ReasonCode.NOTHING_ELIGIBLE,
+                reason_code=(
+                    failed_codes[0] if retryable else ReasonCode.NOTHING_ELIGIBLE
+                ),
                 reason_text="; ".join(errors) or "Nothing could be sized today.",
             )
             return
@@ -525,9 +559,13 @@ def _fire(
         }
         if not ok:
             first = results[0] if results else None
+            # A transient pricing miss reads as `skipped`, not `failed`: nothing went wrong,
+            # the quotes simply were not there yet, and the run is retried inside the window.
+            # The reason code is carried through either way, which is what the gate reads.
+            _soft = {ReasonCode.MARGIN_CAP_TOO_SMALL, *TRANSIENT_REASON_CODES}
             repo.finish_run(
                 run_id,
-                status="skipped" if (first and first.reason_code == ReasonCode.MARGIN_CAP_TOO_SMALL)
+                status="skipped" if (first and first.reason_code in _soft)
                 else "failed",
                 reason_code=(first.reason_code if first else ReasonCode.INTERNAL_ERROR),
                 reason_text=(first.error if first else "Nothing was traded."),

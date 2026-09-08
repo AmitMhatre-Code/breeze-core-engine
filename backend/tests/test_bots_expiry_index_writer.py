@@ -371,6 +371,50 @@ def test_reprice_index_legs_lots_only_edit_leaves_the_strike_alone(patch_chain):
     assert out[0].quantity == 225
 
 
+def test_sizes_a_trade_from_a_live_websocket_chain(no_arm, monkeypatch):
+    """The regression for the expiry day Bot 2 spent standing down.
+
+    Every other sizing test here stubs `fetch_chain_side_icici_response`, which hides the
+    thing that actually broke: the rows a *live* chain produces carry no `spot_price` of
+    their own, because real websocket option ticks have no such field -- only the payload
+    does. So this one stubs the routed payload instead and lets the real flattener run,
+    which is the seam where the spot has to survive. Before the fix this reported
+    "No spot price available" with a fully warm chain, wrote a terminal skip, and gave up
+    on the whole 09:30-12:00 window.
+    """
+    proc = FakeProc(spot=23640.3, bid=15.6, lot=65)
+
+    def routed(p, user_id, stock_code, exchange_code, expiry_display, **kw):
+        return {
+            "spot_price": 23640.3,  # resolved from the "4.1!NIFTY 50" index tick
+            "quote_source": "websocket",
+            "chain_rows": [
+                {
+                    "strike_price": strike,
+                    # No `spot_price` on either cell -- exactly what the WS feed delivers.
+                    "call": {"strike_price": strike, "ltp": 15.6, "best_bid_price": 15.6,
+                             "total_buy_qty": 1, "total_sell_qty": 1},
+                    "put": {"strike_price": strike, "ltp": 15.6, "best_bid_price": 15.6,
+                            "total_buy_qty": 1, "total_sell_qty": 1},
+                }
+                # A real NIFTY expiry ladder: 50-point steps either side of spot.
+                for strike in range(22400, 25000, 50)
+            ],
+        }
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.quote_source_router.fetch_chain_payload_routed",
+        routed,
+    )
+
+    result = fire(proc)
+
+    assert result.error is None, result.error
+    assert result.spot == 23640.3
+    assert result.lots >= 1
+    assert proc.placed, "a live chain must produce a placeable trade"
+
+
 def test_no_bid_refuses_to_trade(patch_chain, no_arm):
     """Unlike Bot 1 there is no indicative fallback — this bot only runs in market hours,
     so an empty book is real."""

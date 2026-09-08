@@ -413,13 +413,35 @@ def _chain_side_key(right: str) -> str:
 
 
 def _flatten_chain_side_rows(payload: dict[str, Any], right: str) -> list[dict[str, Any]]:
+    """Rows in the ICICI REST shape -- including that shape's per-row `spot_price`.
+
+    The stamping is load-bearing, not cosmetic. A genuine ICICI REST chain row carries
+    `spot_price` on every row (`processor._transform_icici_chain_rows`), and every consumer
+    of these rows reads the spot there. But only bhavcopy- and REST-sourced *cells* actually
+    populate it: real websocket option ticks carry no spot field at all, and neither do
+    snapshot cells -- the same fact `chain_readiness.is_chain_complete` documents for its own
+    gate. Since `resolve_quote_source` returns "websocket" for the whole market-open window,
+    in-market rows reached callers with `spot_price: None` and each one silently concluded
+    the market had no spot: Bot 2 stood down for the entire expiry day, Bot 1's distance
+    edits went nowhere, both scalpers failed to locate an ATM strike, and the uncovered-
+    shorts / vertical-spread / hedge scans ran `float(None)`.
+
+    The chain-level spot `_apply_chain_spot` has already resolved (live index tick, then
+    bhavcopy, then REST) is the same number for every strike in the chain, so stamping it
+    onto the rows restores the shape this function's callers have always assumed. A cell
+    that carries its own spot keeps it.
+    """
     side = _chain_side_key(right)
+    chain_spot = _parse_positive_spot(payload.get("spot_price"))
     rows: list[dict[str, Any]] = []
     for chain_row in payload.get("chain_rows") or []:
         cell = chain_row.get(side)
         if not cell:
             continue
-        rows.append(_cell_to_icici_row(cell))
+        row = _cell_to_icici_row(cell)
+        if chain_spot is not None and _parse_positive_spot(row.get("spot_price")) is None:
+            row["spot_price"] = chain_spot
+        rows.append(row)
     return rows
 
 

@@ -79,6 +79,36 @@ def _positive_number(raw: Any) -> bool:
         return False
 
 
+def _row_spot(row: dict, *, context: str) -> float | None:
+    """A chain row's underlying spot, or None if it has none.
+
+    `quote_source_router._flatten_chain_side_rows` stamps the resolved chain spot onto every
+    row, so this normally just reads it back. It returns None only when the router could not
+    resolve a spot from any source at all (a cold start before the index feed seeds, a
+    flushed cache with no fresh bhavcopy). Callers skip the row rather than raising -- but
+    the warning matters: an empty scan result reads as "the market has nothing", and without
+    a log line there is no way to tell that apart from "we could not price anything".
+    """
+    try:
+        spot = float(row.get("spot_price"))
+    except (TypeError, ValueError):
+        _logger.warning(
+            "%s: chain row has no usable spot_price (strike=%s); skipping it",
+            context,
+            row.get("strike_price"),
+        )
+        return None
+    if spot <= 0:
+        _logger.warning(
+            "%s: chain row reports a non-positive spot_price=%r (strike=%s); skipping it",
+            context,
+            spot,
+            row.get("strike_price"),
+        )
+        return None
+    return spot
+
+
 def _uncovered_scan_row_has_bid_side(i: dict, exchange_code: str) -> bool:
     """Selling needs bid-side interest; BFO often returns total_buy_qty=0 in chain while LTP/bid exist (see get_full_option_chain BFO note)."""
     try:
@@ -1035,7 +1065,10 @@ class processor():
                     # exclude the strike the way a confirmed zero does.
                     _buy_qty = i.get("total_buy_qty")
                     _has_bid_side = _buy_qty is None or int(_buy_qty or 0) > 0
-                    if _has_bid_side and ((right == cfg.CALL and strike_f < range_lower and strike_f > float(i['spot_price'])) or (right == cfg.PUT and strike_f > range_upper and strike_f < float(i['spot_price'])) ):
+                    _row_spot_price = _row_spot(i, context="vertical spread buy-leg scan")
+                    if _row_spot_price is None:
+                        continue
+                    if _has_bid_side and ((right == cfg.CALL and strike_f < range_lower and strike_f > _row_spot_price) or (right == cfg.PUT and strike_f > range_upper and strike_f < _row_spot_price) ):
                         temp = {}
                         temp['stock_code'] = stock_code
                         temp['sell_leg'] = sell_leg
@@ -1046,8 +1079,8 @@ class processor():
                         temp['buy_leg']['best_offer_price'] = i['best_offer_price']
                         temp['buy_leg']['total_buy_qty'] = i['total_buy_qty']
                         temp['buy_leg']['total_sell_qty'] = i['total_sell_qty']
-                        temp['buy_leg']['spot_price'] = i['spot_price']
-                        temp['buy_leg']['spot_distance'] = abs(float(i['spot_price']) - float(i["strike_price"])) / float(i["strike_price"])
+                        temp['buy_leg']['spot_price'] = _row_spot_price
+                        temp['buy_leg']['spot_distance'] = abs(_row_spot_price - float(i["strike_price"])) / float(i["strike_price"])
                         _sell_qty = i.get('total_sell_qty')
                         temp['buy_leg']['buy_sell_ratio'] = (
                             int(_buy_qty) / int(_sell_qty)
@@ -1210,7 +1243,9 @@ class processor():
             min_pct = max(0.0, float(otm_min))
             max_pct = max(min_pct, float(otm_max))
             for i in options_chain.get('Success') or []:
-                spot = float(i["spot_price"])
+                spot = _row_spot(i, context="uncovered shorts scan")
+                if spot is None:
+                    continue
                 strike = parse_strike(i["strike_price"])
                 if strike is None:
                     continue
@@ -2520,7 +2555,10 @@ class processor():
                     if strike_price is None or opt_strike is None:
                         continue
                     option['strike_price'] = opt_strike
-                    option['spot_price'] = float(option['spot_price'])
+                    opt_spot = _row_spot(option, context="hedge candidate scan")
+                    if opt_spot is None:
+                        continue
+                    option['spot_price'] = opt_spot
 
                     if self.is_valid_hedge(strike_price,right,option) == True:
                         option['distance_from_spot'] = abs(option['strike_price'] - option['spot_price'])
