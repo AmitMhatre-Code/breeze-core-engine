@@ -20,13 +20,34 @@ export type IndexQuotesResponse = {
   };
 };
 
+/** Slow heartbeat once the calendar says closed and the ticks have stopped. */
+export const CLOSED_HEARTBEAT_MS = 30_000;
+/** How recent an `updated_at` must be to count as "ticks are still arriving". */
+const TICKING_WITHIN_MS = 60_000;
+
+export function indexQuotesAreTicking(
+  data: IndexQuotesResponse | undefined,
+  nowMs: number,
+): boolean {
+  const quotes = [data?.quotes.nifty, data?.quotes.sensex];
+  return quotes.some(
+    (q) =>
+      typeof q?.updated_at === "number" &&
+      nowMs - q.updated_at * 1000 < TICKING_WITHIN_MS,
+  );
+}
+
 /** Live NIFTY/SENSEX spot + day's change for the navbar ticker.
  *
  * Poll cadence follows the user's WS quote-flush-interval setting (see
- * `useQuoteFlushRefetchMs`) instead of a fixed interval. Once the market is
- * closed the backend serves a one-off REST EOD quote that won't change again
- * today, so polling stops entirely -- the query still fires once on mount to
- * pick that value up. */
+ * `useQuoteFlushRefetchMs`) instead of a fixed interval.
+ *
+ * The cadence follows the feed rather than the calendar: ticks still arriving
+ * after the configured close keep it at the live cadence, so a session the
+ * exchange runs later than the calendar knows about doesn't freeze the ticker.
+ * Once they stop it drops to a slow heartbeat — the backend then serves a one-off
+ * REST EOD quote (2 ICICI calls for the whole day, cached with no TTL), so the
+ * heartbeat itself costs nothing further. */
 export function useIndexQuotes() {
   const flushMs = useQuoteFlushRefetchMs();
   const marketStatus = useQuery({
@@ -40,7 +61,12 @@ export function useIndexQuotes() {
   return useQuery({
     queryKey: ["dashboard", "index-quotes"],
     queryFn: () => apiClient.get<IndexQuotesResponse>("/dashboard/index-quotes"),
-    refetchInterval: marketOpen ? flushMs : false,
+    refetchInterval: (query) => {
+      if (marketOpen) return flushMs;
+      return indexQuotesAreTicking(query.state.data, Date.now())
+        ? flushMs
+        : CLOSED_HEARTBEAT_MS;
+    },
     staleTime: 0,
   });
 }

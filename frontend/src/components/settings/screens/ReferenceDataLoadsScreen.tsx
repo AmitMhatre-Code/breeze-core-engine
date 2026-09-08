@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HelpLink } from "@/components/help/HelpLink";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
@@ -81,9 +81,6 @@ const SOURCES = [
   },
 ];
 
-const fileInputCls =
-  "mt-1 w-full rounded-[9px] border border-border bg-panel2 px-3 py-2 text-xs text-text file:mr-3 file:rounded-md file:border-0 file:bg-panel file:px-2.5 file:py-1 file:text-xs file:font-semibold file:text-text";
-
 function DatabaseIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -143,9 +140,6 @@ export function ReferenceDataLoadsScreen() {
     minute_ist: number;
     enabled: boolean;
   } | null>(null);
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadError, setUploadError] = useState<string | null>(null);
   const [marginDraft, setMarginDraft] = useState<"breeze_api" | "exchange_baseline" | null>(null);
   const [showFullHistory, setShowFullHistory] = useState(false);
 
@@ -210,69 +204,6 @@ export function ReferenceDataLoadsScreen() {
       void qc.invalidateQueries({ queryKey: ["settings", "reference-data-loads"] });
     },
   });
-
-  const uploadMut = useMutation({
-    mutationFn: async (file: File) => {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("market", "bse");
-      return apiClient.postForm<{ ok?: boolean; message?: string; result?: Record<string, unknown> }>(
-        "/api/settings/margin-source/upload-baseline",
-        fd,
-      );
-    },
-    onMutate: () => {
-      setUploadError(null);
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["settings", "reference-data-loads"] });
-      setUploadFile(null);
-    },
-    onError: (e) => {
-      setUploadError(e instanceof Error ? e.message : "Upload failed");
-    },
-  });
-
-  useEffect(() => {
-    let tickTimer: ReturnType<typeof setInterval> | undefined;
-    let doneTimer: ReturnType<typeof setTimeout> | undefined;
-
-    if (uploadMut.isPending) {
-      tickTimer = setInterval(() => {
-        setUploadProgress((prev) => {
-          const step = Math.max(1, Math.round((95 - prev) / 9));
-          return Math.min(95, prev + step);
-        });
-      }, 350);
-    } else if (uploadMut.isSuccess) {
-      doneTimer = setTimeout(() => {
-        setUploadProgress(100);
-        setTimeout(() => {
-          setUploadProgress(0);
-          uploadMut.reset();
-        }, 900);
-      }, 0);
-    } else if (uploadMut.isError) {
-      doneTimer = setTimeout(() => {
-        setUploadProgress(0);
-      }, 0);
-    }
-
-    return () => {
-      if (tickTimer) clearInterval(tickTimer);
-      if (doneTimer) clearTimeout(doneTimer);
-    };
-  }, [uploadMut.isPending, uploadMut.isSuccess, uploadMut.isError, uploadMut]);
-
-  const uploadStatusText = useMemo(() => {
-    if (uploadMut.isPending) return "Uploading BSE SPAN file…";
-    if (uploadMut.isSuccess && uploadProgress > 0) {
-      const r = uploadMut.data?.result as { inserted_rows?: number } | undefined;
-      const n = r?.inserted_rows;
-      return typeof n === "number" ? `Upload complete (${n} rows)` : "Upload complete";
-    }
-    return "";
-  }, [uploadMut.isPending, uploadMut.isSuccess, uploadMut.data, uploadProgress]);
 
   const refreshing = Boolean(server?.refresh_in_progress);
 
@@ -483,7 +414,7 @@ export function ReferenceDataLoadsScreen() {
             </div>
           </div>
 
-          <div className="space-y-2 rounded-[10px] border border-amber-accent/40 bg-amber-tint p-4">
+          <div className="space-y-2 rounded-[10px] border border-border px-4 py-3.5">
             <h3 className="text-heading font-bold text-foreground">BSE SPAN Baseline</h3>
             <p className="text-table leading-relaxed text-muted">
               Downloaded automatically alongside NSE at 09:15, 11:15, 12:45, 14:15, 15:45 and 18:00 IST,
@@ -496,8 +427,7 @@ export function ReferenceDataLoadsScreen() {
               >
                 BSE Risk Parameter report
               </a>
-              . Upload a SPAN XML (or ZIP containing it) here only to load a file the scheduled
-              download could not reach. Only <strong className="text-foreground">BSXOPT</strong> and{" "}
+              . Only <strong className="text-foreground">BSXOPT</strong> and{" "}
               <strong className="text-foreground">BKXOPT</strong> portfolios (Sensex / BANKEX on BFO) are
               ingested.
             </p>
@@ -510,44 +440,6 @@ export function ReferenceDataLoadsScreen() {
                   : ""}
               </p>
             )}
-            <label className="block text-xs text-muted">
-              Choose file
-              <input
-                type="file"
-                accept=".xml,.spn,.zip,application/xml,text/xml"
-                disabled={uploadMut.isPending}
-                className={fileInputCls}
-                onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-              />
-            </label>
-            {uploadError ? <div className="app-alert-error text-xs">{uploadError}</div> : null}
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="app-btn-outline"
-                disabled={uploadMut.isPending || !uploadFile}
-                aria-busy={uploadMut.isPending}
-                onClick={() => {
-                  if (!uploadFile) return;
-                  uploadMut.mutate(uploadFile);
-                }}
-              >
-                <AsyncLabelSpan busy={uploadMut.isPending} idleLabel="Upload BSE SPAN file" busyLabel="Uploading…" />
-              </button>
-            </div>
-            {uploadProgress > 0 ? (
-              <div className="space-y-1 pt-1">
-                <div className="h-2 w-full overflow-hidden rounded-full bg-track">
-                  <div
-                    className="h-full bg-accent-strong transition-all duration-300"
-                    style={{ width: `${uploadProgress}%` }}
-                  />
-                </div>
-                <div className="text-xs text-muted">
-                  {uploadStatusText} {uploadMut.isPending ? `${Math.round(uploadProgress)}%` : ""}
-                </div>
-              </div>
-            ) : null}
           </div>
 
           <MarginHarnessPanel />

@@ -161,3 +161,46 @@ def test_market_hours_override_ignored_with_explicit_now(monkeypatch):
     monkeypatch.setenv("MARKET_HOURS_OVERRIDE", "closed")
     dt = _ist(2026, 6, 25, 10, 0)  # would be open
     assert mc.is_market_open(dt) is True
+
+
+class TestNextSessionOpen:
+    """Scopes retained WS quotes to the session that produced them: the last traded
+    price of one session must never be readable as a live price in the next.
+
+    2026-06-26 is Muharram in `exchange_holidays.json`, so the 25th deliberately
+    rolls to Monday the 29th rather than to the next calendar day.
+    """
+
+    def test_during_a_session_the_next_open_is_the_following_trading_day(self):
+        nxt = mc.next_session_open(_ist(2026, 6, 24, 11, 0))  # Wednesday, mid-session
+        assert nxt == _ist(2026, 6, 25, 9, 15)
+
+    def test_before_the_bell_the_next_open_is_today(self):
+        assert mc.next_session_open(_ist(2026, 6, 25, 8, 0)) == _ist(2026, 6, 25, 9, 15)
+
+    def test_after_the_close_it_rolls_forward(self):
+        assert mc.next_session_open(_ist(2026, 6, 24, 16, 0)) == _ist(2026, 6, 25, 9, 15)
+
+    def test_a_holiday_and_the_weekend_behind_it_are_skipped(self):
+        # Thursday evening -> Friday is Muharram, then the weekend -> Monday.
+        assert mc.next_session_open(_ist(2026, 6, 25, 16, 0)) == _ist(2026, 6, 29, 9, 15)
+
+    def test_from_a_weekend_it_lands_on_monday(self):
+        assert mc.next_session_open(_ist(2026, 6, 27, 10, 0)) == _ist(2026, 6, 29, 9, 15)
+
+    def test_it_follows_the_configured_open_time(self, monkeypatch):
+        """A session whose hours the operator changes moves this with it — the point
+        of reading the DB calendar rather than a constant."""
+        cfg = mc.get_calendar_config()
+        monkeypatch.setattr(
+            mc,
+            "get_calendar_config",
+            lambda: mc.CalendarConfig(
+                open_hour=10,
+                open_minute=0,
+                close_hour=cfg.close_hour,
+                close_minute=cfg.close_minute,
+                holidays=cfg.holidays,
+            ),
+        )
+        assert mc.next_session_open(_ist(2026, 6, 24, 11, 0)) == _ist(2026, 6, 25, 10, 0)

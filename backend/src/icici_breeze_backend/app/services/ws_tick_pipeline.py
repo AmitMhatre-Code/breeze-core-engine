@@ -15,6 +15,7 @@ import logging
 import queue
 import threading
 import time
+from datetime import datetime
 from collections.abc import Callable
 from typing import Any
 
@@ -439,6 +440,31 @@ def stop_tick_pipeline() -> None:
         _logger.info("WS tick pipeline stopped")
 
 
+def clear_retained_pnl_quotes() -> int:
+    """Drop every retained WS quote. Returns the number of keys removed.
+
+    Called at the session boundary (see `active_chains.maybe_daily_reset_active_chains`)
+    so the previous session's last traded prices cannot be read by the new one. The
+    TTL computed in `_pnl_quote_ttl_seconds` should already have expired them; this is
+    the explicit half of the same guarantee, for an instance whose calendar moved
+    under it or whose keys were written with an older, longer TTL.
+    """
+    removed = 0
+    try:
+        redis = get_redis()
+        keys = list(redis.scan_iter(match=pnl_quote_key("*"), count=500))
+        for start in range(0, len(keys), 500):
+            batch = keys[start : start + 500]
+            if batch:
+                removed += int(redis.delete(*batch) or 0)
+    except Exception:  # noqa: BLE001 — hygiene must never take down the caller
+        _logger.warning("Could not clear retained pnl quotes", exc_info=True)
+        return removed
+    if removed:
+        _logger.info("Cleared %s retained pnl quote(s) at the session boundary", removed)
+    return removed
+
+
 def pipeline_stats() -> dict[str, Any]:
     return {
         "started": _started,
@@ -480,11 +506,71 @@ def _pnl_flush_interval_seconds() -> float:
         return max(0.5, min(10.0, v))
 
 
+# Expire retained quotes this long before the next session opens, so nothing from the
+# previous session is still readable once a new one begins.
+_QUOTE_RETENTION_MARGIN_SECONDS = 300
+# Hard ceiling on a computed TTL, so a mis-set calendar (or a long holiday run) can't
+# pin the whole quote keyspace in a memory-capped Redis indefinitely.
+_QUOTE_RETENTION_MAX_SECONDS = 4 * 24 * 3600
+# How long a resolved next-session-open may be reused before the calendar is re-read.
+_NEXT_OPEN_CACHE_SECONDS = 60.0
+# (resolved_at, next_session_open)
+_next_open_cache: "tuple[datetime, datetime] | None" = None
+
+
 def _pnl_quote_ttl_seconds() -> int:
+    """Keep a quote until shortly before the next session opens.
+
+    Previously a flat 30s, which made the cache useless the moment ticks stopped:
+    every leg then revalued at its own entry price, so a whole book read as exactly
+    zero P&L after the close and through any feed outage longer than half a minute.
+    Retaining the last traded price fixes that and, because the expiry is tied to the
+    next *session* rather than to a wall-clock hour, it also covers a session the
+    exchange runs later than the configured close — ticks that keep arriving keep
+    being recorded, and keep being the freshest thing we hold.
+
+    Retention alone would not be safe: nothing re-subscribes the feed overnight, so a
+    quote held "until a newer tick replaces it" could still be sitting there the next
+    morning. Every consumer therefore judges the stored timestamp, not the key's mere
+    presence, and this TTL is the second line under that.
+    """
+    configured = getattr(cfg, "PNL_QUOTE_TTL_SECONDS", 30) or 30
     try:
-        return max(5, int(getattr(cfg, "PNL_QUOTE_TTL_SECONDS", 30) or 30))
+        floor = max(5, int(configured))
     except (TypeError, ValueError):
-        return 30
+        floor = 30
+    try:
+        from icici_breeze_backend.app.core.timezone import IST
+
+        now = datetime.now(IST)
+        target = _cached_next_session_open(now)
+        remaining = int((target - now).total_seconds() - _QUOTE_RETENTION_MARGIN_SECONDS)
+        return max(floor, min(remaining, _QUOTE_RETENTION_MAX_SECONDS))
+    except Exception:  # noqa: BLE001 — never let calendar trouble stop the flush
+        _logger.debug("quote TTL: falling back to configured floor", exc_info=True)
+        return floor
+
+
+def _cached_next_session_open(now: "datetime") -> "datetime":
+    """Memoized `next_session_open`, because the flush worker asks every couple of
+    seconds and each miss is a SQLite read of the exchange calendar. Re-resolved once
+    the cached answer is stale or has been passed, so an operator editing the session
+    hours in Settings is picked up within the minute rather than at the next restart.
+    """
+    global _next_open_cache
+    cached = _next_open_cache
+    if (
+        cached is not None
+        and now < cached[1]
+        and (now - cached[0]).total_seconds() < _NEXT_OPEN_CACHE_SECONDS
+    ):
+        return cached[1]
+
+    from icici_breeze_backend.app.services.market_calendar import next_session_open
+
+    target = next_session_open(now)
+    _next_open_cache = (now, target)
+    return target
 
 
 def flush_pnl_quotes() -> int:

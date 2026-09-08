@@ -185,7 +185,49 @@ def maybe_daily_reset_active_chains() -> bool:
             return False
     _logger.info("active-chain registry: daily reset")
     reset_active_chains_registry()
+    _clear_retained_quotes_for_new_session()
+    _repin_armed_squareoff_subscriptions()
     return True
+
+
+def _clear_retained_quotes_for_new_session() -> None:
+    """Drop the previous session's retained WS quotes as the new day starts."""
+    try:
+        from icici_breeze_backend.app.services.ws_tick_pipeline import (
+            clear_retained_pnl_quotes,
+        )
+
+        clear_retained_pnl_quotes()
+    except Exception:  # noqa: BLE001 — never let hygiene break the reset
+        _logger.warning("daily reset: could not clear retained quotes", exc_info=True)
+
+
+def _repin_armed_squareoff_subscriptions() -> None:
+    """Re-pin every live square-off group's WS chain after the registry is wiped.
+
+    The reset above clears `_holder_chains` and the Redis set wholesale, which
+    includes the server-side pins that armed SGs depend on — and those pins are
+    otherwise only ever created at process start, by
+    `squareoff_dispatcher.hydrate_group_rules_on_startup`. Without this, an instance
+    left running across midnight keeps its SGs armed and visible while their chains
+    quietly go unsubscribed, so no tick ever reaches the engine to trip them. Only
+    affects long-running instances; one restarted each morning re-pins on boot.
+    """
+    try:
+        from icici_breeze_backend.app.repositories import squareoff_rules as repo
+        from icici_breeze_backend.app.services import strategy_group_lifecycle as sg
+
+        repinned = 0
+        for row in repo.list_all_live_rules():
+            rule = repo.get_rule(str(row["id"]))
+            if rule is None:
+                continue
+            sg.pin_subscription(str(row["user_id"]), rule)
+            repinned += 1
+        if repinned:
+            _logger.info("daily reset: re-pinned %s live square-off subscription(s)", repinned)
+    except Exception:  # noqa: BLE001 — a pin failure must not abort the reset
+        _logger.exception("daily reset: could not re-pin square-off subscriptions")
 
 
 async def run_active_chain_sweep_loop() -> None:

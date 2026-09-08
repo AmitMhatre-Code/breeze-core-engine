@@ -8,17 +8,15 @@ import logging
 import math
 import re
 import sqlite3
-import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, parse_strike
-from icici_breeze_backend.app.core.timezone import now_ist
+from icici_breeze_backend.app.core.timezone import ist_timestamp
 from icici_breeze_backend.app.services.reference_data import span_sources
 from icici_breeze_backend.app.services.reference_data.aliases import underlying_aliases
-from icici_breeze_backend.app.services.reference_data.state import append_ingest_history
 
 _logger = logging.getLogger(__name__)
 
@@ -32,7 +30,6 @@ BSE_SPAN_PF_CODE_TO_SHORT_NAME = {"BSXOPT": "BSESEN", "BKXOPT": "BANKEX"}
 # (the option portfolio appends OPT; `phyPf`/`ccDef` do not).
 BSE_SPAN_UNDERLYING_TO_SHORT_NAME = {"BSX": "BSESEN", "BKX": "BANKEX"}
 
-_MAX_BASELINE_UPLOAD_BYTES = 120 * 1024 * 1024
 
 _BASELINE_DB_COLUMNS = (
     "exchange_code",
@@ -312,7 +309,10 @@ def _replace_underlying_facts(
     names = set(spot_by_underlying) | set(scan_by_underlying) | set(som_by_underlying)
     if keep_only is not None:
         names &= keep_only
-    now = dt.datetime.now().isoformat(timespec="seconds")
+    # Servers run in UTC; a naive datetime.now() here rendered ~5.5h behind the IST-stamped
+    # ingest-history row for the same refresh. Store the IST wall-clock like every other
+    # timestamp column so the two tally.
+    now = ist_timestamp()
     rows = [
         (
             exchange_code,
@@ -563,7 +563,7 @@ def _ingest_span_xml_stream(
                         source_file,
                         source_date,
                         int(source_version),
-                        dt.datetime.now().isoformat(timespec="seconds"),
+                        ist_timestamp(),
                     )
                 )
                 inserted += 1
@@ -636,98 +636,6 @@ def _ingest_span_xml_stream(
         underlying_rows,
     )
     return inserted, skipped
-
-
-def ingest_exchange_baseline_upload(
-    payload: bytes,
-    original_filename: str,
-    *,
-    market: str,
-) -> dict:
-    """Load SPAN XML (or ZIP containing XML) from user upload. ``market`` is ``nse`` or ``bse``."""
-    market_l = (market or "").strip().lower()
-    if market_l not in ("nse", "bse"):
-        return {"Status": 400, "Error": "market must be nse or bse", "Success": None}
-    if len(payload) > _MAX_BASELINE_UPLOAD_BYTES:
-        return {"Status": 400, "Error": "File too large (max 120MB).", "Success": None}
-    try:
-        ensure_exchange_margin_baseline_table()
-    except Exception as e:
-        return {"Status": 400, "Error": f"Baseline table init failed: {e}", "Success": None}
-    try:
-        with _scrip_conn() as conn:
-            row = conn.execute("PRAGMA quick_check").fetchone()
-            quick_check = str(row[0]) if row and row[0] is not None else "unknown"
-        if quick_check.lower() != "ok":
-            return {
-                "Status": 400,
-                "Error": "scrips.sqlite3 is corrupted (quick_check failed). Rebuild master data before uploading.",
-                "Success": None,
-            }
-    except Exception as e:
-        return {"Status": 400, "Error": f"Scrip DB check failed: {e}", "Success": None}
-
-    base_name = (original_filename or "upload").rsplit("/", 1)[-1].strip() or "upload"
-    opened = open_span_xml_payload(payload, base_name)
-    if not opened:
-        return {"Status": 400, "Error": "Could not read SPAN XML from file (ZIP/XML expected).", "Success": None}
-    stream, source_file, _inner = opened
-    head = stream.read(65536)
-    stream.seek(0)
-    source_date = _sniff_span_created_ymd(head, _default_source_date_ymd())
-    exchange_code = cfg.NFO if market_l == "nse" else cfg.BFO
-    allowed: frozenset[str] | None = None if market_l == "nse" else BSE_BASELINE_PF_CODES
-
-    try:
-        with _scrip_conn() as conn:
-            inserted, skipped = _ingest_span_xml_stream(
-                conn,
-                stream,
-                exchange_code=exchange_code,
-                source_file=source_file[:512],
-                source_date=source_date,
-                source_version=1,
-                allowed_pf_codes=allowed,
-            )
-    except Exception as e:
-        return {"Status": 400, "Error": f"Baseline upload failed: {e}", "Success": None}
-
-    if inserted == 0:
-        return {
-            "Status": 400,
-            "Error": "No option margin rows were ingested. Check file format and (for BSE) that BSXOPT/BKXOPT portfolios are present.",
-            "Success": None,
-        }
-
-    _publish_span_baseline_to_redis()
-
-    append_ingest_history(
-        {
-            "id": str(uuid.uuid4()),
-            "kind": "bse_span_baseline_upload" if market_l == "bse" else "nse_span_baseline_upload",
-            "display_name": "BSE SPAN Baseline" if market_l == "bse" else "NSE SPAN Baseline",
-            "source_file_date": source_date,
-            "row_count": inserted,
-            "ingested_at": now_ist().isoformat(timespec="seconds"),
-            "ok": True,
-            "notes": f"Manual upload: {source_file}" + (f" ({skipped} skipped)" if skipped else ""),
-            "source_url": None,
-        }
-    )
-
-    return {
-        "Status": 200,
-        "Error": "",
-        "Success": {
-            "source_file": source_file,
-            "source_date": source_date,
-            "source_version": 1,
-            "exchange_code": exchange_code,
-            "inserted_rows": inserted,
-            "skipped_rows": skipped,
-            "market": market_l,
-        },
-    }
 
 
 def _baseline_db_healthy() -> str:

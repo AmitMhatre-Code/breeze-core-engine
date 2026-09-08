@@ -181,3 +181,51 @@ def test_reconcile_replaces_approx_price_with_trade_book():
     base = _oracle()["total_day_pnl"]
     assert round(after["total_day_pnl"] - base, 2) == 1891.0
     assert live._state["u1"].reconcile_due is None
+
+
+def test_no_priced_contract_withholds_the_total_instead_of_publishing_zero():
+    """Post-close, every quote hash eventually ages out and no contract can be
+    valued. Publishing 0.0 then rendered as a confident "₹0" and outranked the REST
+    snapshot the client already held — the tile's own fallback never got a chance.
+    """
+    with patch.multiple(
+        live,
+        _day_pnl_session_state=lambda now=None: "open",
+        latest_opened_trading_day=lambda now=None: SESSION_DATE,
+        make_prev_close_lookup=lambda now=None: _lookup,
+        _today=lambda: TODAY,
+        _fetch_live_ltps=lambda keys: {},
+    ):
+        live.capture_baseline("u1", POSITIONS, TRADES, trades_source_ok=True)
+        live.run_tick()
+        payload = live.latest("u1")
+
+    assert payload["total_day_pnl"] is None
+    assert payload["realized_day_pnl"] is None
+    assert payload["unrealized_day_pnl"] is None
+    # Flat intraday round-trips still value exactly (they need no current price), so
+    # `contracts_priced` is non-zero -- which is precisely why "did anything price?"
+    # was the wrong question and "did any *open* leg price?" is the right one.
+    assert payload["contracts_priced"] > 0
+    assert payload["degraded"] is True
+
+
+def test_partially_priced_book_still_reports_its_priced_contracts():
+    """Withholding is only for the all-unpriced case: a book where some contracts
+    price fine still publishes, flagged degraded, exactly as before."""
+    one_key = next(iter(LIVE_LTPS))
+    with patch.multiple(
+        live,
+        _day_pnl_session_state=lambda now=None: "open",
+        latest_opened_trading_day=lambda now=None: SESSION_DATE,
+        make_prev_close_lookup=lambda now=None: _lookup,
+        _today=lambda: TODAY,
+        _fetch_live_ltps=lambda keys: {one_key: LIVE_LTPS[one_key]},
+    ):
+        live.capture_baseline("u1", POSITIONS, TRADES, trades_source_ok=True)
+        live.run_tick()
+        payload = live.latest("u1")
+
+    assert payload["total_day_pnl"] is not None
+    assert payload["contracts_priced"] >= 1
+    assert payload["degraded"] is True

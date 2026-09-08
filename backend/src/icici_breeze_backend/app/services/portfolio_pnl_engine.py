@@ -302,11 +302,106 @@ def group_legs_for_user(user_id: str, stock_code: str, expiry_display: str) -> l
         ]
 
 
+def chains_requiring_feed() -> set[str]:
+    """Chain registry keys that must stay subscribed because a rule depends on them.
+
+    An armed rule is only protection if its contracts are actually ticking, and the
+    P&L engine subscribes nothing itself — it consumes whatever the WS pipeline
+    happens to publish. Browser-held chains cover the common case, but a rule armed
+    against a chain nobody has open (a closed tab, a restarted instance, the morning
+    after a registry reset) has no subscriber at all. The price-feed watchdog unions
+    these with the active-chain registry so they are re-subscribed at the open and
+    re-forced when silent, exactly like a chain someone is looking at.
+    """
+    from icici_breeze_backend.app.services.reference_data.active_chains import (
+        chain_registry_key,
+    )
+
+    keys: set[str] = set()
+    with _registry_lock:
+        legs_by_user = {u: list(legs.values()) for u, legs in _legs_by_user.items()}
+        group_rules = {u: list(rules.values()) for u, rules in _group_rules.items()}
+        portfolio_rule_users = {u for u, r in _portfolio_rules.items() if r}
+
+    for user_id, legs in legs_by_user.items():
+        whole_book = user_id in portfolio_rule_users
+        for leg in legs:
+            if whole_book or leg.target_pnl is not None or leg.stop_loss_pnl is not None:
+                keys.add(
+                    chain_registry_key(leg.exchange_code, leg.stock_code, leg.expiry_display)
+                )
+    for rules in group_rules.values():
+        for rule in rules:
+            keys.add(
+                chain_registry_key(rule.exchange_code, rule.stock_code, rule.expiry_display)
+            )
+    return keys
+
+
+def armed_rule_feed_health() -> dict[str, int]:
+    """How many rule-covered legs currently have a usable price, and how many don't.
+
+    Feeds the WS health status the navbar dot reads. Rules now stand down when their
+    inputs are unpriced rather than silently evaluating a substituted entry price, so
+    "your protection is not currently armed" is a state the user has to be able to
+    see rather than infer.
+    """
+    with _registry_lock:
+        legs_by_user = {u: dict(legs) for u, legs in _legs_by_user.items()}
+        group_rules = {u: list(rules.values()) for u, rules in _group_rules.items()}
+        portfolio_rule_users = {u for u, r in _portfolio_rules.items() if r}
+
+    armed = 0
+    unevaluable = 0
+    for user_id, legs in legs_by_user.items():
+        covered: set[str] = set()
+        if user_id in portfolio_rule_users:
+            covered |= set(legs)
+        for key, leg in legs.items():
+            if leg.target_pnl is not None or leg.stop_loss_pnl is not None:
+                covered.add(key)
+        for rule in group_rules.get(user_id, []):
+            group = _group_key(rule.stock_code, rule.expiry_display)
+            covered |= {
+                key
+                for key, leg in legs.items()
+                if _group_key(leg.stock_code, leg.expiry_display) == group
+            }
+        if not covered:
+            continue
+        snapshot = latest_snapshot(user_id)
+        evaluable = {
+            r["scrip_key"]: bool(r.get("rule_evaluable"))
+            for r in (snapshot or {}).get("legs", [])
+        }
+        armed += len(covered)
+        unevaluable += sum(1 for key in covered if not evaluable.get(key, False))
+    return {"armed_legs": armed, "unevaluable_legs": unevaluable}
+
+
 def _stale_after_seconds() -> float:
     try:
         return max(2.0, float(getattr(cfg, "PNL_STALE_QUOTE_SECONDS", 10.0)))
     except (TypeError, ValueError):
         return 10.0
+
+
+def _rule_max_quote_age_seconds() -> float:
+    """Oldest a retained quote may be and still drive an auto-square-off decision.
+
+    Separate from `_stale_after_seconds` on purpose. That one answers "is this price
+    live enough to present as live"; this one answers "is this price real enough to
+    act on". A stop-loss judged against a two-minute-old traded price still protects
+    the position; refusing to judge it at all leaves the position unprotected, which
+    is what used to happen silently once the quote hash expired and every leg was
+    revalued at its own entry price (P&L exactly zero -> no threshold can trip)."""
+    try:
+        return max(
+            _stale_after_seconds(),
+            float(getattr(cfg, "PNL_RULE_MAX_QUOTE_AGE_SECONDS", 120.0)),
+        )
+    except (TypeError, ValueError):
+        return 120.0
 
 
 def is_tick_stream_stale() -> bool:
@@ -368,12 +463,15 @@ def _evaluate_user_pnl(
 
     now = time.time()
     stale_after = _stale_after_seconds()
+    rule_max_age = _rule_max_quote_age_seconds()
     for idx, leg in enumerate(legs):
         quantities[idx] = leg.quantity
         avg_prices[idx] = leg.average_price
         signs[idx] = -1.0 if leg.action == cfg.SELL else 1.0
         ltp, ts = _parse_quote_fields(quotes_by_key.get(leg.scrip_key))
         if ltp is None:
+            # Kept only so the vectorized arithmetic below stays branch-free; an
+            # unpriced leg's P&L is reported as None, never as this synthetic zero.
             ltps[idx] = leg.average_price
         else:
             ltps[idx] = ltp
@@ -382,7 +480,19 @@ def _evaluate_user_pnl(
             quote_ages[idx] = max(0.0, now - ts)
 
     leg_pnl = signs * (ltps - avg_prices) * quantities
-    total_pnl = float(np.sum(leg_pnl))
+
+    def _rule_evaluable(idx: int) -> bool:
+        """A leg may drive a rule only on a real price of known, bounded age.
+
+        An absent timestamp counts as unknown age, not as fresh: with retention the
+        quote hash outlives the tick that wrote it by hours, so "no timestamp" can no
+        longer be read as "just arrived"."""
+        if not has_quote[idx]:
+            return False
+        age = quote_ages[idx]
+        if age is None:
+            return False
+        return age <= rule_max_age
 
     leg_results = [
         {
@@ -395,19 +505,31 @@ def _evaluate_user_pnl(
             "action": leg.action,
             "quantity": leg.quantity,
             "average_price": leg.average_price,
-            "ltp": float(ltps[idx]),
-            "pnl": float(leg_pnl[idx]),
+            "ltp": float(ltps[idx]) if has_quote[idx] else None,
+            "pnl": float(leg_pnl[idx]) if has_quote[idx] else None,
             "has_live_quote": bool(has_quote[idx]),
             "quote_age_seconds": quote_ages[idx],
             "quote_stale": quote_ages[idx] is not None and quote_ages[idx] > stale_after,
+            "rule_evaluable": _rule_evaluable(idx),
         }
         for idx, leg in enumerate(legs)
     ]
+
+    priced_leg_count = int(np.count_nonzero(has_quote))
+    # A partial sum is indistinguishable from a complete one once rendered, so the
+    # total is published only when every leg carries a real price. Callers fall back
+    # to their own REST snapshot when it is None -- see route_dashboard.get_dashboard_live.
+    total_pnl = float(np.sum(leg_pnl)) if priced_leg_count == n else None
 
     return {
         "user_id": user_id,
         "total_pnl": total_pnl,
         "legs": leg_results,
+        "leg_count": n,
+        "priced_leg_count": priced_leg_count,
+        "unevaluable_rule_legs": sum(
+            1 for r in leg_results if not r["rule_evaluable"]
+        ),
         "stream_stale": stream_stale,
         "computed_at": now,
     }
@@ -517,8 +639,21 @@ def _price_target_reached(
 
 
 def _evaluate_rules(snapshot: dict[str, Any], legs_by_key: dict[str, PositionLeg]) -> None:
+    """Fire any armed rule whose inputs are all priced within the rule age window.
+
+    Every tier below is gated on `rule_evaluable`, never on the clock. That is what
+    keeps protection armed through a session the exchange extends past the configured
+    close (ticks still flowing -> rules still live) and disarmed when the feed dies
+    mid-session (no ticks -> nothing to judge), without either decision depending on
+    the calendar being correct. A rule whose inputs are unevaluable is skipped and
+    counted, never evaluated against a substituted price.
+    """
     user_id = snapshot["user_id"]
+    evaluable_by_key = {r["scrip_key"]: bool(r["rule_evaluable"]) for r in snapshot["legs"]}
+
     for leg_result in snapshot["legs"]:
+        if not leg_result["rule_evaluable"]:
+            continue
         leg = legs_by_key[leg_result["scrip_key"]]
         pnl = leg_result["pnl"]
         if leg.target_pnl is not None and pnl >= leg.target_pnl:
@@ -528,7 +663,9 @@ def _evaluate_rules(snapshot: dict[str, Any], legs_by_key: dict[str, PositionLeg
 
     with _registry_lock:
         rule = _portfolio_rules.get(user_id)
-    if rule:
+    # The portfolio total is only meaningful when every leg contributed a real price;
+    # `total_pnl` is already None otherwise, so this tier stands down with it.
+    if rule and snapshot["total_pnl"] is not None and all(evaluable_by_key.values()):
         total = snapshot["total_pnl"]
         target = rule.get("target_pnl")
         stop = rule.get("stop_loss_pnl")
@@ -560,6 +697,14 @@ def _evaluate_rules(snapshot: dict[str, Any], legs_by_key: dict[str, PositionLeg
         if _check_group_drift(user_id, group_rule):
             # Composition changed since it was armed -> the thresholds no longer describe
             # what the user agreed to. Reset instead of evaluating them.
+            continue
+        # Deliberately *after* the drift check: drift is a composition question, not a
+        # price one, and a group whose legs changed under it must be reset whether or
+        # not we currently hold quotes for them. Only the threshold arithmetic below
+        # needs prices -- and needs all of them, since one unpriced leg makes the group
+        # total wrong and a group square-off exits every leg. Left armed when it can't
+        # be judged; the health status reports it as unevaluable.
+        if not all(r["rule_evaluable"] for r in matching):
             continue
         group_total = sum(r["pnl"] for r in matching)
         reason: str | None = None

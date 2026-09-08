@@ -257,9 +257,29 @@ def _force_order_feed() -> None:
     ensure_order_feed(processor(), user_id)
 
 
+def _watchdog_chain_targets() -> list[str]:
+    """Chains this watchdog is responsible for: everything a holder has registered,
+    plus every chain an armed rule depends on.
+
+    The second half matters because the P&L engine subscribes nothing of its own. A
+    stop-loss armed against a chain no browser holds would otherwise sit armed and
+    unfed — protected on paper, unable to fire in fact.
+    """
+    targets = set(list_active_chains())
+    try:
+        from icici_breeze_backend.app.services.portfolio_pnl_engine import (
+            chains_requiring_feed,
+        )
+
+        targets |= chains_requiring_feed()
+    except Exception:  # noqa: BLE001 — a registry hiccup must not blind the watchdog
+        _logger.debug("price-feed watchdog: rule-chain lookup failed", exc_info=True)
+    return sorted(targets)
+
+
 def _run_open_pass(now: float) -> None:
     """One unconditional re-arm of everything currently subscribed."""
-    chains = list_active_chains()
+    chains = _watchdog_chain_targets()
     _logger.info("price-feed watchdog: market-open re-subscribe pass (%s active chains)", len(chains))
     for chain_key in chains:
         _force_chain(chain_key)
@@ -274,7 +294,7 @@ def _check_silent_feeds(now: float) -> None:
     # "all of them failed" (the socket is dead) from "we forced nothing" (all healthy).
     results: list[bool] = []
 
-    for chain_key in list_active_chains():
+    for chain_key in _watchdog_chain_targets():
         parsed = parse_chain_registry_key(chain_key)
         if parsed is None:
             continue

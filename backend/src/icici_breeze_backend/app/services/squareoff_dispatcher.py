@@ -71,18 +71,51 @@ def _split_into_chunks(total_qty: int, qty_per_order: int) -> list[int]:
     return chunks
 
 
+def _current_leg_ltp(leg: dict[str, Any]) -> float | None:
+    """Freshest cached LTP for this contract, read at dispatch time.
+
+    One pipelined Redis read of the WS quote hash — never an ICICI call, so this
+    stays clear of the broker's per-minute budget no matter how many legs a group
+    holds. Returns None when the contract has no cached quote at all.
+    """
+    scrip_key = leg.get("scrip_key")
+    if not scrip_key:
+        return None
+    try:
+        from icici_breeze_backend.app.services.portfolio_pnl_engine import (
+            _fetch_quotes,
+            _parse_quote_fields,
+        )
+
+        ltp, _ts = _parse_quote_fields(_fetch_quotes([scrip_key]).get(scrip_key))
+        return ltp if ltp and ltp > 0 else None
+    except Exception:  # noqa: BLE001 — pricing must never fail the square-off
+        _logger.debug("Could not re-read LTP for leg=%s", scrip_key, exc_info=True)
+        return None
+
+
 def _leg_limit_price(leg: dict[str, Any], *, reason: str, payload: dict[str, Any]) -> float:
     """Marketable limit price for a closing leg: a Buy is placed at a premium
     to LTP, a Sell at a discount, using whichever of the rule's two
     user-configured percentages matches why it fired (profit-booking vs
     stop-loss) — so the order is priced to fill without being a raw,
-    unbounded-slippage MARKET order."""
+    unbounded-slippage MARKET order.
+
+    The LTP is re-read here rather than taken from the snapshot that tripped the
+    rule. Rules may fire on a quote up to `PNL_RULE_MAX_QUOTE_AGE_SECONDS` old —
+    deliberately, so a stalled feed can't leave a stop-loss unarmed — but pricing a
+    limit order off a two-minute-old quote is how that order sits unfilled. Deciding
+    to exit on an old price and pricing the exit on the best price available are
+    separate questions; this answers the second one.
+    """
     pct = (
         payload["target_premium_pct"]
         if reason == "group_target_hit"
         else payload["stop_loss_premium_pct"]
     )
-    ltp = float(leg["ltp"])
+    ltp = _current_leg_ltp(leg)
+    if ltp is None:
+        ltp = float(leg["ltp"])
     factor = 1 + pct / 100 if leg["action"] == cfg.BUY else 1 - pct / 100
     return _round_to_tick(ltp * factor)
 

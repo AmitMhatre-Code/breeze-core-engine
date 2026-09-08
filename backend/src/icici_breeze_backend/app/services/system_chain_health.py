@@ -297,12 +297,24 @@ def _max_tick_age_seconds(exchange_code: str, ws_symbols: list[str]) -> float | 
     return max(0.0, time.time() - latest)
 
 
+def _armed_rule_health() -> dict[str, int]:
+    try:
+        from icici_breeze_backend.app.services.portfolio_pnl_engine import (
+            armed_rule_feed_health,
+        )
+
+        return armed_rule_feed_health()
+    except Exception:  # noqa: BLE001 — health must never fail on its own reporting
+        _logger.debug("armed-rule health lookup failed", exc_info=True)
+        return {"armed_legs": 0, "unevaluable_legs": 0}
+
+
 def get_system_health_status() -> dict[str, Any]:
     from icici_breeze_backend.app.services.breeze_websocket_manager import get_playground_status
 
     now = datetime.now(IST)
     poll_interval = _quote_flush_interval_seconds()
-    base = {"poll_interval_seconds": poll_interval}
+    base = {"poll_interval_seconds": poll_interval, "rules": _armed_rule_health()}
 
     if not is_market_open(now):
         return {
@@ -382,6 +394,21 @@ def get_system_health_status() -> dict[str, Any]:
             **base,
             "status": "gray",
             "reason": f"{' & '.join(warming_labels)} subscribing, waiting for first ticks",
+            "market_open": True,
+            "prefetch_done": True,
+            "detail": detail,
+        }
+    unevaluable = int(base["rules"].get("unevaluable_legs") or 0)
+    if unevaluable:
+        # The chains we watch are live, but some leg carrying an armed rule is not.
+        # That rule cannot fire, and nothing else in the UI would say so.
+        return {
+            **base,
+            "status": "amber",
+            "reason": (
+                f"{unevaluable} leg{'s' if unevaluable != 1 else ''} with an armed rule "
+                "have no live price; those rules cannot fire"
+            ),
             "market_open": True,
             "prefetch_done": True,
             "detail": detail,

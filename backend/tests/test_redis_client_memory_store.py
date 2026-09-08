@@ -73,3 +73,34 @@ def test_pipeline_is_reusable_after_execute():
     pipe.execute()
     # queued ops are cleared after execute(); a stale pipeline shouldn't replay them
     assert pipe.execute() == []
+
+
+def test_hget_reads_a_single_field():
+    """`dashboard_day_pnl_live` pipelines `hget` for its per-contract LTPs. Without
+    it on the fallback, every read raised, was swallowed by that module's own
+    except, and left the Day's P&L tile permanently unpriced wherever Redis is not
+    reachable — silently, and regardless of market hours."""
+    store = _MemoryStore()
+    store.hset("quotes:pnl:x", mapping={"ltp": 2.5, "timestamp": 100.0})
+    assert store.hget("quotes:pnl:x", "ltp") == "2.5"
+    assert store.hget("quotes:pnl:x", "absent") is None
+    assert store.hget("quotes:pnl:missing-key", "ltp") is None
+
+
+def test_hget_respects_hash_expiry():
+    store = _MemoryStore()
+    store.hset("quotes:pnl:x", mapping={"ltp": 2.5})
+    store.expire("quotes:pnl:x", 0)
+    time.sleep(0.01)
+    assert store.hget("quotes:pnl:x", "ltp") is None
+
+
+def test_pipeline_hget_batches_in_execute_order():
+    store = _MemoryStore()
+    store.hset("a", mapping={"ltp": 1})
+    store.hset("b", mapping={"ltp": 2})
+    pipe = store.pipeline(transaction=False)
+    pipe.hget("a", "ltp")
+    pipe.hget("b", "ltp")
+    pipe.hget("missing", "ltp")
+    assert pipe.execute() == ["1", "2", None]

@@ -435,6 +435,11 @@ def _compute_live_payload(st: _UserState, ltps: dict[str, float]) -> dict[str, A
     total = realized = unrealized = 0.0
     priced = 0
     missing = 0
+    # Tracked separately from `priced` because a flat intraday round-trip values
+    # exactly (realized = -sum(d*p), no current price needed) and would otherwise mask
+    # a book whose every *open* leg is unpriced.
+    open_contracts = 0
+    open_priced = 0
     for key, c in st.contracts.items():
         # Resolve any fills we couldn't price at arrival (missing limitRate) from
         # the live LTP now that we can touch Redis.
@@ -450,12 +455,16 @@ def _compute_live_payload(st: _UserState, ltps: dict[str, float]) -> dict[str, A
             continue
 
         p_now = ltps.get(key, 0.0)
+        if abs(q1) > _EPS:
+            open_contracts += 1
         if abs(c.q0) > _EPS and c.p_prev is None:
             missing += 1
             continue
         if abs(q1) > _EPS and p_now <= 0:
             missing += 1
             continue
+        if abs(q1) > _EPS:
+            open_priced += 1
 
         p_prev = c.p_prev or 0.0
         total_c = q1 * p_now - c.q0 * p_prev - c.sum_dp
@@ -466,6 +475,20 @@ def _compute_live_payload(st: _UserState, ltps: dict[str, float]) -> dict[str, A
         priced += 1
         if abs(c.unpriced_delta) > _EPS:
             missing += 1
+
+    if open_contracts > 0 and open_priced == 0:
+        # Not one open leg could be valued -- the ordinary state after the close, once
+        # every quote hash has aged out. The arithmetic still "succeeds": each unpriced
+        # leg simply contributes nothing, so the tile rendered a confident figure built
+        # from whatever realized trades happened to be in the book, and outranked the
+        # complete REST snapshot the client already held. Withhold instead and let the
+        # client fall back to it.
+        result.update(
+            contracts_priced=priced,
+            contracts_missing_prev_close=missing,
+            degraded=True,
+        )
+        return result
 
     result.update(
         total_day_pnl=total,

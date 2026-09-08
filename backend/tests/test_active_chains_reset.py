@@ -81,3 +81,46 @@ def test_daily_reset_fires_once_on_a_long_running_instance():
         mock_redis.reset_mock()
         assert ac.maybe_daily_reset_active_chains() is False
     mock_redis.delete.assert_not_called()
+
+
+def test_daily_reset_clears_retained_quotes_and_repins_live_squareoffs():
+    """The daily wipe takes the SG subscription pins with it.
+
+    Those pins are the only thing keeping an armed square-off group's chain
+    subscribed when no browser holds it, and they are otherwise created only at
+    process start — so on an instance left running across midnight, every armed SG
+    was left visibly armed and quietly unfed.
+    """
+    ac._last_full_reset_date = dt.date(2020, 1, 1)
+    rule = object()
+
+    with patch.object(ac, "get_redis", return_value=MagicMock()), patch(
+        "icici_breeze_backend.app.repositories.squareoff_rules.list_all_live_rules",
+        return_value=[{"id": "r1", "user_id": "u1"}],
+    ), patch(
+        "icici_breeze_backend.app.repositories.squareoff_rules.get_rule",
+        return_value=rule,
+    ), patch(
+        "icici_breeze_backend.app.services.strategy_group_lifecycle.pin_subscription"
+    ) as pin, patch(
+        "icici_breeze_backend.app.services.ws_tick_pipeline.clear_retained_pnl_quotes",
+        return_value=7,
+    ) as clear:
+        assert ac.maybe_daily_reset_active_chains() is True
+
+    clear.assert_called_once()
+    pin.assert_called_once_with("u1", rule)
+
+
+def test_daily_reset_survives_a_repin_failure():
+    """A pin failure must not abort the reset half-done."""
+    ac._last_full_reset_date = dt.date(2020, 1, 1)
+
+    with patch.object(ac, "get_redis", return_value=MagicMock()), patch(
+        "icici_breeze_backend.app.repositories.squareoff_rules.list_all_live_rules",
+        side_effect=RuntimeError("db gone"),
+    ), patch(
+        "icici_breeze_backend.app.services.ws_tick_pipeline.clear_retained_pnl_quotes",
+        return_value=0,
+    ):
+        assert ac.maybe_daily_reset_active_chains() is True

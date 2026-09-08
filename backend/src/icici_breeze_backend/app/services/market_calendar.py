@@ -121,6 +121,28 @@ def market_closed_reason(now: datetime | None = None) -> str:
     return "market open"
 
 
+def next_session_open(now: datetime | None = None) -> datetime:
+    """The next moment the market opens, strictly after `now`.
+
+    Walks forward over weekends and holidays using the same operator-editable
+    calendar as everything else, so a session whose hours are changed in Settings
+    moves this with it. Used to scope cached WS quotes to the session that produced
+    them: the retained close price of one session must never be readable as a live
+    price in the next.
+    """
+    cal = get_calendar_config()
+    dt = (now or datetime.now(IST)).astimezone(IST)
+    candidate = cal.open_time(dt)
+    if candidate <= dt or not is_trading_day(dt):
+        probe = dt
+        while True:
+            probe = probe + timedelta(days=1)
+            if is_trading_day(probe):
+                candidate = cal.open_time(probe)
+                break
+    return candidate
+
+
 def _previous_trading_day(d: date) -> date:
     prev = d - timedelta(days=1)
     while not is_trading_day(datetime(prev.year, prev.month, prev.day, 12, 0, tzinfo=IST)):

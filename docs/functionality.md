@@ -90,7 +90,7 @@ The UI uses **React Query** for server state and **Chart.js** where charts are s
 
 ### Settings API
 
-- **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline upload/refresh), scrip master refresh, API usage aggregates, exchange-calendar preferences, the margin comparison harness (`/margin-harness/run`, `/runs`, `/runs/{id}/download`), and the reference-data pipeline (`/reference-data-loads/status`, `/schedule`, `/load-now` — see [Architecture — Reference data pipeline](./architecture.md#reference-data-pipeline)).
+- **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline refresh), scrip master refresh, API usage aggregates, exchange-calendar preferences, the margin comparison harness (`/margin-harness/run`, `/runs`, `/runs/{id}/download`), and the reference-data pipeline (`/reference-data-loads/status`, `/schedule`, `/load-now` — see [Architecture — Reference data pipeline](./architecture.md#reference-data-pipeline)).
 
 ### Outlook (market narrative)
 

@@ -8,7 +8,7 @@ from typing import Any, List
 
 import httpx
 import time
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from icici_breeze_backend.app.services.market_calendar import (
@@ -85,7 +85,6 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
     MARGIN_SOURCE_BREEZE,
     MARGIN_SOURCE_EXCHANGE,
     ensure_exchange_margin_baseline_table,
-    ingest_exchange_baseline_upload,
     refresh_all_span_baselines,
 )
 from icici_breeze_backend.app.repositories import exchange_calendar as ec_repo
@@ -478,45 +477,6 @@ async def settings_margin_source_refresh_baseline(ctx: RequestContext = Depends(
             "result": {m: out.get("Success") for m, out in results.items()},
         }
     )
-
-
-@router.post("/margin-source/upload-baseline")
-async def settings_margin_source_upload_baseline(
-    ctx: RequestContext = Depends(get_request_context),
-    file: UploadFile = File(...),
-    market: str = Form(...),
-):
-    """Upload NSE or BSE SPAN XML (or ZIP containing XML). BSE ingests BSXOPT/BKXOPT (BSESEN/BANKEX on BFO) only."""
-    body = await file.read()
-    out = ingest_exchange_baseline_upload(
-        body,
-        file.filename or "upload.xml",
-        market=market,
-    )
-    if out.get("Status") != 200:
-        raise HTTPException(status_code=400, detail=out.get("Error") or "Baseline upload failed")
-    market_l = (market or "").strip().lower()
-    if market_l == "bse":
-        import uuid
-
-        from icici_breeze_backend.app.core.timezone import now_ist
-        from icici_breeze_backend.app.services.reference_data.state import append_ingest_history
-
-        success = out.get("Success") or {}
-        append_ingest_history(
-            {
-                "id": str(uuid.uuid4()),
-                "kind": "bse_span_baseline",
-                "display_name": "BSE SPAN Baseline",
-                "source_file_date": success.get("source_date"),
-                "row_count": int(success.get("inserted_rows") or 0),
-                "ingested_at": now_ist().isoformat(timespec="seconds"),
-                "ok": True,
-                "notes": file.filename or "upload.xml",
-                "source_url": None,
-            }
-        )
-    return JSONResponse({"ok": True, "message": "Exchange Risk Baseline updated from file.", "result": out.get("Success")})
 
 
 @router.get("/margin-harness/runs")

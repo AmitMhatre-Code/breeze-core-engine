@@ -43,6 +43,10 @@ class _MemoryPipeline:
         self._ops.append(("hgetall", (key,), {}))
         return self
 
+    def hget(self, key: str, field: str) -> "_MemoryPipeline":
+        self._ops.append(("hget", (key, field), {}))
+        return self
+
     def expire(self, key: str, seconds: int) -> "_MemoryPipeline":
         self._ops.append(("expire", (key, seconds), {}))
         return self
@@ -58,6 +62,8 @@ class _MemoryPipeline:
                 out.append(self._store.hset(args[0], mapping=kw.get("mapping")))
             elif op == "hgetall":
                 out.append(self._store.hgetall(args[0]))
+            elif op == "hget":
+                out.append(self._store.hget(args[0], args[1]))
             elif op == "expire":
                 out.append(self._store.expire(args[0], args[1]))
         self._ops = []
@@ -102,6 +108,13 @@ class _MemoryStore:
         return removed
 
     def keys(self, pattern: str = "*") -> list[str]:
+        """Every live key matching the pattern, of any type.
+
+        Hashes and sets live in their own dicts, so scanning only `_memory` reported
+        none of them — the same asymmetry `delete` above already had to correct. A
+        pattern sweep that silently skips hash keys makes any cleanup built on
+        `scan_iter` a no-op on this fallback.
+        """
         with _memory_lock:
             now = time.time()
             alive = []
@@ -110,6 +123,14 @@ class _MemoryStore:
                     del _memory[k]
                 else:
                     alive.append(k)
+            for k in list(_memory_hashes):
+                exp = _memory_hash_expires.get(k)
+                if exp is not None and now > exp:
+                    _memory_hashes.pop(k, None)
+                    _memory_hash_expires.pop(k, None)
+                else:
+                    alive.append(k)
+            alive.extend(_memory_sets)
             return [k for k in alive if fnmatch.fnmatch(k, pattern.replace("?", "?"))]
 
     def scan_iter(self, match: str = "*", count: int = 100):
@@ -138,6 +159,13 @@ class _MemoryStore:
                 _memory_hash_expires.pop(key, None)
                 return {}
             return dict(_memory_hashes.get(key, {}))
+
+    def hget(self, key: str, field: str) -> str | None:
+        """Single-field hash read. Absent here until `dashboard_day_pnl_live` began
+        pipelining `hget` for its per-contract LTPs — without it every read on this
+        fallback raised, was swallowed by the caller's own except, and left the tile
+        permanently unpriced on any deployment running without Redis."""
+        return self.hgetall(key).get(field)
 
     def hmget(self, key: str, fields: list[str]) -> list[str | None]:
         bucket = self.hgetall(key)

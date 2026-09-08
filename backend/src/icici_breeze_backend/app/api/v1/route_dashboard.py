@@ -61,10 +61,16 @@ async def get_dashboard_live(ctx: RequestContext = Depends(get_request_context))
     user_id = ctx.user_id
     snap = latest_snapshot(user_id)
     open_pnl = None
+    # `total_pnl` is None whenever any tracked leg had no real price, so this
+    # publishes a live figure only when it is complete. Anything else stays null and
+    # the client keeps its own REST snapshot, which is already correct — the engine
+    # used to substitute each unpriced leg's entry price instead, making a total of
+    # exactly zero indistinguishable from a genuine flat book.
     if snap and isinstance(snap.get("total_pnl"), (int, float)):
         open_pnl = {
             "total_pnl": snap["total_pnl"],
-            "leg_count": len(snap.get("legs") or []),
+            "leg_count": snap.get("leg_count", len(snap.get("legs") or [])),
+            "priced_leg_count": snap.get("priced_leg_count"),
             "stream_stale": bool(snap.get("stream_stale")),
             "computed_at": snap.get("computed_at"),
         }

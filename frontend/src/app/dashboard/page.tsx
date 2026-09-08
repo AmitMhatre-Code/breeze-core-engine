@@ -17,6 +17,7 @@ import { Vix30dChart } from "@/components/dashboard/Vix30dChart";
 import { useWsHealth } from "@/lib/use-ws-health";
 import { useIndexQuotes } from "@/lib/use-index-quotes";
 import { useDashboardLive } from "@/lib/use-dashboard-live";
+import { resolveDayPnl, resolveOpenPnl } from "@/lib/dashboard-tile-source";
 import {
   interpretAtmIvPercent,
   interpretIndiaVix,
@@ -524,12 +525,26 @@ export default function DashboardPage() {
   const liveStale =
     Boolean(liveQ.data?.tick_stale) &&
     (liveOpenPnl != null || liveDayPnl != null);
-  const openPnl = liveOpenPnl ?? openPnlSnapshot;
+  // The live figure is withheld by the backend whenever the P&L engine could not
+  // price every tracked leg (no WS quote for one of them — routine after the close,
+  // and during any feed gap). The REST snapshot we fall back to is complete but not
+  // live, so it is marked rather than passed off as a tick, following the same
+  // convention the Portfolio table uses for a non-live LTP.
+  const { value: openPnl, isSnapshot: openPnlIsSnapshot } = resolveOpenPnl(
+    liveOpenPnl,
+    openPnlSnapshot,
+  );
 
-  const dayPnl = liveDayPnl ?? dayPnlQ.data;
+  const { value: dayPnl, isSnapshot: dayPnlIsSnapshot } = resolveDayPnl(
+    liveDayPnl,
+    dayPnlQ.data,
+  );
+  // Keyed off the resolved value, not merely off a live payload arriving: a payload
+  // that withheld its total is nothing to render, so the tile should stay in its
+  // loading state until the REST snapshot lands rather than flashing an em-dash.
   const dayPnlLoading =
     bootstrapQ.isPending ||
-    (Boolean(bootstrapQ.data) && dayPnlQ.isPending && !liveDayPnl);
+    (Boolean(bootstrapQ.data) && dayPnlQ.isPending && dayPnl == null);
   const marginUsedPct =
     marginUsedDisplay != null && funds != null && marginUsedDisplay + funds > 0
       ? Math.min(100, Math.max(0, (marginUsedDisplay / (marginUsedDisplay + funds)) * 100))
@@ -661,9 +676,12 @@ export default function DashboardPage() {
             }
             toneClassName={openPnl != null ? moneyToneClass(openPnl) : undefined}
             caption={
-              openPositionCount != null
-                ? `${openPositionCount} open ${openPositionCount === 1 ? "position" : "positions"}`
-                : undefined
+              openPositionCount != null ? (
+                <>
+                  {`${openPositionCount} open ${openPositionCount === 1 ? "position" : "positions"}`}
+                  {openPnlIsSnapshot ? <NotLiveNote /> : null}
+                </>
+              ) : undefined
             }
           />
           <MetricTile
@@ -687,6 +705,7 @@ export default function DashboardPage() {
                 >
                   {`Realized ${formatSignedMoneyShort(dayPnl.realized_day_pnl ?? 0)} · Open ${formatSignedMoneyShort(dayPnl.unrealized_day_pnl ?? 0)}`}
                   {dayPnl.degraded ? " · partial" : ""}
+                  {dayPnlIsSnapshot ? <NotLiveNote /> : null}
                 </span>
               ) : (
                 "vs previous close"
@@ -1011,6 +1030,20 @@ export default function DashboardPage() {
         </section>
       </div>
     </AppShell>
+  );
+}
+
+/** Provenance note for a tile served from the REST snapshot rather than the live
+ * feed. Mirrors the Portfolio table's "· prev close" / "· broker px" notes: a number
+ * that isn't a live tick says so, instead of a stale figure reading as current. */
+function NotLiveNote() {
+  return (
+    <span
+      className="ml-1 text-micro app-text-muted"
+      title="Not a live websocket value — last loaded snapshot"
+    >
+      · snapshot
+    </span>
   );
 }
 

@@ -249,3 +249,147 @@ class TestPnlFlushIntervalSettingsBackedAndLive:
         asyncio.run(_drive())
         # Only the first couple (fast) intervals should have fired within the window.
         assert 1 <= len(calls) <= 3
+
+
+@pytest.fixture(autouse=True)
+def _clear_next_open_cache():
+    """The flush path memoizes the resolved next-session-open (it would otherwise
+    re-read the exchange calendar every couple of seconds), so each test must start
+    from a cold cache."""
+    from icici_breeze_backend.app.services import ws_tick_pipeline as wtp
+
+    wtp._next_open_cache = None
+    yield
+    wtp._next_open_cache = None
+
+
+class TestSessionScopedQuoteRetention:
+    """A quote must outlive the tick that wrote it, but never outlive its session.
+
+    The old flat 30s TTL made the cache useless the moment ticks stopped: every leg
+    then revalued at its own entry price, so a whole book read as exactly ₹0 after
+    the close and through any outage longer than half a minute.
+    """
+
+    def test_ttl_runs_to_just_before_the_next_session_open(self, monkeypatch):
+        from datetime import datetime, timedelta
+
+        from icici_breeze_backend.app.core.timezone import IST
+        from icici_breeze_backend.app.services import ws_tick_pipeline as wtp
+
+        now = datetime(2026, 9, 8, 11, 0, tzinfo=IST)
+        next_open = now + timedelta(hours=22, minutes=15)
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.market_calendar.next_session_open",
+            lambda _now=None: next_open,
+        )
+        monkeypatch.setattr(wtp, "datetime", _FrozenDatetime(now))
+
+        ttl = wtp._pnl_quote_ttl_seconds()
+        expected = int((next_open - now).total_seconds()) - wtp._QUOTE_RETENTION_MARGIN_SECONDS
+        assert ttl == expected
+        # Comfortably past the close, so a post-close read still finds a real price.
+        assert ttl > 6 * 3600
+
+    def test_ttl_falls_back_to_the_configured_floor_when_the_calendar_fails(self, monkeypatch):
+        from icici_breeze_backend.app.services import ws_tick_pipeline as wtp
+
+        def _boom(_now=None):
+            raise RuntimeError("calendar unavailable")
+
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.market_calendar.next_session_open", _boom
+        )
+        assert wtp._pnl_quote_ttl_seconds() == 30
+
+    def test_ttl_is_capped_so_a_bad_calendar_cannot_pin_the_keyspace(self, monkeypatch):
+        from datetime import datetime, timedelta
+
+        from icici_breeze_backend.app.core.timezone import IST
+        from icici_breeze_backend.app.services import ws_tick_pipeline as wtp
+
+        now = datetime(2026, 9, 8, 11, 0, tzinfo=IST)
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.market_calendar.next_session_open",
+            lambda _now=None: now + timedelta(days=400),
+        )
+        monkeypatch.setattr(wtp, "datetime", _FrozenDatetime(now))
+        assert wtp._pnl_quote_ttl_seconds() == wtp._QUOTE_RETENTION_MAX_SECONDS
+
+
+class _FrozenDatetime:
+    """Stand-in for the module's `datetime` so `datetime.now(IST)` is deterministic."""
+
+    def __init__(self, now):
+        self._now = now
+
+    def now(self, tz=None):
+        return self._now
+
+
+class TestQuoteRetentionHousekeeping:
+    def test_next_session_open_is_resolved_once_not_per_flush(self, monkeypatch):
+        """The flush worker asks for a TTL every couple of seconds, and each miss is a
+        SQLite read of the exchange calendar."""
+        from datetime import datetime, timedelta
+
+        from icici_breeze_backend.app.core.timezone import IST
+        from icici_breeze_backend.app.services import ws_tick_pipeline as wtp
+
+        now = datetime(2026, 9, 8, 11, 0, tzinfo=IST)
+        calls = []
+
+        def _resolve(_now=None):
+            calls.append(1)
+            return now + timedelta(hours=22)
+
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.market_calendar.next_session_open", _resolve
+        )
+        monkeypatch.setattr(wtp, "datetime", _FrozenDatetime(now))
+
+        for _ in range(20):
+            wtp._pnl_quote_ttl_seconds()
+        assert len(calls) == 1
+
+    def test_cache_is_re_resolved_once_the_session_boundary_passes(self, monkeypatch):
+        from datetime import datetime, timedelta
+
+        from icici_breeze_backend.app.core.timezone import IST
+        from icici_breeze_backend.app.services import ws_tick_pipeline as wtp
+
+        first = datetime(2026, 9, 8, 11, 0, tzinfo=IST)
+        calls = []
+
+        def _resolve(now=None):
+            calls.append(now)
+            return now + timedelta(hours=1)
+
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.market_calendar.next_session_open", _resolve
+        )
+        monkeypatch.setattr(wtp, "datetime", _FrozenDatetime(first))
+        wtp._pnl_quote_ttl_seconds()
+        # Jump past the cached target: the answer is no longer in the future.
+        monkeypatch.setattr(wtp, "datetime", _FrozenDatetime(first + timedelta(hours=2)))
+        wtp._pnl_quote_ttl_seconds()
+        assert len(calls) == 2
+
+    def test_clear_retained_quotes_deletes_only_quote_keys(self):
+        from icici_breeze_backend.app.services import ws_tick_pipeline as wtp
+
+        store = MagicMock()
+        store.scan_iter.return_value = iter(["quotes:pnl:a", "quotes:pnl:b"])
+        store.delete.return_value = 2
+        with patch.object(wtp, "get_redis", return_value=store):
+            assert wtp.clear_retained_pnl_quotes() == 2
+        assert store.scan_iter.call_args.kwargs["match"] == "quotes:pnl:*"
+        store.delete.assert_called_once_with("quotes:pnl:a", "quotes:pnl:b")
+
+    def test_clear_retained_quotes_survives_a_redis_failure(self):
+        from icici_breeze_backend.app.services import ws_tick_pipeline as wtp
+
+        store = MagicMock()
+        store.scan_iter.side_effect = RuntimeError("redis down")
+        with patch.object(wtp, "get_redis", return_value=store):
+            assert wtp.clear_retained_pnl_quotes() == 0

@@ -51,6 +51,8 @@ def test_live_passes_through_engine_and_day_pnl(live_client, monkeypatch):
         lambda uid: {
             "total_pnl": 1234.5,
             "legs": [{"scrip_key": "a"}, {"scrip_key": "b"}],
+            "leg_count": 2,
+            "priced_leg_count": 2,
             "stream_stale": False,
             "computed_at": 111.0,
         },
@@ -69,11 +71,42 @@ def test_live_passes_through_engine_and_day_pnl(live_client, monkeypatch):
     assert body["open_pnl"] == {
         "total_pnl": 1234.5,
         "leg_count": 2,
+        "priced_leg_count": 2,
         "stream_stale": False,
         "computed_at": 111.0,
     }
     assert body["day_pnl"]["total_day_pnl"] == -50.0
     assert body["tick_stale"] is False
+
+
+def test_live_withholds_open_pnl_when_the_engine_could_not_price_every_leg(
+    live_client, monkeypatch
+):
+    """The engine reports `total_pnl: None` for a partially-priced book, and this
+    route must not turn that into a number. The client keeps its REST snapshot,
+    which is complete; publishing a partial live figure would silently outrank it."""
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.portfolio_pnl_engine.latest_snapshot",
+        lambda uid: {
+            "total_pnl": None,
+            "legs": [{"scrip_key": "a"}, {"scrip_key": "b"}],
+            "leg_count": 2,
+            "priced_leg_count": 1,
+            "stream_stale": False,
+            "computed_at": 111.0,
+        },
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.portfolio_pnl_engine.is_tick_stream_stale",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.dashboard_day_pnl_live.latest",
+        lambda uid: None,
+    )
+    r = live_client.get("/dashboard/live")
+    assert r.status_code == 200
+    assert r.json()["open_pnl"] is None
 
 
 def test_live_does_not_require_broker_token(live_client, monkeypatch):

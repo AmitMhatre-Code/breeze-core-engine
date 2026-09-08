@@ -193,18 +193,17 @@ sequenceDiagram
 
 ---
 
-## 9. Settings: margin source and SPAN baseline upload
+## 9. Settings: margin source and SPAN baseline refresh
 
 ```mermaid
 flowchart LR
-  UI[Settings margin UI] -->|POST multipart| API[/api/settings/margin-source/upload-baseline/]
-  API --> ING[ingest_exchange_baseline_upload]
-  ING --> DB[(SQLite table\nexchange baseline)]
-  UI -->|POST refresh| REF[/api/settings/margin-source/refresh-baseline/]
-  REF --> ICICI[ICICI / external fetch\nper implementation]
+  UI[Settings margin UI] -->|POST refresh| REF[/api/settings/margin-source/refresh-baseline/]
+  REF --> SRC[span_sources\nNSE + BSE published archives]
+  SRC --> DB[(SQLite table\nexchange baseline)]
+  SCH[span_scheduler\nintraday IST slots] --> SRC
 ```
 
-Large uploads are why Next enables an increased **proxy body size** in `next.config.js`.
+SPAN files are only fetched from the exchanges — there is no manual upload path.
 
 ---
 

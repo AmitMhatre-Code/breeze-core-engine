@@ -26,6 +26,30 @@ def _reset():
     wd.reset_state_for_tests()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_rule_chains():
+    """The watchdog now also targets chains that armed rules depend on, read from the
+    P&L engine's process-wide registry. Other test modules leave legs and rules in
+    that registry, which would otherwise leak in here as extra re-subscribe targets."""
+    from icici_breeze_backend.app.services import portfolio_pnl_engine as engine
+
+    saved = (
+        dict(engine._legs_by_user),
+        dict(engine._group_rules),
+        dict(engine._portfolio_rules),
+    )
+    engine._legs_by_user.clear()
+    engine._group_rules.clear()
+    engine._portfolio_rules.clear()
+    yield
+    engine._legs_by_user.clear()
+    engine._legs_by_user.update(saved[0])
+    engine._group_rules.clear()
+    engine._group_rules.update(saved[1])
+    engine._portfolio_rules.clear()
+    engine._portfolio_rules.update(saved[2])
+
+
 @pytest.fixture
 def env(monkeypatch):
     """Market open, one active chain, a connected socket, ticks controllable."""
@@ -455,3 +479,44 @@ class TestForcedChainSubscription:
             is True
         )
         sdk.subscribe_feeds.assert_called_once()
+
+
+class TestArmedRuleChainCoverage:
+    """The P&L engine subscribes nothing of its own, so a rule armed against a chain
+    no browser holds had no subscriber at all — armed on paper, unable to fire."""
+
+    def test_targets_union_active_chains_with_rule_chains(self, monkeypatch):
+        from icici_breeze_backend.app.services import ws_price_feed_watchdog as wd
+
+        monkeypatch.setattr(wd, "list_active_chains", lambda: ["NFO|NIFTY|30-Jun-2026"])
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.portfolio_pnl_engine.chains_requiring_feed",
+            lambda: {"NFO|TCS|29-Sep-2026"},
+        )
+        assert wd._watchdog_chain_targets() == [
+            "NFO|NIFTY|30-Jun-2026",
+            "NFO|TCS|29-Sep-2026",
+        ]
+
+    def test_a_rule_chain_nobody_holds_is_still_a_target(self, monkeypatch):
+        from icici_breeze_backend.app.services import ws_price_feed_watchdog as wd
+
+        monkeypatch.setattr(wd, "list_active_chains", lambda: [])
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.portfolio_pnl_engine.chains_requiring_feed",
+            lambda: {"NFO|TCS|29-Sep-2026"},
+        )
+        assert wd._watchdog_chain_targets() == ["NFO|TCS|29-Sep-2026"]
+
+    def test_engine_lookup_failure_leaves_the_watchdog_working(self, monkeypatch):
+        from icici_breeze_backend.app.services import ws_price_feed_watchdog as wd
+
+        def _boom():
+            raise RuntimeError("registry busy")
+
+        monkeypatch.setattr(wd, "list_active_chains", lambda: ["NFO|NIFTY|30-Jun-2026"])
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.portfolio_pnl_engine.chains_requiring_feed",
+            _boom,
+        )
+        assert wd._watchdog_chain_targets() == ["NFO|NIFTY|30-Jun-2026"]

@@ -426,6 +426,48 @@ class TestDispatcher:
         assert captured["price"] == "95.0"
         assert captured["aggressive_limit"] is False
 
+    def test_limit_price_prefers_a_freshly_read_ltp_over_the_snapshot(self, monkeypatch):
+        """Rules may fire on a quote up to `PNL_RULE_MAX_QUOTE_AGE_SECONDS` old — that
+        is deliberate, so a stalled feed cannot leave a stop-loss unarmed. Pricing the
+        exit off that same old quote is how the order then sits unfilled. Deciding to
+        exit and pricing the exit are separate questions."""
+        leg = self._leg(action="Sell", ltp=100.0)
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.portfolio_pnl_engine._fetch_quotes",
+            lambda keys: {leg["scrip_key"]: {"ltp": "80", "timestamp": "1"}},
+        )
+        price = squareoff_dispatcher._leg_limit_price(
+            leg, reason="group_stop_loss_hit", payload=self._payload(stop_loss_premium_pct=5)
+        )
+        # Priced off the current 80, not the 100 the rule tripped on: 80 * 0.95 = 76.0
+        assert price == pytest.approx(76.0)
+
+    def test_limit_price_falls_back_to_the_snapshot_when_no_quote_is_cached(self, monkeypatch):
+        leg = self._leg(action="Sell", ltp=100.0)
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.portfolio_pnl_engine._fetch_quotes",
+            lambda keys: {},
+        )
+        price = squareoff_dispatcher._leg_limit_price(
+            leg, reason="group_stop_loss_hit", payload=self._payload(stop_loss_premium_pct=5)
+        )
+        assert price == pytest.approx(95.0)
+
+    def test_limit_price_survives_a_quote_read_failure(self, monkeypatch):
+        """Pricing must never be what fails a square-off."""
+        leg = self._leg(action="Sell", ltp=100.0)
+
+        def _boom(keys):
+            raise RuntimeError("redis down")
+
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.portfolio_pnl_engine._fetch_quotes", _boom
+        )
+        price = squareoff_dispatcher._leg_limit_price(
+            leg, reason="group_stop_loss_hit", payload=self._payload(stop_loss_premium_pct=5)
+        )
+        assert price == pytest.approx(95.0)
+
     def test_limit_price_rounds_to_nearest_tick(self):
         leg = self._leg(action="Buy", ltp=33.3)
         price = squareoff_dispatcher._leg_limit_price(

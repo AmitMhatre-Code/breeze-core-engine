@@ -399,7 +399,22 @@ HHMM_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
 # NSE's cash/derivatives session. Windows outside it can only ever log
 # `outside_session_window`, so they are refused rather than saved.
 MARKET_OPEN_IST = "09:15"
+# Fallback only. The live value comes from `market_close_ist()` below, which reads the
+# operator-editable exchange calendar -- so a session the exchange lengthens is a
+# Settings change, not a code change, and a window saved against the new close is not
+# rejected by a constant that still remembers the old one.
 MARKET_CLOSE_IST = "15:30"
+
+
+def market_close_ist() -> str:
+    """Configured market close as zero-padded HH:MM, for string comparison."""
+    try:
+        from icici_breeze_backend.app.services.market_calendar import get_calendar_config
+
+        cal = get_calendar_config()
+        return f"{cal.close_hour:02d}:{cal.close_minute:02d}"
+    except Exception:  # noqa: BLE001 — validation must not fail on a calendar read
+        return MARKET_CLOSE_IST
 
 # The earliest a scalper can usefully start. At the default signal settings the volume MA
 # needs 20 one-minute bars built from live ticks -- there is no historical backfill -- so
@@ -457,9 +472,10 @@ def validate_session_windows(
                 f"are built from live ticks with no backfill, so nothing before that can do "
                 f"anything but warm up."
             )
-        if w.end > MARKET_CLOSE_IST:
+        market_close = market_close_ist()
+        if w.end > market_close:
             raise ValueError(
-                f"Window {span} runs past the {MARKET_CLOSE_IST} market close."
+                f"Window {span} runs past the {market_close} market close."
             )
         if w.end > hard_square_off_ist:
             raise ValueError(

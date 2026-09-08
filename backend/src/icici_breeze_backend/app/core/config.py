@@ -118,6 +118,12 @@ PNL_QUOTE_FLUSH_INTERVAL_SECONDS = getattr(_cfg, "PNL_QUOTE_FLUSH_INTERVAL_SECON
 PNL_QUOTE_TTL_SECONDS = getattr(_cfg, "PNL_QUOTE_TTL_SECONDS", 30)
 PNL_ENGINE_INTERVAL_SECONDS = getattr(_cfg, "PNL_ENGINE_INTERVAL_SECONDS", 2.0)
 PNL_STALE_QUOTE_SECONDS = getattr(_cfg, "PNL_STALE_QUOTE_SECONDS", 10.0)
+# Oldest a retained WS quote may be and still be acted on by an auto-square-off rule.
+# Deliberately far above PNL_STALE_QUOTE_SECONDS (which only marks a quote "not live"
+# for display): a stop-loss evaluated against a two-minute-old *real* price protects
+# the position, whereas refusing to evaluate leaves it unprotected entirely. Past this
+# age the leg is reported unevaluable instead, and surfaced in the WS health status.
+PNL_RULE_MAX_QUOTE_AGE_SECONDS = getattr(_cfg, "PNL_RULE_MAX_QUOTE_AGE_SECONDS", 120.0)
 PNL_ENGINE_ENABLED = getattr(_cfg, "PNL_ENGINE_ENABLED", True)
 AGGRESSIVE_LIMIT_ORDER_ENABLED = getattr(_cfg, "AGGRESSIVE_LIMIT_ORDER_ENABLED", False)
 AGGRESSIVE_LIMIT_DEFAULT_TOLERANCE_PCT = getattr(_cfg, "AGGRESSIVE_LIMIT_DEFAULT_TOLERANCE_PCT", 5.0)
