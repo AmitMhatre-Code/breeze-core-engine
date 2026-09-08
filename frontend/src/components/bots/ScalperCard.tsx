@@ -225,8 +225,9 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
   return (
     <>
       {/* `h-full` + the grid's default stretch — matches BotCard so all four cards in a row
-          share one height. No `min-h` floor or `flex-1` filler: the lines above the mode
-          switch are all clamped, so the cards reach the same natural height without padding. */}
+          share one height. The mode-switch cluster is `mt-auto`-pinned to the bottom so it
+          lines up with the writer cards' even though this card carries an extra feed-status
+          line they don't. */}
       <section className="app-card flex h-full flex-col p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -277,12 +278,6 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
               ? "Switched off with a real position still open. Opening nothing new; managing this one to its exit."
               : windowSummary(bot)}
           </p>
-          {feed && (
-            /* Why nothing is happening, where the user is already looking. A scalper can
-               sit at `not_warm` for a whole session and look perfectly healthy otherwise;
-               this is the line that says whether it is filling or was never subscribed. */
-            <p className={`mt-1 font-mono text-hint ${feedToneClass(feed.tone)}`}>{feed.text}</p>
-          )}
           <dl className="mt-3 grid gap-1.5">
             <div className="flex items-baseline justify-between gap-3 text-hint">
               <dt className="text-faint">Cycles today</dt>
@@ -307,9 +302,21 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
               </dd>
             </div>
           </dl>
+          {feed && (
+            /* Why nothing is happening. Sits below the stats, not above them, so the
+               Cycles / Net P&L rows start at the same Y as the writer cards' Expiry /
+               Indices rows — this line has no counterpart there, so it can only go where
+               the writer cards carry slack: after the shared block. A scalper can sit at
+               `not_warm` for a whole session and look healthy otherwise; this is the line
+               that says whether it is filling or was never subscribed. */
+            <p className={`mt-2 font-mono text-hint ${feedToneClass(feed.tone)}`}>{feed.text}</p>
+          )}
         </div>
 
-        <div className="mt-4">
+        {/* `mt-auto`: the mode-switch cluster is pinned to the bottom so it lines up with
+            the writer cards' regardless of the feed-status line above, which the writers
+            have no counterpart for. See BotCard for the full reasoning. */}
+        <div className="mt-auto pt-4">
           <ModePill
             mode={mode}
             disabled={readOnly || update.isPending}

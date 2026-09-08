@@ -129,7 +129,7 @@ Client-side API base: production Docker build intentionally avoids hardcoding `N
 ### Middleware chain (order matters)
 
 1. **CORSMiddleware** — Origins from `CORS_ORIGINS` or `ALLOWED_ORIGINS`.
-2. **RateLimitMiddleware** — Basic protection.
+2. **RateLimitMiddleware** — Basic protection. In-memory sliding window (`RATE_LIMIT_PER_MIN`, default 240) keyed on the **real client IP** — resolved from `X-Real-IP`, then the first `X-Forwarded-For` hop, then the socket peer — because every topology fronts uvicorn with a proxy and the raw peer is always loopback. Only **mutating requests and `/auth/*`** are counted; safe reads (`GET`/`HEAD`/`OPTIONS`) and `/health`/`/metrics` are exempt, so read-heavy dashboards and probes never spend the budget. Headers are trusted as-is (single-tenant box, coarse abuse guard, not a security boundary).
 3. **CorrelationIdMiddleware** — Request correlation for logs and error JSON.
 4. **RequestLoggerMiddleware** — Structured request logging.
 

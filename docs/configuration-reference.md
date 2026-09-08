@@ -107,7 +107,7 @@ For **licensed deployments**, `TELEGRAM_BOT_TOKEN`/`TELEGRAM_BOT_USERNAME` are c
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `RATE_LIMIT_PER_MIN` | `100` | Requests per minute per client key (see middleware). |
+| `RATE_LIMIT_PER_MIN` | `240` | Per-real-client-IP cap on **mutating requests and `/auth/*`** in a rolling 60s window. Safe reads (`GET`/`HEAD`/`OPTIONS`) and `/health`/`/metrics` are not counted. Client IP is read from `X-Real-IP` / `X-Forwarded-For` (proxy always fronts uvicorn). |
 | `E2E_RATE_LIMIT_BYPASS_SECRET` | unset | If set, matching requests can bypass rate limit (admin / E2E). |
 | `INTEGRATION_SKIP_MARKET_HOURS` | unset | When `1`, admin integration tests may skip market-hours checks. |
 | `E2E_BASE_URL` | `http://localhost:8000` | Base URL for subprocess tests spawned from admin routes. |

@@ -36,8 +36,11 @@ function GearIcon() {
 }
 
 function PlayIcon() {
+  // viewBox cropped to the triangle's own bounds (x 8–19, y 5–19) so the glyph fills the
+  // size-4 box the way the gear does — at the full 0 0 24 24 viewBox the triangle only
+  // covered ~60% of the height and read as a smaller icon next to the gear.
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="size-4" aria-hidden>
+    <svg viewBox="8 5 11 14" fill="currentColor" className="size-4" aria-hidden>
       <path d="M8 5v14l11-7z" />
     </svg>
   );
@@ -283,10 +286,11 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
   return (
     <>
       {/* `h-full` + the grid's default stretch keeps the four cards in a row the same
-          height as each other. No `min-h` floor and no `flex-1` filler any more: every
-          fixed-height line above the mode switch (blurb, schedule, mode blurb) is clamped,
-          so all four cards land on the same natural height with no dead space to pad — a
-          genuinely sparse card just carries a little trailing slack. */}
+          height as each other; the mode-switch cluster below is `mt-auto`-pinned to the
+          bottom so all four switches line up on one row whatever sits above them. The
+          lines above the switch (blurb, schedule) are still clamped to a fixed height so
+          the table-like rows read across — the pin just absorbs the one thing that isn't
+          shared: the scalper cards' feed-status line. */}
       <section className="app-card flex h-full flex-col p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -351,7 +355,12 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
           </dl>
         </div>
 
-        <div className="mt-4">
+        {/* `mt-auto`: the mode-switch cluster is pinned to the bottom of the card, so all
+            four cards in a row land their switches on one line however much (or little)
+            content sits above — the scalper cards carry a feed-status line the writers
+            don't, and relying on every row above being an equal fixed height is what made
+            this drift the last two times. Slack now collects between the stats and here. */}
+        <div className="mt-auto pt-4">
           <ModePill
             mode={mode}
             disabled={readOnly || update.isPending}
