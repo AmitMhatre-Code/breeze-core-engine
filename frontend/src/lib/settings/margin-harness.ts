@@ -11,11 +11,23 @@ export type MarginHarnessRanking = {
   closest_on_cases: number;
 };
 
+export type MarginHarnessMarginism = {
+  library_version: string | null;
+  compared_cases: number;
+  exact_snapshot_cases: number;
+  agreeing_cases: number;
+  comparable_cases: number;
+  max_abs_pct_vs_legacy: number | null;
+  mean_abs_pct_vs_icici_span: number | null;
+  unavailable_reasons: string[];
+};
+
 export type MarginHarnessSummary = {
   ranking?: MarginHarnessRanking[];
   best_combination?: MarginHarnessRanking | null;
   icici_non_span_seen_non_zero?: boolean;
   icici_non_span_sample_count?: number;
+  marginism?: MarginHarnessMarginism | null;
 };
 
 export type MarginHarnessRun = {

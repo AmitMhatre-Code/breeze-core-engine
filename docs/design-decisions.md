@@ -357,6 +357,13 @@ This document records **why** the modern stack is shaped the way it is. It is no
 
 **What it deliberately does not do**: it does not change any margin the app charges. It produces evidence. Acting on that evidence — unifying the two ELM models, or dropping one — is a separate decision to be taken once there is data, not before.
 
+**What two production runs established** (2026-09-08 expiry day, 59 cases; 2026-09-09 ordinary day, 56 cases):
+- `non_span_margin_required` came back **0 in 115/115 cases**. ICICI's quoted figure is a single number and never itemises exposure margin, so the harness cannot measure ELM. ELM rates therefore come from exchange circulars — index 2%, stock 3.5% — not from fitting to the broker.
+- NOV from `<p>` returns **exactly 0** on every long-only case where ICICI also returns 0; Black-Scholes NOV is off by −78% to +70%. The `<p>` decision is confirmed, and the fallback should stay a fallback.
+- `somTiers` was 0 in every file across both runs, so `max(scan, SOM)` still never binds. Kept as the tripwire it was built to be.
+
+**A trap in the file's `<p>`, and why it is not a bug**: a strike's settlement premium can sit far off the smooth curve its neighbours describe — a BANKNIFTY 59500 CE at 215.00 between neighbours at 822.48 and 765.72. That is not corruption. Implied vol separates the two populations cleanly: strikes that **traded** carry the real settlement price and follow a genuine skew (12.7–20.1% IV, decaying with strike), while strikes that **did not** carry a theoretical price at the series' single flat `<v>` (~20.3% IV, clustered). The premium curve is legitimately non-monotone because flat-vol theoreticals sit above the true skew in the OTM wing. Risk-array entries equal to `<p>` on those strikes are correct too — SPAN caps a long's loss at the premium, which only bites on cheap strikes; the short side of the array is unaffected, which is why scanning risk was never wrong. **Do not "repair" the curve.** A monotonicity or neighbour-interpolation test flags ~7% of strikes and is measuring the traded/theoretical mix; substituting interpolated premiums moved one CNXBAN iron condor from +0.3% to +23.6% against ICICI. This also explains why the Black-Scholes NOV path over-credits on OTM strikes: a fixed σ = 0.20 reproduces the file's flat-vol theoreticals while the market is at 12–15% there.
+
 ---
 
 ## 27. A missing quote is reported as missing; rules judge price age, never the clock
@@ -396,3 +403,19 @@ Those spellings used to be reconciled by hand in four places that disagreed with
 **One declared table survives, scoped to what no ICICI file contains**: the NSE bhavcopy's own index tickers. Stocks need no entry (NSE and ICICI agree — `RELIANCE`), and neither do BSE's index tickers (`SENSEX`, `FOCIT` already match ICICI's `ExchangeCode`). SPAN pfCode bridges (`BSXOPT` → `BSESEN`) stay in `nsccl_baseline`, next to that file's parser. A publish-time check reports any underlying the bhavcopy names that the registry cannot place, so the next newly listed index shows up in the log instead of silently failing its joins.
 
 **Product decisions still name symbols.** `HEDGEABLE_UNDERLYINGS`, the bots' NIFTY/SENSEX rosters, the navbar ticker and `system_chain_health` all name underlyings deliberately — which underlyings a feature supports is scope, not identity. Re-expressing them as "every index" would silently widen them.
+
+## 29. Raw SPAN archives are retained, and a second SPAN implementation is carried purely as a cross-check
+
+**Decision**: Each day's raw SPAN archive is written to `backend/data/span/<source_date>/` exactly as downloaded and kept for five source dates; the margin harness runs the third-party `marginism` library against that archive and reports its SPAN beside our own. Only the risk figure is taken from it. No production margin path calls it.
+
+**Why keep the raw file at all**: the ingest streams a ~48MB XML into `exchange_margin_baseline` and drops it, which is right for serving margins but wrong for answering "why did this number differ". SPAN is republished six times a session and revisions drift a percent or two, so a figure can only be reproduced against the exact snapshot it came from. Retention is best-effort and never fails a baseline refresh: the refresh is the real work. The archives are the original ZIP rather than the extracted XML, are disposable and rebuildable from the exchange, and are git-ignored.
+
+**Why a second engine, given it returns the same numbers**: it returns the same numbers, and that is the point. Ours and marginism's are independent implementations of the same published algorithm — run against our own stored risk arrays, marginism reproduced our SPAN **bit-identically in 56/56 cases** (max |Δ| 0.0000%). A permanent, automatic agreement check is worth more than a one-off audit, because the failure it catches is drift introduced later. Where the two *can* diverge is ground we do not cover: the intra-commodity (calendar) spread charge from `dSpread`, combined-commodity netting across expiries via `ccDef`/`pfLink`, and futures legs from `futPf`. None of those are exercised by the current single-expiry option cases, so today the comparison reads identical in every row — the informative outcome, not a null result.
+
+**What is deliberately not used**: marginism's `exposure.py`. It classifies index-vs-stock from a hardcoded `index_symbols` tuple, which is exactly the hand-kept name set #28 records as a live money bug. Exposure margin stays ours, from `symbol_registry`.
+
+**Two details that would otherwise mislead**:
+- The lookup reports whether it found the **exact** revision or only a neighbouring one from the same day, and the summary excludes inexact comparisons from its agreement figures. Silently substituting a nearby revision would read intraday SPAN drift as engine disagreement.
+- The same-day fallback matches on the archive's leading non-numeric name (`nsccl.` vs `BSERISK`), so an NFO case can never be handed the BSE file.
+
+**What it does not establish**: a second SPAN implementation cannot close the gap to ICICI's quoted figure, because both engines compute the same quantity. That gap is a question about what ICICI charges on top, not about our arithmetic.

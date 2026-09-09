@@ -204,6 +204,39 @@ export function MarginHarnessPanel() {
         </div>
       )}
 
+      {runs[0]?.summary?.marginism?.compared_cases ? (
+        <p className="text-xs text-muted">
+          Independent cross-check (marginism {runs[0].summary.marginism.library_version ?? "?"}):{" "}
+          {runs[0].summary.marginism.comparable_cases > 0 ? (
+            <>
+              our SPAN engine and marginism agree on{" "}
+              <strong>
+                {runs[0].summary.marginism.agreeing_cases}/
+                {runs[0].summary.marginism.comparable_cases}
+              </strong>{" "}
+              cases priced off the exact same snapshot
+              {runs[0].summary.marginism.max_abs_pct_vs_legacy != null
+                ? ` (largest divergence ${runs[0].summary.marginism.max_abs_pct_vs_legacy.toFixed(3)}%)`
+                : ""}
+              .{" "}
+              {runs[0].summary.marginism.mean_abs_pct_vs_icici_span != null
+                ? `Both sit ${runs[0].summary.marginism.mean_abs_pct_vs_icici_span.toFixed(1)}% from ICICI's SPAN on average — a gap two implementations of the same algorithm cannot close.`
+                : ""}
+            </>
+          ) : (
+            <>
+              {runs[0].summary.marginism.compared_cases} case(s) priced, but none against the exact
+              snapshot they were compared on — intraday SPAN revisions make those figures
+              non-comparable.
+            </>
+          )}
+        </p>
+      ) : runs[0]?.summary?.marginism?.unavailable_reasons?.length ? (
+        <p className="text-xs text-muted">
+          Independent cross-check unavailable: {runs[0].summary.marginism.unavailable_reasons[0]}
+        </p>
+      ) : null}
+
       {runs[0]?.summary?.icici_non_span_sample_count ? (
         <p className="text-xs text-muted">
           Latest run:{" "}

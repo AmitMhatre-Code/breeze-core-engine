@@ -17,6 +17,7 @@ import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import now_ist
 from icici_breeze_backend.app.services.icici_call_class import advisory_calls
 from icici_breeze_backend.app.services.margin_harness import store
+from icici_breeze_backend.app.services.margin_harness import marginism_engine
 from icici_breeze_backend.app.services.margin_harness.cases import (
     HarnessCase,
     build_generated_cases,
@@ -179,12 +180,38 @@ def _evaluate_case(case: HarnessCase, icici: dict[str, Any]) -> dict[str, Any]:
     if scored:
         best = min(scored, key=lambda c: c["abs_diff_vs_icici_total"])
 
+    # Second opinion from the marginism library, read straight off the retained raw archive. It
+    # sits beside `span_methods` rather than inside it so `combinations` and the ranking -- and
+    # therefore every earlier export -- stay directly comparable.
+    source_file = sheet.get("source_file")
+    marginism_out = marginism_engine.evaluate(
+        case,
+        source_date=sheet.get("source_date"),
+        archive_name=str(source_file or "").split(":", 1)[0] or None,
+    )
+    if marginism_out.get("available"):
+        legacy = span_results.get("som_floor_minus_nov_file") or {}
+        legacy_span = legacy.get("span_margin") if legacy.get("found") else None
+        if legacy_span is not None:
+            gap = marginism_out["span_margin"] - legacy_span
+            marginism_out["diff_vs_legacy_span"] = round(gap, 2)
+            marginism_out["pct_vs_legacy_span"] = (
+                round(100.0 * gap / legacy_span, 3) if legacy_span else None
+            )
+        if reference_span is not None:
+            gap = marginism_out["span_margin"] - reference_span
+            marginism_out["diff_vs_icici_span"] = round(gap, 2)
+            marginism_out["pct_vs_icici_span"] = (
+                round(100.0 * gap / reference_span, 3) if reference_span else None
+            )
+
     return {
         "case": case.as_dict(),
         "icici": icici,
-        "baseline_source_file": sheet.get("source_file"),
+        "baseline_source_file": source_file,
         "baseline_source_date": sheet.get("source_date"),
         "span_methods": span_results,
+        "marginism": marginism_out,
         "elm_methods": elm_results,
         "combinations": combinations,
         "closest_combination": best,
@@ -241,6 +268,48 @@ def _summarise(results: list[dict[str, Any]]) -> dict[str, Any]:
         # The headline question: does ICICI break exposure margin out at all?
         "icici_non_span_seen_non_zero": any(v for v in non_span_values),
         "icici_non_span_sample_count": len(non_span_values),
+        "marginism": _summarise_marginism(results),
+    }
+
+
+def _summarise_marginism(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """How the independent SPAN implementation compares, across the run.
+
+    Two different questions, kept apart on purpose:
+
+    * against the **legacy engine** -- these are two implementations of the same published
+      algorithm, so on a single-expiry option book they should agree to the rupee. Any drift is a
+      defect in one of them, and `agreeing_cases` is the number to watch.
+    * against **ICICI** -- both engines will show the same gap, because they compute the same
+      thing. That gap is not something a second SPAN implementation can close.
+
+    Comparisons drawn from a neighbouring revision of the day's file are counted but excluded from
+    the agreement figures: intraday SPAN drift would read as engine disagreement.
+    """
+    blocks = [r.get("marginism") or {} for r in results]
+    available = [b for b in blocks if b.get("available")]
+    exact = [b for b in available if b.get("exact_snapshot")]
+    comparable = [b for b in exact if b.get("pct_vs_legacy_span") is not None]
+    agreeing = [b for b in comparable if abs(b["pct_vs_legacy_span"]) < 0.01]
+    worst = max((abs(b["pct_vs_legacy_span"]) for b in comparable), default=None)
+    icici_pcts = [
+        abs(b["pct_vs_icici_span"]) for b in exact if b.get("pct_vs_icici_span") is not None
+    ]
+    return {
+        "library_version": marginism_engine.library_version(),
+        "compared_cases": len(available),
+        "exact_snapshot_cases": len(exact),
+        "agreeing_cases": len(agreeing),
+        "comparable_cases": len(comparable),
+        "max_abs_pct_vs_legacy": round(worst, 4) if worst is not None else None,
+        "mean_abs_pct_vs_icici_span": (
+            round(sum(icici_pcts) / len(icici_pcts), 3) if icici_pcts else None
+        ),
+        # A zero `compared_cases` on an otherwise healthy run means the raw archive for that day
+        # was never retained, not that anything failed.
+        "unavailable_reasons": sorted(
+            {str(b.get("reason")) for b in blocks if not b.get("available")} - {"None"}
+        ),
     }
 
 

@@ -39,3 +39,7 @@ pytz==2023.3
 
 # Cache (reference data + websocket quotes; optional with in-memory fallback)
 redis>=5.0.0,<6
+
+# Offline SPAN margin cross-check for the margin harness (MIT, no runtime deps).
+# Second opinion only -- no production margin path depends on it.
+marginism==0.1.1

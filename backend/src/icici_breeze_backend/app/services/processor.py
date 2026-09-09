@@ -2208,19 +2208,42 @@ class processor():
                                 i["days_to_expiry"] = max(1, _days_to_expiry(i["expiry_date"]))
 
                                 # Extreme Loss Margin (ELM) is additive (a flat % of notional per
-                                # index short), not netted -- so it is computed per leg here and
-                                # summed into the group/portfolio totals. Applicable for Index
-                                # shorts only, and waived on the option's own expiry date (no
-                                # overnight risk to cover).
-                                if (i['stock_index_indicator'] == cfg.INDEX and i['action'] == cfg.SELL):
-                                    if i['spot_price'] in (None, "Err"):
-                                        i['elm_margin_required'] = None
-                                    elif _parse_option_expiry_date(i['expiry_date']) == today_ist_date():
-                                        i['elm_margin_required'] = 0.0
-                                    else:
-                                        i['elm_margin_required'] = float(i['quantity']) * float(i['spot_price']) * cfg.ELM
-                                else:
+                                # short), not netted -- so it is computed per leg here and summed
+                                # into the group/portfolio totals. It is a labelled overlay beside
+                                # ICICI's SPAN figure, never folded into it.
+                                #
+                                # ICICI's margin_calculator excludes ELM on an ordinary day, and
+                                # folds it into its SPAN number on the option's own expiry date --
+                                # so the overlay is zeroed that day rather than shown twice.
+                                #
+                                # Index vs single stock comes from the Security Master via
+                                # symbol_registry. When the registry carries no classification yet
+                                # (a pre-symbol_master database) fall back to the broker's own
+                                # stock_index_indicator. If neither can place it the ELM stays None
+                                # -- never guessed, because the two tiers differ and a guess here is
+                                # a money error, not a cosmetic one (design-decisions #28).
+                                from icici_breeze_backend.app.services.reference_data.symbol_registry import (
+                                    is_index as symbol_is_index,
+                                )
+
+                                elm_is_index = symbol_is_index(
+                                    i['stock_code'], i.get('exchange_code')
+                                )
+                                if elm_is_index is None:
+                                    indicator = i.get('stock_index_indicator')
+                                    if indicator == cfg.INDEX:
+                                        elm_is_index = True
+                                    elif indicator == cfg.STOCK:
+                                        elm_is_index = False
+                                if elm_is_index is None or i['spot_price'] in (None, "Err"):
                                     i['elm_margin_required'] = None
+                                elif _parse_option_expiry_date(i['expiry_date']) == today_ist_date():
+                                    i['elm_margin_required'] = 0.0
+                                else:
+                                    elm_rate = cfg.ELM if elm_is_index else cfg.ELM_STOCK
+                                    i['elm_margin_required'] = (
+                                        float(i['quantity']) * float(i['spot_price']) * elm_rate
+                                    )
                             else:
                                 if leg_ltp is None:
                                     i['current_profit'] = None

@@ -6,7 +6,9 @@ import io
 import json
 import logging
 import math
+import os
 import re
+import shutil
 import sqlite3
 import xml.etree.ElementTree as ET
 import zipfile
@@ -278,6 +280,95 @@ def open_span_xml_payload(
         inner_name, bio = members
         return bio, f"{logical_name}:{inner_name}", inner_name
     return None
+
+
+# How many distinct source dates of raw SPAN archives to keep on disk. The files are only needed
+# to re-run a margin comparison against the exact snapshot a figure came from; they are rebuildable
+# from the exchange, so this is disposable state on the same volume as the databases.
+SPAN_ARCHIVE_RETAIN_DATES = 5
+
+
+def span_archive_dir() -> str:
+    """Directory holding retained raw SPAN archives, one sub-directory per source date."""
+    return os.path.join(cfg.DATA_PATH, "span")
+
+
+def _archive_family(archive_name: str) -> str:
+    """The leading non-numeric part of an archive name -- `nsccl.` / `BSERISK`.
+
+    Distinguishes the NSE and BSE archives for one date without hard-coding either filename, so a
+    same-day fallback never hands an NFO case the BSE file.
+    """
+    name = os.path.basename(str(archive_name or "").strip())
+    for idx, ch in enumerate(name):
+        if ch.isdigit():
+            return name[:idx]
+    return name
+
+
+def find_span_archive(source_date: str, archive_name: str | None = None) -> tuple[str, bool] | None:
+    """(path, is_exact) for a retained archive of `source_date`, or None if none was kept.
+
+    An exact `archive_name` match wins. Failing that, another revision of the *same* exchange's file
+    for that date is returned with `is_exact=False` -- SPAN is revised six times a day and the
+    revisions differ by a percent or two, so a caller comparing figures has to be told it is looking
+    at a neighbouring snapshot rather than the one a number actually came from.
+    """
+    day_dir = os.path.join(span_archive_dir(), str(source_date or "").strip())
+    if not os.path.isdir(day_dir):
+        return None
+    try:
+        names = sorted(n for n in os.listdir(day_dir) if os.path.isfile(os.path.join(day_dir, n)))
+    except OSError:
+        return None
+    if not names:
+        return None
+    if archive_name:
+        if archive_name in names:
+            return os.path.join(day_dir, archive_name), True
+        family = _archive_family(archive_name)
+        for name in names:
+            if family and _archive_family(name) == family:
+                return os.path.join(day_dir, name), False
+        return None
+    return os.path.join(day_dir, names[0]), False
+
+
+def _purge_span_archives(keep_dates: int = SPAN_ARCHIVE_RETAIN_DATES) -> None:
+    root = span_archive_dir()
+    if not os.path.isdir(root):
+        return
+    try:
+        dates = sorted((d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))), reverse=True)
+    except OSError:
+        return
+    for stale in dates[keep_dates:]:
+        shutil.rmtree(os.path.join(root, stale), ignore_errors=True)
+
+
+def retain_span_archive(payload: bytes, *, source_date: str, archive_name: str) -> str | None:
+    """Keep the raw archive exactly as downloaded, so a margin run can be reproduced against the
+    snapshot it actually used. Stores the original ZIP (a few MB) rather than the ~48MB XML.
+
+    Best-effort: a failure here must never fail a baseline refresh, which is the real work.
+    """
+    date_key = str(source_date or "").strip()
+    name = os.path.basename(str(archive_name or "").strip())
+    if not date_key or not name or not payload:
+        return None
+    try:
+        day_dir = os.path.join(span_archive_dir(), date_key)
+        os.makedirs(day_dir, exist_ok=True)
+        path = os.path.join(day_dir, name)
+        tmp = f"{path}.part"
+        with open(tmp, "wb") as fh:
+            fh.write(payload)
+        os.replace(tmp, path)
+        _purge_span_archives()
+        return path
+    except OSError as exc:
+        _logger.warning("Could not retain SPAN archive %s: %s", name, exc)
+        return None
 
 
 def _safe_float_text(raw: Any) -> float | None:
@@ -723,6 +814,7 @@ def refresh_span_baseline(market: str, *, force: bool = False) -> dict:
             "Error": f"Download failed for {ref.archive_name}.",
             "Success": None,
         }
+    retain_span_archive(payload, source_date=ref.source_date, archive_name=ref.archive_name)
     opened = open_span_xml_payload(payload, ref.archive_name)
     if not opened:
         return {

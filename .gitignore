@@ -61,6 +61,9 @@ backend/data/scrips.sqlite3-wal
 backend/data/scrips.sqlite3-shm
 backend/logs/
 backend/data/strategy-builder-audit/
+# Raw SPAN archives retained so a margin figure can be re-derived against the exact snapshot it
+# came from. Rebuildable from the exchange, tens of MB per day -- never source.
+backend/data/span/
 
 # --- OS & editors ---
 .DS_Store
