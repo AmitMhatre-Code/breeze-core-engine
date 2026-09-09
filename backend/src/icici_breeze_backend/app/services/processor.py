@@ -3101,7 +3101,18 @@ class processor():
         act = str(close_action or "").strip().lower()
         rgt = str(right or "").strip().lower()
         prod = str(product_type or cfg.OPTIONS).strip().lower()
-        index_or_stock = "index" if cfg.is_index_symbol(stock_code) else "stock"
+        from icici_breeze_backend.app.services.reference_data.symbol_registry import (
+            is_index as symbol_is_index,
+        )
+
+        gtt_is_index = symbol_is_index(stock_code, segment=exchange_code)
+        if gtt_is_index is None:
+            _logger.warning(
+                "GTT: underlying %s (%s) is not in the symbol registry; sending index_or_stock=stock",
+                stock_code,
+                exchange_code,
+            )
+        index_or_stock = "index" if gtt_is_index else "stock"
 
         try:
             response = breeze.gtt_three_leg_place_order(
@@ -4248,10 +4259,19 @@ class processor():
             )
             _logger.info("Inserted filtered data into scrip_master")
 
+            from icici_breeze_backend.app.services.reference_data.symbol_registry import (
+                populate_symbol_master_from_raw,
+            )
             from icici_breeze_backend.app.services.reference_data.ws_token_index import (
                 clear_token_lookup_cache,
                 populate_ws_token_index_from_raw,
             )
+
+            # Underlying identity + index/stock classification, taken from raw_scrip_data's
+            # InstrumentName/ExchangeCode while it still exists -- raw_scrip_data is dropped
+            # below and scrip_master never carries InstrumentName.
+            populate_symbol_master_from_raw(cursor, exchange_code)
+            _logger.info("Updated symbol_master for %s", exchange_code)
 
             populate_ws_token_index_from_raw(cursor, exchange_code)
             _logger.info("Updated ws_token_index for %s", exchange_code)
@@ -4434,7 +4454,22 @@ class processor():
         elm_is_index = False
         elm_approximate = False
         if elm_legs and elm_stock_code and elm_expiry_api and spot is not None:
-            elm_is_index = cfg.is_index_symbol(elm_stock_code)
+            from icici_breeze_backend.app.services.reference_data.symbol_registry import (
+                is_index as symbol_is_index,
+            )
+
+            # None means the Security Master registry cannot place this underlying at all. Fall
+            # back to the single-stock tier (over-provisioning is the safe direction) but mark the
+            # figure approximate so the UI does not present a guess as a measured number.
+            elm_known_index = symbol_is_index(elm_stock_code, segment=exchange_code)
+            if elm_known_index is None:
+                _logger.warning(
+                    "Underlying %s (%s) is not in the symbol registry; ELM uses the single-stock tier",
+                    elm_stock_code,
+                    exchange_code,
+                )
+                elm_approximate = True
+            elm_is_index = bool(elm_known_index)
             elm_same_day = _parse_option_expiry_date(elm_expiry_api) == today_ist_date()
             elm_expiry_display = _expiry_api_to_display(elm_expiry_api)
             elm_previous_close: float | None = None

@@ -217,9 +217,11 @@ export function ReferenceDataLoadsScreen() {
       ? `Data date: ${formatSourceFileDate(server.nse_span_source_date)}`
       : server?.span_message || "Not yet loaded";
 
-  const bseSpanStatusText = server?.bse_span_source_date
-    ? `Data date: ${formatSourceFileDate(server.bse_span_source_date)}`
-    : "Not yet loaded";
+  const bseSpanStatusText = server?.bse_span_refreshed_at
+    ? `Refreshed ${formatApiDateTime(server.bse_span_refreshed_at)}`
+    : server?.bse_span_source_date
+      ? `Data date: ${formatSourceFileDate(server.bse_span_source_date)}`
+      : server?.span_message || "Not yet loaded";
 
   const ingestHistory = server?.ingest_history ?? [];
   const displayedIngestHistory = useMemo(() => {
@@ -412,34 +414,6 @@ export function ReferenceDataLoadsScreen() {
                 <span className="text-muted">{bseSpanStatusText}</span>
               </div>
             </div>
-          </div>
-
-          <div className="space-y-2 rounded-[10px] border border-border px-4 py-3.5">
-            <h3 className="text-heading font-bold text-foreground">BSE SPAN Baseline</h3>
-            <p className="text-table leading-relaxed text-muted">
-              Downloaded automatically alongside NSE at 09:15, 11:15, 12:45, 14:15, 15:45 and 18:00 IST,
-              from the{" "}
-              <a
-                href="https://www.bseindia.com/markets/Derivatives/DeriReports/Riskparameternew.aspx"
-                target="_blank"
-                rel="noreferrer"
-                className="app-link"
-              >
-                BSE Risk Parameter report
-              </a>
-              . Only <strong className="text-foreground">BSXOPT</strong> and{" "}
-              <strong className="text-foreground">BKXOPT</strong> portfolios (Sensex / BANKEX on BFO) are
-              ingested.
-            </p>
-            {server.bse_span_source_file && (
-              <p className="text-table text-muted">
-                Loaded: {server.bse_span_source_file}
-                {server.bse_span_row_count != null ? ` (${server.bse_span_row_count} rows)` : ""}
-                {server.bse_span_refreshed_at
-                  ? ` · ${formatApiDateTime(server.bse_span_refreshed_at)}`
-                  : ""}
-              </p>
-            )}
           </div>
 
           <MarginHarnessPanel />

@@ -11,14 +11,13 @@ from typing import Any
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_key
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
-from icici_breeze_backend.app.services.reference_data.aliases import underlying_aliases
 from icici_breeze_backend.app.services.reference_data.bhavcopy_common import safe_float, safe_int
 from icici_breeze_backend.app.services.reference_data.keys import bhav_index_key, bhav_meta_key
 from icici_breeze_backend.app.services.reference_data.scrip_index import (
     current_version,
-    get_exchange_ticker,
     get_strikes,
 )
+from icici_breeze_backend.app.services.reference_data.symbol_registry import aliases_for
 from icici_breeze_backend.app.services.reference_data.versioning import bump_refdata_version
 
 _logger = logging.getLogger(__name__)
@@ -487,8 +486,7 @@ def _lookup_bhav_row(
 ) -> dict[str, str] | None:
     ensure_bhavcopy_memory_ready(exchange_code)
     seg = _segment_key(exchange_code)
-    ticker = get_exchange_ticker(stock_code)
-    aliases = set(underlying_aliases(stock_code)) | {ticker}
+    aliases = set(aliases_for(stock_code))
     with _lock:
         by_strike = _local.get(seg, {}).get("by_strike") or {}
     for alias in aliases:

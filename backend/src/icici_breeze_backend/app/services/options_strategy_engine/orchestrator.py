@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import time
 from typing import Any
 
@@ -34,6 +35,7 @@ from icici_breeze_backend.app.services.portfolio_margin_netting import (
     positions_to_margin_input,
 )
 from icici_breeze_backend.app.services.reference_data.bhavcopy_store import _lookup_bhav_row
+from icici_breeze_backend.app.services.reference_data.symbol_registry import is_index as symbol_is_index
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.services.options_strategy_engine.budget_resize import resize_results_to_budgets
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional._common import (
@@ -65,6 +67,8 @@ from icici_breeze_backend.app.services.options_strategy_engine.audit_helpers imp
     begin_strategy_audit,
     end_strategy_audit,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 def temp_liquid_cache_snapshot(ctx: EngineContext) -> dict[str, Any]:
@@ -111,6 +115,25 @@ def log_strategy_result(ctx: EngineContext, res: StrategyResult) -> None:
 
 def _audit_status_from_result(status: str) -> str:
     return "success" if status == "ok" else status
+
+
+def _resolve_is_index(stock_code: str, exchange_code: str) -> bool:
+    """Index-vs-stock from the Security Master (ELM is 2% on an index short, 5% on a stock one).
+
+    An underlying the registry cannot place falls back to the single-stock tier: over-provisioning
+    sizes the basket smaller, while guessing "index" would recommend quantities the account cannot
+    actually margin. See `symbol_registry`.
+    """
+    known = symbol_is_index(stock_code, segment=exchange_code)
+    if known is None:
+        _logger.warning(
+            "Underlying %s (%s) is not in the symbol registry; ELM falls back to the "
+            "single-stock tier for this build",
+            stock_code,
+            exchange_code,
+        )
+        return False
+    return known
 
 
 async def _resolve_positions_netting(
@@ -509,7 +532,7 @@ async def run_propose_trades(
         atm_strike=0.0,
         range_lower=0.0,
         range_upper=0.0,
-        is_index=cfg.is_index_symbol(stock_code),
+        is_index=_resolve_is_index(stock_code, exchange_code),
         same_day_expiry=is_same_day_expiry(expiry_display),
         audit=audit,
         progress=progress,

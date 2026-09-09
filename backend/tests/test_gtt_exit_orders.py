@@ -13,6 +13,7 @@ from fastapi import HTTPException
 
 from icici_breeze_backend.app.api.v1 import route_gtt_exit_orders as route
 from icici_breeze_backend.app.domain.gtt_exit_order import PlaceGttExitOrderRequest
+from tests.fixtures.symbol_master import seed_symbol_master
 
 
 def _ctx(user_id="u1"):
@@ -250,6 +251,12 @@ class TestCancelRoute:
 
 
 class TestProcessorGttMethods:
+    @pytest.fixture(autouse=True)
+    def _symbols(self, tmp_path, monkeypatch):
+        """GTT's index_or_stock comes from the Security-Master-backed symbol registry, so these
+        need the registry populated the way a scrip-master load leaves it."""
+        seed_symbol_master(tmp_path, monkeypatch)
+
     def test_place_gtt_oco_exit_order_builds_expected_sdk_call(self, monkeypatch):
         from icici_breeze_backend.app.services.processor import processor as processor_factory
 

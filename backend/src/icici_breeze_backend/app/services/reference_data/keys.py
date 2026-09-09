@@ -21,8 +21,10 @@ def strikes_key(version: int, exchange_code: str, short_name: str, expiry_displa
     )
 
 
-def exchange_code_map_key(version: int) -> str:
-    return f"{version_prefix(version)}:exchange_code_map"
+def symbols_key(version: int) -> str:
+    """Underlying identity table (ShortName / exchange symbol / company name / index-or-stock),
+    built from ICICI's Security Master. See `symbol_registry`."""
+    return f"{version_prefix(version)}:symbols"
 
 
 def scrip_contracts_key(version: int) -> str:

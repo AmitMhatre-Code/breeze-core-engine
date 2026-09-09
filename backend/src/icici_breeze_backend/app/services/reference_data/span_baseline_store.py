@@ -11,14 +11,17 @@ from typing import Any
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_key
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
-from icici_breeze_backend.app.services.reference_data.aliases import scrip_short_name, underlying_aliases
 from icici_breeze_backend.app.services.reference_data.keys import (
     span_baseline_meta_key,
     span_baseline_sheet_key,
 )
 from icici_breeze_backend.app.services.reference_data.scrip_index import (
     current_version,
-    get_exchange_ticker,
+)
+from icici_breeze_backend.app.services.reference_data.symbol_registry import (
+    aliases_for,
+    exchange_symbol_for,
+    short_name_for,
 )
 from icici_breeze_backend.app.services.reference_data.versioning import bump_refdata_version
 
@@ -271,15 +274,15 @@ def short_name_candidates(stock_code: str) -> list[str]:
     """Every name a SPAN sheet for this stock could be keyed under, best first.
 
     Callers pass ICICI's stock code; SPAN rows are keyed on the exchange symbol the file's
-    pfCode carries. `get_exchange_ticker` is the bridge (ADATRA -> ADANIENSOL) and is the only
+    pfCode carries. `exchange_symbol_for` is the bridge (ADATRA -> ADANIENSOL) and is the only
     candidate that resolves a stock -- the alias table covers indices only, so without it every
     stock lookup missed and silently fell back to Breeze.
     """
     candidates: list[str] = []
     for candidate in (
-        scrip_short_name(stock_code),
-        get_exchange_ticker(stock_code),
-        *underlying_aliases(stock_code),
+        short_name_for(stock_code),
+        exchange_symbol_for(stock_code),
+        *aliases_for(stock_code),
     ):
         name = str(candidate or "").strip().upper()
         if name and name not in candidates:
@@ -330,7 +333,7 @@ def _get_span_baseline_sheet_raw(
         return {"found": False, "contracts": {}, "source_date": None, "source_file": None}
 
     # Callers pass ICICI's stock code; SPAN sheets are keyed on the exchange symbol the file's
-    # pfCode carries. `get_exchange_ticker` is the bridge (ADATRA -> ADANIENSOL) and is the only
+    # pfCode carries. `exchange_symbol_for` is the bridge (ADATRA -> ADANIENSOL) and is the only
     # candidate that resolves a stock -- the alias table covers indices only, so without it every
     # stock lookup missed and silently fell back to Breeze.
     short_candidates = short_name_candidates(stock_code)
@@ -372,7 +375,7 @@ def _load_sheet_from_sqlite(
 ) -> dict[str, dict[str, Any]] | None:
     names = {str(s).strip().upper() for s in short_candidates if s}
     if not names:
-        names = {scrip_short_name(stock_code)}
+        names = {short_name_for(stock_code)}
     try:
         with _scrip_conn() as conn:
             placeholders = ",".join("?" for _ in names)

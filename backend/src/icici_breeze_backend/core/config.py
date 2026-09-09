@@ -28,14 +28,11 @@ ELM_STOCK_STD = 0.05
 ELM_STOCK_DEEP_OTM = 0.0525
 ELM_STOCK_DEEP_OTM_THRESHOLD = 0.30
 
-# Index underlyings with listed F&O contracts. Used to classify a stock_code as index vs. single-stock
-# (e.g. for ELM tiering and GTT order placement's index_or_stock param) since no scrip-master-backed
-# classification exists.
-INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
-
-
-def is_index_symbol(stock_code: str) -> bool:
-    return str(stock_code).strip().upper() in INDEX_SYMBOLS
+# Index-vs-single-stock classification is NOT declared here. It comes from ICICI's Security
+# Master (InstrumentName: OPTIDX/OPTIND vs OPTSTK) via
+# app/services/reference_data/symbol_registry.py -- a hand-kept name set here silently charged
+# the 5% single-stock ELM tier on index shorts whose ShortName differs from their exchange name
+# (BSESEN, CNXBAN, NIFFIN, NIFSEL, NIFNEX), which is every index but NIFTY and BANKEX.
 
 # Product Types
 OPTIONS = "Options"

@@ -13,10 +13,10 @@ import zipfile
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services.reference_data.symbol_registry import aliases_for, exchange_symbol_for
 from icici_breeze_backend.app.core.strike import Strike, parse_strike
 from icici_breeze_backend.app.core.timezone import ist_timestamp
 from icici_breeze_backend.app.services.reference_data import span_sources
-from icici_breeze_backend.app.services.reference_data.aliases import underlying_aliases
 
 _logger = logging.getLogger(__name__)
 
@@ -206,7 +206,7 @@ def _underlying_lookup_names(short_name: Any, exchange_ticker: Any = None) -> se
     alias table bridges the indices where the two share nothing.
     """
     names = {str(short_name or "").strip().upper(), str(exchange_ticker or "").strip().upper()}
-    names.update(underlying_aliases(short_name))
+    names.update(aliases_for(short_name))
     names.discard("")
     return names
 
@@ -828,10 +828,9 @@ def resolve_exchange_baseline_margin(
 
     option_type = "CE" if right == cfg.CALL else "PE"
     # Same bridge as the store: the row is keyed on the SPAN pfCode, not the caller's stock code.
-    from icici_breeze_backend.app.services.reference_data.scrip_index import get_exchange_ticker
 
     try:
-        exchange_ticker = get_exchange_ticker(stock_code)
+        exchange_ticker = exchange_symbol_for(stock_code)
     except Exception:
         exchange_ticker = ""
     names = sorted(_underlying_lookup_names(stock_code, exchange_ticker))

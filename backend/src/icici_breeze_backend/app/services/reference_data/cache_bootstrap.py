@@ -5,7 +5,12 @@ import logging
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.redis_client import cache_get_json
-from icici_breeze_backend.app.services.reference_data import bhavcopy_store, scrip_index, span_baseline_store
+from icici_breeze_backend.app.services.reference_data import (
+    bhavcopy_store,
+    scrip_index,
+    span_baseline_store,
+    symbol_registry,
+)
 from icici_breeze_backend.app.services.reference_data.keys import bhav_meta_key
 from icici_breeze_backend.app.services.reference_data.scrip_index import current_version, get_underlyings
 
@@ -21,6 +26,18 @@ def is_scrip_cached() -> bool:
         if underlyings:
             return True
     return False
+
+
+def is_symbols_cached() -> bool:
+    """Whether the underlying registry exists at all. It is built only by a scrip-master load
+    (InstrumentName is not persisted anywhere else), so a deployment upgraded onto a database
+    written by an older build has none until the master is re-read -- and until then nothing can
+    tell an index from a single stock. Part of `is_reference_data_complete` so that startup
+    fetches the master instead of serving a blind ELM tier all day.
+
+    Keyed on classified index rows specifically: the registry also answers name lookups from
+    scrip_master alone, and those carry no index-vs-stock verdict."""
+    return bool(symbol_registry.underlyings(kind=symbol_registry.KIND_INDEX))
 
 
 def is_bhavcopy_cached(segment: str) -> bool:
@@ -39,6 +56,7 @@ def is_reference_data_complete() -> bool:
     """True when scrip, bhavcopy (NFO/BFO), and SPAN baselines are present in Redis."""
     return (
         is_scrip_cached()
+        and is_symbols_cached()
         and is_bhavcopy_cached("nfo")
         and is_bhavcopy_cached("bfo")
         and is_span_cached(cfg.NFO)
@@ -51,6 +69,7 @@ def load_all_local_mirrors() -> None:
     from icici_breeze_backend.app.services.reference_data.ws_token_index import load_token_map_from_redis
 
     scrip_index.load_local_from_redis()
+    symbol_registry.load_local_from_redis()
     load_token_map_from_redis()
     bhavcopy_store.load_local_from_redis()
     span_baseline_store.load_local_from_redis()
@@ -82,6 +101,7 @@ def ensure_all_reference_data_cached() -> dict[str, bool]:
             _logger.warning("Boot: scrip index publish failed: %s", exc)
             status["scrip_published"] = False
     status["scrip_cached"] = is_scrip_cached()
+    status["symbols_cached"] = is_symbols_cached()
 
     if need_span:
         try:

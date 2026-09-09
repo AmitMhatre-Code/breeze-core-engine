@@ -11,12 +11,15 @@ from typing import Any
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_key, strikes_sorted
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
-from icici_breeze_backend.app.services.reference_data.aliases import scrip_short_name, underlying_aliases
 from icici_breeze_backend.app.services.reference_data.keys import (
-    exchange_code_map_key,
     scrip_contracts_key,
     strikes_key,
     underlyings_key,
+)
+from icici_breeze_backend.app.services.reference_data.symbol_registry import (
+    aliases_for,
+    publish_symbols,
+    short_name_for,
 )
 from icici_breeze_backend.app.services.reference_data.versioning import bump_refdata_version
 
@@ -25,7 +28,6 @@ _lock = threading.RLock()
 _local: dict[str, Any] = {
     "version": 0,
     "contracts": {},
-    "exchange_code_map": {},
     "underlyings": {},
     "strikes": {},
     "lot_sizes": {},
@@ -114,7 +116,6 @@ def _apply_local_mirror(
     ver: int,
     *,
     contracts: dict[str, dict[str, Any]],
-    exchange_code_map: dict[str, str],
     underlyings_by_exchange: dict[str, list[dict[str, Any]]],
     strikes_by_key: dict[str, list[Strike]],
     lot_sizes: dict[str, int],
@@ -122,7 +123,6 @@ def _apply_local_mirror(
     with _lock:
         _local["version"] = ver
         _local["contracts"] = dict(contracts)
-        _local["exchange_code_map"] = dict(exchange_code_map)
         _local["underlyings"] = dict(underlyings_by_exchange)
         _local["strikes"] = dict(strikes_by_key)
         _local["lot_sizes"] = dict(lot_sizes)
@@ -133,7 +133,6 @@ def load_local_from_redis() -> None:
     if ver <= 0:
         return
     contracts = cache_get_json(scrip_contracts_key(ver)) or {}
-    exchange_code_map = cache_get_json(exchange_code_map_key(ver)) or {}
     underlyings_by_exchange: dict[str, list[dict[str, Any]]] = {}
     strikes_by_key: dict[str, list[Strike]] = {}
     for exchange_code in (cfg.NFO, cfg.BFO):
@@ -165,7 +164,6 @@ def load_local_from_redis() -> None:
     _apply_local_mirror(
         ver,
         contracts=contracts if isinstance(contracts, dict) else {},
-        exchange_code_map=exchange_code_map if isinstance(exchange_code_map, dict) else {},
         underlyings_by_exchange=underlyings_by_exchange,
         strikes_by_key=strikes_by_key,
         lot_sizes=lot_sizes,
@@ -226,7 +224,6 @@ def publish_scrip_index_from_db(version: int | None = None) -> int:
     )
 
     ver = version if version is not None else _next_version()
-    exchange_code_map: dict[str, str] = {}
     contracts: dict[str, dict[str, Any]] = {}
     lot_sizes: dict[str, int] = {}
     underlyings_by_exchange: dict[str, list[dict[str, Any]]] = {}
@@ -245,8 +242,6 @@ def publish_scrip_index_from_db(version: int | None = None) -> int:
                 continue
             disp = _expiry_to_display(expiry)
             grouped[(short_s, str(long_name or ""))].append(disp)
-            if ex_code:
-                exchange_code_map[short_s.upper()] = str(ex_code).strip().upper()
             strike_f = parse_strike(strike)
             opt = _canonical_option_type(str(opt_type or ""))
             if strike_f is None or opt not in {"CE", "PE"}:
@@ -291,19 +286,20 @@ def publish_scrip_index_from_db(version: int | None = None) -> int:
             )
             strikes_flat[_strikes_cache_key(exchange_code, short, disp)] = sorted_strikes
 
-    cache_set_json(exchange_code_map_key(ver), exchange_code_map)
     cache_set_json(scrip_contracts_key(ver), contracts)
+    symbol_count = publish_symbols(ver)
     _apply_local_mirror(
         ver,
         contracts=contracts,
-        exchange_code_map=exchange_code_map,
         underlyings_by_exchange=underlyings_by_exchange,
         strikes_by_key=strikes_flat,
         lot_sizes=lot_sizes,
     )
     publish_ws_token_map_from_db(ver)
     bump_refdata_version(ver)
-    _logger.info("Published scrip index version %s contracts=%s", ver, len(contracts))
+    _logger.info(
+        "Published scrip index version %s contracts=%s symbols=%s", ver, len(contracts), symbol_count
+    )
     return ver
 
 
@@ -327,14 +323,14 @@ def get_contract_meta(
     exchange_code: str = cfg.NFO,
 ) -> dict[str, Any] | None:
     ensure_scrip_memory_ready()
-    short = scrip_short_name(stock_code).upper()
+    short = short_name_for(stock_code).upper()
     disp = _expiry_to_display(expiry_display)
     ckey = contract_index_key(exchange_code, short, disp, strike, option_type)
     with _lock:
         meta = (_local.get("contracts") or {}).get(ckey)
     if meta:
         return meta
-    for alias in underlying_aliases(stock_code):
+    for alias in aliases_for(stock_code):
         ckey = contract_index_key(exchange_code, alias.upper(), disp, strike, option_type)
         with _lock:
             meta = (_local.get("contracts") or {}).get(ckey)
@@ -366,14 +362,14 @@ def list_tradeable_strikes_memory(
     exchange_code: str = cfg.NFO,
 ) -> list[Strike]:
     ensure_scrip_memory_ready()
-    short = scrip_short_name(stock_code)
+    short = short_name_for(stock_code)
     disp = _expiry_to_display(expiry_display)
     sk = _strikes_cache_key(exchange_code, short, disp)
     with _lock:
         strikes = (_local.get("strikes") or {}).get(sk)
     if strikes:
         return list(strikes)
-    for alias in underlying_aliases(stock_code):
+    for alias in aliases_for(stock_code):
         sk = _strikes_cache_key(exchange_code, alias, disp)
         with _lock:
             strikes = (_local.get("strikes") or {}).get(sk)
@@ -389,14 +385,14 @@ def get_lot_size_memory(
     exchange_code: str = cfg.NFO,
 ) -> int | None:
     ensure_scrip_memory_ready()
-    short = scrip_short_name(stock_code)
+    short = short_name_for(stock_code)
     disp = _expiry_to_display(expiry_display)
     ls_key = _lot_size_key(exchange_code, short, disp)
     with _lock:
         lot = (_local.get("lot_sizes") or {}).get(ls_key)
     if lot:
         return lot
-    for alias in underlying_aliases(stock_code):
+    for alias in aliases_for(stock_code):
         ls_key = _lot_size_key(exchange_code, alias, disp)
         with _lock:
             lot = (_local.get("lot_sizes") or {}).get(ls_key)
@@ -425,13 +421,3 @@ def get_strikes(
 ) -> list[Strike] | None:
     strikes = list_tradeable_strikes_memory(stock_code, expiry_display, exchange_code=exchange_code)
     return strikes if strikes else None
-
-
-def get_exchange_ticker(short_name: str) -> str:
-    ensure_scrip_memory_ready()
-    short = scrip_short_name(short_name).upper()
-    with _lock:
-        mapping = _local.get("exchange_code_map") or {}
-    if isinstance(mapping, dict) and mapping.get(short):
-        return str(mapping[short])
-    return short

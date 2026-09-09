@@ -13,7 +13,6 @@ from typing import Any
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_key
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
-from icici_breeze_backend.app.services.reference_data.aliases import scrip_short_name, underlying_aliases
 from icici_breeze_backend.app.services.reference_data.keys import scrip_token_map_key
 from icici_breeze_backend.app.services.reference_data.scrip_index import (
     contract_index_key,
@@ -24,6 +23,7 @@ from icici_breeze_backend.app.services.reference_data.scrip_master_sql import (
     normalize_expiry_display,
     scrip_master_expiry_sql_values,
 )
+from icici_breeze_backend.app.services.reference_data.symbol_registry import aliases_for, short_name_for
 
 _logger = logging.getLogger(__name__)
 _lock = threading.RLock()
@@ -217,9 +217,9 @@ def list_ws_stock_tokens_for_liquid_contracts(
 ) -> list[str]:
     """WS stock_token symbols for all liquid CE/PE at stock+expiry."""
     ensure_token_map_ready()
-    short = scrip_short_name(stock_code).upper()
+    short = short_name_for(stock_code).upper()
     disp = normalize_expiry_display(expiry_display)
-    aliases = {short, *(a.upper() for a in underlying_aliases(stock_code))}
+    aliases = {short, *(a.upper() for a in aliases_for(stock_code))}
     out: list[str] = []
     seen: set[str] = set()
     with _lock:
@@ -343,12 +343,12 @@ def lookup_token_for_contract(
     if strike is None:
         return None
     disp = normalize_expiry_display(expiry_display)
-    short = scrip_short_name(stock_code).upper()
+    short = short_name_for(stock_code).upper()
     ckey = contract_index_key(segment_code, short, disp, strike, opt)
     with _lock:
         ws_symbol = _token_by_contract.get(ckey)
     if not ws_symbol:
-        for alias in underlying_aliases(stock_code):
+        for alias in aliases_for(stock_code):
             ckey = contract_index_key(segment_code, alias.upper(), disp, strike, opt)
             with _lock:
                 ws_symbol = _token_by_contract.get(ckey)

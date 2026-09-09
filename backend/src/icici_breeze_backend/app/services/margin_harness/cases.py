@@ -19,6 +19,11 @@ from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import today_ist_date
+from icici_breeze_backend.app.services.reference_data.symbol_registry import (
+    KIND_INDEX,
+    is_index as symbol_is_index,
+    underlyings,
+)
 from icici_breeze_backend.app.services.reference_data.span_baseline_store import (
     get_underlying_facts_for,
 )
@@ -35,13 +40,6 @@ _INDEX_UNDERLYINGS: tuple[tuple[str, str], ...] = (
     ("BSESEN", cfg.BFO),
 )
 _STOCK_COUNT = 2
-
-# ICICI short names for the listed indices. `cfg.INDEX_SYMBOLS` holds exchange-style names
-# (BANKNIFTY, SENSEX) and so does not match what scrip_master stores (CNXBAN, BSESEN); the
-# harness needs both spellings to classify an underlying.
-_INDEX_SHORT_NAMES = frozenset(
-    {"NIFTY", "CNXBAN", "NIFFIN", "NIFMID", "BSESEN", "BANKEX", "SENSEX", "BANKNIFTY"}
-)
 
 
 @dataclass(frozen=True)
@@ -165,7 +163,9 @@ def _liquid_stocks(conn: sqlite3.Connection, limit: int) -> list[str]:
         """,
         (cfg.NFO,),
     ).fetchall()
-    index_names = {name for name, _ex in _INDEX_UNDERLYINGS} | _INDEX_SHORT_NAMES
+    index_names = {name for name, _ex in _INDEX_UNDERLYINGS} | {
+        sym.short_name for sym in underlyings(kind=KIND_INDEX)
+    }
     out = []
     for name, _n in rows:
         sn = str(name).strip().upper()
@@ -330,7 +330,11 @@ def build_open_position_cases(positions: list[dict[str, Any]]) -> list[HarnessCa
         # The broker's own classification when the position carries one; the name set is the
         # fallback for a leg that arrived without it.
         indicator = str((members[0] or {}).get("stock_index_indicator") or "").strip()
-        is_index = indicator == cfg.INDEX if indicator else stock_code in _INDEX_SHORT_NAMES
+        is_index = (
+            indicator == cfg.INDEX
+            if indicator
+            else bool(symbol_is_index(stock_code, segment=exchange_code))
+        )
         facts = get_underlying_facts_for(exchange_code, stock_code) or {}
         spot = facts.get("spot_price")
         expiry_date = _parse_expiry(expiry)

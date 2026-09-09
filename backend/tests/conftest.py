@@ -39,6 +39,27 @@ def _clear_order_book_cache():
 
 
 @pytest.fixture(autouse=True)
+def _clear_symbol_registry_cache():
+    """The symbol registry mirrors symbol_master in a process-global dict and a versioned Redis
+    key, neither of which follows a test's tmp_path. Without clearing both, a test that seeds its
+    own underlyings answers the next test's lookups, and a test that seeds none silently resolves
+    against the developer's real backend/data/scrips.sqlite3."""
+    from icici_breeze_backend.app.db.redis_client import cache_delete_pattern
+    from icici_breeze_backend.app.services.reference_data import symbol_registry
+
+    def _reset():
+        symbol_registry.clear_cache()
+        try:
+            cache_delete_pattern("refdata:*:symbols")
+        except Exception:
+            pass
+
+    _reset()
+    yield
+    _reset()
+
+
+@pytest.fixture(autouse=True)
 def portal_heartbeat_verify_files(tmp_path, monkeypatch):
     """Bake test public key and allowed portal host for DRM verification tests."""
     pub = tmp_path / "portal_heartbeat_public.pem"

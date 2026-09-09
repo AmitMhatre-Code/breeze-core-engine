@@ -41,9 +41,24 @@ def _resolve_exchange_code(tick: dict[str, Any]) -> str:
     return cfg.NFO
 
 
-def _resolve_stock_short(tick: dict[str, Any]) -> str:
+def _resolve_stock_short(tick: dict[str, Any], segment_code: str | None = None) -> str:
+    """ShortName for a tick that carries no resolvable token.
+
+    `stock_name` is `breeze_connect`'s SecurityMaster *company name*, so the symbol registry --
+    built from the same Security Master -- resolves it properly ("NIFTY BANK" -> CNXBAN,
+    "INFOSYS LTD" -> INFTEC). The old first-word reduction remains only as a last resort: it
+    happens to be right for NIFTY and 17 of 181 NFO underlyings, and mislabels the rest (every
+    NFO index reduced to "NIFTY", staging BANKNIFTY ticks under a NIFTY key).
+    """
+    from icici_breeze_backend.app.services.reference_data.symbol_registry import resolve
+
     stock = str(tick.get("stock_code") or tick.get("stock_name") or "").strip()
-    return stock.split()[0].upper() if stock else stock
+    if not stock:
+        return stock
+    sym = resolve(stock, segment=segment_code) or resolve(stock)
+    if sym is not None:
+        return sym.short_name
+    return stock.split()[0].upper()
 
 
 def _resolve_right_key(right_raw: Any) -> str:
@@ -51,14 +66,15 @@ def _resolve_right_key(right_raw: Any) -> str:
 
 
 def _parse_tick_from_fields(ticks: dict[str, Any]) -> ParsedTick | None:
-    stock = _resolve_stock_short(ticks)
+    exchange_code = _resolve_exchange_code(ticks)
+    stock = _resolve_stock_short(ticks, exchange_code)
     expiry = _normalize_expiry_display(str(ticks.get("expiry_date") or "").strip())
     strike = parse_strike(ticks.get("strike_price"))
     right_raw = ticks.get("right") or ticks.get("right_type") or ""
     if not stock or not expiry or strike is None:
         return None
     return ParsedTick(
-        exchange_code=_resolve_exchange_code(ticks),
+        exchange_code=exchange_code,
         stock_code=stock,
         expiry_display=expiry,
         strike=strike,
@@ -99,9 +115,9 @@ def parse_icici_tick(ticks: Any) -> ParsedTick | None:
     the more direct source. `stock_name` is filled in by `breeze_connect` from its
     SecurityMaster *company name* ("INFOSYS LTD", "NIFTY BANK"), while every contract
     identity in this app is keyed by the scrip master's ShortName ("INFTEC", "CNXBAN").
-    `_resolve_stock_short`'s first-word reduction bridges that gap for exactly one
-    underlying -- "NIFTY 50" -> "NIFTY" -- and only 17 of 181 NFO underlyings have a
-    company name whose first word is their ShortName. The rest either lose every tick
+    `_resolve_stock_short` now bridges that gap through the symbol registry, which is built
+    from the same Security Master; before it did so by reducing to the first word, which is
+    correct for only 17 of 181 NFO underlyings. Those others either lost every tick
     (`chain_build_service._parsed_matches_contract` rejects them, so INFTEC/TCS chains
     built zero cells all session and fell back to the previous close) or, worse, get
     *mislabelled*: every non-NIFTY NFO index reduces to "NIFTY" too, so a BANKNIFTY
