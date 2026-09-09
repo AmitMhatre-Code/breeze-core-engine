@@ -7,6 +7,7 @@ unavailable -- it runs unattended for a whole session.
 from __future__ import annotations
 
 import datetime
+import os
 
 import pytest
 
@@ -18,6 +19,8 @@ from icici_breeze_backend.app.domain.bots import MomentumLongScalperConfig, Reas
 from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.app.services.bots.scalping import runtime
 from icici_breeze_backend.app.services.bots.scalping.decide import FeedHealth
+from icici_breeze_backend.app.services.bots.scalping.signal import SignalResult
+from icici_breeze_backend.audit import bot_audit
 
 USER = "u1"
 
@@ -32,8 +35,14 @@ def db_path(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def stubbed(monkeypatch):
-    """Isolate the driver from the broker, the licence and the clock."""
+def stubbed(monkeypatch, tmp_path):
+    """Isolate the driver from the broker, the licence, the clock and the data volume."""
+    # The driver now appends an audit trail on every pass. Without this the suite writes
+    # JSONL into the developer's real `backend/data/` -- the same class of pollution as the
+    # Redis scrip index, and worse here because the files look like genuine trading days.
+    monkeypatch.setattr(bot_audit.cfg, "DATA_PATH", str(tmp_path) + os.sep)
+    bot_audit._last_signature.clear()
+    bot_audit._last_pruned.clear()
     monkeypatch.setattr(runtime, "_trading_allowed", lambda: True)
     monkeypatch.setattr(runtime, "_api_calls_remaining", lambda uid: 90)
     monkeypatch.setattr(runtime, "_is_expiry_day", lambda cfg: False)
@@ -44,6 +53,16 @@ def stubbed(monkeypatch):
         "icici_breeze_backend.app.services.market_calendar.is_trading_day", lambda now=None: True
     )
     monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 8, 10, 0))
+    # The signal is now the last entry gate, so these tests would otherwise stand down on a
+    # feed that has no candles. Firing by default keeps each test asserting what it is about;
+    # `test_no_signal_is_a_recorded_verdict` overrides this to check the other branch.
+    monkeypatch.setattr(
+        runtime,
+        "_entry_signal",
+        lambda bot_type, config: SignalResult(
+            side="bullish", reason="close above EMA and VWAP on 1.8x volume", values={"volume_x": 1.8}
+        ),
+    )
 
 
 def test_a_pass_opens_a_session_run_and_heartbeats_it(db_path, stubbed):
@@ -65,6 +84,54 @@ def test_repeated_passes_reuse_one_session_run(db_path, stubbed):
     for _ in range(5):
         runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
     assert len(repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)) == 1
+
+
+def test_no_signal_is_a_recorded_verdict_not_a_silent_return(db_path, stubbed, monkeypatch):
+    """A warm bot that declines to trade must say so on the run row.
+
+    This is the gap that made a zero-cycle paper day unexplainable after the fact: the
+    no-signal branch used to `return` from the executor with only a DEBUG log, so the run
+    row still read `gates_clear` -- indistinguishable from a bot that was about to trade.
+    """
+    monkeypatch.setattr(
+        runtime,
+        "_entry_signal",
+        lambda bot_type, config: SignalResult(
+            side=None, reason="volume 0.9x the 20-bar mean", values={"volume_x": 0.9}
+        ),
+    )
+    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+
+    assert decision.action == "idle"
+    assert decision.reason_code == ReasonCode.SIGNAL_NO_TRADE
+
+    run = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0]
+    assert run.reason_code == ReasonCode.SIGNAL_NO_TRADE
+    assert "volume 0.9x" in (run.reason_text or "")
+    assert (run.detail or {}).get("decision", {}).get("volume_x") == 0.9
+    assert repo.list_cycles(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER) == []
+
+
+def test_feed_counters_reach_the_run_row(db_path, stubbed, monkeypatch):
+    """`counter_resets`/`stale_ticks` travel with the verdict, not just the log.
+
+    Without these on the row, a session that kept losing its candle history is
+    indistinguishable from one that was simply slow to warm up.
+    """
+    monkeypatch.setattr(
+        runtime,
+        "_feed_health",
+        lambda cfg: FeedHealth(
+            warm=True, stale=False, stale_seconds=0.0,
+            detail={"token_symbol": "4.1!68407", "candles": 47, "candles_required": 20,
+                    "ticks_seen": 18691, "counter_resets": 3, "stale_ticks": 12},
+        ),
+    )
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+
+    feed = (repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].detail or {})["feed"]
+    assert feed["counter_resets"] == 3
+    assert feed["stale_ticks"] == 12
 
 
 def test_step_3_places_nothing_and_opens_no_cycles(db_path, stubbed):

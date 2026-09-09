@@ -226,6 +226,10 @@ export type BotRun = {
   detail: Record<string, unknown> | null;
   started_at: string | null;
   finished_at: string | null;
+  /** Audit file covering this run's trading *day*, or null once it ages out of retention.
+   *  One per bot per day, so a day fragmented across many interrupted session rows still
+   *  opens one continuous record. */
+  audit_log: string | null;
 };
 
 /** Display metadata. Blurbs state each bot's *constraint model* — the part a user cannot

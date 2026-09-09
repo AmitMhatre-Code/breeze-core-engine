@@ -18,6 +18,10 @@ export type ScalperFeedDetail = {
   ticks_seen?: number | null;
   candles?: number | null;
   candles_required?: number | null;
+  /** Candle history discarded at an IST day boundary — the one legitimate reset. */
+  counter_resets?: number | null;
+  /** Packets refused because their cumulative counters ran backwards. */
+  stale_ticks?: number | null;
   last_error?: string | null;
 };
 
@@ -57,13 +61,22 @@ export function describeFeed(detail: unknown): FeedSummary | null {
   }
 
   const ticks = `${count(feed.ticks_seen)} ticks`;
+  // Stale packets are named outright rather than left to be inferred from a low candle
+  // count. A session losing history to out-of-order ticks looks exactly like an ordinary
+  // slow warm-up, and that ambiguity cost a full day of paper evidence before it was seen.
+  const dropped = feed.stale_ticks ?? 0;
+  const staleNote = dropped > 0 ? ` · ${count(dropped)} stale ticks dropped` : "";
+
   if (feed.warm) {
     const contract = feed.contract ? ` · ${feed.contract}` : "";
-    return { text: `Futures feed live · ${ticks}${contract}`, tone: "ok" };
+    return {
+      text: `Futures feed live · ${ticks}${contract}${staleNote}`,
+      tone: dropped > 0 ? "warn" : "ok",
+    };
   }
   const required = feed.candles_required ?? 0;
   return {
-    text: `Warming up · ${count(feed.candles)} of ${count(required)} candles · ${ticks}`,
+    text: `Warming up · ${count(feed.candles)} of ${count(required)} candles · ${ticks}${staleNote}`,
     tone: "warn",
   };
 }

@@ -53,6 +53,7 @@ from icici_breeze_backend.app.domain.bots import (
 from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.app.services.bots.charges import load_charges, save_charges
 from icici_breeze_backend.app.services.bots import proposals
+from icici_breeze_backend.audit import bot_audit
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
 _logger = logging.getLogger(__name__)
@@ -128,7 +129,13 @@ async def list_runs(
     a user can see every bot's activity, including the days nothing happened, in one place."""
     if bot_type is not None:
         _validate_bot_type(bot_type)
-    return repo.list_runs(ctx.user_id, bot_type=bot_type, limit=limit)
+    runs = repo.list_runs(ctx.user_id, bot_type=bot_type, limit=limit)
+    # Attached here rather than in the repository: this is a filesystem lookup, and the
+    # repository's job is the database. A run whose day has aged out of retention simply
+    # carries `None` and the UI renders no link.
+    for run in runs:
+        run.audit_log = bot_audit.find_for_run(ctx.user_id, run.bot_type, run.started_at)
+    return runs
 
 
 @router.get("/cycles", response_model=list[BotCycleRecord])

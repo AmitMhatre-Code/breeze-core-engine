@@ -42,10 +42,13 @@ through `coerce_float`, which treats '' as absent rather than zero.
 """
 from __future__ import annotations
 
+import datetime
 import logging
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Iterable, Optional
+
+from icici_breeze_backend.app.core.timezone import IST
 
 _logger = logging.getLogger(__name__)
 
@@ -135,6 +138,15 @@ def bucket_start(ts: float) -> int:
     return int(ts // BUCKET_SECONDS) * BUCKET_SECONDS
 
 
+def trading_date_of(ts: float) -> datetime.date:
+    """The IST calendar date an epoch timestamp falls on.
+
+    The builder's session boundary. Derived from the tick's own timestamp rather than
+    `now_ist()` so a replayed or back-dated tick is filed against the day it belongs to.
+    """
+    return datetime.datetime.fromtimestamp(ts, tz=IST).date()
+
+
 class CandleBuilder:
     """Accumulates ticks for ONE contract into 1-minute candles.
 
@@ -153,6 +165,9 @@ class CandleBuilder:
         self._prev_ttv: Optional[float] = None
         self._vwap_reason: Optional[str] = "no_ticks_yet"
         self._resets = 0
+        self._stale_ticks = 0
+        # The IST trading day this history belongs to. `None` until the first tick.
+        self._session_date: Optional[datetime.date] = None
         self._cross_check_diff: Optional[float] = None
         self._cross_check_warned = False
 
@@ -177,14 +192,45 @@ class CandleBuilder:
 
         A tick with no usable `last` is discarded: it carries no price, and admitting it
         would let a malformed payload set a bar's open.
+
+        Two admission checks run before the tick is allowed to touch anything, in this
+        order, because both are reasons the tick does not belong to the history we hold:
+
+        1. A new IST trading day starts a new session -- the exchange's cumulative counters
+           restart there, so the previous day's baseline is meaningless against it.
+        2. Counters that run *backwards* within a day mean a stale or out-of-order packet.
+           It is dropped whole, price included: its `last` is as old as its counters, and
+           admitting it would let a stale print set a bar's high or low.
         """
         price = coerce_float(last)
         if price is None:
             return []
+
+        day = trading_date_of(ts)
+        if self._session_date is None:
+            self._session_date = day
+        elif day != self._session_date:
+            self._start_new_session(day)
+
+        q, v, avg = coerce_float(ttq), parse_ttv(ttv), coerce_float(avg_price)
+        if self._counters_regressed(q, v):
+            self._stale_ticks += 1
+            _logger.debug(
+                "scalping candles: dropping stale tick (ttq=%s ttv=%s; held ttq=%s ttv=%s)",
+                q, v, self._cum_ttq, self._cum_ttv,
+            )
+            return []
+
         completed = self._roll_to(bucket_start(ts))
         self._apply_price(price)
-        self._apply_counters(coerce_float(ttq), parse_ttv(ttv), coerce_float(avg_price))
+        self._apply_counters(q, v, avg)
         return completed
+
+    def _counters_regressed(self, q: Optional[float], v: Optional[float]) -> bool:
+        """True when this tick's cumulative counters are behind the ones already held."""
+        return (q is not None and self._cum_ttq is not None and q < self._cum_ttq) or (
+            v is not None and self._cum_ttv is not None and v < self._cum_ttv
+        )
 
     def _apply_price(self, price: float) -> None:
         if self._ticks == 0:
@@ -198,18 +244,11 @@ class CandleBuilder:
     def _apply_counters(
         self, q: Optional[float], v: Optional[float], avg: Optional[float]
     ) -> None:
-        """Track the latest cumulative readings, detecting a counter reset.
+        """Track the latest cumulative readings.
 
-        A decrease means the counters restarted -- a new trading day, or a reconnect against
-        a fresh session. Carrying the old baseline across that would produce one enormous
-        bar and a nonsense VWAP, so history is dropped and rebuilt. This is the only place
-        candle history is discarded.
+        Regression is not handled here: `ingest` has already refused a tick whose counters
+        run backwards, so anything reaching this point is at or ahead of what we hold.
         """
-        if (q is not None and self._cum_ttq is not None and q < self._cum_ttq) or (
-            v is not None and self._cum_ttv is not None and v < self._cum_ttv
-        ):
-            self._handle_counter_reset(q, v, avg)
-            return
         if q is not None:
             self._cum_ttq = q
             self._bucket_ttq = q
@@ -220,22 +259,28 @@ class CandleBuilder:
             self._avg_price = avg
         self._refresh_vwap_state()
 
-    def _handle_counter_reset(
-        self, q: Optional[float], v: Optional[float], avg: Optional[float]
-    ) -> None:
+    def _start_new_session(self, day: datetime.date) -> None:
+        """Drop history at an IST day boundary -- the one place it is legitimately discarded.
+
+        The exchange's cumulative counters restart with the trading day, so the previous
+        day's baseline would produce one enormous opening bar. A *within-day* regression is
+        no longer routed here: that is a stale packet, and `ingest` drops the packet instead
+        of six hours of history. Wiping on every out-of-order tick is what left the momentum
+        bot below its 20-candle warm-up for most of a session.
+        """
         self._resets += 1
         _logger.info(
-            "scalping candles: cumulative counters went backwards (ttq=%s ttv=%s); "
-            "treating as a new session and dropping %d candle(s)",
-            q,
-            v,
+            "scalping candles: new trading day %s (was %s); dropping %d candle(s)",
+            day,
+            self._session_date,
             len(self._candles),
         )
+        self._session_date = day
         self._candles.clear()
         self._reset_bucket()
-        self._cum_ttq = q
-        self._cum_ttv = v
-        self._avg_price = avg if (avg is not None and avg > 0) else None
+        self._cum_ttq = None
+        self._cum_ttv = None
+        self._avg_price = None
         self._prev_ttq = None
         self._prev_ttv = None
         self._refresh_vwap_state()
@@ -332,6 +377,11 @@ class CandleBuilder:
         return self._resets
 
     @property
+    def stale_ticks(self) -> int:
+        """Packets refused because their cumulative counters ran backwards."""
+        return self._stale_ticks
+
+    @property
     def vwap_unavailable_reason(self) -> Optional[str]:
         """None when VWAP is computable; otherwise a stable code for the run log."""
         return self._vwap_reason
@@ -389,6 +439,7 @@ class CandleBuilder:
             "vwap_unavailable_reason": self._vwap_reason,
             "vwap_cross_check_diff": self._cross_check_diff,
             "counter_resets": self._resets,
+            "stale_ticks": self._stale_ticks,
             "warm": self.is_warm(ema_period=ema_period, volume_ma_period=volume_ma_period),
         }
 

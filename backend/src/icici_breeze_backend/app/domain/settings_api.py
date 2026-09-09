@@ -277,6 +277,22 @@ class StrategyBuilderAuditLogsResponse(BaseModel):
     logs: list[StrategyBuilderAuditLogItem] = Field(default_factory=list)
 
 
+class BotAuditLogItem(BaseModel):
+    """One bot, one IST trading day, one JSONL file."""
+
+    name: str = ""
+    bot_type: str = ""
+    trading_date: str = ""
+    size_bytes: int = 0
+    records: int = 0
+
+
+class BotAuditLogsResponse(BaseModel):
+    user_id: str = ""
+    retention_days: int = 7
+    logs: list[BotAuditLogItem] = Field(default_factory=list)
+
+
 class StrategyBuilderAuditExplainabilityLevel2Out(BaseModel):
     why_this: list[WhyThisStrategyOut] = Field(default_factory=list)
     why_not: list[WhyNotStrategyOut] = Field(default_factory=list)

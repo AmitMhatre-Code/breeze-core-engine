@@ -8,6 +8,7 @@ import { ApiPlaygroundScreen } from "./screens/ApiPlaygroundScreen";
 import { ApiUsageScreen } from "./screens/ApiUsageScreen";
 import { ApplicationLogsScreen } from "./screens/ApplicationLogsScreen";
 import { AuditLogsScreen } from "./screens/AuditLogsScreen";
+import { BotAuditLogsScreen } from "./screens/BotAuditLogsScreen";
 import { BrokerCredentialsScreen } from "./screens/BrokerCredentialsScreen";
 import { DeleteAccountScreen } from "./screens/DeleteAccountScreen";
 import { ExchangeCalendarScreen } from "./screens/ExchangeCalendarScreen";
@@ -26,6 +27,7 @@ type ScreenKey =
   | "advanced-pnl-engine"
   | "telegram-alerts"
   | "audit-logs"
+  | "bot-audit-logs"
   | "application-logs"
   | "api-playground"
   | "delete-account";
@@ -52,6 +54,7 @@ const SCREENS: Record<ScreenKey, ComponentType> = {
   "advanced-pnl-engine": AdvancedPnlEngineScreen,
   "telegram-alerts": TelegramAlertsScreen,
   "audit-logs": AuditLogsScreen,
+  "bot-audit-logs": BotAuditLogsScreen,
   "application-logs": ApplicationLogsScreen,
   "api-playground": ApiPlaygroundScreen,
   "delete-account": DeleteAccountScreen,
@@ -86,6 +89,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Diagnostics",
     items: [
       { key: "audit-logs", label: "Audit Logs", icon: DocIcon },
+      { key: "bot-audit-logs", label: "Bot Audit Logs", icon: DocIcon },
       { key: "application-logs", label: "Application Logs", icon: DocIcon },
     ],
   },

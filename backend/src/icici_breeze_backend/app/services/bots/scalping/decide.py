@@ -19,9 +19,12 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from icici_breeze_backend.app.domain.bots import ReasonCode, ScalperDayTotals, SessionWindow
+
+if TYPE_CHECKING:  # imported for typing only -- `signal` imports this module's Candle type
+    from icici_breeze_backend.app.services.bots.scalping.signal import SignalResult
 
 Action = Literal["idle", "enter", "exit", "stand_down"]
 
@@ -67,6 +70,14 @@ class Snapshot:
     # so the driver is ticking it purely to run the exit path. Entries are refused; the exit
     # half of the stack is untouched, which is the whole point -- see `_decide_entry`.
     entries_suspended: bool = False
+    # The bot's entry signal, for bots that have one. `None` means "this bot has no signal
+    # gate" (Bot 4 sizes a fly whenever the gates are clear) and leaves the stack unchanged.
+    #
+    # It is gathered here rather than inside the executor so that a signal that did NOT fire
+    # is a *verdict* -- carrying a reason code and detail onto the run row like every other
+    # stand-down -- instead of an early `return` visible only in a DEBUG log. A quiet day
+    # that produced no trades has to be able to say which quiet day it was.
+    signal: Optional["SignalResult"] = None
 
 
 @dataclass(frozen=True)
@@ -273,6 +284,16 @@ def _decide_entry(snapshot: Snapshot, config: Any) -> Decision:
             dict(snapshot.feed.detail),
         )
 
-    # Everything shared is satisfied. What to buy, and whether the signal fires at all, is
-    # the bot-specific layer's call.
+    # The last gate, for bots that have an entry signal. A signal that did not fire is a
+    # stand-down like any other and says so on the run row; a bot with no signal gate
+    # (`signal is None`) falls through unchanged.
+    if snapshot.signal is not None and not snapshot.signal.fired:
+        return Decision(
+            "idle",
+            ReasonCode.SIGNAL_NO_TRADE,
+            f"Gates clear, but no entry signal: {snapshot.signal.reason}",
+            dict(snapshot.signal.values or {}),
+        )
+
+    # Everything shared is satisfied. What to buy is the bot-specific layer's call.
     return Decision("enter", "gates_clear", "All entry gates clear.")

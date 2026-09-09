@@ -7,11 +7,13 @@ breaks that identity, this fails rather than the bot silently trading off a wron
 """
 from __future__ import annotations
 
+import datetime
 import json
 from pathlib import Path
 
 import pytest
 
+from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.services.bots.scalping.candles import (
     BUCKET_SECONDS,
     VWAP_CROSS_CHECK_TOLERANCE,
@@ -205,15 +207,70 @@ def test_tick_without_price_is_discarded():
 # --------------------------------------------------------------------------- resets
 
 
-def test_counter_reset_drops_history_rather_than_emitting_a_giant_bar():
+def _fill(b, t, minutes, *, start_q=1_000):
+    """Drive `minutes` completed bars with honestly rising counters."""
+    for i in range(minutes + 1):
+        q = start_q * (i + 1)
+        b.ingest(t + i * 61, 100.0, ttq=q, ttv=f"{q * 100 / 1e7}C", avg_price=100.0)
+
+
+def test_a_stale_tick_is_dropped_without_costing_the_history():
+    """A counter that runs backwards mid-session is an out-of-order packet, not a new day.
+
+    This is the regression that mattered in production: 12 such packets in one session wiped
+    276 candles between them, holding the momentum bot below its 20-candle warm-up for most
+    of the day. The packet is dropped; the history stays.
+    """
     b = CandleBuilder()
     t = 1_000_000
-    for i in range(4):
-        b.ingest(t + i * 61, 100.0, ttq=1_000 * (i + 1), ttv=f"{1_000 * (i + 1) * 100 / 1e7}C", avg_price=100.0)
+    _fill(b, t, 3)
     assert len(b.candles) == 3
-    b.ingest(t + 400, 100.0, ttq=50, ttv="0.0000005C", avg_price=100.0)  # new session
+
+    b.ingest(t + 250, 100.0, ttq=50, ttv="0.0000005C", avg_price=100.0)
+
+    assert len(b.candles) == 3          # history survives
+    assert b.counter_resets == 0        # not a session boundary
+    assert b.stale_ticks == 1
+
+
+def test_a_stale_tick_cannot_set_a_high_or_low():
+    """The whole packet is refused, price included -- its `last` is as old as its counters."""
+    b = CandleBuilder()
+    t = 1_000_000
+    b.ingest(t, 100.0, ttq=1_000, ttv="0.00001C", avg_price=100.0)
+    b.ingest(t + 1, 999.0, ttq=500, ttv="0.000005C", avg_price=100.0)  # stale spike
+    b.flush(t + 120)
+    assert b.candles[0].high == 100.0
+    assert b.candles[0].low == 100.0
+
+
+def test_a_new_ist_trading_day_still_drops_history():
+    """The one legitimate reset: the exchange's counters restart with the trading day."""
+    b = CandleBuilder()
+    day1 = datetime.datetime(2026, 9, 9, 14, 0, tzinfo=IST).timestamp()
+    _fill(b, day1, 3)
+    assert len(b.candles) == 3
+
+    day2 = datetime.datetime(2026, 9, 10, 9, 15, tzinfo=IST).timestamp()
+    b.ingest(day2, 100.0, ttq=50, ttv="0.0000005C", avg_price=100.0)
+
     assert b.candles == []
     assert b.counter_resets == 1
+    assert b.stale_ticks == 0           # a day boundary is not a stale packet
+
+
+def test_counters_rebaseline_across_a_day_boundary():
+    """After a day change the new, lower counters are accepted rather than refused."""
+    b = CandleBuilder()
+    day1 = datetime.datetime(2026, 9, 9, 14, 0, tzinfo=IST).timestamp()
+    _fill(b, day1, 3)
+
+    day2 = datetime.datetime(2026, 9, 10, 9, 15, tzinfo=IST).timestamp()
+    for i in range(3):
+        q = 100 * (i + 1)
+        b.ingest(day2 + i * 61, 100.0, ttq=q, ttv=f"{q * 100 / 1e7}C", avg_price=100.0)
+    assert len(b.candles) == 2          # building again, not stuck refusing every tick
+    assert b.stale_ticks == 0
 
 
 # --------------------------------------------------------------------------- VWAP

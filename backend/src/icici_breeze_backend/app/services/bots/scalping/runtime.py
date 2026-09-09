@@ -48,6 +48,7 @@ from icici_breeze_backend.app.services.bots.scalping.decide import (
     FeedHealth,
     Snapshot,
     decide,
+    in_window,
 )
 
 _logger = logging.getLogger(__name__)
@@ -189,7 +190,27 @@ def build_snapshot(
         exit_at_window_end=_EXIT_AT_WINDOW_END.get(bot_type, False),
         unrealized_pnl=float(unrealized),
         entries_suspended=bool(entries_suspended),
+        signal=_entry_signal(bot_type, config),
     )
+
+
+def _entry_signal(bot_type: str, config: Any) -> Any:
+    """The bot's entry signal, or None for a bot that has no signal gate.
+
+    Evaluated here rather than inside the executor so `decide` can turn a signal that did
+    not fire into a recorded verdict. Cheap enough to run every pass -- an EMA and a mean
+    over at most `_MAX_CANDLES` bars already in memory, with no broker call behind it.
+    """
+    if bot_type != BOT_MOMENTUM_LONG_SCALPER:
+        return None
+    try:
+        from icici_breeze_backend.app.services.bots.scalping.signal import evaluate_momentum
+
+        feed = futures_feed.get_feed()
+        return evaluate_momentum(feed.builder.candles, feed.builder.session_vwap, config.signal)
+    except Exception:  # noqa: BLE001 -- a signal failure must not stop the gate stack
+        _logger.exception("scalping[%s]: signal evaluation failed", bot_type)
+        return None
 
 
 def _is_expiry_day(config: Any) -> bool:
@@ -230,6 +251,11 @@ def _audit_detail(snapshot: Snapshot, decision: Decision) -> dict[str, Any]:
             "ticks_seen": feed.get("ticks_seen"),
             "candles": feed.get("candles"),
             "candles_required": feed.get("candles_required"),
+            # Both travel with the verdict for the same reason `ticks_seen` does: a session
+            # that kept losing its history reads as an ordinary slow warm-up without them,
+            # and the log line that would have said so rotates away within days.
+            "counter_resets": feed.get("counter_resets"),
+            "stale_ticks": feed.get("stale_ticks"),
             "last_error": feed.get("last_error"),
         },
         "gates": {
@@ -292,6 +318,40 @@ def _publish_verdict(
         _logger.exception("scalping[%s]: could not record the run reason", bot_type)
 
 
+def _record_audit(
+    user_id: str,
+    bot_type: str,
+    config: Any,
+    run_id: str,
+    snapshot: Snapshot,
+    decision: Decision,
+) -> None:
+    """Append this pass to the durable audit trail.
+
+    Unlike `_publish_verdict` this is NOT throttled inside a session window: the run row can
+    only hold the latest verdict, and the whole reason the trail exists is that "the signal
+    was evaluated all afternoon and never fired" is not something the latest verdict can say.
+    Outside the windows the writer collapses repeats itself.
+    """
+    from icici_breeze_backend.audit import bot_audit
+
+    try:
+        windows = getattr(config, "sessions", None) or []
+        inside = in_window(snapshot.now_ist, windows) is not None
+        bot_audit.record_pass(
+            user_id,
+            bot_type,
+            run_id,
+            detail=_audit_detail(snapshot, decision),
+            reason_code=decision.reason_code,
+            reason_text=decision.reason_text,
+            in_window=inside,
+            now=snapshot.now_ist,
+        )
+    except Exception:  # noqa: BLE001 -- diagnostic only; never stop the bot for it
+        _logger.exception("scalping[%s]: audit record failed", bot_type)
+
+
 def tick_bot(
     user_id: str, bot_type: str, config: Any, *, entries_suspended: bool = False
 ) -> Decision:
@@ -339,6 +399,7 @@ def tick_bot(
     repo.touch_run_heartbeat(run_id)
     _stamp_session(run_id, bot_type, config)
     _publish_verdict(user_id, bot_type, run_id, snapshot, decision)
+    _record_audit(user_id, bot_type, config, run_id, snapshot, decision)
 
     feed = futures_feed.get_feed()
     _finalise_if_day_is_over(user_id, bot_type, config, run_id, snapshot, decision)
@@ -353,6 +414,7 @@ def tick_bot(
         momentum_bot.execute(
             proc, user_id, bot_type, config, run_id, decision, context,
             load_charges(), feed.builder.candles, feed.builder.session_vwap,
+            signal=snapshot.signal,
         )
     # Disarming happens AFTER the executor has run, so the position is closed first: a bot
     # switched off with an open position would leave it unmanaged.

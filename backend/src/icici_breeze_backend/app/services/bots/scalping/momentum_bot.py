@@ -420,8 +420,16 @@ def execute(
     charges: ChargesModel,
     candles: list,
     session_vwap: Optional[float],
+    signal: Any = None,
 ) -> None:
-    """Carry out one decision."""
+    """Carry out one decision.
+
+    `signal` is the result the driver already computed for `decide` (see
+    `runtime._entry_signal`). Passing it in keeps the executor acting on the *same* verdict
+    the run row recorded -- re-evaluating here could read a candle list a tick newer than
+    the one the decision was made against. It stays optional so the live path and the tests
+    that call this directly can let it evaluate its own.
+    """
     from icici_breeze_backend.app.repositories import bots as repo
     from icici_breeze_backend.app.services.bots.scalping.signal import evaluate_momentum
 
@@ -454,8 +462,11 @@ def execute(
         return
 
     if decision.action == "enter":
-        signal = evaluate_momentum(candles, session_vwap, config.signal)
+        if signal is None:
+            signal = evaluate_momentum(candles, session_vwap, config.signal)
         if not signal.fired:
+            # Reached only when this evaluated its own signal: when the driver supplies one,
+            # `decide` has already turned a no-fire into an `idle` verdict.
             _logger.debug("momentum bot: no signal (%s)", signal.reason)
             return
         _open(proc, repo, user_id, bot_type, config, run_id, signal, charges)

@@ -175,6 +175,17 @@ function RunRow({ run }: { run: BotRun }) {
               {feed.text}
             </div>
           )}
+          {run.audit_log && (
+            /* The row shows one verdict; this is every verdict of that day. Rendered as a
+               plain download rather than an expandable panel because the file is a tick-level
+               record — thousands of lines — meant to be read outside the browser. */
+            <a
+              href={`/api/settings/bot-audit-logs/${encodeURIComponent(run.audit_log)}/download`}
+              className="mt-0.5 inline-block text-[11px] text-accent underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+            >
+              Download full-day audit trail
+            </a>
+          )}
         </td>
       </tr>
       {expandable && expanded && (

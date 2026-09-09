@@ -755,6 +755,11 @@ class BotRunRecord(BaseModel):
     detail: Optional[Dict[str, Any]] = None
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
+    #: Filename of the audit trail covering this run's trading day, when one was written.
+    #: Resolved per *day*, not per run: a day split across a dozen interrupted session rows
+    #: is one continuous record, and linking each fragment to its own slice would rebuild
+    #: exactly the fragmentation the trail exists to see past.
+    audit_log: Optional[str] = None
 
 
 class TradingCharges(BaseModel):

@@ -39,6 +39,8 @@ from icici_breeze_backend.app.domain.settings_api import (
     BreezeApiTesterInvokeResponse,
     StrategyBuilderAuditLogItem,
     StrategyBuilderAuditLogsResponse,
+    BotAuditLogItem,
+    BotAuditLogsResponse,
     StrategyBuilderAuditExplainabilityResponse,
     BreezeApiTesterRiskStatusResponse,
     ExchangeCalendarAddHolidayBody,
@@ -92,6 +94,7 @@ from icici_breeze_backend.app.services.portal_exchange_calendar import (
     fetch_console_exchange_calendar,
     portal_exchange_calendar_configured,
 )
+from icici_breeze_backend.audit import bot_audit
 from icici_breeze_backend.audit.strategy_builder_audit import (
     _MAX_AUDIT_LOGS_PER_USER,
     build_audit_zip_for_user,
@@ -977,6 +980,54 @@ async def download_strategy_builder_audit_log(
         path,
         media_type="application/json",
         filename=fname,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/bot-audit-logs", response_model=BotAuditLogsResponse)
+async def get_bot_audit_logs(ctx: RequestContext = Depends(get_request_context)):
+    """List retained scalping-bot audit files for the current user, newest first."""
+    rows = bot_audit.list_index_for_user(ctx.user_id)
+    return BotAuditLogsResponse(
+        user_id=ctx.user_id,
+        retention_days=bot_audit.RETENTION_DAYS,
+        logs=[BotAuditLogItem(**row) for row in rows],
+    )
+
+
+@router.get("/bot-audit-logs/download")
+async def download_bot_audit_logs(ctx: RequestContext = Depends(get_request_context)):
+    """Download every retained bot audit file as one ZIP."""
+    try:
+        payload, filename = bot_audit.build_zip_for_user(ctx.user_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/bot-audit-logs/{name}/download")
+async def download_bot_audit_log(
+    name: str, ctx: RequestContext = Depends(get_request_context)
+):
+    """Download one bot/day audit file as JSONL.
+
+    `resolve_file_for_user` re-derives the name from its parts before touching the disk, so
+    a traversal attempt resolves to nothing rather than escaping the audit directory.
+    """
+    path = bot_audit.resolve_file_for_user(name.strip(), ctx.user_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="Bot audit log not found")
+    return FileResponse(
+        path,
+        media_type="application/x-ndjson",
+        filename=os.path.basename(path),
         headers={"Cache-Control": "no-store"},
     )
 
