@@ -715,11 +715,23 @@ def _arm_exit(
     except ArmPreconditionError as e:
         # The position is open and unprotected. Say so loudly rather than reporting a
         # clean fire -- this is the single worst state this bot can leave behind.
-        result.error = f"Position is OPEN but its stop could not be armed: {e}"
-        result.reason_code = ReasonCode.EXIT_ARM_FAILED
+        _record_arm_failure(result, e)
         return None
     except Exception as e:  # noqa: BLE001
         _logger.exception("bot2: could not arm exit for %s", result.index_code)
-        result.error = f"Position is OPEN but its stop could not be armed: {e}"
-        result.reason_code = ReasonCode.EXIT_ARM_FAILED
+        _record_arm_failure(result, e)
         return None
+
+
+def _record_arm_failure(result: FireResult, e: Exception) -> None:
+    """Lead with the missing stop, but keep whatever came before it.
+
+    On a partial fill `execute_plan` has already recorded why the other leg was rejected.
+    Overwriting that would leave the user knowing a stop is missing but not which leg never
+    went on -- and the open position is a different shape from the one the bot planned.
+    """
+    message = f"Position is OPEN but its stop could not be armed: {e}"
+    if result.error:
+        message = f"{message}. Also: {result.error}"
+    result.error = message
+    result.reason_code = ReasonCode.EXIT_ARM_FAILED

@@ -535,6 +535,14 @@ def _fire(
             )
 
         ok = [r for r in results if r.ok]
+        # What the next bot in this sweep must treat as spent: every result that put orders
+        # on, not just the clean ones. A fill whose stop failed to arm, or a strangle with one
+        # leg rejected, still holds margin at the broker -- counting it as zero let a
+        # lower-priority bot size against capital that was already gone. For a partial fill
+        # `margin_total` is the planned figure and so overstates; that is the safe direction.
+        committed = round(
+            sum(float(r.margin_total or 0) for r in results if r.order_ids), 2
+        )
         detail = {
             "legs": [
                 {
@@ -571,22 +579,32 @@ def _fire(
                 reason_text=(first.error if first else "Nothing was traded."),
                 detail=detail,
             )
-            return 0.0
-        unprotected = [r for r in ok if r.rule_id is None]
+            return committed
+        # Judge the run by every result that reached the exchange, not only the clean ones.
+        # A clean NIFTY alongside a SENSEX whose stop failed is still an open, unprotected
+        # short; reporting that run as completed buried the SENSEX error in the leg detail.
+        placed = [r for r in results if r.order_ids]
+        unprotected = [r for r in placed if r.rule_id is None]
+        lines = []
+        for r in placed:
+            line = _describe(r)
+            if not r.ok:
+                line += f" — {r.error}"
+            elif r.rule_id is None:
+                line += " — WITHOUT a stop (see the Order Book)"
+            lines.append(line)
         repo.finish_run(
             run_id,
             status="completed" if not unprotected else "failed",
-            reason_code=ReasonCode.ORDERS_PLACED,
-            reason_text=(
-                "; ".join(
-                    _describe(r)
-                    for r in ok
-                )
-                + ("" if not unprotected else " — WITHOUT a stop; see the Order Book.")
+            reason_code=(
+                ReasonCode.EXIT_ARM_FAILED
+                if any(r.reason_code == ReasonCode.EXIT_ARM_FAILED for r in placed)
+                else ReasonCode.ORDERS_PLACED
             ),
+            reason_text="; ".join(lines),
             detail=detail,
         )
-        return round(sum(float(r.margin_total or 0) for r in ok), 2)
+        return committed
     except Exception:  # noqa: BLE001
         _logger.exception("bot2: fire failed for user=%s", user_id)
         repo.finish_run(

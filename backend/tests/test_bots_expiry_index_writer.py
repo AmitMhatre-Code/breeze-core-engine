@@ -191,7 +191,7 @@ def test_only_indices_expiring_today_are_traded():
 class FakeProc:
     def __init__(self, *, span_per_lot=120000.0, lot=75, bid=42.0, spot=24000.0,
                  verified=None, place_ok=True, strangle_margin_multiple=1.6,
-                 bid_by_right=None, orders=()):
+                 bid_by_right=None, orders=(), reject_rights=()):
         self.span_per_lot = span_per_lot
         self.lot = lot
         self.bid = bid
@@ -203,6 +203,8 @@ class FakeProc:
         self.strangle_margin_multiple = strangle_margin_multiple
         self.bid_by_right = bid_by_right or {}
         self.orders = list(orders)
+        # Rights the broker refuses, for a strangle that fills on one side only.
+        self.reject_rights = set(reject_rights)
         self.placed = []
 
     def bid_for(self, right):
@@ -241,7 +243,7 @@ class FakeProc:
     def place_order(self, user_id, product_type, stock_code, action, strike_price, right,
                     price, expiry_date, quantity, exchange_code=cfg.NFO, aggressive_limit=False):
         self.placed.append({"quantity": quantity, "price": price, "right": right})
-        if not self.place_ok:
+        if not self.place_ok or right in self.reject_rights:
             return {"Status": 400, "Error": "Rejected"}
         return {"Status": 200, "Success": {"order_id": f"OID{len(self.placed)}"}}
 
@@ -680,3 +682,37 @@ def test_a_strangle_books_only_when_both_legs_are_cheap(monkeypatch, patch_chain
 
     assert result.strategy == "short_strangle"
     assert captured["target_option_price"] == pytest.approx(20.0)  # min(40, 60) x 50%
+
+
+def test_a_partial_fill_whose_stop_fails_keeps_both_reasons(monkeypatch, patch_chain):
+    """One leg on, one refused, and then no stop: the user needs all three facts.
+
+    The stop failure used to overwrite the leg rejection, so the log said a stop was missing
+    without saying the position was only half the strangle the bot had planned.
+    """
+    captured = {}
+    _stub_arming(monkeypatch, captured)
+    proc = FakeProc(
+        span_per_lot=120000.0,
+        bid_by_right={cfg.CALL: 40.0, cfg.PUT: 60.0},
+        strangle_margin_multiple=1.1,
+        reject_rights={cfg.CALL},
+        orders=[{
+            "stock_code": "NIFTY",
+            "expiry_date": EXPIRY,
+            "strike_price": 23500.0,
+            "right": "Put",
+            "status": "Ordered",
+        }],
+    )
+    patch_chain(proc, strikes=BOTH_SIDES)
+
+    result = _fire_with(proc, ["short_strangle"])
+
+    assert result.strategy == "short_strangle"
+    assert result.order_ids, "the put side filled"
+    assert result.rule_id is None
+    assert result.reason_code == ReasonCode.EXIT_ARM_FAILED
+    # The urgent fact leads; the rejection that explains the lopsided position follows.
+    assert result.error.startswith("Position is OPEN but its stop could not be armed")
+    assert "Also: Rejected" in result.error

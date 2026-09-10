@@ -13,6 +13,7 @@ import pytest
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.bots_migrate import (
     BOT_EXPIRY_INDEX_WRITER,
+    BOT_HOLDINGS_WRITER,
     ensure_bots_tables,
 )
 from icici_breeze_backend.app.domain.bots import IndexWriterLeg, ReasonCode
@@ -194,6 +195,118 @@ def test_a_filled_position_whose_stop_failed_is_not_logged_as_a_rejection(db, mo
     # The filled legs stay on the record: it is the only place the user can see what is
     # actually open while the headline says the run failed.
     assert run.detail["legs"][0]["order_ids"] == ["OID1"]
+
+
+@pytest.mark.parametrize(
+    "reason_code, error",
+    [
+        (ReasonCode.EXIT_ARM_FAILED, "Position is OPEN but its stop could not be armed: x"),
+        (ReasonCode.ORDER_REJECTED, "Partially placed (1 order(s)): Rejected"),
+    ],
+    ids=["stop_failed", "partial_fill"],
+)
+def test_margin_held_by_a_failed_fire_is_still_passed_to_the_next_bot(
+    db, monkeypatch, reason_code, error
+):
+    """Anything that reached the exchange holds margin, whether or not the run was clean.
+
+    Both shapes here are `failed` runs, and both used to hand the next bot in the sweep a
+    commitment of zero -- so with the Expiry Writer ordered first, the Holdings Writer sized
+    against capital a live short was already using.
+    """
+    enable_bot()
+    repo.update_bot("u1", BOT_EXPIRY_INDEX_WRITER, priority=1)
+    repo.update_bot("u1", BOT_HOLDINGS_WRITER, enabled=True, priority=2)
+    patch_decision(monkeypatch, bot2.TickDecision("fire", None, None, ("NIFTY",)))
+    result = bot2.FireResult(
+        index_code="NIFTY", exchange_code=cfg.NFO, expiry_display="03-Sep-2026",
+        right="put", strike_price=23500.0, lots=2, quantity=150, entry_price=42.0,
+        order_ids=["OID1"], rule_id=None, margin_total=250_000.0,
+        reason_code=reason_code, error=error,
+    )
+    monkeypatch.setattr(bot2, "fire_index", lambda *a, **k: result)
+
+    handed_on = []
+
+    def holdings(*a, margin_committed, **k):
+        handed_on.append(margin_committed)
+        return 0.0
+
+    monkeypatch.setattr(scheduler, "_tick_holdings_writer", holdings)
+
+    scheduler.tick(FakeProc())
+
+    assert repo.list_runs("u1")[0].status == "failed"
+    assert handed_on == [250_000.0]
+
+
+def test_a_fire_that_placed_nothing_commits_nothing(db, monkeypatch):
+    """The other side of the same rule: a clean rejection holds no margin, so the next bot
+    must get the full amount rather than a phantom deduction."""
+    enable_bot()
+    repo.update_bot("u1", BOT_EXPIRY_INDEX_WRITER, priority=1)
+    repo.update_bot("u1", BOT_HOLDINGS_WRITER, enabled=True, priority=2)
+    patch_decision(monkeypatch, bot2.TickDecision("fire", None, None, ("NIFTY",)))
+    result = bot2.FireResult(
+        index_code="NIFTY", exchange_code=cfg.NFO, expiry_display="03-Sep-2026",
+        right="put", margin_total=250_000.0,
+        reason_code=ReasonCode.ORDER_REJECTED, error="Rejected",
+    )
+    monkeypatch.setattr(bot2, "fire_index", lambda *a, **k: result)
+
+    handed_on = []
+
+    def holdings(*a, margin_committed, **k):
+        handed_on.append(margin_committed)
+        return 0.0
+
+    monkeypatch.setattr(scheduler, "_tick_holdings_writer", holdings)
+
+    scheduler.tick(FakeProc())
+
+    assert handed_on == [0.0]
+
+
+def test_one_clean_index_cannot_mask_another_left_without_a_stop(db, monkeypatch):
+    """Two indices expiring together: NIFTY fires and arms cleanly, SENSEX fills but its
+    stop fails. The run used to be judged on the clean results alone, so it read as
+    `completed` / `orders_placed` while a SENSEX short sat open with nothing behind it --
+    the one state the run log exists to make impossible to miss."""
+    both = {
+        "NIFTY": IndexWriterLeg(enabled=True, priority=1).model_dump(),
+        "BSESEN": IndexWriterLeg(enabled=True, priority=2).model_dump(),
+    }
+    enable_bot(indices=both)
+    patch_decision(
+        monkeypatch,
+        bot2.TickDecision("fire", None, None, ("NIFTY", "BSESEN")),
+        expiring={"NIFTY": "03-Sep-2026", "BSESEN": "03-Sep-2026"},
+    )
+    by_index = {
+        "NIFTY": bot2.FireResult(
+            index_code="NIFTY", exchange_code=cfg.NFO, expiry_display="03-Sep-2026",
+            right="put", strike_price=23500.0, lots=2, quantity=150, entry_price=42.0,
+            order_ids=["OID1"], rule_id="rule-1",
+        ),
+        "BSESEN": bot2.FireResult(
+            index_code="BSESEN", exchange_code=cfg.BFO, expiry_display="03-Sep-2026",
+            right="put", strike_price=80000.0, lots=1, quantity=20, entry_price=90.0,
+            order_ids=["OID2"], rule_id=None,
+            reason_code=ReasonCode.EXIT_ARM_FAILED,
+            error="Position is OPEN but its stop could not be armed: engine down",
+        ),
+    }
+    monkeypatch.setattr(bot2, "fire_index", lambda proc, user_id, code, **k: by_index[code])
+
+    scheduler.tick(FakeProc())
+    run = repo.list_runs("u1")[0]
+
+    assert run.status == "failed"
+    assert run.reason_code == ReasonCode.EXIT_ARM_FAILED
+    # Both positions are named in the headline: what is protected and what is not.
+    assert "NIFTY 23500 PE" in run.reason_text
+    sensex = bot2.INDEX_LABEL.get("BSESEN", "BSESEN")
+    assert f"{sensex} 80000 PE — Position is OPEN but its stop could not be armed" in run.reason_text
 
 
 def test_a_margin_cap_miss_is_a_skip_not_a_failure(db, monkeypatch):
