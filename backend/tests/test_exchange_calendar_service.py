@@ -73,6 +73,25 @@ def test_open_window_boundaries(hour, minute, open_):
     assert mc.is_market_open(dt) is open_
 
 
+@pytest.mark.parametrize(
+    "hour,minute,opened",
+    [
+        (8, 0, False),
+        (9, 14, False),
+        (9, 15, True),
+        (15, 30, True),  # stays true after the close, unlike is_market_open
+        (23, 59, True),
+    ],
+)
+def test_has_market_opened_boundaries(hour, minute, opened):
+    assert mc.has_market_opened(_ist(2026, 6, 25, hour, minute)) is opened
+
+
+def test_has_market_opened_is_false_on_holidays_and_weekends():
+    assert mc.has_market_opened(_ist(2026, 6, 26, 10, 0)) is False  # Muharram
+    assert mc.has_market_opened(_ist(2026, 6, 27, 10, 0)) is False  # Saturday
+
+
 # Thursday 2026-06-25: regular trading day.
 # Friday 2026-06-26: exchange holiday (Muharram).
 # Saturday 2026-06-27: weekend.

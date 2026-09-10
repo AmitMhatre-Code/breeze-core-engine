@@ -636,6 +636,14 @@ def _service_feed_for_the_session() -> None:
     _ensure_feed(user_id)
 
 
+def _market_has_opened() -> bool:
+    """Has today's trading session started? Stays true after the close, so a bot still
+    finishing its day -- finalising the run, a square-off set at the close -- is not cut off."""
+    from icici_breeze_backend.app.services.market_calendar import has_market_opened
+
+    return has_market_opened(now_ist())
+
+
 def _exit_only_bots(armed: set[tuple[str, str]]) -> list[tuple[str, str]]:
     """Bots holding a real position that the user has since switched off.
 
@@ -661,6 +669,13 @@ def tick() -> None:
     switched off, which is ticked for its exits alone.
     """
     _service_feed_for_the_session()
+
+    # Nothing is ticked before the open. A pass opens the day's session run whatever the
+    # verdict, so a deployment powered on at 08:00 showed its scalpers running from 08:00
+    # with an hour and a half of "outside every session window" behind them. Exit-only bots
+    # wait too: no exit can be placed before the open anyway.
+    if not _market_has_opened():
+        return
 
     armed: set[tuple[str, str]] = set()
     for bot_type in SCALPER_BOT_TYPES:

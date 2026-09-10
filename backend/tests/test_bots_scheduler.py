@@ -28,6 +28,9 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setattr(repo, "_db_path", lambda: path)
     ensure_bots_tables(path)
     monkeypatch.setattr(scheduler, "_last_nag", {})
+    # The sweep reads the real wall clock; pin it inside the session so these tests do not
+    # depend on what time of day the suite happens to run.
+    monkeypatch.setattr(scheduler, "_market_has_opened", lambda: True)
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.deployment_license_status.trading_mutations_allowed",
         lambda: True,
@@ -114,6 +117,51 @@ def test_a_nag_is_sent_and_rate_limited_by_the_decision_layer(db, monkeypatch):
     # A nag is not a resolution -- the day must stay open so the bot can still fire.
     assert repo.list_runs("u1") == []
     assert scheduler._last_nag["u1"] is not None
+
+
+def test_nothing_is_logged_before_the_open(db, monkeypatch):
+    """A deployment powered on at 08:00 logged the day's skip at 08:00."""
+    enable_bot()
+    monkeypatch.setattr(scheduler, "_market_has_opened", lambda: False)
+    patch_decision(
+        monkeypatch,
+        bot2.TickDecision("skip", ReasonCode.NOT_AN_EXPIRY_DAY, "No expiry today."),
+    )
+    scheduler.tick(FakeProc())
+    assert repo.list_runs("u1") == []
+
+    # ...and is logged on the first sweep after the open.
+    monkeypatch.setattr(scheduler, "_market_has_opened", lambda: True)
+    scheduler.tick(FakeProc())
+    assert [r.reason_code for r in repo.list_runs("u1")] == [ReasonCode.NOT_AN_EXPIRY_DAY]
+
+
+def test_nothing_fires_before_the_open(db, monkeypatch):
+    enable_bot(entry_time_ist="08:30")
+    monkeypatch.setattr(scheduler, "_market_has_opened", lambda: False)
+    fired = []
+    monkeypatch.setattr(bot2, "fire_index", lambda *a, **k: fired.append(1))
+    patch_decision(monkeypatch, bot2.TickDecision("fire", None, None, ("NIFTY",)))
+    scheduler.tick(FakeProc())
+    assert fired == []
+    assert repo.list_runs("u1") == []
+
+
+def test_the_login_nag_still_goes_out_before_the_open(db, monkeypatch):
+    """The nag exists to get the user logged in before the entry time, so it is exempt."""
+    enable_bot()
+    monkeypatch.setattr(scheduler, "_market_has_opened", lambda: False)
+    sent = []
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.telegram_alerts.notify_bot_needs_login",
+        lambda user_id, text: sent.append((user_id, text)),
+    )
+    patch_decision(
+        monkeypatch,
+        bot2.TickDecision("nag", ReasonCode.NO_BROKER_SESSION, "Log in please.", ("NIFTY",)),
+    )
+    scheduler.tick(FakeProc(session=False))
+    assert sent == [("u1", "Log in please.")]
 
 
 def test_read_only_mode_blocks_the_fire_with_its_own_reason(db, monkeypatch):

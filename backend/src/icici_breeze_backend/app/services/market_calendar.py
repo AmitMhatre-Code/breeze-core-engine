@@ -99,6 +99,25 @@ def is_market_open(now: datetime | None = None) -> bool:
     return cal.open_time(dt) <= dt < cal.close_time(dt)
 
 
+def has_market_opened(now: datetime | None = None) -> bool:
+    """True from today's open until midnight, on a trading day.
+
+    Deliberately not `is_market_open`: this answers "has the trading day started", so it
+    stays true after the close. The bots gate on it -- nothing may start before the open,
+    but a bot that is mid-way through its day (finalising its run, a square-off set at the
+    close) must not be cut off at 15:30.
+    """
+    if now is None:
+        override = _market_hours_override()
+        if override is not None:
+            return override
+    cal = get_calendar_config()
+    dt = (now or datetime.now(IST)).astimezone(IST)
+    if dt.weekday() >= 5 or cal.is_holiday(dt.date()):
+        return False
+    return dt >= cal.open_time(dt)
+
+
 def market_closed_reason(now: datetime | None = None) -> str:
     """Human-readable reason the market is closed at the given IST instant."""
     if now is None:

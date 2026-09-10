@@ -96,6 +96,13 @@ def _has_session(proc: Any, user_id: str) -> bool:
         return False
 
 
+def _market_has_opened() -> bool:
+    """Has today's trading session started? Nothing but the login nag may happen before it."""
+    from icici_breeze_backend.app.services.market_calendar import has_market_opened
+
+    return has_market_opened()
+
+
 def tick(proc: Any) -> None:
     """One sweep. Safe to call directly in tests.
 
@@ -229,6 +236,10 @@ def _tick_holdings_writer(
         notify_bot_needs_login(user_id, decision.reason_text or "")
         return 0.0
 
+    # Before the open only the nag above may run -- see `_tick_index_writer`.
+    if not _market_has_opened():
+        return 0.0
+
     if decision.action == "skip":
         _log_skip(
             user_id,
@@ -353,6 +364,13 @@ def _tick_index_writer(
         from icici_breeze_backend.app.services.telegram_alerts import notify_bot_needs_login
 
         notify_bot_needs_login(user_id, decision.reason_text or "")
+        return 0.0
+
+    # Nothing that writes happens before the open. A deployment powered on at 08:00 used to
+    # log the day's skip ("No NIFTY or SENSEX expiry today") at 08:00, and an entry time set
+    # earlier than the open would have fired into a closed market. The login nag above is
+    # exempt on purpose: it exists to get the user logged in *before* the entry time.
+    if not _market_has_opened():
         return 0.0
 
     if decision.action == "skip":

@@ -253,6 +253,10 @@ def feed(monkeypatch):
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_market_open", lambda now=None: True
     )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.has_market_opened",
+        lambda now=None: True,
+    )
     monkeypatch.setattr(runtime, "_feed_owner", lambda: USER)
     monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 8, 10, 0))
     return fake
@@ -367,6 +371,27 @@ def test_the_feed_stays_quiet_on_a_holiday(db_path, feed, decisions, monkeypatch
     )
     runtime.tick()
     assert feed.subscribes == []
+
+
+def test_no_bot_is_ticked_before_the_open(armed, feed, decisions, monkeypatch):
+    """A deployment powered on at 08:00 showed its scalpers running from 08:00, because a
+    pass opens the day's session run whatever the verdict."""
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.has_market_opened",
+        lambda now=None: False,
+    )
+    runtime.tick()
+    assert decisions == []
+
+
+def test_bots_keep_ticking_after_the_close(armed, feed, decisions, monkeypatch):
+    """The gate is "has the day started", not "is the market open": a bot finishing its day
+    after 15:30 still has to finalise its run."""
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open", lambda now=None: False
+    )
+    runtime.tick()
+    assert decisions == [(USER, BOT_MOMENTUM_LONG_SCALPER)]
 
 
 def test_no_broker_session_means_nothing_to_subscribe_with(db_path, feed, monkeypatch):
