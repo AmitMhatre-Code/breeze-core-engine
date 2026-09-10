@@ -389,9 +389,31 @@ def _format_proposal_message(bot_type: str, proposal: Any, deadline: str) -> str
     lines += [
         "",
         f"_Valid until {deadline}. Nothing is placed unless you approve._",
-        "_Prices are re-checked at approval — if they have moved, nothing goes out._",
+        _price_move_note(bot_type),
     ]
     return "\n".join(lines)
+
+
+def _price_move_note(bot_type: str) -> str:
+    """What a tap does if the market has moved since the proposal was priced.
+
+    The two bots genuinely differ, and the message has to say which: Bot 1 refuses on a
+    material drop in the bid, Bot 2 re-derives its whole plan from the live spot and places
+    that. A single "if prices move, nothing goes out" line was true of neither.
+    """
+    if bot_type == "expiry_index_writer":
+        return (
+            "_Approving places the trade at live prices. The plan is rebuilt from the current "
+            "spot when you tap, so strikes, premiums, lot size and even the strategy can differ "
+            "from what is shown here. The confirmation lists exactly what went out._"
+        )
+    from icici_breeze_backend.app.services.bots.proposals import MATERIAL_DRIFT_PCT
+
+    return (
+        "_Prices are re-checked when you tap. If any premium has fallen "
+        f"{MATERIAL_DRIFT_PCT:g}% or more, or a strike is no longer available, nothing is "
+        "placed and a fresh proposal follows. Smaller moves go through at the new price._"
+    )
 
 
 def _approval_keyboard(token: str, app_url: str) -> dict[str, Any]:
