@@ -146,7 +146,7 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
   const { data: eligibility } = useLiveEligibility(bot.bot_type);
   // Cycles are read even when the bot is Off: a real position outlives the switch that
   // opened it, and the card has to be able to say so.
-  const { data: cycles } = useTodaysCycles(bot.bot_type, true);
+  const { data: cycles } = useTodaysCycles(bot.bot_type, true, bot.enabled);
   const { data: todaysRun } = useTodaysRun(bot.bot_type, bot.enabled);
   const feed = describeFeed(todaysRun?.detail ?? null);
 

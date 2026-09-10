@@ -556,6 +556,8 @@ def execute(
     if decision.action != "enter":
         return
 
+    # Backstop only. The driver already turns this gate into the pass's verdict
+    # (`runtime._entry_hold`), so an `enter` should never arrive here while it is closed.
     totals = repo.scalper_day_totals(user_id, bot_type)
     blocked = reentry_blocked(
         config, now=now, last_closed_at=totals.last_closed_at, candles=candles

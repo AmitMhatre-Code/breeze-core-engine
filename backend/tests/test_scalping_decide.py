@@ -222,3 +222,29 @@ def test_bot4_flattens_when_its_window_closes_but_bot3_does_not():
         _snap(has_open_position=True, now_ist=_at("12:00"), exit_at_window_end=False), CFG
     )
     assert long_.action == "idle"
+
+
+# --- bot-specific entry holds ----------------------------------------------------------
+
+_HOLD = (ReasonCode.REENTRY_GATE_CLOSED, "5 of 15 cooldown minutes elapsed since the last fly closed.")
+
+
+def test_an_entry_hold_is_a_recorded_verdict_not_gates_clear():
+    """Bot 4's re-entry wait used to surface as `gates_clear`; it must say it is waiting."""
+    d = decide(_snap(now_ist=_at("12:00"), entry_hold=_HOLD), FLY)
+    assert d.action == "idle"
+    assert d.reason_code == ReasonCode.REENTRY_GATE_CLOSED
+    assert "cooldown" in d.reason_text
+
+
+def test_an_entry_hold_never_blocks_an_exit():
+    d = decide(
+        _snap(
+            has_open_position=True,
+            now_ist=_at("12:00"),
+            position_exit=(ReasonCode.TRAILING_STOP, "Trailed out."),
+            entry_hold=_HOLD,
+        ),
+        FLY,
+    )
+    assert d.action == "exit" and d.reason_code == ReasonCode.TRAILING_STOP

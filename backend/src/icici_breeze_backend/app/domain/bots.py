@@ -114,6 +114,11 @@ class ReasonCode:
     QUOTE_UNAVAILABLE = "quote_unavailable"
     MARGIN_LOOKUP_FAILED = "margin_lookup_failed"
     ORDER_REJECTED = "order_rejected"
+    # Orders FILLED, but the exit rule that protects them did not arm. The opposite of
+    # ORDER_REJECTED in every way that matters to the reader: there is a live position,
+    # money is at risk, and it needs a stop set by hand. Reporting it as a rejection told
+    # the user nothing had happened while a naked short sat open.
+    EXIT_ARM_FAILED = "exit_arm_failed"
     BROKER_ERROR = "broker_error"
     RATE_LIMITED = "rate_limited"
     INTERNAL_ERROR = "internal_error"

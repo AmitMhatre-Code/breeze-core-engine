@@ -191,7 +191,7 @@ def test_only_indices_expiring_today_are_traded():
 class FakeProc:
     def __init__(self, *, span_per_lot=120000.0, lot=75, bid=42.0, spot=24000.0,
                  verified=None, place_ok=True, strangle_margin_multiple=1.6,
-                 bid_by_right=None):
+                 bid_by_right=None, orders=()):
         self.span_per_lot = span_per_lot
         self.lot = lot
         self.bid = bid
@@ -202,6 +202,7 @@ class FakeProc:
         # leg -- which is exactly what gives it a fair shot in the yield ranking.
         self.strangle_margin_multiple = strangle_margin_multiple
         self.bid_by_right = bid_by_right or {}
+        self.orders = list(orders)
         self.placed = []
 
     def bid_for(self, right):
@@ -244,8 +245,38 @@ class FakeProc:
             return {"Status": 400, "Error": "Rejected"}
         return {"Status": 200, "Success": {"order_id": f"OID{len(self.placed)}"}}
 
+    def get_orders(self, user_id, start, end, *, exchange_codes=None):
+        """The Processor's order-book shape, NOT BreezeConnect's.
+
+        The arm guard reads the order book through this method, and the bot must hand it
+        the Processor to reach it -- `BreezeConnect` only has the raw `get_order_list`.
+        Modelling it here is what makes that a test failure rather than a live position
+        left without a stop.
+        """
+        return {"Status": 200, "Error": None, "Success": list(self.orders)}
+
     def get_session_breeze(self, user_id):
-        return self
+        """A BreezeConnect-shaped object, deliberately NOT the Processor.
+
+        The fake used to return `self` here, which quietly made the two interchangeable and
+        hid a real bug: code that reached for a Processor method through the session object
+        passed the tests and then raised AttributeError against the live SDK.
+        """
+        return FakeSession(self)
+
+
+class FakeSession:
+    """The subset of `BreezeConnect` this bot actually touches.
+
+    Anything absent here is absent from the real SDK too -- `get_orders` above all, which
+    belongs to the Processor. Reaching for it must fail in a test, not in production.
+    """
+
+    def __init__(self, proc):
+        self._proc = proc
+
+    def margin_calculator(self, payload, exchange_code=cfg.NFO):
+        return self._proc.margin_calculator(payload, exchange_code=exchange_code)
 
 
 @pytest.fixture
@@ -479,6 +510,59 @@ def test_booking_the_whole_premium_arms_no_profit_target(monkeypatch, patch_chai
     assert captured["loss_limit_pnl"] > 0
 
 
+def test_the_arm_guard_is_reached_through_the_processor(patch_chain, monkeypatch):
+    """Regression: the guard used to be handed `proc.get_session_breeze(...)`.
+
+    `BreezeConnect` has no `get_orders`, so every Full-Auto fire raised AttributeError
+    inside the arm and left a live short position with no stop behind it -- reported as a
+    fired trade plus an error line, which is the worst possible pairing. The other arming
+    tests stubbed the guard out, so nothing caught it.
+    """
+    captured = {}
+    _stub_arming(monkeypatch, captured)
+    proc = FakeProc(span_per_lot=120000.0, bid=42.0)
+    patch_chain(proc)
+
+    result = fire(proc)
+
+    assert result.rule_id == "rule-1"
+    assert result.error is None
+    assert captured, "the guard must let a clean order book through to the arm"
+
+
+def test_a_working_order_blocks_the_arm_and_names_the_position_as_unprotected(
+    patch_chain, monkeypatch
+):
+    """The guard's own refusal must surface the same way an engine failure does -- the
+    orders are filled either way, so a blocked arm is still an open, unprotected position."""
+    captured = {}
+    _stub_arming(monkeypatch, captured)
+    proc = FakeProc(
+        span_per_lot=120000.0,
+        bid=42.0,
+        orders=[{
+            "stock_code": "NIFTY",
+            "expiry_date": EXPIRY,
+            "strike_price": 23500.0,
+            "right": "Call",
+            "status": "Ordered",
+        }],
+    )
+    patch_chain(proc)
+
+    result = fire(proc)
+
+    assert result.rule_id is None
+    assert captured == {}, "nothing may be armed while an order is still working"
+    # NOT order_rejected: the orders filled. The two outcomes demand opposite responses --
+    # one needs nothing, the other needs a stop set by hand right now -- so they must never
+    # share a code in the run log.
+    assert result.reason_code == ReasonCode.EXIT_ARM_FAILED
+    assert result.order_ids, "the legs are filled; only the stop is missing"
+    assert "could not be armed" in result.error
+    assert "NIFTY 23500 CE" in result.error
+
+
 def _stub_arming(monkeypatch, captured):
     def fake_arm(user_id, **kw):
         captured.update(kw)
@@ -495,10 +579,6 @@ def _stub_arming(monkeypatch, captured):
 
     monkeypatch.setattr(
         "icici_breeze_backend.app.repositories.squareoff_rules.arm_rule", fake_arm
-    )
-    monkeypatch.setattr(
-        "icici_breeze_backend.app.services.strategy_group_arm_guard.assert_can_arm",
-        lambda *a, **k: None,
     )
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.portfolio_pnl_engine.set_group_rule",

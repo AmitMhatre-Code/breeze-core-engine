@@ -78,6 +78,12 @@ class Snapshot:
     # stand-down -- instead of an early `return` visible only in a DEBUG log. A quiet day
     # that produced no trades has to be able to say which quiet day it was.
     signal: Optional["SignalResult"] = None
+    # A bot-specific hold on a *fresh* entry, as (reason_code, reason_text). Gathered by the
+    # driver for the same reason as `signal`: Bot 4's re-entry gate (a cooldown since the last
+    # fly closed, then a settled spot range) used to be checked inside the executor, so every
+    # held pass was recorded as `enter / gates_clear` and a fifteen-minute wait read as a bot
+    # trying and failing to trade hundreds of times. `None` means nothing is holding it.
+    entry_hold: Optional[tuple[str, str]] = None
 
 
 @dataclass(frozen=True)
@@ -294,6 +300,10 @@ def _decide_entry(snapshot: Snapshot, config: Any) -> Decision:
             f"Gates clear, but no entry signal: {snapshot.signal.reason}",
             dict(snapshot.signal.values or {}),
         )
+
+    if snapshot.entry_hold is not None:
+        code, text = snapshot.entry_hold
+        return Decision("idle", code, text)
 
     # Everything shared is satisfied. What to buy is the bot-specific layer's call.
     return Decision("enter", "gates_clear", "All entry gates clear.")

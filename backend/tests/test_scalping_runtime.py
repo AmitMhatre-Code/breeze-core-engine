@@ -12,10 +12,16 @@ import os
 import pytest
 
 from icici_breeze_backend.app.db.bots_migrate import (
+    BOT_IRON_FLY_SCALPER,
     BOT_MOMENTUM_LONG_SCALPER,
     ensure_bots_tables,
 )
-from icici_breeze_backend.app.domain.bots import MomentumLongScalperConfig, ReasonCode
+from icici_breeze_backend.app.domain.bots import (
+    IronFlyScalperConfig,
+    MomentumLongScalperConfig,
+    ReasonCode,
+    ScalperDayTotals,
+)
 from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.app.services.bots.scalping import runtime
 from icici_breeze_backend.app.services.bots.scalping.decide import FeedHealth
@@ -544,3 +550,42 @@ def test_an_audit_write_failure_does_not_stop_the_bot(db_path, stubbed, monkeypa
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db locked")),
     )
     assert runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+
+
+def _fly_at_noon(monkeypatch):
+    """Inside Bot 4's 11:30-13:30 window, with its executor inert."""
+    monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 8, 12, 0))
+    monkeypatch.setattr(runtime.iron_fly_bot, "execute", lambda *a, **k: None)
+
+
+def test_the_iron_fly_reentry_wait_is_a_recorded_verdict(db_path, stubbed, monkeypatch):
+    """The wait after a stop-loss must read as a wait on the run row, not as `gates_clear`.
+
+    Checked only inside the executor, every held pass was published as `enter / gates_clear`
+    -- one paper day logged 558 of them for two actual entries.
+    """
+    _fly_at_noon(monkeypatch)
+    monkeypatch.setattr(
+        repo, "scalper_day_totals",
+        lambda *a, **k: ScalperDayTotals(last_closed_at="2026-09-08 11:55:00"),
+    )
+    decision = runtime.tick_bot(USER, BOT_IRON_FLY_SCALPER, IronFlyScalperConfig())
+
+    assert decision.action == "idle"
+    assert decision.reason_code == ReasonCode.REENTRY_GATE_CLOSED
+    run = repo.list_runs(USER, bot_type=BOT_IRON_FLY_SCALPER)[0]
+    assert run.reason_code == ReasonCode.REENTRY_GATE_CLOSED
+    assert "cooldown" in (run.reason_text or "")
+
+
+def test_a_failed_reentry_check_holds_the_entry(db_path, stubbed, monkeypatch):
+    """Fail closed: a check that cannot run must not wave a fresh fly through."""
+    _fly_at_noon(monkeypatch)
+    monkeypatch.setattr(
+        runtime.iron_fly_bot, "reentry_blocked",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("feed gone")),
+    )
+    decision = runtime.tick_bot(USER, BOT_IRON_FLY_SCALPER, IronFlyScalperConfig())
+
+    assert decision.action == "idle"
+    assert decision.reason_code == ReasonCode.REENTRY_GATE_CLOSED

@@ -275,11 +275,18 @@ export function useBotCycles(runId: string | null, enabled = true) {
   });
 }
 
-/** Today's cycles for one bot, for the card's counters. */
-export function useTodaysCycles(botType: BotType, enabled = true) {
+/** Today's cycles for one bot, for the card's counters.
+ *
+ *  Polled on `useTodaysRun`'s minute cadence while the bot is armed (`poll`) or still holding
+ *  a position. Without it "Cycles today" and Net P&L froze at whatever the page loaded with —
+ *  window-focus refetch is off app-wide — so a bot that traded all morning read 0 cycles
+ *  beside a verdict that was updating live. */
+export function useTodaysCycles(botType: BotType, enabled = true, poll = false) {
   return useQuery({
     queryKey: ["bots", "cycles", "today", botType],
     enabled,
+    refetchInterval: (query) =>
+      poll || (query.state.data ?? []).some((c) => c.closed_at === null) ? 60_000 : false,
     queryFn: ({ signal }) =>
       apiClient.get<BotCycle[]>(`/bots/cycles?bot_type=${botType}&limit=500`, signal),
     select: (cycles: BotCycle[]) => {

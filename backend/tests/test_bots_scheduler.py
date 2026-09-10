@@ -167,6 +167,35 @@ def test_a_position_left_without_a_stop_is_never_a_clean_success(db, monkeypatch
     assert "WITHOUT a stop" in run.reason_text
 
 
+def test_a_filled_position_whose_stop_failed_is_not_logged_as_a_rejection(db, monkeypatch):
+    """The run log has to tell these two apart at a glance.
+
+    A rejection means nothing happened and nothing is owed. This means the legs are live,
+    money is at risk, and a stop has to be set by hand -- and it was reading as
+    `order_rejected`, the code for the harmless one, while a naked short sat open.
+    """
+    enable_bot()
+    patch_decision(monkeypatch, bot2.TickDecision("fire", None, None, ("NIFTY",)))
+    result = bot2.FireResult(
+        index_code="NIFTY", exchange_code=cfg.NFO, expiry_display="03-Sep-2026",
+        right="put", strike_price=23500.0, lots=2, quantity=150, entry_price=42.0,
+        order_ids=["OID1"], rule_id=None,
+        reason_code=ReasonCode.EXIT_ARM_FAILED,
+        error="Position is OPEN but its stop could not be armed: engine down",
+    )
+    monkeypatch.setattr(bot2, "fire_index", lambda *a, **k: result)
+
+    scheduler.tick(FakeProc())
+    run = repo.list_runs("u1")[0]
+    assert run.status == "failed"
+    assert run.reason_code == ReasonCode.EXIT_ARM_FAILED
+    assert run.reason_code != ReasonCode.ORDER_REJECTED
+    assert "could not be armed" in run.reason_text
+    # The filled legs stay on the record: it is the only place the user can see what is
+    # actually open while the headline says the run failed.
+    assert run.detail["legs"][0]["order_ids"] == ["OID1"]
+
+
 def test_a_margin_cap_miss_is_a_skip_not_a_failure(db, monkeypatch):
     """Declining to trade because one lot is unaffordable is correct behaviour."""
     enable_bot()

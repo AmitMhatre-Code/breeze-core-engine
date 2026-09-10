@@ -191,6 +191,7 @@ def build_snapshot(
         unrealized_pnl=float(unrealized),
         entries_suspended=bool(entries_suspended),
         signal=_entry_signal(bot_type, config),
+        entry_hold=_entry_hold(bot_type, config, now, totals, has_open_position=bool(open_cycles)),
     )
 
 
@@ -211,6 +212,31 @@ def _entry_signal(bot_type: str, config: Any) -> Any:
     except Exception:  # noqa: BLE001 -- a signal failure must not stop the gate stack
         _logger.exception("scalping[%s]: signal evaluation failed", bot_type)
         return None
+
+
+def _entry_hold(
+    bot_type: str, config: Any, now: Any, totals: Any, *, has_open_position: bool
+) -> Optional[tuple[str, str]]:
+    """Bot 4's re-entry gate as a verdict input, or None.
+
+    Evaluated here for the reason `_entry_signal` is: checked only inside the executor, a held
+    pass was published as `enter / gates_clear` and the wait after every stop-loss looked like
+    a bot failing to trade. Irrelevant while a fly is open -- that pass is about exits.
+
+    Fails closed: a check that cannot run holds the entry rather than waving it through.
+    """
+    if bot_type != BOT_IRON_FLY_SCALPER or has_open_position:
+        return None
+    try:
+        return iron_fly_bot.reentry_blocked(
+            config,
+            now=now,
+            last_closed_at=totals.last_closed_at,
+            candles=futures_feed.get_feed().builder.candles,
+        )
+    except Exception:  # noqa: BLE001 -- a failed check must not stop the gate stack
+        _logger.exception("scalping[%s]: re-entry check failed", bot_type)
+        return (ReasonCode.REENTRY_GATE_CLOSED, "Re-entry check failed; holding off.")
 
 
 def _is_expiry_day(config: Any) -> bool:

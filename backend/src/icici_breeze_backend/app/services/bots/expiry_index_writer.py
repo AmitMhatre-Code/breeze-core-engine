@@ -680,8 +680,10 @@ def _arm_exit(
     )
 
     try:
-        breeze = proc.get_session_breeze(user_id)
-        assert_can_arm(breeze, user_id, result.index_code, expiry_display)
+        # The Processor, not `proc.get_session_breeze(...)`: the guard reads the order book
+        # through `get_orders`, which chunks ICICI's 10-day window and merges exchanges.
+        # `BreezeConnect` itself only has the raw `get_order_list`.
+        assert_can_arm(proc, user_id, result.index_code, expiry_display)
         rule = sq_repo.arm_rule(
             user_id,
             stock_code=result.index_code,
@@ -714,10 +716,10 @@ def _arm_exit(
         # The position is open and unprotected. Say so loudly rather than reporting a
         # clean fire -- this is the single worst state this bot can leave behind.
         result.error = f"Position is OPEN but its stop could not be armed: {e}"
-        result.reason_code = ReasonCode.ORDER_REJECTED
+        result.reason_code = ReasonCode.EXIT_ARM_FAILED
         return None
     except Exception as e:  # noqa: BLE001
         _logger.exception("bot2: could not arm exit for %s", result.index_code)
         result.error = f"Position is OPEN but its stop could not be armed: {e}"
-        result.reason_code = ReasonCode.ORDER_REJECTED
+        result.reason_code = ReasonCode.EXIT_ARM_FAILED
         return None
