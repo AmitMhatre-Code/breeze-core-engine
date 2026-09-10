@@ -164,7 +164,7 @@ def refusal_text(bot_type: str) -> str:
     """Why `live` was refused, in the user's terms rather than the gate's."""
     del bot_type
     return (
-        "This bot has not yet completed a full paper trading day on these settings. "
-        "Leave it in Paper for one trading day, then review what it did before switching "
+        "This bot has not yet completed a full trading day in Simulation on these settings. "
+        "Leave it in Simulation for one trading day, then review what it did before switching "
         "to Live. Changing any setting that affects its P&L starts that over."
     )

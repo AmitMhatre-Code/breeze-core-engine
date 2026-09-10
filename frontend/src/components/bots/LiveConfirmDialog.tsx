@@ -73,7 +73,7 @@ export function LiveConfirmDialog({
         <p>
           <strong>{botTitle}</strong> will place <strong>real orders on the exchange</strong>,
           on its own, whenever its signal fires inside a session window — until you set it
-          back to Paper or Off. It does not ask before each trade.
+          back to Simulation or Off. It does not ask before each trade.
         </p>
 
         <div className="rounded-lg border border-border bg-panel2 p-3">
@@ -97,7 +97,7 @@ export function LiveConfirmDialog({
 
         <div>
           <p className="text-hint text-faint">
-            Paper evidence on these exact settings — changing any setting that affects P&amp;L
+            Simulation evidence on these exact settings — changing any setting that affects P&amp;L
             starts this over:
           </p>
           <ul className="mt-1.5 space-y-1">
@@ -130,7 +130,7 @@ export function LiveConfirmDialog({
             // A quiet day still satisfies the gate, and saying so is more honest than a
             // row of dashes the user has to interpret.
             <p className="mt-1.5 text-hint text-faint">
-              The paper day produced no completed cycles, so there is no P&amp;L record to
+              The simulation day produced no completed cycles, so there is no P&amp;L record to
               judge these settings on yet.
             </p>
           )}

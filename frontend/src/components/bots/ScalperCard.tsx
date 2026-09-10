@@ -43,7 +43,7 @@ type ScalperCardMode = "off" | "paper" | "live";
 
 const MODE_LABEL: Record<ScalperCardMode, string> = {
   off: "Off",
-  paper: "Paper",
+  paper: "Simulation",
   live: "Live",
 };
 
@@ -202,8 +202,8 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
   function setMode(next: ScalperCardMode) {
     if (next === mode) return;
     setError(null);
-    // Only the step INTO live is confirmed. Not Paper (which places nothing), not Off, and
-    // not Live → Paper — that is the user stepping back, and putting a dialog in front of it
+    // Only the step INTO live is confirmed. Not Simulation (which places nothing), not Off,
+    // and not Live → Simulation — that is the user stepping back, and putting a dialog in front of it
     // would train them to click through dialogs on this control.
     if (next === "live") {
       setConfirmLiveOpen(true);
@@ -270,7 +270,7 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
                     : "idle"
             }
             label={closingOut ? "Closing" : mode === "off" ? "Idle" : "Armed"}
-            badge={closingOut ? "Live position" : mode === "paper" ? "Paper" : undefined}
+            badge={closingOut ? "Live position" : mode === "paper" ? "Simulation" : undefined}
           />
           {/* Two lines reserved so the summary rows below line up with the writer cards'. */}
           <p className="line-clamp-2 min-h-[2lh] font-mono text-hint text-muted">

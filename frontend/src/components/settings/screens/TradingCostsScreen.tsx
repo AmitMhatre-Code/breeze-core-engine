@@ -53,8 +53,8 @@ const STATUTORY: FieldSpec[] = [
 ];
 
 const SIMULATION: FieldSpec[] = [
-  { key: "slippage_spread_fraction", label: "Paper slippage", suffix: "× spread", step: 0.05, max: 2,
-    hint: "Adverse on each leg. Paper mode and the backtest fill at the touch, which is optimistic; this is the correction. Does not affect live orders." },
+  { key: "slippage_spread_fraction", label: "Simulation slippage", suffix: "× spread", step: 0.05, max: 2,
+    hint: "Adverse on each leg. Simulation mode and the backtest fill at the touch, which is optimistic; this is the correction. Does not affect live orders." },
 ];
 
 function Group({

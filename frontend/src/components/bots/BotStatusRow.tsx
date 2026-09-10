@@ -31,7 +31,7 @@ export function BotStatusRow({
   tone: BotStatusTone;
   /** "Armed" or "Idle". */
   label: string;
-  /** "Asks first" (semi-auto writers) or "Paper" (paper scalpers). Only rendered on the
+  /** "Asks first" (semi-auto writers) or "Simulation" (simulating scalpers). Only rendered on the
    *  `guarded` tone; anything else is a bug at the call site. */
   badge?: string;
 }) {

@@ -100,9 +100,9 @@ def _guard_scalper_live_transition(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Set this bot to Paper before changing settings that affect its P&L. "
+                    "Set this bot to Simulation before changing settings that affect its P&L. "
                     "It is placing real orders on the settings it was armed with, and the "
-                    "new ones have no paper evidence behind them."
+                    "new ones have no simulation evidence behind them."
                 ),
             )
 
