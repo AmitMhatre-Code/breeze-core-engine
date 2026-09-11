@@ -106,7 +106,9 @@ def _set_auth_cookies(
 
     from icici_breeze_backend.app.repositories.broker_session import save_broker_session_token
 
-    save_broker_session_token(user_id, icici_token)
+    # The full secret goes with the token so background work can sign after a restart
+    # (docs/design-decisions.md #31); the cookie below stays the in-request source.
+    save_broker_session_token(user_id, icici_token, full_secret=full_secret)
 
     response.delete_cookie(key=LOGIN_USER_ID_COOKIE, path="/")
     response.set_cookie(

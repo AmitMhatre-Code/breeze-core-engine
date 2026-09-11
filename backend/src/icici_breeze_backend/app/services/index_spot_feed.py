@@ -97,6 +97,19 @@ def _on_raw_tick(raw: dict[str, Any]) -> None:
         return
 
     if label is not None:
+        if not prev_close:
+            # The REST `get_quotes` close is fetched once per subscribe pass and the daily latch
+            # is claimed even when that fetch failed, which left the navbar without its day's
+            # change for the rest of the session. breeze_connect's NSE/BSE exchange-quote ticks
+            # carry the previous close themselves, so fall back to it (REST still wins when present).
+            try:
+                tick_close = float(raw.get("close"))
+            except (TypeError, ValueError):
+                tick_close = 0.0
+            if tick_close > 0:
+                prev_close = tick_close
+                with _lock:
+                    _previous_close.setdefault(label, tick_close)
         change = ltp - prev_close if prev_close else None
         change_pct = (change / prev_close * 100.0) if change is not None and prev_close else None
         cache_set_json(
@@ -177,6 +190,12 @@ def _fetch_previous_close(sdk: Any, cash_exchange: str, cash_stock_code: str) ->
         )
         return None
     if not isinstance(r, dict) or (r.get("Status") or r.get("status")) != 200:
+        # Logged, not silent: this is the only trace when the navbar loses its day's change
+        # (the tick's own `close` in `_on_raw_tick` then stands in).
+        _logger.warning(
+            "index spot previous-close non-200/malformed response for %s/%s: %r",
+            cash_exchange, cash_stock_code, r,
+        )
         return None
     succ = r.get("Success") or r.get("success")
     row = _pick_quote_row(succ, cash_exchange)

@@ -10,7 +10,7 @@ This repo is one half of a two-repo system. Production instances are **licensed 
 
 Deeper docs live in `docs/` — read these before making non-trivial changes, they are kept current:
 - `docs/architecture.md` — runtime topologies, middleware chain, routing, persistence, portal integration, reference-data pipeline, active-chains/WS layer
-- `docs/design-decisions.md` — **why** things are shaped this way (read before "fixing" something that looks odd) — 30 numbered decisions
+- `docs/design-decisions.md` — **why** things are shaped this way (read before "fixing" something that looks odd) — 31 numbered decisions
 - `docs/functionality.md` — feature/route map
 - `docs/flows.md` — sequence diagrams for auth, broker return, heartbeat/upgrade, deploy
 - `docs/configuration-reference.md` — full env var reference
@@ -105,6 +105,7 @@ Redis is optional: `app/db/redis_client.py` falls back to an in-process `_Memory
 
 - One secret (`JWT_SECRET`, aliases `ENCRYPTION_KEY`/`JWT_SECRET_KEY`) is used for **both** JWT signing and encrypting stored broker credential material — losing it means encrypted data is unrecoverable, so treat it like a root key.
 - `PUBLIC_FRONTEND_ORIGIN` and `GOOGLE_OAUTH_REDIRECT_BASE_URL` must match the exact origin the browser uses (host, not just domain — `localhost` and `127.0.0.1` are different origins for cookies/OAuth state). `PUBLIC_FRONTEND_ORIGIN` also determines the `public_ip` this instance reports to the portal — get it wrong and heartbeats/activation will fail their IP-binding check.
+- Background broker work (no request cookie) signs with the full API secret persisted beside the broker token in `user_broker_session`, not with the stored app half, which yields `Invalid Checksum` on every signed call. It shares the token's midnight-IST lifetime and is deleted on expiry. See design-decisions.md #31.
 - Direct login (`/auth/direct-login` → `/auth/icici-redirect`) is current; legacy `/auth/login` (ICICI-token login) is deprecated and returns HTTP 410.
 
 ### Frontend (`frontend/src/`)

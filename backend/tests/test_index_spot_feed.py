@@ -67,6 +67,28 @@ def test_on_raw_tick_handles_missing_previous_close():
     assert cached["change_pct"] is None
 
 
+def test_on_raw_tick_falls_back_to_tick_close_when_rest_close_missing():
+    """A failed REST previous-close fetch must not leave the navbar without its day's change:
+    the exchange-quote tick's own `close` fills in, and is remembered for later ticks."""
+    isf._symbol_to_label["4.1!4963"] = "nifty"
+    isf._on_raw_tick({"symbol": "4.1!4963", "last": "24800.5", "close": "24700.0"})
+    cached = cache_get_json(index_spot_key("nifty"))
+    assert cached["previous_close"] == 24700.0
+    assert cached["change"] == pytest.approx(100.5)
+    assert cached["change_pct"] == pytest.approx(100.5 / 24700.0 * 100.0)
+    assert isf._previous_close["nifty"] == 24700.0
+
+    isf._on_raw_tick({"symbol": "4.1!4963", "last": "24750"})
+    assert cache_get_json(index_spot_key("nifty"))["change"] == pytest.approx(50.0)
+
+
+def test_on_raw_tick_prefers_rest_close_over_tick_close():
+    isf._symbol_to_label["4.1!4963"] = "nifty"
+    isf._previous_close["nifty"] = 24700.0
+    isf._on_raw_tick({"symbol": "4.1!4963", "last": "24800.5", "close": "1"})
+    assert cache_get_json(index_spot_key("nifty"))["previous_close"] == 24700.0
+
+
 def test_sync_index_spot_subscriptions_idempotent_same_day(monkeypatch):
     fake_sdk = MagicMock()
     fake_sdk.get_stock_token_value.side_effect = [

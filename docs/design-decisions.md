@@ -461,3 +461,24 @@ Each horizon is paired on its own, so a reading near the close keeps its shorter
 - **Calls dropped within 5 minutes are reported, not gated.** For a bot that trades every flip, each withdrawn call is a round trip paid for nothing.
 
 **Not yet verified against a live capture**: breeze_connect's depth parser is the only source for the payload shape, because live broker calls work only from the production static IP. `depth_feed.depth_sums` therefore keys on the `BestBuyQty-k` / `BestSellQty-k` field names that both exchange layouts share, not on field position. Turn on the tick-debug capture (`/admin/ws-tick-debug`) for the first live session.
+
+---
+
+## 31. The full API secret is persisted beside the broker token, for one trading day
+
+**Decision**: At login, the full API secret is stored encrypted in `user_broker_session.encrypted_full_secret`, next to the broker token, and shares that token's lifetime. When no request cookie is in scope, `processor._get_full_secret_for_user` reads it before falling back to the stored app half. The lookup order is: request cookie, then an explicitly supplied user fragment, then the persisted secret, then the app half.
+
+**Why the token alone is not enough**: the token identifies the session, and the secret signs each request. breeze_connect sends `X-Checksum = sha256(timestamp + body + secret)` on every call except `customerdetails`. The token was persisted in July so that background work could reach the broker: PB/SL square-off dispatch, bots, the watchdog and the index feed. The secret was not. With no cookie, `reconstruct_full_api_secret(user_id, "")` returns only the app half. `generate_session` still succeeds on that half, because its `customerdetails` probe is unsigned, so the process logged "session created" and cached an SDK whose every signed call failed with `Invalid Checksum`. That lasted until a user request evicted it, and the WS manager's `_sdk` kept the bad instance for as long as the socket stayed up. The 2026-09-10/11 production log shows the pattern exactly. Each session built at startup from the stored token failed on its first signed call (10 Sep 12:40, 11 Sep 07:56). Each one built inside a request worked (11 Sep 06:17, and the rebuilds at 13:08 and 08:08). The first visible symptom was the navbar losing its day's change, because the index previous-close fetch runs on the WS SDK. The more serious one is that after any mid-session restart, portal upgrades included, the PB/SL square-off and bots could not sign orders until someone opened the app.
+
+**What this gives up**: splitting the secret protected against someone with an offline copy of the data, such as an EBS snapshot plus `JWT_SECRET`. It never protected against root on the live host, where the full secret is already in process memory and in every request cookie. For the trading day, that offline copy now yields the whole secret and the day's token. A leaked token dies at midnight. A leaked secret lives until it is regenerated on ICICI, but on its own it cannot trade, because a new session token needs the user's ICICI login and OTP.
+
+**How it is contained**:
+- **Its own key**: a Fernet key derived as `sha256(JWT_SECRET + "broker_full_secret_store_v1")`. It is distinct from the token store and the session cookie, so neither ciphertext decrypts the other.
+- **One login's worth**: every login overwrites the column, and a login without a secret writes NULL. A secret never outlives the login it came from.
+- **Deleted, not ignored**: a row past its IST midnight is deleted when read, at startup (`purge_expired_broker_sessions`), and before the scalping feed lists users. A data-volume snapshot taken after midnight does not contain it.
+- **Cleared on a credential change**: `update_credentials` and `rotate_credentials` null the column, and a deliberate logout deletes the row as before. A session-expiry logout keeps it, because keeping it is what lets the square-off still fire (#22).
+- **One reader**: only `_get_full_secret_for_user` decrypts it, and only when the request cookie is absent. It never goes into logs, error payloads, the diagnostics bundle or the portal heartbeat.
+
+**Why not Redis**: Redis would keep it off the data volume and survive app-container recreates. But the CloudFormation stack runs `redis:7-alpine` with its default RDB snapshots switched on, written to the root disk, and with `allkeys-lru`. An evicted secret would silently bring the `Invalid Checksum` failure back. Making Redis safe for it means changing the portal stack.
+
+**Rollout**: rows written before the column existed have no secret, so on the first day after upgrading, background sessions stay as they were until the user's next login.

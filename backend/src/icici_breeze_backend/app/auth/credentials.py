@@ -64,6 +64,42 @@ def decrypt_broker_session_token(encrypted: str, encryption_key: str) -> Optiona
         return None
 
 
+def _broker_full_secret_store_cipher(encryption_key: str):
+    """Fernet for the full API secret persisted beside the broker token (own key, distinct from
+    the token store and the session cookie) -- see docs/design-decisions.md #31."""
+    key_material = hashlib.sha256(((encryption_key or "") + "broker_full_secret_store_v1").encode()).digest()
+    return Fernet(urlsafe_b64encode(key_material[:32]))
+
+
+def encrypt_broker_full_secret(secret: str, encryption_key: str) -> str:
+    if not secret or not encryption_key:
+        return ""
+    try:
+        return _broker_full_secret_store_cipher(encryption_key).encrypt(secret.encode()).decode("ascii")
+    except Exception:
+        return ""
+
+
+def decrypt_broker_full_secret(encrypted: str, encryption_key: str) -> Optional[str]:
+    if not encrypted or not encryption_key:
+        return None
+    try:
+        return _broker_full_secret_store_cipher(encryption_key).decrypt(encrypted.encode()).decode()
+    except Exception:
+        return None
+
+
+def _clear_persisted_full_secret(user_id: str) -> None:
+    """A credential change makes the persisted full secret stale; drop it so background work
+    cannot keep signing with the old one (the next login stores the new one)."""
+    try:
+        from icici_breeze_backend.app.repositories.broker_session import clear_broker_full_secret
+
+        clear_broker_full_secret(user_id)
+    except Exception as e:
+        logger.warning("clearing persisted full secret failed user_id=%s: %s", user_id, e)
+
+
 def _direct_icici_cipher(encryption_key: str):
     """Fernet for short-lived direct-login → ICICI redirect cookie (user_id only)."""
     key_material = hashlib.sha256(((encryption_key or "") + "direct_icici_prelogin").encode()).digest()
@@ -294,6 +330,7 @@ class CredentialManager:
                     (credential_id, user_id, '', encrypted, b'', 'first_half'),
                 )
                 conn.commit()
+            _clear_persisted_full_secret(user_id)
             return True
         except Exception:
             return False
@@ -328,6 +365,7 @@ class CredentialManager:
                     (credential_id, user_id, broker_api_key, encrypted, b"", "first_half"),
                 )
                 conn.commit()
+            _clear_persisted_full_secret(user_id)
             return True
         except Exception as e:
             logger.warning("update_credentials failed user_id=%s: %s", user_id, e)

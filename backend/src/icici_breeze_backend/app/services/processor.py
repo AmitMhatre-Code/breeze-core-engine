@@ -752,7 +752,20 @@ class processor():
         if not enc_key:
             return None, {"Status": 400, "Error": "JWT_SECRET not set"}
         mgr = CredentialManager(encryption_key=enc_key)
-        full_secret = (get_full_secret_for_request() or mgr.reconstruct_full_api_secret(user_id, user_fragment) or "").strip()
+        # Order matters (docs/design-decisions.md #31). With no request in scope and no fragment,
+        # `reconstruct_full_api_secret` returns only the stored app half; a session built on that
+        # passes generate_session (customerdetails is unsigned) and then fails every signed call
+        # with "Invalid Checksum". So the persisted full secret must be tried before it.
+        full_secret = (get_full_secret_for_request() or "").strip()
+        if not full_secret and user_fragment:
+            full_secret = (mgr.reconstruct_full_api_secret(user_id, user_fragment) or "").strip()
+        if not full_secret:
+            from icici_breeze_backend.app.repositories.broker_session import get_broker_full_secret
+
+            full_secret = (get_broker_full_secret(user_id) or "").strip()
+        if not full_secret:
+            # Last resort, for a deployment whose DB holds the whole secret (no user fragment).
+            full_secret = (mgr.reconstruct_full_api_secret(user_id, "") or "").strip()
         if not full_secret:
             return None, {"Status": 400, "Error": "Could not reconstruct API secret"}
         return full_secret, cred_data
