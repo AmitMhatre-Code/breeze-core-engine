@@ -39,8 +39,15 @@ async def get_dashboard_index_quotes(ctx: RequestContext = Depends(get_request_c
     Same process-wide-state rationale as /ws-health above -- no broker_token check
     (the REST post-close fallback inside `get_index_quotes_status` resolves its own
     session and degrades to null quotes if one isn't available).
+
+    The index direction signal rides this same poll (docs/design-decisions.md #30) rather than
+    adding a second navbar request; `navbar_view` never raises.
     """
-    return get_index_quotes_status(breeze, ctx.user_id)
+    from icici_breeze_backend.app.services.index_signal.reader import navbar_view
+
+    payload = get_index_quotes_status(breeze, ctx.user_id)
+    payload["signals"] = navbar_view()
+    return payload
 
 
 @router.get("/live")

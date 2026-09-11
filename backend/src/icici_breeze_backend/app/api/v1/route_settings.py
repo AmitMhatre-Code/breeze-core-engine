@@ -53,6 +53,8 @@ from icici_breeze_backend.app.domain.settings_api import (
     AggressiveOrderPreferencesResponse,
     AggressiveOrderPreferencesUpdateBody,
     MarketStatusResponse,
+    IndexSignalPreferencesResponse,
+    IndexSignalPreferencesUpdateBody,
     PnlEnginePreferencesResponse,
     PnlEnginePreferencesUpdateBody,
     QuantityLimitsStateResponse,
@@ -64,6 +66,7 @@ from icici_breeze_backend.app.domain.settings_api import (
     WsReleaseRequest,
 )
 from icici_breeze_backend.app.services import pnl_engine_settings
+from icici_breeze_backend.app.services.index_signal import settings as index_signal_settings
 from icici_breeze_backend.app.services.breeze_api_tester_risk import (
     get_breeze_api_tester_risk_accepted_at,
     is_breeze_api_tester_risk_accepted,
@@ -613,6 +616,100 @@ async def settings_pnl_engine_preferences_put(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return PnlEnginePreferencesResponse(**updated, **pnl_engine_settings.bounds())
+
+
+@router.get("/index-signal/preferences", response_model=IndexSignalPreferencesResponse)
+async def settings_index_signal_preferences_get(ctx: RequestContext = Depends(get_request_context)):
+    """Settings -> Index Signal: current tuning plus the hard/recommended bounds the screen uses
+    for its warnings (docs/design-decisions.md #30)."""
+    current = index_signal_settings.load_index_signal_settings()
+    return IndexSignalPreferencesResponse(**current.to_dict(), bounds=index_signal_settings.bounds())
+
+
+@router.put("/index-signal/preferences", response_model=IndexSignalPreferencesResponse)
+async def settings_index_signal_preferences_put(
+    body: IndexSignalPreferencesUpdateBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Global (the signal is app-wide). The running publisher applies it within one loop:
+    switching off unsubscribes the depth feed, and a new tau restarts the smoothing."""
+    try:
+        updated = index_signal_settings.save_index_signal_settings(
+            **body.model_dump(exclude_none=True)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return IndexSignalPreferencesResponse(**updated.to_dict(), bounds=index_signal_settings.bounds())
+
+
+@router.get("/index-signal/weights")
+async def settings_index_signal_weights_get(ctx: RequestContext = Depends(get_request_context)):
+    """Per index: the tracked basket, its weights and their provenance, and whether a refresh
+    is running."""
+    from icici_breeze_backend.app.services.index_signal import weights as index_weights
+
+    top_n = index_signal_settings.load_index_signal_settings().top_n
+    return {
+        "refreshing": index_weights.refresh_running(),
+        "top_n": top_n,
+        "indices": {
+            label: index_weights.weights_overview(label, top_n) for label in index_weights.LABELS
+        },
+    }
+
+
+@router.post("/index-signal/weights/refresh")
+async def settings_index_signal_weights_refresh(ctx: RequestContext = Depends(get_request_context)):
+    """Refetch both indices' weights now. Runs in the background -- SENSEX alone is ~30 BSE
+    calls -- so the screen polls the GET above until `refreshing` clears."""
+    from icici_breeze_backend.app.services.index_signal import weights as index_weights
+
+    started = index_weights.refresh_due_weights_in_background(force=True)
+    return {"started": started, "refreshing": index_weights.refresh_running()}
+
+
+@router.get("/index-signal/shadow-report")
+async def settings_index_signal_shadow_report(
+    days: int = Query(5, ge=1, le=365),
+    min_move_bps: float = Query(5.0, ge=0, le=100),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Shadow-mode evidence: per-state forward index returns and hit rates over the last `days`
+    -- what has to be reviewed before any bot may act on the signal. An index move smaller than
+    `min_move_bps` counts as flat, neither a hit nor a miss."""
+    from icici_breeze_backend.app.services.index_signal import shadow_log
+
+    return {
+        "days": days,
+        "min_move_bps": min_move_bps,
+        "indices": {
+            label: shadow_log.shadow_report(label, days=days, min_move_bps=min_move_bps)
+            for label in ("nifty", "sensex")
+        },
+    }
+
+
+@router.get("/index-signal/readings/download")
+async def settings_index_signal_readings_download(
+    index: str = Query(...),
+    days: int = Query(5, ge=1, le=365),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """The minute readings behind the shadow report as CSV, for Excel or a charting tool: the
+    signal and index level at each reading, and the index 1/5/15 minutes later."""
+    from icici_breeze_backend.app.services.index_signal import shadow_log
+
+    label = index.strip().lower()
+    if label not in ("nifty", "sensex"):
+        raise HTTPException(status_code=400, detail="index must be nifty or sensex")
+    return Response(
+        content=shadow_log.readings_csv(label, days=days),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{shadow_log.readings_filename(label, days)}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 

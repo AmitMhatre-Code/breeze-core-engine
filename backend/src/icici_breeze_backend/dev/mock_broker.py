@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import datetime
 import logging
+import random
 import re
 import threading
+import zlib
 
 from icici_breeze_backend.dev.fixtures import responses as fx
 from icici_breeze_backend.dev.mock_market_data import (
@@ -198,7 +200,7 @@ class MockBreezeSdk:
         get_market_depth: bool = True,
         **kwargs,
     ):
-        """Resolve a subscribable token, **futures only**.
+        """Resolve a subscribable token: futures, and depth-only cash rooms.
 
         Scoped deliberately. `index_spot_feed` also calls this method, and today it fails in
         mock (no such attribute) so index spot stays cold. Answering for cash indices here
@@ -207,10 +209,19 @@ class MockBreezeSdk:
         falsy value for everything else preserves that, and matches the caller's own
         `if not exch_token: continue` guard.
 
+        The one cash answer is a *depth-only* request (quotes off, depth on), which only the
+        index signal's `depth_feed` makes: it gets a synthetic L2 room and never a quote
+        token, so index spot above stays exactly as cold as before.
+
         Real futures tokens are absent from `ws_token_index` (it keeps `Series = "OPTION"`
         rows only), which is exactly why the live path resolves them from the SDK's
         SecurityMaster rather than locally -- see `services/bots/scalping/futures_feed`.
         """
+        exchange = str(exchange_code or "").upper()
+        if exchange in ("NSE", "BSE") and get_market_depth and not get_exchange_quotes:
+            if not stock_code:
+                return False, False
+            return False, self._cash_depth_symbol(exchange, str(stock_code))
         if not str(product_type or "").lower().startswith("fut"):
             return False, False
         if not stock_code or not expiry_date:
@@ -221,7 +232,37 @@ class MockBreezeSdk:
         depth_token = symbol.replace("!", "2!", 1) if get_market_depth else False
         return quotes_token, depth_token
 
+    @staticmethod
+    def _cash_depth_symbol(exchange_code: str, stock_code: str) -> str:
+        """Deterministic synthetic L2 room for a cash scrip (NSE `4.2!`, BSE `1.2!`), in a range
+        no real cash token reaches. crc32 rather than hash(): stable across processes."""
+        prefix = "4.2" if exchange_code.upper() == "NSE" else "1.2"
+        digest = zlib.crc32(f"{exchange_code.upper()}-{stock_code.upper()}".encode()) % 100_000
+        return f"{prefix}!{9_500_000 + digest}"
+
+    @staticmethod
+    def _is_cash_depth_symbol(token: str) -> bool:
+        prefix, _sep, number = str(token).partition("!")
+        return prefix in ("4.2", "1.2") and number.isdigit() and int(number) >= 9_500_000
+
+    def _depth_room_from_kwargs(self, kwargs: dict) -> str | None:
+        """The depth room a by-scrip depth-only subscribe/unsubscribe refers to, else None."""
+        if not kwargs.get("get_market_depth") or kwargs.get("get_exchange_quotes", True):
+            return None
+        _quotes, room = self.get_stock_token_value(
+            exchange_code=str(kwargs.get("exchange_code") or ""),
+            stock_code=str(kwargs.get("stock_code") or ""),
+            get_exchange_quotes=False,
+            get_market_depth=True,
+        )
+        return room or None
+
     def subscribe_feeds(self, stock_token: str | list[str] = "", **kwargs):
+        if not stock_token:
+            room = self._depth_room_from_kwargs(kwargs)
+            if room is not None:
+                self._ws_tokens.add(room)
+                return {"message": f"Stock {kwargs.get('stock_code')} subscribed successfully"}
         if not stock_token and str(kwargs.get("product_type") or "").lower().startswith("fut"):
             # The futures path subscribes by contract, not by token (the live code has no
             # local token to pass), so resolve it here the same way the SDK would.
@@ -285,16 +326,70 @@ class MockBreezeSdk:
         return payload
 
     def unsubscribe_feeds(self, stock_token: str | list[str] = "", **kwargs):
+        if not stock_token:
+            room = self._depth_room_from_kwargs(kwargs)
+            if room is not None:
+                self._ws_tokens.discard(room)
         for token in self._normalize_tokens(stock_token):
             self._ws_tokens.discard(token)
         return {"message": f"Stock {stock_token} unsubscribed successfully"}
+
+    @staticmethod
+    def _mock_depth_tick(token: str, running_state: dict[str, dict]) -> dict:
+        """A synthetic 5-level book in breeze_connect's parsed depth shape.
+
+        Each book's imbalance is a shared, mean-reverting market factor plus its own noise, so a
+        basket of these moves together the way heavyweights do -- enough for the index signal to
+        actually cross its thresholds in mock mode, rather than averaging out to zero."""
+        market = running_state.setdefault("__depth_market__", {"bias": 0.0})
+        market["bias"] = max(-0.8, min(0.8, 0.995 * market["bias"] + random.gauss(0.0, 0.02)))
+        own = running_state.setdefault(token, {"bias": 0.0})
+        own["bias"] = max(-0.8, min(0.8, 0.9 * own["bias"] + random.gauss(0.0, 0.1)))
+        bias = max(-0.9, min(0.9, 0.7 * market["bias"] + 0.3 * own["bias"]))
+        nse = token.startswith("4.2!")
+        rows = []
+        for level in range(1, 6):
+            bid_qty = max(1, int(random.uniform(0.5, 1.5) * 2000 * (1 + bias)))
+            ask_qty = max(1, int(random.uniform(0.5, 1.5) * 2000 * (1 - bias)))
+            bid_rate = f"{1000.0 - 0.05 * level:.2f}"
+            ask_rate = f"{1000.0 + 0.05 * level:.2f}"
+            if nse:
+                rows.append(
+                    {
+                        f"BestBuyRate-{level}": bid_rate,
+                        f"BestBuyQty-{level}": str(bid_qty),
+                        f"BuyNoOfOrders-{level}": "4",
+                        f"BuyFlag-{level}": "N",
+                        f"BestSellRate-{level}": ask_rate,
+                        f"BestSellQty-{level}": str(ask_qty),
+                        f"SellNoOfOrders-{level}": "4",
+                        f"SellFlag-{level}": "N",
+                    }
+                )
+            else:
+                rows.append(
+                    {
+                        f"BestBuyRate-{level}": bid_rate,
+                        f"BestBuyQty-{level}": str(bid_qty),
+                        f"BestSellRate-{level}": ask_rate,
+                        f"BestSellQty-{level}": str(ask_qty),
+                    }
+                )
+        return {
+            "symbol": token,
+            "time": datetime.datetime.now().strftime("%c"),
+            "depth": rows,
+            "quotes": "Market Depth",
+        }
 
     def _ws_tick_loop(self) -> None:
         running_state: dict[str, dict] = {}
         stop = self._ws_stop
         while stop is not None and not stop.is_set():
             for token in list(self._ws_tokens):
-                if is_mock_futures_symbol(token):
+                if self._is_cash_depth_symbol(token):
+                    tick = self._mock_depth_tick(token, running_state)
+                elif is_mock_futures_symbol(token):
                     # Seed from the real local bhavcopy spot rather than a hash: the signal
                     # under test keys off NIFTY price structure, so a plausible level and a
                     # realistic lot size make the mock candles worth looking at.

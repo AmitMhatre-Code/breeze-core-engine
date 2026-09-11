@@ -10,7 +10,7 @@ This repo is one half of a two-repo system. Production instances are **licensed 
 
 Deeper docs live in `docs/` — read these before making non-trivial changes, they are kept current:
 - `docs/architecture.md` — runtime topologies, middleware chain, routing, persistence, portal integration, reference-data pipeline, active-chains/WS layer
-- `docs/design-decisions.md` — **why** things are shaped this way (read before "fixing" something that looks odd) — 29 numbered decisions
+- `docs/design-decisions.md` — **why** things are shaped this way (read before "fixing" something that looks odd) — 30 numbered decisions
 - `docs/functionality.md` — feature/route map
 - `docs/flows.md` — sequence diagrams for auth, broker return, heartbeat/upgrade, deploy
 - `docs/configuration-reference.md` — full env var reference
@@ -119,4 +119,5 @@ Next.js App Router, React 19, TypeScript, Tailwind 4, TanStack React Query for s
 - `route_audit` module exists for operator audit trails but is not currently mounted in the v1 router — don't assume it's live without checking.
 - **Never parallelize ICICI broker calls, and never fire order place/modify/cancel concurrently** — every outbound Breeze REST call is serialized behind a per-user lock on purpose. ICICI's limit is a count per rolling minute (not a concurrency limit) and its cooldown outlasts the minute boundary, so bursting spends the same budget faster and buys a multi-minute penalty; more importantly, serialization is what makes a throttle unambiguously a *refusal*, which is the only reason retrying a failed order can't double-fill. This was built and reverted twice already — read design-decisions.md #24 before touching it. If a flow is slow, cut the call count, not the spacing.
 - **Never hand-maintain a list of underlying names.** One underlying is spelled several ways — ICICI `ShortName` (`BSESEN`, `CNXBAN`), exchange symbol (`SENSEX`, `NIFTY BANK`), company name (`BSE SENSEX`), and NSE bhavcopy tickers for indices (`BANKNIFTY`). All of it, including index-vs-single-stock, comes from `reference_data/symbol_registry.py`, which derives it from ICICI's Security Master. A config-file name set is how index shorts got charged the 5% single-stock ELM tier — see design-decisions.md #28.
+- **The NIFTY/SENSEX direction signal has one source.** Anything that wants bullish/bearish — navbar, screens, bots — reads `app/services/index_signal/reader.py`, never an engine or its own computation, and treats `unavailable` as "no directional trade", never as `neutral`. Weights are fetched from NSE/BSE (not hand-kept), and depth ticks bypass the chain pipeline on purpose — see design-decisions.md #30.
 - Read-only trading mode (see "Portal integration" above) is a real license-enforcement state, not a bug — if a mutation route 403s with a "Read-only mode" message, check `deployment_license_status` before assuming it's broken.

@@ -539,6 +539,17 @@ def start_application():
 
         chain_sweep_task: asyncio.Task = asyncio.create_task(run_active_chain_sweep_loop())
 
+        # NIFTY/SENSEX direction signal (docs/design-decisions.md #30). Publishes on the P&L
+        # recompute clock; its depth feed is first subscribed by the login prefetch.
+        from icici_breeze_backend.app.services.index_signal.publisher import (
+            index_signal_enabled,
+            run_index_signal_loop,
+        )
+
+        index_signal_task: asyncio.Task | None = None
+        if index_signal_enabled():
+            index_signal_task = asyncio.create_task(run_index_signal_loop())
+
         yield
         from icici_breeze_backend.app.services.bots.scheduler import stop_bot_scheduler
         from icici_breeze_backend.app.services.bots.scalping.runtime import stop_scalper_loop
@@ -553,6 +564,12 @@ def start_application():
             watchdog_task.cancel()
             try:
                 await watchdog_task
+            except asyncio.CancelledError:
+                pass
+        if index_signal_task is not None:
+            index_signal_task.cancel()
+            try:
+                await index_signal_task
             except asyncio.CancelledError:
                 pass
         if task is not None:

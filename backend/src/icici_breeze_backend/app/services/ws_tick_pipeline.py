@@ -21,6 +21,7 @@ from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.redis_client import cache_publish, cache_set_json, get_redis
+from icici_breeze_backend.app.services.index_signal.depth_feed import is_depth_payload
 from icici_breeze_backend.app.services.reference_data.keys import (
     WS_TICK_DIRTY_CHANNEL,
     pnl_quote_key,
@@ -245,6 +246,11 @@ def ingest_tick(raw: Any) -> None:
             listener(payload)
         except Exception:
             pass
+    if is_depth_payload(payload):
+        # L2 depth rooms (the index signal's heavyweight books) are for raw listeners only:
+        # no LTP for the P&L buffer, no contract identity for the chain pipeline, and
+        # enqueuing them would spend chain-queue slots, which drop the oldest when full.
+        return
     if isinstance(payload, dict):
         try:
             _stage_pnl_quote(payload)

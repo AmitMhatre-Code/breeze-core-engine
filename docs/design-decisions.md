@@ -419,3 +419,39 @@ Those spellings used to be reconciled by hand in four places that disagreed with
 - The same-day fallback matches on the archive's leading non-numeric name (`nsccl.` vs `BSERISK`), so an NFO case can never be handed the BSE file.
 
 **What it does not establish**: a second SPAN implementation cannot close the gap to ICICI's quoted figure, because both engines compute the same quantity. That gap is a question about what ICICI charges on top, not about our arithmetic.
+
+---
+
+## 30. The index direction signal is one published value built from heavyweight L2 books, and "unavailable" is a state of its own
+
+**Decision**: NIFTY/SENSEX bullish / bearish / neutral comes from exactly one place, `app/services/index_signal/`. For each index's ten heaviest constituents it takes the top-5 bid and ask quantities from the L2 depth feed (NIFTY on NSE books, SENSEX on BSE books), computes each stock's order-book imbalance `(Σbid − Σask)/(Σbid + Σask)`, weights those by free-float index weight (W-OBI), smooths with a 3-second EWMA and applies hysteresis: take a side past ±0.30, fall back to neutral only inside ±0.20. `publisher` writes the result to Redis at the **P&L recompute interval** (Settings → Advanced), and every consumer — the navbar, any other screen, the bots — reads it through `index_signal.reader`.
+
+**Why one published value**: a signal computed separately by each consumer would disagree with itself, because the smoother and the hysteresis carry state. The navbar showing "bullish" while a bot trades a bearish view is the failure this rules out. Redis makes the answer the same in every process, and the payload carries its own `valid_until` (three publish intervals, floor 10s) so a stalled publisher reads as `unavailable` instead of as the last verdict it wrote.
+
+**Why the EWMA is time-based, not per sample**: the smoothing window is a time and the publish cadence is a user setting from 1 to 30 seconds. A fixed-α EWMA stepped at the publish interval smooths over a different horizon for every setting — at 2s α≈0.49, at 30s it is a single snapshot. The engine updates on every depth tick with `α = 1 − exp(−Δt/τ)`, so τ is a real time constant whatever the cadence, and a long gap (overnight, a feed outage) washes the old value out on its own.
+
+**Why "unavailable" is not "neutral"**: neutral is a reading — the heavyweights' books are balanced. Unavailable means there is no reading: `market_closed`, `low_coverage` (less than 70% of tracked weight has a book ≤30s old), `warming_up` (the smoother has not run for 2τ at adequate coverage), `no_constituents`, or from the reader `stale` / `not_published`. Consumers must treat anything other than bullish/bearish as *no directional trade*. This is the same fail-closed stance as #16 and #27: missing data must never look like a benign value.
+
+**Tuning is a setting, never an environment variable**: on/off, tracked stocks, τ, the enter/exit thresholds, minimum coverage, book staleness, depth levels and shadow-log retention are one global row in `users.sqlite3` (`index_signal/settings.py`), edited in Settings → Index Signal and read fresh on every publish loop — the `pnl_engine_settings` pattern. Customer instances are provisioned by the portal's CloudFormation stack, so an env-only knob is one nobody can actually turn. Every change applies live: switching off unsubscribes the depth rooms and publishes an explicit `unavailable / disabled` (the navbar hides its chip for that reason and no other), a new τ restarts the smoother because the old value was smoothed on a different time scale, and a new stock count re-baskets and re-subscribes. The loop always runs; "off" is a state it publishes.
+
+**Why SENSEX reads BSE books**: it was a product decision, made knowing the cost. These stocks trade mostly on NSE, so their BSE top-5 books are thinner and noisier, and the coverage gate does more work for SENSEX than for NIFTY. The ICICI ShortName is identical on both exchanges for every heavyweight (HDFBAN is NSE 1333 and BSE 500180), so one `symbol_registry` lookup resolves both depth rooms.
+
+**Weights are fetched, never hand-kept (#28)**: NIFTY weights come from NSE's `equity-stock-indices` API (per-stock `ffmc`, free-float market cap). SENSEX weights come from BSE's API: `HeatMapData` lists the constituents, `StockTrading` gives each one's `MktCapFF`, and the sum must match `MarketCap?code=16`'s index free-float total within 1%, so a partial fetch fails loudly instead of inflating the names that did arrive. The fallbacks are the niftyindices monthly factsheet PDF (NIFTY only) and then seeded weights, labelled `source: "seed"` in every payload. The refresh runs once per trading day, off-thread, and a failure keeps the last good set. Two findings from the 2026-09-10 evaluation are worth keeping:
+- **No third-party library is used.** jugaad-data, nselib, nsepython, nsetools, bse, bseindia and bsedata were all tried. The ones that worked each wrap a single endpoint, and `bse` (the only maintained BSE client) and `nsepython` are GPLv3, which does not belong in an image we ship to customers.
+- **NSE's old `equity-stockIndices` path returns 404.** It is easy to mistake for a bot wall. The live path is `equity-stock-indices`, and it needs no cookie warm-up.
+
+**Only the tracked names' relative weights matter**: W-OBI divides by the sum of tracked weight, so a month-old factsheet or a seed moves the signal far less than its age suggests. Names the registry cannot resolve are skipped and reported, and the next-heaviest takes the slot.
+
+**Depth ticks bypass the chain pipeline**: `ws_tick_pipeline.ingest_tick` returns after the raw listeners for `quotes: "Market Depth"` payloads. They have no LTP for the P&L buffer and no contract identity for the chain builder, and about 20 busy books would otherwise take slots in a queue that drops its oldest entry when full.
+
+**The watchdog re-arms the depth feed but never escalates for it**: `ws_price_feed_watchdog` re-subscribes it at the open and on 45s of silence, like index spot, but its outcome is not counted towards the rebuild-the-socket escalation. A refused depth subscribe is that feed's problem and must not cost every live chain its socket.
+
+**Shadow mode before any bot acts on it**: the ±0.30 threshold is an untested prior, and top-5 OBI measures *resting* liquidity, not aggression. A large bid wall is as often a seller being absorbed as a buyer arriving. `shadow_log` records a one-minute sample and every state transition, each with the index spot at that moment. A spot more than 15s old is logged as blank: out of hours the navbar caches a REST close with no expiry, and that close would otherwise pass for the level at the open. `score` then judges the readings at +1/+5/+15 minutes, and it is built against the four ways a hit rate flatters a signal:
+- The 95% range comes only from readings a whole horizon apart, because a run's back-to-back minutes are one bet.
+- Each directional cell shows its edge over how often the index moved that way after *any* reading.
+- Moves under a chosen minimum are flat, neither hit nor miss.
+- Flips are scored once each, from the flip's own level. Flips out of `unavailable` are skipped: that is the signal waking up, not an opinion.
+
+Each horizon is paired on its own, so a reading near the close keeps its shorter outcomes. Bots do not consume the signal until that evidence has been reviewed.
+
+**Not yet verified against a live capture**: breeze_connect's depth parser is the only source for the payload shape, because live broker calls work only from the production static IP. `depth_feed.depth_sums` therefore keys on the `BestBuyQty-k` / `BestSellQty-k` field names that both exchange layouts share, not on field position. Turn on the tick-debug capture (`/admin/ws-tick-debug`) for the first live session.

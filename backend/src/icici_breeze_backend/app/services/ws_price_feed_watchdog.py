@@ -127,6 +127,41 @@ def _index_spot_ticking() -> bool:
     return False
 
 
+# The index signal's L2 depth feed (`index_signal.depth_feed`). Watched like index spot, but its
+# outcome never counts towards socket escalation: a refused depth subscribe is a problem with that
+# feed alone, and must not get every live chain's socket rebuilt.
+_INDEX_DEPTH_TARGET = "__index_depth__"
+
+
+def _index_depth_ticking() -> bool:
+    """True when the depth feed ticked within the silence window -- or has nothing subscribed,
+    in which case there is nothing here to re-arm (the signal loop owns the first subscribe)."""
+    from icici_breeze_backend.app.services.index_signal import depth_feed
+
+    if not depth_feed.has_subscriptions():
+        return True
+    age = depth_feed.last_tick_age_seconds()
+    return age is not None and age <= _SILENCE_SECONDS
+
+
+def _force_index_depth() -> bool | None:
+    from icici_breeze_backend.app.services.breeze_websocket_manager import current_ws_user_id
+    from icici_breeze_backend.app.services.index_signal.publisher import (
+        ensure_depth_feed,
+        index_signal_enabled,
+    )
+    from icici_breeze_backend.app.services.processor import processor
+
+    if not index_signal_enabled():
+        return None
+    user_id = current_ws_user_id()
+    if user_id is None:
+        return None
+    ok = ensure_depth_feed(processor(), user_id, force=True)
+    _logger.info("price-feed watchdog: forced re-subscribe index depth ok=%s", ok)
+    return ok
+
+
 def _throttled(target: str, now: float) -> bool:
     last = _last_forced.get(target)
     return last is not None and (now - last) < _THROTTLE_SECONDS
@@ -286,6 +321,8 @@ def _run_open_pass(now: float) -> None:
         _mark_forced(chain_key, now)
     _force_index_spot()
     _mark_forced(_INDEX_SPOT_TARGET, now)
+    _force_index_depth()
+    _mark_forced(_INDEX_DEPTH_TARGET, now)
     _force_order_feed()
 
 
@@ -329,6 +366,16 @@ def _check_silent_feeds(now: float) -> None:
         if outcome is not None:
             results.append(outcome)
         _mark_forced(_INDEX_SPOT_TARGET, now)
+
+    if _index_depth_ticking():
+        _last_ok[_INDEX_DEPTH_TARGET] = now
+    elif _silent_for(_INDEX_DEPTH_TARGET, now, None) >= _SILENCE_SECONDS and not _throttled(
+        _INDEX_DEPTH_TARGET, now
+    ):
+        _logger.warning("price-feed watchdog: index depth feed silent; re-subscribing")
+        # Outcome deliberately not appended to `results` -- see `_INDEX_DEPTH_TARGET`.
+        _force_index_depth()
+        _mark_forced(_INDEX_DEPTH_TARGET, now)
 
     _note_pass_outcome(results, now)
 

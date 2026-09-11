@@ -268,6 +268,8 @@ Customer deployments (the current, active path) get their `.env` written by bree
 | `CHAIN_WS_WAIT_POLL_MS` | `100` | Poll interval within either wait. |
 | `CHAIN_READY_ATM_STRIKE_WINDOW` | `5` | Strikes each side of ATM that must carry a real quote for a chain to count as ready. Raise it and far-dated or thin chains (BSESEN monthlies, single-stock options) become permanently un-ready — their deep wings may not trade at all in a session, so no wait length helps. |
 
+**Index direction signal:** there are deliberately **no environment variables** for it. All of its tuning — on/off, tracked constituents, smoothing, thresholds, coverage, book staleness, depth levels, shadow-log retention — lives in **Settings → Index Signal** (the `index_signal_settings` row in `users.sqlite3`, defaults in `app/services/index_signal/settings.py`) and applies to the running app within one publish loop. Its cadence follows the P&L recompute interval (Settings → Advanced). See design-decisions.md #30.
+
 **Monitoring:** `GET /health` reports Redis connectivity (`status`: `ok` or `degraded`). `GET /metrics/runtime` reports Redis memory, WS tick pipeline queues, and active chain registry stats.
 
 **EC2 (t4g.small):** CloudFormation bootstrap and legacy deploy user-data configure a **2 GiB swap file** on the root volume as an OOM safety margin. Persistent app data remains on the attached data EBS volume.

@@ -13,10 +13,31 @@ export type IndexQuote = {
   updated_at: number;
 };
 
+export type IndexSignalState = "bullish" | "bearish" | "neutral" | "unavailable";
+
+/** The slim per-index direction-signal view the backend adds to this poll
+ * (`index_signal.reader.navbar_view`). `reason` is set whenever `state` is
+ * "unavailable"; "disabled" means switched off in Settings → Index Signal. */
+export type IndexSignalSummary = {
+  state: IndexSignalState;
+  reason: string | null;
+  signal: number | null;
+  coverage: number | null;
+  thresholds: { enter: number; exit: number } | null;
+  computed_at: number | null;
+  weights_source: string | null;
+  weights_as_of: string | null;
+};
+
 export type IndexQuotesResponse = {
   quotes: {
     nifty: IndexQuote | null;
     sensex: IndexQuote | null;
+  };
+  /** Absent from an older backend; the navbar then shows no signal chip. */
+  signals?: {
+    nifty?: IndexSignalSummary | null;
+    sensex?: IndexSignalSummary | null;
   };
 };
 

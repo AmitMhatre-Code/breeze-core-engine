@@ -60,6 +60,21 @@ def _clear_symbol_registry_cache():
 
 
 @pytest.fixture(autouse=True)
+def _index_signal_disabled_by_default(tmp_path, monkeypatch):
+    """The index signal subscribes a WS depth feed from the login prefetch and the price-feed
+    watchdog. Left on, unrelated tests of those paths would drive a real subscribe against
+    whatever socket state they mocked. Its own tests switch it back on. Its settings row is
+    pointed at a temp DB so no test reads or writes the developer's users.sqlite3."""
+    from icici_breeze_backend.app.services.index_signal import publisher
+    from icici_breeze_backend.app.services.index_signal import settings as signal_settings
+
+    monkeypatch.setattr(
+        signal_settings, "_db_path", lambda: str(tmp_path / "index_signal_settings.sqlite3")
+    )
+    monkeypatch.setattr(publisher, "index_signal_enabled", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def portal_heartbeat_verify_files(tmp_path, monkeypatch):
     """Bake test public key and allowed portal host for DRM verification tests."""
     pub = tmp_path / "portal_heartbeat_public.pem"

@@ -33,7 +33,8 @@ import {
 } from "@/lib/home-data";
 import { formatMarginCompact, moneyToneClass } from "@/lib/format-money-in";
 import { useWsHealth } from "@/lib/use-ws-health";
-import { useIndexQuotes, type IndexQuote } from "@/lib/use-index-quotes";
+import { useIndexQuotes, type IndexQuote, type IndexSignalSummary } from "@/lib/use-index-quotes";
+import { indexSignalChip } from "@/lib/index-signal-chip";
 
 // Hidden from nav (route still works): { href: "/trade-options-chain", label: "Trade Options Chain" },
 const navItems = [
@@ -283,8 +284,16 @@ export function AppShell({
           </div>
           <div className="flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-3">
             <div className="hidden items-center gap-3 lg:flex">
-              <IndexTickerItem label="NIFTY" quote={indexQuotesQ.data?.quotes.nifty ?? null} />
-              <IndexTickerItem label="SENSEX" quote={indexQuotesQ.data?.quotes.sensex ?? null} />
+              <IndexTickerItem
+                label="NIFTY"
+                quote={indexQuotesQ.data?.quotes.nifty ?? null}
+                signal={indexQuotesQ.data?.signals?.nifty ?? null}
+              />
+              <IndexTickerItem
+                label="SENSEX"
+                quote={indexQuotesQ.data?.quotes.sensex ?? null}
+                signal={indexQuotesQ.data?.signals?.sensex ?? null}
+              />
             </div>
             {homeDataReady && (
               <span
@@ -447,17 +456,36 @@ export function AppShell({
   );
 }
 
+/** Direction-signal chip after an index price (backend design-decisions #30). Hidden entirely
+ * when the signal is switched off; `unavailable` shows as a muted dash, never as neutral. */
+function IndexSignalChip({ label, signal }: { label: string; signal: IndexSignalSummary | null }) {
+  const chip = indexSignalChip(label, signal);
+  if (!chip.visible) return null;
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 self-center rounded-[4px] px-1.5 py-px text-micro font-semibold tracking-[.04em] ${chip.toneClass}`}
+      title={chip.title}
+    >
+      <span aria-hidden>{chip.arrow}</span>
+      {chip.word ? <span>{chip.word}</span> : <span className="sr-only">{chip.title}</span>}
+    </span>
+  );
+}
+
 function IndexTickerItem({
   label,
   quote,
+  signal,
 }: {
   label: string;
   quote: IndexQuote | null;
+  signal: IndexSignalSummary | null;
 }) {
   if (!quote) {
     return (
-      <span className="whitespace-nowrap font-mono text-xs text-faint">
+      <span className="inline-flex items-baseline gap-1 whitespace-nowrap font-mono text-xs text-faint">
         {label} <span className="text-faint">—</span>
+        <IndexSignalChip label={label} signal={signal} />
       </span>
     );
   }

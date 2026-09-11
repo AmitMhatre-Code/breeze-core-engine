@@ -257,6 +257,32 @@ Refreshing every possible option chain on every tick is wasteful on the modest E
 
 ---
 
+## Index direction signal (W-OBI)
+
+The app has one NIFTY/SENSEX bullish / bearish / neutral / unavailable signal, built from the L2 books of each index's ten heaviest constituents. Rationale is in design-decisions.md #30; the flow is:
+
+```
+SDK depth ticks (4.2!<nse token>, 1.2!<bse scrip>)
+  → ws_tick_pipeline.ingest_tick ── raw listeners only; depth never enters the P&L buffer or chain queue
+  → index_signal/depth_feed      ── Σ top-5 bid/ask per constituent (SDK socket thread)
+  → index_signal/engine          ── OBI per stock → weighted W-OBI → 3s time-based EWMA (every tick)
+  → index_signal/publisher       ── snapshot + hysteresis every P&L recompute interval → Redis signal:index:{nifty|sensex}
+  → index_signal/reader          ── the only read path (navbar, screens, bots); judges valid_until
+```
+
+- **`weights.py`** fetches free-float weights once per trading day, off-thread: NSE `equity-stock-indices` for NIFTY, and BSE `HeatMapData` + `StockTrading` checked against the `MarketCap` checksum for SENSEX. The fallbacks are the niftyindices factsheet, then seeds. Weights are stored in `index_constituent_weights` (users.sqlite3), and each index's top 10 are resolved to ICICI ShortNames through `symbol_registry`.
+- **`depth_feed.py`** subscribes depth-only rooms for NIFTY names on NSE and SENSEX names on BSE (about 20 rooms). It unsubscribes names that leave a basket, and claims its daily latch only when every subscribe succeeds. The login prefetch (`system_chain_health`) subscribes first; the publisher loop retries every 60s, and `ws_price_feed_watchdog` re-arms it at the open and on silence, without counting it towards socket escalation.
+- **`shadow_log.py`** writes `index_signal_log` (a sample per minute plus every transition, each with the index spot, provided it is a live tick at most 15s old). `score` judges it at +1/+5/+15 minutes, both per state and after each flip. Moves under a minimum count as flat, the 95% range comes from readings a whole horizon apart, and each directional cell carries its edge over all readings. `readings_csv` exports the minute readings with their outcomes. Bots do not consume the signal until that evidence has been reviewed.
+- **`settings.py`** holds all tuning as one global SQLite row (no env variables), served at `GET/PUT /api/settings/index-signal/preferences` with its bounds. The Settings → Index Signal screen also uses:
+  - `GET /api/settings/index-signal/weights`
+  - `POST …/weights/refresh` (a background refetch)
+  - `GET …/shadow-report?days=N&min_move_bps=M`
+  - `GET …/readings/download?index=nifty|sensex&days=N` (CSV) The publisher re-reads the row every loop, so every change applies live, including switching the signal off.
+- **Navbar**: `/dashboard/index-quotes` carries `signals.{nifty,sensex}` from `reader.navbar_view()` (no constituent rows), rendered as a ▲ BULL / ▼ BEAR / ● NEUT chip after each index price, with a muted dash for `unavailable` and nothing at all for `disabled`.
+- **Mock mode**: `MockBreezeSdk` answers depth-only cash requests with synthetic 5-level books driven by a shared market factor, so the signal moves locally. Index spot stays cold in mock, as before.
+
+---
+
 ## Other additions since the last major doc pass
 
 - **Breeze API Playground** (`/settings/breeze-api-playground` in the UI, `app/domain/breeze_api_tester_catalog.py` on the backend) — lets a user interactively invoke raw ICICI Breeze API methods, including WS subscribe, against their own connected session. Useful for diagnosing broker-side issues without leaving the app.

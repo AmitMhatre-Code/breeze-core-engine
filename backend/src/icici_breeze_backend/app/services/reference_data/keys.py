@@ -106,4 +106,10 @@ def index_spot_key(label: str) -> str:
     return f"quotes:index_spot:{label.lower()}"
 
 
+def index_signal_key(label: str) -> str:
+    """Published W-OBI direction signal per index (see `index_signal.publisher`). Read only via
+    `index_signal.reader`, which judges the payload's own `valid_until`, not this key's TTL."""
+    return f"signal:index:{label.lower()}"
+
+
 WS_TICK_DIRTY_CHANNEL = "ws:tick:dirty"

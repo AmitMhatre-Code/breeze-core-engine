@@ -199,6 +199,15 @@ def _run_system_prefetch_blocking(user_id: str, today: date, *, force: bool = Fa
     except Exception:
         errors.append("index-spot: subscribe raised an exception")
         _logger.warning("index spot subscription sync failed", exc_info=True)
+    try:
+        from icici_breeze_backend.app.services.index_signal.publisher import ensure_depth_feed
+
+        # Deliberately not added to `errors`: the index-signal loop retries its own depth
+        # feed, and a refusal there must not put the chain prefetch into its retry cycle.
+        if not ensure_depth_feed(proc, user_id, force=force):
+            _logger.info("index-signal depth feed did not fully subscribe; its loop will retry")
+    except Exception:
+        _logger.warning("index-signal depth feed sync failed", exc_info=True)
     if force:
         # Arm the order feed on the same trigger. Cheap: re-arming is a no-op when
         # the SDK's order socket is already up (it guards on `orderconnect == 0`).
