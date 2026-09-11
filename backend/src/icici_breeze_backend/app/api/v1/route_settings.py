@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import sqlite3
-from typing import Any, List
+from typing import Any, List, Optional
 
 import httpx
 import time
@@ -671,12 +671,13 @@ async def settings_index_signal_weights_refresh(ctx: RequestContext = Depends(ge
 @router.get("/index-signal/shadow-report")
 async def settings_index_signal_shadow_report(
     days: int = Query(5, ge=1, le=365),
-    min_move_bps: float = Query(5.0, ge=0, le=100),
+    min_move_bps: Optional[float] = Query(None, ge=0, le=100),
     ctx: RequestContext = Depends(get_request_context),
 ):
     """Shadow-mode evidence: per-state forward index returns and hit rates over the last `days`
     -- what has to be reviewed before any bot may act on the signal. An index move smaller than
-    `min_move_bps` counts as flat, neither a hit nor a miss."""
+    `min_move_bps` counts as flat, neither a hit nor a miss; omitted, each index uses its
+    breakeven move, priced from Settings -> Trading Costs."""
     from icici_breeze_backend.app.services.index_signal import shadow_log
 
     return {
@@ -687,6 +688,16 @@ async def settings_index_signal_shadow_report(
             for label in ("nifty", "sensex")
         },
     }
+
+
+@router.get("/index-signal/readiness")
+async def settings_index_signal_readiness(ctx: RequestContext = Depends(get_request_context)):
+    """The plain-language verdict above the shadow evidence: per index, whether flips beat the
+    market's trend at +5 minutes by more than the breakeven move. Fixed test, no parameters --
+    see `shadow_log.readiness`."""
+    from icici_breeze_backend.app.services.index_signal import shadow_log
+
+    return {"indices": {label: shadow_log.readiness(label) for label in ("nifty", "sensex")}}
 
 
 @router.get("/index-signal/readings/download")

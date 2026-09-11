@@ -69,6 +69,8 @@ export type ShadowBucket = {
   n: number;
   /** Readings at least a horizon apart — the count the 95% range is taken from. */
   n_independent: number;
+  /** Of those, the ones whose move cleared the minimum either way — the count behind the range. */
+  n_independent_decisive: number;
   ups: number;
   downs: number;
   /** Moves smaller than the minimum move: neither a hit nor a miss. */
@@ -93,11 +95,27 @@ export type ShadowBaseline = {
 
 export type ShadowExcluded = { no_level: number; day_end: number; gap: number };
 
+/** The breakeven move (backend `index_signal/breakeven.py`): the Trading Costs round trip on one
+ * at-the-money lot, at the last session's premium, as an index move. `premium` is null when the
+ * bhavcopy has no price (the cost is then the flat charges alone); `points`/`bps` are null until
+ * the lot size and an index level are known. Excludes the bid-ask spread. */
+export type ShadowBreakeven = {
+  cost_rupees: number | null;
+  premium: number | null;
+  lot_size: number | null;
+  delta: number;
+  index_level: number | null;
+  points: number | null;
+  bps: number | null;
+};
+
 /** Keys of the per-horizon records are horizon seconds as strings ("60", "300", "900"). */
 export type ShadowReport = {
   label: IndexLabel;
   days: number;
+  /** The minimum move actually used — the breakeven when none was asked for. */
   min_move_bps: number;
+  breakeven: ShadowBreakeven;
   samples: number;
   transitions: number;
   flips: number;
@@ -109,13 +127,54 @@ export type ShadowReport = {
 
 export type IndexSignalShadowReportResponse = {
   days: number;
-  min_move_bps: number;
+  /** Null when each index scored against its own breakeven. */
+  min_move_bps: number | null;
   indices: Record<IndexLabel, ShadowReport>;
 };
+
+export type ReadinessStatus = "ready" | "too_early" | "no_edge" | "worse";
+export type CallStatus = "better" | "worse" | "no_edge" | "too_early" | "no_calls";
+
+/** Flips into one side, judged at one horizon (backend `shadow_log._call_view`). */
+export type ReadinessCall = {
+  status: CallStatus;
+  right: number;
+  calls: number;
+  /** Calls at least a horizon apart with a move past the breakeven — the evidence count. */
+  separate_calls: number;
+  hit_rate: number | null;
+  hit_rate_low: number | null;
+  hit_rate_high: number | null;
+  /** How often the index went the called way after any reading: what the calls must beat. */
+  trend_share: number | null;
+};
+
+/** The fixed scalping test (backend `shadow_log.readiness`): flips, at +5 min, against the breakeven. */
+export type IndexReadiness = {
+  label: IndexLabel;
+  status: ReadinessStatus;
+  lookback_days: number;
+  scalp_horizon_seconds: number;
+  hold_horizon_seconds: number;
+  min_move_bps: number;
+  breakeven: ShadowBreakeven;
+  directions: Record<"bullish" | "bearish", { scalp: ReadinessCall; hold: ReadinessCall }>;
+  sessions: number;
+  up_days: number;
+  down_days: number;
+  flips: number;
+  /** Flips the signal let go of within the scalp horizon. */
+  dropped_quickly: number;
+  requirements: { separate_calls: number; sessions: number; up_days: number; down_days: number };
+};
+
+export type IndexSignalReadinessResponse = { indices: Record<IndexLabel, IndexReadiness> };
 
 export const INDEX_SIGNAL_PREFERENCES_QUERY_KEY = ["settings", "index-signal-preferences"] as const;
 export const INDEX_SIGNAL_WEIGHTS_QUERY_KEY = ["settings", "index-signal-weights"] as const;
 export const INDEX_SIGNAL_SHADOW_REPORT_QUERY_KEY = ["settings", "index-signal-shadow-report"] as const;
+/** Under the report's key, so invalidating the report refreshes the verdict too. */
+export const INDEX_SIGNAL_READINESS_QUERY_KEY = [...INDEX_SIGNAL_SHADOW_REPORT_QUERY_KEY, "readiness"] as const;
 
 export const WEIGHTS_SOURCE_LABEL: Record<string, string> = {
   nse_api: "NSE · live free-float",
@@ -145,14 +204,20 @@ export function refreshIndexSignalWeights(): Promise<{ started: boolean; refresh
   );
 }
 
+/** `minMoveBps` null scores each index against its breakeven move. */
 export function fetchIndexSignalShadowReport(
   days: number,
-  minMoveBps: number,
+  minMoveBps: number | null,
 ): Promise<IndexSignalShadowReportResponse> {
-  const params = new URLSearchParams({ days: String(days), min_move_bps: String(minMoveBps) });
+  const params = new URLSearchParams({ days: String(days) });
+  if (minMoveBps != null) params.set("min_move_bps", String(minMoveBps));
   return apiClient.get<IndexSignalShadowReportResponse>(
     `/api/settings/index-signal/shadow-report?${params.toString()}`,
   );
+}
+
+export function fetchIndexSignalReadiness(): Promise<IndexSignalReadinessResponse> {
+  return apiClient.get<IndexSignalReadinessResponse>("/api/settings/index-signal/readiness");
 }
 
 async function triggerBlobDownload(res: Response, fallbackFilename: string): Promise<void> {

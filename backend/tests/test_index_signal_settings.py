@@ -163,6 +163,14 @@ class TestRoutes:
         assert resp["indices"]["nifty"]["samples"] == 0
         assert resp["indices"]["nifty"]["min_move_bps"] == 2.0
 
+    def test_readiness_route_reports_both_indices(self):
+        resp = asyncio.run(route_settings.settings_index_signal_readiness(_ctx()))
+        assert set(resp["indices"]) == {"nifty", "sensex"}
+        nifty = resp["indices"]["nifty"]
+        assert nifty["status"] == "too_early"  # nothing logged
+        assert nifty["breakeven"]["bps"] is None  # no index level logged yet
+        assert nifty["directions"]["bullish"]["scalp"]["status"] == "no_calls"
+
     def test_readings_download_route_serves_csv(self):
         resp = asyncio.run(route_settings.settings_index_signal_readings_download(index="NIFTY", days=5, ctx=_ctx()))
         assert resp.media_type.startswith("text/csv")

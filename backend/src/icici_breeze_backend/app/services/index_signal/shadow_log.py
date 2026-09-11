@@ -25,12 +25,13 @@ import math
 import sqlite3
 import threading
 import time
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from datetime import datetime
 from typing import Any, Iterable
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import IST
+from icici_breeze_backend.app.services.index_signal import breakeven
 
 _logger = logging.getLogger(__name__)
 
@@ -291,6 +292,7 @@ def _cell_summary(state: str, t: _Tally, baseline: dict[str, Any]) -> dict[str, 
     out: dict[str, Any] = {
         "n": t.n,
         "n_independent": t.independent,
+        "n_independent_decisive": t.independent_decisive,
         "ups": t.counts["up"],
         "downs": t.counts["down"],
         "flats": t.counts["flat"],
@@ -402,23 +404,173 @@ def score(
     }
 
 
+def _latest_level(rows: list[dict[str, Any]]) -> float | None:
+    for r in reversed(rows):
+        level = _level(r)
+        if level is not None:
+            return level
+    return None
+
+
+def _breakeven_move(label: str, rows: list[dict[str, Any]]) -> tuple[dict[str, Any], float]:
+    """The breakeven block and the minimum move to score with: the breakeven in bps, or the
+    default when it cannot be worked out (no lot size or index level yet)."""
+    be = breakeven.breakeven(label, _latest_level(rows))
+    return be, be["bps"] if be["bps"] is not None else DEFAULT_MIN_MOVE_BPS
+
+
 def shadow_report(
     label: str,
     *,
     days: int = 5,
-    min_move_bps: float = DEFAULT_MIN_MOVE_BPS,
+    min_move_bps: float | None = DEFAULT_MIN_MOVE_BPS,
     db_path: str | None = None,
     now: float | None = None,
 ) -> dict[str, Any]:
+    """`min_move_bps=None` scores against the breakeven move (`breakeven.py`)."""
     since = (time.time() if now is None else now) - days * 86400.0
     rows = load_rows(label, since, db_path)
+    be, breakeven_bps = _breakeven_move(label, rows)
+    used = breakeven_bps if min_move_bps is None else min_move_bps
     return {
         "label": label,
         "days": days,
-        "min_move_bps": min_move_bps,
+        "min_move_bps": used,
+        "breakeven": be,
         "samples": sum(1 for r in rows if r["kind"] == "sample"),
         "transitions": sum(1 for r in rows if r["kind"] == "transition"),
-        **score(rows, min_move_bps=min_move_bps),
+        **score(rows, min_move_bps=used),
+    }
+
+
+# The readiness verdict: the one answer to "may a scalping bot act on this signal yet?". The
+# test is fixed in advance -- flips, at +5 minutes, against the breakeven move -- because picking
+# whichever of the report's cells looks best would find a winner in pure noise. +15 minutes rides
+# along as information (does the move hold?), never as a way to pass.
+SCALP_HORIZON_SECONDS = 300
+HOLD_HORIZON_SECONDS = 900
+READINESS_LOOKBACK_DAYS = 60
+# A floor against early luck, not a target: the 95% range must also clear the trend, so a strong
+# signal passes soon after the floor and a marginal one needs far more calls than this.
+MIN_SEPARATE_CALLS = 30
+# A one-way week makes one side look clever, so the evidence must span both kinds of day.
+MIN_SESSIONS = 10
+MIN_UP_DAYS = 3
+MIN_DOWN_DAYS = 3
+
+
+def _sessions(ordered: list[dict[str, Any]]) -> tuple[int, int, int]:
+    """(trading days logged, up days, down days), a day's direction being its last logged level
+    against its first."""
+    first: dict[str, float] = {}
+    last: dict[str, float] = {}
+    for r in ordered:
+        level = _level(r)
+        if r.get("kind") != "sample" or level is None:
+            continue
+        day = _ist_day(float(r["ts"]))
+        first.setdefault(day, level)
+        last[day] = level
+    up = sum(1 for d in first if last[d] > first[d])
+    down = sum(1 for d in first if last[d] < first[d])
+    return len(first), up, down
+
+
+def _dropped_within(ordered: list[dict[str, Any]], seconds: float) -> tuple[int, int]:
+    """(flips, flips the signal let go of within `seconds`). Every flip is a trade for a bot that
+    acts on it, so one given up minutes later is a round trip paid for a call withdrawn."""
+    flips = _flips(ordered)
+    changes = [float(r["ts"]) for r in ordered if r.get("kind") == "transition"]
+    dropped = 0
+    for t0, _state, _level_at_flip in flips:
+        j = bisect_right(changes, t0)
+        if j < len(changes) and changes[j] - t0 < seconds:
+            dropped += 1
+    return len(flips), dropped
+
+
+def _call_status(cell: dict[str, Any] | None) -> str:
+    if cell is None or cell["ups"] + cell["downs"] == 0:
+        return "no_calls"
+    if cell["n_independent_decisive"] < MIN_SEPARATE_CALLS:
+        return "too_early"
+    return {"better": "better", "worse": "worse"}.get(str(cell["verdict"]), "no_edge")
+
+
+def _call_view(state: str, cell: dict[str, Any] | None, baseline: dict[str, Any]) -> dict[str, Any]:
+    bullish = state == "bullish"
+    wins = (cell["ups"] if bullish else cell["downs"]) if cell else 0
+    return {
+        "status": _call_status(cell),
+        "right": wins,
+        "calls": (cell["ups"] + cell["downs"]) if cell else 0,
+        "separate_calls": cell["n_independent_decisive"] if cell else 0,
+        "hit_rate": cell["hit_rate"] if cell else None,
+        "hit_rate_low": cell["hit_rate_low"] if cell else None,
+        "hit_rate_high": cell["hit_rate_high"] if cell else None,
+        # How often the index went the called way after any reading: what the flip must beat.
+        "trend_share": baseline["up_share" if bullish else "down_share"],
+    }
+
+
+def readiness(
+    label: str,
+    *,
+    db_path: str | None = None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Whether the signal has earned a scalping bot's trust, in the terms the Settings screen's
+    summary shows. `status`: `ready` (both sides beat the trend at +5 min), `worse` (a side is
+    reliably worse than the trend), `no_edge` (enough evidence, no better than the trend), or
+    `too_early` (below a floor)."""
+    since = (time.time() if now is None else now) - READINESS_LOOKBACK_DAYS * 86400.0
+    ordered = load_rows(label, since, db_path)
+    be, min_move = _breakeven_move(label, ordered)
+    scored = score(ordered, horizons=(SCALP_HORIZON_SECONDS, HOLD_HORIZON_SECONDS), min_move_bps=min_move)
+    sessions, up_days, down_days = _sessions(ordered)
+    flips, dropped = _dropped_within(ordered, SCALP_HORIZON_SECONDS)
+
+    directions: dict[str, dict[str, Any]] = {}
+    for state in DIRECTIONAL_STATES:
+        directions[state] = {
+            key: _call_view(
+                state,
+                scored["flip_returns"][h].get(state),
+                scored["baseline"][h],
+            )
+            for key, h in (("scalp", SCALP_HORIZON_SECONDS), ("hold", HOLD_HORIZON_SECONDS))
+        }
+    scalp = [directions[s]["scalp"]["status"] for s in DIRECTIONAL_STATES]
+    enough_days = sessions >= MIN_SESSIONS and up_days >= MIN_UP_DAYS and down_days >= MIN_DOWN_DAYS
+    if "worse" in scalp:
+        status = "worse"
+    elif not enough_days or any(s in ("no_calls", "too_early") for s in scalp):
+        status = "too_early"
+    elif all(s == "better" for s in scalp):
+        status = "ready"
+    else:
+        status = "no_edge"
+
+    return {
+        "label": label,
+        "status": status,
+        "lookback_days": READINESS_LOOKBACK_DAYS,
+        "scalp_horizon_seconds": SCALP_HORIZON_SECONDS,
+        "hold_horizon_seconds": HOLD_HORIZON_SECONDS,
+        "min_move_bps": min_move,
+        "breakeven": be,
+        "directions": directions,
+        "sessions": sessions,
+        "up_days": up_days,
+        "down_days": down_days,
+        "flips": flips,
+        "dropped_quickly": dropped,
+        "requirements": {
+            "separate_calls": MIN_SEPARATE_CALLS,
+            "sessions": MIN_SESSIONS,
+            "up_days": MIN_UP_DAYS,
+            "down_days": MIN_DOWN_DAYS,
+        },
     }
 
 
@@ -486,3 +638,4 @@ def reset_state_for_tests() -> None:
         _last_minute.clear()
         _ready_paths.clear()
         _last_purge_date = None
+    breakeven.reset_state_for_tests()

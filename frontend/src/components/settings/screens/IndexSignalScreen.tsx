@@ -1,22 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { SettingsScreenHeader } from "@/components/settings/SettingsScreenHeader";
+import { fetchMarketStatus } from "@/lib/market-status";
+import { useIndexQuotes } from "@/lib/use-index-quotes";
 import {
   downloadIndexSignalReadings,
   fetchIndexSignalPreferences,
+  fetchIndexSignalReadiness,
   fetchIndexSignalShadowReport,
   fetchIndexSignalWeights,
   INDEX_SIGNAL_PREFERENCES_QUERY_KEY,
+  INDEX_SIGNAL_READINESS_QUERY_KEY,
   INDEX_SIGNAL_SHADOW_REPORT_QUERY_KEY,
   INDEX_SIGNAL_WEIGHTS_QUERY_KEY,
   refreshIndexSignalWeights,
   saveIndexSignalPreferences,
   WEIGHTS_SOURCE_LABEL,
+  type CallStatus,
   type IndexLabel,
+  type IndexReadiness,
+  type ReadinessCall,
+  type ReadinessStatus,
   type IndexSignalFieldBound,
   type IndexSignalNumericField,
   type IndexSignalPreferences,
@@ -566,8 +574,8 @@ function WeightsTable({
 }
 
 const DAY_OPTIONS = [1, 5, 20, 60];
-const MIN_MOVE_OPTIONS = [0, 2, 5, 10];
-const DEFAULT_MIN_MOVE_BPS = 5;
+/** null = each index's breakeven move, the bar the readiness summary uses. */
+const MIN_MOVE_OPTIONS: (number | null)[] = [null, 0, 2, 5, 10];
 const HORIZONS: { key: string; label: string }[] = [
   { key: "60", label: "+1 min" },
   { key: "300", label: "+5 min" },
@@ -584,12 +592,13 @@ const FLIP_STATES: StateRow[] = [
   { key: "bearish", label: "Turned bearish", tone: "text-down" },
 ];
 const EXCLUDED_REASONS: { key: keyof ShadowExcluded; label: string }[] = [
-  { key: "day_end", label: "too near the close" },
+  // The log ends before the horizon: the close, or (mid-session) an outcome not due yet.
+  { key: "day_end", label: "past the close or not due yet" },
   { key: "no_level", label: "no index level" },
   { key: "gap", label: "gap in the log" },
 ];
 
-function PillGroup({
+function PillGroup<T extends number | null>({
   label,
   options,
   value,
@@ -597,10 +606,10 @@ function PillGroup({
   format,
 }: {
   label: string;
-  options: number[];
-  value: number;
-  onChange: (value: number) => void;
-  format: (value: number) => string;
+  options: T[];
+  value: T;
+  onChange: (value: T) => void;
+  format: (value: T) => string;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -608,7 +617,7 @@ function PillGroup({
       <div role="group" aria-label={label} className="inline-flex gap-1.5">
         {options.map((o) => (
           <button
-            key={o}
+            key={String(o)}
             type="button"
             aria-pressed={value === o}
             onClick={() => onChange(o)}
@@ -626,50 +635,337 @@ function PillGroup({
   );
 }
 
+/** The log writes its minute sample on the first publish of each wall-clock minute (backend
+ * `shadow_log.record`), so the report is refetched just past each minute rather than on the
+ * signal's own publish interval — the publishes in between add nothing to it. */
+const MINUTE_SAMPLE_LAG_MS = 5_000;
+/** The navbar reads a new state from Redis a moment before the shadow log commits the
+ * transition row (`publisher.publish_once` writes the payload first). */
+const TRANSITION_SETTLE_MS = 2_000;
+
+function msUntilNextSample(nowMs: number): number {
+  const next = (Math.floor((nowMs - MINUTE_SAMPLE_LAG_MS) / 60_000) + 1) * 60_000 + MINUTE_SAMPLE_LAG_MS;
+  return next - nowMs;
+}
+
 function ShadowEvidenceSection() {
+  const qc = useQueryClient();
+  const [showDetail, setShowDetail] = useState(false);
   const [days, setDays] = useState(5);
-  const [minMove, setMinMove] = useState(DEFAULT_MIN_MOVE_BPS);
+  const [minMove, setMinMove] = useState<number | null>(null);
+  const marketStatus = useQuery({
+    queryKey: ["settings", "market-status"],
+    queryFn: fetchMarketStatus,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+  });
+  const marketOpen = marketStatus.data?.is_open ?? false;
+  // No samples are logged while the market is closed, so there is nothing new to fetch.
+  const refetchInterval = marketOpen ? () => msUntilNextSample(Date.now()) : false;
+  const readiness = useQuery({
+    queryKey: INDEX_SIGNAL_READINESS_QUERY_KEY,
+    queryFn: fetchIndexSignalReadiness,
+    refetchInterval,
+  });
   const q = useQuery({
     queryKey: [...INDEX_SIGNAL_SHADOW_REPORT_QUERY_KEY, days, minMove],
     queryFn: () => fetchIndexSignalShadowReport(days, minMove),
+    // The full tables are folded away by default: only fetch them once opened.
+    enabled: showDetail,
+    refetchInterval,
   });
 
+  // A state change writes a transition row the moment it happens: pick it up from the navbar's
+  // poll (same query, no extra requests) instead of waiting for the next minute.
+  const signals = useIndexQuotes().data?.signals;
+  const stateKey = signals ? `${signals.nifty?.state ?? ""}|${signals.sensex?.state ?? ""}` : null;
+  const lastStateKey = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = lastStateKey.current;
+    lastStateKey.current = stateKey;
+    if (prev == null || stateKey == null || prev === stateKey) return;
+    const timer = window.setTimeout(
+      () => void qc.invalidateQueries({ queryKey: INDEX_SIGNAL_SHADOW_REPORT_QUERY_KEY }),
+      TRANSITION_SETTLE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [stateKey, qc]);
+
+  const requirements = readiness.data?.indices.nifty?.requirements;
   return (
     <section className="app-card space-y-4 p-5">
       <div>
         <h3 className="text-heading font-bold text-foreground">Shadow evidence</h3>
         <p className="mt-1 text-xs leading-relaxed text-muted">
-          Every minute the signal is logged with the index level, and each reading is compared with where the index
-          was 1, 5 and 15 minutes later. A hit is a move of at least the minimum move in the called direction; smaller
-          moves are flat and count neither way.
-        </p>
-        <p className="mt-1.5 text-xs leading-relaxed text-muted">
-          The range under each hit rate is its 95% range, worked out only from readings a whole horizon apart,
-          because back-to-back minutes of one run are nearly the same bet. The edge compares the hit rate with how
-          often the index moved that way after any reading in the same period: the signal is only earning its keep
-          where it shows green, meaning the whole range sits above that. &ldquo;After a flip&rdquo; scores each change
-          of mind once, from the index level at the flip.
+          Is the signal good enough for a scalping bot? Each time it turns bullish or bearish, the index is checked
+          5 and 15 minutes later: a call is right when the index went that way by enough to pay for a trade, and it
+          only counts for something if it is right more often than simply going along with the market&rsquo;s trend.
+          While the market is open this updates every minute, and as soon as the signal changes state.
         </p>
       </div>
-      <div className="flex flex-wrap gap-x-6 gap-y-2">
-        <PillGroup label="Period" options={DAY_OPTIONS} value={days} onChange={setDays} format={(d) => `${d}d`} />
-        <PillGroup
-          label="Minimum move"
-          options={MIN_MOVE_OPTIONS}
-          value={minMove}
-          onChange={setMinMove}
-          format={(b) => (b === 0 ? "Any" : `${b} bps`)}
-        />
-      </div>
-      {q.error ? (
-        <p className="text-xs text-down">{q.error instanceof Error ? q.error.message : "Could not load the evidence"}</p>
+      {readiness.error ? (
+        <p className="text-xs text-down">
+          {readiness.error instanceof Error ? readiness.error.message : "Could not load the verdict"}
+        </p>
       ) : null}
       <div className="grid gap-5 xl:grid-cols-2">
         {INDICES.map(({ key, name }) => (
-          <ShadowIndexReport key={key} label={key} name={name} days={days} report={q.data?.indices[key]} />
+          <ReadinessCard key={key} name={name} readiness={readiness.data?.indices[key]} />
         ))}
       </div>
+      {requirements ? (
+        <div className="space-y-1 text-hint leading-relaxed text-muted">
+          <p className="flex flex-wrap gap-x-4 gap-y-1">
+            {(Object.keys(CALL_LABEL) as CallStatus[])
+              .filter((s) => s !== "no_calls")
+              .map((s) => (
+                <span key={s} className="inline-flex items-center gap-1.5">
+                  <StatusDot status={s} />
+                  {CALL_LABEL[s]}
+                </span>
+              ))}
+          </p>
+          <p>
+            &ldquo;Ready&rdquo; needs both sides beating the trend within 5 minutes, on at least{" "}
+            {requirements.separate_calls} separate calls each, over at least {requirements.sessions} trading days
+            with {requirements.up_days} up and {requirements.down_days} down days among them. A separate call is one
+            at least 5 minutes after the last one counted. The 15-minute column shows whether the move holds; it
+            never decides the verdict. Bots still don&rsquo;t act on the signal until you let them.
+          </p>
+        </div>
+      ) : null}
+      <details
+        open={showDetail}
+        onToggle={(e) => setShowDetail(e.currentTarget.open)}
+        className="rounded-[10px] border border-border"
+      >
+        <summary className="cursor-pointer select-none px-4 py-3 text-xs font-semibold text-foreground">
+          Show the full evidence{" "}
+          <span className="font-normal text-muted">— every reading, all horizons, CSV download</span>
+        </summary>
+        <div className="space-y-4 border-t border-border p-4">
+          <div>
+            <p className="text-xs leading-relaxed text-muted">
+              Every minute the signal is logged with the index level, and each reading is compared with where the
+              index was 1, 5 and 15 minutes later. A hit is a move of at least the minimum move in the called
+              direction; smaller moves are flat and count neither way. &ldquo;Breakeven&rdquo; is the Trading Costs
+              round trip as an index move, the same bar the verdict above uses.
+            </p>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted">
+              The range under each hit rate is its 95% range, worked out only from readings a whole horizon apart,
+              because back-to-back minutes of one run are nearly the same bet. The edge compares the hit rate with how
+              often the index moved that way after any reading in the same period: the signal is only earning its
+              keep where it shows green, meaning the whole range sits above that. &ldquo;After a flip&rdquo; scores
+              each change of mind once, from the index level at the flip.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-x-6 gap-y-2">
+            <PillGroup label="Period" options={DAY_OPTIONS} value={days} onChange={setDays} format={(d) => `${d}d`} />
+            <PillGroup
+              label="Minimum move"
+              options={MIN_MOVE_OPTIONS}
+              value={minMove}
+              onChange={setMinMove}
+              format={(b) => (b == null ? "Breakeven" : b === 0 ? "Any" : `${b} bps`)}
+            />
+          </div>
+          {q.error ? (
+            <p className="text-xs text-down">
+              {q.error instanceof Error ? q.error.message : "Could not load the evidence"}
+            </p>
+          ) : null}
+          <div className="grid gap-5 xl:grid-cols-2">
+            {INDICES.map(({ key, name }) => (
+              <ShadowIndexReport key={key} label={key} name={name} days={days} report={q.data?.indices[key]} />
+            ))}
+          </div>
+        </div>
+      </details>
     </section>
+  );
+}
+
+const HEADLINE: Record<ReadinessStatus, { text: string; tone: string }> = {
+  ready: { text: "Yes — it beats the trend", tone: "border-up/40 text-up" },
+  too_early: { text: "Not yet — too early to tell", tone: "border-border text-muted" },
+  no_edge: { text: "No — no better than the trend", tone: "border-amber-accent/40 text-amber-accent" },
+  worse: { text: "No — worse than the trend", tone: "border-down/40 text-down" },
+};
+
+const CALL_LABEL: Record<CallStatus, string> = {
+  better: "better than the trend",
+  worse: "worse than the trend",
+  no_edge: "no better than the trend",
+  too_early: "too early to tell",
+  no_calls: "no calls yet",
+};
+
+function StatusDot({ status }: { status: CallStatus }) {
+  const fill: Record<CallStatus, string> = {
+    better: "bg-up",
+    worse: "bg-down",
+    no_edge: "bg-faint",
+    too_early: "border border-muted",
+    no_calls: "border border-muted",
+  };
+  return <span className={`inline-block size-2 shrink-0 rounded-full ${fill[status]}`} aria-hidden />;
+}
+
+function formatNumber(x: number, digits: number): string {
+  return x.toLocaleString("en-IN", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+function CallCell({ call, side }: { call: ReadinessCall; side: "bullish" | "bearish" }) {
+  const went = side === "bullish" ? "rose" : "fell";
+  return (
+    <span className="inline-flex items-start gap-2" title={CALL_LABEL[call.status]}>
+      <span className="mt-[5px]">
+        <StatusDot status={call.status} />
+      </span>
+      <span className="leading-snug">
+        <span className="sr-only">{CALL_LABEL[call.status]}: </span>
+        {call.status === "no_calls" ? (
+          <span className="text-faint">no calls yet</span>
+        ) : (
+          <>
+            <span className="text-foreground">
+              right {call.right} of {call.calls}
+            </span>
+            {call.trend_share != null ? (
+              <span className="block text-hint text-faint">
+                market {went} {pct(call.trend_share)} of the time anyway
+              </span>
+            ) : null}
+          </>
+        )}
+      </span>
+    </span>
+  );
+}
+
+function breakevenLine(r: IndexReadiness): string {
+  const be = r.breakeven;
+  if (be.points == null || be.bps == null || be.cost_rupees == null) {
+    return `Trading costs can't be turned into an index move yet (no lot size or index level), so a move counts from ${formatNumber(r.min_move_bps, 1)} bps.`;
+  }
+  const priced =
+    be.premium != null
+      ? `at the last session's ₹${formatNumber(be.premium, 0)} premium`
+      : "flat charges only, as there is no option price yet";
+  return `A call is right when the index moves at least ${formatNumber(be.points, 1)} points (${formatNumber(be.bps, 1)} bps) its way: enough to cover the ₹${formatNumber(be.cost_rupees, 0)} round trip on one at-the-money lot of ${be.lot_size} (Trading Costs, ${priced}; the bid-ask spread is not included).`;
+}
+
+/** Only once every cell has a verdict: what +5 against +15 minutes says about how to trade it. */
+function takeaway(r: IndexReadiness): string | null {
+  const sides = [r.directions.bullish, r.directions.bearish];
+  const decided = (c: ReadinessCall) => c.status !== "too_early" && c.status !== "no_calls";
+  if (!sides.every((d) => decided(d.scalp) && decided(d.hold))) return null;
+  const quick = sides.every((d) => d.scalp.status === "better");
+  const holds = sides.every((d) => d.hold.status === "better");
+  if (quick && holds) return "Moves tend to keep going after a flip: winners can be given room to run.";
+  if (quick) return "Moves come quickly and fade: take profit within a few minutes.";
+  if (holds) return "It calls moves early: they do come, but too slowly for a 5-minute scalp.";
+  return null;
+}
+
+function stillNeeded(r: IndexReadiness): { share: number; missing: string[] } {
+  const req = r.requirements;
+  const bull = r.directions.bullish.scalp.separate_calls;
+  const bear = r.directions.bearish.scalp.separate_calls;
+  const share = Math.min(
+    1,
+    bull / req.separate_calls,
+    bear / req.separate_calls,
+    r.sessions / req.sessions,
+    r.up_days / req.up_days,
+    r.down_days / req.down_days,
+  );
+  const missing: string[] = [];
+  const more = (have: number, need: number, noun: string) => {
+    if (have < need) missing.push(`${need - have} more ${noun}${need - have === 1 ? "" : "s"}`);
+  };
+  more(bull, req.separate_calls, "bullish call");
+  more(bear, req.separate_calls, "bearish call");
+  more(r.sessions, req.sessions, "trading day");
+  more(r.up_days, req.up_days, "up day");
+  more(r.down_days, req.down_days, "down day");
+  return { share, missing };
+}
+
+function ReadinessCard({ name, readiness: r }: { name: string; readiness: IndexReadiness | undefined }) {
+  if (!r) {
+    return <p className="text-xs text-muted">Loading {name}…</p>;
+  }
+  const headline = HEADLINE[r.status];
+  const { share, missing } = stillNeeded(r);
+  const lesson = takeaway(r);
+  const flickers = r.flips >= 5 && r.dropped_quickly * 2 >= r.flips;
+  return (
+    <div className="min-w-0 space-y-3 rounded-[10px] border border-border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-heading font-semibold text-foreground">{name}</div>
+        <span className={`rounded-full border px-3 py-1 text-xs font-medium ${headline.tone}`}>
+          <span className="font-normal text-muted">Ready to scalp? </span>
+          {headline.text}
+        </span>
+      </div>
+      <p className="text-hint leading-relaxed text-muted">{breakevenLine(r)}</p>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-left text-table">
+          <thead>
+            <tr className="text-hint text-muted">
+              <th className="py-1.5 pr-3 font-medium" />
+              <th className="px-3 py-1.5 font-medium whitespace-nowrap">Within 5 min</th>
+              <th className="py-1.5 pl-3 font-medium whitespace-nowrap">Within 15 min</th>
+            </tr>
+          </thead>
+          <tbody>
+            {FLIP_STATES.map((s) => {
+              const side = s.key as "bullish" | "bearish";
+              return (
+                <tr key={s.key} className="border-t border-border">
+                  <td className={`py-2 pr-3 align-top whitespace-nowrap font-medium ${s.tone}`}>
+                    When it {s.label.toLowerCase()}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <CallCell call={r.directions[side].scalp} side={side} />
+                  </td>
+                  <td className="py-2 pl-3 align-top">
+                    <CallCell call={r.directions[side].hold} side={side} />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-3">
+          <span className="shrink-0 text-hint text-muted">Evidence</span>
+          <div
+            className="h-1.5 flex-1 overflow-hidden rounded-full bg-border"
+            role="progressbar"
+            aria-label={`${name} evidence collected`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(share * 100)}
+          >
+            <div className="h-full rounded-full bg-accent-strong" style={{ width: `${Math.round(share * 100)}%` }} />
+          </div>
+        </div>
+        <p className="text-hint leading-relaxed text-muted">
+          {missing.length ? `Still needed: ${missing.join(", ")}.` : "Enough evidence collected."}
+        </p>
+      </div>
+      {lesson ? <p className="text-table text-foreground">{lesson}</p> : null}
+      {r.flips > 0 ? (
+        <p className={`text-hint leading-relaxed ${flickers ? "text-amber-accent" : "text-muted"}`}>
+          {flickers ? "Changes its mind quickly: " : ""}
+          {r.dropped_quickly} of {countLabel(r.flips, "call")} dropped within 5 minutes
+          {flickers ? ". A bot acting on every call would pay for each one." : "."}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -697,7 +993,7 @@ function ShadowIndexReport({
           {report ? (
             <div className="text-hint text-muted">
               {countLabel(report.samples, "reading")} · {countLabel(report.transitions, "state change")} ·{" "}
-              {countLabel(report.flips, "flip")}
+              {countLabel(report.flips, "flip")} · moves from {formatNumber(report.min_move_bps, 1)} bps
             </div>
           ) : null}
         </div>
@@ -806,7 +1102,8 @@ function EvidenceCell({ bucket, directional }: { bucket: ShadowBucket | undefine
       ? `${Math.round(bucket.hit_rate_low * 100)}–${pct(bucket.hit_rate_high)}`
       : null;
   const edge = [
-    bucket.edge_hit != null ? `${signed(bucket.edge_hit * 100, 0)} pts` : null,
+    // Percentage points of hit rate, spelled so it can't be read as index points.
+    bucket.edge_hit != null ? `${signed(bucket.edge_hit * 100, 0)}% vs trend` : null,
     bucket.edge_bps != null ? `${signed(bucket.edge_bps, 1)} bps` : null,
   ]
     .filter(Boolean)
