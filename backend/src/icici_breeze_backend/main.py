@@ -540,15 +540,12 @@ def start_application():
         chain_sweep_task: asyncio.Task = asyncio.create_task(run_active_chain_sweep_loop())
 
         # NIFTY/SENSEX direction signal (docs/design-decisions.md #30). Publishes on the P&L
-        # recompute clock; its depth feed is first subscribed by the login prefetch.
-        from icici_breeze_backend.app.services.index_signal.publisher import (
-            index_signal_enabled,
-            run_index_signal_loop,
-        )
+        # recompute clock; its depth feed is first subscribed by the login prefetch. Always
+        # started: the loop reads Settings -> Index Signal every tick and publishes `disabled`
+        # while switched off, so switching it back on needs no restart.
+        from icici_breeze_backend.app.services.index_signal.publisher import run_index_signal_loop
 
-        index_signal_task: asyncio.Task | None = None
-        if index_signal_enabled():
-            index_signal_task = asyncio.create_task(run_index_signal_loop())
+        index_signal_task: asyncio.Task | None = asyncio.create_task(run_index_signal_loop())
 
         yield
         from icici_breeze_backend.app.services.bots.scheduler import stop_bot_scheduler

@@ -517,6 +517,7 @@ function IndexTickerItem({
           {quote.change_pct != null ? ` (${sign}${quote.change_pct.toFixed(2)}%)` : ""}
         </span>
       ) : null}
+      <IndexSignalChip label={label} signal={signal} />
     </span>
   );
 }

@@ -276,17 +276,34 @@ function PreferencesSection() {
   // Drafts only hold what the user has touched; everything else reads straight from the server
   // value, so a save (which clears the drafts) shows exactly what the backend stored.
   const [drafts, setDrafts] = useState<Drafts>({});
-  const [enabledDraft, setEnabledDraft] = useState<boolean | null>(null);
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [switchNotice, setSwitchNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+
+  // The switch saves on its own the moment it is flipped. It leaves `drafts` alone, so unsaved
+  // edits to the numeric fields survive a flip.
+  const toggle = useMutation({
+    mutationFn: (next: boolean) => saveIndexSignalPreferences({ enabled: next }),
+    onSuccess: (updated) => {
+      qc.setQueryData<IndexSignalPreferences>(INDEX_SIGNAL_PREFERENCES_QUERY_KEY, updated);
+      setSwitchNotice({
+        tone: "ok",
+        text: updated.enabled
+          ? "Switched on. The signal starts publishing within one cycle."
+          : "Switched off. The navbar chip disappears within one cycle.",
+      });
+      void qc.invalidateQueries({ queryKey: ["dashboard", "index-quotes"] });
+    },
+    onError: (e) =>
+      setSwitchNotice({ tone: "error", text: e instanceof Error ? e.message : "Could not switch the signal" }),
+  });
 
   const save = useMutation({
     mutationFn: saveIndexSignalPreferences,
     onSuccess: (updated) => {
       qc.setQueryData<IndexSignalPreferences>(INDEX_SIGNAL_PREFERENCES_QUERY_KEY, updated);
       setDrafts({});
-      setEnabledDraft(null);
       setNotice({ tone: "ok", text: "Saved. The running app applies this within one cycle." });
-      // The navbar chip follows the switch, and a new stock count changes the weights table.
+      // The navbar chip's tooltip shows the thresholds, and a new stock count changes the weights table.
       void qc.invalidateQueries({ queryKey: ["dashboard", "index-quotes"] });
       void qc.invalidateQueries({ queryKey: INDEX_SIGNAL_WEIGHTS_QUERY_KEY });
     },
@@ -296,8 +313,9 @@ function PreferencesSection() {
   const data = q.data;
   const disabled = !data || save.isPending;
   // Until the stored value arrives the switch shows off (and is disabled) rather than guessing
-  // "on" — a wrong guess read as the signal's real state.
-  const enabled = enabledDraft ?? data?.enabled ?? false;
+  // "on" — a wrong guess read as the signal's real state. While a flip saves, it shows the
+  // position asked for.
+  const enabled = (toggle.isPending ? toggle.variables : undefined) ?? data?.enabled ?? false;
   const valueOf = (key: IndexSignalNumericField): string =>
     drafts[key] ?? (data ? String(data[key]) : "");
 
@@ -311,9 +329,7 @@ function PreferencesSection() {
     }
   }
   const hasError = [...issues.values()].some((i) => i?.tone === "error");
-  const dirty =
-    data != null &&
-    (enabled !== data.enabled || ALL_FIELDS.some((spec) => valueOf(spec.key) !== String(data[spec.key])));
+  const dirty = data != null && ALL_FIELDS.some((spec) => valueOf(spec.key) !== String(data[spec.key]));
 
   const renderFields = (specs: FieldSpec[]) =>
     data ? (
@@ -349,16 +365,22 @@ function PreferencesSection() {
             <h3 className="text-heading font-bold text-foreground">Signal</h3>
             <p className="mt-1 text-xs leading-relaxed text-muted">
               When off, the order-book subscriptions are dropped, nothing is published or logged, and the navbar
-              chip disappears. Anything that reads the signal sees it as unavailable.
+              chip disappears. Anything that reads the signal sees it as unavailable. The switch saves as soon as
+              you flip it.
             </p>
+            {switchNotice ? (
+              <p className={`mt-1.5 text-xs ${switchNotice.tone === "ok" ? "text-up" : "text-down"}`}>
+                {switchNotice.text}
+              </p>
+            ) : null}
           </div>
           <Switch
             enabled={enabled}
             onChange={(next) => {
-              setNotice(null);
-              setEnabledDraft(next);
+              setSwitchNotice(null);
+              toggle.mutate(next);
             }}
-            disabled={disabled}
+            disabled={!data || toggle.isPending}
             label="Index signal enabled"
           />
         </div>
@@ -382,12 +404,12 @@ function PreferencesSection() {
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
-          className="app-btn-outline rounded-[9px] px-4 py-2 text-xs"
+          className="app-btn-primary rounded-[9px] px-4 py-2 text-xs"
           disabled={disabled || !dirty || hasError}
           aria-busy={save.isPending}
           onClick={() => {
             if (!data) return;
-            const body: Record<string, number | boolean> = { enabled };
+            const body: Record<string, number> = {};
             for (const spec of ALL_FIELDS) body[spec.key] = Number(valueOf(spec.key));
             save.mutate(body);
           }}
