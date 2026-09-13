@@ -18,7 +18,7 @@ export type BotType =
 
 // --- CAS Bingo (docs/bots-cas-bingo-plan.md) ------------------------------------------
 
-/** `simulation` places nothing; `live` is the card's Autonomous. Manual is `enabled=false`. */
+/** `simulation` places nothing; `live` is the card's Autonomous. Off is `enabled=false`. */
 export type CasBingoMode = "simulation" | "live";
 export type CasBingoStrategy = "credit_spread" | "debit_spread" | "long_strangle";
 export type CasBingoStructure =

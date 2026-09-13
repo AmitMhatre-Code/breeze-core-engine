@@ -25,18 +25,18 @@ import {
  *
  *  Its own axis again: no Telegram approval (the user dropped HITL for this bot — a flip
  *  inside a ~15-minute window cannot wait on a message), and no paper-evidence gate on
- *  Autonomous. Manual is `enabled=false`; the run sheet works in every mode. */
-type CasCardMode = "manual" | "simulation" | "live";
+ *  Autonomous. Off is `enabled=false`; the run sheet (header play icon) works in every mode. */
+type CasCardMode = "off" | "simulation" | "live";
 
 const MODE_LABEL: Record<CasCardMode, string> = {
-  manual: "Manual",
+  off: "Off",
   simulation: "Simulation",
   live: "Autonomous",
 };
 
 // Two lines at the 22rem card width, like the other cards' blurbs.
 const MODE_BLURB: Record<CasCardMode, string> = {
-  manual: "Never fires on its own. Run it from the sheet and pick a structure yourself.",
+  off: "Never fires on its own. Start a run with the play icon and pick a structure yourself.",
   simulation: "Runs the full logic on live prices on expiry days. Places no orders.",
   live: "Places real orders on expiry days when its trigger fires, within your limits.",
 };
@@ -63,8 +63,21 @@ function GearIcon() {
   );
 }
 
+// Same glyph and button look as the writer cards' header (BotCard), so the run trigger
+// sits in the same place on every card rather than as a button at the bottom of this one.
+function PlayIcon() {
+  return (
+    <svg viewBox="8 5 11 14" fill="currentColor" className="size-4" aria-hidden>
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+
+const HEADER_ICON_BTN =
+  "grid size-8 shrink-0 place-items-center rounded-lg text-muted transition hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 disabled:pointer-events-none disabled:opacity-40";
+
 function cardMode(bot: Bot): CasCardMode {
-  if (!bot.enabled) return "manual";
+  if (!bot.enabled) return "off";
   // Anything unrecognised resolves to simulation, matching the backend default. An unknown
   // value must never mean "places real orders".
   return (bot.config as { mode?: string }).mode === "live" ? "live" : "simulation";
@@ -177,7 +190,9 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
   const mode = cardMode(bot);
   const { data: cycles } = useTodaysCycles(bot.bot_type, true, bot.enabled);
   const { data: todaysRun } = useTodaysRun(bot.bot_type, bot.enabled);
-  const { data: readiness } = useSignalReadiness(config.strategy !== "long_strangle");
+  // Only the Autonomous confirmation shows readiness (the other cards carry no signal line),
+  // so it is fetched when that dialog opens rather than on every card render.
+  const { data: readiness } = useSignalReadiness(confirmOpen && config.strategy !== "long_strangle");
 
   const open = (cycles ?? []).filter((c) => c.closed_at === null);
   const closed = (cycles ?? []).filter((c) => c.closed_at !== null);
@@ -192,7 +207,7 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
       // previous mode — briefly authorised for real orders when the user asked for less.
       await update.mutateAsync({
         botType: bot.bot_type,
-        enabled: next !== "manual",
+        enabled: next !== "off",
         config: { mode: next === "live" ? "live" : "simulation" },
       });
       setConfirmOpen(false);
@@ -219,17 +234,6 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
     }
   }
 
-  const readinessLine =
-    config.strategy === "long_strangle" || !readiness
-      ? null
-      : Object.entries(config.indices ?? {})
-          .filter(([, v]) => v.enabled)
-          .map(([code]) => {
-            const status = readiness.indices?.[code === "BSESEN" ? "sensex" : "nifty"]?.status ?? "unknown";
-            return `${INDEX_LABEL[code] ?? code} ${READINESS_LABEL[status] ?? status}`;
-          })
-          .join(" · ");
-
   return (
     <>
       <section className="app-card flex h-full flex-col p-4">
@@ -250,20 +254,31 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
             <h2 className="app-text-heading mt-1.5">{meta.title}</h2>
             <p className="app-text-muted mt-1 line-clamp-2 min-h-[2lh] text-hint">{meta.blurb}</p>
           </div>
-          <button
-            type="button"
-            aria-label={`${meta.title} settings`}
-            onClick={() => setSettingsOpen(true)}
-            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted transition hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
-          >
-            <GearIcon />
-          </button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              aria-label={`Start a run for ${meta.title}`}
+              disabled={readOnly}
+              onClick={() => setSheetOpen(true)}
+              className={HEADER_ICON_BTN}
+            >
+              <PlayIcon />
+            </button>
+            <button
+              type="button"
+              aria-label={`${meta.title} settings`}
+              onClick={() => setSettingsOpen(true)}
+              className={HEADER_ICON_BTN}
+            >
+              <GearIcon />
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 flex flex-col gap-1.5">
           <BotStatusRow
             tone={holding ? "guarded" : mode === "live" ? "live" : mode === "simulation" ? "guarded" : "idle"}
-            label={holding && mode === "manual" ? "Closing" : mode === "manual" ? "Idle" : "Armed"}
+            label={holding && mode === "off" ? "Closing" : mode === "off" ? "Idle" : "Armed"}
             badge={holding ? "Live position" : mode === "simulation" ? "Simulation" : undefined}
           />
           <p className="line-clamp-2 min-h-[2lh] font-mono text-hint text-muted">{scheduleSummary(config)}</p>
@@ -286,11 +301,8 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
               </dd>
             </div>
           </dl>
-          {readinessLine && (
-            <p className="mt-1 font-mono text-hint text-faint">Signal readiness: {readinessLine}</p>
-          )}
           {todaysRun?.reason_text && (
-            <p className="mt-1 line-clamp-2 font-mono text-hint text-muted" title={todaysRun.reason_text}>
+            <p className="mt-2 line-clamp-2 font-mono text-hint text-muted" title={todaysRun.reason_text}>
               {todaysRun.reason_text}
             </p>
           )}
@@ -298,7 +310,7 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
 
         <div className="mt-auto pt-4">
           <div className="grid grid-cols-3 gap-[3px] rounded-full border border-border bg-panel2 p-[3px]" role="group" aria-label="CAS Bingo mode">
-            {(["manual", "simulation", "live"] as const).map((value) => {
+            {(["off", "simulation", "live"] as const).map((value) => {
               const active = mode === value;
               return (
                 <button
@@ -327,7 +339,7 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
           </div>
         </div>
         <div className="mt-1.5 grid min-h-[2lh]">
-          {(["manual", "simulation", "live"] as const).map((value) => (
+          {(["off", "simulation", "live"] as const).map((value) => (
             <p
               key={value}
               aria-hidden={value !== mode}
@@ -337,14 +349,6 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
             </p>
           ))}
         </div>
-        <button
-          type="button"
-          className="app-btn-outline mt-2 w-full"
-          disabled={readOnly}
-          onClick={() => setSheetOpen(true)}
-        >
-          Run manually
-        </button>
         {error && <p className="mt-2 text-hint text-down">{error}</p>}
       </section>
 
