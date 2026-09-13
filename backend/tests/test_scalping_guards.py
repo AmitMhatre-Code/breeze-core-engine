@@ -46,6 +46,12 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setattr(repo, "_db_path", lambda: path)
     ensure_bots_tables(path)
     runtime.reset_state_for_tests()
+    # The fake scrip master lists a 10-Sep-2026 expiry. Pin the expiry picker's clock to the
+    # date these tests are written for, or they rot the day that expiry passes.
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.bots.scalping.momentum_bot.now_ist",
+        lambda: datetime.datetime(2026, 9, 8, 10, 0),
+    )
     engine.clear_group_rule(USER, "NIFTY", EXPIRY)
     yield path
     engine.clear_group_rule(USER, "NIFTY", EXPIRY)

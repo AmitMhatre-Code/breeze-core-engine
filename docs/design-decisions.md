@@ -462,6 +462,12 @@ Each horizon is paired on its own, so a reading near the close keeps its shorter
 
 **Not yet verified against a live capture**: breeze_connect's depth parser is the only source for the payload shape, because live broker calls work only from the production static IP. `depth_feed.depth_sums` therefore keys on the `BestBuyQty-k` / `BestSellQty-k` field names that both exchange layouts share, not on field position. Turn on the tick-debug capture (`/admin/ws-tick-debug`) for the first live session.
 
+**Order-flow challengers run in shadow beside W-OBI (2026-09-13)**: the first shadow day showed no usable information in W-OBI (correlation with the next 1/5/15-minute move ≈ 0.04–0.07) and a persistent bearish lean, which fits the caveat above — resting size is not intent. Rather than retune W-OBI against its own report, one challenger per index was chosen *before* any evidence existed for it, and `index_signal/flow.py` computes it on the feeds already subscribed:
+- **NIFTY — futures pressure**: order-flow imbalance (Cont–Kukanov–Stoikov) at the NIFTY futures contract's best bid/ask, averaged with the aggressor imbalance of its traded quantity, from the quote ticks the always-on scalper candle feed receives (`futures_feed.set_quote_observer`). The futures contract is where aggression shows first, and one liquid book beats ten thin ones.
+- **SENSEX — constituent queue flow**: the same imbalance at the top of each tracked BSE constituent's book (`depth_feed.set_top_listener`), weighted like W-OBI. SENSEX futures are too thin to carry a signal.
+
+Each flow is a ratio of time-decayed signed and absolute sums, on W-OBI's −1..+1 scale and thresholds, with τ = 30s because single flow events are much noisier than a book level. **Those parameters are constants, not Settings fields**: tuning a challenger against the shadow report would pick the winner after seeing the results, which the fixed readiness test exists to prevent. Challengers are recorded in the shadow log as `nifty:flow` / `sensex:flow` against the incumbent's own index level and judged by the same `readiness` (breakeven from the base index), shown under the incumbent on Settings → Index Signal, and published nowhere else: navbar, screens and bots keep reading W-OBI through `reader` until a challenger's evidence says it should replace it — a decision for the user, not code.
+
 ---
 
 ## 31. The full API secret is persisted beside the broker token, for one trading day

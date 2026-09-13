@@ -158,6 +158,17 @@ def evaluate_trigger(
     ts = now.timestamp()
     if config.strategy == "long_strangle":
         return triggers.strangle_due(ts, config.strangle.entry_time_ist, windows)
+    if _auction_credit(config, now):
+        # Section 3.2b. The signal is not read: inside the auction it shows auction books.
+        if now.strftime("%H:%M") < triggers.AUCTION_ORDER_ENTRY_IST:
+            return triggers.Verdict(
+                None,
+                f"Auction orders open at {triggers.AUCTION_ORDER_ENTRY_IST}; the indicative "
+                f"index is a settlement estimate only from then.",
+            )
+        return triggers.evaluate_auction_credit(
+            indicative=market.index_spot(index_code), day_open=day_open(index_code), now_ts=ts
+        )
 
     label = market.SIGNAL_LABEL[index_code]
     state, value, reason = _signal(label)
@@ -179,6 +190,12 @@ def evaluate_trigger(
 def _in_window(config: CasBingoConfig, now: datetime.datetime) -> bool:
     t = now.strftime("%H:%M")
     return any(start <= t < end for start, end in _windows(config))
+
+
+def _auction_credit(config: CasBingoConfig, now: datetime.datetime) -> bool:
+    """A credit spread inside the CAS window is the auction rule's alone (section 3.2b)."""
+    t = now.strftime("%H:%M")
+    return config.strategy == "credit_spread" and config.cas_window.start <= t < config.cas_window.end
 
 
 def _entry_for_index(
@@ -209,7 +226,10 @@ def _entry_for_index(
         )
 
     live = config.mode == "live"
-    if live and config.strategy != "long_strangle":
+    auction = _auction_credit(config, now)
+    # The readiness verdict is evidence about the signal; a trigger that does not read the
+    # signal (the strangle's clock, the auction rule) has nothing for it to vouch for.
+    if live and config.strategy != "long_strangle" and not auction:
         status = readiness_status(market.SIGNAL_LABEL[index_code])
         if status != "ready":
             return ReasonCode.SIGNAL_NOT_READY, (
@@ -225,6 +245,7 @@ def _entry_for_index(
     plan, problem = build_plan(
         proc, user_id, config, index_code=index_code, expiry_display=expiry,
         structure=structure, day_open=day_open(index_code),
+        spot=verdict.trigger.level, auction=auction,
     )
     if plan is None:
         code, text = problem or (ReasonCode.INTERNAL_ERROR, "Could not plan the entry.")

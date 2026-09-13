@@ -118,6 +118,94 @@ def test_no_signal_is_a_recorded_verdict_not_a_silent_return(db_path, stubbed, m
     assert repo.list_cycles(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER) == []
 
 
+def _closed_entry_on(candle_start):
+    run_id = repo.open_session_run(USER, BOT_MOMENTUM_LONG_SCALPER)
+    cycle = repo.open_cycle(
+        USER, BOT_MOMENTUM_LONG_SCALPER, run_id, structure="long_ce",
+        legs=[{"right": "call"}], lots=1, entry_value=1000.0, paper=True,
+        detail={"signal": {"candle_start": candle_start}},
+    )
+    repo.close_cycle(
+        cycle.id, exit_reason_code=ReasonCode.STOP_LOSS, exit_reason_text="stopped",
+        gross_pnl=-390.0, friction=100.0,
+    )
+
+
+def _fake_candles(monkeypatch, candles):
+    from types import SimpleNamespace
+
+    from icici_breeze_backend.app.services.bots.scalping import futures_feed
+
+    builder = SimpleNamespace(candles=candles, session_vwap=None)
+    monkeypatch.setattr(futures_feed, "get_feed", lambda: SimpleNamespace(builder=builder))
+
+
+def _fast_config():
+    from icici_breeze_backend.app.domain.bots import MomentumSignalConfig
+
+    return MomentumLongScalperConfig(
+        signal=MomentumSignalConfig(ema_period=3, volume_ma_period=3, volume_multiplier=1.5)
+    )
+
+
+def _bar(close, volume, start, vwap=99.0):
+    from icici_breeze_backend.app.services.bots.scalping.candles import Candle
+
+    return Candle(
+        start=start, open=close, high=close, low=close, close=close,
+        volume=volume, turnover=None, ticks=1, vwap=vwap,
+    )
+
+
+_RUN = [_bar(100.0, 1000, i * 60) for i in range(3)] + [_bar(110.0, 5000, 180)]
+
+
+def test_a_re_entry_on_the_same_signal_run_is_held(db_path, stubbed, monkeypatch):
+    """Stopped out, and the signal is still the run that opened the trade: no re-buy."""
+    _closed_entry_on(180)
+    _fake_candles(monkeypatch, _RUN + [_bar(115.0, 9000, 240, 100.0)])
+
+    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, _fast_config())
+
+    assert decision.action == "idle"
+    assert decision.reason_code == ReasonCode.SIGNAL_NOT_FRESH
+    assert "bullish signal run" in decision.reason_text
+
+
+def test_a_signal_that_lapsed_and_fired_again_may_enter(db_path, stubbed, monkeypatch):
+    _closed_entry_on(180)
+    _fake_candles(
+        monkeypatch, _RUN + [_bar(112.0, 1000, 240, 100.0), _bar(125.0, 20000, 300, 100.0)]
+    )
+    decision = runtime._entry_hold(
+        BOT_MOMENTUM_LONG_SCALPER, _fast_config(), None,
+        repo.scalper_day_totals(USER, BOT_MOMENTUM_LONG_SCALPER), has_open_position=False,
+    )
+    assert decision is None
+
+
+def test_the_first_entry_of_the_day_is_never_held(db_path, stubbed, monkeypatch):
+    _fake_candles(monkeypatch, _RUN)
+    assert runtime._entry_hold(
+        BOT_MOMENTUM_LONG_SCALPER, _fast_config(), None, ScalperDayTotals(), has_open_position=False
+    ) is None
+
+
+def test_a_failed_fresh_signal_check_holds_rather_than_waves_through(db_path, monkeypatch):
+    from icici_breeze_backend.app.services.bots.scalping import futures_feed
+
+    def _boom():
+        raise RuntimeError("feed gone")
+
+    monkeypatch.setattr(futures_feed, "get_feed", _boom)
+    hold = runtime._entry_hold(
+        BOT_MOMENTUM_LONG_SCALPER, _fast_config(), None,
+        ScalperDayTotals(last_entry_candle_start=180, last_entry_side="bullish"),
+        has_open_position=False,
+    )
+    assert hold is not None and hold[0] == ReasonCode.SIGNAL_NOT_FRESH
+
+
 def test_feed_counters_reach_the_run_row(db_path, stubbed, monkeypatch):
     """`counter_resets`/`stale_ticks` travel with the verdict, not just the log.
 

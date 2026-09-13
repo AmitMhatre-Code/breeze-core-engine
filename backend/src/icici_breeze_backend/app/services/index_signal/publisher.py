@@ -26,7 +26,7 @@ from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
-from icici_breeze_backend.app.services.index_signal import depth_feed, shadow_log, weights
+from icici_breeze_backend.app.services.index_signal import depth_feed, flow, shadow_log, weights
 from icici_breeze_backend.app.services.index_signal import settings as signal_settings
 from icici_breeze_backend.app.services.index_signal.engine import IndexSignalEngine
 from icici_breeze_backend.app.services.index_signal.settings import IndexSignalSettings
@@ -54,6 +54,8 @@ _SPOT_MAX_AGE_SECONDS = 15.0
 
 _lock = threading.RLock()
 _engines: dict[str, IndexSignalEngine] = {}
+# The order-flow challengers (`flow`), shadow-logged as `<index>:flow` and published nowhere else.
+_challengers: dict[str, flow.FlowEngine] = {}
 _weights_meta: dict[str, dict[str, Any]] = {}
 _applied_generation: int | None = None
 _applied_top_n: int | None = None
@@ -103,6 +105,45 @@ def _on_book(exchange: str, short_name: str, bid_qty: float, ask_qty: float, ts:
             _engine(label).on_book(short_name, bid_qty, ask_qty, ts)
 
 
+def _challenger(label: str) -> flow.FlowEngine:
+    with _lock:
+        eng = _challengers.get(label)
+        if eng is None:
+            eng = flow.FlowEngine(label, flow.CHALLENGER_KIND[label])
+            _challengers[label] = eng
+        return eng
+
+
+def _on_top(
+    exchange: str, short_name: str, bid_px: float, bid_qty: float, ask_px: float, ask_qty: float, ts: float
+) -> None:
+    """`depth_feed`'s top-of-book listener, for the constituent-flow challenger(s)."""
+    top = flow.Top(bid_px, bid_qty, ask_px, ask_qty)
+    for label, ex in EXCHANGE_FOR_LABEL.items():
+        if ex == exchange and flow.CHALLENGER_KIND[label] == flow.KIND_CONSTITUENTS:
+            _challenger(label).on_top(short_name, top, ts)
+
+
+def _on_futures_quote(payload: Any, ts: float) -> None:
+    """The scalper futures feed's quote observer: NIFTY futures ticks drive the NIFTY challenger."""
+    if not isinstance(payload, dict):
+        return
+    top, last, ttq = flow.parse_futures_quote(payload)
+    _challenger("nifty").on_futures_quote(top, last, ttq, ts)
+
+
+def _attach_listeners() -> None:
+    """Idempotent. The futures feed is a replaceable singleton, so this runs every loop."""
+    depth_feed.set_book_listener(_on_book)
+    depth_feed.set_top_listener(_on_top)
+    try:
+        from icici_breeze_backend.app.services.bots.scalping import futures_feed
+
+        futures_feed.get_feed().set_quote_observer(_on_futures_quote)
+    except Exception:  # noqa: BLE001 -- a challenger must never cost the live signal anything
+        _logger.debug("index signal: futures observer not attached", exc_info=True)
+
+
 def apply_runtime_settings(s: IndexSignalSettings) -> None:
     """Push the tuning that needs no re-subscribe into the running parts. A new tau restarts the
     smoother (see `IndexSignalEngine.set_params`); everything else applies from the next publish."""
@@ -141,6 +182,8 @@ def apply_weights_if_needed(*, force: bool = False, top_n: int | None = None) ->
         constituents, meta = weights.tracked_constituents(label, top_n)
         if _engine(label).set_constituents(constituents):
             changed = True
+        if flow.CHALLENGER_KIND[label] == flow.KIND_CONSTITUENTS:
+            _challenger(label).set_constituents(constituents)
         # A short basket means the registry could not resolve names it should have, most often
         # because it is still cold after a boot -- worth another try shortly.
         unresolved = unresolved or len(constituents) < top_n
@@ -168,7 +211,7 @@ def ensure_depth_feed(proc: "Processor", user_id: str, *, force: bool = False) -
     if not index_signal_enabled():
         return True
     apply_weights_if_needed()
-    depth_feed.set_book_listener(_on_book)
+    _attach_listeners()
     targets = depth_targets()
     if not targets:
         return False
@@ -227,10 +270,17 @@ def publish_once(
         payload["valid_until"] = ts + valid_for
         payload["publish_interval_seconds"] = interval
         _write_payload(label, payload, valid_for)
+        spot = _index_spot(label, ts)
         try:
-            shadow_log.record(label, payload, spot=_index_spot(label, ts), now=ts)
+            shadow_log.record(label, payload, spot=spot, now=ts)
         except Exception:  # noqa: BLE001 -- evidence is best-effort; never block publication
             _logger.debug("index signal: shadow log write failed for %s", label, exc_info=True)
+        try:
+            # Scored against the same index level as the incumbent, so the two are comparable.
+            challenger = _challenger(label).snapshot(ts, session_open=session_open)
+            shadow_log.record(flow.challenger_label(label), challenger, spot=spot, now=ts)
+        except Exception:  # noqa: BLE001 -- a challenger must never cost the live signal anything
+            _logger.debug("index signal: challenger log write failed for %s", label, exc_info=True)
         out[label] = payload
     return out
 
@@ -315,6 +365,7 @@ def _loop_tick(interval: float) -> None:
         return
 
     apply_runtime_settings(s)
+    _attach_listeners()
     now_m = time.monotonic()
     with _lock:
         check_weights = (
@@ -340,7 +391,7 @@ async def run_index_signal_loop() -> None:
     """Cancelled only via the FastAPI lifespan's `task.cancel()`; one bad tick never kills it
     (the `run_pnl_loop` idiom)."""
     _logger.info("Index signal loop started")
-    depth_feed.set_book_listener(_on_book)
+    _attach_listeners()
     while True:
         try:
             interval = await asyncio.to_thread(_publish_interval_seconds)
@@ -368,6 +419,7 @@ def reset_state_for_tests() -> None:
     global _last_weights_check_monotonic, _last_depth_attempt_monotonic
     with _lock:
         _engines.clear()
+        _challengers.clear()
         _weights_meta.clear()
         _applied_generation = None
         _applied_top_n = None

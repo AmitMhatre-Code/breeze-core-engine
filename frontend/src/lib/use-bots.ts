@@ -39,6 +39,8 @@ export type CasBingoConfig = {
     move_trigger_pct: number;
     inner_pct: number;
     outer_pct: number;
+    auction_gap_pct: number;
+    auction_min_credit_pct: number;
     target_pct: number;
     stop_loss_pct: number;
   };

@@ -296,6 +296,7 @@ def ensure_bots_tables(db_path: str) -> None:
         # charge different transaction rates, and one column could only ever be right for one.
         _add_column(conn, "trading_charges", "exchange_txn_pct_bse", "REAL NOT NULL DEFAULT 0.0325")
         _correct_superseded_charge_defaults(conn)
+        _correct_superseded_bot_defaults(conn)
         _add_column(conn, "bot_scrip_prefs", "ce_lots", "INTEGER")
         _add_column(conn, "bot_scrip_prefs", "pe_lots", "INTEGER")
         _add_column(conn, "bot_scrip_prefs", "priority", "INTEGER NOT NULL DEFAULT 1")
@@ -332,6 +333,57 @@ _SUPERSEDED_CHARGE_DEFAULTS = {
     "exchange_txn_pct": (0.0495, 0.03545),
     "ipft_pct": (0.0005, 0.0),
 }
+
+
+# Bot config defaults later found to be wrong, as (key path, old default, new default).
+# Configs are stored as a full dump, so a changed model default never reaches a bot that
+# already exists -- the same gap `_correct_superseded_charge_defaults` closes for charges.
+_SUPERSEDED_BOT_DEFAULTS = {
+    # 2026-09-13: the 1,00,000 ceiling bought ~13 lots, which put the flat 1,500 stop inside
+    # the entry spread's noise (docs/bots-scalping-plan.md section 4.6).
+    "iron_fly_scalper": (
+        (("margin_ceiling_inr",), 100000.0, 25000.0),
+        (("exits", "hard_stop_loss_inr"), 1500.0, None),
+    ),
+}
+
+
+def _correct_superseded_bot_defaults(conn: sqlite3.Connection) -> None:
+    """Rewrite superseded bot config defaults, and ONLY where the stored value is still the
+    exact old default. Anything else is a figure the user chose, and is left alone.
+    Idempotent: a corrected value no longer matches."""
+    import json
+
+    for bot_type, fixes in _SUPERSEDED_BOT_DEFAULTS.items():
+        rows = conn.execute(
+            "SELECT id, config FROM bots WHERE bot_type = ?", (bot_type,)
+        ).fetchall()
+        for row_id, raw in rows:
+            try:
+                config = json.loads(raw or "{}")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(config, dict):
+                continue
+            changed = False
+            for path, old, new in fixes:
+                parent = config
+                for key in path[:-1]:
+                    parent = parent.get(key) if isinstance(parent, dict) else None
+                if not isinstance(parent, dict):
+                    continue
+                current = parent.get(path[-1])
+                if (
+                    isinstance(current, (int, float))
+                    and not isinstance(current, bool)
+                    and abs(float(current) - float(old)) < 1e-9
+                ):
+                    parent[path[-1]] = new
+                    changed = True
+            if changed:
+                conn.execute(
+                    "UPDATE bots SET config = ? WHERE id = ?", (json.dumps(config), row_id)
+                )
 
 
 def _correct_superseded_charge_defaults(conn: sqlite3.Connection) -> None:

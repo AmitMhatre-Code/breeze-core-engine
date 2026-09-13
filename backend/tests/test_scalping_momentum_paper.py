@@ -74,6 +74,11 @@ def env(tmp_path, monkeypatch):
         "icici_breeze_backend.app.services.market_calendar.is_trading_day", lambda now=None: True
     )
     monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 8, 10, 0))
+    # The fake scrip master lists a 10-Sep-2026 expiry; the expiry picker keeps its own clock.
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.bots.scalping.momentum_bot.now_ist",
+        lambda: datetime.datetime(2026, 9, 8, 10, 0),
+    )
 
     proc = FakeProc()
     monkeypatch.setattr(

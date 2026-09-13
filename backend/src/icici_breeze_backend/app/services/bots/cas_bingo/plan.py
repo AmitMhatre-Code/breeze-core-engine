@@ -190,9 +190,11 @@ def _strikes(
     calls: list[dict[str, Any]],
     puts: list[dict[str, Any]],
     reference: float,
+    credit_pcts: Optional[tuple[float, float]] = None,
 ) -> tuple[Optional[tuple[PlanLeg, ...]], Optional[Problem]]:
     """Resolve the legs for one structure against `reference`. Distances are % of reference,
-    snapped away from it (market.pick_strike)."""
+    snapped away from it (market.pick_strike). `credit_pcts` overrides a credit spread's
+    (inner, outer) distances -- the auction rule measures its own."""
     def up(pct: float) -> float:
         return reference * (1 + pct / 100.0)
 
@@ -200,12 +202,13 @@ def _strikes(
         return reference * (1 - pct / 100.0)
 
     c, d, s = config.credit, config.debit, config.strangle
+    inner, outer = credit_pcts or (c.inner_pct, c.outer_pct)
     if structure == "bear_call_credit":
-        sell = _leg(market.pick_strike(calls, up(c.inner_pct), outward_up=True), "call", cfg.SELL)
-        buy = _leg(market.pick_strike(calls, up(c.outer_pct), outward_up=True), "call", cfg.BUY)
+        sell = _leg(market.pick_strike(calls, up(inner), outward_up=True), "call", cfg.SELL)
+        buy = _leg(market.pick_strike(calls, up(outer), outward_up=True), "call", cfg.BUY)
     elif structure == "bull_put_credit":
-        sell = _leg(market.pick_strike(puts, down(c.inner_pct), outward_up=False), "put", cfg.SELL)
-        buy = _leg(market.pick_strike(puts, down(c.outer_pct), outward_up=False), "put", cfg.BUY)
+        sell = _leg(market.pick_strike(puts, down(inner), outward_up=False), "put", cfg.SELL)
+        buy = _leg(market.pick_strike(puts, down(outer), outward_up=False), "put", cfg.BUY)
     elif structure == "bull_call_debit":
         buy = _leg(market.pick_strike(calls, up(d.inner_pct), outward_up=True), "call", cfg.BUY)
         sell = _leg(market.pick_strike(calls, up(d.outer_pct), outward_up=True), "call", cfg.SELL)
@@ -290,17 +293,30 @@ def build_plan(
     spot: Optional[float] = None,
     calls: Optional[list[dict[str, Any]]] = None,
     puts: Optional[list[dict[str, Any]]] = None,
+    auction: bool = False,
 ) -> tuple[Optional[Plan], Optional[Problem]]:
     """Price and size one structure. `calls`/`puts` may be passed in so the manual sheet
-    prices five structures off one chain read per side."""
+    prices five structures off one chain read per side.
+
+    `auction=True` is section 3.2b's credit spread: strikes from the indicative index (`spot`
+    or the live index feed -- never a chain row's spot, which is not the auction's value),
+    and refused unless the spread still pays `auction_min_credit_pct` of its width."""
     family = STRUCTURES[structure][0]
     calls = calls if calls is not None else market.chain_rows(proc, user_id, index_code, expiry_display, "call")
     puts = puts if puts is not None else market.chain_rows(proc, user_id, index_code, expiry_display, "put")
     if not calls or not puts:
         return None, (ReasonCode.CHAIN_NOT_READY, f"The {expiry_display} chain is not ready on both sides.")
 
-    spot = spot or market.index_spot(index_code) or market.spot_from(calls) or market.spot_from(puts)
-    if family == "credit":
+    live_level = spot or market.index_spot(index_code)
+    spot = live_level or market.spot_from(calls) or market.spot_from(puts)
+    credit_pcts: Optional[tuple[float, float]] = None
+    if family == "credit" and auction:
+        if not live_level:
+            return None, (ReasonCode.QUOTE_UNAVAILABLE, "No fresh indicative index level to measure from.")
+        reference, reference_kind = float(live_level), "indicative"
+        c = config.credit
+        credit_pcts = (c.auction_gap_pct, c.auction_gap_pct + (c.outer_pct - c.inner_pct))
+    elif family == "credit":
         if not day_open:
             return None, (
                 ReasonCode.DAY_OPEN_UNAVAILABLE,
@@ -312,7 +328,7 @@ def build_plan(
             return None, (ReasonCode.QUOTE_UNAVAILABLE, "No live index level to measure from.")
         reference, reference_kind = float(spot), "spot"
 
-    legs, problem = _strikes(structure, config, calls, puts, reference)
+    legs, problem = _strikes(structure, config, calls, puts, reference, credit_pcts)
     if legs is None:
         return None, problem
 
@@ -331,6 +347,23 @@ def build_plan(
             return None, (
                 ReasonCode.NOTHING_ELIGIBLE,
                 f"The spread collects no credit at the touch ({net:+.2f} per unit).",
+            )
+        if auction:
+            # Checked before sizing: a spread not worth selling must not spend margin calls.
+            width = abs(legs[0].strike - legs[1].strike)
+            share = 100.0 * net / width if width else 0.0
+            need = config.credit.auction_min_credit_pct
+            if share < need:
+                return None, (
+                    ReasonCode.NOTHING_ELIGIBLE,
+                    f"The spread beyond the indicative index pays {net:.2f} a unit, "
+                    f"{share:.1f}% of its {width:g}-point width; the auction rule sells only at "
+                    f"{need:g}% or more.",
+                )
+            notes.append(
+                f"Strikes measured from the indicative auction index ({reference:,.2f}): the "
+                f"sold leg sits at least {config.credit.auction_gap_pct:g}% beyond where expiry "
+                f"would settle now, and the spread pays {share:.1f}% of its width."
             )
         lots, margin, problem = _size_credit(
             proc,

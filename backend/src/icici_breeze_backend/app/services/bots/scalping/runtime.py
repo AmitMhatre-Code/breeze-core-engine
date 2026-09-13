@@ -217,15 +217,21 @@ def _entry_signal(bot_type: str, config: Any) -> Any:
 def _entry_hold(
     bot_type: str, config: Any, now: Any, totals: Any, *, has_open_position: bool
 ) -> Optional[tuple[str, str]]:
-    """Bot 4's re-entry gate as a verdict input, or None.
+    """A bot-specific hold on a fresh entry, as a verdict input, or None.
+
+    Bot 3: the fresh-signal rule. Bot 4: the re-entry gate (cooldown, then a settled range).
 
     Evaluated here for the reason `_entry_signal` is: checked only inside the executor, a held
     pass was published as `enter / gates_clear` and the wait after every stop-loss looked like
-    a bot failing to trade. Irrelevant while a fly is open -- that pass is about exits.
+    a bot failing to trade. Irrelevant while a position is open -- that pass is about exits.
 
     Fails closed: a check that cannot run holds the entry rather than waving it through.
     """
-    if bot_type != BOT_IRON_FLY_SCALPER or has_open_position:
+    if has_open_position:
+        return None
+    if bot_type == BOT_MOMENTUM_LONG_SCALPER:
+        return _fresh_signal_hold(config, totals)
+    if bot_type != BOT_IRON_FLY_SCALPER:
         return None
     try:
         return iron_fly_bot.reentry_blocked(
@@ -237,6 +243,38 @@ def _entry_hold(
     except Exception:  # noqa: BLE001 -- a failed check must not stop the gate stack
         _logger.exception("scalping[%s]: re-entry check failed", bot_type)
         return (ReasonCode.REENTRY_GATE_CLOSED, "Re-entry check failed; holding off.")
+
+
+def _fresh_signal_hold(config: Any, totals: Any) -> Optional[tuple[str, str]]:
+    """Bot 3 holds while the signal run that opened its last trade is still going.
+
+    See `signal.signal_run_unbroken`. No earlier entry today means nothing to hold.
+    """
+    start, side = totals.last_entry_candle_start, totals.last_entry_side
+    if start is None or side is None:
+        return None
+    try:
+        from icici_breeze_backend.app.services.bots.scalping.signal import signal_run_unbroken
+
+        candles = futures_feed.get_feed().builder.candles
+        if not signal_run_unbroken(
+            candles, config.signal, entry_candle_start=int(start), side=str(side)
+        ):
+            return None
+    except Exception:  # noqa: BLE001 -- a failed check must not stop the gate stack
+        _logger.exception("scalping: fresh-signal check failed")
+        return (ReasonCode.SIGNAL_NOT_FRESH, "Fresh-signal check failed; holding off.")
+
+    import datetime as _dt
+
+    from icici_breeze_backend.app.core.timezone import IST
+
+    since = _dt.datetime.fromtimestamp(int(start), tz=IST).strftime("%H:%M")
+    return (
+        ReasonCode.SIGNAL_NOT_FRESH,
+        f"Still the {side} signal run that opened the last trade (its {since} candle); "
+        "waiting for the signal to switch off and fire again.",
+    )
 
 
 def _is_expiry_day(config: Any) -> bool:

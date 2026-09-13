@@ -405,7 +405,7 @@ export function ScalperSettings({
           value={s.wing_width_points}
           onChange={(v) => onConfig({ structure: { ...s, wing_width_points: v } })} disabled={disabled} />
         <Num label="Margin ceiling" suffix="₹" min={1000} max={100_000_000} step={5000}
-          hint="The bot takes the largest whole-lot fly that fits, verified through one margin call carrying all four legs. If one lot will not fit it skips rather than partially funding."
+          hint="The bot takes the largest whole-lot fly that fits, verified through one margin call carrying all four legs. If one lot will not fit it skips rather than partially funding. Size it to your daily stop: ₹25,000 is about three lots."
           value={fly.margin_ceiling_inr}
           onChange={(v) => onConfig({ margin_ceiling_inr: v })} disabled={disabled} />
         <Num label="Widen above VIX" min={0} max={100} step={0.5}
@@ -448,9 +448,10 @@ export function ScalperSettings({
     <div className="space-y-4">
       <p className="app-text-muted text-hint">
         Both loss stops are live and <b>the tighter one binds</b>. Set either to zero to switch
-        it off. A flat rupee stop does not scale with lot count — at three lots ₹1,500 is ₹500
-        a lot, which ordinary movement clears — while a share of credit scales with size,
-        expiry and volatility.
+        it off. The flat rupee stop ships off: a fly opens about a point down on the bid-ask
+        spread alone, and a flat stop does not grow with lot count — at 13 lots ₹1,500 was
+        under two points, so it fired on noise. A share of credit scales with size, expiry and
+        volatility.
       </p>
       <div className="grid gap-4 sm:grid-cols-2">
         <Num label="Book at credit decay of" suffix="%" min={1} max={100} step={1}

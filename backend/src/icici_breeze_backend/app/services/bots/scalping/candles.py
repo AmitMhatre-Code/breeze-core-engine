@@ -87,6 +87,10 @@ class Candle:
     volume: Optional[int]
     turnover: Optional[float]
     ticks: int
+    # Session VWAP as the bar closed. Kept per bar so the signal can be replayed on any past
+    # candle exactly as it read then -- the fresh-signal rule (`signal.signal_run_unbroken`)
+    # needs to know whether the signal switched off at some minute it has already passed.
+    vwap: Optional[float] = None
 
     @property
     def typical_price(self) -> float:
@@ -342,6 +346,7 @@ class CandleBuilder:
             volume=volume,
             turnover=turnover,
             ticks=self._ticks,
+            vwap=self.session_vwap,
         )
         if self._bucket_ttq is not None:
             self._prev_ttq = self._bucket_ttq

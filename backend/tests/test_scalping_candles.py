@@ -204,6 +204,17 @@ def test_tick_without_price_is_discarded():
     assert b.candles == []
 
 
+def test_a_bar_keeps_the_vwap_it_closed_on_not_the_next_ticks():
+    """The fresh-signal rule replays past bars; each must carry the VWAP it was read against."""
+    b = CandleBuilder()
+    t = 1_000_020  # minute-aligned
+    b.ingest(t + 1, 100.0, ttq=1_000, ttv="0.0001C", avg_price=100.0)
+    b.ingest(t + 30, 101.0, ttq=1_200, ttv="0.00012C", avg_price=100.4)
+    b.ingest(t + BUCKET_SECONDS + 1, 103.0, ttq=1_500, ttv="0.00015C", avg_price=101.0)
+    assert b.candles[0].vwap == 100.4
+    assert b.session_vwap == 101.0
+
+
 # --------------------------------------------------------------------------- resets
 
 

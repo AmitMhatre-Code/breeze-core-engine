@@ -151,7 +151,8 @@ export type ReadinessCall = {
 
 /** The fixed scalping test (backend `shadow_log.readiness`): flips, at +5 min, against the breakeven. */
 export type IndexReadiness = {
-  label: IndexLabel;
+  /** `nifty:flow` / `sensex:flow` for the order-flow challengers. */
+  label: IndexLabel | `${IndexLabel}:flow`;
   status: ReadinessStatus;
   lookback_days: number;
   scalp_horizon_seconds: number;
@@ -168,7 +169,11 @@ export type IndexReadiness = {
   requirements: { separate_calls: number; sessions: number; up_days: number; down_days: number };
 };
 
-export type IndexSignalReadinessResponse = { indices: Record<IndexLabel, IndexReadiness> };
+export type IndexSignalReadinessResponse = {
+  indices: Record<IndexLabel, IndexReadiness>;
+  /** Shadow-only order-flow challengers, judged by the same fixed test (backend `index_signal.flow`). */
+  challengers?: Record<IndexLabel, IndexReadiness & { name: string }>;
+};
 
 export const INDEX_SIGNAL_PREFERENCES_QUERY_KEY = ["settings", "index-signal-preferences"] as const;
 export const INDEX_SIGNAL_WEIGHTS_QUERY_KEY = ["settings", "index-signal-weights"] as const;

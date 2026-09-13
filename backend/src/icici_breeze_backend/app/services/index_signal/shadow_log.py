@@ -415,8 +415,13 @@ def _latest_level(rows: list[dict[str, Any]]) -> float | None:
 def _breakeven_move(label: str, rows: list[dict[str, Any]]) -> tuple[dict[str, Any], float]:
     """The breakeven block and the minimum move to score with: the breakeven in bps, or the
     default when it cannot be worked out (no lot size or index level yet)."""
-    be = breakeven.breakeven(label, _latest_level(rows))
+    be = breakeven.breakeven(base_label(label), _latest_level(rows))
     return be, be["bps"] if be["bps"] is not None else DEFAULT_MIN_MOVE_BPS
+
+
+def base_label(label: str) -> str:
+    """The index a log label belongs to: a challenger (`nifty:flow`) trades the same options."""
+    return label.split(":", 1)[0]
 
 
 def shadow_report(
@@ -628,7 +633,7 @@ def readings_csv(
 
 def readings_filename(label: str, days: int, now: float | None = None) -> str:
     stamp = datetime.fromtimestamp(time.time() if now is None else now, IST).strftime("%Y-%m-%d")
-    return f"{label}-signal-readings-{stamp}-{days}d.csv"
+    return f"{label.replace(':', '-')}-signal-readings-{stamp}-{days}d.csv"
 
 
 def reset_state_for_tests() -> None:

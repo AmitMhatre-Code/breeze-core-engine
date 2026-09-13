@@ -129,6 +129,22 @@ class TestCreditTrigger:
         assert self._eval(rows, "bearish", day_open=None).trigger is None
 
 
+class TestAuctionCreditTrigger:
+    """Section 3.2b, decided 2026-09-13: inside the auction no flip is read."""
+
+    def test_a_rise_into_the_auction_sells_calls(self):
+        v = triggers.evaluate_auction_credit(indicative=24300.0, day_open=24000.0, now_ts=ts("15:22"))
+        assert v.trigger.right == "call" and v.trigger.level == 24300.0
+
+    def test_a_drop_sells_puts(self):
+        v = triggers.evaluate_auction_credit(indicative=23700.0, day_open=24000.0, now_ts=ts("15:22"))
+        assert v.trigger.right == "put"
+
+    def test_no_indicative_level_or_open_means_no_trade(self):
+        assert triggers.evaluate_auction_credit(indicative=None, day_open=24000.0, now_ts=ts("15:22")).trigger is None
+        assert triggers.evaluate_auction_credit(indicative=24300.0, day_open=None, now_ts=ts("15:22")).trigger is None
+
+
 def test_strangle_fires_from_its_time_until_its_window_closes():
     assert triggers.strangle_due(ts("15:14"), "15:15", WINDOWS).trigger is None
     assert triggers.strangle_due(ts("15:15"), "15:15", WINDOWS).trigger is not None
@@ -223,6 +239,40 @@ def test_credit_sizing_fits_the_margin_budget_in_two_calls():
 def test_credit_spread_without_the_open_is_refused():
     p, problem = _plan("bull_put_credit", day_open=None)
     assert p is None and problem[0] == ReasonCode.DAY_OPEN_UNAVAILABLE
+
+
+def _auction_plan(structure, **credit):
+    return plan.build_plan(
+        FakeProc(), USER, CasBingoConfig(credit=credit or {}),
+        index_code="NIFTY", expiry_display=EXPIRY, structure=structure,
+        day_open=24000.0, spot=24000.0, calls=_chain("call"), puts=_chain("put"), auction=True,
+    )
+
+
+def test_auction_credit_strikes_sit_the_gap_beyond_the_indicative_index():
+    p, problem = _auction_plan("bear_call_credit", auction_min_credit_pct=4.0)
+    assert problem is None and p.reference_kind == "indicative"
+    buy, sell = p.entry_sequence()
+    assert sell.strike == 24250.0  # 24000 x 1.010 = 24240, snapped away
+    assert buy.strike == 24400.0  # 24000 x 1.015 (gap + the 0.5% width) = 24360 -> 24400
+    assert "indicative" in p.notes[0]
+
+
+def test_auction_credit_is_refused_when_it_no_longer_pays_enough_of_its_width():
+    # 9.50 bid - 2.50 ask = 7.00 on a 150-point spread: 4.7%, short of the default 10%.
+    p, problem = _auction_plan("bull_put_credit")
+    assert p is None and problem[0] == ReasonCode.NOTHING_ELIGIBLE
+    assert "10% or more" in problem[1]
+
+
+def test_auction_credit_never_measures_from_a_chain_rows_spot(monkeypatch):
+    monkeypatch.setattr(plan.market, "index_spot", lambda code, **k: None)
+    p, problem = plan.build_plan(
+        FakeProc(), USER, CasBingoConfig(), index_code="NIFTY", expiry_display=EXPIRY,
+        structure="bear_call_credit", day_open=24000.0, calls=_chain("call"),
+        puts=_chain("put"), auction=True,
+    )
+    assert p is None and problem[0] == ReasonCode.QUOTE_UNAVAILABLE
 
 
 def test_debit_strikes_come_from_spot_and_size_by_premium_budget():
@@ -446,6 +496,41 @@ def test_a_live_pbsl_rule_on_the_expiry_blocks_entry(db, monkeypatch):
         FakeProc(), USER, CasBingoConfig(), "r", "NIFTY", EXPIRY, now
     )
     assert code == ReasonCode.SG_RULE_CONFLICT
+
+
+def _credit_config(**kw):
+    return CasBingoConfig(strategy="credit_spread", **kw)
+
+
+def test_inside_the_auction_the_credit_trigger_reads_the_indicative_index(monkeypatch):
+    monkeypatch.setattr(runtime.market, "index_spot", lambda code, **k: 24300.0)
+    monkeypatch.setattr(runtime, "day_open", lambda code: 24000.0)
+    monkeypatch.setattr(runtime, "_signal", lambda label: ("unavailable", None, "auction"))
+    at = datetime.datetime(2026, 9, 15, 15, 22, tzinfo=IST)
+    v = runtime.evaluate_trigger(_credit_config(), "NIFTY", at)
+    assert v.trigger is not None and v.trigger.right == "call"  # the signal was never needed
+
+
+def test_between_15_15_and_15_20_the_auction_rule_waits(monkeypatch):
+    monkeypatch.setattr(runtime.market, "index_spot", lambda code, **k: 24300.0)
+    at = datetime.datetime(2026, 9, 15, 15, 17, tzinfo=IST)
+    v = runtime.evaluate_trigger(_credit_config(), "NIFTY", at)
+    assert v.trigger is None and "15:20" in v.reason
+
+
+def test_the_auction_rule_is_not_gated_on_the_signals_readiness(db, monkeypatch):
+    """Readiness vouches for the signal; the auction rule does not read it."""
+    monkeypatch.setattr(runtime, "readiness_status", lambda label: "too_early")
+    monkeypatch.setattr(runtime, "sg_conflict", lambda *a: False)
+    monkeypatch.setattr(runtime, "evaluate_trigger", lambda *a: triggers.Verdict(None, "quiet"))
+    live_credit = _credit_config(mode="live")
+    in_auction = datetime.datetime(2026, 9, 15, 15, 22, tzinfo=IST)
+    code, _ = runtime._entry_for_index(FakeProc(), USER, live_credit, "r", "NIFTY", EXPIRY, in_auction)
+    assert code == ReasonCode.SIGNAL_NO_TRADE
+    # Before the auction the credit spread is the flip rule, and the gate still holds.
+    pre_cas = datetime.datetime(2026, 9, 15, 15, 0, tzinfo=IST)
+    code, _ = runtime._entry_for_index(FakeProc(), USER, live_credit, "r", "NIFTY", EXPIRY, pre_cas)
+    assert code == ReasonCode.SIGNAL_NOT_READY
 
 
 def test_day_open_is_captured_from_the_tick_once_per_day():

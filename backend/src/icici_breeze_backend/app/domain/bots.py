@@ -90,6 +90,9 @@ class ReasonCode:
     TERMINATED_FOR_DAY = "terminated_for_day"
     OUTSIDE_SESSION_WINDOW = "outside_session_window"
     REENTRY_GATE_CLOSED = "reentry_gate_closed"
+    # Bot 3 fired, but on the same signal run that opened its last trade. It re-enters only
+    # after the signal has switched off and fired again (plan section 3.4).
+    SIGNAL_NOT_FRESH = "signal_not_fresh"
     # The user set the bot Off (or back to Paper) while a real position was still open. The
     # loop keeps ticking it so the exit path runs -- section 5.5's "a gate that blocks
     # entering never blocks leaving", extended past the arming switch itself -- but nothing
@@ -675,10 +678,17 @@ class IronFlyExitConfig(BaseModel):
     Either can be set to None to switch it off. Both None means the position has no P&L stop
     at all and relies on the drift stop and the wings, which is a deliberate choice a user has
     to make explicitly rather than reach by accident.
+
+    **The flat stop ships off** (2026-09-13). A fly opens about a point down on the bid-ask
+    spread of its four legs alone, and time decay earns that back only over tens of minutes.
+    On the 10-11 Sep paper days a 1,500 flat stop on ~13 lots was under two points: flies
+    were stopped out 14 and 37 seconds after entry, and the results said nothing about the
+    strategy. The share-of-credit stop and the drift stop now govern; the fly otherwise holds
+    to the end of its window, which is where its time decay is actually earned.
     """
 
     target_decay_pct: float = Field(15.0, gt=0, le=100)
-    hard_stop_loss_inr: Optional[float] = Field(1500.0, gt=0)
+    hard_stop_loss_inr: Optional[float] = Field(None, gt=0)
     stop_loss_credit_pct: Optional[float] = Field(20.0, gt=0, le=500)
     max_spot_drift_pct: float = Field(0.35, gt=0, le=10)
 
@@ -731,7 +741,11 @@ class IronFlyScalperConfig(BaseModel):
     # share of free margin (which would drift with the day's P&L). The bot takes the largest
     # whole-lot fly that fits, verified through `margin_calculator` on all four legs at once
     # so the exchange's netting is real.
-    margin_ceiling_inr: float = Field(100000.0, gt=0)
+    #
+    # 25,000 is about three lots: a hedged fly needed roughly 7,000-7,700 a lot in the
+    # 10-11 Sep 2026 paper sessions. The original 1,00,000 default bought ~13 lots, which
+    # put the loss stops -- and the 10,000 daily limit -- inside the entry spread's noise.
+    margin_ceiling_inr: float = Field(25000.0, gt=0)
     min_lots: int = Field(1, ge=1, le=100)
     structure: IronFlyStructureConfig = Field(default_factory=IronFlyStructureConfig)
     exits: IronFlyExitConfig = Field(default_factory=IronFlyExitConfig)
@@ -786,12 +800,26 @@ class CasBingoCreditConfig(BaseModel):
     Strikes are measured from the **day's open**, not from spot at entry -- spot can swing
     2-3% inside CAS, and the thesis is a reversal back toward the open. So a sold leg can be in
     the money versus spot at entry; the user confirmed that is the bet.
+
+    **Inside the auction (from 15:20) the rule is different** (2026-09-13, plan section 3.2b).
+    The order-book signal cannot be read there, so no flip is consulted: the sold leg sits
+    `auction_gap_pct` beyond the exchange's *indicative* index -- roughly where expiry would
+    settle now -- on the side the index has moved from the open, and it is sold only while the
+    spread still pays `auction_min_credit_pct` of its width. An option that should expire
+    worthless but still costs that much is the spike being faded. The hedge sits one spread
+    width further out, the width being `outer_pct - inner_pct`.
     """
 
     margin_lakhs: float = Field(2.0, gt=0, le=1000)
     move_trigger_pct: float = Field(0.5, gt=0, le=10)
     inner_pct: float = Field(0.5, ge=0, le=20)
     outer_pct: float = Field(1.0, gt=0, le=25)
+    # The user asked for the gap as a setting: SENSEX has swung 2-3% inside the auction on
+    # expiry days, so how much room to leave is a judgement Simulation should inform.
+    auction_gap_pct: float = Field(1.0, gt=0, le=10)
+    auction_min_credit_pct: float = Field(
+        10.0, gt=0, le=100, description="Net credit as a share of the spread's width"
+    )
     target_pct: float = Field(
         80.0, gt=0, le=100, description="Book once this share of the credit is captured"
     )
@@ -1035,6 +1063,10 @@ class ScalperDayTotals(BaseModel):
     friction: float = 0.0
     consecutive_losses: int = 0
     last_closed_at: Optional[str] = None
+    # Today's most recent entry signal (Bot 3): the candle it fired on and its side. Read from
+    # the cycle rows like everything else here, so the fresh-signal rule survives a restart.
+    last_entry_candle_start: Optional[int] = None
+    last_entry_side: Optional[str] = None
 
 
 class PaperEvidenceDay(BaseModel):

@@ -96,3 +96,45 @@ def evaluate_momentum(
     if last.close < ema and below_vwap:
         return SignalResult("bearish", "confluence", values)
     return SignalResult(None, "no_confluence", values)
+
+
+# Verdicts that mean the signal is genuinely off. The data-gap reasons (not_enough_candles,
+# ema_unavailable, volume_unavailable, vwap_unavailable) are deliberately absent: not knowing
+# whether the signal fired is not evidence that it stopped.
+_DECISIVE_OFF = frozenset({"volume_below_threshold", "no_confluence"})
+
+
+def signal_run_unbroken(
+    candles: Sequence[Candle],
+    config: MomentumSignalConfig,
+    *,
+    entry_candle_start: int,
+    side: str,
+) -> bool:
+    """True while the run of candles that opened the last trade has not ended.
+
+    One trade per signal run (docs/bots-scalping-plan.md section 3.4). The signal is a
+    *state* -- close above EMA and VWAP on volume stays true minute after minute -- so without
+    this rule a stopped-out position is re-bought two seconds later on the same reading. On
+    the 10-11 Sep paper days that happened seven times: one winner, -Rs 3,706 net.
+
+    The run ends at the first completed candle after the entry candle that decisively did not
+    fire `side`: low volume, no confluence, or the opposite side. A candle that went off
+    *while the position was still held* counts -- the 11 Sep 13:55 re-entry (+Rs 1,769) came
+    after the signal lapsed mid-hold and fired again, and is exactly the trade to keep.
+
+    Each candle is replayed with its own VWAP (`Candle.vwap`), so the verdict is what the
+    signal read at that minute, not a re-reading against today's latest VWAP. After a restart
+    the candles from before it are gone; the run is then held unbroken until the rebuilt
+    history shows an off-candle, which is the conservative reading.
+    """
+    completed = list(candles)
+    for k, candle in enumerate(completed):
+        if candle.start <= entry_candle_start:
+            continue
+        verdict = evaluate_momentum(completed[: k + 1], candle.vwap, config)
+        if verdict.side is not None and verdict.side != side:
+            return False
+        if verdict.side is None and verdict.reason in _DECISIVE_OFF:
+            return False
+    return True

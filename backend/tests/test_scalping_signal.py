@@ -5,7 +5,10 @@ import pytest
 
 from icici_breeze_backend.app.domain.bots import MomentumSignalConfig
 from icici_breeze_backend.app.services.bots.scalping.candles import Candle
-from icici_breeze_backend.app.services.bots.scalping.signal import evaluate_momentum
+from icici_breeze_backend.app.services.bots.scalping.signal import (
+    evaluate_momentum,
+    signal_run_unbroken,
+)
 
 CFG = MomentumSignalConfig(ema_period=3, volume_ma_period=3, volume_multiplier=1.5)
 
@@ -87,3 +90,56 @@ def test_values_are_reported_even_when_nothing_fires():
     r = evaluate_momentum(_rising(110.0, 1000), session_vwap=99.0, config=CFG)
     assert not r.fired
     assert set(r.values) >= {"close", "ema", "session_vwap", "volume", "volume_ma", "volume_threshold"}
+
+
+# --- the fresh-signal rule: one trade per signal run ----------------------------------
+
+
+def _cv(close, volume, start, vwap):
+    return Candle(
+        start=start, open=close, high=close, low=close, close=close,
+        volume=volume, turnover=None, ticks=1, vwap=vwap,
+    )
+
+
+# Three flat bars, then a bullish bar at 180 -- the candle the last trade was opened on.
+_ENTRY = [_cv(100.0, 1000, i * 60, 99.0) for i in range(3)] + [_cv(110.0, 5000, 180, 99.0)]
+
+
+def _still_running(candles, side="bullish"):
+    return signal_run_unbroken(candles, CFG, entry_candle_start=180, side=side)
+
+
+def test_the_run_continues_while_every_later_candle_fires_the_same_side():
+    """The 10-11 Sep leak: a stopped-out long re-bought two seconds later on the same run."""
+    assert _still_running(_ENTRY)  # nothing after the entry candle yet
+    assert _still_running(_ENTRY + [_cv(115.0, 9000, 240, 100.0)])
+
+
+def test_a_low_volume_candle_ends_the_run_and_the_next_firing_is_fresh():
+    candles = _ENTRY + [_cv(112.0, 1000, 240, 100.0)]
+    assert not _still_running(candles)
+    # Fires again after lapsing: a new run, even though it lapsed while the trade was held.
+    assert not _still_running(candles + [_cv(125.0, 20000, 300, 100.0)])
+
+
+def test_the_opposite_side_ends_the_run():
+    assert not _still_running(_ENTRY + [_cv(90.0, 9000, 240, 101.0)])
+
+
+def test_an_unknown_reading_does_not_end_the_run():
+    """Low volume, but VWAP unknown: the verdict is a data gap, not evidence the signal lapsed."""
+    assert _still_running(_ENTRY + [_cv(112.0, 1000, 240, None)])
+
+
+def test_each_candle_is_replayed_with_its_own_vwap():
+    """Against its own VWAP the bar fired; against a later, higher one it would read as off."""
+    assert _still_running(_ENTRY + [_cv(115.0, 9000, 240, 100.0)])
+    assert not _still_running(_ENTRY + [_cv(115.0, 9000, 240, 120.0)])
+
+
+def test_after_a_restart_the_run_holds_until_an_off_candle_is_seen():
+    """The entry candle is gone with the old process; a rebuilt history that only fires holds."""
+    rebuilt = [_cv(100.0, 1000, 600, 99.0), _cv(100.0, 1000, 660, 99.0), _cv(110.0, 5000, 720, 99.0)]
+    assert _still_running(rebuilt)
+    assert not _still_running(rebuilt + [_cv(108.0, 1000, 780, 99.0)])

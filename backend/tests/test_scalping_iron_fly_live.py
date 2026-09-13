@@ -44,7 +44,8 @@ class FakeProc:
 
     def margin_calculator(self, payload, exchange_code=""):
         lots = max(1, int(payload[0]["quantity"]) // LOT)
-        return {"Status": 200, "Success": {"span_margin_required": 40_000.0 * lots}}
+        # ~7,500 a lot: what a hedged NIFTY fly needed on the 10-11 Sep 2026 paper days.
+        return {"Status": 200, "Success": {"span_margin_required": 7_500.0 * lots}}
 
 
 def _price(strike):
@@ -73,6 +74,14 @@ def env(tmp_path, monkeypatch):
     spreads.reset_throttle_for_tests()
     runtime.reset_state_for_tests()
     live.reset_state_for_tests()
+    # The fake scrip master lists a 10-Sep-2026 expiry. Pin the expiry picker's clock to the
+    # date these tests are written for, or they rot the day that expiry passes.
+    import datetime
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.bots.scalping.momentum_bot.now_ist",
+        lambda: datetime.datetime(2026, 9, 8, 10, 0),
+    )
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.quote_source_router.fetch_chain_side_icici_response",
         lambda p, u, s, e, exp, right, **k: {"Status": 200, "Success": _rows(right)},

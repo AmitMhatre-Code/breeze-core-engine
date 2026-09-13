@@ -139,6 +139,9 @@ class NiftyFuturesFeed:
         self._builder = CandleBuilder()
         self._contract: Optional[FuturesContract] = None
         self._token_symbol: Optional[str] = None
+        # A second consumer of the same quote ticks: the index signal's futures-pressure
+        # challenger (`index_signal.flow`). Called outside the lock with (payload, receive ts).
+        self._quote_observer: Any = None
         self._expiry_format: Optional[str] = None
         self._listener_registered = False
         self._subscribed_date: Optional[datetime.date] = None
@@ -308,17 +311,26 @@ class NiftyFuturesFeed:
                 return
             import time
 
+            now = time.time()
             with self._lock:
                 self._ticks_seen += 1
                 self._builder.ingest(
-                    time.time(),
+                    now,
                     payload.get("last"),
                     payload.get("ttq"),
                     payload.get("ttv"),
                     payload.get("avgPrice"),
                 )
+                observer = self._quote_observer
+            if observer is not None:
+                observer(payload, now)
         except Exception:  # noqa: BLE001
             _logger.debug("futures feed: raw tick handling failed", exc_info=True)
+
+    def set_quote_observer(self, observer: Any) -> None:
+        """Hand every quote tick of the traded contract to `observer(payload, ts)` as well."""
+        with self._lock:
+            self._quote_observer = observer
 
     def flush(self, now_ts: float) -> None:
         """Close a bar the clock has left even if the contract did not print."""

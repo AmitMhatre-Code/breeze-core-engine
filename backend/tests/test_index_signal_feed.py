@@ -256,6 +256,26 @@ class TestPublisherAndReader:
         stale = reader.get_index_signal("nifty", now=t0 + 8 + 11)
         assert (stale["state"], stale["reason"]) == ("unavailable", "stale")
 
+    def test_challengers_are_shadow_logged_beside_the_incumbent(self, baskets):
+        """Logged as `<index>:flow`, fed by BSE tops and NIFTY futures quotes, never published."""
+        publisher.apply_weights_if_needed(force=True)
+        t0 = 1_000_000.0
+        for k in range(0, 80, 5):
+            for short_name in ("HDFBAN", "ICIBAN"):
+                publisher._on_top("BSE", short_name, 1000.0, 100.0 + k, 1000.05, 100.0, t0 + k)
+            publisher._on_futures_quote(
+                {"bPrice": 23500.0, "bQty": 100 + k, "sPrice": 23500.5, "sQty": 100,
+                 "last": 23500.5, "ttq": 1000 + k},
+                t0 + k,
+            )
+            publisher.publish_once(now=t0 + k, interval=2.0, session_open=True)
+        sensex = shadow_log.load_rows("sensex:flow", 0.0)
+        nifty = shadow_log.load_rows("nifty:flow", 0.0)
+        assert sensex and nifty
+        assert sensex[-1]["state"] == "bullish" and nifty[-1]["state"] == "bullish"
+        # Readers still see only the incumbent.
+        assert "challenger" not in reader.get_index_signal("sensex", now=t0 + 76)
+
     def test_validity_scales_with_the_publish_interval(self, baskets):
         publisher.apply_weights_if_needed(force=True)
         out = publisher.publish_once(now=5_000.0, interval=20.0, session_open=True)

@@ -27,7 +27,7 @@ const STRATEGIES: { value: CasBingoStrategy; label: string; hint: string }[] = [
   {
     value: "credit_spread",
     label: "Credit spread",
-    hint: "After the index moves from the open, the signal flips against it: sell a CE after a rise, a PE after a drop.",
+    hint: "Before 15:15: after the index moves from the open, the signal flips against it — sell a CE after a rise, a PE after a drop. From 15:20: sell the side beyond the indicative index that is still priced when it should settle worthless.",
   },
   {
     value: "debit_spread",
@@ -218,9 +218,13 @@ export function CasBingoSettings({
           <strong>Warning:</strong> {CAS_BINGO_CREDIT_WARNING}
         </Warning>
         <Num label="Margin to deploy" suffix="lakh" step={0.1} min={0.1} max={1000} value={c.margin_lakhs} disabled={disabled} onChange={(v) => patch({ margin_lakhs: v })} />
+        <p className="text-micro font-semibold uppercase tracking-[0.06em] text-faint">Before the auction (pre-CAS window)</p>
         <Num label="Move from open that arms it" suffix="%" step={0.05} min={0.05} max={10} value={c.move_trigger_pct} disabled={disabled} onChange={(v) => patch({ move_trigger_pct: v })} hint="The index must have risen (or dropped) this far from the day's open at the flip." />
         <Num label="Inner (sold) leg from open" suffix="%" step={0.05} min={0} max={20} value={c.inner_pct} disabled={disabled} onChange={(v) => patch({ inner_pct: v })} hint="Measured from the day's open, not spot — so after a big move the sold leg can be in the money." />
-        <Num label="Outer (bought) leg from open" suffix="%" step={0.05} min={0.05} max={25} value={c.outer_pct} disabled={disabled} onChange={(v) => patch({ outer_pct: v })} />
+        <Num label="Outer (bought) leg from open" suffix="%" step={0.05} min={0.05} max={25} value={c.outer_pct} disabled={disabled} onChange={(v) => patch({ outer_pct: v })} hint="Outer minus inner is the spread's width, used in both windows." />
+        <p className="text-micro font-semibold uppercase tracking-[0.06em] text-faint">Inside the auction (from 15:20)</p>
+        <Num label="Gap beyond the indicative index" suffix="%" step={0.05} min={0.05} max={10} value={c.auction_gap_pct} disabled={disabled} onChange={(v) => patch({ auction_gap_pct: v })} hint="From 15:20 the exchange's indicative index is roughly where expiry will settle. The sold leg sits at least this far above it after a rise (below it after a drop). SENSEX has swung 2–3% inside the auction." />
+        <Num label="Minimum credit" suffix="% of width" step={1} min={1} max={100} value={c.auction_min_credit_pct} disabled={disabled} onChange={(v) => patch({ auction_min_credit_pct: v })} hint="Sell only while the spread still pays at least this share of its width — an option that should expire worthless but still costs this much is the spike being faded." />
         <Num label="Profit target" suffix="% of credit" min={1} max={100} value={c.target_pct} disabled={disabled} onChange={(v) => patch({ target_pct: v })} />
         <Num label="Stop-loss" suffix="% of credit" min={1} max={1000} value={c.stop_loss_pct} disabled={disabled} onChange={(v) => patch({ stop_loss_pct: v })} hint="If neither fires, the spread settles at expiry." />
       </div>

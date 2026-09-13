@@ -37,6 +37,10 @@ _logger = logging.getLogger(__name__)
 
 # (exchange "NSE"/"BSE", ICICI ShortName, bid qty, ask qty, receive time)
 BookListener = Callable[[str, str, float, float, float], None]
+# (exchange, ShortName, best bid px, best bid qty, best ask px, best ask qty, receive time) --
+# the level-1 view the order-flow challenger needs (`index_signal.flow`).
+TopListener = Callable[[str, str, float, float, float, float, float], None]
+_TOP_KEYS = ("BestBuyRate-1", "BestBuyQty-1", "BestSellRate-1", "BestSellQty-1")
 
 _DEPTH_QTY_RE = re.compile(r"^Best(Buy|Sell)Qty-(\d+)$")
 _DEFAULT_LEVELS = 5
@@ -45,6 +49,7 @@ _lock = threading.RLock()
 # Serialises whole subscribe passes: the login prefetch and the signal loop can both ask at once.
 _sync_lock = threading.Lock()
 _book_listener: BookListener | None = None
+_top_listener: TopListener | None = None
 # Levels summed per side, pushed in by the publisher from Settings -> Index Signal.
 _depth_levels = _DEFAULT_LEVELS
 _symbol_to_target: dict[str, tuple[str, str]] = {}
@@ -114,10 +119,37 @@ def depth_sums(depth: Any, levels: int = _DEFAULT_LEVELS) -> tuple[float, float]
     return (bid, ask) if found else None
 
 
+def depth_top(depth: Any) -> tuple[float, float, float, float] | None:
+    """(best bid px, best bid qty, best ask px, best ask qty) from a parsed depth block, keyed
+    on the `-1` field names both exchange layouts share. None when any of the four is missing."""
+    rows = [depth] if isinstance(depth, dict) else depth
+    if not isinstance(rows, list):
+        return None
+    found: dict[str, float] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for key in _TOP_KEYS:
+            if key in row and key not in found:
+                try:
+                    found[key] = float(row[key])
+                except (TypeError, ValueError):
+                    return None
+    if len(found) < len(_TOP_KEYS):
+        return None
+    return tuple(found[k] for k in _TOP_KEYS)  # type: ignore[return-value]
+
+
 def set_book_listener(cb: BookListener | None) -> None:
     global _book_listener
     with _lock:
         _book_listener = cb
+
+
+def set_top_listener(cb: TopListener | None) -> None:
+    global _top_listener
+    with _lock:
+        _top_listener = cb
 
 
 def _on_raw_tick(payload: Any) -> None:
@@ -130,6 +162,7 @@ def _on_raw_tick(payload: Any) -> None:
         with _lock:
             target = _symbol_to_target.get(symbol)
             cb = _book_listener
+            top_cb = _top_listener
         if target is None:
             return
         sums = depth_sums(payload.get("depth"), _levels())
@@ -138,8 +171,13 @@ def _on_raw_tick(payload: Any) -> None:
         with _lock:
             _last_tick_monotonic = time.monotonic()
             _ticks_seen += 1
+        now_ts = time.time()
         if cb is not None:
-            cb(target[0], target[1], sums[0], sums[1], time.time())
+            cb(target[0], target[1], sums[0], sums[1], now_ts)
+        if top_cb is not None:
+            top = depth_top(payload.get("depth"))
+            if top is not None:
+                top_cb(target[0], target[1], top[0], top[1], top[2], top[3], now_ts)
     except Exception:  # noqa: BLE001
         _logger.debug("index depth feed: tick handling failed", exc_info=True)
 
@@ -353,10 +391,11 @@ def status() -> dict[str, Any]:
 
 
 def reset_state_for_tests() -> None:
-    global _book_listener, _subscribed_date, _listener_registered, _depth_levels
+    global _book_listener, _top_listener, _subscribed_date, _listener_registered, _depth_levels
     global _last_tick_monotonic, _ticks_seen, _last_error
     with _lock:
         _book_listener = None
+        _top_listener = None
         _depth_levels = _DEFAULT_LEVELS
         _symbol_to_target.clear()
         _target_to_symbol.clear()

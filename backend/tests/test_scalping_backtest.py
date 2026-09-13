@@ -176,6 +176,22 @@ def test_only_one_position_is_held_at_a_time():
         assert a.exited_at <= b.entered_at
 
 
+def test_one_signal_run_buys_once_in_the_backtest_too():
+    """A slow grind on ever-rising volume fires every bar. The first trade times out (it does
+    not make +3 points in 90s); the run is unbroken, so nothing is re-bought on it -- the same
+    rule the live runtime applies, or the backtest would describe a different strategy."""
+    day = _NEAR_EXPIRY
+    closes = [24_000.0] * 25 + [24_000.0 + 2 * i for i in range(1, 20)]
+    volumes = [1_000] * 25 + [int(2_000 * 1.2 ** i) for i in range(1, 20)]
+    result = run_backtest(
+        _bars(day, closes, volumes), config=MomentumLongScalperConfig(), charges=CHARGES,
+        spread=SPREAD, vix_by_day={day: 13.0},
+    )
+    assert len(result.cycles) == 1
+    assert result.skipped_same_signal > 0
+    assert result.summary()["skipped_same_signal"] == result.skipped_same_signal
+
+
 def test_a_position_never_carries_across_days():
     """A candle history is not a position; each session starts flat."""
     d1, d2 = _NEAR_EXPIRY, datetime.date(2026, 3, 10)

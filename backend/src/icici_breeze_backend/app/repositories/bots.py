@@ -954,6 +954,7 @@ def scalper_day_totals(user_id: str, bot_type: str) -> ScalperDayTotals:
             consecutive += 1
         else:
             break
+    entry_start, entry_side = _last_entry_signal(cycles)
     return ScalperDayTotals(
         cycles=len(cycles),
         open_cycles=sum(1 for c in cycles if c.is_open),
@@ -961,7 +962,31 @@ def scalper_day_totals(user_id: str, bot_type: str) -> ScalperDayTotals:
         friction=round(sum(c.friction or 0.0 for c in cycles), 2),
         consecutive_losses=consecutive,
         last_closed_at=closed[-1].closed_at if closed else None,
+        last_entry_candle_start=entry_start,
+        last_entry_side=entry_side,
     )
+
+
+_STRUCTURE_SIDE = {"long_ce": "bullish", "long_pe": "bearish"}
+
+
+def _last_entry_signal(cycles: list[BotCycleRecord]) -> tuple[Optional[int], Optional[str]]:
+    """(candle start, side) of the latest cycle that recorded its entry signal.
+
+    Every cycle counts, an aborted entry included: a limit that never filled was still a bid
+    on that signal run, and re-bidding it on the next minute is the chase plan section 3.6
+    rules out. Cycles without a signal (Bot 4's flies) yield (None, None).
+    """
+    for cycle in reversed(cycles):
+        signal = (cycle.detail or {}).get("signal") or {}
+        side = _STRUCTURE_SIDE.get(cycle.structure)
+        try:
+            start = int(signal.get("candle_start"))
+        except (TypeError, ValueError):
+            continue
+        if side is not None:
+            return start, side
+    return None, None
 
 
 # --------------------------------------------------------------------------------------

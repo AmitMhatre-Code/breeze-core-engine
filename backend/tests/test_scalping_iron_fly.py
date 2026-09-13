@@ -39,7 +39,8 @@ CHARGES = ChargesModel()
 class FakeProc:
     """Prices every strike off a crude but monotonic curve, and records margin calls."""
 
-    def __init__(self, *, margin_per_lot=40_000.0, unpriceable=()):
+    # ~7,500 a lot is what a hedged NIFTY fly actually needed on the 10-11 Sep 2026 paper days.
+    def __init__(self, *, margin_per_lot=7_500.0, unpriceable=()):
         self.margin_calls: list[list[dict]] = []
         self._margin_per_lot = margin_per_lot
         self._unpriceable = set(unpriceable)
@@ -90,6 +91,12 @@ def env(tmp_path, monkeypatch):
     spreads.reset_throttle_for_tests()
     runtime.reset_state_for_tests()
     proc = FakeProc()
+    # The fake scrip master lists a 10-Sep-2026 expiry. Pin the expiry picker's clock to the
+    # date these tests are written for, or they rot the day that expiry passes.
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.bots.scalping.momentum_bot.now_ist",
+        lambda: datetime.datetime(2026, 9, 8, 10, 0),
+    )
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.quote_source_router.fetch_chain_side_icici_response",
         lambda p, u, s, e, exp, right, **k: {"Status": 200, "Success": _rows(right, proc)},
@@ -163,14 +170,14 @@ def test_the_wings_are_sent_as_buys_not_sells(env):
 
 
 def test_lots_are_the_most_that_fit_under_the_ceiling(env):
-    # 40,000 per lot against a 100,000 ceiling -> 2 lots.
-    plan, _ = fly.plan_entry(env, USER, IronFlyScalperConfig(margin_ceiling_inr=100_000.0))
-    assert plan.lots == 2
-    assert plan.margin_required <= 100_000.0
+    # 7,500 per lot against the default 25,000 ceiling -> 3 lots, the size the stops assume.
+    plan, _ = fly.plan_entry(env, USER, IronFlyScalperConfig())
+    assert plan.lots == 3
+    assert plan.margin_required <= 25_000.0
 
 
 def test_a_ceiling_too_small_for_one_lot_skips_rather_than_partial_funding(env):
-    plan, problem = fly.plan_entry(env, USER, IronFlyScalperConfig(margin_ceiling_inr=10_000.0))
+    plan, problem = fly.plan_entry(env, USER, IronFlyScalperConfig(margin_ceiling_inr=5_000.0))
     assert plan is None and problem[0] == ReasonCode.MARGIN_CAP_TOO_SMALL
 
 
@@ -300,8 +307,10 @@ def test_drift_outranks_the_pnl_stops():
 
 def test_the_tighter_of_the_two_loss_stops_binds():
     """Both are live by design; honouring only the looser would retire the stricter."""
-    # 1 lot, credit 7,500: 20% = 1,500, equal to the flat stop.
-    tight_pct = IronFlyScalperConfig(exits={"stop_loss_credit_pct": 5.0})
+    # 1 lot, credit 7,500: a 1,500 flat stop against 5% of credit (375).
+    tight_pct = IronFlyScalperConfig(
+        exits={"stop_loss_credit_pct": 5.0, "hard_stop_loss_inr": 1500.0}
+    )
     verdict = fly.evaluate_exit(
         tight_pct.model_copy(), net_credit_per_unit=100.0, close_cost_per_unit=106.0,
         quantity=LOT, spot=24_000.0, atm_strike_price=ATM,

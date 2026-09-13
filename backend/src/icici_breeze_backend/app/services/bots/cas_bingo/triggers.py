@@ -23,6 +23,11 @@ from icici_breeze_backend.app.core.timezone import IST
 DIRECTIONAL = ("bullish", "bearish")
 _FLIP_FROM = frozenset({"neutral", "bullish", "bearish"})
 
+# Cash stocks take auction orders from 15:20 (none 15:15-15:20); only then do constituents
+# publish equilibrium prices, so only then is the index's indicative value a settlement
+# estimate. SEBI's 2026-09-12 consultation may change the session -- re-read plan section 0.
+AUCTION_ORDER_ENTRY_IST = "15:20"
+
 
 @dataclass(frozen=True)
 class Flip:
@@ -37,6 +42,9 @@ class Trigger:
     right: str  # "call" | "put" -- the side the structure goes on
     text: str
     flip: Optional[Flip] = None
+    # The index level the trigger judged against, when strikes must be measured from that
+    # same reading (the auction rule's indicative index) rather than a fresh one.
+    level: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -215,6 +223,37 @@ def evaluate_credit(
             text=(
                 f"Index {move:+.2f}% from the open, then a {flip.state} flip at "
                 f"{hhmm(flip.ts)}: sell a {sold} credit spread."
+            ),
+        ),
+        "",
+    )
+
+
+def evaluate_auction_credit(
+    *, indicative: Optional[float], day_open: Optional[float], now_ts: float
+) -> Verdict:
+    """Section 3.2b: inside the auction, the credit side is the side the index has moved to.
+
+    No flip is read: from 15:20 the depth feed shows auction books the readiness evidence never
+    scored. Whether the chosen side is actually worth selling -- still priced well above what
+    it would settle at -- is `plan.build_plan(auction=True)`'s question, because it needs the
+    chain.
+    """
+    if not indicative or indicative <= 0:
+        return Verdict(None, "No fresh indicative index level yet.")
+    if not day_open or day_open <= 0:
+        return Verdict(None, "The day's open is not known, so the auction's direction cannot be told.")
+    move = (indicative - day_open) / day_open * 100.0
+    right = "call" if move >= 0 else "put"
+    sold = "CE" if right == "call" else "PE"
+    where = "above" if right == "call" else "below"
+    return Verdict(
+        Trigger(
+            right=right,
+            level=float(indicative),
+            text=(
+                f"Indicative index {indicative:,.2f} at {hhmm(now_ts)} ({move:+.2f}% from the "
+                f"open): sell a {sold} credit spread {where} it if it is still priced."
             ),
         ),
         "",

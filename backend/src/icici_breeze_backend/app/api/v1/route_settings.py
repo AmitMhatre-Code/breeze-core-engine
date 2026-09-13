@@ -695,9 +695,17 @@ async def settings_index_signal_readiness(ctx: RequestContext = Depends(get_requ
     """The plain-language verdict above the shadow evidence: per index, whether flips beat the
     market's trend at +5 minutes by more than the breakeven move. Fixed test, no parameters --
     see `shadow_log.readiness`."""
-    from icici_breeze_backend.app.services.index_signal import shadow_log
+    from icici_breeze_backend.app.services.index_signal import flow, shadow_log
 
-    return {"indices": {label: shadow_log.readiness(label) for label in ("nifty", "sensex")}}
+    labels = ("nifty", "sensex")
+    return {
+        "indices": {label: shadow_log.readiness(label) for label in labels},
+        # The order-flow challengers, judged by the same fixed test (`index_signal.flow`).
+        "challengers": {
+            label: {**shadow_log.readiness(flow.challenger_label(label)), "name": flow.CHALLENGER_NAME[label]}
+            for label in labels
+        },
+    }
 
 
 @router.get("/index-signal/readings/download")
@@ -711,8 +719,8 @@ async def settings_index_signal_readings_download(
     from icici_breeze_backend.app.services.index_signal import shadow_log
 
     label = index.strip().lower()
-    if label not in ("nifty", "sensex"):
-        raise HTTPException(status_code=400, detail="index must be nifty or sensex")
+    if label not in ("nifty", "sensex", "nifty:flow", "sensex:flow"):
+        raise HTTPException(status_code=400, detail="index must be nifty or sensex (or its :flow challenger)")
     return Response(
         content=shadow_log.readings_csv(label, days=days),
         media_type="text/csv; charset=utf-8",

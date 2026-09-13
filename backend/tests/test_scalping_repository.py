@@ -277,3 +277,72 @@ def test_day_totals_ignore_other_days(db_path):
         conn.execute("UPDATE bot_cycles SET opened_at = ? WHERE id = ?", (yesterday, old.id))
         conn.commit()
     assert repo.scalper_day_totals(USER, BOT_MOMENTUM_LONG_SCALPER).cycles == 0
+
+
+def test_day_totals_carry_the_latest_entry_signal(db_path):
+    """The fresh-signal rule reads these; from rows, so a restart does not forget them."""
+    run_id = repo.open_session_run(USER, BOT_MOMENTUM_LONG_SCALPER)
+    for structure, start in (("long_ce", 1_789_032_420), ("long_pe", 1_789_032_600)):
+        cycle = repo.open_cycle(
+            USER, BOT_MOMENTUM_LONG_SCALPER, run_id, structure=structure,
+            legs=[{"right": "put"}], lots=1, entry_value=1000.0, paper=True,
+            detail={"signal": {"candle_start": start, "close": 23_500.0}},
+        )
+        _close(cycle, -390.0)
+    totals = repo.scalper_day_totals(USER, BOT_MOMENTUM_LONG_SCALPER)
+    assert totals.last_entry_candle_start == 1_789_032_600
+    assert totals.last_entry_side == "bearish"
+
+
+def test_the_fly_defaults_are_about_three_lots_with_no_flat_stop():
+    from icici_breeze_backend.app.domain.bots import IronFlyScalperConfig
+
+    cfg = IronFlyScalperConfig()
+    assert cfg.margin_ceiling_inr == 25_000.0
+    assert cfg.exits.hard_stop_loss_inr is None
+    assert cfg.exits.stop_loss_credit_pct == 20.0  # the credit stop still governs
+
+
+def _store_fly_config(db_path, config):
+    import json
+    import sqlite3
+
+    repo.get_or_create_bot(USER, BOT_IRON_FLY_SCALPER)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE bots SET config = ? WHERE user_id = ? AND bot_type = ?",
+            (json.dumps(config), USER, BOT_IRON_FLY_SCALPER),
+        )
+        conn.commit()
+
+
+def test_the_superseded_fly_defaults_are_corrected_on_boot(db_path):
+    """Configs are stored whole, so a new model default never reaches an existing bot."""
+    _store_fly_config(db_path, {
+        "margin_ceiling_inr": 100000.0,
+        "exits": {"target_decay_pct": 15.0, "hard_stop_loss_inr": 1500.0, "stop_loss_credit_pct": 20.0},
+    })
+    ensure_bots_tables(db_path)
+    cfg = repo.get_or_create_bot(USER, BOT_IRON_FLY_SCALPER).config
+    assert cfg["margin_ceiling_inr"] == 25_000.0
+    assert cfg["exits"]["hard_stop_loss_inr"] is None
+    assert cfg["exits"]["stop_loss_credit_pct"] == 20.0
+
+
+def test_a_fly_value_the_user_chose_is_left_alone(db_path):
+    _store_fly_config(db_path, {
+        "margin_ceiling_inr": 50000.0,
+        "exits": {"hard_stop_loss_inr": 2500.0},
+    })
+    ensure_bots_tables(db_path)
+    ensure_bots_tables(db_path)  # idempotent
+    cfg = repo.get_or_create_bot(USER, BOT_IRON_FLY_SCALPER).config
+    assert cfg["margin_ceiling_inr"] == 50_000.0
+    assert cfg["exits"]["hard_stop_loss_inr"] == 2500.0
+
+
+def test_a_cycle_without_a_signal_leaves_the_entry_signal_empty(db_path):
+    run_id = repo.open_session_run(USER, BOT_MOMENTUM_LONG_SCALPER)
+    _open(run_id)
+    totals = repo.scalper_day_totals(USER, BOT_MOMENTUM_LONG_SCALPER)
+    assert totals.last_entry_candle_start is None and totals.last_entry_side is None

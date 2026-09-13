@@ -29,7 +29,10 @@ from icici_breeze_backend.app.services.bots.scalping import ladder as ladder_mod
 from icici_breeze_backend.app.services.bots.scalping.backtest_store import HistCandle
 from icici_breeze_backend.app.services.bots.scalping.candles import Candle
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
-from icici_breeze_backend.app.services.bots.scalping.signal import evaluate_momentum
+from icici_breeze_backend.app.services.bots.scalping.signal import (
+    evaluate_momentum,
+    signal_run_unbroken,
+)
 from icici_breeze_backend.app.services.bots.scalping.spreads import SpreadStats
 from icici_breeze_backend.app.services.iv_compute import bs_price_call, bs_price_put
 
@@ -72,6 +75,8 @@ class BacktestResult:
     cycles: list[BacktestCycle] = field(default_factory=list)
     skipped_no_signal: int = 0
     skipped_unaffordable: int = 0
+    # Fired, but on the signal run that opened the previous trade (plan section 3.4).
+    skipped_same_signal: int = 0
     days: int = 0
     iv_source: str = ""
     spread_source: str = ""
@@ -111,6 +116,7 @@ class BacktestResult:
             ),
             "skipped_no_signal": self.skipped_no_signal,
             "skipped_unaffordable": self.skipped_unaffordable,
+            "skipped_same_signal": self.skipped_same_signal,
             "iv_source": self.iv_source,
             "spread_source": self.spread_source,
         }
@@ -169,7 +175,7 @@ def atm_strike_for(spot: float, step: float = STRIKE_STEP) -> float:
     return round(spot / step) * step
 
 
-def _to_candle(bar: HistCandle) -> Candle:
+def _to_candle(bar: HistCandle, vwap: Optional[float] = None) -> Candle:
     return Candle(
         start=int(bar.ts.timestamp()),
         open=bar.open,
@@ -179,6 +185,7 @@ def _to_candle(bar: HistCandle) -> Candle:
         volume=bar.volume,
         turnover=None,
         ticks=1,
+        vwap=vwap,
     )
 
 
@@ -235,12 +242,17 @@ def _run_day(
 ) -> None:
     required = max(config.signal.ema_period, config.signal.volume_ma_period)
     open_position: Optional[dict[str, Any]] = None
+    # Built every bar, held or not: the fresh-signal rule counts a candle that went off while
+    # the position was still open, exactly as the live runtime does.
+    candles: list[Candle] = []
+    last_entry: Optional[tuple[int, str]] = None  # (signal candle start, side)
 
     for i in range(len(day_bars)):
         bar = day_bars[i]
         history = day_bars[: i + 1]
         spot = bar.close
         t = years_to_expiry(bar.ts, expiry)
+        candles.append(_to_candle(bar, vwap=_session_vwap(history)))
 
         if open_position is not None:
             price = theoretical_price(
@@ -264,11 +276,14 @@ def _run_day(
 
         if len(history) < required:
             continue
-        signal = evaluate_momentum(
-            [_to_candle(b) for b in history], _session_vwap(history), config.signal
-        )
+        signal = evaluate_momentum(candles, candles[-1].vwap, config.signal)
         if not signal.fired:
             result.skipped_no_signal += 1
+            continue
+        if last_entry is not None and signal_run_unbroken(
+            candles, config.signal, entry_candle_start=last_entry[0], side=last_entry[1]
+        ):
+            result.skipped_same_signal += 1
             continue
 
         right = signal.right or "call"
@@ -283,6 +298,7 @@ def _run_day(
             continue
 
         fill = round(ask + half * charges.slippage_spread_fraction * 2, 2)
+        last_entry = (candles[-1].start, str(signal.side))
         open_position = {
             "entered_at": bar.ts,
             "right": right,

@@ -713,6 +713,25 @@ function ShadowEvidenceSection() {
           <ReadinessCard key={key} name={name} readiness={readiness.data?.indices[key]} />
         ))}
       </div>
+      {readiness.data?.challengers ? (
+        <div className="space-y-3">
+          <p className="text-xs leading-relaxed text-muted">
+            <span className="font-semibold text-foreground">Challengers — in shadow only.</span> Two alternative
+            signals that read how orders and trades are <em>changing</em> rather than how much is waiting: NIFTY from
+            the NIFTY futures contract&rsquo;s own buying and selling pressure, SENSEX from how its big stocks&rsquo;
+            queues move. They are judged by exactly the same test and nothing acts on them. If one earns
+            &ldquo;Ready&rdquo; where the current signal does not, that is the case for switching.
+          </p>
+          <div className="grid gap-5 xl:grid-cols-2">
+            {INDICES.map(({ key }) => {
+              const challenger = readiness.data?.challengers?.[key];
+              return challenger ? (
+                <ReadinessCard key={`${key}-flow`} name={challenger.name} readiness={challenger} />
+              ) : null;
+            })}
+          </div>
+        </div>
+      ) : null}
       {requirements ? (
         <div className="space-y-1 text-hint leading-relaxed text-muted">
           <p className="flex flex-wrap gap-x-4 gap-y-1">
