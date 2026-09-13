@@ -1,4 +1,4 @@
-"""Cached historical data for the backtest (docs/bots-scalping-plan.md section 8).
+"""Cached historical data for the backtests (docs/bots-scalping-plan.md section 8).
 
 A standalone SQLite file, deliberately **not** `users.sqlite3`: this is bulk, regenerable,
 disposable data, and it must never be able to corrupt or bloat the file that holds accounts,
@@ -7,6 +7,12 @@ credentials and the run log. Deleting it costs nothing but a re-fetch.
 Fetching needs a live broker session, which only works from the production static IP, so
 `fetch` runs on the EC2 instance. Replay is pure CPU and needs no broker at all, so it runs
 on the same box over SSH -- no transfer, nothing to keep in sync.
+
+Option candles are fetched **on demand** (section 8.7). A replay records the contracts it
+needed and did not have as `option_needs`; `fetch-options` downloads exactly those and logs
+each window it asked for in `option_fetches` -- including windows that came back empty, so
+"ICICI has nothing for this contract" is an answer the replay can act on rather than a need
+that is re-requested forever.
 """
 from __future__ import annotations
 
@@ -22,10 +28,21 @@ _logger = logging.getLogger(__name__)
 
 BACKTEST_DB = "backtest.sqlite3"
 
+INTERVAL_MINUTE = "1minute"
+INTERVAL_SECOND = "1second"
+
+# A complete NSE session is 09:15-15:29, 375 one-minute bars. A day short of this is either a
+# half day or a truncated fetch, and `coverage` lists it so the reader can tell which.
+SESSION_BARS = 375
+COMPLETE_DAY_BARS = 370
+
+_UNDERLYING_TABLES = ("futures_candles", "spot_candles")
+_TS = "%Y-%m-%d %H:%M:%S"
+
 
 @dataclass(frozen=True)
 class HistCandle:
-    """One 1-minute futures bar, as stored."""
+    """One bar, as stored. `ts` is the bar's START, naive IST."""
 
     ts: datetime.datetime
     open: float
@@ -39,28 +56,63 @@ class HistCandle:
         return self.ts.date()
 
 
+@dataclass(frozen=True)
+class OptionKey:
+    stock_code: str
+    expiry: datetime.date
+    strike: float
+    right: str  # "call" | "put"
+
+    def label(self) -> str:
+        return (
+            f"{self.stock_code} {self.expiry:%d-%b-%Y} {int(self.strike)} "
+            f"{'CE' if self.right == 'call' else 'PE'}"
+        )
+
+
+@dataclass(frozen=True)
+class Need:
+    """One window of one contract that a replay wanted and the cache did not have."""
+
+    key: OptionKey
+    interval: str
+    start: datetime.datetime
+    end: datetime.datetime
+
+
 def db_path() -> str:
     return cfg.DATA_PATH + BACKTEST_DB
 
 
+def _connect(path: Optional[str]) -> sqlite3.Connection:
+    return sqlite3.connect(path or db_path())
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
 def ensure_tables(path: Optional[str] = None) -> None:
-    with sqlite3.connect(path or db_path()) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS futures_candles (
-                stock_code TEXT NOT NULL,
-                ts TEXT NOT NULL,
-                open REAL, high REAL, low REAL, close REAL,
-                volume INTEGER,
-                PRIMARY KEY (stock_code, ts)
+    with _connect(path) as conn:
+        for table in _UNDERLYING_TABLES:
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {table} (
+                    stock_code TEXT NOT NULL,
+                    ts TEXT NOT NULL,
+                    open REAL, high REAL, low REAL, close REAL,
+                    volume INTEGER,
+                    PRIMARY KEY (stock_code, ts)
+                )
+                """
             )
-            """
-        )
-        # The primary key makes re-fetching an overlapping range idempotent, which matters:
-        # a fetch that dies halfway is resumed by simply running it again.
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_futures_candles_ts ON futures_candles(ts)"
-        )
+            # The primary key makes re-fetching an overlapping range idempotent, which
+            # matters: a fetch that dies halfway is resumed by simply running it again.
+            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_ts ON {table}(ts)")
+        # Which monthly contract a futures bar came from. Added after the first release, so
+        # it goes on as an ALTER for a cache that already exists.
+        if "expiry" not in _columns(conn, "futures_candles"):
+            conn.execute("ALTER TABLE futures_candles ADD COLUMN expiry TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS daily_vix (
@@ -69,39 +121,166 @@ def ensure_tables(path: Optional[str] = None) -> None:
             )
             """
         )
-        conn.commit()
-
-
-def store_candles(rows: Iterable[dict[str, Any]], *, stock_code: str = "NIFTY", path: Optional[str] = None) -> int:
-    payload = []
-    for row in rows:
-        ts = _parse_ts(row.get("datetime") or row.get("date"))
-        if ts is None:
-            continue
-        try:
-            payload.append(
-                (
-                    stock_code,
-                    ts.strftime("%Y-%m-%d %H:%M:%S"),
-                    float(row.get("open") or 0),
-                    float(row.get("high") or 0),
-                    float(row.get("low") or 0),
-                    float(row.get("close") or 0),
-                    int(float(row.get("volume") or 0)),
-                )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS option_candles (
+                stock_code TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                strike REAL NOT NULL,
+                right TEXT NOT NULL,
+                interval TEXT NOT NULL,
+                ts TEXT NOT NULL,
+                open REAL, high REAL, low REAL, close REAL,
+                volume INTEGER,
+                oi INTEGER,
+                PRIMARY KEY (stock_code, expiry, strike, right, interval, ts)
             )
-        except (TypeError, ValueError):
-            continue
-    if not payload:
-        return 0
-    with sqlite3.connect(path or db_path()) as conn:
-        conn.executemany(
-            "INSERT OR REPLACE INTO futures_candles "
-            "(stock_code, ts, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            payload,
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS option_fetches (
+                stock_code TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                strike REAL NOT NULL,
+                right TEXT NOT NULL,
+                interval TEXT NOT NULL,
+                start_ts TEXT NOT NULL,
+                end_ts TEXT NOT NULL,
+                rows INTEGER NOT NULL,
+                fetched_at TEXT NOT NULL,
+                PRIMARY KEY (stock_code, expiry, strike, right, interval, start_ts, end_ts)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS option_needs (
+                stock_code TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                strike REAL NOT NULL,
+                right TEXT NOT NULL,
+                interval TEXT NOT NULL,
+                start_ts TEXT NOT NULL,
+                end_ts TEXT NOT NULL,
+                PRIMARY KEY (stock_code, expiry, strike, right, interval, start_ts, end_ts)
+            )
+            """
+        )
+        # What the probe learned about ICICI's API (per-call cap, request clock). Read by the
+        # fetcher so a fact measured once is not re-guessed on every run.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY NOT NULL, value TEXT)"
         )
         conn.commit()
+
+
+# --------------------------------------------------------------------------------------
+# Underlying bars: futures (the Bot 3 signal) and the cash index (spot)
+# --------------------------------------------------------------------------------------
+
+
+def _check_table(table: str) -> None:
+    if table not in _UNDERLYING_TABLES:
+        raise ValueError(f"unknown underlying table {table!r}")
+
+
+def _bar_tuple(row: dict[str, Any]) -> Optional[tuple]:
+    ts = _parse_ts(row.get("datetime") or row.get("date"))
+    if ts is None:
+        return None
+    try:
+        return (
+            ts.strftime(_TS),
+            float(row.get("open") or 0),
+            float(row.get("high") or 0),
+            float(row.get("low") or 0),
+            float(row.get("close") or 0),
+            int(float(row.get("volume") or 0)),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def store_candles(
+    rows: Iterable[dict[str, Any]],
+    *,
+    stock_code: str = "NIFTY",
+    path: Optional[str] = None,
+    table: str = "futures_candles",
+    expiry: Optional[datetime.date] = None,
+) -> int:
+    _check_table(table)
+    payload = [(stock_code,) + t for t in (_bar_tuple(r) for r in rows) if t is not None]
+    if not payload:
+        return 0
+    with _connect(path) as conn:
+        if table == "futures_candles":
+            conn.executemany(
+                "INSERT OR REPLACE INTO futures_candles "
+                "(stock_code, ts, open, high, low, close, volume, expiry) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [p + (expiry.isoformat() if expiry else None,) for p in payload],
+            )
+        else:
+            conn.executemany(
+                f"INSERT OR REPLACE INTO {table} "
+                "(stock_code, ts, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                payload,
+            )
+        conn.commit()
     return len(payload)
+
+
+def load_candles(
+    *,
+    stock_code: str = "NIFTY",
+    from_date: Optional[datetime.date] = None,
+    to_date: Optional[datetime.date] = None,
+    path: Optional[str] = None,
+    table: str = "futures_candles",
+) -> list[HistCandle]:
+    _check_table(table)
+    sql = f"SELECT ts, open, high, low, close, volume FROM {table} WHERE stock_code = ?"
+    args: list[Any] = [stock_code]
+    if from_date:
+        sql += " AND ts >= ?"
+        args.append(f"{from_date.isoformat()} 00:00:00")
+    if to_date:
+        sql += " AND ts <= ?"
+        args.append(f"{to_date.isoformat()} 23:59:59")
+    sql += " ORDER BY ts ASC"
+    with _connect(path) as conn:
+        rows = conn.execute(sql, args).fetchall()
+    return _to_candles(rows)
+
+
+def day_bar_counts(
+    *, stock_code: str = "NIFTY", table: str = "futures_candles", path: Optional[str] = None
+) -> dict[datetime.date, int]:
+    _check_table(table)
+    with _connect(path) as conn:
+        rows = conn.execute(
+            f"SELECT substr(ts, 1, 10), COUNT(*) FROM {table} WHERE stock_code = ? GROUP BY 1",
+            (stock_code,),
+        ).fetchall()
+    out: dict[datetime.date, int] = {}
+    for day, count in rows:
+        try:
+            out[datetime.date.fromisoformat(day)] = int(count)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _to_candles(rows: Iterable[tuple]) -> list[HistCandle]:
+    out: list[HistCandle] = []
+    for ts, o, h, l, c, v in rows:
+        parsed = _parse_ts(ts)
+        if parsed is None:
+            continue
+        out.append(HistCandle(parsed, float(o), float(h), float(l), float(c), int(v or 0)))
+    return out
 
 
 def store_vix(rows: Iterable[dict[str, Any]], *, path: Optional[str] = None) -> int:
@@ -116,7 +295,7 @@ def store_vix(rows: Iterable[dict[str, Any]], *, path: Optional[str] = None) -> 
             payload.append((date, value))
     if not payload:
         return 0
-    with sqlite3.connect(path or db_path()) as conn:
+    with _connect(path) as conn:
         conn.executemany(
             "INSERT OR REPLACE INTO daily_vix (date, value) VALUES (?, ?)", payload
         )
@@ -124,35 +303,8 @@ def store_vix(rows: Iterable[dict[str, Any]], *, path: Optional[str] = None) -> 
     return len(payload)
 
 
-def load_candles(
-    *,
-    stock_code: str = "NIFTY",
-    from_date: Optional[datetime.date] = None,
-    to_date: Optional[datetime.date] = None,
-    path: Optional[str] = None,
-) -> list[HistCandle]:
-    sql = "SELECT ts, open, high, low, close, volume FROM futures_candles WHERE stock_code = ?"
-    args: list[Any] = [stock_code]
-    if from_date:
-        sql += " AND ts >= ?"
-        args.append(f"{from_date.isoformat()} 00:00:00")
-    if to_date:
-        sql += " AND ts <= ?"
-        args.append(f"{to_date.isoformat()} 23:59:59")
-    sql += " ORDER BY ts ASC"
-    with sqlite3.connect(path or db_path()) as conn:
-        rows = conn.execute(sql, args).fetchall()
-    out: list[HistCandle] = []
-    for ts, o, h, l, c, v in rows:
-        parsed = _parse_ts(ts)
-        if parsed is None:
-            continue
-        out.append(HistCandle(parsed, float(o), float(h), float(l), float(c), int(v or 0)))
-    return out
-
-
 def load_vix(*, path: Optional[str] = None) -> dict[datetime.date, float]:
-    with sqlite3.connect(path or db_path()) as conn:
+    with _connect(path) as conn:
         rows = conn.execute("SELECT date, value FROM daily_vix").fetchall()
     out: dict[datetime.date, float] = {}
     for date, value in rows:
@@ -163,21 +315,182 @@ def load_vix(*, path: Optional[str] = None) -> dict[datetime.date, float]:
     return out
 
 
+# --------------------------------------------------------------------------------------
+# Option bars, and the fetch/need bookkeeping behind them
+# --------------------------------------------------------------------------------------
+
+
+def _key_args(key: OptionKey, interval: str) -> tuple:
+    return (key.stock_code, key.expiry.isoformat(), float(key.strike), key.right, interval)
+
+
+def store_option_candles(
+    rows: Iterable[dict[str, Any]], key: OptionKey, interval: str, *, path: Optional[str] = None
+) -> int:
+    payload = []
+    for row in rows:
+        bar = _bar_tuple(row)
+        if bar is None:
+            continue
+        try:
+            oi = int(float(row.get("open_interest") or 0))
+        except (TypeError, ValueError):
+            oi = 0
+        payload.append(_key_args(key, interval) + bar + (oi,))
+    if not payload:
+        return 0
+    with _connect(path) as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO option_candles "
+            "(stock_code, expiry, strike, right, interval, ts, open, high, low, close, volume, oi) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            payload,
+        )
+        conn.commit()
+    return len(payload)
+
+
+def load_option_bars(
+    key: OptionKey,
+    interval: str,
+    start: datetime.datetime,
+    end: datetime.datetime,
+    *,
+    path: Optional[str] = None,
+) -> list[HistCandle]:
+    with _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT ts, open, high, low, close, volume FROM option_candles "
+            "WHERE stock_code = ? AND expiry = ? AND strike = ? AND right = ? AND interval = ? "
+            "AND ts >= ? AND ts <= ? ORDER BY ts ASC",
+            _key_args(key, interval) + (start.strftime(_TS), end.strftime(_TS)),
+        ).fetchall()
+    return _to_candles(rows)
+
+
+def record_fetch(need: Need, rows: int, *, path: Optional[str] = None) -> None:
+    now = datetime.datetime.now().strftime(_TS)
+    with _connect(path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO option_fetches "
+            "(stock_code, expiry, strike, right, interval, start_ts, end_ts, rows, fetched_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            _key_args(need.key, need.interval)
+            + (need.start.strftime(_TS), need.end.strftime(_TS), int(rows), now),
+        )
+        conn.execute(
+            "DELETE FROM option_needs WHERE stock_code = ? AND expiry = ? AND strike = ? "
+            "AND right = ? AND interval = ? AND start_ts = ? AND end_ts = ?",
+            _key_args(need.key, need.interval)
+            + (need.start.strftime(_TS), need.end.strftime(_TS)),
+        )
+        conn.commit()
+
+
+def fetched(need: Need, *, path: Optional[str] = None) -> bool:
+    """True when some earlier fetch already covered this whole window."""
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM option_fetches WHERE stock_code = ? AND expiry = ? AND strike = ? "
+            "AND right = ? AND interval = ? AND start_ts <= ? AND end_ts >= ? LIMIT 1",
+            _key_args(need.key, need.interval)
+            + (need.start.strftime(_TS), need.end.strftime(_TS)),
+        ).fetchone()
+    return row is not None
+
+
+def add_needs(needs: Iterable[Need], *, path: Optional[str] = None) -> int:
+    """Queue what a replay was missing. Returns how many were new."""
+    added = 0
+    with _connect(path) as conn:
+        for need in needs:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO option_needs "
+                "(stock_code, expiry, strike, right, interval, start_ts, end_ts) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                _key_args(need.key, need.interval)
+                + (need.start.strftime(_TS), need.end.strftime(_TS)),
+            )
+            added += cur.rowcount or 0
+        conn.commit()
+    return added
+
+
+def pending_needs(*, path: Optional[str] = None, limit: Optional[int] = None) -> list[Need]:
+    sql = (
+        "SELECT stock_code, expiry, strike, right, interval, start_ts, end_ts FROM option_needs "
+        "ORDER BY expiry, start_ts, strike, right"
+    )
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    with _connect(path) as conn:
+        rows = conn.execute(sql).fetchall()
+    out = []
+    for stock, expiry, strike, right, interval, start, end in rows:
+        out.append(
+            Need(
+                OptionKey(stock, datetime.date.fromisoformat(expiry), float(strike), right),
+                interval,
+                datetime.datetime.strptime(start, _TS),
+                datetime.datetime.strptime(end, _TS),
+            )
+        )
+    return out
+
+
+def set_meta(key: str, value: str, *, path: Optional[str] = None) -> None:
+    with _connect(path) as conn:
+        conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, str(value)))
+        conn.commit()
+
+
+def get_meta(key: str, *, path: Optional[str] = None) -> Optional[str]:
+    with _connect(path) as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else None
+
+
 def coverage(*, stock_code: str = "NIFTY", path: Optional[str] = None) -> dict[str, Any]:
     """What is actually cached -- printed before a replay so a short run is never a surprise."""
-    with sqlite3.connect(path or db_path()) as conn:
+    with _connect(path) as conn:
         row = conn.execute(
             "SELECT COUNT(*), MIN(ts), MAX(ts) FROM futures_candles WHERE stock_code = ?",
             (stock_code,),
         ).fetchone()
+        spot = conn.execute(
+            "SELECT COUNT(*), MIN(ts), MAX(ts) FROM spot_candles WHERE stock_code = ?",
+            (stock_code,),
+        ).fetchone()
         vix = conn.execute("SELECT COUNT(*), MIN(date), MAX(date) FROM daily_vix").fetchone()
+        options = conn.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT stock_code || expiry || strike || right) "
+            "FROM option_candles"
+        ).fetchone()
+        empty = conn.execute("SELECT COUNT(*) FROM option_fetches WHERE rows = 0").fetchone()
+        needs = conn.execute("SELECT COUNT(*) FROM option_needs").fetchone()
+        meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+    short_days = {
+        d.isoformat(): n
+        for d, n in sorted(day_bar_counts(stock_code=stock_code, path=path).items())
+        if n < COMPLETE_DAY_BARS
+    }
     return {
         "candles": int(row[0] or 0),
         "candles_from": row[1],
         "candles_to": row[2],
+        # Either a half day or a truncated fetch; re-running `fetch` refills the latter.
+        "short_futures_days": short_days,
+        "spot_candles": int(spot[0] or 0),
+        "spot_from": spot[1],
+        "spot_to": spot[2],
         "vix_days": int(vix[0] or 0),
         "vix_from": vix[1],
         "vix_to": vix[2],
+        "option_bars": int(options[0] or 0),
+        "option_contracts": int(options[1] or 0),
+        "option_windows_empty": int(empty[0] or 0),
+        "option_needs_pending": int(needs[0] or 0),
+        "probe": {k: v for k, v in meta.items()},
     }
 
 

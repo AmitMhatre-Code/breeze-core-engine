@@ -65,6 +65,9 @@ backend/data/bots-audit/
 # Raw SPAN archives retained so a margin figure can be re-derived against the exact snapshot it
 # came from. Rebuildable from the exchange, tens of MB per day -- never source.
 backend/data/span/
+# The bot backtests' history cache (docs/bots-scalping-plan.md section 8). Regenerable.
+backend/data/backtest.sqlite3
+backend/data/backtest.sqlite3-journal
 
 # --- OS & editors ---
 .DS_Store

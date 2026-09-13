@@ -238,6 +238,19 @@ Two notes:
 
 No re-entry after a stop-loss in the MVP.
 
+### 4a. Backtest (2026-09-13)
+
+`services/bots/backtest_expiry.py`, run as `scripts/scalping_backtest.py replay-expiry`.
+
+On every expiry day in the cached history it sells each shortlisted strategy (naked CE,
+naked PE, short strangle) side by side, at `entry_time_ist` and the safety distances. Each
+position is managed the way the armed SG rule would manage it. Prices are ICICI's traded
+option bars (or Black-Scholes with `--model`, never mixed).
+
+**No margin-yield ranking and no free-margin sizing:** margin has no history, so each strategy
+is reported at a fixed lot count and the reader compares them. The fill model, the minute
+checks and the history window are in docs/bots-scalping-plan.md sections 8.6-8.8.
+
 ---
 
 ## 5. Cross-cutting

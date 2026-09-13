@@ -307,7 +307,7 @@ def test_spread_scales_with_premium_and_is_floored_at_a_tick(spread_db):
 def test_the_raised_outlay_is_what_makes_a_full_week_tradeable():
     """Why the default moved from 10,000 to 25,000 (plan section 8.5).
 
-    With NIFTY's 75 lot size, one ATM lot costs roughly 5,000 at 1 day to expiry and 13,000
+    With NIFTY's 65 lot size, one ATM lot costs roughly 4,400 at 1 day to expiry and 11,300
     at 6 days (VIX 13). A 10,000 outlay therefore cannot buy a lot for half of most weeks and
     the bot stands down, correctly and quietly. The bot refuses rather than partially funding.
     """

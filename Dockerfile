@@ -42,6 +42,9 @@ RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
 
 COPY backend/src ./src
 COPY backend/static ./static
+# Operator scripts run inside the container with `docker exec` -- the bot backtests need the
+# instance's static IP to fetch history (docs/bots-scalping-plan.md section 8.10).
+COPY backend/scripts ./scripts
 COPY backend/data/users.empty.sqlite3 backend/data/scrips.empty.sqlite3 \
   backend/data/NSEFreezeLimits.txt backend/data/BSEFreezeLimits.txt \
   backend/data/exchange_holidays.json \

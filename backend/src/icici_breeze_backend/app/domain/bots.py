@@ -626,10 +626,10 @@ class MomentumLongScalperConfig(BaseModel):
     #
     # 25,000 rather than the 10,000 the source conversation suggested, decided 2026-09-06
     # after the backtest refused to trade at all. That figure assumed an ATM premium of
-    # 80-140 on a lot of 65 (5,200-9,100 per lot); the lot is now 75, and 80-140 describes an
-    # option one or two days from expiry rather than a Monday one. At 10,000 the bot could
-    # not afford a single ATM lot beyond about 3 days to expiry and stood down for half of
-    # most weeks -- see docs/bots-scalping-plan.md section 8.5.
+    # 80-140 on a lot of 65 (5,200-9,100 per lot); the lot was 75 when this was decided (it is
+    # 65 again now), and 80-140 describes an option one or two days from expiry rather than a
+    # Monday one. At 10,000 the bot could not afford a single ATM lot beyond about 3 days to
+    # expiry and stood down for half of most weeks -- see docs/bots-scalping-plan.md 8.5.
     #
     # Known and accepted consequence: because lots = floor(outlay / cost) and an ATM option
     # gets cheaper as expiry approaches, position size rises as expiry nears -- roughly 1 lot

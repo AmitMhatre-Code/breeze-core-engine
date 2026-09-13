@@ -1,21 +1,25 @@
-"""Signal backtest for Bot 3 (docs/bots-scalping-plan.md section 8).
+"""Signal backtest for Bot 3 (docs/bots-scalping-plan.md sections 8 and 8.7).
 
-**What this tests, and what it does not.** There is no historical option-price series in this
-deployment -- `ws_quote_snapshot` keeps only each contract's last value per day -- so option
-prices here are *modelled*: Black-Scholes off real 1-minute NIFTY futures candles, with a
-volatility taken from that day's real India VIX and a spread taken from what paper mode has
-actually observed. That makes this an honest test of the **signal** over real history, and
-only an approximate test of the **fills**. A result showing edge has shown the signal has
-edge, not that the strategy survives execution -- paper mode is what tests the second half.
-Every result line says which IV and which spread source it used, so a run priced off a
+**Two ways to price the option, never mixed in one run.**
+
+* **Real** (the default once option bars are cached): the traded 1-minute bars ICICI serves
+  for the exact ATM contract, with 1-second bars inside each trade so the ~90-second ladder is
+  judged at the resolution it actually runs at. Traded prices are not bid/ask, so the spread
+  is still modelled from what paper mode has observed.
+* **Model** (`--model`): Black-Scholes off spot with that day's real India VIX -- the original
+  harness. An honest test of the **signal** over real history, an approximate one of the
+  **fills**.
+
+Either way a result showing edge has shown the signal has edge; paper mode is what tests
+execution. Every result line names its price, spot and spread sources, so a run priced off a
 fallback is never mistaken for a calibrated one.
 
-Pure: no broker, no clock, no database. `backtest_store` supplies the candles and
-`scripts/scalping_backtest.py` supplies the arguments.
+Pure: no broker, no clock, no database beyond the read-only cache. `backtest_store` supplies
+the candles and `scripts/scalping_backtest.py` supplies the arguments.
 
-Reuses the production signal and ladder rather than reimplementing them. That is the whole
-value of having kept them pure -- a backtest that re-derived the entry rule would be testing
-a different bot from the one that trades.
+Reuses the production signal, ladder, fills and gate stack rather than reimplementing them
+-- a backtest that re-derived the entry rule would be testing a different bot from the one
+that trades.
 """
 from __future__ import annotations
 
@@ -24,30 +28,74 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
-from icici_breeze_backend.app.domain.bots import MomentumLongScalperConfig
-from icici_breeze_backend.app.services.bots.scalping import ladder as ladder_mod
-from icici_breeze_backend.app.services.bots.scalping.backtest_store import HistCandle
-from icici_breeze_backend.app.services.bots.scalping.candles import Candle
+from icici_breeze_backend.app.domain.bots import MomentumLongScalperConfig, ReasonCode
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
+from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
+from icici_breeze_backend.app.services.bots.scalping import ladder as ladder_mod
+from icici_breeze_backend.app.services.bots.scalping.backtest_common import (
+    MINUTE,
+    DayLedger,
+    SessionVwap,
+    by_day,
+    checkpoint,
+    gate,
+    rollback,
+    spot_at,
+    spot_map,
+    tally_idle,
+    to_candle,
+)
+from icici_breeze_backend.app.services.bots.scalping.backtest_options import (
+    MISSING,
+    NO_DATA,
+    ModelPricer,
+    theoretical_price,
+    years_to_expiry,
+)
+from icici_breeze_backend.app.services.bots.scalping.backtest_regime import (
+    expiry_weekday_for,
+    next_expiry,
+)
+from icici_breeze_backend.app.services.bots.scalping.backtest_store import HistCandle, OptionKey
+from icici_breeze_backend.app.services.bots.scalping.paper import (
+    round_trip_pnl,
+    simulate_buy,
+    simulate_sell,
+)
 from icici_breeze_backend.app.services.bots.scalping.signal import (
     evaluate_momentum,
     signal_run_unbroken,
 )
 from icici_breeze_backend.app.services.bots.scalping.spreads import SpreadStats
-from icici_breeze_backend.app.services.iv_compute import bs_price_call, bs_price_put
+
+__all__ = [
+    "DEFAULT_EXPIRY_WEEKDAY_MAP",
+    "BacktestCycle",
+    "BacktestResult",
+    "atm_strike_for",
+    "expiry_weekday_for",
+    "next_expiry",
+    "run_backtest",
+    "theoretical_price",
+    "years_to_expiry",
+]
 
 _logger = logging.getLogger(__name__)
 
 STRIKE_STEP = 50.0
-TRADING_DAYS_PER_YEAR = 252.0
-MINUTES_PER_SESSION = 375.0
+INDEX = "NIFTY"
+DEFAULT_EXPIRY_WEEKDAY_MAP = regime.EXPIRY_WEEKDAY_MAP[INDEX]
 
-# NIFTY weekly expiry has not always fallen on the same weekday -- SEBI moved it. A single
-# weekday would misprice every option on one side of the change, so the map is date-ranged
-# and explicit. Monday=0 ... Sunday=6.
-DEFAULT_EXPIRY_WEEKDAY_MAP: tuple[tuple[Optional[datetime.date], int], ...] = (
-    (datetime.date(2025, 8, 31), 3),   # Thursday, up to and including this date
-    (None, 1),                          # Tuesday, thereafter
+# The runtime acts a pass or two after a candle closes; on 1-second bars the entry is the first
+# trade after this delay, within the order's own fill timeout and retries.
+ENTRY_LATENCY = datetime.timedelta(seconds=2)
+
+_DAY_COUNTERS = (
+    "skipped_no_signal",
+    "skipped_unaffordable",
+    "skipped_same_signal",
+    "skipped_no_data",
+    "skipped_no_fill",
 )
 
 
@@ -68,6 +116,8 @@ class BacktestCycle:
     spot_entry: float
     spot_exit: float
     iv: float
+    # "model", "1s" (1-second bars through the trade) or "1m" (ICICI had no 1-second bars).
+    resolution: str = "model"
 
 
 @dataclass
@@ -77,9 +127,20 @@ class BacktestResult:
     skipped_unaffordable: int = 0
     # Fired, but on the signal run that opened the previous trade (plan section 3.4).
     skipped_same_signal: int = 0
+    # Real prices only: ICICI returned nothing for the contract, or nothing traded at entry.
+    skipped_no_data: int = 0
+    skipped_no_fill: int = 0
     days: int = 0
+    # Stopped at an uncached contract; the contract is now a need for `fetch-options`.
+    days_awaiting_data: int = 0
+    days_outside_history: int = 0
+    days_without_spot: int = 0
+    # Every other gate verdict, by reason code: windows, warm-up, cooldown, expiry day ...
+    idle: dict[str, int] = field(default_factory=dict)
     iv_source: str = ""
     spread_source: str = ""
+    price_source: str = ""
+    spot_source: str = ""
 
     @property
     def wins(self) -> int:
@@ -102,10 +163,18 @@ class BacktestResult:
         return round(100.0 * self.wins / len(self.cycles), 1) if self.cycles else 0.0
 
     def summary(self) -> dict[str, Any]:
+        replayed = self.days - self.days_awaiting_data - self.days_outside_history - self.days_without_spot
+        resolutions: dict[str, int] = {}
+        for c in self.cycles:
+            resolutions[c.resolution] = resolutions.get(c.resolution, 0) + 1
         return {
             "days": self.days,
+            "days_replayed": replayed,
+            "days_awaiting_data": self.days_awaiting_data,
+            "days_outside_history": self.days_outside_history,
+            "days_without_spot": self.days_without_spot,
             "cycles": len(self.cycles),
-            "cycles_per_day": round(len(self.cycles) / self.days, 1) if self.days else 0.0,
+            "cycles_per_day": round(len(self.cycles) / replayed, 1) if replayed > 0 else 0.0,
             "win_rate_pct": self.win_rate,
             "gross_pnl": self.gross,
             "friction": self.friction,
@@ -117,84 +186,19 @@ class BacktestResult:
             "skipped_no_signal": self.skipped_no_signal,
             "skipped_unaffordable": self.skipped_unaffordable,
             "skipped_same_signal": self.skipped_same_signal,
+            "skipped_no_data": self.skipped_no_data,
+            "skipped_no_fill": self.skipped_no_fill,
+            "resolution": resolutions,
+            "idle": dict(sorted(self.idle.items())),
+            "price_source": self.price_source,
+            "spot_source": self.spot_source,
             "iv_source": self.iv_source,
             "spread_source": self.spread_source,
         }
 
 
-def expiry_weekday_for(
-    d: datetime.date, weekday_map: Sequence[tuple[Optional[datetime.date], int]]
-) -> int:
-    for until, weekday in weekday_map:
-        if until is None or d <= until:
-            return weekday
-    return weekday_map[-1][1]
-
-
-def next_expiry(
-    d: datetime.date,
-    weekday_map: Sequence[tuple[Optional[datetime.date], int]],
-    holidays: Optional[set[datetime.date]] = None,
-) -> datetime.date:
-    """The next weekly expiry on or after `d`, shifted back off an exchange holiday.
-
-    Shifted *back*, not forward: when an expiry day is a holiday the exchange brings the
-    expiry forward to the previous trading day, it does not defer it.
-    """
-    holidays = holidays or set()
-    target = expiry_weekday_for(d, weekday_map)
-    ahead = (target - d.weekday()) % 7
-    expiry = d + datetime.timedelta(days=ahead)
-    while expiry in holidays or expiry.weekday() >= 5:
-        expiry -= datetime.timedelta(days=1)
-        if expiry < d:
-            # Shifting back has moved the expiry into the past; the next one is a week out.
-            return next_expiry(d + datetime.timedelta(days=1), weekday_map, holidays)
-    return expiry
-
-
-def years_to_expiry(now: datetime.datetime, expiry: datetime.date) -> float:
-    """Calendar-day time to expiry, floored so an expiry-day option is never worthless.
-
-    Deliberately simple. These trades last about 90 seconds, so intraday theta is
-    irrelevant to the result; time to expiry matters here only because it sets the option's
-    delta and gamma.
-    """
-    days = (expiry - now.date()).days
-    remaining_minutes = max(0.0, (15 * 60 + 30) - (now.hour * 60 + now.minute))
-    total_days = days + remaining_minutes / (24 * 60.0)
-    return max(total_days / 365.0, 1.0 / (365.0 * 24 * 60))
-
-
-def theoretical_price(spot: float, strike: float, right: str, t: float, sigma: float) -> float:
-    fn = bs_price_call if right == "call" else bs_price_put
-    return max(0.05, round(fn(spot, strike, t, sigma), 2))
-
-
 def atm_strike_for(spot: float, step: float = STRIKE_STEP) -> float:
     return round(spot / step) * step
-
-
-def _to_candle(bar: HistCandle, vwap: Optional[float] = None) -> Candle:
-    return Candle(
-        start=int(bar.ts.timestamp()),
-        open=bar.open,
-        high=bar.high,
-        low=bar.low,
-        close=bar.close,
-        volume=bar.volume,
-        turnover=None,
-        ticks=1,
-        vwap=vwap,
-    )
-
-
-def _session_vwap(bars: Sequence[HistCandle]) -> Optional[float]:
-    """Volume-weighted mean of the session's bars so far, matching the live definition."""
-    total_v = sum(b.volume for b in bars)
-    if total_v <= 0:
-        return None
-    return sum(((b.high + b.low + b.close) / 3.0) * b.volume for b in bars) / total_v
 
 
 def run_backtest(
@@ -206,152 +210,262 @@ def run_backtest(
     vix_by_day: dict[datetime.date, float],
     default_iv: float = 0.13,
     holidays: Optional[set[datetime.date]] = None,
-    weekday_map: Sequence[tuple[Optional[datetime.date], int]] = DEFAULT_EXPIRY_WEEKDAY_MAP,
+    weekday_map: regime.WeekdayMap = DEFAULT_EXPIRY_WEEKDAY_MAP,
+    pricer: Any = None,
+    spot_bars: Sequence[HistCandle] = (),
 ) -> BacktestResult:
-    """Replay the live signal and ladder over historical futures bars.
+    """Replay the live signal, gates and ladder over historical futures bars.
 
     One position at a time, matching the bot. Sessions are per calendar day and state does
     not carry across days -- a candle history is not a position.
+
+    `spot_bars` are the cash index's 1-minute bars: the live bot picks its ATM strike off the
+    index, and a monthly future's basis would put it a strike or two away. Real pricing needs
+    them; model pricing falls back to the futures close and says so.
     """
+    pricer = pricer or ModelPricer()
+    spots = spot_map(spot_bars)
     result = BacktestResult(
         spread_source=spread.describe(),
         iv_source="daily India VIX" if vix_by_day else f"constant {default_iv:.3f}",
+        price_source=pricer.source,
+        spot_source="cash index" if spots else "futures close (no index bars cached)",
     )
-    by_day: dict[datetime.date, list[HistCandle]] = {}
-    for bar in bars:
-        by_day.setdefault(bar.date, []).append(bar)
-    result.days = len(by_day)
+    days = by_day(bars)
+    spot_days = {ts.date() for ts in spots}
+    result.days = len(days)
 
-    for day, day_bars in sorted(by_day.items()):
+    for day, day_bars in sorted(days.items()):
+        if day < regime.HISTORY_START:
+            result.days_outside_history += 1
+            continue
+        if pricer.real and day not in spot_days:
+            result.days_without_spot += 1
+            continue
         sigma = (vix_by_day.get(day, default_iv * 100.0)) / 100.0
         if sigma <= 0:
             sigma = default_iv
         expiry = next_expiry(day, weekday_map, holidays)
-        _run_day(day_bars, expiry, sigma, config, charges, spread, result)
+        _run_day(day_bars, day, expiry, sigma, config, charges, spread, pricer, spots, result)
     return result
+
+
+def _fresh_signal_hold(
+    candles: list, config: MomentumLongScalperConfig, ledger: DayLedger
+) -> Optional[tuple[str, str]]:
+    """The runtime's fresh-signal rule (`runtime._fresh_signal_hold`), on the replayed candles."""
+    start, side = ledger.totals.last_entry_candle_start, ledger.totals.last_entry_side
+    if start is None or side is None:
+        return None
+    if signal_run_unbroken(candles, config.signal, entry_candle_start=int(start), side=str(side)):
+        return (ReasonCode.SIGNAL_NOT_FRESH, "Still the signal run that opened the last trade.")
+    return None
 
 
 def _run_day(
     day_bars: list[HistCandle],
+    day: datetime.date,
     expiry: datetime.date,
     sigma: float,
     config: MomentumLongScalperConfig,
     charges: ChargesModel,
     spread: SpreadStats,
+    pricer: Any,
+    spots: dict,
     result: BacktestResult,
 ) -> None:
     required = max(config.signal.ema_period, config.signal.volume_ma_period)
-    open_position: Optional[dict[str, Any]] = None
-    # Built every bar, held or not: the fresh-signal rule counts a candle that went off while
-    # the position was still open, exactly as the live runtime does.
-    candles: list[Candle] = []
-    last_entry: Optional[tuple[int, str]] = None  # (signal candle start, side)
+    lot_size = regime.lot_size_for(INDEX, day)
+    saved = checkpoint(result, _DAY_COUNTERS)
+    ledger = DayLedger()
+    vwap = SessionVwap()
+    candles: list = []
+    i, n = 0, len(day_bars)
 
-    for i in range(len(day_bars)):
+    while i < n:
         bar = day_bars[i]
-        history = day_bars[: i + 1]
-        spot = bar.close
-        t = years_to_expiry(bar.ts, expiry)
-        candles.append(_to_candle(bar, vwap=_session_vwap(history)))
-
-        if open_position is not None:
-            price = theoretical_price(
-                spot, open_position["strike"], open_position["right"], t, sigma
-            )
-            half = spread.spread_for(price) / 2.0
-            bid = max(0.05, round(price - half, 2))
-            state, _ = ladder_mod.advance(open_position["ladder"], bid, config.exits)
-            open_position["ladder"] = state
-            # The ladder was opened with this bar series' own timestamps, so the wall clock
-            # it compares against is simply the current bar.
-            verdict = ladder_mod.exit_decision(state, bid, bar.ts.timestamp(), config.exits)
-            last_bar = i == len(day_bars) - 1
-            if verdict or last_bar:
-                _close(
-                    open_position, bar, bid, spot, sigma, charges,
-                    spread.spread_for(price), verdict, result,
-                )
-                open_position = None
-            continue
-
-        if len(history) < required:
-            continue
+        candles.append(to_candle(bar, vwap.add(bar)))
+        i += 1
+        now = bar.ts + MINUTE  # the bar has closed; this is when the runtime sees it
         signal = evaluate_momentum(candles, candles[-1].vwap, config.signal)
-        if not signal.fired:
-            result.skipped_no_signal += 1
-            continue
-        if last_entry is not None and signal_run_unbroken(
-            candles, config.signal, entry_candle_start=last_entry[0], side=last_entry[1]
-        ):
-            result.skipped_same_signal += 1
+        decision = gate(
+            config,
+            ledger,
+            now,
+            is_expiry_day=day == expiry,
+            warm=len(candles) >= required,
+            has_open_position=False,
+            signal=signal,
+            entry_hold=_fresh_signal_hold(candles, config, ledger),
+        )
+        if decision.action != "enter":
+            if decision.reason_code == ReasonCode.SIGNAL_NO_TRADE:
+                result.skipped_no_signal += 1
+            elif decision.reason_code == ReasonCode.SIGNAL_NOT_FRESH:
+                result.skipped_same_signal += 1
+            else:
+                tally_idle(result.idle, decision)
             continue
 
         right = signal.right or "call"
-        strike = atm_strike_for(spot)
-        price = theoretical_price(spot, strike, right, t, sigma)
+        spot = spot_at(spots, bar.ts, bar.close)
+        key = OptionKey(INDEX, expiry, regime.atm_strike(spot, INDEX), right)
+        status, points, resolution = _price_path(
+            pricer, key, now, spot, day_bars[i:], spots, sigma
+        )
+        if status == MISSING:
+            # Everything after this entry depends on how it plays out, so the whole day waits
+            # for the data rather than being replayed on a guess.
+            rollback(result, saved)
+            result.days_awaiting_data += 1
+            return
+        if status == NO_DATA:
+            result.skipped_no_data += 1
+            continue
+        entry = _entry_point(points, now, resolution, config)
+        if entry is None:
+            result.skipped_no_fill += 1
+            continue
+        entry_idx, entry_at, price = entry
+
         half = spread.spread_for(price) / 2.0
-        ask = round(price + half, 2)
-        lot_size = 75
+        bid, ask = max(0.05, round(price - half, 2)), round(price + half, 2)
         lots = int(config.premium_outlay_inr // (ask * lot_size))
         if lots < 1:
             result.skipped_unaffordable += 1
             continue
+        quantity = lots * lot_size
+        fill = simulate_buy(bid, ask, quantity, charges)
+        ledger.opened(candle_start=candles[-1].start, side=str(signal.side))
 
-        fill = round(ask + half * charges.slippage_spread_fraction * 2, 2)
-        last_entry = (candles[-1].start, str(signal.side))
-        open_position = {
-            "entered_at": bar.ts,
-            "right": right,
-            "strike": strike,
-            "lots": lots,
-            "quantity": lots * lot_size,
-            "entry_price": fill,
-            "spot_entry": spot,
-            "iv": sigma,
-            "ladder": ladder_mod.open_ladder(fill, bar.ts.timestamp(), config.exits),
-            "entry_charges": charges.leg_charges(fill, lots * lot_size, is_buy=True),
-        }
-
-
-def _close(
-    position: dict[str, Any],
-    bar: HistCandle,
-    bid: float,
-    spot: float,
-    sigma: float,
-    charges: ChargesModel,
-    spread_abs: float,
-    verdict: Optional[tuple[str, str]],
-    result: BacktestResult,
-) -> None:
-    # Slippage is adverse on BOTH legs, exactly as `paper.simulate_sell` applies it. Applying
-    # it only on entry -- as an earlier draft of this did -- makes every backtested cycle look
-    # better than the same trade would in paper mode, which is the one comparison that has to
-    # hold if the two are to be believed together.
-    exit_price = max(
-        0.05, round(bid - spread_abs * charges.slippage_spread_fraction, 2)
-    )
-    qty = int(position["quantity"])
-    gross = round((exit_price - position["entry_price"]) * qty, 2)
-    friction = round(
-        position["entry_charges"] + charges.leg_charges(exit_price, qty, is_buy=False), 2
-    )
-    result.cycles.append(
-        BacktestCycle(
-            entered_at=position["entered_at"],
-            exited_at=bar.ts,
-            right=position["right"],
-            strike=position["strike"],
-            lots=int(position["lots"]),
-            quantity=qty,
-            entry_price=position["entry_price"],
-            exit_price=exit_price,
-            gross_pnl=gross,
-            friction=friction,
-            net_pnl=round(gross - friction, 2),
-            exit_reason=(verdict[0] if verdict else "session_end"),
-            spot_entry=position["spot_entry"],
-            spot_exit=spot,
-            iv=sigma,
+        exit_at, exit_bid, exit_ask, reason = _hold(
+            points, entry_idx, entry_at, fill.price, quantity, config, spread, ledger, day == expiry
         )
+        out = simulate_sell(exit_bid, exit_ask, quantity, charges)
+        gross, friction, net = round_trip_pnl(fill, out)
+        ledger.closed(net, exit_at)
+        result.cycles.append(
+            BacktestCycle(
+                entered_at=entry_at,
+                exited_at=exit_at,
+                right=right,
+                strike=key.strike,
+                lots=lots,
+                quantity=quantity,
+                entry_price=fill.price,
+                exit_price=out.price,
+                gross_pnl=gross,
+                friction=friction,
+                net_pnl=net,
+                exit_reason=reason,
+                spot_entry=spot,
+                spot_exit=_spot_near(spots, day_bars, exit_at),
+                iv=sigma,
+                resolution=resolution,
+            )
+        )
+        # Candles that closed while the position was held are still history: the fresh-signal
+        # rule reads them, exactly as the live runtime keeps building candles mid-trade.
+        while i < n and day_bars[i].ts + MINUTE <= exit_at:
+            candles.append(to_candle(day_bars[i], vwap.add(day_bars[i])))
+            i += 1
+
+
+def _price_path(
+    pricer: Any,
+    key: OptionKey,
+    now: datetime.datetime,
+    spot: float,
+    later_bars: Sequence[HistCandle],
+    spots: dict,
+    sigma: float,
+) -> tuple[str, list[tuple[datetime.datetime, float]], str]:
+    if pricer.real:
+        return pricer.long_path(key, now)
+    points = [(now, theoretical_price(spot, key.strike, key.right, years_to_expiry(now, key.expiry), sigma))]
+    for bar in later_bars:
+        at = bar.ts + MINUTE
+        s = spot_at(spots, bar.ts, bar.close)
+        points.append(
+            (at, theoretical_price(s, key.strike, key.right, years_to_expiry(at, key.expiry), sigma))
+        )
+    return "ok", points, "model"
+
+
+def _entry_point(
+    points: list[tuple[datetime.datetime, float]],
+    now: datetime.datetime,
+    resolution: str,
+    config: MomentumLongScalperConfig,
+) -> Optional[tuple[int, datetime.datetime, float]]:
+    """Where the entry fills: (index into points, time, traded price), or None for no fill.
+
+    Model: at the signal bar's close, as before. 1-second bars: the first trade inside the
+    order's own fill window (timeout x attempts) after the runtime's reaction delay. 1-minute
+    bars: the next minute's open -- and a minute with no trade in it is no fill.
+    """
+    if not points:
+        return None
+    if resolution == "model":
+        return 0, points[0][0], points[0][1]
+    if resolution == "1m":
+        ts, price = points[0]
+        return (0, ts, price) if ts == now else None
+    execution = config.execution
+    window_end = now + ENTRY_LATENCY + datetime.timedelta(
+        seconds=execution.entry_fill_timeout_seconds * (execution.entry_retries + 1)
     )
+    for idx, (ts, price) in enumerate(points):
+        if ts < now + ENTRY_LATENCY:
+            continue
+        if ts > window_end:
+            return None
+        return idx, ts, price
+    return None
+
+
+def _hold(
+    points: list[tuple[datetime.datetime, float]],
+    entry_idx: int,
+    entry_at: datetime.datetime,
+    entry_price: float,
+    quantity: int,
+    config: MomentumLongScalperConfig,
+    spread: SpreadStats,
+    ledger: DayLedger,
+    is_expiry_day: bool,
+) -> tuple[datetime.datetime, float, float, str]:
+    """Walk the price path through the ladder and the exit gates. (at, bid, ask, reason)."""
+    state = ladder_mod.open_ladder(entry_price, entry_at.timestamp(), config.exits)
+    at, bid, ask = entry_at, *_touch(points[entry_idx][1], spread)
+    for ts, price in points[entry_idx + 1 :]:
+        at = ts
+        bid, ask = _touch(price, spread)
+        state, _ = ladder_mod.advance(state, bid, config.exits)
+        verdict = ladder_mod.exit_decision(state, bid, ts.timestamp(), config.exits)
+        decision = gate(
+            config,
+            ledger,
+            ts,
+            is_expiry_day=is_expiry_day,
+            warm=True,
+            has_open_position=True,
+            position_exit=verdict,
+            unrealized=(bid - entry_price) * quantity,
+        )
+        if decision.action == "exit":
+            return at, bid, ask, decision.reason_code
+    return at, bid, ask, "session_end"
+
+
+def _touch(price: float, spread: SpreadStats) -> tuple[float, float]:
+    half = spread.spread_for(price) / 2.0
+    return max(0.05, round(price - half, 2)), round(price + half, 2)
+
+
+def _spot_near(spots: dict, day_bars: Sequence[HistCandle], at: datetime.datetime) -> float:
+    minute = at.replace(second=0, microsecond=0)
+    for bar in reversed(day_bars):
+        if bar.ts <= minute:
+            return spot_at(spots, bar.ts, bar.close)
+    return day_bars[0].close if day_bars else 0.0
