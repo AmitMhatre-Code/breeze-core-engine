@@ -40,8 +40,12 @@ META_MAX_BARS = "max_bars_per_call"
 META_CLOCK = "request_clock"  # "ist": ICICI reads a request's time as IST; "utc": as UTC
 
 
-class BudgetExhausted(RuntimeError):
-    """The run's call budget is spent; everything fetched so far is already stored."""
+class Stopped(RuntimeError):
+    """The run stopped before finishing; everything fetched so far is already stored."""
+
+
+class BudgetExhausted(Stopped):
+    """The run's call budget is spent."""
 
 
 def market_hours_refusal(now: datetime.datetime, *, trading_day: bool) -> Optional[str]:
@@ -114,6 +118,7 @@ class Fetcher:
         max_calls: Optional[int] = DEFAULT_MAX_CALLS,
         log: Callable[[str], None] = print,
         sleep: Callable[[float], None] = time.sleep,
+        stop: Optional[Callable[[], Optional[str]]] = None,
     ) -> None:
         self.sdk = sdk
         self.path = path
@@ -121,12 +126,19 @@ class Fetcher:
         self.max_calls = max_calls
         self.log = log
         self.sleep = sleep
+        # Asked before every call; a reason means stop now. The market-hours rule is checked
+        # here too, so a run started at 08:40 stops itself at 09:00 rather than running on.
+        self.stop = stop
         self.calls = 0
         self._clock_warned = False
 
     # -- plumbing ------------------------------------------------------------------------
 
     def _tick(self) -> None:
+        if self.stop is not None:
+            reason = self.stop()
+            if reason:
+                raise Stopped(reason)
         if self.max_calls is not None and self.calls >= self.max_calls:
             raise BudgetExhausted(f"call budget of {self.max_calls} spent")
         if self.calls:

@@ -26,6 +26,7 @@ from icici_breeze_backend.app.api.v1 import route_login_disclosure
 from icici_breeze_backend.app.api.v1 import route_settings_telegram
 from icici_breeze_backend.app.api.v1 import route_diagnostics
 from icici_breeze_backend.app.api.v1 import route_bots
+from icici_breeze_backend.app.api.v1 import route_bots_backtest
 
 v1_router = APIRouter()
 
@@ -50,6 +51,7 @@ v1_router.include_router(route_performance.router, prefix="/performance", tags=[
 v1_router.include_router(route_admin.router, prefix="/admin", tags=[""], include_in_schema=False)
 v1_router.include_router(route_diagnostics.router, prefix="", include_in_schema=False)
 v1_router.include_router(route_bots.router, prefix="/bots", tags=[""], include_in_schema=False)
+v1_router.include_router(route_bots_backtest.router, prefix="/bots", tags=[""], include_in_schema=False)
 v1_router.include_router(
     route_strategy_builder.router,
     prefix="/strategy-builder",

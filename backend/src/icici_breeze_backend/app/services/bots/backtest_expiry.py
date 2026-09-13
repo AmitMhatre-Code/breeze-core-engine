@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass, field, replace
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, Union
 
 from icici_breeze_backend.app.domain.bots import ExpiryIndexWriterConfig
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
@@ -92,7 +92,7 @@ class ExpiryResult:
     days_without_spot: int = 0
     skipped_no_data: int = 0
     skipped_no_fill: int = 0
-    lots: int = DEFAULT_LOTS
+    lots: Any = DEFAULT_LOTS  # one count, or {"NIFTY naked_pe": 3, ...}
     price_source: str = ""
     spread_source: str = ""
 
@@ -128,6 +128,29 @@ class ExpiryResult:
         }
 
 
+_COUNTERS = (
+    "expiry_days",
+    "days_awaiting_data",
+    "days_outside_history",
+    "days_without_spot",
+    "skipped_no_data",
+    "skipped_no_fill",
+)
+
+
+def merge_expiry_results(
+    results: Sequence[ExpiryResult], *, price_source: str, spread_source: str
+) -> ExpiryResult:
+    """One result from one run per index. Day counts add up across indices, so they read as
+    index-days: two indices over one week is ten index-days, of which two are expiries."""
+    out = ExpiryResult(lots={}, price_source=price_source, spread_source=spread_source)
+    for r in results:
+        out.trades.extend(r.trades)
+        for name in _COUNTERS:
+            setattr(out, name, getattr(out, name) + getattr(r, name))
+    return out
+
+
 def expiry_days(
     index: str,
     start: datetime.date,
@@ -152,10 +175,12 @@ def run_expiry_backtest(
     spread: SpreadStats,
     strategies: Sequence[str] = tuple(STRATEGY_RIGHTS),
     pricer: Any = None,
-    lots: int = DEFAULT_LOTS,
+    lots: Union[int, Mapping[str, int]] = DEFAULT_LOTS,
     vix_by_day: Optional[dict[datetime.date, float]] = None,
     default_iv: float = 0.13,
 ) -> ExpiryResult:
+    """`lots` is one count for every strategy, or a count per strategy -- the Backtest page
+    sizes each from today's margin, so a strangle and a naked put get different counts."""
     pricer = pricer or ModelPricer()
     result = ExpiryResult(lots=lots, price_source=pricer.source, spread_source=spread.describe())
     spots_by_day: dict[datetime.date, dict[datetime.datetime, HistCandle]] = {}
@@ -182,7 +207,7 @@ def _run_day(
     spread: SpreadStats,
     strategies: Sequence[str],
     pricer: Any,
-    lots: int,
+    lots: Union[int, Mapping[str, int]],
     sigma: float,
     result: ExpiryResult,
 ) -> None:
@@ -208,7 +233,7 @@ def _run_day(
         result.days_awaiting_data += 1
         return
 
-    quantity = lots * regime.lot_size_for(index, day)
+    lot_size = regime.lot_size_for(index, day)
     exchange = regime.OPTION_EXCHANGE[index]
     for strategy in strategies:
         legs = STRATEGY_RIGHTS[strategy]
@@ -219,11 +244,12 @@ def _run_day(
         if NO_TRADE in statuses:
             result.skipped_no_fill += 1
             continue
+        n_lots = int(lots.get(strategy, DEFAULT_LOTS) if isinstance(lots, Mapping) else lots)
         result.trades.append(
             _trade(
                 index, day, strategy, [(r, keys[r], entry_bars[r][1]) for r in legs],
                 entry_at, spot_entry, spot_close, spots, config, charges, spread, pricer,
-                quantity, lots, exchange, sigma,
+                n_lots * lot_size, n_lots, exchange, sigma,
             )
         )
 

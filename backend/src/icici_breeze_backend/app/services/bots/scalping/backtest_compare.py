@@ -160,6 +160,60 @@ def match_cycles(
     return pairs, lonely, unclaimed
 
 
+def _label(p: PaperCycle) -> str:
+    kind = ("CE" if p.right == "call" else "PE") if p.right else "fly"
+    return f"{int(p.strike or 0)} {kind}"
+
+
+def _totals(rows: Sequence[Any]) -> dict[str, float]:
+    gross = sum(r.gross_pnl for r in rows)
+    friction = sum(r.friction for r in rows)
+    return {"cycles": len(rows), "gross_pnl": round(gross, 2), "friction": round(friction, 2),
+            "net_pnl": round(gross - friction, 2)}
+
+
+def compare_payload(
+    day: datetime.date,
+    paper: Sequence[PaperCycle],
+    backtest_cycles: Sequence[Any],
+    *,
+    config_hash_now: Optional[str],
+    config_hashes_then: set[Optional[str]],
+    price_source: str,
+    lots: Optional[int] = None,
+) -> dict[str, Any]:
+    """What `render` prints, as data for the Backtest page."""
+    live = [p for p in paper if not p.aborted]
+    pairs, lonely, extra = match_cycles(live, backtest_cycles)
+    diffs = [abs(d) for d in (pair.entry_diff for pair in pairs) if d is not None]
+    return {
+        "day": day.isoformat(),
+        "price_source": price_source,
+        "settings_changed": bool(config_hashes_then) and config_hash_now not in config_hashes_then,
+        "lots": lots,
+        "paper": _totals(live),
+        "backtest": _totals(backtest_cycles),
+        "pairs": [
+            {
+                "contract": _label(pair.paper),
+                "paper_at": pair.paper.opened_at.strftime("%H:%M:%S"),
+                "backtest_at": pair.backtest.entered_at.strftime("%H:%M:%S"),
+                "paper_entry": pair.paper.entry,
+                "backtest_entry": getattr(pair.backtest, "entry_price", getattr(pair.backtest, "net_credit_per_unit", None)),
+                "entry_diff": pair.entry_diff,
+                "paper_exit": pair.paper.exit_reason,
+                "backtest_exit": pair.backtest.exit_reason,
+                "paper_net": round(pair.paper.net_pnl, 2),
+                "backtest_net": round(pair.backtest.net_pnl, 2),
+            }
+            for pair in pairs
+        ],
+        "paper_only": [f"{p.opened_at:%H:%M} {_label(p)}" for p in lonely],
+        "backtest_only": [f"{b.entered_at:%H:%M}" for b in extra],
+        "median_abs_entry_diff": round(statistics.median(diffs), 2) if diffs else None,
+    }
+
+
 def render(
     day: datetime.date,
     paper: Sequence[PaperCycle],

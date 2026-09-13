@@ -231,6 +231,21 @@ const nextConfig = {
         source: "/bots/cas-bingo/execute",
         destination: `${backendUpstream}/bots/cas-bingo/execute`,
       },
+      // Bots -> Backtest API. Enumerated, never `/bots/backtest/:path*`: that pattern also
+      // matches `/bots/backtest` itself, which is the page.
+      ...[
+        "overview",
+        "probe",
+        "fetch",
+        "replay",
+        "cancel",
+        "run",
+        "run/csv",
+        "compare",
+      ].map((p) => ({
+        source: `/bots/backtest/${p}`,
+        destination: `${backendUpstream}/bots/backtest/${p}`,
+      })),
       {
         source: "/uncovered-shorts/data",
         destination: `${backendUpstream}/uncovered-shorts/data`,

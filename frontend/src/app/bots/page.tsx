@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
 import { BotCard } from "@/components/bots/BotCard";
 import { BotRunLog } from "@/components/bots/BotRunLog";
@@ -18,7 +19,12 @@ export default function BotsPage() {
     <AppShell contentWidth="wide">
       <div className="space-y-4">
         <header>
-          <h1 className="app-text-heading text-lg">Bots</h1>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h1 className="app-text-heading text-lg">Bots</h1>
+            <Link href="/bots/backtest" className="app-btn-outline text-xs">
+              Backtest
+            </Link>
+          </div>
           <p className="app-text-muted mt-1 max-w-prose text-sm">
             Automations that scan and trade on your behalf, within limits you set. Every bot
             can be run by hand, ask you to approve each trade on Telegram, or place them on

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Backtest the bots against real ICICI history (docs/bots-scalping-plan.md section 8).
 
-On the EC2 instance (a live broker session needs the static IP), and never between 09:00 and
-15:45 IST on a trading day -- the script refuses, because its calls are invisible to the API
-server's rate limiter and would compete with live orders:
+The same engine as Bots -> Backtest in the app (section 8.11); this is the SSH route to it. On
+the EC2 instance (a live broker session needs the static IP), and never between 09:00 and
+15:45 IST on a trading day -- the script refuses, and a run already going stops itself at 09:00:
 
     docker exec -it breeze-core-engine python /app/backend/scripts/scalping_backtest.py probe
     docker exec -it breeze-core-engine python /app/backend/scripts/scalping_backtest.py backfill --bot momentum
@@ -26,8 +26,11 @@ Then, as often as you like -- no broker, pure CPU:
     ... replay --target-pts 12 --stop-loss-pts 5 --csv cycles.csv
     ... replay-fly --lots 3        # Bot 4
     ... replay-expiry --index NIFTY --strategy naked_pe --strategy short_strangle   # Bot 2
-    ... compare --bot momentum --date 2026-09-11   # paper against backtest, same day
+    ... compare --bot momentum --date 2026-09-11   # simulation against backtest, same day
     ... coverage
+
+Unlike the app, the command line takes lot counts as flags (`--lots`) rather than pricing
+today's margin, and accepts setting overrides for Bot 3's ladder.
 
 WHAT THE RESULTS MEAN: on real prices the option fills come from ICICI's traded bars plus the
 bid-ask spread paper mode has observed -- the book itself is not in the history. On `--model`
@@ -44,7 +47,6 @@ import json
 import os
 import sqlite3
 import sys
-from collections import Counter
 from typing import Any, Optional
 
 _BACKEND = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -64,64 +66,32 @@ def _bootstrap() -> None:
 _bootstrap()
 
 from icici_breeze_backend.app.core.timezone import now_ist  # noqa: E402
-from icici_breeze_backend.app.db.bots_migrate import (  # noqa: E402
-    BOT_EXPIRY_INDEX_WRITER,
-    BOT_IRON_FLY_SCALPER,
-    BOT_MOMENTUM_LONG_SCALPER,
-)
-from icici_breeze_backend.app.domain.bots import (  # noqa: E402
-    ExpiryIndexWriterConfig,
-    IronFlyScalperConfig,
-    MomentumLongScalperConfig,
-)
-from icici_breeze_backend.app.services.bots.backtest_expiry import (  # noqa: E402
-    STRATEGY_RIGHTS,
-    expiry_days,
-    run_expiry_backtest,
-)
-from icici_breeze_backend.app.services.bots.charges import load_charges  # noqa: E402
+from icici_breeze_backend.app.services.bots import backtest_service as service  # noqa: E402
+from icici_breeze_backend.app.services.bots.backtest_expiry import STRATEGY_RIGHTS  # noqa: E402
 from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime  # noqa: E402
 from icici_breeze_backend.app.services.bots.scalping import backtest_store as store  # noqa: E402
-from icici_breeze_backend.app.services.bots.scalping.backtest import run_backtest  # noqa: E402
-from icici_breeze_backend.app.services.bots.scalping.backtest_fly import (  # noqa: E402
-    DEFAULT_LOTS,
-    run_fly_backtest,
-)
+from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import Stopped  # noqa: E402
+from icici_breeze_backend.app.services.bots.scalping.backtest_fly import DEFAULT_LOTS  # noqa: E402
 from icici_breeze_backend.app.services.bots.scalping.backtest_options import (  # noqa: E402
     ModelPricer,
     OptionBook,
     RealPricer,
 )
-from icici_breeze_backend.app.services.bots.scalping.spreads import spread_stats  # noqa: E402
-
-BOT_TYPES = {"momentum": BOT_MOMENTUM_LONG_SCALPER, "fly": BOT_IRON_FLY_SCALPER, "expiry": BOT_EXPIRY_INDEX_WRITER}
-CONFIG_MODELS = {"momentum": MomentumLongScalperConfig, "fly": IronFlyScalperConfig, "expiry": ExpiryIndexWriterConfig}
-MAX_BACKFILL_ROUNDS = 25
 
 
 def _iso(d: str) -> datetime.date:
     return datetime.date.fromisoformat(d)
 
 
-def _holidays() -> set[datetime.date]:
-    try:
-        from icici_breeze_backend.app.services.market_calendar import get_calendar_config
-
-        return {datetime.date.fromisoformat(d) for d in get_calendar_config().holidays}
-    except Exception:  # noqa: BLE001 -- a missing calendar only costs holiday-shifted expiries
-        print("warning: exchange calendar unavailable; expiries are not holiday-shifted", file=sys.stderr)
-        return set()
-
-
 def _range(args: argparse.Namespace) -> tuple[datetime.date, datetime.date]:
-    start = _iso(args.from_date) if getattr(args, "from_date", None) else regime.HISTORY_START
-    if start < regime.HISTORY_START:
+    frm = _iso(args.from_date) if getattr(args, "from_date", None) else None
+    to = _iso(args.to_date) if getattr(args, "to_date", None) else None
+    if frm and frm < regime.HISTORY_START:
         print(f"note: --from clipped to {regime.HISTORY_START}, the start of the replayed lot-size era.")
-        start = regime.HISTORY_START
-    end = _iso(args.to_date) if getattr(args, "to_date", None) else now_ist().date() - datetime.timedelta(days=1)
-    if start > end:
-        raise SystemExit("--from must be on or before --to")
-    return start, end
+    try:
+        return service.clip_range(frm, to, now_ist().date())
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def _pricer(args: argparse.Namespace) -> Any:
@@ -133,20 +103,21 @@ def _stored_config(bot: str, user_id: Optional[str] = None) -> Any:
     from icici_breeze_backend.app.core import config as cfg
     from icici_breeze_backend.app.repositories.bots import normalize_config
 
-    bot_type = BOT_TYPES[bot]
+    bot_type = service.BOT_TYPES[bot]
     with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
         rows = conn.execute("SELECT user_id, config FROM bots WHERE bot_type = ?", (bot_type,)).fetchall()
     if user_id:
         rows = [r for r in rows if r[0] == user_id]
     if len(rows) != 1:
-        raise SystemExit(
-            f"{len(rows)} saved {bot_type} configs found; pass --user-id (or omit --stored)."
-        )
-    return CONFIG_MODELS[bot](**normalize_config(bot_type, rows[0][1]))
+        raise SystemExit(f"{len(rows)} saved {bot_type} configs found; pass --user-id (or omit --stored).")
+    return service.CONFIG_MODELS[bot](**normalize_config(bot_type, rows[0][1]))
 
 
 def _config(bot: str, args: argparse.Namespace) -> Any:
-    config = _stored_config(bot, args.user_id) if getattr(args, "stored", False) else CONFIG_MODELS[bot]()
+    if getattr(args, "stored", False):
+        config = _stored_config(bot, args.user_id)
+    else:
+        config = service.CONFIG_MODELS[bot]()
     if bot == "momentum":
         exits = config.exits.model_copy(
             update={
@@ -163,32 +134,26 @@ def _config(bot: str, args: argparse.Namespace) -> Any:
     return config
 
 
-def _replay(bot: str, args: argparse.Namespace, pricer: Any, start: datetime.date, end: datetime.date, *, config: Any = None, lots: Optional[int] = None) -> Any:
-    config = config or _config(bot, args)
-    holidays = _holidays()
-    common = {"charges": load_charges(), "spread": spread_stats(), "pricer": pricer}
-    if bot == "expiry":
-        index = args.index
-        return run_expiry_backtest(
-            index=index,
-            days=expiry_days(index, start, end, holidays),
-            spot_bars=store.load_candles(stock_code=index, from_date=start, to_date=end, table="spot_candles"),
-            config=config,
-            strategies=args.strategy or tuple(STRATEGY_RIGHTS),
-            lots=lots or args.lots,
-            vix_by_day=store.load_vix(),
-            **common,
+def _scopes(args: argparse.Namespace, lots: Optional[int] = None) -> list[service.Scope]:
+    strategies = tuple(args.strategy or STRATEGY_RIGHTS)
+    n = lots or args.lots
+    return [service.Scope(args.index, strategies, {s: n for s in strategies})]
+
+
+def _replay(bot: str, args: argparse.Namespace, pricer: Any, start: datetime.date, end: datetime.date,
+            *, config: Any = None, lots: Optional[int] = None) -> Any:
+    try:
+        return service.replay(
+            bot,
+            start=start,
+            end=end,
+            config=config or _config(bot, args),
+            pricer=pricer,
+            lots=lots or getattr(args, "lots", None),
+            scopes=_scopes(args, lots) if bot == "expiry" else None,
         )
-    futures = store.load_candles(from_date=start, to_date=end)
-    spot = store.load_candles(from_date=start, to_date=end, table="spot_candles")
-    if not futures:
-        raise SystemExit("No cached futures candles for that range. Run `backfill` (or `fetch`) on the instance.")
-    if bot == "fly":
-        return run_fly_backtest(
-            futures, config=config, spot_bars=spot, vix_by_day=store.load_vix(),
-            lots=lots or args.lots, holidays=holidays, **common,
-        )
-    return run_backtest(futures, config=config, spot_bars=spot, vix_by_day=store.load_vix(), holidays=holidays, **common)
+    except service.NoCachedData as exc:
+        raise SystemExit(f"{exc} Run `backfill` (or `fetch`) on the instance.") from exc
 
 
 # --------------------------------------------------------------------------------------
@@ -196,37 +161,34 @@ def _replay(bot: str, args: argparse.Namespace, pricer: Any, start: datetime.dat
 # --------------------------------------------------------------------------------------
 
 
-def _fetcher(args: argparse.Namespace) -> Any:
-    from icici_breeze_backend.app.core.requests_patch import apply_requests_patch
-    from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import (
-        Fetcher,
-        market_hours_refusal,
-        resolve_sdk,
-    )
+def _market_hours() -> Optional[str]:
+    from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import market_hours_refusal
     from icici_breeze_backend.app.services.market_calendar import is_trading_day
 
     now = now_ist()
-    refusal = market_hours_refusal(now.replace(tzinfo=None), trading_day=is_trading_day(now))
+    return market_hours_refusal(now.replace(tzinfo=None), trading_day=is_trading_day(now))
+
+
+def _fetcher(args: argparse.Namespace) -> Any:
+    from icici_breeze_backend.app.core.requests_patch import apply_requests_patch
+    from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import Fetcher, resolve_sdk
+
+    refusal = _market_hours()
     if refusal:
         raise SystemExit(refusal)
     apply_requests_patch()  # breeze_connect's session call needs GET-with-body, as in main.py
-    return Fetcher(resolve_sdk(args.user_id), holidays=_holidays(), max_calls=args.max_calls)
-
-
-def _fetch_underlying(fetcher: Any, index: str, start: datetime.date, end: datetime.date, *, futures: bool) -> None:
-    if futures:
-        fetcher.fetch_futures("NIFTY", start, end)
-    fetcher.fetch_spot(index, start, end)
-    cached = store.load_vix()
-    missing = [d for d in regime.trading_days(start, end, fetcher.holidays) if d not in cached]
-    if missing:
-        fetcher.fetch_vix(min(missing), max(missing))
+    return Fetcher(
+        resolve_sdk(args.user_id), holidays=service.holidays(), max_calls=args.max_calls, stop=_market_hours
+    )
 
 
 def cmd_probe(args: argparse.Namespace) -> int:
     store.ensure_tables()
     fetcher = _fetcher(args)
-    report = fetcher.probe(now_ist().date())
+    try:
+        report = fetcher.probe(now_ist().date())
+    except Stopped as exc:
+        raise SystemExit(f"Stopped: {exc}") from exc
     print(json.dumps(report, indent=2, default=str))
     expired = (report.get("expired_nifty_weekly") or {}).get("verdict")
     print(f"\n{fetcher.calls} ICICI calls. Expired NIFTY weekly contracts: {expired}.")
@@ -236,22 +198,18 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
 
 def cmd_fetch(args: argparse.Namespace) -> int:
-    from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import BudgetExhausted
-
     store.ensure_tables()
     start, end = _range(args)
     fetcher = _fetcher(args)
     try:
-        _fetch_underlying(fetcher, args.index, start, end, futures=args.index == "NIFTY")
-    except BudgetExhausted as exc:
+        service.fetch_underlying(fetcher, "expiry" if args.index != "NIFTY" else "momentum", start, end, [args.index])
+    except Stopped as exc:
         print(f"Stopped: {exc}. Run again to resume.")
     print(f"\n{fetcher.calls} ICICI calls. Cache: {store.db_path()}")
     return 0
 
 
 def cmd_fetch_options(args: argparse.Namespace) -> int:
-    from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import BudgetExhausted
-
     store.ensure_tables()
     pending = store.pending_needs()
     if not pending:
@@ -260,38 +218,25 @@ def cmd_fetch_options(args: argparse.Namespace) -> int:
     fetcher = _fetcher(args)
     try:
         print(json.dumps(fetcher.fetch_needs(pending)))
-    except BudgetExhausted as exc:
+    except Stopped as exc:
         print(f"Stopped: {exc}. Run again to resume.")
     print(f"{fetcher.calls} ICICI calls.")
     return 0
 
 
 def cmd_backfill(args: argparse.Namespace) -> int:
-    from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import BudgetExhausted
-
     store.ensure_tables()
     start, end = _range(args)
-    index = args.index if args.bot == "expiry" else "NIFTY"
+    scopes = _scopes(args) if args.bot == "expiry" else None
     fetcher = _fetcher(args)
     try:
-        _fetch_underlying(fetcher, index, start, end, futures=args.bot != "expiry")
-        for round_no in range(1, MAX_BACKFILL_ROUNDS + 1):
-            book = OptionBook()
-            result = _replay(args.bot, args, RealPricer(book), start, end)
-            store.add_needs(book.needs)
-            pending = store.pending_needs()
-            waiting = result.summary().get("days_awaiting_data", 0)
-            if not pending:
-                print(f"\nComplete: every contract the replay needs is cached ({waiting} days still waiting).")
-                break
-            print(f"\nRound {round_no}: fetching {len(pending)} option windows")
-            stats = fetcher.fetch_needs(pending)
-            if stats["fetched"] == 0:
-                print("No progress this round -- every request errored. Stopping; see the errors above.")
-                break
-        else:
-            print(f"\nStopped after {MAX_BACKFILL_ROUNDS} rounds; run again to continue.")
-    except BudgetExhausted as exc:
+        service.fetch_underlying(fetcher, args.bot, start, end, service.indices_for(args.bot, None, scopes))
+        outcome = service.backfill(
+            fetcher, args.bot, start=start, end=end, config=_config(args.bot, args),
+            lots=args.lots, scopes=scopes, log=print,
+        )
+        print(f"\n{outcome['message']}")
+    except Stopped as exc:
         print(f"\nStopped: {exc}. Run again to resume.")
     print(f"{fetcher.calls} ICICI calls used.")
     return 0
@@ -386,21 +331,22 @@ def cmd_compare(args: argparse.Namespace) -> int:
         run_config_hashes,
     )
     from icici_breeze_backend.app.services.bots.scalping.evidence import material_config_hash
+    from collections import Counter
 
     store.ensure_tables()
     day = _iso(args.date)
-    bot_type = BOT_TYPES[args.bot]
+    bot_type = service.BOT_TYPES[args.bot]
     paper = load_paper_cycles(bot_type, day, user_id=args.user_id)
     if not paper:
-        raise SystemExit(f"No paper {bot_type} cycles on {day}.")
+        raise SystemExit(f"No simulation {bot_type} cycles on {day}.")
     config = _stored_config(args.bot, paper[0].user_id)
     lots = None
     if args.bot == "fly":
-        # Size the replay like the paper session did; the fly's sizing has no history.
+        # Size the replay like the simulation session did; the fly's sizing has no history.
         lots = Counter(p.lots for p in paper if p.lots).most_common(1)[0][0]
     pricer = _pricer(args)
     result = _replay(args.bot, args, pricer, day, day, config=config, lots=lots)
-    if result.summary().get("days_awaiting_data"):
+    if result.days_awaiting_data:
         _queue_needs(pricer)
         raise SystemExit(f"Run `backfill --bot {args.bot} --from {day} --to {day}` on the instance first.")
     lines = render(
@@ -412,7 +358,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         price_source=result.price_source,
     )
     if lots:
-        lines.insert(1, f"  replayed at {lots} lots, the paper session's size")
+        lines.insert(1, f"  replayed at {lots} lots, the simulation session's size")
     print("\n".join(lines))
     return 0
 
@@ -453,7 +399,7 @@ def main() -> int:
     p = sub.add_parser("backfill", help="Fetch everything a bot's replay needs (instance only)")
     broker(p)
     span(p)
-    p.add_argument("--bot", choices=tuple(BOT_TYPES), required=True)
+    p.add_argument("--bot", choices=tuple(service.BOT_TYPES), required=True)
     p.add_argument("--index", choices=("NIFTY", "BSESEN"), default="NIFTY", help="Bot 2 only")
     p.add_argument("--strategy", action="append", choices=tuple(STRATEGY_RIGHTS), help="Bot 2 only")
     p.add_argument("--lots", type=int, default=DEFAULT_LOTS)
@@ -482,7 +428,7 @@ def main() -> int:
     p.add_argument("--lots", type=int, default=1)
     p.set_defaults(func=cmd_replay_expiry)
 
-    p = sub.add_parser("compare", help="Paper against backtest for one day")
+    p = sub.add_parser("compare", help="Simulation against backtest for one day")
     p.add_argument("--bot", choices=("momentum", "fly"), required=True)
     p.add_argument("--date", required=True, help="YYYY-MM-DD")
     p.add_argument("--model", action="store_true")

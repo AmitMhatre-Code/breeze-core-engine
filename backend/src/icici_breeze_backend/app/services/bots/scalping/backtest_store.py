@@ -17,6 +17,7 @@ that is re-requested forever.
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -171,6 +172,26 @@ def ensure_tables(path: Optional[str] = None) -> None:
         # fetcher so a fact measured once is not re-guessed on every run.
         conn.execute(
             "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY NOT NULL, value TEXT)"
+        )
+        # Replays run from Bots -> Backtest, kept so variations can be compared later. Each row
+        # carries the settings it ran on, because the bot's settings move on after it.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS backtest_runs (
+                id TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT NOT NULL,
+                bot TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                params TEXT NOT NULL,
+                summary TEXT,
+                trades TEXT,
+                error TEXT
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_backtest_runs_user ON backtest_runs(user_id, created_at)"
         )
         conn.commit()
 
@@ -492,6 +513,101 @@ def coverage(*, stock_code: str = "NIFTY", path: Optional[str] = None) -> dict[s
         "option_needs_pending": int(needs[0] or 0),
         "probe": {k: v for k, v in meta.items()},
     }
+
+
+def latest_close(
+    stock_code: str, *, table: str = "spot_candles", path: Optional[str] = None
+) -> Optional[float]:
+    _check_table(table)
+    with _connect(path) as conn:
+        row = conn.execute(
+            f"SELECT close FROM {table} WHERE stock_code = ? AND close > 0 ORDER BY ts DESC LIMIT 1",
+            (stock_code,),
+        ).fetchone()
+    return float(row[0]) if row else None
+
+
+# --------------------------------------------------------------------------------------
+# Saved runs
+# --------------------------------------------------------------------------------------
+
+
+def save_run(run: dict[str, Any], *, path: Optional[str] = None) -> None:
+    with _connect(path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO backtest_runs "
+            "(id, user_id, bot, created_at, status, params, summary, trades, error) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run["id"],
+                run["user_id"],
+                run["bot"],
+                run["created_at"],
+                run["status"],
+                json.dumps(run.get("params") or {}, default=str),
+                json.dumps(run["summary"], default=str) if run.get("summary") is not None else None,
+                json.dumps(run["trades"], default=str) if run.get("trades") is not None else None,
+                run.get("error"),
+            ),
+        )
+        conn.commit()
+
+
+def _run_row(row: sqlite3.Row, *, with_trades: bool) -> dict[str, Any]:
+    out = {
+        "id": row["id"],
+        "bot": row["bot"],
+        "created_at": row["created_at"],
+        "status": row["status"],
+        "params": json.loads(row["params"] or "{}"),
+        "summary": json.loads(row["summary"]) if row["summary"] else None,
+        "error": row["error"],
+    }
+    if with_trades:
+        out["trades"] = json.loads(row["trades"]) if row["trades"] else []
+    return out
+
+
+def list_runs(user_id: str, *, limit: int = 50, path: Optional[str] = None) -> list[dict[str, Any]]:
+    with _connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, bot, created_at, status, params, summary, error FROM backtest_runs "
+            "WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, int(limit)),
+        ).fetchall()
+    return [_run_row(r, with_trades=False) for r in rows]
+
+
+def get_run(run_id: str, user_id: str, *, path: Optional[str] = None) -> Optional[dict[str, Any]]:
+    with _connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM backtest_runs WHERE id = ? AND user_id = ?", (run_id, user_id)
+        ).fetchone()
+    return _run_row(row, with_trades=True) if row else None
+
+
+def delete_run(run_id: str, user_id: str, *, path: Optional[str] = None) -> bool:
+    with _connect(path) as conn:
+        cur = conn.execute(
+            "DELETE FROM backtest_runs WHERE id = ? AND user_id = ? AND status != 'running'",
+            (run_id, user_id),
+        )
+        conn.commit()
+    return bool(cur.rowcount)
+
+
+def fail_unfinished_runs(*, path: Optional[str] = None) -> int:
+    """Runs left `running` by a restart can never finish; say so rather than spin forever."""
+    with _connect(path) as conn:
+        cur = conn.execute(
+            "UPDATE backtest_runs SET status = 'failed', "
+            "error = 'Interrupted: the app restarted while this run was in progress.' "
+            "WHERE status = 'running'"
+        )
+        conn.commit()
+    return cur.rowcount or 0
 
 
 def _parse_ts(raw: Any) -> Optional[datetime.datetime]:
