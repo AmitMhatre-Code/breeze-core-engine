@@ -224,6 +224,14 @@ const nextConfig = {
         destination: `${backendUpstream}/bots/proposal/reprice`,
       },
       {
+        source: "/bots/cas-bingo/plan",
+        destination: `${backendUpstream}/bots/cas-bingo/plan`,
+      },
+      {
+        source: "/bots/cas-bingo/execute",
+        destination: `${backendUpstream}/bots/cas-bingo/execute`,
+      },
+      {
         source: "/uncovered-shorts/data",
         destination: `${backendUpstream}/uncovered-shorts/data`,
       },

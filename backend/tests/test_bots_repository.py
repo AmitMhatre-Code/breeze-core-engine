@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from icici_breeze_backend.app.db.bots_migrate import (
+    BOT_CAS_BINGO,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
     BOT_IRON_FLY_SCALPER,
@@ -49,6 +50,7 @@ def test_bots_are_created_lazily_disabled_with_policy_defaults(db_path):
         BOT_EXPIRY_INDEX_WRITER,
         BOT_MOMENTUM_LONG_SCALPER,
         BOT_IRON_FLY_SCALPER,
+        BOT_CAS_BINGO,
     }
     assert all(b.enabled is False for b in bots), "a new bot must never start armed"
 

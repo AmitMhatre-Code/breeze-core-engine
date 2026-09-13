@@ -17,6 +17,7 @@ BotType = Literal[
     "expiry_index_writer",
     "momentum_long_scalper",
     "iron_fly_scalper",
+    "cas_bingo",
 ]
 
 # How a run was started. `schedule` is the bot's own timer, `manual` a user-pressed scan,
@@ -107,6 +108,20 @@ class ReasonCode:
     DRIFT_STOP = "drift_stop"
     CREDIT_DECAY_TARGET = "credit_decay_target"
     SQUARE_OFF = "square_off"
+
+    # CAS Bingo (docs/bots-cas-bingo-plan.md). `signal_not_ready` is the readiness gate on an
+    # Autonomous spread entry -- distinct from SIGNAL_NO_TRADE, which means the signal is
+    # trusted and simply has not triggered.
+    SIGNAL_NOT_READY = "signal_not_ready"
+    DAY_OPEN_UNAVAILABLE = "day_open_unavailable"
+    MARGIN_INSUFFICIENT = "margin_insufficient"
+    # Liquidation ran (or would have) and still could not cover the shortfall. The buy-backs
+    # that did fill stand: each was profitable on its own terms.
+    LIQUIDATION_INSUFFICIENT = "liquidation_insufficient"
+    TARGET_REACHED = "target_reached"
+    # Neither exit fired, so the contract expired. P&L is an estimate at intrinsic value
+    # against the last index level; the official settlement price is published later.
+    EXPIRED_SETTLED = "expired_settled"
 
     # Failures -- something went wrong
     INTERRUPTED = "interrupted"
@@ -735,6 +750,167 @@ class IronFlyScalperConfig(BaseModel):
         if s.widen_above_vix is not None and s.widened_wing_width_points <= s.wing_width_points:
             raise ValueError("The widened wing width must exceed the normal one.")
         return self
+
+
+# --------------------------------------------------------------------------------------
+# Bot 5 -- CAS Bingo, the expiry-day closing-auction bot (docs/bots-cas-bingo-plan.md)
+# --------------------------------------------------------------------------------------
+
+
+# `simulation` runs the full logic on live prices and places nothing; `live` is the card's
+# Autonomous. Manual is simply `enabled=False` -- the run sheet works in every mode.
+CasBingoMode = Literal["simulation", "live"]
+CasBingoStrategy = Literal["credit_spread", "debit_spread", "long_strangle"]
+
+CAS_BINGO_INDICES = ("NIFTY", "BSESEN")
+
+
+class CasBingoIndex(BaseModel):
+    enabled: bool = True
+
+
+def _outer_beyond_inner(inner_pct: float, outer_pct: float, what: str) -> None:
+    # A spread whose far leg sits inside its near leg is a different structure (or none).
+    if outer_pct <= inner_pct:
+        raise ValueError(
+            f"The {what}'s outer leg must sit further out than its inner leg "
+            f"({outer_pct}% is not beyond {inner_pct}%)."
+        )
+
+
+class CasBingoCreditConfig(BaseModel):
+    """Credit spread: after the index has moved `move_trigger_pct` from the day's open, any
+    signal flip against that move sells the inner leg (CE after a rise, PE after a drop) with
+    the outer leg bought first as the hedge.
+
+    Strikes are measured from the **day's open**, not from spot at entry -- spot can swing
+    2-3% inside CAS, and the thesis is a reversal back toward the open. So a sold leg can be in
+    the money versus spot at entry; the user confirmed that is the bet.
+    """
+
+    margin_lakhs: float = Field(2.0, gt=0, le=1000)
+    move_trigger_pct: float = Field(0.5, gt=0, le=10)
+    inner_pct: float = Field(0.5, ge=0, le=20)
+    outer_pct: float = Field(1.0, gt=0, le=25)
+    target_pct: float = Field(
+        80.0, gt=0, le=100, description="Book once this share of the credit is captured"
+    )
+    stop_loss_pct: float = Field(
+        100.0, gt=0, le=1000, description="Stop once the loss reaches this share of the credit"
+    )
+
+    @model_validator(mode="after")
+    def _legs_ordered(self) -> "CasBingoCreditConfig":
+        _outer_beyond_inner(self.inner_pct, self.outer_pct, "credit spread")
+        return self
+
+
+class CasBingoDebitConfig(BaseModel):
+    """Debit spread: a strong signal flip, held for `sustain_minutes`, buys the inner leg
+    (0% = ATM) and sells the outer one, in the direction of the flip. Strikes are measured
+    from spot at the moment of deploying."""
+
+    premium_budget_inr: float = Field(10000.0, gt=0, le=10_000_000)
+    # Above the navbar's 0.30 entry on purpose: "a strong upcoming move", not merely a side.
+    strong_threshold: float = Field(0.50, gt=0, le=1)
+    sustain_minutes: float = Field(3.0, ge=0, le=60)
+    inner_pct: float = Field(0.0, ge=0, le=20)
+    outer_pct: float = Field(0.5, gt=0, le=25)
+    target_pct: float = Field(100.0, gt=0, le=1000, description="Gain as a share of the debit")
+    stop_loss_pct: float = Field(50.0, gt=0, le=100, description="Loss as a share of the debit")
+
+    @model_validator(mode="after")
+    def _legs_ordered(self) -> "CasBingoDebitConfig":
+        _outer_beyond_inner(self.inner_pct, self.outer_pct, "debit spread")
+        return self
+
+
+class CasBingoStrangleConfig(BaseModel):
+    """Long strangle: no signal -- it buys both sides at `entry_time_ist`."""
+
+    premium_budget_inr: float = Field(10000.0, gt=0, le=10_000_000)
+    entry_time_ist: str = Field("15:15", pattern=HHMM_PATTERN)
+    call_pct: float = Field(0.5, ge=0, le=20)
+    put_pct: float = Field(0.5, ge=0, le=20)
+    target_pct: float = Field(100.0, gt=0, le=1000, description="Gain as a share of the debit")
+    stop_loss_pct: float = Field(50.0, gt=0, le=100, description="Loss as a share of the debit")
+
+
+class CasBingoLiquidationConfig(BaseModel):
+    """Buying back profitable shorts on the same index and expiry to free margin.
+
+    `min_captured_pct` is the share of the original premium that must already be captured:
+    80 means a short sold at 100 is bought back only at 20 or less, and the buy-back limit is
+    capped there -- so a liquidation can never be a losing trade.
+    """
+
+    enabled: bool = True
+    min_captured_pct: float = Field(80.0, gt=0, lt=100)
+    # Added on top of the shortfall before the local estimate is trusted: the in-app SPAN
+    # engine under-prices short calls against ICICI by up to ~22% (margin harness, 2026-09).
+    safety_buffer_pct: float = Field(10.0, ge=0, le=100)
+
+
+class CasBingoConfig(BaseModel):
+    """CAS Bingo -- trades today's expiry inside two windows around the closing auction.
+
+    Ships in `simulation` for the same reason the scalpers ship in paper: arming something
+    that fires unattended orders should be a deliberate act.
+    """
+
+    mode: CasBingoMode = "simulation"
+    indices: Dict[str, CasBingoIndex] = Field(
+        default_factory=lambda: {code: CasBingoIndex() for code in CAS_BINGO_INDICES}
+    )
+    # Both are ENTRY windows (the user rejected "pre-CAS observes, CAS enters"). 15:29, not
+    # 15:30: derivatives stop at the close and an entry needs time to fill.
+    pre_cas_window: SessionWindow = Field(
+        default_factory=lambda: SessionWindow(start="14:30", end="15:15")
+    )
+    cas_window: SessionWindow = Field(
+        default_factory=lambda: SessionWindow(start="15:15", end="15:29")
+    )
+    strategy: CasBingoStrategy = "debit_spread"
+    credit: CasBingoCreditConfig = Field(default_factory=CasBingoCreditConfig)
+    debit: CasBingoDebitConfig = Field(default_factory=CasBingoDebitConfig)
+    strangle: CasBingoStrangleConfig = Field(default_factory=CasBingoStrangleConfig)
+    liquidation: CasBingoLiquidationConfig = Field(default_factory=CasBingoLiquidationConfig)
+    execution: ScalperExecutionConfig = Field(default_factory=ScalperExecutionConfig)
+
+    @field_validator("indices")
+    @classmethod
+    def _known_indices(cls, v: Dict[str, CasBingoIndex]) -> Dict[str, CasBingoIndex]:
+        unknown = set(v) - set(CAS_BINGO_INDICES)
+        if unknown:
+            raise ValueError(f"Unsupported index code(s): {', '.join(sorted(unknown))}")
+        return v
+
+    @model_validator(mode="after")
+    def _windows_are_tradeable(self) -> "CasBingoConfig":
+        pre, cas = self.pre_cas_window, self.cas_window
+        if pre.start < MARKET_OPEN_IST:
+            raise ValueError(f"The pre-CAS window cannot start before the {MARKET_OPEN_IST} open.")
+        close = market_close_ist()
+        if cas.end > close:
+            raise ValueError(f"The CAS window runs past the {close} market close.")
+        if pre.end > cas.start:
+            raise ValueError(
+                f"The pre-CAS window ({pre.start}-{pre.end}) must end by the time the CAS "
+                f"window starts ({cas.start})."
+            )
+        t = self.strangle.entry_time_ist
+        if not any(w.start <= t < w.end for w in (pre, cas)):
+            raise ValueError(
+                f"The long strangle's entry time {t} is outside both windows, so it could "
+                f"never fire."
+            )
+        return self
+
+    def windows(self) -> List[SessionWindow]:
+        return [self.pre_cas_window, self.cas_window]
+
+    def enabled_indices(self) -> List[str]:
+        return [code for code in CAS_BINGO_INDICES if self.indices.get(code, CasBingoIndex(enabled=False)).enabled]
 
 
 class BotRecord(BaseModel):

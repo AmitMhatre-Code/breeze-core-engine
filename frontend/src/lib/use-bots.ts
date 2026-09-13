@@ -7,12 +7,191 @@ export const BOT_HOLDINGS_WRITER = "holdings_writer" as const;
 export const BOT_EXPIRY_INDEX_WRITER = "expiry_index_writer" as const;
 export const BOT_MOMENTUM_LONG_SCALPER = "momentum_long_scalper" as const;
 export const BOT_IRON_FLY_SCALPER = "iron_fly_scalper" as const;
+export const BOT_CAS_BINGO = "cas_bingo" as const;
 
 export type BotType =
   | typeof BOT_HOLDINGS_WRITER
   | typeof BOT_EXPIRY_INDEX_WRITER
   | typeof BOT_MOMENTUM_LONG_SCALPER
-  | typeof BOT_IRON_FLY_SCALPER;
+  | typeof BOT_IRON_FLY_SCALPER
+  | typeof BOT_CAS_BINGO;
+
+// --- CAS Bingo (docs/bots-cas-bingo-plan.md) ------------------------------------------
+
+/** `simulation` places nothing; `live` is the card's Autonomous. Manual is `enabled=false`. */
+export type CasBingoMode = "simulation" | "live";
+export type CasBingoStrategy = "credit_spread" | "debit_spread" | "long_strangle";
+export type CasBingoStructure =
+  | "bull_put_credit"
+  | "bear_call_credit"
+  | "bull_call_debit"
+  | "bear_put_debit"
+  | "long_strangle";
+
+export type CasBingoConfig = {
+  mode: CasBingoMode;
+  indices: Record<string, { enabled: boolean }>;
+  pre_cas_window: SessionWindow;
+  cas_window: SessionWindow;
+  strategy: CasBingoStrategy;
+  credit: {
+    margin_lakhs: number;
+    move_trigger_pct: number;
+    inner_pct: number;
+    outer_pct: number;
+    target_pct: number;
+    stop_loss_pct: number;
+  };
+  debit: {
+    premium_budget_inr: number;
+    strong_threshold: number;
+    sustain_minutes: number;
+    inner_pct: number;
+    outer_pct: number;
+    target_pct: number;
+    stop_loss_pct: number;
+  };
+  strangle: {
+    premium_budget_inr: number;
+    entry_time_ist: string;
+    call_pct: number;
+    put_pct: number;
+    target_pct: number;
+    stop_loss_pct: number;
+  };
+  liquidation: { enabled: boolean; min_captured_pct: number; safety_buffer_pct: number };
+  execution: ScalperExecutionConfig;
+};
+
+/** Shown on the Credit choice, the Autonomous confirmation and both credit rows of the sheet. */
+export const CAS_BINGO_CREDIT_WARNING =
+  "ICICI may square off your positions at an extreme loss if MTM or margin requirements spike during CAS.";
+export const CAS_BINGO_REGIME_NOTE =
+  "During CAS the index is an indicative auction value, and SEBI's consultation (comments due 3 Oct 2026) may move expiry settlement off the auction.";
+
+export type CasBingoPlanLeg = {
+  right: "call" | "put";
+  strike_price: number;
+  action: "Buy" | "Sell";
+  bid: number | null;
+  ask: number | null;
+};
+
+export type CasBingoPlan = {
+  index_code: string;
+  index_label: string;
+  expiry_display: string;
+  structure: CasBingoStructure;
+  label: string;
+  family: "credit" | "debit" | "strangle";
+  legs: CasBingoPlanLeg[];
+  lots: number;
+  lot_size: number;
+  quantity: number;
+  reference: number;
+  reference_kind: "open" | "spot";
+  spot: number | null;
+  net_premium_per_unit: number;
+  net_premium_inr: number;
+  margin_required: number;
+  notes: string[];
+};
+
+export type CasBingoBuyBack = {
+  right: "call" | "put";
+  strike_price: number;
+  quantity: number;
+  average_price: number;
+  ask: number;
+  cap_price: number;
+  captured_pct: number;
+  est_release: number;
+  cost: number;
+};
+
+export type CasBingoLiquidation = {
+  shortfall?: number;
+  target?: number;
+  est_release?: number;
+  covered: boolean;
+  buybacks: CasBingoBuyBack[];
+  ineligible?: { right: string; strike_price: number; quantity: number; reason: string }[];
+  note: string | null;
+};
+
+export type CasBingoCandidate = {
+  structure: CasBingoStructure;
+  label: string;
+  family: "credit" | "debit" | "strangle";
+  plan?: CasBingoPlan;
+  problem?: { reason_code: string; reason: string } | null;
+  liquidation?: CasBingoLiquidation;
+};
+
+export type CasBingoSheetIndex = {
+  index_code: string;
+  index_label: string;
+  expiry_display: string;
+  day_open: number | null;
+  spot: number | null;
+  signal: { state: string; value: number | null };
+  readiness: string;
+  sg_conflict: boolean;
+  candidates: CasBingoCandidate[];
+};
+
+export type CasBingoSheet = {
+  indices: CasBingoSheetIndex[];
+  available_margin?: number | null;
+  liquidation_enabled?: boolean;
+  message?: string;
+  warnings: { credit: string; cas: string };
+};
+
+export type CasBingoExecuteResult = {
+  opened: boolean;
+  reason_code: string;
+  reason_text: string;
+  cycle_id: string | null;
+  plan: CasBingoPlan;
+  liquidation: { plan: CasBingoLiquidation; rounds: unknown[] } | null;
+};
+
+/** Price all five structures for every index expiring today. Places nothing. */
+export function useCasBingoSheet() {
+  return useMutation({
+    mutationFn: () => apiClient.post<CasBingoSheet>("/bots/cas-bingo/plan", {}),
+  });
+}
+
+/** Re-price one structure and place it for real, liquidating first if margin is short. */
+export function useCasBingoExecute() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { indexCode: string; structure: CasBingoStructure }) =>
+      apiClient.post<CasBingoExecuteResult>("/bots/cas-bingo/execute", {
+        index_code: vars.indexCode,
+        structure: vars.structure,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["bots"] });
+    },
+  });
+}
+
+/** The signal's readiness verdict per index — Autonomous spread entries need `ready`. */
+export function useSignalReadiness(enabled = true) {
+  return useQuery({
+    queryKey: ["bots", "signal-readiness"],
+    enabled,
+    staleTime: 5 * 60_000,
+    queryFn: ({ signal }) =>
+      apiClient.get<{ indices: Record<string, { status: string }> }>(
+        "/api/settings/index-signal/readiness",
+        signal,
+      ),
+  });
+}
 
 export const SCALPER_BOT_TYPES: BotType[] = [
   BOT_MOMENTUM_LONG_SCALPER,
@@ -251,6 +430,10 @@ export const BOT_META: Record<BotType, { title: string; blurb: string }> = {
   [BOT_IRON_FLY_SCALPER]: {
     title: "Iron Fly Scalper",
     blurb: "Sells an ATM fly under a margin ceiling, books it on credit decay.",
+  },
+  [BOT_CAS_BINGO]: {
+    title: "CAS Bingo",
+    blurb: "Expiry-day spreads or a strangle around the closing auction, buy leg first.",
   },
 };
 

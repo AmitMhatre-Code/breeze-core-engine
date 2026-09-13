@@ -36,11 +36,16 @@ BOT_EXPIRY_INDEX_WRITER = "expiry_index_writer"
 BOT_MOMENTUM_LONG_SCALPER = "momentum_long_scalper"
 BOT_IRON_FLY_SCALPER = "iron_fly_scalper"
 SCALPER_BOT_TYPES = (BOT_MOMENTUM_LONG_SCALPER, BOT_IRON_FLY_SCALPER)
+# Expiry-day closing-auction bot (docs/bots-cas-bingo-plan.md). Holds its positions as
+# `bot_cycles` rows like the scalpers, but runs its own loop and is NOT a scalper: it has no
+# paper-evidence gate and none of the scalpers' session/cooldown machinery.
+BOT_CAS_BINGO = "cas_bingo"
 BOT_TYPES = (
     BOT_HOLDINGS_WRITER,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_MOMENTUM_LONG_SCALPER,
     BOT_IRON_FLY_SCALPER,
+    BOT_CAS_BINGO,
 )
 
 

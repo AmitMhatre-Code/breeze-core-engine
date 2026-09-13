@@ -110,6 +110,7 @@ def _on_raw_tick(raw: dict[str, Any]) -> None:
                 prev_close = tick_close
                 with _lock:
                     _previous_close.setdefault(label, tick_close)
+        _remember_day_open(label, raw.get("open"))
         change = ltp - prev_close if prev_close else None
         change_pct = (change / prev_close * 100.0) if change is not None and prev_close else None
         cache_set_json(
@@ -146,6 +147,40 @@ def _on_raw_tick(raw: dict[str, Any]) -> None:
             remember_chain_spot(opt_exchange, opt_stock_code, ltp)
         except Exception:
             pass
+
+
+# label -> (IST date, the day's opening index level). CAS Bingo measures its credit-spread
+# strikes and trigger move from the open (docs/bots-cas-bingo-plan.md section 5), and nothing
+# else stored it. Keyed by date so yesterday's open can never answer for today's.
+_day_open: dict[str, tuple[date, float]] = {}
+
+
+def _remember_day_open(label: str, raw_open: Any) -> None:
+    """Keep the exchange-quote tick's own `open`. First valid value of the day wins: the
+    exchange's open does not change intraday, so later ticks can only restate it."""
+    try:
+        value = float(raw_open)
+    except (TypeError, ValueError):
+        return
+    if value <= 0:
+        return
+    today = datetime.now(IST).date()
+    with _lock:
+        held = _day_open.get(label)
+        if held is None or held[0] != today:
+            _day_open[label] = (today, value)
+
+
+def day_open(label: str) -> float | None:
+    """Today's opening level for `nifty`/`sensex`, or None when no tick or quote has said.
+
+    None is an answer, not a zero: a caller that fell back to the previous close would read
+    a gap-up day as an intraday move."""
+    with _lock:
+        held = _day_open.get(label)
+    if held is None or held[0] != datetime.now(IST).date():
+        return None
+    return held[1]
 
 
 def _register_listener_once() -> None:
@@ -201,6 +236,11 @@ def _fetch_previous_close(sdk: Any, cash_exchange: str, cash_stock_code: str) ->
     row = _pick_quote_row(succ, cash_exchange)
     if not isinstance(row, dict):
         return None
+    # The same row carries the day's open. Kept here so CAS Bingo still has it on a day the
+    # first ticks arrive without one, at no extra broker call.
+    label = next((lbl for ex, sc, _ox, _os, lbl in _INDEX_SCRIPS if ex == cash_exchange and sc == cash_stock_code), None)
+    if label is not None:
+        _remember_day_open(label, row.get("open"))
     try:
         pc = float(row.get("previous_close") or 0)
     except (TypeError, ValueError):
@@ -538,6 +578,7 @@ def reset_state_for_tests() -> None:
         _listener_registered = False
         _symbol_to_label.clear()
         _previous_close.clear()
+        _day_open.clear()
         _underlying_targets.clear()
         _subscribed_cash_tokens.clear()
         _synced_underlying_scrips.clear()

@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
+import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.domain.bots import ReasonCode
 from icici_breeze_backend.app.services.bots.scalping.momentum_bot import (
     INDEX_STOCK_CODE,
@@ -213,8 +214,11 @@ def reconcile_pending_cycles(proc: Any, user_id: str, bot_type: str) -> int:
 
         filled = 0
         unknown = False
+        # Looked up on the exchange the legs trade on. A SENSEX (BFO) order asked about on NFO
+        # is simply not found, which would read as "nothing filled" and abandon a real fill.
+        exchange = str(((cycle.legs or [{}])[0] or {}).get("exchange_code") or cfg.NFO)
         for order_id in order_ids:
-            state = live._rest_order_state(proc, user_id, order_id)
+            state = live._rest_order_state(proc, user_id, order_id, exchange)
             if not state:
                 unknown = True
                 continue

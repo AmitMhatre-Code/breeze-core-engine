@@ -472,6 +472,13 @@ def start_application():
 
         start_scalper_loop()
 
+        # CAS Bingo (docs/bots-cas-bingo-plan.md). Its own loop because it is neither a
+        # once-a-day scheduler bot nor a scalper; inert off an expiry day, and it keeps
+        # ticking any bot still holding a real position so its exits run.
+        from icici_breeze_backend.app.services.bots.cas_bingo.runtime import start_cas_bingo_loop
+
+        start_cas_bingo_loop()
+
         from icici_breeze_backend.app.services.ws_quote_snapshot import (
             load_snapshot_from_sqlite,
             run_snapshot_flush_loop,
@@ -557,9 +564,11 @@ def start_application():
         yield
         from icici_breeze_backend.app.services.bots.scheduler import stop_bot_scheduler
         from icici_breeze_backend.app.services.bots.scalping.runtime import stop_scalper_loop
+        from icici_breeze_backend.app.services.bots.cas_bingo.runtime import stop_cas_bingo_loop
 
         stop_bot_scheduler()
         stop_scalper_loop()
+        stop_cas_bingo_loop()
         for watchdog_task in (
             order_feed_watchdog_task,
             price_feed_watchdog_task,

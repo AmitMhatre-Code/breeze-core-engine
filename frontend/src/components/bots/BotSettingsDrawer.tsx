@@ -32,6 +32,8 @@ import {
   ScalperSettings,
   type Tab,
 } from "@/components/bots/ScalperSettings";
+import { CAS_BINGO_TABS, CasBingoSettings } from "@/components/bots/CasBingoSettings";
+import type { CasBingoConfig } from "@/lib/use-bots";
 
 
 const HOLDINGS_TABS: Tab[] = [
@@ -866,13 +868,16 @@ export function BotSettingsDrawer({
   const meta = BOT_META[bot.bot_type];
   const isHoldings = bot.bot_type === BOT_HOLDINGS_WRITER;
   const scalper = isScalper(bot.bot_type);
-  const tabs = scalper
-    ? bot.bot_type === BOT_IRON_FLY_SCALPER
-      ? IRON_FLY_TABS
-      : MOMENTUM_TABS
-    : isHoldings
-      ? HOLDINGS_TABS
-      : INDEX_TABS;
+  const casBingo = bot.bot_type === "cas_bingo";
+  const tabs = casBingo
+    ? CAS_BINGO_TABS
+    : scalper
+      ? bot.bot_type === BOT_IRON_FLY_SCALPER
+        ? IRON_FLY_TABS
+        : MOMENTUM_TABS
+      : isHoldings
+        ? HOLDINGS_TABS
+        : INDEX_TABS;
   const titleId = useId();
 
   const update = useUpdateBot();
@@ -1014,7 +1019,14 @@ export function BotSettingsDrawer({
 
       <FieldValidityContext.Provider value={reportValidity}>
         <div className="flex-1 overflow-auto p-4">
-          {scalper ? (
+          {casBingo ? (
+            <CasBingoSettings
+              tab={tab}
+              config={draft as unknown as CasBingoConfig}
+              onConfig={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+              disabled={readOnly || pending}
+            />
+          ) : scalper ? (
             <ScalperSettings
               bot={bot}
               tab={tab}

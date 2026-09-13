@@ -16,13 +16,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
 from icici_breeze_backend.app.db.bots_migrate import (
+    BOT_CAS_BINGO,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
     BOT_TYPES,
@@ -30,6 +32,7 @@ from icici_breeze_backend.app.db.bots_migrate import (
 )
 from icici_breeze_backend.app.domain.bots import (
     ApprovalResult,
+    CasBingoConfig,
     BotCycleRecord,
     ApproveProposalRequest,
     BotRecord,
@@ -548,6 +551,58 @@ async def plan_bot(
         detail={"skipped": skipped, "proposal_id": proposal.id},
     )
     return ScanResponse(run_id=run_id, proposal=proposal, skipped=skipped, warnings=[])
+
+
+# --------------------------------------------------------------------------------------
+# CAS Bingo — manual run sheet (docs/bots-cas-bingo-plan.md section 6)
+# --------------------------------------------------------------------------------------
+
+
+class CasBingoExecuteRequest(BaseModel):
+    index_code: Literal["NIFTY", "BSESEN"]
+    structure: Literal[
+        "bear_call_credit", "bull_put_credit", "bull_call_debit", "bear_put_debit", "long_strangle"
+    ]
+
+
+@router.post("/cas-bingo/plan")
+async def cas_bingo_plan(
+    ctx: RequestContext = Depends(get_request_context),
+    _: None = Depends(require_trading_not_revoked),
+):
+    """Price all five structures for every index expiring today. Places nothing.
+
+    Allowed on any day, like Bot 2's plan: off an expiry day it says nothing expires rather
+    than greying out the button with no explanation."""
+    from icici_breeze_backend.app.services.bots.cas_bingo import manual
+    from icici_breeze_backend.app.services.processor import processor
+
+    bot = repo.get_or_create_bot(ctx.user_id, BOT_CAS_BINGO)
+    return manual.sheet(processor(), ctx.user_id, CasBingoConfig(**bot.config))
+
+
+@router.post("/cas-bingo/execute")
+async def cas_bingo_execute(
+    payload: CasBingoExecuteRequest,
+    ctx: RequestContext = Depends(get_request_context),
+    _: None = Depends(require_trading_not_revoked),
+):
+    """Re-price one structure and place it for real -- liquidation first if margin is short."""
+    from icici_breeze_backend.app.services.bots.cas_bingo import manual
+    from icici_breeze_backend.app.services.processor import processor
+
+    bot = repo.get_or_create_bot(ctx.user_id, BOT_CAS_BINGO)
+    try:
+        result = manual.execute(
+            processor(), ctx.user_id, CasBingoConfig(**bot.config),
+            index_code=payload.index_code, structure=payload.structure,
+        )
+    except manual.ManualRefused as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+    AuditLogger(None).log_operation(
+        ctx.user_id, OperationType.BOT_CONFIG_UPDATED, "BotManualRun", f"cas_bingo:{payload.structure}"
+    )
+    return result
 
 
 @router.post("/proposal/reprice", response_model=ProposalRecord)

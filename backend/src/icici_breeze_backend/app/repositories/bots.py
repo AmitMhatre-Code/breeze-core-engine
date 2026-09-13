@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from icici_breeze_backend.app.core.timezone import ist_timestamp, now_ist
 from icici_breeze_backend.app.db.bots_migrate import (
+    BOT_CAS_BINGO,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
     BOT_IRON_FLY_SCALPER,
@@ -27,6 +28,7 @@ from icici_breeze_backend.app.domain.bots import (
     BotCycleRecord,
     BotRecord,
     BotRunRecord,
+    CasBingoConfig,
     ExpiryIndexWriterConfig,
     HoldingsWriterConfig,
     IronFlyScalperConfig,
@@ -42,17 +44,20 @@ _CONFIG_MODEL = {
     BOT_EXPIRY_INDEX_WRITER: ExpiryIndexWriterConfig,
     BOT_MOMENTUM_LONG_SCALPER: MomentumLongScalperConfig,
     BOT_IRON_FLY_SCALPER: IronFlyScalperConfig,
+    BOT_CAS_BINGO: CasBingoConfig,
 }
 
 # Cross-bot ordering seeded so no two bots are ever tied on creation. Bot 1 leads because it
 # is the one with a hard external constraint -- its calls are capped by stock actually held,
 # so margin it does not take is margin nothing else can use. The scalpers come last: they
-# size off what is left, and both are capped by their own rupee budgets anyway.
+# size off what is left, and both are capped by their own rupee budgets anyway. CAS Bingo
+# trades last of all in the day (the closing auction), so it sits after them.
 _DEFAULT_PRIORITY = {
     BOT_HOLDINGS_WRITER: 1,
     BOT_EXPIRY_INDEX_WRITER: 2,
     BOT_MOMENTUM_LONG_SCALPER: 3,
     BOT_IRON_FLY_SCALPER: 4,
+    BOT_CAS_BINGO: 5,
 }
 
 
@@ -149,6 +154,7 @@ _LISTED_BOT_TYPES = (
     BOT_EXPIRY_INDEX_WRITER,
     BOT_MOMENTUM_LONG_SCALPER,
     BOT_IRON_FLY_SCALPER,
+    BOT_CAS_BINGO,
 )
 
 
@@ -672,6 +678,22 @@ def bots_with_open_live_cycles() -> list[tuple[str, str]]:
             "WHERE closed_at IS NULL AND paper = 0"
         ).fetchall()
     return [(str(r["user_id"]), str(r["bot_type"])) for r in rows]
+
+
+def users_with_open_cycles(bot_type: str) -> list[str]:
+    """Every user holding an open cycle of this bot type, paper or live, armed or not.
+
+    CAS Bingo's loop ticks these for their exits. Unlike the scalpers it keeps managing an
+    open *simulated* position after the bot is switched to Manual too: a simulation that
+    stopped marking its position mid-way would leave a cycle open for ever, and the exit
+    loop costs nothing but cache reads.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT user_id FROM bot_cycles WHERE bot_type = ? AND closed_at IS NULL",
+            (bot_type,),
+        ).fetchall()
+    return [str(r["user_id"]) for r in rows]
 
 
 def _row_to_cycle(row: sqlite3.Row) -> BotCycleRecord:

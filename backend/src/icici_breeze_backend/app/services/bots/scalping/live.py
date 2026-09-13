@@ -143,18 +143,24 @@ class _FillTracker:
 _tracker = _FillTracker()
 
 
-def _rest_order_state(proc: Any, user_id: str, order_id: str) -> dict[str, Any]:
+def _rest_order_state(
+    proc: Any, user_id: str, order_id: str, exchange_code: str = cfg.NFO
+) -> dict[str, Any]:
     """REST backstop. Only consulted when the WS feed has told us nothing.
 
     Deliberately the fallback rather than the primary: it costs a broker call, and the feed
     is right almost always. But 'almost always' is exactly the gap that left Strategy Groups
     stuck on Fired when a completion event went missing.
+
+    `exchange_code` defaults to NFO because Bots 3/4 trade NIFTY only. CAS Bingo trades SENSEX
+    on BFO too, and an order looked up on the wrong exchange simply is not found -- which
+    reads as "nothing filled" and would abandon a real fill.
     """
     try:
         breeze = proc.get_session_breeze(user_id)
         if breeze is None:
             return {}
-        resp = breeze.get_order_detail(exchange_code=cfg.NFO, order_id=str(order_id))
+        resp = breeze.get_order_detail(exchange_code=exchange_code, order_id=str(order_id))
         rows = (resp or {}).get("Success") or []
         if not rows:
             return {}
@@ -179,6 +185,7 @@ def await_fill(
     poll_interval: float = 0.5,
     now: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    exchange_code: str = cfg.NFO,
 ) -> dict[str, Any]:
     """Block until the order fills, dies, or the timeout expires.
 
@@ -200,7 +207,7 @@ def await_fill(
             # and abandoning a filled order as unfilled is the expensive mistake here.
             if not consulted_rest:
                 consulted_rest = True
-                rest = _rest_order_state(proc, user_id, order_id)
+                rest = _rest_order_state(proc, user_id, order_id, exchange_code)
                 if rest:
                     state = rest
                     continue
@@ -285,6 +292,7 @@ def place_and_confirm(
         state = await_fill(
             proc, user_id, order_id, quantity=leg.quantity,
             timeout_seconds=timeout_seconds, now=now, sleep=sleep,
+            exchange_code=leg.exchange_code,
         )
         executed = int(state.get("executed") or 0)
         status = str(state.get("status") or "")

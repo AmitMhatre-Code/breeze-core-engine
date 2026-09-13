@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotRunSheet } from "@/components/bots/BotRunSheet";
 import { BotStatusRow } from "@/components/bots/BotStatusRow";
+import { CasBingoCard } from "@/components/bots/CasBingoCard";
 import { ScalperCard } from "@/components/bots/ScalperCard";
 import { NumberInput } from "@/components/ui/NumberInput";
 import {
@@ -229,6 +230,11 @@ export function BotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
   // keeps one entry point for the page while the two shapes stay honest about themselves.
   if (isScalper(bot.bot_type)) {
     return <ScalperCard bot={bot} readOnly={readOnly} />;
+  }
+  // CAS Bingo is its own shape too: Manual / Simulation / Autonomous, no Telegram approval,
+  // and a manual sheet that prices five structures rather than approving one proposal.
+  if (bot.bot_type === "cas_bingo") {
+    return <CasBingoCard bot={bot} readOnly={readOnly} />;
   }
   return <WriterCard bot={bot} readOnly={readOnly} />;
 }
