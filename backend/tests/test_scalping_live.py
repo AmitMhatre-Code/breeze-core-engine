@@ -217,6 +217,30 @@ def test_an_exit_limit_never_goes_to_zero():
     assert all(ladder(i) >= 0.05 for i in range(6))
 
 
+def test_limits_are_sent_on_the_exchange_tick():
+    """ICICI rejects any price off the 0.05 grid ("Price should be in multiples of: 0.05").
+
+    The CAS Bingo case that hit it: buy at an ask of 103.75 with a 1% tolerance = 104.7875.
+    """
+    broker = FakeBroker(fills={"OID1": {"quantity_executed": 75, "status": "Executed"}})
+    live.place_and_confirm(
+        broker, USER, LEG, price_for_attempt=live.entry_price_ladder(103.75, 1.0),
+        timeout_seconds=0, now=_clock(), sleep=_no_sleep,
+    )
+    assert broker.placed[0]["price"] == pytest.approx(104.75)
+
+
+def test_tick_snapping_never_crosses_the_ladder_price():
+    # Buys round down (still >= the on-grid ask), sells round up (still <= the on-grid bid).
+    assert live.limit_on_tick(104.7875, cfg.BUY) == pytest.approx(104.75)
+    assert live.limit_on_tick(98.0125, cfg.SELL) == pytest.approx(98.05)
+    # Already on the grid: unchanged despite float noise.
+    assert live.limit_on_tick(101.0, cfg.BUY) == pytest.approx(101.0)
+    assert live.limit_on_tick(0.9, cfg.SELL) == pytest.approx(0.9)
+    # Never a zero-price order.
+    assert live.limit_on_tick(0.01, cfg.BUY) == pytest.approx(0.05)
+
+
 # --- crash reconciliation --------------------------------------------------------------
 
 

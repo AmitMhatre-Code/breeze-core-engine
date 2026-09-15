@@ -32,6 +32,7 @@ design decision #24.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -261,7 +262,7 @@ def place_and_confirm(
 
     for attempt in range(max(1, int(attempts))):
         result.attempts = attempt + 1
-        price = round(float(price_for_attempt(attempt)), 2)
+        price = limit_on_tick(float(price_for_attempt(attempt)), leg.action)
         try:
             response = proc.place_order(
                 user_id,
@@ -335,6 +336,23 @@ def place_and_confirm(
             return result
 
     return result
+
+
+_TICK = 0.05
+
+
+def limit_on_tick(price: float, action: str) -> float:
+    """Snap a limit onto the exchange's 0.05 grid, never past the price the ladder allowed.
+
+    The ladders scale the touch by a percentage, so they land off-grid (103.75 x 1.01 =
+    104.79) and ICICI refuses the order outright ("Price should be in multiples of: 0.05").
+    A buy rounds DOWN and a sell rounds UP: the touch is itself on the grid, so the order
+    still crosses it, and a capped buy-back (CAS Bingo liquidation) can never overshoot its
+    cap by rounding.
+    """
+    steps = round(float(price) / _TICK, 6)  # float noise: 101.0 / 0.05 is not exactly 2020
+    steps = math.floor(steps) if action == cfg.BUY else math.ceil(steps)
+    return max(_TICK, round(steps * _TICK, 2))
 
 
 def entry_price_ladder(ask: float, tolerance_pct: float) -> Callable[[int], float]:
