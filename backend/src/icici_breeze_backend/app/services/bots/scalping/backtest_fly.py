@@ -34,6 +34,7 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_common import (
     DayLedger,
     SessionVwap,
     by_day,
+    split_session,
     checkpoint,
     gate,
     rollback,
@@ -208,10 +209,11 @@ def _run_day(
     lots: int,
     result: FlyResult,
 ) -> None:
+    pre_open, day_bars = split_session(day_bars)
     quantity = lots * regime.lot_size_for(INDEX, day)
     saved = checkpoint(result, ("skipped_no_data", "skipped_no_fill"))
     ledger = DayLedger()
-    vwap = SessionVwap()
+    vwap = SessionVwap(pre_open)
     candles: list = []
     position: Optional[_OpenFly] = None
     is_expiry_day = day == expiry

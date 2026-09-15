@@ -33,7 +33,9 @@ INTERVAL_MINUTE = "1minute"
 INTERVAL_SECOND = "1second"
 
 # A complete NSE session is 09:15-15:29, 375 one-minute bars. A day short of this is either a
-# half day or a truncated fetch, and `coverage` lists it so the reader can tell which.
+# half day or a truncated fetch, and `coverage` lists it so the reader can tell which. Futures
+# days also carry pre-open (09:00-09:08) and post-close (to 15:39) bars, up to ~395 in all
+# (verified 2026-09-15); the check is a floor, so the extra bars never mark a day incomplete.
 SESSION_BARS = 375
 COMPLETE_DAY_BARS = 370
 

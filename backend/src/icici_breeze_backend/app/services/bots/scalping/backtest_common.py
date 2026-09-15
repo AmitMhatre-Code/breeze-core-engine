@@ -16,6 +16,7 @@ import datetime
 from typing import Any, Optional, Sequence
 
 from icici_breeze_backend.app.domain.bots import ReasonCode, ScalperDayTotals
+from icici_breeze_backend.app.services.bots.scalping.backtest_options import SESSION_CLOSE, SESSION_OPEN
 from icici_breeze_backend.app.services.bots.scalping.backtest_store import HistCandle
 from icici_breeze_backend.app.services.bots.scalping.candles import Candle
 from icici_breeze_backend.app.services.bots.scalping.decide import (
@@ -115,17 +116,39 @@ def rollback(result: Any, saved: tuple[dict[str, int], int, dict[str, int]]) -> 
 
 
 class SessionVwap:
-    """Running volume-weighted typical price, matching the live session VWAP definition."""
+    """The session VWAP rebuilt from 1-minute bars, standing in for the tick's `avgPrice`.
 
-    def __init__(self) -> None:
+    The live bot reads the exchange's own VWAP; history has only bars. Each bar's volume is
+    priced at its OHLC average, and the pre-open bars count, because `avgPrice` fits better with
+    them in. Against the live log of 2026-09-15 (122 candles) this reads 0.98 pts from `avgPrice`
+    on average -- the typical price from 09:15, the first formula, read 1.80 -- and neither ever
+    put a close on the other side of VWAP from where the live bot saw it (plan section 8.7a).
+    """
+
+    def __init__(self, pre_open: Sequence[HistCandle] = ()) -> None:
         self._pv = 0.0
         self._v = 0
+        for bar in pre_open:
+            self.add(bar)
 
     def add(self, bar: HistCandle) -> Optional[float]:
+        # Not `!= 0`: ICICI served a pre-open bar with volume -650 on 2026-09-15.
         if bar.volume > 0:
-            self._pv += ((bar.high + bar.low + bar.close) / 3.0) * bar.volume
+            self._pv += ((bar.open + bar.high + bar.low + bar.close) / 4.0) * bar.volume
             self._v += bar.volume
         return self._pv / self._v if self._v > 0 else None
+
+
+def split_session(day_bars: Sequence[HistCandle]) -> tuple[list[HistCandle], list[HistCandle]]:
+    """(pre-open bars, the bars the live feed builds candles from).
+
+    ICICI's futures history carries pre-open bars from 09:00 and post-close bars to 15:39. The
+    live feed builds candles from 09:15 only, so a replay that fed it the pre-open would warm the
+    EMA and volume MA on bars the bot never sees. The pre-open is returned for VWAP alone.
+    """
+    pre_open = [b for b in day_bars if b.ts.time() < SESSION_OPEN]
+    session = [b for b in day_bars if SESSION_OPEN <= b.ts.time() < SESSION_CLOSE]
+    return pre_open, session
 
 
 def to_candle(bar: HistCandle, vwap: Optional[float] = None) -> Candle:

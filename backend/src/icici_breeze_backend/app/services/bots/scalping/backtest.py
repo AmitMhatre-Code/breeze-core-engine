@@ -37,6 +37,7 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_common import (
     DayLedger,
     SessionVwap,
     by_day,
+    split_session,
     checkpoint,
     gate,
     rollback,
@@ -274,11 +275,12 @@ def _run_day(
     spots: dict,
     result: BacktestResult,
 ) -> None:
+    pre_open, day_bars = split_session(day_bars)
     required = max(config.signal.ema_period, config.signal.volume_ma_period)
     lot_size = regime.lot_size_for(INDEX, day)
     saved = checkpoint(result, _DAY_COUNTERS)
     ledger = DayLedger()
-    vwap = SessionVwap()
+    vwap = SessionVwap(pre_open)
     candles: list = []
     i, n = 0, len(day_bars)
 

@@ -22,6 +22,7 @@ from icici_breeze_backend.app.services.bots.scalping.backtest import (
     theoretical_price,
     years_to_expiry,
 )
+from icici_breeze_backend.app.services.bots.scalping.backtest_common import SessionVwap, split_session
 from icici_breeze_backend.app.services.bots.scalping.backtest_store import HistCandle
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
 from icici_breeze_backend.app.services.bots.scalping.spreads import SpreadStats
@@ -98,6 +99,31 @@ def _bars(day: datetime.date, closes: list[float], volumes: list[int]) -> list[H
         HistCandle(base + datetime.timedelta(minutes=i), c, c, c, c, v)
         for i, (c, v) in enumerate(zip(closes, volumes))
     ]
+
+
+def _bar_at(day: datetime.date, hour: int, minute: int, o, h, l, c, v) -> HistCandle:
+    return HistCandle(datetime.datetime.combine(day, datetime.time(hour, minute)), o, h, l, c, v)
+
+
+def test_only_the_live_feeds_minutes_become_candles():
+    """ICICI returns pre-open bars from 09:00 and post-close bars to 15:39; live has neither."""
+    day = datetime.date(2026, 9, 15)
+    bars = [_bar_at(day, h, m, 1.0, 1.0, 1.0, 1.0, 1) for h, m in ((9, 0), (9, 8), (9, 15), (15, 29), (15, 30), (15, 39))]
+    pre_open, session = split_session(bars)
+    assert [b.ts.time() for b in pre_open] == [datetime.time(9, 0), datetime.time(9, 8)]
+    assert [b.ts.time() for b in session] == [datetime.time(9, 15), datetime.time(15, 29)]
+
+
+def test_session_vwap_prices_bars_at_their_ohlc_average_and_counts_the_pre_open():
+    day = datetime.date(2026, 9, 15)
+    pre_open = [
+        _bar_at(day, 9, 0, 100.0, 100.0, 100.0, 100.0, 10),
+        # ICICI served a -650 volume bar in the 2026-09-15 pre-open; it must not count.
+        _bar_at(day, 9, 5, 500.0, 500.0, 500.0, 500.0, -650),
+    ]
+    vwap = SessionVwap(pre_open)
+    # OHLC average (100 + 110 + 90 + 104) / 4 = 101.
+    assert vwap.add(_bar_at(day, 9, 15, 100.0, 110.0, 90.0, 104.0, 10)) == pytest.approx(100.5)
 
 
 # Monday 2026-03-09; the next Tuesday expiry is the 10th, so options are 1 day out. Chosen

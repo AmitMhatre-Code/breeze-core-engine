@@ -28,7 +28,8 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_store import Need,
 _logger = logging.getLogger(__name__)
 
 MARKET_HOURS_BLOCK = (datetime.time(9, 0), datetime.time(15, 45))
-# Believed to be ICICI's per-call candle cap; `probe` measures it and records the answer.
+# ICICI's per-call row cap, measured 2026-09-15 at both 1-minute and 1-second. A longer window
+# is cut from the START -- the latest rows come back -- so a truncated chunk loses its first days.
 DEFAULT_MAX_BARS_PER_CALL = 1000
 # One call a second is 60 a minute, well under the ~100 ICICI allows, leaving room for
 # whatever the API server itself does after hours.
@@ -37,7 +38,8 @@ DEFAULT_MAX_CALLS = 1500
 VIX_CHUNK_DAYS = 28
 
 META_MAX_BARS = "max_bars_per_call"
-META_CLOCK = "request_clock"  # "ist": ICICI reads a request's time as IST; "utc": as UTC
+# "ist": ICICI reads a request's time as IST; "utc": as UTC. Measured 2026-09-15: IST.
+META_CLOCK = "request_clock"
 
 
 class Stopped(RuntimeError):
