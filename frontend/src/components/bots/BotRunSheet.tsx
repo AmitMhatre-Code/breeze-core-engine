@@ -15,6 +15,7 @@ import {
   useReprice,
   useScan,
   type Bot,
+  type ExitStop,
   type LegEdit,
   type PlacedLeg,
   type Proposal,
@@ -24,6 +25,31 @@ import {
 
 function money(n: number | null | undefined) {
   return n == null ? "—" : formatIndianMoneyCompact(n);
+}
+
+function fillNote(p: PlacedLeg): string {
+  if (p.error || p.filled_quantity == null) return "";
+  if (p.filled_quantity >= p.quantity) return " — filled";
+  if (p.filled_quantity <= 0) return " — working, nothing filled yet";
+  return ` — working, ${p.filled_quantity} of ${p.quantity} filled`;
+}
+
+// Placement and protection are separate facts. A stop that fails to arm must never make a
+// placed leg look unplaced -- that reads as "place it again by hand" on top of a live position.
+function stopText(s: ExitStop): string {
+  const name = INDEX_LABEL[s.stock_code] ?? s.stock_code;
+  if (s.status === "armed") return `${name} stop armed — automatic exit is live.`;
+  if (s.status === "pending") {
+    return (
+      `${name} stop not armed yet — it arms automatically the moment every order fills. ` +
+      "Until then this position has no automatic exit; cancel the unfilled rest in the " +
+      "Order Book to arm it on what filled."
+    );
+  }
+  return (
+    `${name} stop NOT armed: ${s.detail ?? "unknown error"}. Retrying every 2 minutes — ` +
+    "set PB/SL yourself in Portfolio if you would rather not wait."
+  );
 }
 
 function legLabel(leg: ProposalLeg): string {
@@ -206,6 +232,7 @@ export function BotRunSheet({
   const [edits, setEdits] = useState<Record<number, LegEdit>>({});
   const [invalidFields, setInvalidFields] = useState<Record<string, boolean>>({});
   const [placed, setPlaced] = useState<PlacedLeg[] | null>(null);
+  const [stops, setStops] = useState<ExitStop[]>([]);
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
 
@@ -226,6 +253,7 @@ export function BotRunSheet({
   const start = useCallback(async () => {
     setError(null);
     setPlaced(null);
+    setStops([]);
     setOverrides({});
     setEdits({});
     setInvalidFields({});
@@ -333,6 +361,7 @@ export function BotRunSheet({
         edits,
       });
       setPlaced(result.placed);
+      setStops(result.stops ?? []);
       setProposal(null);
     } catch (e) {
       setError((e as Error)?.message ?? "Could not place the orders.");
@@ -394,15 +423,37 @@ export function BotRunSheet({
                     {p.right === "put" ? "PE" : "CE"}
                   </span>{" "}
                   {p.error ? (
-                    <span className="text-down">{p.error}</span>
+                    <span className="text-down">
+                      {p.order_ids.length > 0 ? "partly placed: " : "not placed: "}
+                      {p.error}
+                    </span>
                   ) : (
                     <span className="text-up">
                       {p.quantity} @ {p.limit_price} — order {p.order_ids.join(", ")}
+                      {fillNote(p)}
                     </span>
                   )}
                 </li>
               ))}
             </ul>
+            {stops.length > 0 && (
+              <ul className="mt-3 space-y-1 border-t border-border pt-3 text-body">
+                {stops.map((s) => (
+                  <li
+                    key={`${s.stock_code}-${s.expiry_display}`}
+                    className={
+                      s.status === "armed"
+                        ? "text-up"
+                        : s.status === "failed"
+                          ? "font-semibold text-down"
+                          : "font-semibold"
+                    }
+                  >
+                    {stopText(s)}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 

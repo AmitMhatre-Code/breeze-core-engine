@@ -463,6 +463,13 @@ def start_application():
 
         start_bot_scheduler()
 
+        # Arms a bot position's stop once its entry orders finish, off the WS order feed.
+        # Started with the scheduler, and resumes any stop still waiting from before a
+        # restart -- that gap is exactly where a position would otherwise sit unprotected.
+        from icici_breeze_backend.app.services.bots.exit_arming import start_exit_arming
+
+        start_exit_arming()
+
         # Drives the intraday scalpers (docs/bots-scalping-plan.md). Separate from the
         # scheduler above because the cadence is different in kind: that one ticks every 30s
         # to make one decision a day, this one runs at the user's PB/SL recompute interval
@@ -566,7 +573,10 @@ def start_application():
         from icici_breeze_backend.app.services.bots.scalping.runtime import stop_scalper_loop
         from icici_breeze_backend.app.services.bots.cas_bingo.runtime import stop_cas_bingo_loop
 
+        from icici_breeze_backend.app.services.bots.exit_arming import stop_exit_arming
+
         stop_bot_scheduler()
+        stop_exit_arming()
         stop_scalper_loop()
         stop_cas_bingo_loop()
         for watchdog_task in (

@@ -177,6 +177,43 @@ def ensure_bots_tables(db_path: str) -> None:
             "CREATE INDEX IF NOT EXISTS idx_bot_approval_tokens_proposal "
             "ON bot_approval_tokens(proposal_id)"
         )
+        # The Telegram message a token's buttons live on. Stored so the message can be
+        # edited the moment it is answered -- buttons removed, "placing orders..." shown --
+        # instead of leaving live-looking buttons that invite a second tap. NULL on rows from
+        # before the column existed; those messages simply keep their buttons.
+        _add_column(conn, "bot_approval_tokens", "message_id", "INTEGER")
+        _add_column(conn, "bot_approval_tokens", "message_text", "TEXT")
+        _add_column(conn, "bot_approval_tokens", "message_closed_at", "TIMESTAMP")
+
+        # A position whose stop could not be armed yet because its entry orders were still
+        # working. Persisted rather than held in memory because the gap it covers -- orders
+        # out, stop not armed -- is exactly where a restart would otherwise leave a short
+        # position silently unprotected. `terms` is the arm's inputs, frozen at placement.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_pending_exits (
+                id TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT NOT NULL,
+                bot_type TEXT NOT NULL,
+                run_id TEXT,
+                stock_code TEXT NOT NULL,
+                exchange_code TEXT NOT NULL,
+                expiry_display TEXT NOT NULL,
+                order_ids TEXT NOT NULL,
+                terms TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'waiting',
+                rule_id TEXT,
+                last_error TEXT,
+                alerted INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours', '+30 minutes')),
+                updated_at TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bot_pending_exits_status "
+            "ON bot_pending_exits(status, created_at)"
+        )
 
         # Renamed from `scalping_charges` when the model stopped being scalper-specific.
         # Rename rather than create-and-abandon: a deployment that had already edited its

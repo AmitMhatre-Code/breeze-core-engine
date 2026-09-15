@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import re
 from typing import Any, Optional
 
 from icici_breeze_backend.app.db.bots_migrate import (
@@ -112,6 +113,13 @@ def ask_about(
     if not chat:
         return False
 
+    # The previous ask's token is about to be burned, and its message would otherwise keep
+    # live-looking buttons right above the new one.
+    retire_open_asks(
+        user_id,
+        bot_type,
+        "⌛ *Superseded* — a newer proposal follows below. Nothing was placed from this one.",
+    )
     token = repo.issue_approval_token(
         user_id=user_id,
         bot_type=bot_type,
@@ -130,6 +138,9 @@ def ask_about(
         proposal=proposal,
         deadline=f"{deadline} IST",
         token=token,
+        record_message=lambda message_id, text: repo.set_approval_message(
+            token, message_id, text
+        ),
     )
 
 
@@ -248,6 +259,11 @@ def _note_timeout(user_id: str, bot_type: str, config: Any, *, now: datetime.dat
     if last is None or last.date() != now.date():
         return
     repo.expire_stale_proposals(user_id)
+    retire_open_asks(
+        user_id,
+        bot_type,
+        f"⌛ *Expired* — no approval before the {config.cutoff_ist} cutoff. Nothing was placed.",
+    )
     run_id = repo.start_run(user_id, bot_type, "schedule")
     repo.finish_run(
         run_id,
@@ -266,6 +282,51 @@ def _hhmm(value: str) -> datetime.time:
 
 
 # --------------------------------------------------------------------------------------
+# The proposal message itself
+# --------------------------------------------------------------------------------------
+
+
+def _edit_ask(row: dict[str, Any], footer: str) -> None:
+    """Rewrite a proposal message as answered: its text, a status line, no Approve/Reject."""
+    from icici_breeze_backend.app.services.telegram_alerts import answered_keyboard
+    from icici_breeze_backend.app.services.telegram_client import edit_message_text_sync
+
+    try:
+        edit_message_text_sync(
+            str(row["chat_id"]),
+            int(row["message_id"]),
+            f"{row.get('message_text') or ''}\n\n{footer}",
+            reply_markup=answered_keyboard(),
+        )
+    except Exception:  # noqa: BLE001 -- a failed edit costs the buttons, never the trade
+        _logger.warning("hitl: could not edit the proposal message", exc_info=True)
+
+
+def _retire(row: Optional[dict[str, Any]], footer: str) -> bool:
+    """Retire one proposal message's buttons, once. False if already retired (or none)."""
+    if not row or not repo.close_approval_message(str(row["token"])):
+        return False
+    _edit_ask(row, footer)
+    return True
+
+
+def retire_open_asks(user_id: str, bot_type: str, footer: str) -> None:
+    """Retire every proposal message still showing buttons for this bot.
+
+    Buttons on an ask that can no longer be answered are the worst kind of control: a tap
+    on one reaches nothing, and on a phone the only reply is a toast that fades unread.
+    Never raises -- this runs beside proposals and approvals, not instead of them.
+    """
+    try:
+        rows = repo.open_approval_messages(user_id, bot_type)
+    except Exception:  # noqa: BLE001
+        _logger.warning("hitl: could not list open proposal messages", exc_info=True)
+        return
+    for row in rows:
+        _retire(row, footer)
+
+
+# --------------------------------------------------------------------------------------
 # Answering
 # --------------------------------------------------------------------------------------
 
@@ -275,7 +336,13 @@ def handle_callback(event: dict[str, Any]) -> None:
 
     Runs off the event loop (SQLite writes and broker calls both block). Never raises: one
     bad callback must not take down the claim loop that delivers the rest.
+
+    The proposal message is edited FIRST, before any broker call: its buttons go and a
+    "placing orders now" line appears. Placement takes a while (a plan rebuild and a dozen
+    serialized freeze-sliced orders), and a tap with no visible reaction for that long reads
+    as a tap that did not register -- so the user taps again.
     """
+    from icici_breeze_backend.app.core.timezone import now_ist
     from icici_breeze_backend.app.services import telegram_alerts
     from icici_breeze_backend.app.services.telegram_client import send_message_sync
 
@@ -289,6 +356,10 @@ def handle_callback(event: dict[str, Any]) -> None:
     if claim is None:
         # Expired, already tapped, or superseded by a newer proposal. Say which is not
         # possible -- the token is gone -- so say the one thing that is always true.
+        _retire(
+            repo.open_approval_message(token),
+            "⌛ *No longer valid* — nothing was placed from this proposal.",
+        )
         send_message_sync(
             chat_id,
             "This approval is no longer valid — it was already answered, or the prices it "
@@ -304,8 +375,11 @@ def handle_callback(event: dict[str, Any]) -> None:
 
     user_id = str(claim["user_id"])
     bot_type = str(claim["bot_type"])
+    ask = repo.open_approval_message(token)
+    stamp = now_ist().strftime("%H:%M")
 
     if action == "r":
+        _retire(ask, f"❌ *Rejected at {stamp}* — nothing was placed.")
         repo.resolve_proposal(
             user_id, str(claim["proposal_id"]), status="rejected", note="Rejected on Telegram."
         )
@@ -326,6 +400,7 @@ def handle_callback(event: dict[str, Any]) -> None:
         return
 
     if not trading_allowed():
+        _retire(ask, "🔒 *Not placed* — read-only mode.")
         telegram_alerts.notify_bot_approval_outcome(
             user_id,
             "🔒 *Read-only mode* — your licence does not currently allow trading, so "
@@ -333,7 +408,15 @@ def handle_callback(event: dict[str, Any]) -> None:
         )
         return
 
+    retired = _retire(
+        ask,
+        f"⏳ *Approved at {stamp} — placing orders now…*\n"
+        "_The result follows in a new message._",
+    )
     _approve_and_report(user_id, bot_type, str(claim["proposal_id"]))
+    if retired:
+        # "Placing orders now" would read as still in flight for ever after the result.
+        _edit_ask(ask, f"☑️ *Approved at {stamp}* — the result is in the message below.")
 
 
 def _ask_again(user_id: str, bot_type: str) -> None:
@@ -384,7 +467,7 @@ def _approve_and_report(user_id: str, bot_type: str, proposal_id: str) -> None:
 
     payload = ApproveProposalRequest(leg_indexes=list(range(len(pending.legs))))
     try:
-        result = svc.approve(user_id, bot_type, payload)
+        result = svc.approve(user_id, bot_type, payload, trigger="telegram")
     except svc.ApprovalRefused as e:
         telegram_alerts.notify_bot_approval_outcome(
             user_id, f"⚠️ *Nothing was placed.*\n\n{e.message}"
@@ -403,36 +486,107 @@ def _approve_and_report(user_id: str, bot_type: str, proposal_id: str) -> None:
         )
         return
 
+    # The stop may have armed while the result was being assembled -- the order feed does
+    # not wait for this message -- so report where it stands now, not where it stood.
+    from icici_breeze_backend.app.services.bots import exit_arming
+
+    for stop in result.stops:
+        if stop.status == "pending" and exit_arming.current_status(stop.pending_exit_id) == "armed":
+            stop.status = "armed"
+    telegram_alerts.notify_bot_approval_outcome(user_id, format_outcome(result))
+
+
+def _md(text: Any) -> str:
+    """Escape Telegram legacy-Markdown metacharacters in text we did not write.
+
+    A broker error carrying one stray `_` makes Telegram refuse the whole message -- and the
+    message it refuses is the one saying what happened to the user's orders.
+    """
+    return re.sub(r"([_*`\[])", r"\\\1", str(text))
+
+
+def _label(stock_code: str) -> str:
+    from icici_breeze_backend.app.services.bots.expiry_index_writer import INDEX_LABEL
+
+    return INDEX_LABEL.get(stock_code, stock_code)
+
+
+def _fill_note(p: Any) -> str:
+    if p.error or p.filled_quantity is None:
+        return ""
+    if p.filled_quantity >= p.quantity:
+        return " — filled"
+    if p.filled_quantity <= 0:
+        return " — working, nothing filled yet"
+    return f" — working, {p.filled_quantity:,} of {p.quantity:,} filled"
+
+
+def _stop_line(stop: Any) -> str:
+    label = _label(stop.stock_code)
+    if stop.status == "armed":
+        return f"🛡 *{label} stop armed.* Automatic exit is live."
+    if stop.status == "pending":
+        return (
+            f"⏳ *{label} stop not armed yet.* It arms automatically the moment every order "
+            "has filled, and you will get a message here when it does. Until then this "
+            "position has *no automatic exit*. To protect it sooner, cancel the unfilled "
+            "rest in the Order Book (the stop then arms on what filled) or set PB/SL "
+            "yourself."
+        )
+    return (
+        f"🚨 *{label} stop NOT armed:* {_md(stop.detail or 'unknown error')}\n"
+        "This position has no automatic exit. Retrying every 2 minutes; set PB/SL "
+        "yourself in Portfolio if you would rather not wait."
+    )
+
+
+def format_outcome(result: Any) -> str:
+    """The reply to an approval: what reached the exchange, and separately, the stop.
+
+    Placement and protection are reported as two facts because they are two facts. The old
+    single error field carried the stop's failure onto every leg, so a fully placed strangle
+    read "Partly placed ... 0 of 2 leg(s) placed" -- which invites the user to place the
+    trade again by hand on top of the one already open.
+    """
     ok = [p for p in result.placed if not p.error]
-    lines = [
-        "✅ *Approved and placed*" if result.all_succeeded else "⚠️ *Partly placed*",
-        "",
-    ]
+    went_out = [p for p in result.placed if p.order_ids]
+    if not went_out:
+        head = "❌ *Nothing was placed*"
+    elif result.all_succeeded:
+        head = "✅ *Orders placed*"
+    else:
+        head = "⚠️ *Only part of the trade was placed*"
+    lines = [head, ""]
     for p in result.placed:
         side = "CE" if str(p.right).lower().startswith("c") else "PE"
-        mark = "✅" if not p.error else "❌"
-        if p.error:
-            lines.append(f"{mark} {p.stock_code} {p.strike_price:g} {side} — {p.error}")
+        contract = f"{p.stock_code} {p.strike_price:g} {side}"
+        if p.error and p.order_ids:
+            lines.append(f"⚠️ {contract} — partly placed: {_md(p.error)}")
+        elif p.error:
+            lines.append(f"❌ {contract} — not placed: {_md(p.error)}")
         else:
             lines.append(
-                f"{mark} SELL {p.stock_code} {p.strike_price:g} {side} ×{p.quantity} "
-                f"@ ₹{p.limit_price:g}"
+                f"✅ SELL {contract} ×{p.quantity:,} @ ₹{p.limit_price:g}{_fill_note(p)}"
             )
-    if not result.all_succeeded:
+    for stop in result.stops:
+        lines += ["", _stop_line(stop)]
+    if went_out and not result.all_succeeded:
         lines += [
             "",
-            "_Only the legs marked ✅ went out. Review the position before placing "
-            "anything yourself._",
+            "_Only the legs marked ✅ (and any partly placed) went out. Review the position "
+            "before placing anything yourself._",
         ]
     lines += ["", f"{len(ok)} of {len(result.placed)} leg(s) placed."]
-    telegram_alerts.notify_bot_approval_outcome(user_id, "\n".join(lines))
+    return "\n".join(lines)
 
 
 __all__ = [
     "ask_about",
+    "format_outcome",
     "handle_callback",
     "is_telegram_mode",
     "next_action",
     "propose",
+    "retire_open_asks",
     "trading_allowed",
 ]

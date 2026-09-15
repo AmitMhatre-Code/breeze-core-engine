@@ -22,6 +22,7 @@ from icici_breeze_backend.app.db.bots_migrate import (
 from icici_breeze_backend.app.domain.bots import (
     ApprovalResult,
     ApproveProposalRequest,
+    ExitStopResult,
     ExpiryIndexWriterConfig,
     HoldingsWriterConfig,
     PlacedLegResult,
@@ -314,18 +315,42 @@ def reprice_index_legs(
 # --------------------------------------------------------------------------------------
 
 
-def approve(user_id: str, bot_type: str, payload: ApproveProposalRequest) -> ApprovalResult:
+def approve(
+    user_id: str,
+    bot_type: str,
+    payload: ApproveProposalRequest,
+    *,
+    trigger: str = "manual",
+) -> ApprovalResult:
     """Place the approved legs, after confirming their prices still hold.
 
     Approval names the legs to keep — anything omitted is dropped, which is how the manual
     delivery-cash allocation is expressed.
+
+    `trigger` is the door the approval came through -- `manual` for the app's review screen,
+    `telegram` for a tap -- and is what the run log shows. Both doors used to log `manual`,
+    so an approval tapped on a phone read in the Activity log as one made in the app.
     """
     if bot_type == BOT_EXPIRY_INDEX_WRITER:
-        return _approve_index_plan(user_id, payload)
-    return _approve_holdings(user_id, payload)
+        result = _approve_index_plan(user_id, payload, trigger=trigger)
+    else:
+        result = _approve_holdings(user_id, payload, trigger=trigger)
+    # Approved in the app: any ask still sitting in Telegram would otherwise keep
+    # live-looking buttons for a trade that has already gone out. (On the Telegram path the
+    # tapped message is retired before this runs, so there is nothing left to retire.)
+    from icici_breeze_backend.app.services.bots import hitl
+
+    hitl.retire_open_asks(
+        user_id,
+        bot_type,
+        "✅ *Approved in the app* — nothing more to do here.",
+    )
+    return result
 
 
-def _approve_holdings(user_id: str, payload: ApproveProposalRequest) -> ApprovalResult:
+def _approve_holdings(
+    user_id: str, payload: ApproveProposalRequest, *, trigger: str = "manual"
+) -> ApprovalResult:
     from icici_breeze_backend.app.services.bots import holdings_runner, placement
     from icici_breeze_backend.app.services.processor import processor
     import icici_breeze_backend.app.core.config as cfg
@@ -444,7 +469,7 @@ def _approve_holdings(user_id: str, payload: ApproveProposalRequest) -> Approval
     AuditLogger(None).log_operation(
         user_id, OperationType.BOT_ORDERS_PLACED, "BotProposal", pending.id
     )
-    run_id = repo.start_run(user_id, BOT_HOLDINGS_WRITER, "manual")
+    run_id = repo.start_run(user_id, BOT_HOLDINGS_WRITER, trigger)
     repo.finish_run(
         run_id,
         status="completed" if all_ok else "failed",
@@ -468,7 +493,9 @@ def _approve_holdings(user_id: str, payload: ApproveProposalRequest) -> Approval
     return ApprovalResult(proposal_id=pending.id, placed=placed, all_succeeded=all_ok)
 
 
-def _approve_index_plan(user_id: str, payload: ApproveProposalRequest) -> ApprovalResult:
+def _approve_index_plan(
+    user_id: str, payload: ApproveProposalRequest, *, trigger: str = "manual"
+) -> ApprovalResult:
     """Execute Bot 2's reviewed plan.
 
     The plan is re-derived rather than replayed from the stored proposal: index premiums on
@@ -477,6 +504,7 @@ def _approve_index_plan(user_id: str, payload: ApproveProposalRequest) -> Approv
     strangle's two sides together, which is the only shape selection that is meaningful --
     half a strangle is a naked short.
     """
+    from icici_breeze_backend.app.services.bots import exit_arming
     from icici_breeze_backend.app.services.bots import expiry_index_writer as bot2
     from icici_breeze_backend.app.services.processor import processor
 
@@ -529,8 +557,9 @@ def _approve_index_plan(user_id: str, payload: ApproveProposalRequest) -> Approv
         )
     margin_source = proc.get_strategy_builder_margin_source(user_id)
 
-    run_id = repo.start_run(user_id, BOT_EXPIRY_INDEX_WRITER, "manual")
+    run_id = repo.start_run(user_id, BOT_EXPIRY_INDEX_WRITER, trigger)
     placed: list[PlacedLegResult] = []
+    stops: list[ExitStopResult] = []
     all_ok = True
     for index_code in sorted({leg.stock_code for leg in chosen}):
         index_legs = [leg for leg in chosen if leg.stock_code == index_code]
@@ -579,10 +608,16 @@ def _approve_index_plan(user_id: str, payload: ApproveProposalRequest) -> Approv
                     sum(leg["premium_total"] for leg in plan.legs), 2
                 )
 
-        result = bot2.execute_plan(proc, user_id, plan, config=config)
-        if result.error:
-            all_ok = False
+        result = bot2.execute_plan(proc, user_id, plan, config=config, run_id=run_id)
+        # Each leg is judged on its OWN placement. The index-level `result.error` also
+        # carries the stop's failure, and copying it onto every leg is what once reported
+        # two filled legs as "0 of 2 leg(s) placed" while the position sat open.
         for leg in result.legs:
+            order_ids = list(leg.get("order_ids") or [])
+            error = leg.get("error")
+            if error:
+                all_ok = False
+            fill = exit_arming.fill_state(order_ids)
             placed.append(
                 PlacedLegResult(
                     stock_code=index_code,
@@ -590,26 +625,73 @@ def _approve_index_plan(user_id: str, payload: ApproveProposalRequest) -> Approv
                     strike_price=leg["strike_price"],
                     expiry_display=result.expiry_display,
                     quantity=leg["quantity"],
-                    limit_price=leg["bid"],
-                    order_ids=result.order_ids,
-                    error=result.error,
+                    limit_price=float(leg.get("limit_price") or leg["bid"]),
+                    order_ids=order_ids,
+                    error=error,
+                    filled_quantity=fill["executed"] if fill["heard"] else None,
                 )
             )
+        stop = _stop_result(result)
+        if stop is not None:
+            stops.append(stop)
 
     AuditLogger(None).log_operation(
         user_id, OperationType.BOT_ORDERS_PLACED, "BotProposal", pending.id
     )
+    placed_count = sum(1 for p in placed if not p.error)
+    waiting = [s for s in stops if s.status == "pending"]
+    failed_stops = [s for s in stops if s.status == "failed"]
+    if not all_ok:
+        status, reason_code = "failed", ReasonCode.ORDER_REJECTED
+    elif failed_stops:
+        status, reason_code = "failed", ReasonCode.EXIT_ARM_FAILED
+    elif waiting:
+        status, reason_code = "completed", ReasonCode.EXIT_ARM_PENDING
+    else:
+        status, reason_code = "completed", ReasonCode.ORDERS_PLACED
+    reason_text = f"{placed_count} of {len(placed)} leg(s) placed"
+    reason_text += "".join(exit_arming.pending_note(s.stock_code) for s in waiting)
+    reason_text += "".join(
+        f" — {bot2.INDEX_LABEL.get(s.stock_code, s.stock_code)} stop NOT armed: {s.detail}"
+        for s in failed_stops
+    )
     repo.finish_run(
         run_id,
-        status="completed" if all_ok else "failed",
-        reason_code=ReasonCode.ORDERS_PLACED if all_ok else ReasonCode.ORDER_REJECTED,
-        reason_text=f"{sum(1 for p in placed if not p.error)} of {len(placed)} leg(s) placed.",
-        detail={"legs": [p.model_dump() for p in placed]},
+        status=status,
+        reason_code=reason_code,
+        reason_text=reason_text,
+        detail={
+            "legs": [p.model_dump() for p in placed],
+            "stops": [s.model_dump() for s in stops],
+        },
     )
     repo.resolve_proposal(
         user_id,
         pending.id,
         status="placed",
-        note=f"{sum(1 for p in placed if not p.error)} of {len(placed)} leg(s) placed.",
+        note=f"{placed_count} of {len(placed)} leg(s) placed.",
     )
-    return ApprovalResult(proposal_id=pending.id, placed=placed, all_succeeded=all_ok)
+    return ApprovalResult(
+        proposal_id=pending.id, placed=placed, all_succeeded=all_ok, stops=stops
+    )
+
+
+def _stop_result(result) -> Optional[ExitStopResult]:
+    """What became of one index's stop. None when nothing went out, or no stop is set."""
+    if not result.order_ids:
+        return None
+    common = dict(stock_code=result.index_code, expiry_display=result.expiry_display)
+    if result.rule_id:
+        return ExitStopResult(status="armed", rule_id=result.rule_id, **common)
+    if result.arm_pending:
+        return ExitStopResult(
+            status="pending", pending_exit_id=result.pending_exit_id, **common
+        )
+    if result.arm_error or result.reason_code == ReasonCode.EXIT_ARM_FAILED:
+        return ExitStopResult(
+            status="failed",
+            pending_exit_id=result.pending_exit_id,
+            detail=result.arm_error or result.error,
+            **common,
+        )
+    return None

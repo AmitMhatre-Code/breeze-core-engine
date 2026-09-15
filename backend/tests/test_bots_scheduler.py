@@ -216,6 +216,36 @@ def test_a_position_left_without_a_stop_is_never_a_clean_success(db, monkeypatch
     assert "WITHOUT a stop" in run.reason_text
 
 
+def test_a_stop_waiting_on_its_fills_is_pending_not_unprotected(db, monkeypatch):
+    """Orders out, stop waiting for them to finish filling. `exit_arming` arms it on the
+    last fill, so this is neither a failure nor a position left WITHOUT a stop -- and the
+    run's note is the exact text `exit_arming` rewrites once the stop arms."""
+    enable_bot()
+    patch_decision(monkeypatch, bot2.TickDecision("fire", None, None, ("NIFTY",)))
+    result = bot2.FireResult(
+        index_code="NIFTY", exchange_code=cfg.NFO, expiry_display="03-Sep-2026",
+        right="put", strike_price=23500.0, lots=2, quantity=150, entry_price=42.0,
+        order_ids=["OID1"], rule_id=None, arm_pending=True,
+        reason_code=ReasonCode.EXIT_ARM_PENDING,
+    )
+    seen_run_ids = []
+
+    def fake_fire(*a, run_id=None, **k):
+        seen_run_ids.append(run_id)
+        return result
+
+    monkeypatch.setattr(bot2, "fire_index", fake_fire)
+
+    scheduler.tick(FakeProc())
+    run = repo.list_runs("u1")[0]
+
+    assert run.status == "completed"
+    assert run.reason_code == ReasonCode.EXIT_ARM_PENDING
+    assert "WITHOUT a stop" not in run.reason_text
+    assert "NIFTY stop arms once every order fills" in run.reason_text
+    assert seen_run_ids == [run.id], "the fire must know its run, so the stop can revise it"
+
+
 def test_a_filled_position_whose_stop_failed_is_not_logged_as_a_rejection(db, monkeypatch):
     """The run log has to tell these two apart at a glance.
 

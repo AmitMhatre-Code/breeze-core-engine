@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any
+from typing import Any, Callable
 
 from icici_breeze_backend.app.repositories.user_telegram import get_status
-from icici_breeze_backend.app.services.telegram_client import send_message_sync
+from icici_breeze_backend.app.services.telegram_client import (
+    send_message_get_id,
+    send_message_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -416,6 +419,13 @@ def _price_move_note(bot_type: str) -> str:
     )
 
 
+def _bots_app_url() -> str:
+    import icici_breeze_backend.app.core.config as cfg
+
+    origin = (getattr(cfg, "PUBLIC_FRONTEND_ORIGIN", "") or "").strip().rstrip("/")
+    return f"{origin}/bots" if origin else ""
+
+
 def _approval_keyboard(token: str, app_url: str) -> dict[str, Any]:
     """Two actions on one single-use token. Whichever is tapped first wins, and the second
     tap finds the token already burned — which is the behaviour we want anyway."""
@@ -429,17 +439,32 @@ def _approval_keyboard(token: str, app_url: str) -> dict[str, Any]:
     return {"inline_keyboard": keyboard}
 
 
+def answered_keyboard() -> dict[str, Any]:
+    """What an answered proposal keeps: the link to the app, never Approve/Reject."""
+    app_url = _bots_app_url()
+    if not app_url:
+        return {"inline_keyboard": []}
+    return {"inline_keyboard": [[{"text": "⚙️ Open Bots in app", "url": app_url}]]}
+
+
 def notify_bot_proposal(
-    user_id: str, *, bot_type: str, proposal: Any, deadline: str, token: str
+    user_id: str,
+    *,
+    bot_type: str,
+    proposal: Any,
+    deadline: str,
+    token: str,
+    record_message: Callable[[int, str], None] | None = None,
 ) -> bool:
     """Send a proposal with its Approve/Reject keyboard. False if it could not be sent.
 
     The return value matters: a bot in `telegram` mode that cannot deliver its proposal has
     not asked anyone, and the caller has to log that rather than sit waiting for an answer
     that can never arrive.
-    """
-    import icici_breeze_backend.app.core.config as cfg
 
+    `record_message(message_id, text)` receives the sent message so the caller can edit it
+    later -- retiring the buttons the moment the proposal is answered or superseded.
+    """
     try:
         status = get_status(user_id)
     except Exception:  # noqa: BLE001
@@ -448,12 +473,29 @@ def notify_bot_proposal(
     if not status["alerts_enabled"] or not status["telegram_chat_id"]:
         return False
 
-    origin = (getattr(cfg, "PUBLIC_FRONTEND_ORIGIN", "") or "").strip().rstrip("/")
     text = _format_proposal_message(bot_type, proposal, deadline)
-    markup = _approval_keyboard(token, f"{origin}/bots" if origin else "")
+    markup = _approval_keyboard(token, _bots_app_url())
     # Sent inline rather than on a daemon thread, unlike every other alert here: the caller
     # must know whether the ask actually went out before it records the run as waiting.
-    return send_message_sync(status["telegram_chat_id"], text, reply_markup=markup)
+    message_id = send_message_get_id(status["telegram_chat_id"], text, reply_markup=markup)
+    if message_id is None:
+        return False
+    if record_message is not None:
+        try:
+            record_message(message_id, text)
+        except Exception:  # noqa: BLE001 -- the ask went out; losing the id only costs the edit
+            logger.warning("bot proposal alert: could not record message id", exc_info=True)
+    return True
+
+
+def notify_bot_exit_update(user_id: str, text: str) -> None:
+    """A bot position's stop changed state after the approval reply: armed, or in trouble.
+
+    Its own entry point, not `notify_bot_approval_outcome`, because it arrives on its own
+    schedule -- whenever the order feed reports the last fill -- and must reach the user on
+    the autonomous path too, where there was no approval to follow up on.
+    """
+    _notify(user_id, text, kind="bot exit update")
 
 
 def notify_bot_approval_outcome(user_id: str, text: str) -> None:

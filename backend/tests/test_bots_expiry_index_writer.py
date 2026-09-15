@@ -18,6 +18,7 @@ from icici_breeze_backend.app.domain.bots import (
     ProposalLeg,
     ReasonCode,
 )
+from icici_breeze_backend.app.services.bots import exit_arming
 from icici_breeze_backend.app.services.bots import expiry_index_writer as bot2
 
 TODAY = datetime.date(2026, 9, 3)
@@ -191,7 +192,7 @@ def test_only_indices_expiring_today_are_traded():
 class FakeProc:
     def __init__(self, *, span_per_lot=120000.0, lot=75, bid=42.0, spot=24000.0,
                  verified=None, place_ok=True, strangle_margin_multiple=1.6,
-                 bid_by_right=None, orders=(), reject_rights=()):
+                 bid_by_right=None, orders=(), reject_rights=(), feed="filled"):
         self.span_per_lot = span_per_lot
         self.lot = lot
         self.bid = bid
@@ -205,6 +206,10 @@ class FakeProc:
         self.orders = list(orders)
         # Rights the broker refuses, for a strangle that fills on one side only.
         self.reject_rights = set(reject_rights)
+        # What the WS order feed reports for each accepted order: "filled" (fills at once),
+        # "working" (acknowledged and resting) or "silent" (nothing arrives -- a deaf feed).
+        self.feed = feed
+        self.order_book_reads = 0
         self.placed = []
 
     def bid_for(self, right):
@@ -245,7 +250,18 @@ class FakeProc:
         self.placed.append({"quantity": quantity, "price": price, "right": right})
         if not self.place_ok or right in self.reject_rights:
             return {"Status": 400, "Error": "Rejected"}
-        return {"Status": 200, "Success": {"order_id": f"OID{len(self.placed)}"}}
+        order_id = f"OID{len(self.placed)}"
+        if self.feed != "silent":
+            filled = self.feed == "filled"
+            exit_arming.record_order_state(
+                order_id,
+                status="executed" if filled else "ordered",
+                executed=quantity if filled else 0,
+                total=quantity,
+                stock_code=stock_code,
+                expiry_display=expiry_date,
+            )
+        return {"Status": 200, "Success": {"order_id": order_id}}
 
     def get_orders(self, user_id, start, end, *, exchange_codes=None):
         """The Processor's order-book shape, NOT BreezeConnect's.
@@ -255,6 +271,7 @@ class FakeProc:
         Modelling it here is what makes that a test failure rather than a live position
         left without a stop.
         """
+        self.order_book_reads += 1
         return {"Status": 200, "Error": None, "Success": list(self.orders)}
 
     def get_session_breeze(self, user_id):
@@ -303,6 +320,27 @@ def patch_chain(monkeypatch):
         )
 
     return _install
+
+
+@pytest.fixture(autouse=True)
+def isolated_arming(tmp_path, monkeypatch):
+    """Keep exit arming off the real database, the WS, Telegram and the real clock's close.
+
+    A stop that cannot arm at placement is persisted and waited on; without this the
+    waiting path would write into whatever database the environment points at.
+    """
+    from icici_breeze_backend.app.db.bots_migrate import ensure_bots_tables
+    from icici_breeze_backend.app.repositories import bots as repo
+
+    path = str(tmp_path / "bots.sqlite3")
+    monkeypatch.setattr(repo, "_db_path", lambda: path)
+    ensure_bots_tables(path)
+    exit_arming.reset_state_for_tests()
+    monkeypatch.setattr(exit_arming, "prepare", lambda proc, user_id: None)
+    monkeypatch.setattr(exit_arming, "now_ist", lambda: datetime.datetime(2026, 9, 3, 10, 0))
+    monkeypatch.setattr(exit_arming, "_notify", lambda user_id, text: None)
+    yield
+    exit_arming.reset_state_for_tests()
 
 
 @pytest.fixture
@@ -532,17 +570,50 @@ def test_the_arm_guard_is_reached_through_the_processor(patch_chain, monkeypatch
     assert captured, "the guard must let a clean order book through to the arm"
 
 
-def test_a_working_order_blocks_the_arm_and_names_the_position_as_unprotected(
+def test_orders_still_working_leave_the_stop_waiting_and_the_last_fill_arms_it(
     patch_chain, monkeypatch
 ):
-    """The guard's own refusal must surface the same way an engine failure does -- the
-    orders are filled either way, so a blocked arm is still an open, unprotected position."""
+    """The 15-Sep-2026 incident. Freshly placed limit orders are almost never all filled when
+    placement returns, and arming only then -- once -- failed and left a 14,885-qty strangle
+    with no stop. Now the stop waits on the order feed and arms on the fill that completes
+    the position, with no broker call until then."""
+    captured = {}
+    _stub_arming(monkeypatch, captured)
+    proc = FakeProc(span_per_lot=120000.0, bid=42.0, feed="working")
+    patch_chain(proc)
+
+    result = fire(proc)
+
+    assert result.rule_id is None
+    assert captured == {}, "nothing may be armed while an order is still working"
+    assert result.arm_pending is True
+    assert result.reason_code == ReasonCode.EXIT_ARM_PENDING
+    assert result.error is None, "a stop waiting on its fills is not an error"
+    assert proc.order_book_reads == 0, "the feed said 'working'; no REST read is owed"
+
+    for oid in result.order_ids:
+        exit_arming.record_order_state(
+            oid, status="executed", executed=result.quantity, total=result.quantity,
+            stock_code="NIFTY", expiry_display=EXPIRY,
+        )
+    exit_arming.evaluate(proc)
+
+    assert captured, "armed on the fill that completed the position"
+    assert exit_arming.current_status(result.pending_exit_id) == "armed"
+    assert proc.order_book_reads == 1, "one read: the arm guard's own"
+
+
+def test_an_unrelated_working_order_holds_the_stop_until_it_ends(patch_chain, monkeypatch):
+    """The guard refuses on ANY live order for the expiry. That refusal used to be reported
+    as a failed arm and never retried; now the stop waits, and the blocking order's own end
+    on the feed is what re-triggers it."""
     captured = {}
     _stub_arming(monkeypatch, captured)
     proc = FakeProc(
         span_per_lot=120000.0,
         bid=42.0,
         orders=[{
+            "order_id": "MANUAL1",
             "stock_code": "NIFTY",
             "expiry_date": EXPIRY,
             "strike_price": 23500.0,
@@ -554,15 +625,40 @@ def test_a_working_order_blocks_the_arm_and_names_the_position_as_unprotected(
 
     result = fire(proc)
 
-    assert result.rule_id is None
-    assert captured == {}, "nothing may be armed while an order is still working"
-    # NOT order_rejected: the orders filled. The two outcomes demand opposite responses --
-    # one needs nothing, the other needs a stop set by hand right now -- so they must never
-    # share a code in the run log.
+    assert result.rule_id is None and captured == {}
+    assert result.arm_pending is True
+    assert result.order_ids, "the legs are filled; only the stop is waiting"
+
+    proc.orders = []
+    exit_arming.record_order_state(
+        "MANUAL1", status="cancelled", executed=0, total=75,
+        stock_code="NIFTY", expiry_display=EXPIRY,
+    )
+    exit_arming.evaluate(proc)
+
+    assert captured, "armed once nothing on the expiry was still working"
+
+
+def test_a_stop_that_errors_is_reported_apart_from_the_legs(patch_chain, monkeypatch):
+    """A real arm failure is loud -- but it is the STOP that failed. Copying it onto the
+    legs is what once reported two placed legs as "0 of 2 placed"."""
+    _stub_arming(monkeypatch, {})
+
+    def engine_down(*a, **k):
+        raise RuntimeError("engine down")
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.portfolio_pnl_engine.set_group_rule", engine_down
+    )
+    proc = FakeProc(span_per_lot=120000.0, bid=42.0)
+    patch_chain(proc)
+
+    result = fire(proc)
+
     assert result.reason_code == ReasonCode.EXIT_ARM_FAILED
-    assert result.order_ids, "the legs are filled; only the stop is missing"
-    assert "could not be armed" in result.error
-    assert "NIFTY 23500 CE" in result.error
+    assert result.arm_error == "engine down"
+    assert all(leg["error"] is None and leg["order_ids"] for leg in result.legs)
+    assert result.pending_exit_id, "and it keeps retrying rather than giving up"
 
 
 def _stub_arming(monkeypatch, captured):
@@ -684,12 +780,11 @@ def test_a_strangle_books_only_when_both_legs_are_cheap(monkeypatch, patch_chain
     assert captured["target_option_price"] == pytest.approx(20.0)  # min(40, 60) x 50%
 
 
-def test_a_partial_fill_whose_stop_fails_keeps_both_reasons(monkeypatch, patch_chain):
-    """One leg on, one refused, and then no stop: the user needs all three facts.
-
-    The stop failure used to overwrite the leg rejection, so the log said a stop was missing
-    without saying the position was only half the strangle the bot had planned.
-    """
+def test_a_one_sided_strangle_names_the_rejected_leg_and_waits_for_its_stop(
+    monkeypatch, patch_chain
+):
+    """One leg on, one refused, and a stop still to arm: the user needs all three facts,
+    and each belongs to its own leg -- not smeared across both."""
     captured = {}
     _stub_arming(monkeypatch, captured)
     proc = FakeProc(
@@ -710,9 +805,10 @@ def test_a_partial_fill_whose_stop_fails_keeps_both_reasons(monkeypatch, patch_c
     result = _fire_with(proc, ["short_strangle"])
 
     assert result.strategy == "short_strangle"
-    assert result.order_ids, "the put side filled"
+    call, put = result.legs
+    assert call["error"] == "Rejected" and call["order_ids"] == []
+    assert put["error"] is None and put["order_ids"], "the put side filled"
     assert result.rule_id is None
-    assert result.reason_code == ReasonCode.EXIT_ARM_FAILED
-    # The urgent fact leads; the rejection that explains the lopsided position follows.
-    assert result.error.startswith("Position is OPEN but its stop could not be armed")
-    assert "Also: Rejected" in result.error
+    # The rejection is the run's headline; the stop is waiting, not failed.
+    assert result.reason_code == ReasonCode.ORDER_REJECTED
+    assert result.arm_pending is True

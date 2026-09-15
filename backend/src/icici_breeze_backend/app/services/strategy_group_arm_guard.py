@@ -71,15 +71,28 @@ def _label(row: dict[str, Any]) -> str:
 
 
 def live_orders_for_group(
-    breeze, user_id: str, stock_code: str, expiry_display: str
+    breeze,
+    user_id: str,
+    stock_code: str,
+    expiry_display: str,
+    exchange_code: str | None = None,
 ) -> list[dict[str, Any]]:
     """Every non-terminal order for this scrip+expiry, straight from the REST order book.
 
     REST-authoritative on purpose, never derived from WS state: a dropped notification
     must not be able to make an orphaned order look terminal and thereby unblock a re-arm.
+
+    `exchange_code`, when the caller knows it, confines the read to that exchange's book.
+    `get_orders` makes one `get_order_list` call per exchange, and an NFO contract's orders
+    can never be on BFO, so naming it halves the cost of every read for nothing lost.
     """
     start, end = today_order_window()
-    resp = breeze.get_orders(user_id, start=start, end=end)
+    resp = breeze.get_orders(
+        user_id,
+        start=start,
+        end=end,
+        exchange_codes=[exchange_code] if exchange_code else None,
+    )
     if not isinstance(resp, dict) or resp.get("Status") != 200:
         # Fail closed. If we cannot prove there are no live orders, we must not let an arm
         # through -- the downside is a blocked button; the alternative is a duplicate exit.
@@ -104,14 +117,20 @@ def live_orders_for_group(
     return out
 
 
-def assert_can_arm(breeze, user_id: str, stock_code: str, expiry_display: str) -> None:
+def assert_can_arm(
+    breeze,
+    user_id: str,
+    stock_code: str,
+    expiry_display: str,
+    exchange_code: str | None = None,
+) -> None:
     """Raise ArmPreconditionError unless this SG can be armed right now.
 
     Scoped to ANY non-terminal order for the scrip+expiry, not just ones tied to
     currently-open legs: a stray unfilled order still changes what the group will be, and
     a previous rule's orphan still risks the duplicate-fire above.
     """
-    live = live_orders_for_group(breeze, user_id, stock_code, expiry_display)
+    live = live_orders_for_group(breeze, user_id, stock_code, expiry_display, exchange_code)
     if not live:
         return
     labels = sorted({_label(r) for r in live})

@@ -137,6 +137,11 @@ class ReasonCode:
     # money is at risk, and it needs a stop set by hand. Reporting it as a rejection told
     # the user nothing had happened while a naked short sat open.
     EXIT_ARM_FAILED = "exit_arm_failed"
+    # Orders are out but some are still working at the exchange, so the stop cannot be armed
+    # yet (the arm guard refuses while any order for the expiry is live). Not a failure:
+    # `bots/exit_arming` arms it the moment the order feed reports every order done, and
+    # rewrites the run's reason when it does.
+    EXIT_ARM_PENDING = "exit_arm_pending"
     BROKER_ERROR = "broker_error"
     RATE_LIMITED = "rate_limited"
     INTERNAL_ERROR = "internal_error"
@@ -1177,13 +1182,33 @@ class PlacedLegResult(BaseModel):
     quantity: int
     limit_price: float
     order_ids: List[str] = Field(default_factory=list)
+    # Placement only: whether THIS leg's orders reached the exchange. Whether the position
+    # got its stop is a property of the index, not the leg, and lives on `ApprovalResult.stops`
+    # -- folding the two together is what once reported two placed legs as "0 of 2 placed".
     error: Optional[str] = None
+    # What the order feed has confirmed filled so far; None when it has not reported yet.
+    filled_quantity: Optional[int] = None
+
+
+class ExitStopResult(BaseModel):
+    """The PB/SL state of one index's position once the approval has placed it."""
+
+    stock_code: str
+    expiry_display: str
+    # "armed" | "pending" (waiting for the orders to finish filling) | "failed"
+    status: str
+    rule_id: Optional[str] = None
+    # The `bot_pending_exits` row arming it later, when it was not armed at placement.
+    pending_exit_id: Optional[str] = None
+    detail: Optional[str] = None
 
 
 class ApprovalResult(BaseModel):
     proposal_id: str
     placed: List[PlacedLegResult] = Field(default_factory=list)
+    # Every leg reached the exchange. Says nothing about the stop -- see `stops`.
     all_succeeded: bool
+    stops: List[ExitStopResult] = Field(default_factory=list)
 
 
 class ScanResponse(BaseModel):

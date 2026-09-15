@@ -1228,3 +1228,191 @@ def has_outstanding_approval_token() -> bool:
             (now,),
         ).fetchone()
     return row is not None
+
+
+# --------------------------------------------------------------------------------------
+# The Telegram message behind an approval token
+# --------------------------------------------------------------------------------------
+
+
+def set_approval_message(token: str, message_id: int, message_text: str) -> None:
+    """Remember which Telegram message carries this token's buttons, and what it said."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE bot_approval_tokens SET message_id = ?, message_text = ? WHERE token = ?",
+            (int(message_id), message_text, token),
+        )
+        conn.commit()
+
+
+def open_approval_messages(
+    user_id: str, bot_type: str, *, token: Optional[str] = None
+) -> list[dict[str, Any]]:
+    """Sent approval messages whose buttons have not been retired yet.
+
+    Keyed on the message, not the token's validity: a token burned by a newer proposal or
+    by its own expiry still has a message on the user's screen with live-looking buttons.
+    """
+    sql = (
+        "SELECT token, chat_id, message_id, message_text FROM bot_approval_tokens "
+        "WHERE user_id = ? AND bot_type = ? AND message_id IS NOT NULL "
+        "AND message_closed_at IS NULL"
+    )
+    args: list[Any] = [user_id, bot_type]
+    if token is not None:
+        sql += " AND token = ?"
+        args.append(token)
+    with _connect() as conn:
+        rows = conn.execute(sql, args).fetchall()
+    return [dict(r) for r in rows]
+
+
+def open_approval_message(token: str) -> Optional[dict[str, Any]]:
+    """The still-open message behind one token, whoever it belongs to."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT token, chat_id, message_id, message_text FROM bot_approval_tokens "
+            "WHERE token = ? AND message_id IS NOT NULL AND message_closed_at IS NULL",
+            (token,),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def close_approval_message(token: str) -> bool:
+    """Mark a message's buttons retired. True only for the call that retired it, so two
+    closers racing (a tap and a newer proposal) edit the message once, not twice."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE bot_approval_tokens SET message_closed_at = ? "
+            "WHERE token = ? AND message_closed_at IS NULL",
+            (ist_timestamp(), token),
+        )
+        conn.commit()
+        return bool(cur.rowcount)
+
+
+# --------------------------------------------------------------------------------------
+# Stops waiting for their entry orders to fill (`services/bots/exit_arming`)
+# --------------------------------------------------------------------------------------
+
+
+def _row_to_pending_exit(row: sqlite3.Row) -> dict[str, Any]:
+    out = dict(row)
+    out["order_ids"] = _json_or([], row["order_ids"])
+    out["terms"] = _json_or({}, row["terms"])
+    return out
+
+
+def create_pending_exit(
+    *,
+    user_id: str,
+    bot_type: str,
+    run_id: Optional[str],
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    order_ids: list[str],
+    terms: dict[str, Any],
+) -> str:
+    pending_id = str(uuid.uuid4())
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO bot_pending_exits (id, user_id, bot_type, run_id, stock_code, "
+            "exchange_code, expiry_display, order_ids, terms, status, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?)",
+            (
+                pending_id,
+                user_id,
+                bot_type,
+                run_id,
+                stock_code,
+                exchange_code,
+                expiry_display,
+                json.dumps(list(order_ids)),
+                json.dumps(terms),
+                ist_timestamp(),
+            ),
+        )
+        conn.commit()
+    return pending_id
+
+
+def waiting_pending_exits(*, since_date: Optional[str] = None) -> list[dict[str, Any]]:
+    """Every stop still waiting, optionally only those created on/after `since_date`."""
+    sql = "SELECT * FROM bot_pending_exits WHERE status = 'waiting'"
+    args: list[Any] = []
+    if since_date:
+        sql += " AND date(created_at) >= ?"
+        args.append(since_date)
+    sql += " ORDER BY created_at"
+    with _connect() as conn:
+        rows = conn.execute(sql, args).fetchall()
+    return [_row_to_pending_exit(r) for r in rows]
+
+
+def get_pending_exit(pending_id: str) -> Optional[dict[str, Any]]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM bot_pending_exits WHERE id = ?", (pending_id,)
+        ).fetchone()
+    return _row_to_pending_exit(row) if row is not None else None
+
+
+def pending_exit_for_run(run_id: str, stock_code: str) -> Optional[dict[str, Any]]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM bot_pending_exits WHERE run_id = ? AND stock_code = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (run_id, stock_code),
+        ).fetchone()
+    return _row_to_pending_exit(row) if row is not None else None
+
+
+def update_pending_exit(pending_id: str, **fields: Any) -> None:
+    allowed = {"status", "rule_id", "last_error", "alerted"}
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if not sets:
+        return
+    cols = ", ".join(f"{k} = ?" for k in sets)
+    with _connect() as conn:
+        conn.execute(
+            f"UPDATE bot_pending_exits SET {cols}, updated_at = ? WHERE id = ?",
+            (*sets.values(), ist_timestamp(), pending_id),
+        )
+        conn.commit()
+
+
+def run_status(run_id: str) -> Optional[str]:
+    with _connect() as conn:
+        row = conn.execute("SELECT status FROM bot_runs WHERE id = ?", (run_id,)).fetchone()
+    return str(row["status"]) if row is not None else None
+
+
+def get_run(run_id: str) -> Optional[dict[str, Any]]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM bot_runs WHERE id = ?", (run_id,)).fetchone()
+    if row is None:
+        return None
+    out = dict(row)
+    out["detail"] = _json_or(None, row["detail"])
+    return out
+
+
+def revise_finished_run(
+    run_id: str, *, status: str, reason_code: str, reason_text: str
+) -> bool:
+    """Rewrite a finished run's verdict when a later event settles it.
+
+    Only a stop that arms after its run closed calls this: the run's honest last word at
+    close was "stop pending", and it stops being honest the moment the stop arms. Guarded on
+    `status != 'running'` so it can never race the caller that is still writing the first
+    verdict -- `exit_arming` defers until the run has closed for the same reason.
+    """
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE bot_runs SET status = ?, reason_code = ?, reason_text = ? "
+            "WHERE id = ? AND status != 'running'",
+            (status, reason_code, reason_text, run_id),
+        )
+        conn.commit()
+        return bool(cur.rowcount)

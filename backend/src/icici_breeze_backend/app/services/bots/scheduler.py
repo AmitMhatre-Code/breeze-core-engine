@@ -549,6 +549,7 @@ def _fire(
                     # than by whichever index happened to go first.
                     available_margin=available,
                     margin_source=margin_source,
+                    run_id=run_id,
                 )
             )
 
@@ -601,24 +602,33 @@ def _fire(
         # Judge the run by every result that reached the exchange, not only the clean ones.
         # A clean NIFTY alongside a SENSEX whose stop failed is still an open, unprotected
         # short; reporting that run as completed buried the SENSEX error in the leg detail.
+        from icici_breeze_backend.app.services.bots import exit_arming
+
         placed = [r for r in results if r.order_ids]
-        unprotected = [r for r in placed if r.rule_id is None]
+        # A stop waiting for its orders to fill is not a missing stop: `exit_arming` arms it
+        # on the last fill and rewrites this run's verdict when it does.
+        waiting = [r for r in placed if r.rule_id is None and r.arm_pending]
+        unprotected = [r for r in placed if r.rule_id is None and not r.arm_pending]
         lines = []
         for r in placed:
             line = _describe(r)
             if not r.ok:
                 line += f" — {r.error}"
-            elif r.rule_id is None:
+            elif r.rule_id is None and not r.arm_pending:
                 line += " — WITHOUT a stop (see the Order Book)"
+            if r in waiting:
+                line += exit_arming.pending_note(r.index_code)
             lines.append(line)
+        if any(r.reason_code == ReasonCode.EXIT_ARM_FAILED for r in placed):
+            reason_code = ReasonCode.EXIT_ARM_FAILED
+        elif waiting:
+            reason_code = ReasonCode.EXIT_ARM_PENDING
+        else:
+            reason_code = ReasonCode.ORDERS_PLACED
         repo.finish_run(
             run_id,
             status="completed" if not unprotected else "failed",
-            reason_code=(
-                ReasonCode.EXIT_ARM_FAILED
-                if any(r.reason_code == ReasonCode.EXIT_ARM_FAILED for r in placed)
-                else ReasonCode.ORDERS_PLACED
-            ),
+            reason_code=reason_code,
             reason_text="; ".join(lines),
             detail=detail,
         )

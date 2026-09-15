@@ -400,7 +400,7 @@ export type BotRun = {
   /** `session` is the scalpers': one row covering a whole trading day, with its round
    *  trips in `bot_cycles` beneath it — a different unit of work, not a fourth way to
    *  start a run. */
-  trigger: "schedule" | "manual" | "session_arrival" | "session";
+  trigger: "schedule" | "manual" | "session_arrival" | "session" | "telegram";
   status: BotRunStatus;
   reason_code: string | null;
   reason_text: string | null;
@@ -691,13 +691,28 @@ export type PlacedLeg = {
   quantity: number;
   limit_price: number;
   order_ids: string[];
+  /** Placement only — whether this leg reached the exchange. The stop is on `stops`. */
   error: string | null;
+  /** What the order feed has confirmed filled so far; null before it reports. */
+  filled_quantity?: number | null;
+};
+
+/** One index's PB/SL once the approval placed it. "pending" arms itself on the last fill. */
+export type ExitStop = {
+  stock_code: string;
+  expiry_display: string;
+  status: "armed" | "pending" | "failed";
+  rule_id: string | null;
+  pending_exit_id: string | null;
+  detail: string | null;
 };
 
 export type ApprovalResult = {
   proposal_id: string;
   placed: PlacedLeg[];
+  /** Every leg reached the exchange. Says nothing about the stop — see `stops`. */
   all_succeeded: boolean;
+  stops?: ExitStop[];
 };
 
 export function useProposal(botType: BotType) {

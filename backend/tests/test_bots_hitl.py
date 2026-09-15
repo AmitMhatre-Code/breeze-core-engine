@@ -514,6 +514,164 @@ def test_an_undeliverable_reask_does_not_leave_the_loop_blocked(db_path, monkeyp
     assert repo.get_pending_proposal("u1", BOT_HOLDINGS_WRITER) is None
 
 
+# --- the proposal message and the reply ------------------------------------------------
+
+
+def _capture_edits(monkeypatch):
+    import icici_breeze_backend.app.services.telegram_client as client
+
+    edits = []
+    monkeypatch.setattr(
+        client,
+        "edit_message_text_sync",
+        lambda chat_id, message_id, text, reply_markup=None: (
+            edits.append((message_id, text, reply_markup)) or True
+        ),
+    )
+    return edits
+
+
+def test_an_approve_tap_retires_the_buttons_before_placing_anything(db_path, monkeypatch):
+    """Placement takes a while; a tap with no visible reaction reads as a tap that did not
+    register. The message changes first, and its Approve button is gone for good."""
+    token, _ = _issue()
+    repo.set_approval_message(token, 77, "the proposal")
+    monkeypatch.setattr(hitl, "trading_allowed", lambda: True)
+    events = []
+    edits = _capture_edits(monkeypatch)
+    monkeypatch.setattr(
+        hitl, "_approve_and_report", lambda *a: events.append(("placed", len(edits)))
+    )
+
+    hitl.handle_callback({"token": token, "chat_id": "900", "action": "a"})
+
+    assert events == [("placed", 1)], "the message was edited before anything was placed"
+    first_id, first_text, keyboard = edits[0]
+    assert first_id == 77 and "placing orders now" in first_text
+    assert "callback_data" not in str(keyboard), "no Approve/Reject may survive the tap"
+    assert "the result is in the message below" in edits[-1][1]
+    assert repo.open_approval_messages("u1", BOT_HOLDINGS_WRITER) == []
+
+
+def test_a_reject_tap_says_so_on_the_proposal_itself(db_path, monkeypatch):
+    token, _ = _issue()
+    repo.set_approval_message(token, 78, "the proposal")
+    edits = _capture_edits(monkeypatch)
+    import icici_breeze_backend.app.services.telegram_alerts as alerts
+
+    monkeypatch.setattr(alerts, "notify_bot_approval_outcome", lambda uid, text: None)
+
+    hitl.handle_callback({"token": token, "chat_id": "900", "action": "r"})
+
+    assert len(edits) == 1 and "Rejected at" in edits[0][1]
+
+
+def test_a_new_ask_retires_the_previous_messages_buttons(db_path, monkeypatch):
+    import icici_breeze_backend.app.services.telegram_alerts as alerts
+    import icici_breeze_backend.app.services.telegram_link_portal as portal
+
+    monkeypatch.setattr(portal, "register_approval_token", lambda *a, **k: True)
+    message_ids = iter([101, 102])
+
+    def fake_notify(user_id, *, record_message=None, **kw):
+        record_message(next(message_ids), "an ask")
+        return True
+
+    monkeypatch.setattr(alerts, "notify_bot_proposal", fake_notify)
+    edits = _capture_edits(monkeypatch)
+    _, proposal = _propose_row()
+
+    hitl.ask_about("u1", BOT_HOLDINGS_WRITER, proposal, ttl_minutes=15, chat_id="900")
+    hitl.ask_about("u1", BOT_HOLDINGS_WRITER, proposal, ttl_minutes=15, chat_id="900")
+
+    assert [(mid, "Superseded" in text) for mid, text, _ in edits] == [(101, True)]
+    assert [r["message_id"] for r in repo.open_approval_messages("u1", BOT_HOLDINGS_WRITER)] == [102]
+
+
+def _placed(right, strike, qty, filled, **kw):
+    from icici_breeze_backend.app.domain.bots import PlacedLegResult
+
+    base = dict(
+        stock_code="NIFTY", right=right, strike_price=strike, expiry_display="15-Sep-2026",
+        quantity=qty, limit_price=0.65, order_ids=["OID"], filled_quantity=filled,
+    )
+    base.update(kw)
+    return PlacedLegResult(**base)
+
+
+def test_a_placed_strangle_waiting_on_its_stop_never_reads_as_a_failure():
+    """The 15-Sep-2026 reply: both legs out, one still filling, stop waiting. It read
+    "Partly placed ... 0 of 2 leg(s) placed" -- an invitation to place the trade again."""
+    from icici_breeze_backend.app.domain.bots import ApprovalResult, ExitStopResult
+
+    result = ApprovalResult(
+        proposal_id="p",
+        all_succeeded=True,
+        placed=[
+            _placed("call", 24200, 14885, 14885),
+            _placed("put", 22750, 14885, 4500),
+        ],
+        stops=[ExitStopResult(stock_code="NIFTY", expiry_display="15-Sep-2026", status="pending")],
+    )
+
+    text = hitl.format_outcome(result)
+
+    assert text.startswith("✅ *Orders placed*")
+    assert "2 of 2 leg(s) placed." in text
+    assert "❌" not in text
+    assert "24200 CE ×14,885 @ ₹0.65 — filled" in text
+    assert "working, 4,500 of 14,885 filled" in text
+    assert "stop not armed yet" in text
+    assert "Only the legs marked" not in text
+
+
+def test_a_rejected_leg_and_a_failed_stop_are_two_separate_lines():
+    from icici_breeze_backend.app.domain.bots import ApprovalResult, ExitStopResult
+
+    result = ApprovalResult(
+        proposal_id="p",
+        all_succeeded=False,
+        placed=[
+            _placed("call", 24200, 14885, None, order_ids=[], error="bad_price"),
+            _placed("put", 22750, 14885, None),
+        ],
+        stops=[ExitStopResult(
+            stock_code="NIFTY", expiry_display="15-Sep-2026", status="failed",
+            detail="engine_down",
+        )],
+    )
+
+    text = hitl.format_outcome(result)
+
+    assert text.startswith("⚠️ *Only part of the trade was placed*")
+    assert "❌ NIFTY 24200 CE — not placed: bad\\_price" in text, "broker text is escaped"
+    assert "✅ SELL NIFTY 22750 PE" in text
+    assert "stop NOT armed:* engine\\_down" in text
+    assert "1 of 2 leg(s) placed." in text
+
+
+def test_a_telegram_approval_is_logged_as_telegram_not_manual(db_path, monkeypatch):
+    """The Activity log read "Manual" for an approval tapped on a phone: both doors into
+    `proposals.approve` started their run with the same trigger."""
+    from icici_breeze_backend.app.domain.bots import ApprovalResult
+    from icici_breeze_backend.app.services.bots import proposals as svc
+    import icici_breeze_backend.app.services.telegram_alerts as alerts
+
+    _, proposal = _propose_row()
+    seen = {}
+
+    def fake_approve(user_id, bot_type, payload, **kw):
+        seen.update(kw)
+        return ApprovalResult(proposal_id=proposal.id, all_succeeded=True)
+
+    monkeypatch.setattr(svc, "approve", fake_approve)
+    monkeypatch.setattr(alerts, "notify_bot_approval_outcome", lambda uid, text: None)
+
+    hitl._approve_and_report("u1", BOT_HOLDINGS_WRITER, proposal.id)
+
+    assert seen == {"trigger": "telegram"}
+
+
 def test_nothing_to_adopt_is_not_an_error(db_path, monkeypatch):
     """Bot 2 re-derives its plan without persisting one, so there is simply nothing there."""
     monkeypatch.setattr(hitl, "ask_about", lambda *a, **k: True)

@@ -386,6 +386,15 @@ class FireResult:
     rule_id: Optional[str] = None
     reason_code: Optional[str] = None
     error: Optional[str] = None
+    # The run this fire belongs to, so a stop armed later can rewrite that run's verdict.
+    run_id: Optional[str] = None
+    # Orders are out, the stop is waiting for them to finish (`bots/exit_arming`). Not an
+    # error: it arms on the last fill without anyone doing anything.
+    arm_pending: bool = False
+    pending_exit_id: Optional[str] = None
+    # Why the stop failed to arm, kept apart from `error` (which also carries placement
+    # rejections) so a report can say "placed" and "stop failed" as two separate facts.
+    arm_error: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -572,6 +581,7 @@ def fire_index(
     config: ExpiryIndexWriterConfig,
     available_margin: float,
     margin_source: str,
+    run_id: Optional[str] = None,
 ) -> FireResult:
     """Size and place one index's short position, then arm its exit."""
     result = plan_index(
@@ -585,16 +595,31 @@ def fire_index(
     )
     if result.error or not result.legs:
         return result
-    return execute_plan(proc, user_id, result, config=config)
+    return execute_plan(proc, user_id, result, config=config, run_id=run_id)
 
 
 def execute_plan(
-    proc: Any, user_id: str, result: FireResult, *, config: ExpiryIndexWriterConfig
+    proc: Any,
+    user_id: str,
+    result: FireResult,
+    *,
+    config: ExpiryIndexWriterConfig,
+    run_id: Optional[str] = None,
 ) -> FireResult:
-    """Place a plan's legs and arm the exit. Shared by the scheduler and the manual run."""
-    from icici_breeze_backend.app.services.bots import placement
+    """Place a plan's legs and arm the exit. Shared by the scheduler and the manual run.
 
+    Each leg dict comes back annotated with its own `order_ids`, `error` and the
+    `limit_price` actually sent, so a report can say exactly which leg went out at what --
+    rather than smearing one index-level error across every leg.
+    """
+    from icici_breeze_backend.app.services.bots import exit_arming, placement
+
+    if run_id:
+        result.run_id = run_id
     exchange = result.exchange_code
+    # Listening has to start before the first order goes out: a fast fill's events arrive
+    # while the remaining freeze slices are still being placed.
+    exit_arming.prepare(proc, user_id)
     placed = placement.place_short_legs(
         proc,
         user_id,
@@ -613,7 +638,11 @@ def execute_plan(
         tolerance_pct=float(cfg.AGGRESSIVE_LIMIT_DEFAULT_TOLERANCE_PCT),
     )
     errors = []
-    for leg_result in placed:
+    # `place_short_legs` returns one result per input leg, in order.
+    for leg, leg_result in zip(result.legs, placed):
+        leg["order_ids"] = list(leg_result.order_ids)
+        leg["error"] = leg_result.error
+        leg["limit_price"] = leg_result.limit_price
         result.order_ids.extend(leg_result.order_ids)
         if leg_result.error:
             errors.append(leg_result.error)
@@ -634,16 +663,8 @@ def execute_plan(
     return result
 
 
-def _arm_exit(
-    proc: Any,
-    user_id: str,
-    result: FireResult,
-    *,
-    config: ExpiryIndexWriterConfig,
-    exchange: str,
-    expiry_display: str,
-) -> Optional[str]:
-    """Arm the SG that will close this position.
+def exit_terms(result: FireResult, config: ExpiryIndexWriterConfig) -> Optional[dict]:
+    """The stop's numbers, fixed at placement. None when there is no stop to arm.
 
     The loss limit genuinely is a rupee P&L (N x the premium collected) so it maps onto
     `loss_limit_pnl` on the group -- the right shape for a strangle, whose risk is net
@@ -654,14 +675,11 @@ def _arm_exit(
     broker's `average_price`, which need not equal the price the bot sold at. At 100% the
     target price is zero, which no limit order can reach, so no profit target is armed at
     all and only the stop-loss stands -- the honest reading of "let it expire worthless".
-    """
-    from icici_breeze_backend.app.repositories import squareoff_rules as sq_repo
-    from icici_breeze_backend.app.services import portfolio_pnl_engine
-    from icici_breeze_backend.app.services.strategy_group_arm_guard import (
-        ArmPreconditionError,
-        assert_can_arm,
-    )
 
+    Frozen here, not recomputed when the stop finally arms, because a stop that arms minutes
+    later must still protect the trade that was placed, under the settings it was placed
+    with -- not whatever the config says by then.
+    """
     premium_collected = float(result.premium_total or 0)
     loss_limit = config.loss_limit_premium_multiple * premium_collected
     if loss_limit <= 0:
@@ -678,49 +696,132 @@ def _arm_exit(
         if leg_targets and all(t is not None for t in leg_targets)
         else None
     )
+    return {
+        "premium_collected": premium_collected,
+        "loss_limit": loss_limit,
+        "loss_multiple": float(config.loss_limit_premium_multiple),
+        "target_option_price": target_option_price,
+    }
 
-    try:
-        # The Processor, not `proc.get_session_breeze(...)`: the guard reads the order book
-        # through `get_orders`, which chunks ICICI's 10-day window and merges exchanges.
-        # `BreezeConnect` itself only has the raw `get_order_list`.
-        assert_can_arm(proc, user_id, result.index_code, expiry_display)
-        rule = sq_repo.arm_rule(
-            user_id,
-            stock_code=result.index_code,
-            expiry_display=expiry_display,
-            exchange_code=exchange,
-            # `profit_target_pnl` is NOT NULL and must stay positive. Where a price target
-            # exists the two are alternatives, not a pair, so this is pushed out of reach so
-            # it cannot front-run it. Where the user asked to let the position expire, it is
-            # pushed out of reach for the same reason -- the stop-loss is the only live exit.
-            profit_target_pnl=max(premium_collected * 100.0, 1.0),
-            loss_limit_pnl=loss_limit,
-            target_premium_pct=5,
-            stop_loss_premium_pct=5,
-            target_option_price=target_option_price,
-        )
-        portfolio_pnl_engine.set_group_rule(
-            user_id,
-            rule.id,
-            stock_code=result.index_code,
-            expiry_display=expiry_display,
-            exchange_code=exchange,
-            target_pnl=rule.profit_target_pnl,
-            stop_loss_pnl=rule.loss_limit_pnl,
-            target_premium_pct=rule.target_premium_pct,
-            stop_loss_premium_pct=rule.stop_loss_premium_pct,
-            target_option_price=rule.target_option_price,
-        )
-        return rule.id
-    except ArmPreconditionError as e:
-        # The position is open and unprotected. Say so loudly rather than reporting a
-        # clean fire -- this is the single worst state this bot can leave behind.
-        _record_arm_failure(result, e)
+
+def arm_exit_rule(
+    proc: Any,
+    user_id: str,
+    *,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    terms: dict,
+) -> str:
+    """Arm the SG that will close this position. Returns the rule id; raises if it cannot.
+
+    `ArmPreconditionError` means "not yet" -- an order for this expiry is still working, or
+    the order book could not be read -- and is what `exit_arming` waits out. Anything else
+    is a real failure.
+    """
+    from icici_breeze_backend.app.repositories import squareoff_rules as sq_repo
+    from icici_breeze_backend.app.services import portfolio_pnl_engine
+    from icici_breeze_backend.app.services.strategy_group_arm_guard import assert_can_arm
+
+    premium_collected = float(terms.get("premium_collected") or 0)
+    # The Processor, not `proc.get_session_breeze(...)`: the guard reads the order book
+    # through `get_orders`, which chunks ICICI's 10-day window and merges exchanges.
+    # `BreezeConnect` itself only has the raw `get_order_list`.
+    # One exchange's book, not both: an index's contracts live on exactly one of them.
+    assert_can_arm(proc, user_id, stock_code, expiry_display, exchange_code)
+    rule = sq_repo.arm_rule(
+        user_id,
+        stock_code=stock_code,
+        expiry_display=expiry_display,
+        exchange_code=exchange_code,
+        # `profit_target_pnl` is NOT NULL and must stay positive. Where a price target
+        # exists the two are alternatives, not a pair, so this is pushed out of reach so
+        # it cannot front-run it. Where the user asked to let the position expire, it is
+        # pushed out of reach for the same reason -- the stop-loss is the only live exit.
+        profit_target_pnl=max(premium_collected * 100.0, 1.0),
+        loss_limit_pnl=float(terms["loss_limit"]),
+        target_premium_pct=5,
+        stop_loss_premium_pct=5,
+        target_option_price=terms.get("target_option_price"),
+    )
+    portfolio_pnl_engine.set_group_rule(
+        user_id,
+        rule.id,
+        stock_code=stock_code,
+        expiry_display=expiry_display,
+        exchange_code=exchange_code,
+        target_pnl=rule.profit_target_pnl,
+        stop_loss_pnl=rule.loss_limit_pnl,
+        target_premium_pct=rule.target_premium_pct,
+        stop_loss_premium_pct=rule.stop_loss_premium_pct,
+        target_option_price=rule.target_option_price,
+    )
+    return rule.id
+
+
+def _arm_exit(
+    proc: Any,
+    user_id: str,
+    result: FireResult,
+    *,
+    config: ExpiryIndexWriterConfig,
+    exchange: str,
+    expiry_display: str,
+) -> Optional[str]:
+    """Arm now if the orders are already done; otherwise leave it to the order feed.
+
+    Arming straight after placement used to be the only attempt, and it failed on almost
+    every real-sized trade: the guard refuses while any order for the expiry is working, and
+    freshly-placed limit orders nearly always are. So "not yet" is no longer a failure --
+    `exit_arming` registers the position and arms it on the fill that completes it. Only a
+    genuine error (not a still-working order) is reported as a failed arm, and even that is
+    retried.
+    """
+    from icici_breeze_backend.app.db.bots_migrate import BOT_EXPIRY_INDEX_WRITER
+    from icici_breeze_backend.app.services.bots import exit_arming
+    from icici_breeze_backend.app.services.strategy_group_arm_guard import (
+        ArmPreconditionError,
+    )
+
+    terms = exit_terms(result, config)
+    if terms is None:
         return None
-    except Exception as e:  # noqa: BLE001
-        _logger.exception("bot2: could not arm exit for %s", result.index_code)
-        _record_arm_failure(result, e)
-        return None
+
+    alerted = False
+    if exit_arming.orders_settled(result.order_ids):
+        try:
+            return arm_exit_rule(
+                proc,
+                user_id,
+                stock_code=result.index_code,
+                exchange_code=exchange,
+                expiry_display=expiry_display,
+                terms=terms,
+            )
+        except ArmPreconditionError:
+            pass  # something else on this expiry is still working -- wait for it
+        except Exception as e:  # noqa: BLE001
+            _logger.exception("bot2: could not arm exit for %s", result.index_code)
+            # The report carries this failure, so the retry below must not alert again.
+            _record_arm_failure(result, e)
+            alerted = True
+
+    result.pending_exit_id = exit_arming.wait_then_arm(
+        user_id=user_id,
+        bot_type=BOT_EXPIRY_INDEX_WRITER,
+        run_id=result.run_id,
+        stock_code=result.index_code,
+        exchange_code=exchange,
+        expiry_display=expiry_display,
+        order_ids=list(result.order_ids),
+        terms=terms,
+        alerted=alerted,
+    )
+    if not alerted:
+        result.arm_pending = True
+        if result.reason_code is None:
+            result.reason_code = ReasonCode.EXIT_ARM_PENDING
+    return None
 
 
 def _record_arm_failure(result: FireResult, e: Exception) -> None:
@@ -734,4 +835,5 @@ def _record_arm_failure(result: FireResult, e: Exception) -> None:
     if result.error:
         message = f"{message}. Also: {result.error}"
     result.error = message
+    result.arm_error = str(e)
     result.reason_code = ReasonCode.EXIT_ARM_FAILED
