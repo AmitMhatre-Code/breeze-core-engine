@@ -48,7 +48,7 @@ import {
 import { atmSigmaFromChain, buildSigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { expiryDisplayToYears, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
 import {
-  fetchRealBasketMargins,
+  fetchBasketMarginOnly,
   useOnDemandBasketMargin,
 } from "@/lib/strategy-builder/real-margin";
 import {
@@ -56,6 +56,7 @@ import {
   computeNetDebit,
   computeScaleMultiplier,
   hasUnpricedActiveLeg,
+  solveMarginScale,
   suggestScaleMode,
   type ScaleLeg,
   type ScaleMode,
@@ -367,17 +368,14 @@ export default function BasketOrderPage() {
   const marginModeAvailable = hasActiveSellLeg;
   const premiumModeAvailable = baseNetDebit > 0;
 
-  // Set every active leg to `k` copies of the strategy's irreducible unit
-  // (its lots ÷ the active-leg GCD), so scaling snaps to the finest lot ratio
-  // that preserves the strategy — letting the basket scale down as well as up.
-  const applyUnitMultiplier = useCallback(
-    (gcdLots: number, k: number): StrategyLeg[] => {
-      const scaled = legs.map((l) =>
+  // Every active leg at `k` copies of the strategy's irreducible unit (its
+  // lots ÷ the active-leg GCD), so scaling snaps to the finest lot ratio that
+  // preserves the strategy — letting the basket scale down as well as up.
+  const legsAtUnits = useCallback(
+    (gcdLots: number, k: number): StrategyLeg[] =>
+      legs.map((l) =>
         l.lots > 0 ? { ...l, lots: Math.round(l.lots / gcdLots) * k } : l,
-      );
-      setLegs(scaled);
-      return scaled;
-    },
+      ),
     [legs],
   );
 
@@ -407,7 +405,7 @@ export default function BasketOrderPage() {
         );
         return;
       }
-      applyUnitMultiplier(gcdLots, res.k);
+      setLegs(legsAtUnits(gcdLots, res.k));
       return;
     }
 
@@ -425,38 +423,55 @@ export default function BasketOrderPage() {
     }
     setScaling(true);
     try {
-      const data = await fetchRealBasketMargins({
-        legs,
-        stockCode,
-        exchangeCode: segmentExchange,
-        expiryDate,
-        lotSize,
-        spot,
+      let elmUnavailable = false;
+      // One whole-basket ICICI call per size tried. Margin isn't linear in lot
+      // count, so the size is solved against real quotes, never extrapolated.
+      const measure = async (k: number) => {
+        const data = await fetchBasketMarginOnly({
+          legs: legsAtUnits(gcdLots, k),
+          stockCode,
+          exchangeCode: segmentExchange,
+          expiryDate,
+          lotSize,
+          spot,
+        });
+        if (scaleIncludeElm && data.elmRequirement == null) elmUnavailable = true;
+        return (
+          data.span +
+          (scaleIncludeElm && data.elmRequirement != null ? data.elmRequirement : 0)
+        );
+      };
+      const res = await solveMarginScale({
+        currentUnits: gcdLots,
+        currentMargin: await measure(gcdLots),
+        target,
+        measure,
       });
-      const elmUnavailable = scaleIncludeElm && data.elmRequirement == null;
-      const base =
-        data.spanMargin +
-        (scaleIncludeElm && data.elmRequirement != null ? data.elmRequirement : 0);
-      // Per-unit margin from the current basket's real margin — the same
-      // linear approximation used when scaling up by whole multiples.
-      const unitBase = base / gcdLots;
-      const res = computeScaleMultiplier(unitBase, target);
       if (!res.ok) {
+        const over = res.smallestOver;
         setScaleWarning(
-          res.reason === "underflow"
-            ? `A single basket already needs ${formatIndianMoneyCompact(unitBase)} in margin, which exceeds your target of ${formatIndianMoneyCompact(target)}.`
-            : "Could not compute a base margin for this basket.",
+          res.reason !== "underflow" || !over
+            ? "ICICI shows no margin for this basket at its current size, so it can't be scaled by margin — switch to Premium."
+            : over.units === 1
+              ? `A single basket already needs ${formatIndianMoneyCompact(over.margin)} in margin, which exceeds your target of ${formatIndianMoneyCompact(target)}.`
+              : `Couldn't find a size within your target of ${formatIndianMoneyCompact(target)} — the smallest size checked still needs ${formatIndianMoneyCompact(over.margin)}.`,
         );
         return;
       }
-      const scaled = applyUnitMultiplier(gcdLots, res.k);
+      const scaled = legsAtUnits(gcdLots, res.k);
+      setLegs(scaled);
       // Confirm-recalc against the scaled legs so the totals show true deployed margin.
       marginCalc.calculateFor(scaled);
-      if (elmUnavailable) {
-        setScaleWarning(
-          "Basket ELM wasn't available, so this was scaled against SPAN margin alone.",
+      const notes: string[] = [];
+      if (res.linearOvershoot != null) {
+        notes.push(
+          `Margin doesn't grow in step with lots for this basket — the straight-line size needed ${formatIndianMoneyCompact(res.linearOvershoot)}, so it was sized to ${formatIndianMoneyCompact(res.margin)} against your ${formatIndianMoneyCompact(target)} target.`,
         );
       }
+      if (elmUnavailable) {
+        notes.push("Basket ELM wasn't available, so this was scaled against SPAN margin alone.");
+      }
+      if (notes.length > 0) setScaleWarning(notes.join(" "));
     } catch (err) {
       setScaleWarning(
         err instanceof Error ? err.message : "Failed to calculate margin for scaling.",
@@ -479,7 +494,7 @@ export default function BasketOrderPage() {
     expiryDate,
     lotSize,
     spot,
-    applyUnitMultiplier,
+    legsAtUnits,
     marginCalc,
   ]);
 

@@ -334,6 +334,7 @@ def ensure_bots_tables(db_path: str) -> None:
         _add_column(conn, "trading_charges", "exchange_txn_pct_bse", "REAL NOT NULL DEFAULT 0.0325")
         _correct_superseded_charge_defaults(conn)
         _correct_superseded_bot_defaults(conn)
+        _separate_tied_priorities(conn)
         _add_column(conn, "bot_scrip_prefs", "ce_lots", "INTEGER")
         _add_column(conn, "bot_scrip_prefs", "pe_lots", "INTEGER")
         _add_column(conn, "bot_scrip_prefs", "priority", "INTEGER NOT NULL DEFAULT 1")
@@ -421,6 +422,32 @@ def _correct_superseded_bot_defaults(conn: sqlite3.Connection) -> None:
                 conn.execute(
                     "UPDATE bots SET config = ? WHERE id = ?", (json.dumps(config), row_id)
                 )
+
+
+def _separate_tied_priorities(conn: sqlite3.Connection) -> None:
+    """Give every bot of a user whose priorities collide a distinct slot.
+
+    The `priority` column arrived as an ALTER with DEFAULT 1, so every bot that already
+    existed -- Bots 1 and 2 on any deployment that ran them before 2.10.0 -- landed on 1
+    together. The scheduler then broke that tie on bot_type spelling. Only users with a tie
+    are touched; each is renumbered 1..n in their existing order, ties going to the
+    `BOT_TYPES` order the seeded defaults follow. Idempotent: a renumbered user has no tie.
+    """
+    rank = {bot_type: i for i, bot_type in enumerate(BOT_TYPES)}
+    tied_users = {
+        row[0]
+        for row in conn.execute(
+            "SELECT user_id FROM bots GROUP BY user_id, priority HAVING COUNT(*) > 1"
+        ).fetchall()
+    }
+    for user_id in tied_users:
+        rows = conn.execute(
+            "SELECT id, bot_type, priority FROM bots WHERE user_id = ?", (user_id,)
+        ).fetchall()
+        ordered = sorted(rows, key=lambda r: (r[2], rank.get(r[1], len(rank)), r[1]))
+        for slot, (row_id, _bot_type, priority) in enumerate(ordered, start=1):
+            if priority != slot:
+                conn.execute("UPDATE bots SET priority = ? WHERE id = ?", (slot, row_id))
 
 
 def _correct_superseded_charge_defaults(conn: sqlite3.Connection) -> None:

@@ -97,3 +97,89 @@ export function computeScaleMultiplier(
   if (k < 1) return { ok: false, reason: "underflow" };
   return { ok: true, k };
 }
+
+/** Real margin for `units` copies of the basket's irreducible unit (see `activeLotsGcd`). */
+export type MarginProbe = (units: number) => Promise<number>;
+
+export type MarginScaleResult =
+  | {
+      ok: true;
+      k: number;
+      /** Measured margin at `k` units — never above the target. */
+      margin: number;
+      /** Margin quoted at the straight-line size when that came back over target, else null. */
+      linearOvershoot: number | null;
+    }
+  | {
+      ok: false;
+      reason: "invalid-base" | "invalid-target" | "underflow";
+      /** Smallest size measured over target (`underflow` only). */
+      smallestOver?: { units: number; margin: number };
+    };
+
+type MarginPoint = { units: number; margin: number };
+
+/** Next size to probe: the secant between the bracketing quotes, else a chord through the origin. */
+function nextMarginProbe(
+  fit: MarginPoint | null,
+  over: MarginPoint | null,
+  target: number,
+): number {
+  if (fit && over) {
+    const slope = (over.margin - fit.margin) / (over.units - fit.units);
+    if (slope > 0) return Math.floor(fit.units + (target - fit.margin) / slope);
+  }
+  const ref = (over ?? fit)!;
+  return Math.floor((ref.units * target) / ref.margin);
+}
+
+/**
+ * Largest whole number of units whose MEASURED margin fits `target`.
+ *
+ * Margin is not linear in lot count — ICICI's hedge credit can fall away as a
+ * basket grows, so a straight-line size from one quote can overshoot badly (a
+ * 1:1 call spread quoted at most ~₹22K/lot small came back ~₹58K/lot at 126
+ * lots). The straight-line size is probed first; after that each probe sits on
+ * the secant between the largest size known to fit and the smallest known not
+ * to, which under-sizes whenever margin grows faster than lots. Only a measured
+ * fit is ever returned, and each probe is an ICICI call against the per-minute
+ * budget, so at most `maxProbes` are made. Same two-point idea as the portfolio
+ * sizer (docs/strategy-builder-portfolio-margin-plan.md, D5).
+ */
+export async function solveMarginScale(params: {
+  currentUnits: number;
+  currentMargin: number;
+  target: number;
+  measure: MarginProbe;
+  maxProbes?: number;
+}): Promise<MarginScaleResult> {
+  const { currentUnits, currentMargin, target, measure, maxProbes = 3 } = params;
+  if (!(currentUnits >= 1 && Number.isFinite(currentMargin) && currentMargin > 0)) {
+    return { ok: false, reason: "invalid-base" };
+  }
+  if (!(Number.isFinite(target) && target > 0)) {
+    return { ok: false, reason: "invalid-target" };
+  }
+  const start = { units: currentUnits, margin: currentMargin };
+  let fit: MarginPoint | null = currentMargin <= target ? start : null;
+  let over: MarginPoint | null = fit ? null : start;
+  let linearOvershoot: number | null = null;
+  let next = nextMarginProbe(fit, over, target);
+  for (let probe = 0; probe < maxProbes; probe++) {
+    if (over) next = Math.min(next, over.units - 1);
+    if (next < (fit ? fit.units + 1 : 1)) break;
+    const margin = await measure(next);
+    if (!Number.isFinite(margin)) {
+      throw new Error("ICICI did not return a margin figure");
+    }
+    if (margin <= target) {
+      fit = { units: next, margin };
+    } else {
+      if (probe === 0) linearOvershoot = margin;
+      over = { units: next, margin };
+    }
+    next = nextMarginProbe(fit, over, target);
+  }
+  if (fit) return { ok: true, k: fit.units, margin: fit.margin, linearOvershoot };
+  return { ok: false, reason: "underflow", smallestOver: over ?? undefined };
+}

@@ -4,6 +4,7 @@ import {
   computeNetDebit,
   computeScaleMultiplier,
   hasUnpricedActiveLeg,
+  solveMarginScale,
   suggestScaleMode,
   type ScaleLeg,
 } from "@/lib/strategy-builder/basket-scale";
@@ -144,5 +145,105 @@ describe("computeScaleMultiplier", () => {
       ok: false,
       reason: "invalid-target",
     });
+  });
+});
+
+describe("solveMarginScale", () => {
+  /** Margin curve as a probe that records every size it was asked for. */
+  function probe(curve: (units: number) => number) {
+    const calls: number[] = [];
+    const measure = async (units: number) => {
+      calls.push(units);
+      return curve(units);
+    };
+    return { calls, measure };
+  }
+
+  it("lands on the linear size in one probe when margin is linear", async () => {
+    const { calls, measure } = probe((u) => 10_000 * u);
+    const res = await solveMarginScale({
+      currentUnits: 2,
+      currentMargin: 20_000,
+      target: 95_000,
+      measure,
+    });
+    expect(res).toEqual({ ok: true, k: 9, margin: 90_000, linearOvershoot: null });
+    expect(calls).toEqual([9]);
+  });
+
+  it("scales an oversized basket down", async () => {
+    const { calls, measure } = probe((u) => 10_000 * u);
+    const res = await solveMarginScale({
+      currentUnits: 10,
+      currentMargin: 100_000,
+      target: 35_000,
+      measure,
+    });
+    expect(res).toMatchObject({ ok: true, k: 3, margin: 30_000 });
+    expect(calls).toEqual([3]);
+  });
+
+  it("never returns a size over target when margin grows faster than lots", async () => {
+    // Hedge credit fading with size: the straight-line size (137) is ~3x over.
+    const { calls, measure } = probe((u) => 20_000 * u + 350 * u * u);
+    const res = await solveMarginScale({
+      currentUnits: 1,
+      currentMargin: 20_350,
+      target: 2_800_000,
+      measure,
+    });
+    expect(res).toEqual({
+      ok: true,
+      k: 57,
+      margin: 2_277_150,
+      linearOvershoot: 9_309_150,
+    });
+    expect(calls).toEqual([137, 41, 57]);
+  });
+
+  it("keeps the last measured fit once the probe budget runs out", async () => {
+    const { calls, measure } = probe((u) => (u === 1 ? 1_000 : 100_001));
+    const res = await solveMarginScale({
+      currentUnits: 1,
+      currentMargin: 1_000,
+      target: 100_000,
+      measure,
+    });
+    expect(res).toMatchObject({ ok: true, k: 1, margin: 1_000 });
+    expect(calls).toHaveLength(3);
+  });
+
+  it("reports underflow without probing when one unit is already over target", async () => {
+    const { calls, measure } = probe(() => 50_000);
+    const res = await solveMarginScale({
+      currentUnits: 1,
+      currentMargin: 50_000,
+      target: 30_000,
+      measure,
+    });
+    expect(res).toEqual({
+      ok: false,
+      reason: "underflow",
+      smallestOver: { units: 1, margin: 50_000 },
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects a zero base margin and a non-positive target", async () => {
+    const { calls, measure } = probe(() => 1);
+    await expect(
+      solveMarginScale({ currentUnits: 1, currentMargin: 0, target: 10, measure }),
+    ).resolves.toEqual({ ok: false, reason: "invalid-base" });
+    await expect(
+      solveMarginScale({ currentUnits: 1, currentMargin: 10, target: 0, measure }),
+    ).resolves.toEqual({ ok: false, reason: "invalid-target" });
+    expect(calls).toEqual([]);
+  });
+
+  it("throws when a probe returns no usable figure", async () => {
+    const { measure } = probe(() => Number.NaN);
+    await expect(
+      solveMarginScale({ currentUnits: 1, currentMargin: 1_000, target: 10_000, measure }),
+    ).rejects.toThrow("ICICI did not return a margin figure");
   });
 });

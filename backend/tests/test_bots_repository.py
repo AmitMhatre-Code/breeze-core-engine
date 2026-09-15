@@ -131,6 +131,57 @@ def test_bots_are_scoped_per_user(db_path):
 # --- per-scrip prefs -----------------------------------------------------------------
 
 
+def _priorities(user_id):
+    return {b.bot_type: b.priority for b in repo.list_bots(user_id)}
+
+
+def test_new_bots_get_distinct_priorities(db_path):
+    assert sorted(_priorities("u1").values()) == [1, 2, 3, 4, 5]
+
+
+def test_taking_a_held_priority_swaps_with_its_holder(db_path):
+    before = _priorities("u1")
+    repo.update_bot("u1", BOT_CAS_BINGO, priority=1)
+    after = _priorities("u1")
+    assert after[BOT_CAS_BINGO] == 1
+    assert after[BOT_HOLDINGS_WRITER] == before[BOT_CAS_BINGO]
+    assert sorted(after.values()) == [1, 2, 3, 4, 5]
+
+
+def test_priority_swap_never_reaches_another_user(db_path):
+    _priorities("u2")
+    repo.update_bot("u1", BOT_CAS_BINGO, priority=1)
+    assert _priorities("u2")[BOT_HOLDINGS_WRITER] == 1
+
+
+def test_migration_separates_priorities_the_alter_default_tied(db_path):
+    import sqlite3
+
+    _priorities("u1")
+    _priorities("u2")
+    # What a pre-2.10.0 deployment looked like after the ALTER: Bots 1 and 2 both on 1.
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE bots SET priority = 1 WHERE user_id = 'u1' AND bot_type = ?",
+            (BOT_EXPIRY_INDEX_WRITER,),
+        )
+    ensure_bots_tables(db_path)
+    assert _priorities("u1") == {
+        BOT_HOLDINGS_WRITER: 1,
+        BOT_EXPIRY_INDEX_WRITER: 2,
+        BOT_MOMENTUM_LONG_SCALPER: 3,
+        BOT_IRON_FLY_SCALPER: 4,
+        BOT_CAS_BINGO: 5,
+    }
+
+
+def test_migration_leaves_untied_custom_priorities_alone(db_path):
+    repo.update_bot("u1", BOT_CAS_BINGO, priority=1)
+    before = _priorities("u1")
+    ensure_bots_tables(db_path)
+    assert _priorities("u1") == before
+
+
 def test_scrip_prefs_upsert_and_override(db_path):
     repo.upsert_scrip_prefs("u1", [ScripPref(stock_code="itc", ce_enabled=False, pe_enabled=True)])
     prefs = repo.list_scrip_prefs("u1")

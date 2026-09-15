@@ -186,6 +186,30 @@ export async function fetchRealBasketMargins(
   };
 }
 
+/**
+ * Whole-basket margin only — one ICICI call, no per-leg fan-out. For sizing
+ * probes, where only the basket total (and its ELM) matters.
+ */
+export async function fetchBasketMarginOnly(
+  params: {
+    legs: StrategyLeg[];
+    stockCode: string;
+    exchangeCode: string;
+    expiryDate: string;
+    lotSize: number;
+    spot: number | null;
+  },
+  signal?: AbortSignal,
+): Promise<{ span: number; elmRequirement: number | null }> {
+  const { legs, spot, ...ctx } = params;
+  const basket = await fetchRealMarginWithElm(
+    legs.filter((l) => l.lots > 0).map((l) => buildMarginLegPayload(l, ctx)),
+    spot,
+    signal,
+  );
+  return { span: basket.span, elmRequirement: basket.elmRequirement };
+}
+
 function formatMutationError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return "Failed to calculate margins";

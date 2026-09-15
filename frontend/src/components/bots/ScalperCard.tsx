@@ -4,7 +4,7 @@ import { useState } from "react";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotStatusRow } from "@/components/bots/BotStatusRow";
 import { LiveConfirmDialog } from "@/components/bots/LiveConfirmDialog";
-import { NumberInput } from "@/components/ui/NumberInput";
+import { PriorityPill } from "@/components/bots/PriorityPill";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import { describeFeed, feedToneClass } from "@/lib/scalper-audit";
 import {
@@ -212,16 +212,6 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
     void applyMode(next);
   }
 
-  async function setPriority(next: number) {
-    setError(null);
-    try {
-      await update.mutateAsync({ botType: bot.bot_type, priority: next });
-    } catch (e) {
-      setError((e as Error)?.message ?? "Could not save.");
-    }
-  }
-
-
   return (
     <>
       {/* `h-full` + the grid's default stretch — matches BotCard so all four cards in a row
@@ -231,18 +221,7 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
       <section className="app-card flex h-full flex-col p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <span className="inline-flex items-center gap-1.5 rounded border border-gtt/30 bg-gtt-tint px-2 py-0.5 font-mono text-micro font-bold uppercase tracking-[0.06em] text-gtt-on-tint focus-within:ring-2 focus-within:ring-accent/45">
-              Priority
-              <NumberInput
-                min={1}
-                max={99}
-                aria-label={`Priority for ${meta.title}`}
-                value={bot.priority}
-                disabled={readOnly || update.isPending}
-                onChange={(v) => void setPriority(v)}
-                className="w-5 border-0 bg-transparent p-0 text-center font-mono text-micro font-bold text-gtt-on-tint focus:outline-none disabled:opacity-50 [-moz-appearance:textfield] [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none"
-              />
-            </span>
+            <PriorityPill bot={bot} readOnly={readOnly} onError={setError} />
             <h2 className="app-text-heading mt-1.5">{meta.title}</h2>
             {/* Two lines reserved whether the blurb fills them or not, so the status row
                 starts at the same Y as the writer cards. */}

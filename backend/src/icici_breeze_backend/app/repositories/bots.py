@@ -130,6 +130,15 @@ def get_or_create_bot(user_id: str, bot_type: str) -> BotRecord:
             return _row_to_bot(row)
         bot_id = str(uuid.uuid4())
         default_priority = _DEFAULT_PRIORITY.get(bot_type, 9)
+        # The seeded slot may already be taken -- the user moved another bot into it before
+        # this one was first listed -- and priorities stay unique, so take the next free one.
+        taken = conn.execute(
+            "SELECT 1 FROM bots WHERE user_id = ? AND priority = ?", (user_id, default_priority)
+        ).fetchone()
+        if taken is not None:
+            default_priority = conn.execute(
+                "SELECT COALESCE(MAX(priority), 0) + 1 FROM bots WHERE user_id = ?", (user_id,)
+            ).fetchone()[0]
         conn.execute(
             "INSERT INTO bots (id, user_id, bot_type, enabled, priority, config) "
             "VALUES (?, ?, ?, 0, ?, ?)",
@@ -303,6 +312,16 @@ def update_bot(
         merged.update(config)
     new_config = normalize_config(bot_type, merged)
     with _connect() as conn:
+        # Priorities are a ranking, so they stay unique per user: taking a slot another bot
+        # holds hands that bot this one's old slot. Rejecting instead would force the user
+        # through a spare number to reorder two bots, and allowing the tie leaves the
+        # scheduler to break it on bot_type spelling, which is not an order anyone chose.
+        if new_priority != current.priority:
+            conn.execute(
+                "UPDATE bots SET priority = ?, updated_at = ? "
+                "WHERE user_id = ? AND priority = ? AND bot_type != ?",
+                (current.priority, ist_timestamp(), user_id, new_priority, bot_type),
+            )
         conn.execute(
             "UPDATE bots SET enabled = ?, priority = ?, config = ?, updated_at = ? "
             "WHERE user_id = ? AND bot_type = ?",
