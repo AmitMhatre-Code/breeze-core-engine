@@ -188,9 +188,6 @@ def run_expiry_backtest(
         spots_by_day.setdefault(bar.date, {})[bar.ts] = bar
     for day in days:
         result.expiry_days += 1
-        if day < regime.HISTORY_START:
-            result.days_outside_history += 1
-            continue
         spots = spots_by_day.get(day) or {}
         vix = (vix_by_day or {}).get(day)
         sigma = (vix if vix and vix > 0 else default_iv * 100.0) / 100.0

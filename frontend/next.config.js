@@ -231,10 +231,12 @@ const nextConfig = {
         source: "/bots/cas-bingo/execute",
         destination: `${backendUpstream}/bots/cas-bingo/execute`,
       },
-      // Bots -> Backtest API. Enumerated, never `/bots/backtest/:path*`: that pattern also
-      // matches `/bots/backtest` itself, which is the page.
+      // Bot backtest API (design-decisions #35, #36). Enumerated rather than
+      // `/bots/backtest/:path*` so no page under /bots can ever be swallowed by the rewrite.
       ...[
         "overview",
+        "start",
+        "job",
         "probe",
         "fetch",
         "replay",

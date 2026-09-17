@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
@@ -53,6 +54,10 @@ class HistCandle:
     low: float
     close: float
     volume: int
+    #: Open interest as the bar closed, for the expansion mechanism's OI quadrant (#34).
+    #: None where the series has none: ICICI serves OI 0 on pre-open bars and on *every* BSE
+    #: bar, and a zero used as a window anchor reads as the largest OI rise ever recorded.
+    oi: Optional[int] = None
 
     @property
     def date(self) -> datetime.date:
@@ -116,6 +121,11 @@ def ensure_tables(path: Optional[str] = None) -> None:
         # it goes on as an ALTER for a cache that already exists.
         if "expiry" not in _columns(conn, "futures_candles"):
             conn.execute("ALTER TABLE futures_candles ADD COLUMN expiry TEXT")
+        # Open interest, for the expansion mechanism (#34). Added after the futures cache
+        # already existed, so it goes on as an ALTER like `expiry` did.
+        for table in _UNDERLYING_TABLES:
+            if "oi" not in _columns(conn, table):
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN oi INTEGER")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS daily_vix (
@@ -208,6 +218,19 @@ def _check_table(table: str) -> None:
         raise ValueError(f"unknown underlying table {table!r}")
 
 
+def _bar_oi(row: dict[str, Any]) -> Optional[int]:
+    """Open interest from an ICICI bar, or None when it is absent.
+
+    ICICI serves `open_interest: 0` on pre-open bars and on every BSE contract (measured
+    2026-09-16 with a working NSE control -- see #34), so a non-positive value is stored as
+    NULL rather than as a reading of zero."""
+    try:
+        value = int(float(row.get("open_interest") or 0))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def _bar_tuple(row: dict[str, Any]) -> Optional[tuple]:
     ts = _parse_ts(row.get("datetime") or row.get("date"))
     if ts is None:
@@ -220,6 +243,7 @@ def _bar_tuple(row: dict[str, Any]) -> Optional[tuple]:
             float(row.get("low") or 0),
             float(row.get("close") or 0),
             int(float(row.get("volume") or 0)),
+            _bar_oi(row),
         )
     except (TypeError, ValueError):
         return None
@@ -241,14 +265,15 @@ def store_candles(
         if table == "futures_candles":
             conn.executemany(
                 "INSERT OR REPLACE INTO futures_candles "
-                "(stock_code, ts, open, high, low, close, volume, expiry) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(stock_code, ts, open, high, low, close, volume, oi, expiry) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [p + (expiry.isoformat() if expiry else None,) for p in payload],
             )
         else:
             conn.executemany(
                 f"INSERT OR REPLACE INTO {table} "
-                "(stock_code, ts, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(stock_code, ts, open, high, low, close, volume, oi) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 payload,
             )
         conn.commit()
@@ -264,7 +289,7 @@ def load_candles(
     table: str = "futures_candles",
 ) -> list[HistCandle]:
     _check_table(table)
-    sql = f"SELECT ts, open, high, low, close, volume FROM {table} WHERE stock_code = ?"
+    sql = f"SELECT ts, open, high, low, close, volume, oi FROM {table} WHERE stock_code = ?"
     args: list[Any] = [stock_code]
     if from_date:
         sql += " AND ts >= ?"
@@ -298,11 +323,15 @@ def day_bar_counts(
 
 def _to_candles(rows: Iterable[tuple]) -> list[HistCandle]:
     out: list[HistCandle] = []
-    for ts, o, h, l, c, v in rows:
+    for ts, o, h, l, c, v, oi in rows:
         parsed = _parse_ts(ts)
         if parsed is None:
             continue
-        out.append(HistCandle(parsed, float(o), float(h), float(l), float(c), int(v or 0)))
+        # A stored 0 or NULL is absent, never a reading of zero (#34).
+        oi_value = int(oi) if oi is not None and int(oi) > 0 else None
+        out.append(
+            HistCandle(parsed, float(o), float(h), float(l), float(c), int(v or 0), oi_value)
+        )
     return out
 
 
@@ -355,11 +384,10 @@ def store_option_candles(
         bar = _bar_tuple(row)
         if bar is None:
             continue
-        try:
-            oi = int(float(row.get("open_interest") or 0))
-        except (TypeError, ValueError):
-            oi = 0
-        payload.append(_key_args(key, interval) + bar + (oi,))
+        # `_bar_tuple` already carries OI in its last slot, normalised so a non-positive
+        # value is NULL rather than a reading of zero (#34) -- the option row shape puts it
+        # in the same place, so the tuple goes in whole.
+        payload.append(_key_args(key, interval) + bar)
     if not payload:
         return 0
     with _connect(path) as conn:
@@ -383,7 +411,7 @@ def load_option_bars(
 ) -> list[HistCandle]:
     with _connect(path) as conn:
         rows = conn.execute(
-            "SELECT ts, open, high, low, close, volume FROM option_candles "
+            "SELECT ts, open, high, low, close, volume, oi FROM option_candles "
             "WHERE stock_code = ? AND expiry = ? AND strike = ? AND right = ? AND interval = ? "
             "AND ts >= ? AND ts <= ? ORDER BY ts ASC",
             _key_args(key, interval) + (start.strftime(_TS), end.strftime(_TS)),
@@ -626,3 +654,84 @@ def _parse_ts(raw: Any) -> Optional[datetime.datetime]:
         except ValueError:
             continue
     return None
+
+
+# --------------------------------------------------------------------------------------
+# The daily call budget and the size cap (#36)
+# --------------------------------------------------------------------------------------
+
+#: ICICI calls backtests may spend per IST day, across every bot and every run. Measured
+#: 2026-09-17: a month of one bot is ~70-90 calls and six months ~460-550, so this admits any
+#: single run up to about six months and still stops a day of stacked long runs well short of
+#: the per-minute and per-day limits the live bots depend on. There is no bulk pre-cache; data
+#: is fetched only when a backtest needs it, and kept.
+DAILY_CALL_BUDGET = 800
+
+#: The cache's ceiling on disk. Deployments run on an 8 GiB data volume shared with
+#: `users.sqlite3`, `scrips.sqlite3` and the audit trails; a replay-driven cache of a dozen bots
+#: over several periods measures in the low hundreds of MB, so this is a backstop, not a
+#: working limit.
+MAX_CACHE_BYTES = 2 * 1024**3
+
+
+def _calls_key(day: datetime.date) -> str:
+    return f"calls:{day.isoformat()}"
+
+
+def calls_spent(day: datetime.date, *, path: Optional[str] = None) -> int:
+    raw = get_meta(_calls_key(day), path=path)
+    try:
+        return max(0, int(raw)) if raw else 0
+    except ValueError:
+        return 0
+
+
+def add_calls(day: datetime.date, calls: int, *, path: Optional[str] = None) -> int:
+    total = calls_spent(day, path=path) + max(0, int(calls))
+    set_meta(_calls_key(day), str(total), path=path)
+    return total
+
+
+def calls_remaining(day: datetime.date, *, path: Optional[str] = None) -> int:
+    return max(0, DAILY_CALL_BUDGET - calls_spent(day, path=path))
+
+
+def cache_bytes(path: Optional[str] = None) -> int:
+    target = path or db_path()
+    total = 0
+    for suffix in ("", "-wal", "-journal"):
+        try:
+            total += os.path.getsize(target + suffix)
+        except OSError:
+            pass
+    return total
+
+
+def enforce_cache_cap(
+    *, max_bytes: int = MAX_CACHE_BYTES, path: Optional[str] = None
+) -> dict[str, Any]:
+    """Evict option history, oldest expiry first, until the file is under `max_bytes`.
+
+    Futures, cash-index and VIX bars are never evicted: they are small (~15 MB for six months of
+    both indices) and every bot and every signal replay needs them. Option bars are the bulk and
+    are per contract, so dropping a whole expired contract series is clean -- its fetch records
+    and needs go with it, so a later backtest that wants that expiry simply fetches it again.
+    """
+    evicted: list[str] = []
+    if cache_bytes(path) <= max_bytes:
+        return {"evicted_expiries": evicted, "bytes": cache_bytes(path)}
+    while cache_bytes(path) > max_bytes:
+        with _connect(path) as conn:
+            row = conn.execute("SELECT MIN(expiry) FROM option_candles").fetchone()
+            oldest = row[0] if row else None
+            if oldest is None:
+                break
+            for table in ("option_candles", "option_fetches", "option_needs"):
+                conn.execute(f"DELETE FROM {table} WHERE expiry = ?", (oldest,))
+            conn.commit()
+        evicted.append(oldest)
+        with _connect(path) as conn:
+            conn.execute("VACUUM")
+    if evicted:
+        _logger.info("backtest cache: evicted %d expiry series to stay under the cap", len(evicted))
+    return {"evicted_expiries": evicted, "bytes": cache_bytes(path)}

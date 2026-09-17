@@ -23,7 +23,13 @@ export type IndexSignalSummary = {
   reason: string | null;
   signal: number | null;
   coverage: number | null;
-  thresholds: { enter: number; exit: number } | null;
+  /** Order-book imbalance carries enter/exit; volume expansion carries percentiles (#34). */
+  thresholds:
+    | { enter: number; exit: number }
+    | { price_percentile: number; volume_percentile: number }
+    | null;
+  /** Which mechanism produced this reading. Absent from payloads written before #34. */
+  mechanism?: "wobi" | "expansion" | null;
   computed_at: number | null;
   weights_source: string | null;
   weights_as_of: string | null;

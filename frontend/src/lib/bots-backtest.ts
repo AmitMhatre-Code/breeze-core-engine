@@ -1,19 +1,69 @@
 import { apiClient } from "@/lib/api-client";
 import { getBackendBaseUrl } from "@/lib/config";
+import {
+  BOT_EXPIRY_INDEX_WRITER,
+  BOT_IRON_FLY_SCALPER,
+  BOT_MOMENTUM_LONG_SCALPER,
+  type BotType,
+} from "@/lib/use-bots";
 
-/** Bots → Backtest (docs/bots-scalping-plan.md section 8.11). */
+/** Bot backtests: started from the clock on each card, recorded in Activity (design-decisions #35, #36). */
 
 export type BacktestBot = "momentum" | "fly" | "expiry";
 
-export const BACKTEST_BOTS: ReadonlyArray<{ value: BacktestBot; label: string }> = [
-  { value: "momentum", label: "Bot 3 · Momentum scalper" },
-  { value: "fly", label: "Bot 4 · Iron fly" },
-  { value: "expiry", label: "Bot 2 · Expiry-day writer" },
+/** Which bots have a replay, and what the API calls each one.
+ *
+ *  The Holdings Writer and CAS Bingo have none, so their cards carry no backtest icon at all:
+ *  an entry point that leads to "this bot cannot be backtested" is worse than no entry point. */
+export const BACKTEST_SLUG: Partial<Record<BotType, BacktestBot>> = {
+  [BOT_MOMENTUM_LONG_SCALPER]: "momentum",
+  [BOT_IRON_FLY_SCALPER]: "fly",
+  [BOT_EXPIRY_INDEX_WRITER]: "expiry",
+};
+
+export const BACKTEST_BOT_TYPE: Record<BacktestBot, BotType> = {
+  momentum: BOT_MOMENTUM_LONG_SCALPER,
+  fly: BOT_IRON_FLY_SCALPER,
+  expiry: BOT_EXPIRY_INDEX_WRITER,
+};
+
+/** The card dialog's only question (#36). */
+export type BacktestPeriod = "last_day" | "last_week" | "last_month" | "custom";
+
+export const BACKTEST_PERIODS: ReadonlyArray<{ value: BacktestPeriod; label: string }> = [
+  { value: "last_day", label: "Last trading day" },
+  { value: "last_week", label: "Last trading week" },
+  { value: "last_month", label: "Last trading month" },
+  { value: "custom", label: "Custom range" },
 ];
+
+export type BacktestStartBody = {
+  bot: BacktestBot;
+  period: BacktestPeriod;
+  from_date?: string;
+  to_date?: string;
+};
+
+export type BacktestJobStatus = {
+  job: BacktestJob | null;
+  budget: { daily_calls: number; spent_today: number; remaining_today: number };
+  market_hours_block: string | null;
+  live: boolean;
+};
+
+export const startBotBacktest = (body: BacktestStartBody) =>
+  apiClient.post<BacktestJob>("/bots/backtest/start", body);
+export const fetchBacktestJobStatus = () => apiClient.get<BacktestJobStatus>("/bots/backtest/job");
+export const cancelBacktestJob = () => apiClient.post<{ cancelled: boolean }>("/bots/backtest/cancel", {});
+
+/** A replay's own trail: one file for the whole run, not the live day's file (#35). */
+export function backtestAuditHref(name: string): string {
+  return `/api/settings/bot-audit-logs/backtest/${encodeURIComponent(name)}/download`;
+}
 
 export type BacktestJob = {
   id: string;
-  kind: "probe" | "fetch" | "replay" | string;
+  kind: "backtest" | "probe" | "fetch" | "replay" | string;
   status: "running" | "completed" | "failed" | "stopped" | string;
   running: boolean;
   started_at: string;
@@ -26,22 +76,8 @@ export type BacktestJob = {
   from_date?: string;
   to_date?: string;
   run_id?: string;
+  period?: BacktestPeriod;
 };
-
-export type CoverageSpan = { days: number; from: string | null; to: string | null; short_days: number };
-
-export type BacktestCoverage = {
-  nifty_futures: CoverageSpan;
-  nifty_index: CoverageSpan;
-  sensex_index: CoverageSpan;
-  vix: { days: number; from: string | null; to: string | null };
-  option_contracts: number;
-  option_bars: number;
-  option_windows_empty: number;
-  option_needs_pending: number;
-};
-
-export type SavedSummary = { label: string; lines: string[]; enabled?: boolean };
 
 export type BacktestSummary = Record<string, unknown>;
 
@@ -69,81 +105,8 @@ export type BacktestTrade = Record<string, unknown> & {
 
 export type BacktestRun = BacktestRunListItem & { trades: BacktestTrade[] };
 
-export type ProbeOption = {
-  expiry?: string;
-  day?: string;
-  contract?: string;
-  minute_bars?: number;
-  verdict?: string;
-  request_clock?: string;
-};
-
-export type BacktestProbe = {
-  per_call_cap?: number | string;
-  expired_nifty_weekly?: ProbeOption;
-  history_start_nifty_weekly?: ProbeOption;
-  expired_sensex_weekly?: ProbeOption;
-} & Record<string, unknown>;
-
-export type BacktestOverview = {
-  broker_mode: string;
-  live: boolean;
-  market_hours_block: string | null;
-  history_start: string;
-  default_to: string;
-  job: BacktestJob | null;
-  probe: BacktestProbe | null;
-  probed_at: string | null;
-  coverage: BacktestCoverage;
-  saved: Record<BacktestBot, SavedSummary>;
-  runs: BacktestRunListItem[];
-};
-
-export type ComparePair = {
-  contract: string;
-  paper_at: string;
-  backtest_at: string;
-  paper_entry: number | null;
-  backtest_entry: number | null;
-  entry_diff: number | null;
-  paper_exit: string;
-  backtest_exit: string;
-  paper_net: number;
-  backtest_net: number;
-};
-
-export type CompareTotals = { cycles: number; gross_pnl: number; friction: number; net_pnl: number };
-
-export type ComparePayload = {
-  day: string;
-  price_source: string;
-  settings_changed: boolean;
-  lots: number | null;
-  paper: CompareTotals;
-  backtest: CompareTotals;
-  pairs: ComparePair[];
-  paper_only: string[];
-  backtest_only: string[];
-  median_abs_entry_diff: number | null;
-};
-
-export type RangeBody = { bot: BacktestBot; from_date: string; to_date: string };
-
-export const fetchBacktestOverview = () => apiClient.get<BacktestOverview>("/bots/backtest/overview");
-export const startBacktestProbe = () => apiClient.post<BacktestJob>("/bots/backtest/probe", {});
-export const startBacktestFetch = (body: RangeBody) => apiClient.post<BacktestJob>("/bots/backtest/fetch", body);
-export const startBacktestReplay = (body: RangeBody & { model: boolean }) =>
-  apiClient.post<BacktestJob>("/bots/backtest/replay", body);
-export const cancelBacktestJob = () => apiClient.post<{ cancelled: boolean }>("/bots/backtest/cancel", {});
 export const fetchBacktestRun = (id: string) =>
   apiClient.get<BacktestRun>(`/bots/backtest/run?id=${encodeURIComponent(id)}`);
-export const deleteBacktestRun = (id: string) =>
-  apiClient.delete<{ deleted: boolean }>(`/bots/backtest/run?id=${encodeURIComponent(id)}`);
-export const fetchBacktestCompare = (bot: "momentum" | "fly", date: string, model: boolean) =>
-  apiClient.get<ComparePayload>(
-    `/bots/backtest/compare?bot=${bot}&date=${encodeURIComponent(date)}&model=${model}`,
-  );
-
 export async function downloadBacktestCsv(id: string): Promise<void> {
   const url = new URL(`/bots/backtest/run/csv?id=${encodeURIComponent(id)}`, getBackendBaseUrl());
   const res = await fetch(url.toString(), { method: "GET", credentials: "include" });

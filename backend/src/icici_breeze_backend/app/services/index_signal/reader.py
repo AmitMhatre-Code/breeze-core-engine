@@ -49,7 +49,9 @@ def index_signal_state(label: str, *, now: float | None = None) -> str:
     return str(get_index_signal(label, now=now).get("state") or "unavailable")
 
 
-_NAVBAR_FIELDS = ("state", "reason", "signal", "coverage", "thresholds", "computed_at")
+# `mechanism` says which reading this is (#34): the chip must not describe a volume-expansion
+# strength as an order-book imbalance, and the two carry differently shaped `thresholds`.
+_NAVBAR_FIELDS = ("state", "reason", "signal", "coverage", "thresholds", "computed_at", "mechanism")
 
 
 def navbar_view(*, now: float | None = None) -> dict[str, dict[str, Any]]:

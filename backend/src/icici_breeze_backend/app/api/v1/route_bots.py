@@ -32,6 +32,7 @@ from icici_breeze_backend.app.db.bots_migrate import (
 )
 from icici_breeze_backend.app.domain.bots import (
     ApprovalResult,
+    BacktestEvidence,
     CasBingoConfig,
     BotCycleRecord,
     ApproveProposalRequest,
@@ -137,7 +138,11 @@ async def list_runs(
     # repository's job is the database. A run whose day has aged out of retention simply
     # carries `None` and the UI renders no link.
     for run in runs:
-        run.audit_log = bot_audit.find_for_run(ctx.user_id, run.bot_type, run.started_at)
+        if run.trigger == "backtest":
+            # A replay's trail is one file for the whole run, not the day's live file (#35).
+            run.audit_log = bot_audit.find_for_backtest_run(ctx.user_id, run.bot_type, run.id)
+        else:
+            run.audit_log = bot_audit.find_for_run(ctx.user_id, run.bot_type, run.started_at)
     return runs
 
 
@@ -279,7 +284,19 @@ async def live_eligibility(
 
     record = repo.get_or_create_bot(ctx.user_id, bot_type)
     found = evidence_mod.gather(ctx.user_id, bot_type, record.config)
+    # Shown beside the paper record, never consulted by the gate. A deployment that has never
+    # run a backtest has no cache to read, and that must not stop the gate answering.
+    backtest = None
+    try:
+        from icici_breeze_backend.app.services.bots import backtest_service as backtest_mod
+
+        backtest = backtest_mod.backtest_evidence(ctx.user_id, bot_type, record.config)
+    except Exception:  # noqa: BLE001 -- evidence that cannot be read is simply not shown
+        logging.getLogger(__name__).debug(
+            "live-eligibility: no backtest evidence for %s", bot_type, exc_info=True
+        )
     return LiveEligibility(
+        backtest=BacktestEvidence(**backtest) if backtest else None,
         bot_type=bot_type,
         unlocked=found.unlocked,
         config_hash=found.config_hash,

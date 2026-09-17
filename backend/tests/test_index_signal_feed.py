@@ -230,30 +230,31 @@ class TestPublisherAndReader:
         ]
 
         t0 = 1_000_000.0
-        for short_name in ("HDFBAN", "RELIND"):
-            publisher._on_book("NSE", short_name, 1500.0, 500.0, t0)  # OBI +0.5
+        # SENSEX still publishes W-OBI, so it is the end-to-end path through the reader.
+        # NIFTY publishes the expansion mechanism now (#34) and is asserted separately below.
+        for short_name in ("HDFBAN", "ICIBAN"):
+            publisher._on_book("BSE", short_name, 1500.0, 500.0, t0)  # OBI +0.5
         first = publisher.publish_once(now=t0 + 1, interval=2.0, session_open=True)
-        assert (first["nifty"]["state"], first["nifty"]["reason"]) == ("unavailable", "warming_up")
-        # NSE books never drive SENSEX: it has no BSE books yet.
-        assert first["sensex"]["reason"] == "low_coverage"
+        assert (first["sensex"]["state"], first["sensex"]["reason"]) == ("unavailable", "warming_up")
 
-        for short_name in ("HDFBAN", "RELIND"):
-            publisher._on_book("NSE", short_name, 1500.0, 500.0, t0 + 8)
+        for short_name in ("HDFBAN", "ICIBAN"):
+            publisher._on_book("BSE", short_name, 1500.0, 500.0, t0 + 8)
         second = publisher.publish_once(now=t0 + 8, interval=2.0, session_open=True)
-        assert second["nifty"]["state"] == "bullish"
+        assert second["sensex"]["state"] == "bullish"
+        assert second["sensex"]["mechanism"] == "wobi"
 
-        read = reader.get_index_signal("nifty", now=t0 + 9)
+        read = reader.get_index_signal("sensex", now=t0 + 9)
         assert read["state"] == "bullish"
         assert read["weights"]["source"] == "test"
         assert read["valid_until"] == pytest.approx(t0 + 8 + 10.0)
-        assert reader.index_signal_state("NIFTY", now=t0 + 9) == "bullish"
+        assert reader.index_signal_state("SENSEX", now=t0 + 9) == "bullish"
 
-        view = reader.navbar_view(now=t0 + 9)["nifty"]
+        view = reader.navbar_view(now=t0 + 9)["sensex"]
         assert view["state"] == "bullish"
         assert view["weights_source"] == "test"
         assert "constituents" not in view
 
-        stale = reader.get_index_signal("nifty", now=t0 + 8 + 11)
+        stale = reader.get_index_signal("sensex", now=t0 + 8 + 11)
         assert (stale["state"], stale["reason"]) == ("unavailable", "stale")
 
     def test_challengers_are_shadow_logged_beside_the_incumbent(self, baskets):
@@ -362,3 +363,75 @@ class TestMockBroker:
 
         sdk.unsubscribe_feeds(exchange_code="NSE", stock_code="HDFBAN", get_exchange_quotes=False, get_market_depth=True)
         assert nse_room not in sdk._ws_tokens
+
+
+class TestPublishedMechanism:
+    """Which mechanism each index actually publishes (#34)."""
+
+    def test_nifty_publishes_expansion_while_wobi_keeps_accruing_evidence(self, baskets):
+        from icici_breeze_backend.app.services.index_signal import shadow_log
+
+        publisher.apply_weights_if_needed(force=True)
+        t0 = 1_000_000.0
+        for short_name in ("HDFBAN", "RELIND"):
+            publisher._on_book("NSE", short_name, 1500.0, 500.0, t0)
+        publisher.publish_once(now=t0 + 1, interval=2.0, session_open=True)  # starts W-OBI warm-up
+        for short_name in ("HDFBAN", "RELIND"):
+            publisher._on_book("NSE", short_name, 1500.0, 500.0, t0 + 8)
+        out = publisher.publish_once(now=t0 + 8, interval=2.0, session_open=True)
+
+        # W-OBI would have called this bullish; what is published is the expansion mechanism,
+        # which has had no bars and so has no reading at all.
+        assert out["nifty"]["mechanism"] == "expansion"
+        assert out["nifty"]["state"] == "unavailable"
+
+        # ...but the incumbent keeps being logged, so the two stay comparable.
+        wobi_rows = shadow_log.load_rows("nifty", 0.0)
+        assert wobi_rows and wobi_rows[-1]["state"] == "bullish"
+
+    def test_every_mechanism_is_shadow_logged_against_the_same_index_level(self, baskets):
+        from icici_breeze_backend.app.services.index_signal import shadow_log
+
+        publisher.apply_weights_if_needed(force=True)
+        t0 = 1_000_000.0
+        for short_name in ("HDFBAN", "RELIND"):
+            publisher._on_book("NSE", short_name, 1500.0, 500.0, t0)
+        publisher.publish_once(now=t0 + 8, interval=2.0, session_open=True)
+
+        for label in ("nifty", "nifty:flow", "nifty:expansion"):
+            assert shadow_log.load_rows(label, 0.0), f"{label} was not logged"
+
+    def test_sensex_expansion_runs_without_the_oi_half(self):
+        eng = publisher._expansion_engine("sensex")
+        assert eng.params.require_oi is False
+        assert publisher._expansion_engine("nifty").params.require_oi is True
+
+
+def test_expansion_is_seeded_from_cached_futures_bars_without_calling_icici(tmp_path):
+    import datetime as dt
+
+    from icici_breeze_backend.app.core.timezone import IST
+    from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
+
+    publisher.reset_state_for_tests()
+    cache = str(tmp_path / "backtest.sqlite3")
+    store.ensure_tables(cache)
+    day = dt.date(2026, 9, 16)
+    rows = []
+    for i in range(300):
+        at = dt.datetime.combine(day, dt.time(9, 15)) + dt.timedelta(minutes=i)
+        rows.append({"datetime": at.strftime("%Y-%m-%d %H:%M:%S"), "open": 1, "high": 1, "low": 1,
+                     "close": 23_000 + i, "volume": 100, "open_interest": 1_000_000 + i})
+    store.store_candles(rows, stock_code="NIFTY", path=cache)
+
+    next_morning = dt.datetime(2026, 9, 17, 9, 0, tzinfo=IST).timestamp()
+    seeded = publisher.seed_expansion_from_cache(now=next_morning, cache_path=cache)
+    eng = publisher._expansion_engine("nifty")
+    assert seeded == eng.params.baseline_bars + eng.params.window_minutes + 1
+    # Only the continuous session is seeded: nothing after 15:15.
+    assert all(dt.datetime.fromtimestamp(b.ts, IST).time() <= dt.time(15, 15) for b in eng._bars)
+
+
+def test_seeding_an_empty_cache_is_a_quiet_no_op(tmp_path):
+    publisher.reset_state_for_tests()
+    assert publisher.seed_expansion_from_cache(cache_path=str(tmp_path / "none.sqlite3")) == 0

@@ -153,11 +153,12 @@ def _momentum(underlying, pricer=None, config=None, spot_bars=None):
 # --- the regime -------------------------------------------------------------------------
 
 
-def test_lot_size_is_only_known_inside_the_replayed_era():
+def test_every_replayed_day_uses_todays_lot_size():
+    """#36: a backtest asks what the bot as configured today would have done -- so a day when
+    NIFTY was 75 a lot is still sized at today's 65, deliberately."""
     assert regime.lot_size_for("NIFTY", D(2026, 3, 2)) == 65
     assert regime.lot_size_for("BSESEN", D(2026, 3, 2)) == 20
-    with pytest.raises(regime.OutsideHistory):
-        regime.lot_size_for("NIFTY", D(2025, 12, 31))
+    assert regime.lot_size_for("NIFTY", D(2025, 12, 31)) == 65
 
 
 def test_each_index_expires_on_its_own_weekday():
@@ -441,9 +442,11 @@ def test_expiry_day_is_not_traded_by_default():
     assert result.idle.get(ReasonCode.NOT_A_FIRING_DAY, 0) > 0
 
 
-def test_days_before_the_history_start_are_not_replayed():
-    result = _momentum(_trending(D(2025, 12, 15)))
-    assert result.days_outside_history == 1 and result.cycles == []
+def test_days_before_the_history_start_are_replayed_like_any_other():
+    early = _momentum(_trending(D(2025, 12, 15)))
+    later = _momentum(_trending(MON))
+    assert early.days_outside_history == 0
+    assert len(early.cycles) == len(later.cycles)
 
 
 # --- Bot 4 ------------------------------------------------------------------------------

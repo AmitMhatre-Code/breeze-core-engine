@@ -182,9 +182,6 @@ def run_fly_backtest(
     days = by_day(futures_bars)
     result.days = len(days)
     for day, day_bars in sorted(days.items()):
-        if day < regime.HISTORY_START:
-            result.days_outside_history += 1
-            continue
         if pricer.real and day not in spot_days:
             result.days_without_spot += 1
             continue

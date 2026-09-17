@@ -320,3 +320,80 @@ def build_zip_for_user(user_id: str) -> tuple[bytes, str]:
         for name in names:
             zf.write(os.path.join(root, name), arcname=name)
     return buf.getvalue(), f"bot-audit-{_safe_token(user_id, 16)}.zip"
+
+
+# --------------------------------------------------------------------------- backtests (#35)
+
+_BACKTEST_SUBDIR = "backtests"
+#: Backtest trails kept per deployment. A trail is the record of one replay, not of a trading
+#: day, so it is not dated and does not age out on the daily retention; the newest are kept.
+BACKTEST_KEEP = 200
+
+
+def backtest_dir() -> str:
+    path = os.path.join(audit_dir(), _BACKTEST_SUBDIR)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def backtest_file_name(user_id: str, bot_type: str, run_id: str) -> str:
+    return f"{_safe_token(user_id, 16)}__{_safe_token(bot_type)}__{_safe_token(run_id, 40)}.jsonl"
+
+
+def write_backtest_audit(
+    user_id: str, bot_type: str, run_id: str, records: list[dict[str, Any]]
+) -> str:
+    """Write one replay's whole trail in a single pass. Returns the file name.
+
+    Run-scoped rather than day-scoped: a month's backtest is one result, and splitting it into
+    twenty daily files would rebuild exactly the fragmentation the live trail's per-day file
+    exists to avoid (#35)."""
+    name = backtest_file_name(user_id, bot_type, run_id)
+    path = os.path.join(backtest_dir(), name)
+    with _write_lock:
+        with open(path, "w", encoding="utf-8") as fh:
+            for record in records:
+                fh.write(json.dumps(record, default=str, separators=(",", ":")) + "\n")
+    _prune_backtests()
+    return name
+
+
+def _prune_backtests(keep: int = BACKTEST_KEEP) -> int:
+    try:
+        root = backtest_dir()
+        names = [n for n in os.listdir(root) if n.endswith(".jsonl")]
+    except OSError:
+        return 0
+    if len(names) <= keep:
+        return 0
+    names.sort(key=lambda n: os.path.getmtime(os.path.join(root, n)), reverse=True)
+    removed = 0
+    for name in names[keep:]:
+        try:
+            os.remove(os.path.join(root, name))
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def resolve_backtest_file_for_user(name: str, user_id: str) -> Optional[str]:
+    """Path for a backtest trail, only when it belongs to `user_id`; name re-derived, as for the
+    daily trails, so a traversal attempt resolves to nothing."""
+    base = os.path.basename(name or "")
+    parsed = _parse_name(base)
+    if parsed is None:
+        return None
+    token, bot_type, run_id = parsed
+    if token != _safe_token(user_id, 16):
+        return None
+    rebuilt = f"{_safe_token(token, 16)}__{_safe_token(bot_type)}__{_safe_token(run_id, 40)}.jsonl"
+    if rebuilt != base:
+        return None
+    path = os.path.join(backtest_dir(), rebuilt)
+    return path if os.path.isfile(path) else None
+
+
+def find_for_backtest_run(user_id: str, bot_type: str, run_id: str) -> Optional[str]:
+    name = backtest_file_name(user_id, bot_type, run_id)
+    return name if os.path.isfile(os.path.join(backtest_dir(), name)) else None

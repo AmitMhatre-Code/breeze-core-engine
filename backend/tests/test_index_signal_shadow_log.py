@@ -139,15 +139,19 @@ def test_readings_csv_blanks_only_the_outcomes_the_session_ran_out_for(tmp_path)
 
     table = list(csv.reader(io.StringIO(shadow_log.readings_csv("nifty", days=1, db_path=db, now=B + 700))))
     assert table[0] == [
-        "time_ist", "state", "reason", "signal", "raw_wobi", "coverage", "nifty_level",
+        "time_ist", "state", "reason", "signal", "raw_wobi", "ofi", "aggressor", "coverage",
+        "nifty_level",
         "nifty_after_1m", "move_1m_bps", "nifty_after_5m", "move_5m_bps", "nifty_after_15m", "move_15m_bps",
     ]
     first = table[1]
-    assert first[:7] == ["2027-01-15 13:30:01", "bullish", "", "0.1000", "0.2000", "0.9000", "24000.00"]
-    assert first[7:11] == ["24001.00", "0.42", "24005.00", "2.08"]
-    assert first[11:] == ["", ""]  # fewer than 15 minutes of session left
-    assert table[7][7] == "24007.00" and table[7][9] == ""  # 5 minutes from the end: +1 only
-    assert table[11][7:] == [""] * 6  # the last reading has no outcome at all
+    # W-OBI has no challenger halves, so both stay blank (#33).
+    assert first[:9] == [
+        "2027-01-15 13:30:01", "bullish", "", "0.1000", "0.2000", "", "", "0.9000", "24000.00",
+    ]
+    assert first[9:13] == ["24001.00", "0.42", "24005.00", "2.08"]
+    assert first[13:] == ["", ""]  # fewer than 15 minutes of session left
+    assert table[7][9] == "24007.00" and table[7][11] == ""  # 5 minutes from the end: +1 only
+    assert table[11][9:] == [""] * 6  # the last reading has no outcome at all
 
 
 def test_index_spot_ignores_a_cached_level_that_is_not_a_live_tick(monkeypatch):
@@ -318,3 +322,120 @@ def test_a_report_without_a_minimum_move_scores_against_the_breakeven(lot_65, tm
     assert out["min_move_bps"] == out["breakeven"]["bps"] == pytest.approx(0.77, abs=0.02)
     fixed = shadow_log.shadow_report("nifty", days=5, min_move_bps=5.0, db_path=db, now=B + 86400)
     assert fixed["min_move_bps"] == 5.0
+
+
+# -- the challenger's two halves (#33) ----------------------------------------------------
+
+
+def _flow_payload(ofi: float | None, aggr: float | None) -> dict:
+    """What `flow.FlowEngine.snapshot` publishes for KIND_FUTURES."""
+    blend = None if ofi is None or aggr is None else 0.5 * (ofi + aggr)
+    return {
+        "state": "bullish",
+        "reason": None,
+        "signal": blend,
+        "raw_wobi": None,
+        "coverage": 1.0,
+        "components": {"order_flow": ofi, "aggressor": aggr},
+    }
+
+
+def test_futures_challenger_halves_are_stored_beside_the_blend(tmp_path):
+    db = str(tmp_path / "users_test.sqlite3")
+    shadow_log.record("nifty:flow", _flow_payload(0.4, 0.8), spot=24000.0, now=B, db_path=db)
+
+    row = shadow_log.load_rows("nifty:flow", B - 1, db)[0]
+    assert row["signal"] == pytest.approx(0.6)
+    # The blend alone could not say which half carried the reading -- that is the whole point.
+    assert row["ofi"] == pytest.approx(0.4)
+    assert row["aggressor"] == pytest.approx(0.8)
+
+
+def test_labels_without_futures_components_keep_null_halves(tmp_path):
+    db = str(tmp_path / "users_test.sqlite3")
+    # W-OBI publishes no `components` at all.
+    shadow_log.record("nifty", _payload("bullish"), spot=24000.0, now=B, db_path=db)
+    # The constituent challenger's map is keyed by ShortName and has no aggressor half.
+    shadow_log.record(
+        "sensex:flow",
+        {**_payload("bearish"), "components": {"HDFBAN": 0.3, "RELIND": -0.1}},
+        spot=80000.0,
+        now=B,
+        db_path=db,
+    )
+    for label in ("nifty", "sensex:flow"):
+        row = shadow_log.load_rows(label, B - 1, db)[0]
+        assert row["ofi"] is None and row["aggressor"] is None
+
+
+def test_a_half_that_is_not_a_finite_number_is_stored_as_null(tmp_path):
+    db = str(tmp_path / "users_test.sqlite3")
+    shadow_log.record("nifty:flow", _flow_payload(None, 0.5), spot=24000.0, now=B, db_path=db)
+    row = shadow_log.load_rows("nifty:flow", B - 1, db)[0]
+    assert row["ofi"] is None
+    assert row["aggressor"] == pytest.approx(0.5)
+
+
+def test_the_columns_are_added_to_a_log_written_before_they_existed(tmp_path):
+    """Upgrading an instance must not lose the rows it already has, or refuse to write new ones."""
+    db = str(tmp_path / "users_test.sqlite3")
+    with sqlite3.connect(db) as conn:  # the pre-#33 schema, verbatim
+        conn.execute(
+            """
+            CREATE TABLE index_signal_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL, ts REAL NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL,
+                reason TEXT, signal REAL, raw_wobi REAL, coverage REAL, spot REAL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO index_signal_log (label, ts, kind, state, signal, coverage, spot) "
+            "VALUES ('nifty:flow', ?, 'sample', 'bullish', 0.6, 1.0, 24000.0)",
+            (B - 60,),
+        )
+        conn.commit()
+
+    shadow_log.record("nifty:flow", _flow_payload(0.4, 0.8), spot=24010.0, now=B, db_path=db)
+
+    old, new = shadow_log.load_rows("nifty:flow", B - 120, db)
+    assert old["signal"] == pytest.approx(0.6)
+    assert old["ofi"] is None and old["aggressor"] is None  # NULL is the truth about old rows
+    assert new["ofi"] == pytest.approx(0.4) and new["aggressor"] == pytest.approx(0.8)
+
+    # Idempotent: a second ensure must not raise on the columns it just added.
+    shadow_log.ensure_log_table(db)
+
+
+def test_readings_csv_carries_the_halves(tmp_path):
+    db = str(tmp_path / "users_test.sqlite3")
+    shadow_log.record("nifty:flow", _flow_payload(0.4, 0.8), spot=24000.0, now=B, db_path=db)
+    rows = list(csv.DictReader(io.StringIO(
+        shadow_log.readings_csv("nifty:flow", days=5, db_path=db, now=B + 60)
+    )))
+    assert rows[0]["ofi"] == "0.4000"
+    assert rows[0]["aggressor"] == "0.8000"
+
+
+def test_flip_list_is_newest_first_with_outcomes_judged_against_the_bar(tmp_path):
+    db = str(tmp_path / "users_test.sqlite3")
+
+    def rec(state, at, spot):
+        shadow_log.record("nifty:expansion", _payload(state), spot=spot, now=B + at, db_path=db)
+
+    rec("neutral", 0, 24000.0)
+    rec("bullish", 60, 24000.0)      # flip up at 24000
+    for k in range(2, 20):
+        rec("bullish", 60 * k, 24000.0 + 5 * k)
+    rec("bearish", 60 * 20, 24100.0)  # flip down at 24100
+    for k in range(21, 40):
+        rec("bearish", 60 * k, 24100.0)
+
+    out = shadow_log.flip_list("nifty:expansion", days=1, min_move_bps=1.0, db_path=db, now=B + 3000)
+    states = [f["state"] for f in out["flips"]]
+    assert states == ["bearish", "bullish"]  # newest first
+    up = out["flips"][1]
+    assert up["level"] == 24000.0
+    assert up["move_5m_bps"] > 0 and up["right_5m"] is True
+    down = out["flips"][0]
+    assert down["move_5m_bps"] == 0.0 and down["right_5m"] is False  # flat is not right

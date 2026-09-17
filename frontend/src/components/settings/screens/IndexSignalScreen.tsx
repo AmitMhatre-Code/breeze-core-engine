@@ -9,18 +9,26 @@ import { fetchMarketStatus } from "@/lib/market-status";
 import { useIndexQuotes } from "@/lib/use-index-quotes";
 import {
   downloadIndexSignalReadings,
+  fetchIndexSignalFlips,
   fetchIndexSignalPreferences,
   fetchIndexSignalReadiness,
   fetchIndexSignalShadowReport,
   fetchIndexSignalWeights,
+  INDEX_SIGNAL_FLIPS_QUERY_KEY,
   INDEX_SIGNAL_PREFERENCES_QUERY_KEY,
   INDEX_SIGNAL_READINESS_QUERY_KEY,
   INDEX_SIGNAL_SHADOW_REPORT_QUERY_KEY,
   INDEX_SIGNAL_WEIGHTS_QUERY_KEY,
+  MECHANISMS,
+  mechanismLabel,
   refreshIndexSignalWeights,
+  runExpansionBacktest,
   saveIndexSignalPreferences,
   WEIGHTS_SOURCE_LABEL,
   type CallStatus,
+  type ExpansionBacktestResponse,
+  type MechanismKey,
+  type SignalLabel,
   type IndexLabel,
   type IndexReadiness,
   type ReadinessCall,
@@ -257,7 +265,7 @@ export function IndexSignalScreen() {
       <SettingsScreenHeader
         icon={<SignalIcon />}
         title="Index Signal"
-        description="NIFTY and SENSEX bullish / bearish reading from the heaviest stocks' live order books. It is the one signal the navbar, the screens and the bots all read."
+        description="NIFTY and SENSEX bullish / bearish reading. It is the one signal the navbar, the screens and the bots all read — each index shows one mechanism, and the others run beside it in shadow."
       />
       <div className="space-y-4">
         <div className="rounded-[8px] border border-border-soft bg-panel2 px-3 py-2.5 text-xs leading-relaxed text-muted">
@@ -650,6 +658,7 @@ function msUntilNextSample(nowMs: number): number {
 
 function ShadowEvidenceSection() {
   const qc = useQueryClient();
+  const [mechanism, setMechanism] = useState<MechanismKey>("expansion");
   const [showDetail, setShowDetail] = useState(false);
   const [days, setDays] = useState(5);
   const [minMove, setMinMove] = useState<number | null>(null);
@@ -691,56 +700,104 @@ function ShadowEvidenceSection() {
     return () => window.clearTimeout(timer);
   }, [stateKey, qc]);
 
+  const spec = MECHANISMS.find((m) => m.key === mechanism) ?? MECHANISMS[0];
+  const expansionMeta = readiness.data?.expansion;
+  /** Which mechanism the navbar shows for this index. */
+  const publishedFor = (index: IndexLabel): MechanismKey =>
+    expansionMeta?.[index]?.published ? "expansion" : "wobi";
+  const readinessFor = (index: IndexLabel): IndexReadiness | undefined => {
+    if (mechanism === "wobi") return readiness.data?.indices[index];
+    if (mechanism === "flow") return readiness.data?.challengers?.[index];
+    return expansionMeta?.[index];
+  };
+  const reportFor = (index: IndexLabel): ShadowReport | undefined =>
+    mechanism === "wobi" ? q.data?.indices[index] : q.data?.mechanisms?.[mechanismLabel(mechanism, index)];
+
   const requirements = readiness.data?.indices.nifty?.requirements;
   return (
     <section className="app-card space-y-4 p-5">
       <div>
-        <h3 className="text-heading font-bold text-foreground">Shadow evidence</h3>
+        <h3 className="text-heading font-bold text-foreground">Signal mechanisms</h3>
         <p className="mt-1 text-xs leading-relaxed text-muted">
-          Is the signal good enough for a scalping bot? Each time it turns bullish or bearish, the index is checked
-          5 and 15 minutes later: a call is right when the index went that way by enough to pay for a trade, and it
-          only counts for something if it is right more often than simply going along with the market&rsquo;s trend.
-          While the market is open this updates every minute, and as soon as the signal changes state.
+          Each way of reading direction runs side by side and is judged by the same test. Each time one turns bullish
+          or bearish, the index is checked 5 and 15 minutes later: a call is right when the index went that way by
+          enough to pay for a trade. The navbar shows one mechanism per index; the rest run in shadow.
         </p>
       </div>
-      {readiness.error ? (
-        <p className="text-xs text-down">
-          {readiness.error instanceof Error ? readiness.error.message : "Could not load the verdict"}
-        </p>
-      ) : null}
-      <div className="grid gap-5 xl:grid-cols-2">
-        {INDICES.map(({ key, name }) => (
-          <ReadinessCard key={key} name={name} readiness={readiness.data?.indices[key]} />
-        ))}
+
+      <div role="tablist" aria-label="Signal mechanisms" className="flex flex-wrap gap-1 border-b border-border">
+        {MECHANISMS.map((m) => {
+          const active = m.key === mechanism;
+          const shownFor = INDICES.filter(({ key }) => publishedFor(key) === m.key).map(({ key }) => key.toUpperCase());
+          return (
+            <button
+              key={m.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setMechanism(m.key)}
+              className={[
+                "-mb-px inline-flex items-center gap-2 border-b-2 px-3 py-2.5 text-xs font-semibold transition",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
+                active ? "border-accent text-accent" : "border-transparent text-muted hover:text-foreground",
+              ].join(" ")}
+            >
+              {m.name}
+              {shownFor.length ? (
+                <span className="rounded-full border border-border px-1.5 py-px text-hint font-medium text-muted">
+                  In navbar · {shownFor.join(", ")}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
       </div>
-      {readiness.data?.challengers ? (
-        <div className="space-y-3">
-          <p className="text-xs leading-relaxed text-muted">
-            <span className="font-semibold text-foreground">Challengers — in shadow only.</span> Two alternative
-            signals that read how orders and trades are <em>changing</em> rather than how much is waiting: NIFTY from
-            the NIFTY futures contract&rsquo;s own buying and selling pressure, SENSEX from how its big stocks&rsquo;
-            queues move. They are judged by exactly the same test and nothing acts on them. If one earns
-            &ldquo;Ready&rdquo; where the current signal does not, that is the case for switching.
-          </p>
-          <div className="grid gap-5 xl:grid-cols-2">
-            {INDICES.map(({ key }) => {
-              const challenger = readiness.data?.challengers?.[key];
-              return challenger ? (
-                <ReadinessCard key={`${key}-flow`} name={challenger.name} readiness={challenger} />
-              ) : null;
-            })}
+
+      <div role="tabpanel" className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <p className="max-w-3xl text-xs leading-relaxed text-muted">{spec.summary}</p>
+          <div className="flex items-center gap-3">
+            <PillGroup label="Period" options={DAY_OPTIONS} value={days} onChange={setDays} format={(d) => `${d}d`} />
           </div>
         </div>
-      ) : null}
+
+        {readiness.error ? (
+          <p className="text-xs text-down">
+            {readiness.error instanceof Error ? readiness.error.message : "Could not load the verdict"}
+          </p>
+        ) : null}
+
+        {spec.backtestable ? <ExpansionBacktestPanel days={days} /> : null}
+
+        <div className="grid gap-5 xl:grid-cols-2">
+          {INDICES.map(({ key, name }) => {
+            const r = readinessFor(key);
+            const halfStrength = mechanism === "expansion" && expansionMeta?.[key]?.requires_oi === false;
+            return (
+              <div key={key} className="min-w-0 space-y-3">
+                <ReadinessCard name={`${name} · ${spec.name}`} readiness={r} />
+                {halfStrength ? (
+                  <p className="rounded-[8px] border border-border-soft bg-panel2 px-3 py-2 text-hint leading-relaxed text-muted">
+                    <strong className="font-semibold text-foreground">Price and volume only.</strong> ICICI serves no
+                    open interest for BSE, so this cannot tell a breakout from a blow-off the way NIFTY&rsquo;s can.
+                  </p>
+                ) : null}
+                <FlipList label={mechanismLabel(mechanism, key)} name={name} days={days} refetchInterval={refetchInterval} />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {requirements ? (
         <div className="space-y-1 text-hint leading-relaxed text-muted">
           <p className="flex flex-wrap gap-x-4 gap-y-1">
             {(Object.keys(CALL_LABEL) as CallStatus[])
-              .filter((s) => s !== "no_calls")
-              .map((s) => (
-                <span key={s} className="inline-flex items-center gap-1.5">
-                  <StatusDot status={s} />
-                  {CALL_LABEL[s]}
+              .filter((st) => st !== "no_calls")
+              .map((st) => (
+                <span key={st} className="inline-flex items-center gap-1.5">
+                  <StatusDot status={st} />
+                  {CALL_LABEL[st]}
                 </span>
               ))}
           </p>
@@ -760,7 +817,7 @@ function ShadowEvidenceSection() {
       >
         <summary className="cursor-pointer select-none px-4 py-3 text-xs font-semibold text-foreground">
           Show the full evidence{" "}
-          <span className="font-normal text-muted">— every reading, all horizons, CSV download</span>
+          <span className="font-normal text-muted">— {spec.name}: every reading, all horizons, CSV download</span>
         </summary>
         <div className="space-y-4 border-t border-border p-4">
           <div>
@@ -779,7 +836,6 @@ function ShadowEvidenceSection() {
             </p>
           </div>
           <div className="flex flex-wrap gap-x-6 gap-y-2">
-            <PillGroup label="Period" options={DAY_OPTIONS} value={days} onChange={setDays} format={(d) => `${d}d`} />
             <PillGroup
               label="Minimum move"
               options={MIN_MOVE_OPTIONS}
@@ -795,12 +851,204 @@ function ShadowEvidenceSection() {
           ) : null}
           <div className="grid gap-5 xl:grid-cols-2">
             {INDICES.map(({ key, name }) => (
-              <ShadowIndexReport key={key} label={key} name={name} days={days} report={q.data?.indices[key]} />
+              <ShadowIndexReport
+                key={key}
+                label={mechanismLabel(mechanism, key)}
+                name={name}
+                days={days}
+                report={reportFor(key)}
+              />
             ))}
           </div>
         </div>
       </details>
     </section>
+  );
+}
+
+type FlipFilter = "all" | "bullish" | "bearish";
+
+function ClockIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-4" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
+function moveCell(move: number | null, right: boolean | null, missing: string | undefined) {
+  if (move == null) {
+    return <span className="text-faint">{missing === "day_end" ? "close" : "—"}</span>;
+  }
+  const tone = right ? "text-up" : "text-down";
+  return (
+    <span className={`tabular-nums ${tone}`} title={right ? "Right — paid for a trade" : "Not right"}>
+      {move > 0 ? "+" : ""}
+      {move.toFixed(1)} bps
+    </span>
+  );
+}
+
+/** "When it turned bullish / bearish": each flip, newest first, with the index 5 and 15 minutes on. */
+function FlipList({
+  label,
+  name,
+  days,
+  refetchInterval,
+}: {
+  label: SignalLabel;
+  name: string;
+  days: number;
+  refetchInterval?: false | (() => number);
+}) {
+  const [filter, setFilter] = useState<FlipFilter>("all");
+  const q = useQuery({
+    queryKey: [...INDEX_SIGNAL_FLIPS_QUERY_KEY, label, days],
+    queryFn: () => fetchIndexSignalFlips(label, days),
+    refetchInterval,
+  });
+  const flips = (q.data?.flips ?? []).filter((f) => filter === "all" || f.state === filter);
+  const counts = {
+    bullish: q.data?.flips.filter((f) => f.state === "bullish").length ?? 0,
+    bearish: q.data?.flips.filter((f) => f.state === "bearish").length ?? 0,
+  };
+  return (
+    <div className="min-w-0 rounded-[10px] border border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
+        <div className="text-xs font-semibold text-foreground">When {name} turned</div>
+        <div className="flex gap-1" role="group" aria-label={`Filter ${name} flips`}>
+          {(["all", "bullish", "bearish"] as FlipFilter[]).map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setFilter(f)}
+              aria-pressed={filter === f}
+              className={[
+                "rounded-full border px-2 py-0.5 text-hint font-medium transition",
+                filter === f ? "border-accent text-accent" : "border-border text-muted hover:text-foreground",
+              ].join(" ")}
+            >
+              {f === "all" ? "All" : f === "bullish" ? `Bullish · ${counts.bullish}` : `Bearish · ${counts.bearish}`}
+            </button>
+          ))}
+        </div>
+      </div>
+      {q.error ? (
+        <p className="px-3 py-2 text-xs text-down">
+          {q.error instanceof Error ? q.error.message : "Could not load the flips"}
+        </p>
+      ) : !q.data ? (
+        <p className="px-3 py-2 text-xs text-muted">Loading…</p>
+      ) : flips.length === 0 ? (
+        <p className="px-3 py-2 text-xs text-muted">No turns in the last {days}d.</p>
+      ) : (
+        <div className="max-h-72 overflow-auto">
+          <table className="min-w-full text-left text-table">
+            <thead className="sticky top-0 bg-panel">
+              <tr className="text-hint text-muted">
+                <th className="px-3 py-1.5 font-medium">When</th>
+                <th className="px-3 py-1.5 font-medium">Turned</th>
+                <th className="px-3 py-1.5 text-right font-medium">Level</th>
+                <th className="px-3 py-1.5 text-right font-medium">+5 min</th>
+                <th className="px-3 py-1.5 text-right font-medium">+15 min</th>
+              </tr>
+            </thead>
+            <tbody>
+              {flips.map((f) => (
+                <tr key={`${f.ts}-${f.state}`} className="border-t border-border-soft">
+                  <td className="whitespace-nowrap px-3 py-1.5 font-mono text-muted">{f.time_ist.slice(5, 16)}</td>
+                  <td className={`px-3 py-1.5 font-semibold ${f.state === "bullish" ? "text-up" : "text-down"}`}>
+                    {f.state === "bullish" ? "Bullish" : "Bearish"}
+                  </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {f.level == null ? "—" : f.level.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-3 py-1.5 text-right">{moveCell(f.move_5m_bps, f.right_5m, f.missing_5m)}</td>
+                  <td className="px-3 py-1.5 text-right">{moveCell(f.move_15m_bps, f.right_15m, f.missing_15m)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {q.data ? (
+        <p className="border-t border-border px-3 py-1.5 text-hint text-faint">
+          Right means the index moved the called way by at least {q.data.min_move_bps.toFixed(1)} bps — enough to pay
+          for a trade.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+const BACKTEST_DAYS = 180;
+
+/** The clock: replay stored history through this mechanism and judge it with the live test. */
+function ExpansionBacktestPanel({ days }: { days: number }) {
+  const [results, setResults] = useState<Partial<Record<IndexLabel, ExpansionBacktestResponse>>>({});
+  const run = useMutation({
+    mutationFn: async () => {
+      // One index at a time: the replay is CPU work on the API process, not a broker call.
+      const out: Partial<Record<IndexLabel, ExpansionBacktestResponse>> = {};
+      for (const { key } of INDICES) out[key] = await runExpansionBacktest(key, BACKTEST_DAYS);
+      return out;
+    },
+    onSuccess: setResults,
+  });
+  const hasResults = Object.keys(results).length > 0;
+  return (
+    <div className="space-y-3 rounded-[10px] border border-border-soft bg-panel2 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="max-w-2xl text-xs leading-relaxed text-muted">
+          <strong className="font-semibold text-foreground">Backtestable.</strong> This mechanism needs no order book,
+          so it can be replayed on up to {BACKTEST_DAYS} days of stored ICICI history and judged by the same test.
+          The replay reads the local cache only and spends no ICICI calls.
+        </p>
+        <button
+          type="button"
+          onClick={() => run.mutate()}
+          disabled={run.isPending}
+          aria-busy={run.isPending}
+          title={`Backtest on the last ${BACKTEST_DAYS} days of stored history`}
+          className="app-btn-outline inline-flex items-center gap-1.5 rounded-[9px] px-3 py-1.5 text-xs"
+        >
+          <ClockIcon />
+          <AsyncLabelSpan busy={run.isPending} idleLabel="Backtest" busyLabel="Replaying…" />
+        </button>
+      </div>
+      {run.error ? (
+        <p className="text-xs text-down">{run.error instanceof Error ? run.error.message : "Backtest failed"}</p>
+      ) : null}
+      {hasResults ? (
+        <div className="grid gap-5 xl:grid-cols-2">
+          {INDICES.map(({ key, name }) => {
+            const res = results[key];
+            if (!res) return null;
+            const sm = res.summary;
+            return (
+              <div key={key} className="min-w-0 space-y-3">
+                {sm.verdict === "no_data" ? (
+                  <p className="rounded-[8px] border border-border px-3 py-2 text-xs text-muted">
+                    <strong className="font-semibold text-foreground">{name}:</strong> {sm.message}
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs text-muted">
+                      <strong className="font-semibold text-foreground">{name} backtest</strong> · {sm.days} sessions
+                      {sm.from ? ` (${sm.from} → ${sm.to})` : ""} · {sm.readings.toLocaleString("en-IN")} readings ·{" "}
+                      {sm.directional_pct}% directional
+                    </p>
+                    <ReadinessCard name={`${name} · backtest`} readiness={res.readiness ?? undefined} />
+                    <FlipList label={`${key}:expansion:backtest`} name={`${name} (backtest)`} days={Math.max(days, BACKTEST_DAYS + 1)} />
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -998,7 +1246,7 @@ function ShadowIndexReport({
   days,
   report,
 }: {
-  label: IndexLabel;
+  label: SignalLabel;
   name: string;
   days: number;
   report: ShadowReport | undefined;

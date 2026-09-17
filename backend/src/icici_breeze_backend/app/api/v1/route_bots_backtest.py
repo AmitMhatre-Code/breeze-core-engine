@@ -1,8 +1,9 @@
-"""Bots -> Backtest (docs/bots-scalping-plan.md section 8.11).
+"""Bot backtests: the API behind the clock icon on each bot card (design-decisions #35, #36).
 
-Static paths under `/bots/backtest/...`, each enumerated in `next.config.js` and both nginx
-confs, for the reason `route_bots` gives: the page itself is `/bots/backtest`, which no
-rewrite matches, so the page and API namespaces stay disjoint.
+`/backtest/start` and `/backtest/job` are what the app uses: one period in, a replay on real
+prices out, recorded as an Activity row. The remaining routes (overview, probe, fetch, replay,
+compare) served the retired `/bots/backtest` page and are kept for the operator and the tests;
+nothing in the app calls them. Each is enumerated in `next.config.js` and both nginx confs.
 
 Nothing here places an order, so read-only licence mode does not block it. Fetching is
 refused in market hours and off the live broker; see `services/bots/backtest_jobs.py`.
@@ -40,6 +41,15 @@ class ReplayRequest(RangeRequest):
     model: bool = False
 
 
+class StartRequest(BaseModel):
+    """The card's backtest dialog: which bot, and a period. Nothing else is asked (#36)."""
+
+    bot: BotKey
+    period: Literal["last_day", "last_week", "last_month", "custom"]
+    from_date: Optional[datetime.date] = None
+    to_date: Optional[datetime.date] = None
+
+
 def _range(req: RangeRequest) -> tuple[datetime.date, datetime.date]:
     try:
         return service.clip_range(req.from_date, req.to_date, now_ist().date())
@@ -73,6 +83,37 @@ def overview(ctx: RequestContext = Depends(get_request_context)):
         "coverage": service.coverage_summary(),
         "saved": service.saved_summary(ctx.user_id),
         "runs": store.list_runs(ctx.user_id),
+    }
+
+
+@router.post("/backtest/start")
+def start(req: StartRequest, ctx: RequestContext = Depends(get_request_context)):
+    """Fetch what is missing within today's call budget, replay on real prices, and record the
+    result as an Activity row with its own audit trail."""
+    return _start(
+        lambda: jobs.start_bot_backtest(ctx.user_id, req.bot, req.period, req.from_date, req.to_date)
+    )
+
+
+@router.get("/backtest/job")
+def job(ctx: RequestContext = Depends(get_request_context)):
+    """The running (or last) job, polled by the card while a backtest runs. Also closes any
+    backtest row a restart orphaned, since only a live job may leave one `running`."""
+    from icici_breeze_backend.app.repositories import bots as repo
+
+    if not jobs.is_running():
+        repo.reap_orphaned_backtests()
+    jobs.ensure_store()
+    today = now_ist().date()
+    return {
+        "job": jobs.state(),
+        "budget": {
+            "daily_calls": store.DAILY_CALL_BUDGET,
+            "spent_today": store.calls_spent(today),
+            "remaining_today": store.calls_remaining(today),
+        },
+        "market_hours_block": jobs.market_hours_reason(),
+        "live": jobs.broker_live(),
     }
 
 

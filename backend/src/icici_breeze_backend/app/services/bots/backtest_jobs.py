@@ -318,3 +318,220 @@ def start_replay(
             raise
 
     return _start("replay", target, bot=bot, run_id=run_id)
+
+
+def start_bot_backtest(
+    user_id: str,
+    bot: str,
+    period: str,
+    from_date: Optional[datetime.date] = None,
+    to_date: Optional[datetime.date] = None,
+) -> dict[str, Any]:
+    """The card's clock: one choice of period, and everything else follows (#35, #36).
+
+    1. **Fetch what is missing, within today's budget.** Only when the broker is live, outside
+       market hours, and `backtest_store.DAILY_CALL_BUDGET` has calls left. Anything that stops
+       the fetch -- the budget, the market opening, a cancel -- is recorded as a note, never as a
+       failure: the replay then runs on what is cached and reports the gap (the user's rule).
+    2. **Size from today's margin** for the fly and Bot 2, as the live bots do.
+    3. **Replay on real ICICI prices only.** The Black-Scholes path is not offered here.
+    4. **Record it where live runs are recorded**: an Activity row (`trigger="backtest"`, never
+       counted by a live guard -- see `repositories/bots.LIVE_RUNS_ONLY`) and a run-scoped audit
+       trail, sharing one id with the stored run so the row opens its trades.
+    """
+    from icici_breeze_backend.app.repositories import bots as repo
+    from icici_breeze_backend.audit import bot_audit
+
+    if bot not in service.BOT_TYPES:
+        raise ValueError(f"{bot!r} has no backtest.")
+    if period not in service.PERIODS:
+        raise ValueError(f"Unknown period {period!r}.")
+    ensure_store()
+    config = service.saved_config(bot, user_id)
+    if bot == "expiry" and not service.expiry_scope(config):
+        raise ValueError("No index is enabled in Bot 2's settings, so there is nothing to backtest.")
+    if bot in ("fly", "expiry") and not broker_live():
+        raise ValueError(
+            f"{service.BOT_LABELS[bot]} is sized from one lot's margin at today's levels, which "
+            f"needs ICICI's margin calculator. This instance is in '{cfg.ICICI_BROKER_MODE}' mode."
+        )
+    now = now_ist()
+    hol = service.holidays()
+    start, end = service.resolve_period(period, from_date, to_date, now, hol)
+    bot_type = service.BOT_TYPES[bot]
+    with _lock:
+        if _thread is not None and _thread.is_alive():
+            raise Busy("A backtest is already running. Wait for it, or stop it.")
+
+    run_id = repo.start_run(user_id, bot_type, "backtest")
+    period_text = (
+        f"{service.PERIOD_LABELS[period]} · {start}" if start == end
+        else f"{service.PERIOD_LABELS[period]} · {start} to {end}"
+    )
+    run: dict[str, Any] = {
+        "id": run_id,
+        "user_id": user_id,
+        "bot": bot,
+        "created_at": now.isoformat(timespec="seconds"),
+        "status": "running",
+        "params": {
+            "bot": bot,
+            "label": service.BOT_LABELS[bot],
+            "period": period,
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "model": False,
+            "config": config.model_dump(mode="json"),
+        },
+    }
+    store.save_run(run)
+    trail: list[dict[str, Any]] = [
+        {
+            "event": "backtest_started",
+            "at": now.isoformat(timespec="seconds"),
+            "run_id": run_id,
+            "bot_type": bot_type,
+            "period": period,
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "config": run["params"]["config"],
+        }
+    ]
+
+    def note(text: str, **extra: Any) -> None:
+        _log(text)
+        trail.append({"event": "note", "at": now_ist().isoformat(timespec="seconds"), "text": text, **extra})
+
+    def target() -> None:
+        notes: list[str] = []
+        calls = 0
+        try:
+            # 1. fetch within budget
+            remaining = store.calls_remaining(now.date())
+            block = market_hours_reason()
+            indices = service.indices_for(bot, config)
+            if not broker_live():
+                notes.append(
+                    f"Nothing fetched: this instance is in '{cfg.ICICI_BROKER_MODE}' mode, so only "
+                    "data already cached was replayed."
+                )
+            elif block:
+                notes.append(f"Nothing fetched: {block} Replayed on cached data only.")
+            elif remaining <= 0:
+                notes.append(
+                    f"Nothing fetched: today's backtest budget of {store.DAILY_CALL_BUDGET} ICICI "
+                    "calls is spent. Replayed on cached data only."
+                )
+            else:
+                note(f"Fetching missing data, up to {remaining} calls…")
+                with _broker_scope(user_id):
+                    fetcher = _fetcher(user_id)
+                    fetcher.max_calls = remaining
+                    try:
+                        service.fetch_underlying(fetcher, bot, start, end, indices)
+                        outcome = service.backfill(
+                            fetcher, bot, start=start, end=end, config=config, log=fetcher.log
+                        )
+                        notes.append(outcome["message"])
+                    except Stopped as exc:
+                        notes.append(f"Fetch stopped early: {exc} Replayed on what was cached.")
+                    finally:
+                        calls = fetcher.calls
+                        store.add_calls(now.date(), calls)
+            for text in notes:
+                note(text)
+
+            # 2. size from today's margin
+            lots, scopes = None, None
+            if bot in ("fly", "expiry"):
+                from icici_breeze_backend.app.services.processor import processor
+
+                note("Pricing one lot's margin at today's levels…")
+                with _broker_scope(user_id):
+                    sizing = service.price_lots(bot, config, user_id, processor())
+                run["params"]["sizing"] = sizing["describe"]
+                lots, scopes = sizing.get("lots"), sizing.get("scopes")
+                note(sizing["describe"])
+
+            # 3. replay on real prices
+            note(f"Replaying {service.BOT_LABELS[bot]}, {start} to {end}, on real ICICI prices…")
+            book = OptionBook()
+            try:
+                result = service.replay(
+                    bot, start=start, end=end, config=config, pricer=RealPricer(book),
+                    lots=lots, scopes=scopes, holidays_=hol,
+                )
+            except service.NoCachedData as exc:
+                raise service.NoCachedData(
+                    f"{exc} " + (" ".join(notes) if notes else "")
+                ) from exc
+            if book.needs:
+                store.add_needs(book.needs)
+            summary = result.summary()
+            summary["option_windows_missing"] = len(book.needs)
+            summary["calls_spent"] = calls
+            summary["notes"] = notes
+            trades = service.trade_rows(result)
+            run.update(status="completed", summary=summary, trades=trades)
+            store.save_run(run)
+
+            # 4. record
+            for trade in trades:
+                trail.append({"event": "trade", **trade})
+            trail.append({"event": "backtest_finished", "at": now_ist().isoformat(timespec="seconds"), "summary": summary})
+            bot_audit.write_backtest_audit(user_id, bot_type, run_id, trail)
+
+            waiting = int(summary.get("days_awaiting_data") or 0)
+            net = float(summary.get("net_pnl") or 0.0)
+            cycles = int(summary.get("cycles") or 0)
+            reason_text = (
+                f"{period_text}: {cycles} trade(s), net ₹{net:,.0f} after costs."
+                + (f" {waiting} day(s) had no price data and were skipped." if waiting else "")
+            )
+            repo.finish_run(
+                run_id,
+                status="completed",
+                reason_code="backtest_gaps" if waiting else "backtest_complete",
+                reason_text=reason_text,
+                detail={
+                    "backtest_run_id": run_id,
+                    "period": period,
+                    "from": start.isoformat(),
+                    "to": end.isoformat(),
+                    "summary": summary,
+                },
+            )
+            store.enforce_cache_cap()
+            _finish("completed", message=reason_text, run_id=run_id, calls=calls)
+        except Exception as exc:
+            run.update(status="failed", error=str(exc))
+            store.save_run(run)
+            trail.append({"event": "backtest_failed", "at": now_ist().isoformat(timespec="seconds"), "error": str(exc)})
+            try:
+                bot_audit.write_backtest_audit(user_id, bot_type, run_id, trail)
+            except OSError:
+                _logger.warning("backtest: could not write the audit trail for %s", run_id)
+            repo.finish_run(
+                run_id,
+                status="failed",
+                reason_code="backtest_failed",
+                reason_text=f"{period_text}: {exc}",
+                detail={"backtest_run_id": run_id, "period": period, "from": start.isoformat(), "to": end.isoformat()},
+            )
+            raise
+
+    try:
+        return _start(
+            "backtest", target, bot=bot, run_id=run_id,
+            from_date=start.isoformat(), to_date=end.isoformat(), period=period,
+        )
+    except Busy:
+        # Lost a race to another job between the check above and here: close the row this
+        # call opened rather than leave a replay that never ran looking as if it is running.
+        repo.finish_run(
+            run_id, status="skipped", reason_code="backtest_busy",
+            reason_text="Another backtest was already running.",
+        )
+        run.update(status="failed", error="Another backtest was already running.")
+        store.save_run(run)
+        raise

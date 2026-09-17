@@ -75,6 +75,17 @@ def ensure_log_table(db_path: str | None = None) -> None:
             )
             """
         )
+        # Added 2026-09-16 (#33). The futures challenger publishes 0.5 * (ofi + aggressor);
+        # storing only the blend made its verdict unattributable to either half. Additive and
+        # idempotent because `shadow_log` owns this table outright and no migration touches it.
+        for ddl in (
+            "ALTER TABLE index_signal_log ADD COLUMN ofi REAL",
+            "ALTER TABLE index_signal_log ADD COLUMN aggressor REAL",
+        ):
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass  # already present
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_index_signal_log_label_ts "
             "ON index_signal_log (label, ts)"
@@ -95,6 +106,28 @@ def set_retention_days(days: int) -> None:
 
 def _retention_days() -> int:
     return _retention_days_setting
+
+
+def _flow_components(payload: dict[str, Any]) -> tuple[float | None, float | None]:
+    """The futures challenger's two halves, or (None, None) for anything else (#33).
+
+    `flow.snapshot` reports `components` as `{"order_flow": .., "aggressor": ..}` only for
+    `KIND_FUTURES`. The constituent challenger's map is keyed by ShortName and has no aggressor
+    half at all -- depth rooms carry no trade prints -- and `IndexSignalEngine` has no
+    `components` at all. Both keep NULL halves, which is the truth about them.
+    """
+    parts = payload.get("components")
+    if not isinstance(parts, dict):
+        return None, None
+    out: list[float | None] = []
+    for key in ("order_flow", "aggressor"):
+        try:
+            value = float(parts[key])  # type: ignore[arg-type]
+        except (KeyError, TypeError, ValueError):
+            out.append(None)
+        else:
+            out.append(value if math.isfinite(value) else None)
+    return out[0], out[1]
 
 
 def record(
@@ -133,6 +166,7 @@ def record(
         ready = path in _ready_paths
     if not ready:
         ensure_log_table(path)
+    ofi, aggressor = _flow_components(payload)
     rows = [
         (
             label,
@@ -144,14 +178,16 @@ def record(
             payload.get("raw_wobi"),
             payload.get("coverage"),
             spot,
+            ofi,
+            aggressor,
         )
         for kind in kinds
     ]
     with sqlite3.connect(path) as conn:
         conn.executemany(
             "INSERT INTO index_signal_log "
-            "(label, ts, kind, state, reason, signal, raw_wobi, coverage, spot) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(label, ts, kind, state, reason, signal, raw_wobi, coverage, spot, ofi, aggressor) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         today = datetime.fromtimestamp(ts, IST).date().isoformat()
@@ -165,6 +201,31 @@ def record(
     return kinds
 
 
+def purge_label(label: str, db_path: str | None = None) -> int:
+    """Delete every row for one label. Returns how many went.
+
+    Only a *replay* label (`<index>:expansion:backtest`) should ever be passed here: a backtest
+    re-run must start from an empty series or its second run would score the first run's rows
+    as well. Live evidence is never purged this way -- it ages out on the retention setting,
+    which is what makes the readiness gate's "10 sessions" mean ten real ones.
+    """
+    if not label.endswith(":backtest"):
+        raise ValueError(
+            f"refusing to purge {label!r}: only replay labels may be cleared wholesale"
+        )
+    path = db_path or _db_path()
+    ensure_log_table(path)
+    with _lock:
+        # The transition and once-a-minute guards are in-process state keyed by label. Leaving
+        # them behind would make a re-run drop its first sample and miss its first transition.
+        _last_state.pop(label, None)
+        _last_minute.pop(label, None)
+    with sqlite3.connect(path) as conn:
+        cursor = conn.execute("DELETE FROM index_signal_log WHERE label = ?", (label,))
+        conn.commit()
+        return int(cursor.rowcount or 0)
+
+
 def load_rows(label: str, since_ts: float, db_path: str | None = None) -> list[dict[str, Any]]:
     """Oldest first; rows written by one publish keep their write order (transition, then
     sample), which is what `_flips` relies on to see the state a transition left."""
@@ -173,7 +234,8 @@ def load_rows(label: str, since_ts: float, db_path: str | None = None) -> list[d
     with sqlite3.connect(path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT label, ts, kind, state, reason, signal, raw_wobi, coverage, spot "
+            "SELECT label, ts, kind, state, reason, signal, raw_wobi, coverage, spot, "
+            "ofi, aggressor "
             "FROM index_signal_log WHERE label = ? AND ts >= ? ORDER BY ts, id",
             (label, since_ts),
         ).fetchall()
@@ -346,6 +408,46 @@ def _flips(ordered: list[dict[str, Any]]) -> list[tuple[float, str, float | None
             out.append((float(r["ts"]), state, _level(r)))
         prev = state
     return out
+
+
+def flip_list(
+    label: str,
+    *,
+    days: int,
+    min_move_bps: float | None = None,
+    db_path: str | None = None,
+    now: float | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Each time the signal turned bullish or bearish, newest first, with what the index did
+    5 and 15 minutes later -- the plain list behind the "when it turned" view on Settings.
+
+    A flip is `_flips`' definition, so this list and the readiness verdict count the same
+    events. `right` is judged against `min_move_bps` (the breakeven when omitted), the same bar
+    the verdict uses: a move the called way that would not pay for a trade is not a right call.
+    """
+    since = (time.time() if now is None else now) - days * 86400.0
+    rows = load_rows(label, since, db_path)
+    prices = _PriceSeries(rows, _FORWARD_TOLERANCE_SECONDS)
+    bar = min_move_bps if min_move_bps is not None else _breakeven_move(label, rows)[1]
+    out: list[dict[str, Any]] = []
+    for ts, state, level in _flips(rows):
+        entry: dict[str, Any] = {
+            "ts": ts,
+            "time_ist": datetime.fromtimestamp(ts, IST).strftime("%Y-%m-%d %H:%M:%S"),
+            "state": state,
+            "level": level,
+        }
+        want = 1.0 if state == "bullish" else -1.0
+        for horizon, tag in ((300, "5m"), (900, "15m")):
+            later, move, why = prices.forward(ts, level, horizon)
+            entry[f"move_{tag}_bps"] = None if move is None else round(move, 2)
+            entry[f"right_{tag}"] = None if move is None else (move * want >= bar)
+            if why:
+                entry[f"missing_{tag}"] = why
+        out.append(entry)
+    out.reverse()
+    return {"label": label, "days": days, "min_move_bps": round(bar, 2), "flips": out[:limit]}
 
 
 def score(
@@ -598,6 +700,9 @@ def readings_csv(
     """The minute readings behind the report, for Excel or a charting tool: one row per sample
     with the signal, the index level, and the index 1/5/15 minutes later with the move in bps.
 
+    `ofi` and `aggressor` are the futures challenger's two halves (#33) and are blank for every
+    other label -- the blended `signal` alone could not say which half carried the reading.
+
     An outcome is blank where `score` has none -- the last 5 minutes of a session have no +5,
     the last 15 no +15, and a reading with no index level has none at all. IST times are written
     as `YYYY-MM-DD HH:MM:SS`, which Excel reads as a date-time."""
@@ -606,7 +711,18 @@ def readings_csv(
     prices = _PriceSeries(rows, _FORWARD_TOLERANCE_SECONDS)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    header = ["time_ist", "state", "reason", "signal", "raw_wobi", "coverage", f"{label}_level"]
+    header = [
+        "time_ist",
+        "state",
+        "reason",
+        "signal",
+        "raw_wobi",
+        # The challenger's halves (#33); blank for W-OBI and for the constituent challenger.
+        "ofi",
+        "aggressor",
+        "coverage",
+        f"{label}_level",
+    ]
     for _h, tag in _CSV_HORIZONS:
         header += [f"{label}_after_{tag}", f"move_{tag}_bps"]
     writer.writerow(header)
@@ -621,6 +737,8 @@ def readings_csv(
             r.get("reason") or "",
             _csv_number(r.get("signal"), 4),
             _csv_number(r.get("raw_wobi"), 4),
+            _csv_number(r.get("ofi"), 4),
+            _csv_number(r.get("aggressor"), 4),
             _csv_number(r.get("coverage"), 4),
             _csv_number(level, 2),
         ]

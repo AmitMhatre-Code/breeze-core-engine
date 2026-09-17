@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { BacktestButton } from "@/components/bots/BacktestButton";
+import { LastBacktestRow } from "@/components/bots/LastBacktestRow";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotRunSheet } from "@/components/bots/BotRunSheet";
 import { BotStatusRow } from "@/components/bots/BotStatusRow";
@@ -307,6 +309,7 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
             >
               <PlayIcon />
             </button>
+            <BacktestButton botType={bot.bot_type} className={HEADER_ICON_BTN} />
             <button
               type="button"
               aria-label={`${meta.title} settings`}
@@ -336,6 +339,7 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
                 <dd className="m-0 font-mono tabular-nums text-text">{value}</dd>
               </div>
             ))}
+            <LastBacktestRow botType={bot.bot_type} />
           </dl>
         </div>
 

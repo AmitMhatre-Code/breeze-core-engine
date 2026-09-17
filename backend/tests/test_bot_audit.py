@@ -25,6 +25,14 @@ def audit_root(tmp_path, monkeypatch):
     root = tmp_path / "data"
     root.mkdir()
     monkeypatch.setattr(bot_audit.cfg, "DATA_PATH", str(root) + os.sep)
+    # Retention prunes against the wall clock while every record here is dated September 2026,
+    # so an unpinned clock silently deletes the older fixtures as the real date moves on: this
+    # file began failing on 2026-09-16, the day the 8th fell outside the 7-day window. Pinned to
+    # the newest day the tests use, so nothing they write is ever already expired. The tests
+    # that exercise retention itself pass `today=` explicitly and are unaffected.
+    monkeypatch.setattr(
+        bot_audit, "now_ist", lambda: datetime.datetime(2026, 9, 9, 17, 0, tzinfo=IST)
+    )
     bot_audit._last_signature.clear()
     bot_audit._last_pruned.clear()
     return str(root / "bots-audit")

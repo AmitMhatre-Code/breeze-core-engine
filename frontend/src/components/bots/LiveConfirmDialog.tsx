@@ -51,6 +51,7 @@ export function LiveConfirmDialog({
   // a stray Enter takes.
   const cancelRef = useRef<HTMLButtonElement>(null);
   const days = evidence?.sessions ?? [];
+  const backtest = evidence?.backtest ?? null;
 
   return (
     <Modal
@@ -132,6 +133,63 @@ export function LiveConfirmDialog({
             <p className="mt-1.5 text-hint text-faint">
               The simulation day produced no completed cycles, so there is no P&amp;L record to
               judge these settings on yet.
+            </p>
+          )}
+        </div>
+
+        {/* The other half of the evidence. A Simulation day proves the bot runs end to end on
+            live plumbing and real fills; only a replay over many days says anything about edge.
+            Neither is required by the gate — both are here so the judgement is made on both. */}
+        <div>
+          <p className="text-hint text-faint">Backtest on these exact settings:</p>
+          {backtest ? (
+            <div className="mt-1.5 rounded border border-border bg-panel2 px-2.5 py-2 text-hint">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="font-mono tabular-nums text-text">
+                  {backtest.from_date} → {backtest.to_date}
+                </span>
+                <span className={`font-mono tabular-nums ${moneyToneClass(backtest.net_pnl)}`}>
+                  {formatIndianMoneyCompact(backtest.net_pnl)}
+                </span>
+              </div>
+              <div className="mt-1 text-faint">
+                {backtest.days_replayed} day{backtest.days_replayed === 1 ? "" : "s"} ·{" "}
+                {backtest.cycles} trade{backtest.cycles === 1 ? "" : "s"}
+                {backtest.win_rate_pct !== null ? ` · ${backtest.win_rate_pct}% won` : ""} · after{" "}
+                {formatIndianMoneyCompact(backtest.friction)} of friction
+              </div>
+              {/* Model runs price every strike off Black-Scholes, so they describe the rules,
+                  not what the market would have filled. */}
+              {backtest.price_source.toLowerCase().includes("model") && (
+                <div className="mt-1 text-amber-accent">
+                  Model-priced run — evidence about the rules, not about fills.
+                </div>
+              )}
+              {backtest.days_awaiting_data > 0 && (
+                <div className="mt-1 text-amber-accent">
+                  {backtest.days_awaiting_data} day
+                  {backtest.days_awaiting_data === 1 ? " is" : "s are"} missing option prices and
+                  not in these totals.
+                </div>
+              )}
+              {/* The backtest has no bid or ask — its fills use a modelled spread — so the only
+                  evidence that its prices are achievable is a day checked against Simulation. */}
+              <div className="mt-1 text-faint">
+                {backtest.compare_median_entry_gap !== null ? (
+                  <>
+                    Fills checked against Simulation on {backtest.compare_day}: median entry gap ₹
+                    {backtest.compare_median_entry_gap.toFixed(2)} a unit
+                    {backtest.compare_pairs ? ` over ${backtest.compare_pairs} matched trades` : ""}.
+                  </>
+                ) : (
+                  "Fills have not been checked against a Simulation day, so its entry prices are a modelled spread, not observed ones."
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="mt-1.5 text-hint text-faint">
+              None. The gate does not require one — but a single Simulation day says whether this
+              bot runs, not whether it makes money.
             </p>
           )}
         </div>

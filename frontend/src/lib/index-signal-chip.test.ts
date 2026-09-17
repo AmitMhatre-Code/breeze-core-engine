@@ -59,3 +59,40 @@ describe("indexSignalChip", () => {
     expect(chip.visible && chip.title).toContain("built-in seed, 2026-09-10");
   });
 });
+
+describe("indexSignalChip with the volume-expansion mechanism", () => {
+  const expansion = (o: Partial<IndexSignalSummary> = {}) =>
+    summary({
+      mechanism: "expansion",
+      signal: 0.91,
+      coverage: 1,
+      thresholds: { price_percentile: 0.8, volume_percentile: 0.8 },
+      weights_source: null,
+      weights_as_of: null,
+      ...o,
+    });
+
+  it("does not crash on percentile thresholds and does not call it an order-book imbalance", () => {
+    const chip = indexSignalChip("NIFTY", expansion());
+    expect(chip.visible).toBe(true);
+    if (!chip.visible) return;
+    expect(chip.word).toBe("BULL");
+    expect(chip.title).toContain("volume-confirmed expansion +0.91");
+    expect(chip.title).toContain("80th percentile");
+    expect(chip.title).not.toContain("order-book");
+    expect(chip.title).not.toContain("coverage");
+  });
+
+  it("explains an expansion warm-up in terms of bars, not order books", () => {
+    const chip = indexSignalChip("NIFTY", expansion({ state: "unavailable", reason: "warming_up", signal: null }));
+    if (!chip.visible) throw new Error("expected visible");
+    expect(chip.title).toContain("one-minute bars");
+    expect(chip.title).not.toContain("order books");
+  });
+
+  it("names a rollover exclusion rather than calling it no reading", () => {
+    const chip = indexSignalChip("NIFTY", expansion({ state: "unavailable", reason: "excluded_session", signal: null }));
+    if (!chip.visible) throw new Error("expected visible");
+    expect(chip.title).toContain("rollover");
+  });
+});

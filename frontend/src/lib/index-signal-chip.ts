@@ -18,6 +18,9 @@ export type IndexSignalChip =
 
 const REASON_TEXT: Record<string, string> = {
   warming_up: "warming up — the smoothing needs a few seconds of live order books",
+  no_bars: "no futures bars have arrived yet",
+  no_open_interest: "the futures feed is not carrying open interest",
+  excluded_session: "futures rollover — open interest moves for mechanical reasons on these days",
   low_coverage: "too little of the index's weight has a live order book",
   market_closed: "market closed",
   stale: "the signal feed has stalled",
@@ -54,8 +57,13 @@ export function indexSignalChip(
 ): IndexSignalChip {
   if (!summary || summary.reason === "disabled") return { visible: false };
 
+  const expansion = summary.mechanism === "expansion";
+
   if (summary.state === "unavailable") {
-    const why = REASON_TEXT[summary.reason ?? ""] ?? "no reading";
+    const why =
+      expansion && summary.reason === "warming_up"
+        ? "warming up — needs enough one-minute bars to judge what is unusual today"
+        : (REASON_TEXT[summary.reason ?? ""] ?? "no reading");
     return {
       visible: true,
       state: "unavailable",
@@ -68,13 +76,19 @@ export function indexSignalChip(
 
   const d = DIRECTIONAL[summary.state];
   const parts = [`${label} direction signal: ${d.name}`];
+  const t = summary.thresholds;
   if (summary.signal != null) {
-    const thresholds = summary.thresholds
-      ? ` (enter ±${summary.thresholds.enter.toFixed(2)}, exit ±${summary.thresholds.exit.toFixed(2)})`
-      : "";
-    parts.push(`order-book imbalance ${signed(summary.signal)}${thresholds}`);
+    if (expansion) {
+      const bar = t && "price_percentile" in t ? ` (fires above the ${Math.round(t.price_percentile * 100)}th percentile)` : "";
+      parts.push(`volume-confirmed expansion ${signed(summary.signal)}${bar}`);
+    } else {
+      const thresholds =
+        t && "enter" in t ? ` (enter ±${t.enter.toFixed(2)}, exit ±${t.exit.toFixed(2)})` : "";
+      parts.push(`order-book imbalance ${signed(summary.signal)}${thresholds}`);
+    }
   }
-  if (summary.coverage != null) parts.push(`coverage ${Math.round(summary.coverage * 100)}%`);
+  // Expansion's coverage is not a share of index weight, so it is not shown as one.
+  if (summary.coverage != null && !expansion) parts.push(`coverage ${Math.round(summary.coverage * 100)}%`);
   const note = weightsNote(summary);
   if (note) parts.push(note);
   return {

@@ -400,7 +400,7 @@ export type BotRun = {
   /** `session` is the scalpers': one row covering a whole trading day, with its round
    *  trips in `bot_cycles` beneath it — a different unit of work, not a fourth way to
    *  start a run. */
-  trigger: "schedule" | "manual" | "session_arrival" | "session" | "telegram";
+  trigger: "schedule" | "manual" | "session_arrival" | "session" | "telegram" | "backtest";
   status: BotRunStatus;
   reason_code: string | null;
   reason_text: string | null;
@@ -409,7 +409,8 @@ export type BotRun = {
   finished_at: string | null;
   /** Audit file covering this run's trading *day*, or null once it ages out of retention.
    *  One per bot per day, so a day fragmented across many interrupted session rows still
-   *  opens one continuous record. */
+   *  opens one continuous record. For a `backtest` row it is that replay's own trail instead,
+   *  downloaded from a different route (design-decisions #35). */
   audit_log: string | null;
 };
 
@@ -493,6 +494,25 @@ export type PaperEvidenceDay = {
   friction: number;
 };
 
+/** The latest backtest on the settings being armed. Never part of the gate: it is the other
+ *  half of the picture, because one Simulation day says nothing about edge. */
+export type BacktestEvidence = {
+  run_id: string;
+  created_at: string;
+  from_date: string | null;
+  to_date: string | null;
+  price_source: string;
+  days_replayed: number;
+  days_awaiting_data: number;
+  cycles: number;
+  win_rate_pct: number | null;
+  net_pnl: number;
+  friction: number;
+  compare_day: string | null;
+  compare_median_entry_gap: number | null;
+  compare_pairs: number | null;
+};
+
 export type LiveEligibility = {
   bot_type: BotType;
   unlocked: boolean;
@@ -506,6 +526,7 @@ export type LiveEligibility = {
   friction: number;
   sessions: PaperEvidenceDay[];
   blocked_reason: string | null;
+  backtest: BacktestEvidence | null;
 };
 
 /** Whether this scalper may be armed Live, and the paper record behind that answer.

@@ -202,15 +202,32 @@ STRATEGY_RIGHTS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _chain_rows(proc: Any, user_id: str, index_code: str, exchange: str, expiry: str, right: str):
+def _side(right: str) -> str:
+    return "CE" if right == cfg.CALL else "PE"
+
+
+def _chain_side(
+    proc: Any, user_id: str, index_code: str, exchange: str, expiry: str, right: str
+) -> tuple[list[dict], Optional[str]]:
+    """One chain side's rows, or why there are none -- the source's own miss text included,
+    so a bhavcopy miss and a REST-fallback miss don't read the same in the run log."""
     from icici_breeze_backend.app.services.quote_source_router import (
         fetch_chain_side_icici_response,
     )
 
     chain = fetch_chain_side_icici_response(proc, user_id, index_code, exchange, expiry, right)
-    if (chain or {}).get("Status") != 200 or not chain.get("Success"):
-        return []
-    return [r for r in chain["Success"] if isinstance(r, dict)]
+    if not isinstance(chain, dict):
+        return [], "chain fetch returned nothing"
+    if chain.get("Status") != 200:
+        return [], f"chain fetch status {chain.get('Status')}: {chain.get('Error') or 'no error text'}"
+    rows = [r for r in (chain.get("Success") or []) if isinstance(r, dict)]
+    if not rows:
+        return [], "chain fetch returned no rows"
+    return rows, None
+
+
+def _chain_rows(proc: Any, user_id: str, index_code: str, exchange: str, expiry: str, right: str):
+    return _chain_side(proc, user_id, index_code, exchange, expiry, right)[0]
 
 
 def _spot_from(rows: list[dict]) -> float:
@@ -250,11 +267,35 @@ def margin_for_legs(
     `legs` is (right, strike, quantity). Returns None on any failure; callers treat that as
     "cannot price", never as zero.
     """
+    return price_margin_for_legs(
+        proc,
+        user_id,
+        exchange_code=exchange_code,
+        stock_code=stock_code,
+        expiry_display=expiry_display,
+        legs=legs,
+    )[0]
+
+
+def price_margin_for_legs(
+    proc: Any,
+    user_id: str,
+    *,
+    exchange_code: str,
+    stock_code: str,
+    expiry_display: str,
+    legs: list[tuple[str, float, int]],
+) -> tuple[Optional[float], Optional[str]]:
+    """`margin_for_legs`, plus *why* it failed: (span, None) or (None, reason).
+
+    Each failure mode gets its own wording so a skipped run says which one it was -- a
+    raised call, a broker refusal, and a zero SPAN need different fixes.
+    """
     from icici_breeze_backend.app.core.strike import strike_for_broker
     from icici_breeze_backend.app.services.processor import _expiry_display_to_api
 
     if not legs:
-        return None
+        return None, "no legs to price"
     try:
         breeze = proc.get_session_breeze(user_id)
         expiry_api = _expiry_display_to_api(expiry_display)
@@ -271,16 +312,23 @@ def margin_for_legs(
             for right, strike, quantity in legs
         ]
         out = breeze.margin_calculator(payload, exchange_code=exchange_code)
-    except Exception:  # noqa: BLE001 -- an unpriceable shape drops out of the shortlist
+    except Exception as exc:  # noqa: BLE001 -- an unpriceable shape drops out of the shortlist
         _logger.warning("bot2: margin_calculator failed for %s", stock_code, exc_info=True)
-        return None
-    if not isinstance(out, dict) or out.get("Status") != 200:
-        return None
+        return None, f"margin_calculator raised {type(exc).__name__}: {exc}"
+    if not isinstance(out, dict):
+        return None, f"margin_calculator returned {type(out).__name__}, not a response"
+    if out.get("Status") != 200:
+        return None, (
+            f"margin_calculator status {out.get('Status')}: {out.get('Error') or 'no error text'}"
+        )
+    raw = (out.get("Success") or {}).get("span_margin_required")
     try:
-        value = float((out.get("Success") or {}).get("span_margin_required") or 0)
+        value = float(raw or 0)
     except (TypeError, ValueError):
-        return None
-    return value if value > 0 else None
+        return None, f"margin_calculator span_margin_required unreadable: {raw!r}"
+    if value <= 0:
+        return None, f"margin_calculator span_margin_required was {raw!r}"
+    return value, None
 
 
 def build_candidates(
@@ -292,43 +340,78 @@ def build_candidates(
     expiry_display: str,
     leg_cfg: IndexWriterLeg,
     lot_size: int,
-) -> tuple[list[Candidate], Optional[str], float]:
-    """Price every shortlisted strategy for one lot. Returns (candidates, error, spot)."""
-    rights_needed = {r for s in leg_cfg.strategies for r in STRATEGY_RIGHTS.get(s, ())}
+) -> tuple[list[Candidate], Optional[str], float, Optional[str]]:
+    """Price every shortlisted strategy for one lot.
+
+    Returns (candidates, error, spot, reason_code). When nothing prices, `error` names every
+    leg and strategy that dropped out and why -- "could not be priced" on its own covered a
+    missing strike, an empty book and a refused margin call alike, and each needs a
+    different fix.
+    """
+    # CE before PE, so the same failure always reads the same way in the run log.
+    rights_needed = [
+        r for r in (cfg.CALL, cfg.PUT)
+        if any(r in STRATEGY_RIGHTS.get(s, ()) for s in leg_cfg.strategies)
+    ]
     rows_by_right: dict[str, list[dict]] = {}
     spot = 0.0
     for right in rights_needed:
-        rows = _chain_rows(proc, user_id, index_code, exchange, expiry_display, right)
+        rows, chain_error = _chain_side(proc, user_id, index_code, exchange, expiry_display, right)
         if not rows:
-            return [], "No option chain available.", 0.0
+            return (
+                [],
+                f"No option chain available ({_side(right)} {expiry_display}: {chain_error}).",
+                0.0,
+                ReasonCode.CHAIN_NOT_READY,
+            )
         rows_by_right[right] = rows
         spot = spot or _spot_from(rows)
     if spot <= 0:
-        return [], "No spot price available.", 0.0
+        counts = ", ".join(f"{len(rows_by_right[r])} {_side(r)}" for r in rights_needed)
+        return (
+            [],
+            f"No spot price available (no spot_price on any of {counts} chain rows).",
+            0.0,
+            ReasonCode.QUOTE_UNAVAILABLE,
+        )
 
     # Pick each side once and reuse it: a strangle's call leg is the same contract the
     # naked-CE candidate would sell, so pricing it twice would only invite them to drift.
     picked: dict[str, CandidateLeg] = {}
+    leg_failures: list[str] = []
     for right in rights_needed:
         safety = leg_cfg.safety_pct_ce if right == cfg.CALL else leg_cfg.safety_pct_pe
-        row = _pick_strike(rows_by_right[right], spot, right, safety)
+        rows = rows_by_right[right]
+        row = _pick_strike(rows, spot, right, safety)
         if row is None:
+            leg_failures.append(_no_strike_reason(rows, spot, right, safety))
             continue
         strike = float(parse_strike(row.get("strike_price")) or 0)
+        if strike <= 0:
+            leg_failures.append(
+                f"{_side(right)}: picked row has unreadable strike {row.get('strike_price')!r}"
+            )
+            continue
         bid = _bid(row)
         # Unlike Bot 1 there is no indicative fallback: this bot only runs during market
         # hours, so a missing bid means the book really is empty.
-        if strike <= 0 or bid <= 0:
+        if bid <= 0:
+            leg_failures.append(
+                f"{_side(right)} {strike:g}: no bid (best_bid_price "
+                f"{row.get('best_bid_price')!r}, ltp {row.get('ltp')!r})"
+            )
             continue
         picked[right] = CandidateLeg(right=right, strike_price=strike, bid=bid)
 
     candidates: list[Candidate] = []
+    margin_failures: list[str] = []
     for strategy in leg_cfg.strategies:
         rights = STRATEGY_RIGHTS.get(strategy, ())
         legs = [picked[r] for r in rights if r in picked]
         if len(legs) != len(rights):
+            # The missing leg is already explained once in `leg_failures`.
             continue
-        margin = margin_for_legs(
+        margin, margin_error = price_margin_for_legs(
             proc,
             user_id,
             exchange_code=exchange,
@@ -337,6 +420,10 @@ def build_candidates(
             legs=[(leg.right, leg.strike_price, lot_size) for leg in legs],
         )
         if margin is None:
+            strikes = " + ".join(f"{_side(l.right)} {l.strike_price:g}" for l in legs)
+            margin_failures.append(
+                f"{STRATEGY_LABEL.get(strategy, strategy)} ({strikes}): {margin_error}"
+            )
             continue
         candidates.append(
             Candidate(
@@ -347,8 +434,30 @@ def build_candidates(
             )
         )
     if not candidates:
-        return [], "None of the shortlisted strategies could be priced.", spot
-    return candidates, None, spot
+        detail = "; ".join(leg_failures + margin_failures) or "no strategies shortlisted"
+        # Only a pure margin-call failure is a margin lookup problem; any quote gap means
+        # the book itself was not tradeable.
+        code = (
+            ReasonCode.MARGIN_LOOKUP_FAILED
+            if margin_failures and not leg_failures
+            else ReasonCode.QUOTE_UNAVAILABLE
+        )
+        return [], f"None of the shortlisted strategies could be priced ({detail}).", spot, code
+    return candidates, None, spot, None
+
+
+def _no_strike_reason(rows: list[dict], spot: float, right: str, safety_pct: float) -> str:
+    """Why `_pick_strike` found nothing: the target and how far the listed strikes reach."""
+    target = spot * (1 + safety_pct / 100) if right == cfg.CALL else spot * (1 - safety_pct / 100)
+    strikes = sorted(
+        float(s) for s in (parse_strike(r.get("strike_price")) for r in rows) if s is not None
+    )
+    direction = "at or above" if right == cfg.CALL else "at or below"
+    reach = f"listed {strikes[0]:g}-{strikes[-1]:g}" if strikes else "no readable strikes"
+    return (
+        f"{_side(right)}: no strike {direction} {target:,.2f} "
+        f"(spot {spot:,.2f}, safety {safety_pct:g}%; {reach})"
+    )
 
 
 def choose(candidates: list[Candidate]) -> Optional[Candidate]:
@@ -473,7 +582,7 @@ def plan_index(
         result.error = "No lot size in the scrip master."
         return result
 
-    candidates, error, spot = build_candidates(
+    candidates, error, spot, error_code = build_candidates(
         proc,
         user_id,
         index_code,
@@ -484,11 +593,7 @@ def plan_index(
     )
     result.spot = round(spot, 2) if spot > 0 else None
     if error:
-        result.reason_code = (
-            ReasonCode.CHAIN_NOT_READY
-            if "chain" in error.lower()
-            else ReasonCode.QUOTE_UNAVAILABLE
-        )
+        result.reason_code = error_code
         result.error = error
         return result
 

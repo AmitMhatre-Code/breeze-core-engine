@@ -254,6 +254,11 @@ def _ensure_app_database() -> None:
             _reaped = _bots_repo.reap_stale_runs()
             if _reaped:
                 _logger.info("Closed %d interrupted bot run(s) from a previous process.", _reaped)
+            # Backtests are skipped by the live reaper (#35) and need their own; a backtest job
+            # is a thread of this process, so any still `running` at startup was cut off.
+            _reaped_bt = _bots_repo.reap_orphaned_backtests()
+            if _reaped_bt:
+                _logger.info("Closed %d interrupted backtest(s) from a previous process.", _reaped_bt)
             # Last: every table above must exist before their stamps can be shifted.
             from icici_breeze_backend.app.db.ist_timestamp_backfill import (
                 backfill_ist_timestamps_if_needed,

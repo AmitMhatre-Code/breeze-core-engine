@@ -496,6 +496,69 @@ def test_no_bid_refuses_to_trade(patch_chain, no_arm):
     assert proc.placed == []
 
 
+def _fire_shortlist(proc, strategies):
+    return bot2.fire_index(
+        proc, "u1", "NIFTY",
+        expiry_display=EXPIRY,
+        config=config(indices={"NIFTY": IndexWriterLeg(
+            enabled=True, strategies=strategies, safety_pct_ce=2.0, safety_pct_pe=2.0,
+            margin_pct_cap=30.0,
+        )}),
+        available_margin=1_000_000.0,
+        margin_source="breeze_api",
+    )
+
+
+def test_unpriceable_reason_names_the_empty_book(patch_chain, no_arm):
+    """"could not be priced" alone covered three different failures; each must be told apart."""
+    proc = FakeProc(bid=0.0)
+    patch_chain(proc)
+    result = _fire_shortlist(proc, ["naked_pe"])
+    assert result.reason_code == ReasonCode.QUOTE_UNAVAILABLE
+    assert "PE 23500: no bid" in result.error
+
+
+def test_unpriceable_reason_names_the_missing_strike(patch_chain, no_arm):
+    proc = FakeProc()
+    # Spot 24000 + 2% = 24480, beyond the top listed strike.
+    patch_chain(proc)
+    result = _fire_shortlist(proc, ["naked_ce"])
+    assert result.reason_code == ReasonCode.QUOTE_UNAVAILABLE
+    assert "CE: no strike at or above 24,480.00" in result.error
+    assert "listed 23500-24000" in result.error
+
+
+def test_unpriceable_reason_names_the_margin_refusal(patch_chain, no_arm, monkeypatch):
+    proc = FakeProc()
+    patch_chain(proc)
+    monkeypatch.setattr(
+        proc, "margin_calculator",
+        lambda payload, exchange_code=cfg.NFO: {"Status": 500, "Error": "Session expired"},
+    )
+    result = _fire_shortlist(proc, ["naked_pe"])
+    assert result.reason_code == ReasonCode.MARGIN_LOOKUP_FAILED
+    assert "Naked PE (PE 23500): margin_calculator status 500: Session expired" in result.error
+
+
+def test_unpriceable_reason_lists_every_dropped_shape(patch_chain, no_arm):
+    """A strangle missing its call leg is explained by the CE line, not repeated."""
+    proc = FakeProc(bid_by_right={cfg.PUT: 0.0})
+    patch_chain(proc)
+    result = _fire_shortlist(proc, ["naked_ce", "naked_pe", "short_strangle"])
+    assert result.error.count("CE: no strike") == 1
+    assert "PE 23500: no bid" in result.error
+
+
+def test_chain_miss_carries_the_source_error(monkeypatch, no_arm):
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.quote_source_router.fetch_chain_side_icici_response",
+        lambda *a: {"Status": 500, "Error": "Quote not available in bhavcopy", "Success": None},
+    )
+    result = _fire_shortlist(FakeProc(), ["naked_pe"])
+    assert result.reason_code == ReasonCode.CHAIN_NOT_READY
+    assert "PE" in result.error and "Quote not available in bhavcopy" in result.error
+
+
 def test_a_rejected_order_reports_the_rejection(patch_chain, no_arm):
     proc = FakeProc(place_ok=False)
     patch_chain(proc)

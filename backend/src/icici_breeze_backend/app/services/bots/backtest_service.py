@@ -69,7 +69,11 @@ CONFIG_MODELS = {
     "fly": IronFlyScalperConfig,
     "expiry": ExpiryIndexWriterConfig,
 }
+SLUG_FOR_BOT_TYPE = {bot_type: slug for slug, bot_type in BOT_TYPES.items()}
 MAX_BACKFILL_ROUNDS = 25
+# How far back to look for a run on the current settings. A user comparing variations makes a
+# handful of runs, not hundreds, and this is read while a confirmation dialog opens.
+EVIDENCE_RUN_SCAN = 50
 
 
 class NoCachedData(ValueError):
@@ -130,12 +134,86 @@ def holidays() -> set[datetime.date]:
 def clip_range(
     from_date: Optional[datetime.date], to_date: Optional[datetime.date], today: datetime.date
 ) -> tuple[datetime.date, datetime.date]:
-    """The range to replay, floored at HISTORY_START and defaulting to yesterday."""
-    start = max(from_date or regime.HISTORY_START, regime.HISTORY_START)
+    """The range to replay, defaulting to HISTORY_START..yesterday. Not floored (#36)."""
+    start = from_date or regime.HISTORY_START
     end = to_date or today - datetime.timedelta(days=1)
     if start > end:
         raise ValueError(f"The range is empty: {start} is after {end}.")
     return start, end
+
+
+# The four choices the card's backtest dialog offers, and nothing else (#36).
+PERIODS = ("last_day", "last_week", "last_month", "custom")
+PERIOD_LABELS = {
+    "last_day": "Last trading day",
+    "last_week": "Last trading week",
+    "last_month": "Last trading month",
+    "custom": "Custom range",
+}
+# A session is over, and replayable, once the continuous session has closed.
+SESSION_CLOSE = datetime.time(15, 30)
+WEEK_SESSIONS = 5
+
+
+def last_completed_session(now: datetime.datetime, holidays_: set[datetime.date]) -> datetime.date:
+    """The most recent trading day whose session has closed: today after 15:30 on a trading
+    day, otherwise the trading day before."""
+    today = now.date()
+    if regime.is_trading_day(today, holidays_) and now.time() >= SESSION_CLOSE:
+        return today
+    day = today - datetime.timedelta(days=1)
+    while not regime.is_trading_day(day, holidays_):
+        day -= datetime.timedelta(days=1)
+    return day
+
+
+def _one_month_before(day: datetime.date) -> datetime.date:
+    year, month = (day.year, day.month - 1) if day.month > 1 else (day.year - 1, 12)
+    for candidate in (day.day, 30, 29, 28):
+        try:
+            return datetime.date(year, month, candidate)
+        except ValueError:
+            continue
+    return datetime.date(year, month, 28)
+
+
+def resolve_period(
+    period: str,
+    from_date: Optional[datetime.date],
+    to_date: Optional[datetime.date],
+    now: datetime.datetime,
+    holidays_: Optional[set[datetime.date]] = None,
+) -> tuple[datetime.date, datetime.date]:
+    """The (start, end) a dialog choice means, in trading days on the exchange calendar.
+
+    Not floored: a custom range may reach as far back as the user likes (#36). A range that
+    runs into a session still open is clipped to the last completed one, because a partial day
+    replayed as if it were whole would report a day the bot never finished.
+    """
+    hol = holidays() if holidays_ is None else holidays_
+    end = last_completed_session(now, hol)
+    if period == "last_day":
+        return end, end
+    if period == "last_week":
+        sessions = [end]
+        day = end
+        while len(sessions) < WEEK_SESSIONS:
+            day -= datetime.timedelta(days=1)
+            if regime.is_trading_day(day, hol):
+                sessions.append(day)
+        return sessions[-1], end
+    if period == "last_month":
+        return _one_month_before(end) + datetime.timedelta(days=1), end
+    if period == "custom":
+        if from_date is None or to_date is None:
+            raise ValueError("A custom range needs both a start and an end date.")
+        clipped_end = min(to_date, end)
+        if from_date > clipped_end:
+            raise ValueError(
+                f"The range is empty: {from_date} is after {clipped_end}, the last completed session."
+            )
+        return from_date, clipped_end
+    raise ValueError(f"Unknown period {period!r}; expected one of {', '.join(PERIODS)}.")
 
 
 # --------------------------------------------------------------------------------------
@@ -536,12 +614,105 @@ def compare(
             f"Option prices for {day} are not cached yet. Fetch data for {BOT_LABELS[bot]} "
             f"from {day} to {day}, then compare again."
         )
-    return compare_payload(
+    config_hash_now = material_config_hash(bot_type, config.model_dump(mode="json"))
+    payload = compare_payload(
         day,
         paper,
         result.cycles,
-        config_hash_now=material_config_hash(bot_type, config.model_dump(mode="json")),
+        config_hash_now=config_hash_now,
         config_hashes_then=run_config_hashes(bot_type, day),
         price_source=result.price_source,
         lots=lots,
     )
+    # Kept so the Live confirmation can show it without replaying a day while a dialog opens.
+    # The answer cannot change for a fixed day and a fixed set of settings, so a stored one is
+    # as good as a fresh one -- and it is keyed by the settings, so editing any of them drops it.
+    try:
+        record_compare(bot, config_hash_now, payload, path=path)
+    except Exception:  # noqa: BLE001 -- a compare the user asked for must not fail on bookkeeping
+        _logger.debug("compare: could not record the fill check for %s", bot, exc_info=True)
+    return payload
+
+
+def _compare_key(slug: str, config_hash: str) -> str:
+    return f"compare:{slug}:{config_hash}"
+
+
+def record_compare(
+    slug: str, config_hash: str, payload: Mapping[str, Any], *, path: Optional[str] = None
+) -> None:
+    """Remember a fill check: the median gap between backtest and Simulation entries."""
+    store.set_meta(
+        _compare_key(slug, config_hash),
+        json.dumps(
+            {
+                "day": str(payload.get("day") or ""),
+                "median_abs_entry_diff": payload.get("median_abs_entry_diff"),
+                "pairs": len(payload.get("pairs") or []),
+                "settings_changed": bool(payload.get("settings_changed")),
+                "computed_at": now_ist().isoformat(timespec="seconds"),
+            },
+            default=str,
+        ),
+        path=path,
+    )
+
+
+def _last_compare(slug: str, config_hash: str, *, path: Optional[str] = None) -> Optional[dict[str, Any]]:
+    raw = store.get_meta(_compare_key(slug, config_hash), path=path)
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def backtest_evidence(
+    user_id: str, bot_type: str, config: Any, *, path: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    """The most recent completed backtest on *these exact settings*, for the Live dialog.
+
+    Matched by the same materiality rule as the paper gate (`evidence.material_config_hash`):
+    a run whose settings differ in anything that moves the P&L describes a different bot, so it
+    is not offered as evidence for this one. The hash is recomputed from the config each run
+    stored rather than read from a column, so runs made before this existed still match.
+
+    This is never a gate and never blocks anything — `evidence.gather` remains the only thing
+    that decides whether Live may be armed.
+    """
+    from icici_breeze_backend.app.services.bots.scalping.evidence import material_config_hash
+
+    slug = SLUG_FOR_BOT_TYPE.get(bot_type)
+    if slug is None:
+        return None
+    raw = config.model_dump(mode="json") if hasattr(config, "model_dump") else dict(config or {})
+    wanted = material_config_hash(bot_type, raw)
+
+    for run in store.list_runs(user_id, limit=EVIDENCE_RUN_SCAN, path=path):
+        if run.get("bot") != slug or run.get("status") != "completed":
+            continue
+        params = run.get("params") or {}
+        stored = params.get("config")
+        if not isinstance(stored, dict) or material_config_hash(bot_type, stored) != wanted:
+            continue
+        summary = run.get("summary") or {}
+        checked = _last_compare(slug, wanted, path=path)
+        return {
+            "run_id": str(run.get("id") or ""),
+            "created_at": str(run.get("created_at") or ""),
+            "from_date": params.get("from"),
+            "to_date": params.get("to"),
+            "price_source": str(summary.get("price_source") or ("model" if params.get("model") else "real")),
+            "days_replayed": int(summary.get("days_replayed") or 0),
+            "days_awaiting_data": int(summary.get("days_awaiting_data") or 0),
+            "cycles": int(summary.get("cycles") or 0),
+            "win_rate_pct": summary.get("win_rate_pct"),
+            "net_pnl": float(summary.get("net_pnl") or 0.0),
+            "friction": float(summary.get("friction") or 0.0),
+            "compare_day": (checked or {}).get("day") or None,
+            "compare_median_entry_gap": (checked or {}).get("median_abs_entry_diff"),
+            "compare_pairs": (checked or {}).get("pairs"),
+        }
+    return None

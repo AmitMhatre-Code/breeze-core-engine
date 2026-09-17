@@ -25,7 +25,10 @@ BotType = Literal[
 # `session` is the scalpers': one run row covering a whole trading session, with its
 # cycles in `bot_cycles`. It is not a fourth way of starting a run so much as a different
 # unit of work -- see `docs/bots-scalping-plan.md` section 9.
-BotRunTrigger = Literal["schedule", "manual", "session_arrival", "session"]
+# "backtest" is a replay, never a trade. It shares the Activity table with live runs so one
+# surface shows everything a bot has done, but it MUST be excluded from every guard that asks
+# "has this bot already acted today?" -- see `repositories/bots.LIVE_RUNS_ONLY` (#35).
+BotRunTrigger = Literal["schedule", "manual", "session_arrival", "session", "backtest"]
 
 # Terminal run states. `proposed` is Bot 1 finishing successfully with something for the
 # user to approve -- distinct from `completed`, which means orders were actually placed.
@@ -1088,6 +1091,37 @@ class PaperEvidenceDay(BaseModel):
     friction: float = 0.0
 
 
+class BacktestEvidence(BaseModel):
+    """The latest completed backtest on the settings being armed, if there is one.
+
+    Deliberately NOT part of the gate: `unlocked` stays one completed Simulation day. This
+    travels beside it because the two answer different questions — a Simulation day proves the
+    bot runs end to end against live plumbing and real fills, while a replay over months is the
+    only thing that says anything about edge. One quiet Simulation day on its own is a thin
+    basis for judging whether a strategy makes money.
+
+    The backtest's own limits ride along rather than being hidden: `price_source` says whether
+    it was priced off real traded candles or Black-Scholes, `days_awaiting_data` how much of the
+    range is missing from the totals, and `compare_*` whether its fills were ever checked
+    against a Simulation day (its spread is modelled, so that check is the only fill evidence).
+    """
+
+    run_id: str
+    created_at: str
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
+    price_source: str = ""
+    days_replayed: int = 0
+    days_awaiting_data: int = 0
+    cycles: int = 0
+    win_rate_pct: Optional[float] = None
+    net_pnl: float = 0.0
+    friction: float = 0.0
+    compare_day: Optional[str] = None
+    compare_median_entry_gap: Optional[float] = None
+    compare_pairs: Optional[int] = None
+
+
 class LiveEligibility(BaseModel):
     """Whether a scalper may be set `live`, and the evidence the user judges it on.
 
@@ -1110,6 +1144,9 @@ class LiveEligibility(BaseModel):
     # Present only when locked, so the card can say what is missing rather than just
     # disabling a segment with no explanation.
     blocked_reason: Optional[str] = None
+    # The other half of the picture, when a backtest exists on these exact settings. Never
+    # consulted by the gate — see BacktestEvidence.
+    backtest: Optional[BacktestEvidence] = None
 
 
 class ProposalLeg(BaseModel):

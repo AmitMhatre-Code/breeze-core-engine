@@ -16,6 +16,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from icici_breeze_backend.app.services import breeze_websocket_manager as bwm
+from icici_breeze_backend.app.services import ws_tick_pipeline as wtp
 
 _AUTH_LATCH_ERROR = (
     "Exception while subscribing to feeds Could not authenticate credentials. "
@@ -28,6 +29,13 @@ def _reset(monkeypatch) -> None:
     monkeypatch.setattr(bwm, "_sub_holders", {})
     monkeypatch.setattr(bwm, "_sub_meta", {})
     monkeypatch.setattr(bwm, "_last_error", None)
+    # The watchdog also reports a feed gone silent, and `_note_error` overwrites `_last_error` --
+    # so a tick timestamp left behind by an EARLIER TEST FILE (it is a process global that
+    # nothing resets) resurfaces here as "WS feed silent for Ns during market hours" and hides
+    # the subscribe failure these tests are about. It only bites when the whole suite runs, since
+    # the tick must age past 120s, and only during market hours -- which is what made it look
+    # flaky rather than broken.
+    monkeypatch.setattr(wtp, "_last_tick_monotonic", None)
 
 
 def _connected_sdk(monkeypatch, subscribe_result):

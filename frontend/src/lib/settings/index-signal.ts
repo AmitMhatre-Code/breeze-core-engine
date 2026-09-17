@@ -111,7 +111,7 @@ export type ShadowBreakeven = {
 
 /** Keys of the per-horizon records are horizon seconds as strings ("60", "300", "900"). */
 export type ShadowReport = {
-  label: IndexLabel;
+  label: SignalLabel;
   days: number;
   /** The minimum move actually used — the breakeven when none was asked for. */
   min_move_bps: number;
@@ -130,6 +130,88 @@ export type IndexSignalShadowReportResponse = {
   /** Null when each index scored against its own breakeven. */
   min_move_bps: number | null;
   indices: Record<IndexLabel, ShadowReport>;
+  /** Every non-incumbent mechanism's report, keyed by shadow-log label (`nifty:expansion`). */
+  mechanisms?: Record<string, ShadowReport>;
+};
+
+/** One way of reading direction. Each gets its own tab on the signals page. */
+export type MechanismKey = "wobi" | "flow" | "expansion";
+
+/** A shadow-log label: the index alone for W-OBI, else `<index>:<mechanism>`. */
+export type SignalLabel = IndexLabel | `${IndexLabel}:flow` | `${IndexLabel}:expansion` | `${IndexLabel}:expansion:backtest`;
+
+export function mechanismLabel(mechanism: MechanismKey, index: IndexLabel): SignalLabel {
+  return mechanism === "wobi" ? index : (`${index}:${mechanism}` as SignalLabel);
+}
+
+export type MechanismSpec = {
+  key: MechanismKey;
+  name: string;
+  summary: string;
+  /** Replayable on `get_historical_data_v2` bars: needs no order book and no quotes. */
+  backtestable: boolean;
+};
+
+export const MECHANISMS: readonly MechanismSpec[] = [
+  {
+    key: "expansion",
+    name: "Volume expansion",
+    summary:
+      "Calls a side when a price move and the trading behind it are both unusually large for the day. On NIFTY, open interest must also show new positions being opened, not old ones closed — which separates a breakout from a blow-off. SENSEX has no open interest from ICICI, so its version cannot tell those two apart.",
+    backtestable: true,
+  },
+  {
+    key: "flow",
+    name: "Order flow",
+    summary:
+      "Reads how orders and trades are changing rather than how much is waiting: NIFTY from the futures contract's own buying and selling pressure, SENSEX from how its big stocks' queues move. Needs live quotes, so it cannot be replayed on history.",
+    backtestable: false,
+  },
+  {
+    key: "wobi",
+    name: "Order-book imbalance",
+    summary:
+      "Compares how much is queued to buy against how much is queued to sell across each index's heaviest stocks. Needs live order books, so it cannot be replayed on history.",
+    backtestable: false,
+  },
+];
+
+export type SignalFlip = {
+  ts: number;
+  time_ist: string;
+  state: "bullish" | "bearish";
+  level: number | null;
+  move_5m_bps: number | null;
+  move_15m_bps: number | null;
+  /** Did the index go the called way by at least the bar? Null when there is no outcome yet. */
+  right_5m: boolean | null;
+  right_15m: boolean | null;
+  missing_5m?: string;
+  missing_15m?: string;
+};
+
+export type SignalFlipsResponse = {
+  label: SignalLabel;
+  days: number;
+  min_move_bps: number;
+  flips: SignalFlip[];
+};
+
+export type ExpansionBacktestResponse = {
+  summary: {
+    label: string;
+    bars: number;
+    readings: number;
+    days: number;
+    from?: string | null;
+    to?: string | null;
+    states?: Record<string, number>;
+    directional_pct?: number;
+    verdict?: "no_data";
+    message?: string;
+  };
+  report: ShadowReport | null;
+  readiness: IndexReadiness | null;
 };
 
 export type ReadinessStatus = "ready" | "too_early" | "no_edge" | "worse";
@@ -151,8 +233,8 @@ export type ReadinessCall = {
 
 /** The fixed scalping test (backend `shadow_log.readiness`): flips, at +5 min, against the breakeven. */
 export type IndexReadiness = {
-  /** `nifty:flow` / `sensex:flow` for the order-flow challengers. */
-  label: IndexLabel | `${IndexLabel}:flow`;
+  /** The shadow-log label this verdict judged. */
+  label: SignalLabel;
   status: ReadinessStatus;
   lookback_days: number;
   scalp_horizon_seconds: number;
@@ -173,6 +255,11 @@ export type IndexSignalReadinessResponse = {
   indices: Record<IndexLabel, IndexReadiness>;
   /** Shadow-only order-flow challengers, judged by the same fixed test (backend `index_signal.flow`). */
   challengers?: Record<IndexLabel, IndexReadiness & { name: string }>;
+  /** The price/volume/OI mechanism. `published` says whether the navbar shows it. */
+  expansion?: Record<
+    IndexLabel,
+    IndexReadiness & { name: string; requires_oi: boolean; published: boolean }
+  >;
 };
 
 export const INDEX_SIGNAL_PREFERENCES_QUERY_KEY = ["settings", "index-signal-preferences"] as const;
@@ -221,6 +308,22 @@ export function fetchIndexSignalShadowReport(
   );
 }
 
+export const INDEX_SIGNAL_FLIPS_QUERY_KEY = [...INDEX_SIGNAL_SHADOW_REPORT_QUERY_KEY, "flips"] as const;
+
+export function fetchIndexSignalFlips(label: SignalLabel, days: number): Promise<SignalFlipsResponse> {
+  const params = new URLSearchParams({ label, days: String(days) });
+  return apiClient.get<SignalFlipsResponse>(`/api/settings/index-signal/flips?${params.toString()}`);
+}
+
+/** Replays stored history only — spends no ICICI calls, and says so when the cache is short. */
+export function runExpansionBacktest(index: IndexLabel, days: number): Promise<ExpansionBacktestResponse> {
+  const params = new URLSearchParams({ index, days: String(days) });
+  return apiClient.post<ExpansionBacktestResponse>(
+    `/api/settings/index-signal/expansion/backtest?${params.toString()}`,
+    {},
+  );
+}
+
 export function fetchIndexSignalReadiness(): Promise<IndexSignalReadinessResponse> {
   return apiClient.get<IndexSignalReadinessResponse>("/api/settings/index-signal/readiness");
 }
@@ -242,7 +345,7 @@ async function triggerBlobDownload(res: Response, fallbackFilename: string): Pro
 }
 
 /** The minute readings behind the shadow report, as CSV for Excel or a charting tool. */
-export async function downloadIndexSignalReadings(label: IndexLabel, days: number): Promise<void> {
+export async function downloadIndexSignalReadings(label: SignalLabel, days: number): Promise<void> {
   const url = new URL("/api/settings/index-signal/readings/download", getBackendBaseUrl());
   url.searchParams.set("index", label);
   url.searchParams.set("days", String(days));
@@ -251,5 +354,5 @@ export async function downloadIndexSignalReadings(label: IndexLabel, days: numbe
     const text = await res.text();
     throw new Error(text || "Could not download the readings");
   }
-  await triggerBlobDownload(res, `${label}-signal-readings-${days}d.csv`);
+  await triggerBlobDownload(res, `${label.replaceAll(":", "-")}-signal-readings-${days}d.csv`);
 }

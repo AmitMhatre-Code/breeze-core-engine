@@ -26,7 +26,8 @@ from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
-from icici_breeze_backend.app.services.index_signal import depth_feed, flow, shadow_log, weights
+from icici_breeze_backend.app.services.index_signal import depth_feed, expansion, expansion_feed
+from icici_breeze_backend.app.services.index_signal import flow, shadow_log, weights
 from icici_breeze_backend.app.services.index_signal import settings as signal_settings
 from icici_breeze_backend.app.services.index_signal.engine import IndexSignalEngine
 from icici_breeze_backend.app.services.index_signal.settings import IndexSignalSettings
@@ -42,6 +43,22 @@ EXCHANGE_FOR_LABEL: dict[str, str] = {"nifty": "NSE", "sensex": "BSE"}
 
 REASON_DISABLED = "disabled"
 
+# Which mechanism each index actually PUBLISHES (#34). Everything else runs in shadow.
+#
+# NIFTY moved to `expansion` because #33 showed W-OBI carries no information across two
+# sessions and the pre-registered flow challenger none either, on a 357-call sample.
+#
+# SENSEX stays on W-OBI for now -- not because W-OBI is better there, but because the
+# expansion mechanism has no live bar source for it yet: SENSEX futures trade a median of 20
+# contracts a minute with no trade at all in 47% of bars (#34), so its instrument is the
+# option chain, and there is no always-on SENSEX option feed. Blanking the chip was the worse
+# of the two options. Flip this the day that feed exists.
+PUBLISHED_MECHANISM: dict[str, str] = {"nifty": "expansion", "sensex": "wobi"}
+
+MECHANISM_SUFFIX = ":expansion"
+# SENSEX cannot read open interest at all -- ICICI serves none for BSE (#34).
+EXPANSION_REQUIRES_OI: dict[str, bool] = {"nifty": True, "sensex": False}
+
 # A published payload stays valid for this many publish intervals (with a floor), so one slow
 # tick does not blank the signal but a stopped loop does within seconds.
 _VALIDITY_MULTIPLE = 3.0
@@ -56,6 +73,10 @@ _lock = threading.RLock()
 _engines: dict[str, IndexSignalEngine] = {}
 # The order-flow challengers (`flow`), shadow-logged as `<index>:flow` and published nowhere else.
 _challengers: dict[str, flow.FlowEngine] = {}
+# The price/volume/OI mechanism (`expansion`), shadow-logged as `<index>:expansion` and, where
+# PUBLISHED_MECHANISM says so, published as the index's signal.
+_expansion: dict[str, expansion.ExpansionEngine] = {}
+_expansion_bars: dict[str, expansion_feed.BarAccumulator] = {}
 _weights_meta: dict[str, dict[str, Any]] = {}
 _applied_generation: int | None = None
 _applied_top_n: int | None = None
@@ -124,12 +145,58 @@ def _on_top(
             _challenger(label).on_top(short_name, top, ts)
 
 
+def expansion_label(label: str) -> str:
+    return f"{label}{MECHANISM_SUFFIX}"
+
+
+def _in_rollover_window(ts: float) -> bool:
+    """Whether the near-month futures contract is rolling, so OI is moving mechanically (#34).
+
+    Best-effort by design: a calendar lookup that fails must not stop the signal publishing,
+    and not excluding a rollover day costs some noisy readings, never a wrong trade."""
+    try:
+        from datetime import datetime
+
+        from icici_breeze_backend.app.core.timezone import IST
+        from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
+
+        today = datetime.fromtimestamp(ts, IST).date()
+        return expansion.in_rollover_window(
+            today, regime.near_month_futures_expiry(today, "NIFTY", set())
+        )
+    except Exception:  # noqa: BLE001
+        _logger.debug("index signal: rollover window check failed", exc_info=True)
+        return False
+
+
+def _expansion_engine(label: str) -> expansion.ExpansionEngine:
+    with _lock:
+        eng = _expansion.get(label)
+        if eng is None:
+            eng = expansion.ExpansionEngine(
+                label, expansion.ExpansionParams(require_oi=EXPANSION_REQUIRES_OI[label])
+            )
+            _expansion[label] = eng
+            _expansion_bars[label] = expansion_feed.BarAccumulator()
+        return eng
+
+
 def _on_futures_quote(payload: Any, ts: float) -> None:
-    """The scalper futures feed's quote observer: NIFTY futures ticks drive the NIFTY challenger."""
+    """The scalper futures feed's quote observer.
+
+    One observer slot serves both mechanisms: NIFTY futures ticks drive the flow challenger
+    tick by tick, and are accumulated into one-minute bars for the expansion mechanism. Runs on
+    the SDK socket thread for every tick, so it never raises and never does I/O."""
     if not isinstance(payload, dict):
         return
     top, last, ttq = flow.parse_futures_quote(payload)
     _challenger("nifty").on_futures_quote(top, last, ttq, ts)
+
+    eng = _expansion_engine("nifty")
+    with _lock:
+        bar = _expansion_bars["nifty"].ingest(ts, payload)
+    if bar is not None:
+        eng.on_bar(bar)
 
 
 def _attach_listeners() -> None:
@@ -262,25 +329,46 @@ def publish_once(
         session_open = is_market_open()
     valid_for = _validity_seconds(interval)
     out: dict[str, dict[str, Any]] = {}
+    excluded = _in_rollover_window(ts)
     for label in LABELS:
-        payload = _engine(label).snapshot(ts, session_open=session_open)
+        wobi = _engine(label).snapshot(ts, session_open=session_open)
+        spot = _index_spot(label, ts)
+
+        # Every mechanism is scored against the same index level at the same moment, so the
+        # shadow report compares like with like whichever one is published.
+        mechanisms: dict[str, dict[str, Any]] = {"wobi": wobi}
+        try:
+            mechanisms["expansion"] = _expansion_engine(label).snapshot(
+                ts, session_open=session_open, excluded=excluded
+            )
+        except Exception:  # noqa: BLE001 -- a shadow mechanism never costs the live signal
+            _logger.debug("index signal: expansion snapshot failed for %s", label, exc_info=True)
+
+        payload = mechanisms.get(PUBLISHED_MECHANISM.get(label, "wobi")) or wobi
+        payload["mechanism"] = PUBLISHED_MECHANISM.get(label, "wobi")
         with _lock:
             payload["weights"] = dict(_weights_meta.get(label) or {})
         payload["published_at"] = ts
         payload["valid_until"] = ts + valid_for
         payload["publish_interval_seconds"] = interval
         _write_payload(label, payload, valid_for)
-        spot = _index_spot(label, ts)
+
         try:
-            shadow_log.record(label, payload, spot=spot, now=ts)
+            shadow_log.record(label, wobi, spot=spot, now=ts)
         except Exception:  # noqa: BLE001 -- evidence is best-effort; never block publication
             _logger.debug("index signal: shadow log write failed for %s", label, exc_info=True)
         try:
-            # Scored against the same index level as the incumbent, so the two are comparable.
             challenger = _challenger(label).snapshot(ts, session_open=session_open)
             shadow_log.record(flow.challenger_label(label), challenger, spot=spot, now=ts)
         except Exception:  # noqa: BLE001 -- a challenger must never cost the live signal anything
             _logger.debug("index signal: challenger log write failed for %s", label, exc_info=True)
+        if "expansion" in mechanisms:
+            try:
+                shadow_log.record(
+                    expansion_label(label), mechanisms["expansion"], spot=spot, now=ts
+                )
+            except Exception:  # noqa: BLE001
+                _logger.debug("index signal: expansion log failed for %s", label, exc_info=True)
         out[label] = payload
     return out
 
@@ -387,11 +475,67 @@ def _loop_tick(interval: float) -> None:
     publish_once(interval=interval)
 
 
+def seed_expansion_from_cache(
+    *, now: float | None = None, cache_path: str | None = None, lookback_days: int = 10
+) -> int:
+    """Warm NIFTY's expansion baseline from bars already in the backtest cache. Returns how many.
+
+    Without this the navbar chip reads `warming_up` for the first ~75 minutes of every session
+    after a restart, because a percentile needs a distribution to rank against (#34). Spends no
+    ICICI calls: it reads only what backtests have already fetched, so on an instance that has
+    never run one it seeds nothing and the chip warms up live as before. Best-effort by design.
+    """
+    import datetime as _dt
+
+    from icici_breeze_backend.app.core.timezone import IST
+    from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
+    from icici_breeze_backend.app.services.index_signal.expansion_backtest import (
+        SESSION_END,
+        SESSION_START,
+    )
+
+    ts_now = time.time() if now is None else now
+    today = _dt.datetime.fromtimestamp(ts_now, IST).date()
+    try:
+        store.ensure_tables(cache_path)
+        candles = store.load_candles(
+            stock_code="NIFTY",
+            from_date=today - _dt.timedelta(days=lookback_days),
+            to_date=today,
+            path=cache_path,
+        )
+    except Exception:  # noqa: BLE001
+        _logger.debug("index signal: no cache to seed expansion from", exc_info=True)
+        return 0
+    eng = _expansion_engine("nifty")
+    p = eng.params
+    session = [
+        c for c in candles
+        if SESSION_START <= c.ts.time() <= SESSION_END and c.ts.replace(tzinfo=IST).timestamp() < ts_now
+    ]
+    tail = session[-(p.baseline_bars + p.window_minutes + 1):]
+    eng.seed(
+        [
+            expansion.Bar(
+                ts=c.ts.replace(tzinfo=IST).timestamp(), close=c.close, volume=c.volume, oi=c.oi
+            )
+            for c in tail
+        ]
+    )
+    if tail:
+        _logger.info("index signal: seeded NIFTY expansion with %d cached bar(s)", len(tail))
+    return len(tail)
+
+
 async def run_index_signal_loop() -> None:
     """Cancelled only via the FastAPI lifespan's `task.cancel()`; one bad tick never kills it
     (the `run_pnl_loop` idiom)."""
     _logger.info("Index signal loop started")
     _attach_listeners()
+    try:
+        await asyncio.to_thread(seed_expansion_from_cache)
+    except Exception:  # noqa: BLE001 -- a cold baseline only delays the first call
+        _logger.warning("index signal: expansion seed failed", exc_info=True)
     while True:
         try:
             interval = await asyncio.to_thread(_publish_interval_seconds)
@@ -420,6 +564,8 @@ def reset_state_for_tests() -> None:
     with _lock:
         _engines.clear()
         _challengers.clear()
+        _expansion.clear()
+        _expansion_bars.clear()
         _weights_meta.clear()
         _applied_generation = None
         _applied_top_n = None

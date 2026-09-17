@@ -7,9 +7,11 @@ expired months ago. So the replays need the history written down, and a fact tha
 over time (the expiry weekday, the lot size) has to be written down *with its dates*: one
 value across a change misprices every day on one side of it.
 
-The history the replays accept starts at `HISTORY_START`. Decided 2026-09-13: backtest only
-the lot-size era the bots trade in today, so every replayed day is sized with today's lot
-rather than depending on a table of past lot changes nobody has verified.
+`HISTORY_START` was a floor until 2026-09-17 and is now only the default start of a range with
+no dates given. Replays are unrestricted in period and always use today's lot size and today's
+margin (#36). The date-ranged facts below still matter: a wrong expiry weekday before its
+verified window resolves to a contract ICICI has no bars for, which shows up as a reported data
+gap on that day rather than as a mispriced trade.
 """
 from __future__ import annotations
 
@@ -55,11 +57,12 @@ class OutsideHistory(ValueError):
 
 
 def lot_size_for(stock_code: str, day: datetime.date) -> int:
-    if day < HISTORY_START:
-        raise OutsideHistory(
-            f"{day} is before {HISTORY_START}, the start of the lot-size era the backtests "
-            "replay (backtest_regime.HISTORY_START)."
-        )
+    """Today's lot size, for every replayed day (#36).
+
+    A backtest answers "what would this bot, as configured today, have done?", so it sizes with
+    today's lot and today's margin whatever the date -- the user's rule, decided 2026-09-17. A
+    day before HISTORY_START (NIFTY was 75 a lot then) is therefore replayed at 65, deliberately.
+    `day` is kept in the signature so a future dated table slots in without touching callers."""
     return LOT_SIZE[stock_code]
 
 

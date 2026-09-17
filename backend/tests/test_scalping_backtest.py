@@ -371,3 +371,59 @@ def test_position_size_rises_towards_expiry_on_a_fixed_outlay():
         _trending_day(far), config=cfg, charges=CHARGES, spread=SPREAD, vix_by_day={far: 13.0}
     ).cycles[0].lots
     assert near_lots > far_lots
+
+
+# -- open interest on the underlying series (#34) -----------------------------------------
+
+
+def test_futures_bars_round_trip_open_interest_and_treat_zero_as_absent(tmp_path):
+    from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
+
+    cache = str(tmp_path / "backtest.sqlite3")
+    store.ensure_tables(cache)
+    rows = [
+        # A pre-open bar: ICICI serves OI 0 there, and on every BSE bar. That is absent, not a
+        # reading of zero -- a zero anchor would read as the largest OI rise ever recorded.
+        {"datetime": "2026-09-16 09:00:00", "open": 1, "high": 1, "low": 1, "close": 1,
+         "volume": 10, "open_interest": 0},
+        {"datetime": "2026-09-16 09:15:00", "open": 2, "high": 2, "low": 2, "close": 2,
+         "volume": 20, "open_interest": 18_039_125},
+        # No key at all, as the cash index series comes back.
+        {"datetime": "2026-09-16 09:16:00", "open": 3, "high": 3, "low": 3, "close": 3,
+         "volume": 30},
+    ]
+    assert store.store_candles(rows, stock_code="NIFTY", path=cache) == 3
+
+    bars = store.load_candles(stock_code="NIFTY", path=cache)
+    assert [b.oi for b in bars] == [None, 18_039_125, None]
+    assert [b.volume for b in bars] == [10, 20, 30]
+
+
+def test_the_oi_column_is_added_to_a_futures_cache_written_before_it_existed(tmp_path):
+    """Upgrading must not lose the bars already cached, or refuse to write new ones."""
+    import sqlite3
+
+    from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
+
+    cache = str(tmp_path / "backtest.sqlite3")
+    with sqlite3.connect(cache) as conn:  # the pre-#34 shape
+        conn.execute(
+            "CREATE TABLE futures_candles (stock_code TEXT NOT NULL, ts TEXT NOT NULL, "
+            "open REAL, high REAL, low REAL, close REAL, volume INTEGER, "
+            "PRIMARY KEY (stock_code, ts))"
+        )
+        conn.execute(
+            "INSERT INTO futures_candles VALUES ('NIFTY','2026-09-15 09:15:00',1,1,1,1,5)"
+        )
+        conn.commit()
+
+    store.ensure_tables(cache)  # the ALTER that adds `oi` to a cache that predates it
+    store.store_candles(
+        [{"datetime": "2026-09-16 09:15:00", "open": 2, "high": 2, "low": 2, "close": 2,
+          "volume": 7, "open_interest": 999}],
+        stock_code="NIFTY",
+        path=cache,
+    )
+    old, new = store.load_candles(stock_code="NIFTY", path=cache)
+    assert old.volume == 5 and old.oi is None  # NULL is the truth about a pre-#34 bar
+    assert new.oi == 999

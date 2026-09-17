@@ -687,6 +687,14 @@ async def settings_index_signal_shadow_report(
             label: shadow_log.shadow_report(label, days=days, min_move_bps=min_move_bps)
             for label in ("nifty", "sensex")
         },
+        # Every mechanism gets the same table, so the signals page can tab between them
+        # instead of showing only whichever one happens to be published (#34).
+        "mechanisms": {
+            label: shadow_log.shadow_report(label, days=days, min_move_bps=min_move_bps)
+            for label in (
+                "nifty:flow", "sensex:flow", "nifty:expansion", "sensex:expansion",
+            )
+        },
     }
 
 
@@ -695,7 +703,7 @@ async def settings_index_signal_readiness(ctx: RequestContext = Depends(get_requ
     """The plain-language verdict above the shadow evidence: per index, whether flips beat the
     market's trend at +5 minutes by more than the breakeven move. Fixed test, no parameters --
     see `shadow_log.readiness`."""
-    from icici_breeze_backend.app.services.index_signal import flow, shadow_log
+    from icici_breeze_backend.app.services.index_signal import flow, publisher, shadow_log
 
     labels = ("nifty", "sensex")
     return {
@@ -705,6 +713,78 @@ async def settings_index_signal_readiness(ctx: RequestContext = Depends(get_requ
             label: {**shadow_log.readiness(flow.challenger_label(label)), "name": flow.CHALLENGER_NAME[label]}
             for label in labels
         },
+        # The price/volume/OI mechanism (#34), judged by that same fixed test. `requires_oi`
+        # is False for SENSEX, which cannot read OI at all -- ICICI serves none for BSE -- so
+        # its version cannot tell a breakout from a blow-off and must be labelled as such.
+        "expansion": {
+            label: {
+                **shadow_log.readiness(publisher.expansion_label(label)),
+                "name": f"{label.upper()} volume-confirmed expansion",
+                "requires_oi": publisher.EXPANSION_REQUIRES_OI[label],
+                "published": publisher.PUBLISHED_MECHANISM.get(label) == "expansion",
+            }
+            for label in labels
+        },
+    }
+
+
+_SIGNAL_LOG_LABELS = (
+    "nifty", "sensex",
+    "nifty:flow", "sensex:flow",
+    "nifty:expansion", "sensex:expansion",
+    "nifty:expansion:backtest", "sensex:expansion:backtest",
+)
+
+
+@router.get("/index-signal/flips")
+async def settings_index_signal_flips(
+    label: str = Query(...),
+    days: int = Query(5, ge=1, le=3650),
+    min_move_bps: Optional[float] = Query(None, ge=0, le=100),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Each time one mechanism turned bullish or bearish, newest first, with the index 5 and 15
+    minutes later -- the "when it turned" list on the signals page. `label` is a shadow-log
+    label, including a backtest replay's (`nifty:expansion:backtest`)."""
+    from icici_breeze_backend.app.services.index_signal import shadow_log
+
+    key = label.strip().lower()
+    if key not in _SIGNAL_LOG_LABELS:
+        raise HTTPException(status_code=400, detail=f"unknown signal label: {label}")
+    return shadow_log.flip_list(key, days=days, min_move_bps=min_move_bps)
+
+
+@router.post("/index-signal/expansion/backtest")
+async def settings_index_signal_expansion_backtest(
+    index: str = Query(...),
+    days: int = Query(180, ge=1, le=3650),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Replay the expansion mechanism over stored history and score it with the live test (#34).
+
+    Spends no ICICI calls: it reads the local candle cache only, and says so when the cache is
+    short rather than silently narrowing the range. This is the clock icon on the signals page,
+    and it exists only for mechanisms that need no order book -- W-OBI and the flow challengers
+    cannot be replayed at all, because history carries no books and no quotes."""
+    import datetime as _dt
+
+    from icici_breeze_backend.app.services.index_signal import expansion_backtest, shadow_log
+
+    label = index.strip().lower()
+    if label not in ("nifty", "sensex"):
+        raise HTTPException(status_code=400, detail="index must be nifty or sensex")
+
+    today = _dt.date.today()
+    summary = expansion_backtest.replay(
+        label, from_date=today - _dt.timedelta(days=days), to_date=today
+    )
+    if summary.get("bars", 0) == 0:
+        return {"summary": summary, "report": None, "readiness": None}
+    scored = expansion_backtest.backtest_label(label)
+    return {
+        "summary": summary,
+        "report": shadow_log.shadow_report(scored, days=days + 1),
+        "readiness": shadow_log.readiness(scored),
     }
 
 
@@ -719,8 +799,15 @@ async def settings_index_signal_readings_download(
     from icici_breeze_backend.app.services.index_signal import shadow_log
 
     label = index.strip().lower()
-    if label not in ("nifty", "sensex", "nifty:flow", "sensex:flow"):
-        raise HTTPException(status_code=400, detail="index must be nifty or sensex (or its :flow challenger)")
+    if label not in (
+        "nifty", "sensex",
+        "nifty:flow", "sensex:flow",
+        "nifty:expansion", "sensex:expansion",
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="index must be nifty or sensex, or its :flow or :expansion mechanism",
+        )
     return Response(
         content=shadow_log.readings_csv(label, days=days),
         media_type="text/csv; charset=utf-8",
@@ -1125,6 +1212,23 @@ async def download_bot_audit_logs(ctx: RequestContext = Depends(get_request_cont
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-store",
         },
+    )
+
+
+@router.get("/bot-audit-logs/backtest/{name}/download")
+async def download_bot_backtest_audit_log(
+    name: str, ctx: RequestContext = Depends(get_request_context)
+):
+    """Download one backtest's whole trail (#35). Separate from the daily trails: a replay is
+    one record of one run, not a trading day's file."""
+    path = bot_audit.resolve_backtest_file_for_user(name.strip(), ctx.user_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="Backtest audit trail not found")
+    return FileResponse(
+        path,
+        media_type="application/x-ndjson",
+        filename=os.path.basename(path),
+        headers={"Cache-Control": "no-store"},
     )
 
 

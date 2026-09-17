@@ -65,6 +65,87 @@ def _rows(day, closes, volumes, start=datetime.time(9, 15)):
     ]
 
 
+def _save_momentum_run(cache, run_id, config, *, created_at, status="completed"):
+    store.save_run(
+        {
+            "id": run_id,
+            "user_id": "u1",
+            "bot": "momentum",
+            "created_at": created_at,
+            "status": status,
+            "params": {
+                "bot": "momentum",
+                "from": "2026-06-16",
+                "to": "2026-09-12",
+                "model": False,
+                "config": config.model_dump(mode="json"),
+            },
+            "summary": {
+                "days_replayed": 60,
+                "cycles": 42,
+                "net_pnl": 18_450.0,
+                "friction": 3_600.0,
+                "win_rate_pct": 55.0,
+                "price_source": "real",
+            },
+        },
+        path=cache,
+    )
+
+
+def test_backtest_evidence_is_only_the_run_on_these_exact_settings(env):
+    """The Live dialog may only cite a backtest of the bot being armed.
+
+    A run on other settings describes a different bot, and an unfinished one has no result --
+    either would put a number in front of the user that their click is not actually about.
+    """
+    bot_type = service.BOT_TYPES["momentum"]
+    config = MomentumLongScalperConfig()
+    other = config.model_copy(update={"premium_outlay_inr": config.premium_outlay_inr + 5_000})
+
+    # Both decoys are NEWER, so recency alone would pick the wrong one.
+    _save_momentum_run(env["cache"], "r-other-settings", other, created_at="2026-09-16T09:00:00")
+    _save_momentum_run(env["cache"], "r-running", config, created_at="2026-09-16T10:00:00", status="running")
+    _save_momentum_run(env["cache"], "r-mine", config, created_at="2026-09-15T20:00:00")
+
+    found = service.backtest_evidence("u1", bot_type, config, path=env["cache"])
+    assert found is not None
+    assert found["run_id"] == "r-mine"
+    assert found["net_pnl"] == 18_450.0
+    assert found["cycles"] == 42
+    # No fill check has been run, and the dialog must not imply one.
+    assert found["compare_median_entry_gap"] is None
+
+    assert service.backtest_evidence("u1", bot_type, other, path=env["cache"])["run_id"] == "r-other-settings"
+
+
+def test_a_recorded_fill_check_travels_with_the_backtest_it_belongs_to(env):
+    """`compare` is keyed by settings, so editing any of them drops the stale check."""
+    from icici_breeze_backend.app.services.bots.scalping.evidence import material_config_hash
+
+    bot_type = service.BOT_TYPES["momentum"]
+    config = MomentumLongScalperConfig()
+    _save_momentum_run(env["cache"], "r-mine", config, created_at="2026-09-15T20:00:00")
+
+    service.record_compare(
+        "momentum",
+        material_config_hash(bot_type, config.model_dump(mode="json")),
+        {"day": "2026-09-11", "median_abs_entry_diff": 1.25, "pairs": [object(), object()]},
+        path=env["cache"],
+    )
+
+    found = service.backtest_evidence("u1", bot_type, config, path=env["cache"])
+    assert found["compare_day"] == "2026-09-11"
+    assert found["compare_median_entry_gap"] == 1.25
+    assert found["compare_pairs"] == 2
+
+    # The same run, judged for settings the check was not made on: the run still matches on its
+    # own hash, but its fill check does not follow.
+    changed = config.model_copy(update={"premium_outlay_inr": config.premium_outlay_inr + 5_000})
+    _save_momentum_run(env["cache"], "r-changed", changed, created_at="2026-09-15T21:00:00")
+    assert service.backtest_evidence("u1", bot_type, changed, path=env["cache"])["compare_median_entry_gap"] is None
+
+
 def _cache_trending(cache, day=D(2026, 3, 9)):
     closes = [24_000.0] * 25 + [24_000.0 + 12 * i for i in range(1, 40)]
     volumes = [1_000] * 25 + [90_000] * 39
@@ -80,9 +161,10 @@ def _wait_for_job():
 # --- the service ------------------------------------------------------------------------
 
 
-def test_the_range_floors_at_history_start_and_defaults_to_yesterday():
+def test_the_range_is_not_floored_and_defaults_to_yesterday():
+    """#36: backtest periods are unrestricted; HISTORY_START is only the default start."""
     assert service.clip_range(None, None, D(2026, 9, 14)) == (regime.HISTORY_START, D(2026, 9, 13))
-    assert service.clip_range(D(2025, 6, 1), D(2026, 2, 1), D(2026, 9, 14))[0] == regime.HISTORY_START
+    assert service.clip_range(D(2025, 6, 1), D(2026, 2, 1), D(2026, 9, 14))[0] == D(2025, 6, 1)
     with pytest.raises(ValueError):
         service.clip_range(D(2026, 3, 5), D(2026, 3, 1), D(2026, 9, 14))
 
@@ -300,3 +382,128 @@ def test_runs_can_be_read_downloaded_and_deleted(client):
     assert csv_text.splitlines()[0] == "entered_at,net_pnl"
     assert client.delete("/bots/backtest/run?id=r1").status_code == 200
     assert client.get("/bots/backtest/run?id=r1").status_code == 404
+
+
+# --- the card's one-click backtest (#35, #36) ---------------------------------------------
+
+IST_ = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+
+def _at(y, m, d, hh, mm):
+    return datetime.datetime(y, m, d, hh, mm, tzinfo=IST_)
+
+
+class TestPeriods:
+    def test_last_day_is_today_only_after_the_close(self):
+        # Thursday 2026-09-17: before 15:30 the last completed session is Wednesday.
+        assert service.resolve_period("last_day", None, None, _at(2026, 9, 17, 11, 0), set()) == (D(2026, 9, 16), D(2026, 9, 16))
+        assert service.resolve_period("last_day", None, None, _at(2026, 9, 17, 16, 0), set()) == (D(2026, 9, 17), D(2026, 9, 17))
+
+    def test_last_day_skips_weekends_and_holidays(self):
+        monday_morning = _at(2026, 9, 14, 10, 0)
+        assert service.resolve_period("last_day", None, None, monday_morning, set())[1] == D(2026, 9, 11)
+        assert service.resolve_period("last_day", None, None, monday_morning, {D(2026, 9, 11)})[1] == D(2026, 9, 10)
+
+    def test_last_week_is_five_trading_sessions_on_the_exchange_calendar(self):
+        start, end = service.resolve_period("last_week", None, None, _at(2026, 9, 17, 16, 0), {D(2026, 9, 15)})
+        # Five sessions ending Thursday, with Tuesday a holiday: Wed 10 .. Thu 17.
+        assert (start, end) == (D(2026, 9, 10), D(2026, 9, 17))
+        assert len(regime.trading_days(start, end, {D(2026, 9, 15)})) == 5
+
+    def test_last_month_runs_from_the_day_after_the_same_date_a_month_back(self):
+        assert service.resolve_period("last_month", None, None, _at(2026, 3, 31, 16, 0), set()) == (D(2026, 3, 1), D(2026, 3, 31))
+
+    def test_custom_is_not_floored_and_is_clipped_to_the_last_completed_session(self):
+        start, end = service.resolve_period("custom", D(2024, 6, 3), D(2026, 12, 31), _at(2026, 9, 17, 11, 0), set())
+        assert start == D(2024, 6, 3)  # unrestricted: before HISTORY_START is fine
+        assert end == D(2026, 9, 16)   # never into a session still open
+
+    def test_custom_needs_both_dates(self):
+        with pytest.raises(ValueError, match="both"):
+            service.resolve_period("custom", D(2026, 9, 1), None, _at(2026, 9, 17, 11, 0), set())
+
+
+class TestBudgetAndCap:
+    def test_calls_accumulate_per_day_against_the_budget(self, env):
+        day = D(2026, 9, 17)
+        assert store.calls_remaining(day) == store.DAILY_CALL_BUDGET
+        store.add_calls(day, 300)
+        store.add_calls(day, 200)
+        assert store.calls_spent(day) == 500
+        assert store.calls_remaining(day) == store.DAILY_CALL_BUDGET - 500
+        assert store.calls_remaining(D(2026, 9, 18)) == store.DAILY_CALL_BUDGET  # a new day resets
+
+    def test_the_cap_evicts_option_history_oldest_expiry_first_and_never_the_underlying(self, env):
+        from icici_breeze_backend.app.services.bots.scalping.backtest_store import OptionKey
+
+        cache = env["cache"]
+        store.store_candles(_rows(D(2026, 3, 9), [24_000.0] * 50, [10] * 50), path=cache)
+        bars = _rows(D(2026, 3, 9), [100.0] * 300, [5] * 300)
+        for expiry in (D(2026, 3, 10), D(2026, 3, 17), D(2026, 3, 24)):
+            store.store_option_candles(bars, OptionKey("NIFTY", expiry, 24_000.0, "call"), store.INTERVAL_MINUTE, path=cache)
+
+        out = store.enforce_cache_cap(max_bytes=store.cache_bytes(cache) - 1, path=cache)
+        assert out["evicted_expiries"][0] == "2026-03-10"
+        assert store.load_candles(path=cache), "futures bars must never be evicted"
+
+    def test_a_cache_under_the_cap_is_left_alone(self, env):
+        assert store.enforce_cache_cap(path=env["cache"])["evicted_expiries"] == []
+
+
+class TestOneClickBacktest:
+    @pytest.fixture
+    def audit(self, tmp_path, monkeypatch):
+        from icici_breeze_backend.audit import bot_audit
+
+        root = tmp_path / "bots-audit"
+        root.mkdir()
+        monkeypatch.setattr(bot_audit, "audit_dir", lambda: str(root))
+        return bot_audit
+
+    def test_a_run_on_cached_data_records_an_activity_row_and_its_own_trail(self, env, audit, monkeypatch):
+        _cache_trending(env["cache"])
+        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+        monkeypatch.setattr(jobs, "now_ist", lambda: _at(2026, 3, 9, 18, 0))
+
+        jobs.start_bot_backtest("u1", "momentum", "last_day")
+        state = _wait_for_job()
+        assert state["status"] == "completed", state
+
+        (row,) = [r for r in repo.list_runs("u1") if r.trigger == "backtest"]
+        assert row.status == "completed"
+        assert row.detail["from"] == row.detail["to"] == "2026-03-09"
+        # One id ties the Activity row to the stored run with its trades.
+        assert store.get_run(row.id, "u1")["status"] == "completed"
+        # Mock mode: nothing fetched, and the row says so rather than pretending it did.
+        assert any("mode" in n for n in row.detail["summary"]["notes"])
+
+        name = audit.find_for_backtest_run("u1", row.bot_type, row.id)
+        assert name and audit.resolve_backtest_file_for_user(name, "u1")
+        events = [__import__("json").loads(line)["event"] for line in open(audit.resolve_backtest_file_for_user(name, "u1"))]
+        assert events[0] == "backtest_started" and events[-1] == "backtest_finished"
+
+    def test_the_row_never_stands_a_live_session_down(self, env, audit, monkeypatch):
+        _cache_trending(env["cache"])
+        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+        jobs.start_bot_backtest("u1", "momentum", "custom", D(2026, 3, 9), D(2026, 3, 9))
+        _wait_for_job()
+        bot_type = service.BOT_TYPES["momentum"]
+        assert repo.has_terminal_run_today("u1", bot_type) is False
+        assert repo.has_committed_run_today("u1", bot_type) is False
+
+    def test_a_trail_belongs_to_its_user_and_rejects_traversal(self, env, audit):
+        name = audit.write_backtest_audit("u1", "momentum_long_scalper", "run-1", [{"event": "x"}])
+        assert audit.resolve_backtest_file_for_user(name, "u1")
+        assert audit.resolve_backtest_file_for_user(name, "u2") is None
+        assert audit.resolve_backtest_file_for_user("../../etc/passwd", "u1") is None
+
+    def test_a_restart_closes_a_backtest_left_running(self, env):
+        run_id = repo.start_run("u1", service.BOT_TYPES["momentum"], "backtest")
+        assert repo.reap_orphaned_backtests() == 1
+        (row,) = [r for r in repo.list_runs("u1") if r.id == run_id]
+        assert row.status == "failed" and row.reason_code == "backtest_interrupted"
+
+    def test_the_fly_still_needs_the_broker_for_todays_margin(self, env, monkeypatch):
+        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+        with pytest.raises(ValueError, match="margin"):
+            jobs.start_bot_backtest("u1", "fly", "last_week")

@@ -204,6 +204,13 @@ def bot_owner(bot_id: str) -> Optional[str]:
     return str(row["user_id"]) if row else None
 
 
+# A backtest writes a row into `bot_runs` so the Activity table shows it beside live runs,
+# but it placed no orders and must never satisfy a "has this bot acted today?" guard. Getting
+# this wrong makes a replay silently stand a real session down, so the filter lives here once
+# rather than at each call site (#35).
+LIVE_RUNS_ONLY = "AND trigger != 'backtest'"
+
+
 def has_terminal_run_today(user_id: str, bot_type: str) -> bool:
     """Has this bot already resolved today, either way?
 
@@ -215,7 +222,7 @@ def has_terminal_run_today(user_id: str, bot_type: str) -> bool:
     with _connect() as conn:
         row = conn.execute(
             "SELECT 1 FROM bot_runs WHERE user_id = ? AND bot_type = ? "
-            "AND date(started_at) = ? LIMIT 1",
+            f"AND date(started_at) = ? {LIVE_RUNS_ONLY} LIMIT 1",
             (user_id, bot_type, today),
         ).fetchone()
     return row is not None
@@ -253,7 +260,7 @@ def has_committed_run_today(
         rows = conn.execute(
             "SELECT status, reason_code, finished_at FROM bot_runs "
             "WHERE user_id = ? AND bot_type = ? AND date(started_at) = ? "
-            "AND status != 'proposed'",
+            f"AND status != 'proposed' {LIVE_RUNS_ONLY}",
             (user_id, bot_type, today),
         ).fetchall()
 
@@ -444,6 +451,26 @@ def finish_run(
         conn.commit()
 
 
+def reap_orphaned_backtests() -> int:
+    """Close backtest rows left `running` with no job alive to finish them. Returns the count.
+
+    The live reaper skips backtest rows (`LIVE_RUNS_ONLY`), so they need their own. A backtest
+    job is a thread of the API process and cannot outlive it, which makes this safe to call at
+    startup unconditionally, and from the backtest routes whenever no job is running."""
+    with _connect() as conn:
+        cursor = conn.execute(
+            "UPDATE bot_runs SET status = 'failed', reason_code = 'backtest_interrupted', "
+            "reason_text = ?, finished_at = ? WHERE status = 'running' AND trigger = 'backtest'",
+            (
+                "Interrupted before it finished — the app restarted during the replay. Run it "
+                "again; anything it had fetched is kept.",
+                ist_timestamp(),
+            ),
+        )
+        conn.commit()
+        return int(cursor.rowcount or 0)
+
+
 def reap_stale_runs(*, older_than_minutes: int | None = None) -> int:
     """Close out runs left `running`, and say so honestly.
 
@@ -467,7 +494,10 @@ def reap_stale_runs(*, older_than_minutes: int | None = None) -> int:
     # `started_at` and the semantics are exactly what they were. A scalper session is
     # legitimately `running` for hours, so ageing it from `started_at` would reap a healthy
     # bot mid-trade; ageing it from its heartbeat still catches one that has hung.
-    sql = "UPDATE bot_runs SET status = 'failed', reason_code = ?, reason_text = ?, finished_at = ? WHERE status = 'running'"
+    sql = (
+        "UPDATE bot_runs SET status = 'failed', reason_code = ?, reason_text = ?, "
+        f"finished_at = ? WHERE status = 'running' {LIVE_RUNS_ONLY}"
+    )
     args: list[Any] = [
         "interrupted",
         "Interrupted before it finished — the app stopped or the run stalled. Any orders it "

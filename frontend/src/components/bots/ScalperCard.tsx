@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { BacktestButton } from "@/components/bots/BacktestButton";
+import { LastBacktestRow } from "@/components/bots/LastBacktestRow";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotStatusRow } from "@/components/bots/BotStatusRow";
 import { LiveConfirmDialog } from "@/components/bots/LiveConfirmDialog";
@@ -39,6 +41,11 @@ function GearIcon() {
  *  will never request. Its real question is narrower and sharper: can this place real
  *  orders, or is it only pretending?
  */
+/** The header icons (backtest, gear) share one look: a plain icon, no box, colour the only
+ *  hover affordance — the same string BotCard uses, so the two card shapes stay one family. */
+const HEADER_ICON_BTN =
+  "grid size-8 shrink-0 place-items-center rounded-lg text-muted transition hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45";
+
 type ScalperCardMode = "off" | "paper" | "live";
 
 const MODE_LABEL: Record<ScalperCardMode, string> = {
@@ -227,14 +234,17 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
                 starts at the same Y as the writer cards. */}
             <p className="app-text-muted mt-1 line-clamp-2 min-h-[2lh] text-hint">{meta.blurb}</p>
           </div>
-          <button
-            type="button"
-            aria-label={`${meta.title} settings`}
-            onClick={() => setSettingsOpen(true)}
-            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted transition hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
-          >
-            <GearIcon />
-          </button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <BacktestButton botType={bot.bot_type} className={HEADER_ICON_BTN} />
+            <button
+              type="button"
+              aria-label={`${meta.title} settings`}
+              onClick={() => setSettingsOpen(true)}
+              className={HEADER_ICON_BTN}
+            >
+              <GearIcon />
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 flex flex-col gap-1.5">
@@ -280,6 +290,7 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
                 )}
               </dd>
             </div>
+            <LastBacktestRow botType={bot.bot_type} />
           </dl>
           {feed && (
             /* Why nothing is happening. Sits below the stats, not above them, so the

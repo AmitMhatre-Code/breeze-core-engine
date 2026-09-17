@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useId, useState } from "react";
+import { BACKTEST_SLUG } from "@/lib/bots-backtest";
 import { Modal } from "@/components/ui/Modal";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { NumberInput, FieldValidityContext } from "@/components/ui/NumberInput";
@@ -1064,6 +1065,12 @@ export function BotSettingsDrawer({
               : dirty
                 ? "Unsaved changes"
                 : "All changes saved"}
+          {/* A backtest replays the SAVED settings, so the loop is change → save → backtest.
+              Pointed at only once there is nothing unsaved, because a run started now would
+              silently test the stored numbers rather than the ones on screen. */}
+          {!dirty && !anyInvalid && BACKTEST_SLUG[bot.bot_type] ? (
+            <> · Backtest these settings with the clock on the card</>
+          ) : null}
         </span>
         <div className="flex gap-2">
           <button

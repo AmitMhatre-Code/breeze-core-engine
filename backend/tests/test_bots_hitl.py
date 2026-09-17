@@ -677,3 +677,34 @@ def test_nothing_to_adopt_is_not_an_error(db_path, monkeypatch):
     monkeypatch.setattr(hitl, "ask_about", lambda *a, **k: True)
 
     hitl._ask_again("u1", BOT_EXPIRY_INDEX_WRITER)  # must not raise
+
+
+
+# -- backtest runs share the Activity table but never satisfy a live guard (#35) -----------
+
+
+class TestBacktestRunsAreNotLiveRuns:
+    def _row(self, user="u1", bot="momentum_long_scalper", trigger="backtest"):
+        import uuid
+
+        from icici_breeze_backend.app.repositories.bots import _connect
+        from icici_breeze_backend.app.core.timezone import ist_timestamp
+
+        with _connect() as conn:
+            conn.execute(
+                "INSERT INTO bot_runs (id, user_id, bot_type, trigger, status, started_at) "
+                "VALUES (?, ?, ?, ?, 'completed', ?)",
+                (str(uuid.uuid4()), user, bot, trigger, ist_timestamp()),
+            )
+            conn.commit()
+
+    def test_a_backtest_row_does_not_stand_down_a_real_session(self, db_path):
+        self._row(trigger="backtest")
+        # The whole hazard: a replay must never make the scheduler think the bot already ran.
+        assert repo.has_terminal_run_today("u1", "momentum_long_scalper") is False
+        assert repo.has_committed_run_today("u1", "momentum_long_scalper") is False
+
+    def test_a_real_run_still_stands_the_day_down(self, db_path):
+        self._row(trigger="schedule")
+        assert repo.has_terminal_run_today("u1", "momentum_long_scalper") is True
+        assert repo.has_committed_run_today("u1", "momentum_long_scalper") is True

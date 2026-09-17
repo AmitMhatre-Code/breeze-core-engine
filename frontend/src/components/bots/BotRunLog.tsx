@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import { BacktestRunTrades } from "@/components/bots/BacktestTrades";
+import { BACKTEST_SLUG, backtestAuditHref } from "@/lib/bots-backtest";
 import { describeFeed, feedToneClass } from "@/lib/scalper-audit";
 import {
   isScalper,
@@ -128,10 +130,14 @@ function CycleTable({ runId }: { runId: string }) {
 
 function RunRow({ run }: { run: BotRun }) {
   const [expanded, setExpanded] = useState(false);
-  // Only a scalper session has cycles beneath it; the writers resolve in one pass and have
-  // nothing to expand into.
-  const expandable = isScalper(run.bot_type) && run.trigger === "session";
-  const feed = describeFeed(run.detail);
+  // A scalper session has cycles beneath it, and a backtest has the trades it replayed (#35);
+  // the writers resolve in one pass and have nothing to expand into.
+  const isBacktest = run.trigger === "backtest";
+  const backtestBot = isBacktest ? BACKTEST_SLUG[run.bot_type] : undefined;
+  const expandable =
+    (isScalper(run.bot_type) && run.trigger === "session") ||
+    (isBacktest && run.status === "completed" && Boolean(backtestBot));
+  const feed = isBacktest ? null : describeFeed(run.detail);
 
   return (
     <>
@@ -156,7 +162,17 @@ function RunRow({ run }: { run: BotRun }) {
             BOT_META[run.bot_type]?.title ?? run.bot_type
           )}
         </td>
-        <td className="px-3 py-2 text-xs capitalize">{run.trigger.replace("_", " ")}</td>
+        <td className="px-3 py-2 text-xs capitalize">
+          {isBacktest ? (
+            /* Marked, not just labelled: a backtest's P&L in this table must never be read as
+               money a bot made. */
+            <span className="rounded border border-border px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+              Backtest
+            </span>
+          ) : (
+            run.trigger.replace("_", " ")
+          )}
+        </td>
         <td className="px-3 py-2">
           <StatusBadge status={run.status} />
         </td>
@@ -176,14 +192,18 @@ function RunRow({ run }: { run: BotRun }) {
             </div>
           )}
           {run.audit_log && (
-            /* The row shows one verdict; this is every verdict of that day. Rendered as a
-               plain download rather than an expandable panel because the file is a tick-level
-               record — thousands of lines — meant to be read outside the browser. */
+            /* The row shows one verdict; this is every verdict of that day -- or, for a
+               backtest, the whole replay. Rendered as a plain download rather than an
+               expandable panel because the file is meant to be read outside the browser. */
             <a
-              href={`/api/settings/bot-audit-logs/${encodeURIComponent(run.audit_log)}/download`}
-              className="mt-0.5 inline-block text-[11px] text-accent underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+              href={
+                isBacktest
+                  ? backtestAuditHref(run.audit_log)
+                  : `/api/settings/bot-audit-logs/${encodeURIComponent(run.audit_log)}/download`
+              }
+              className="mt-0.5 block w-fit text-[11px] text-accent underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
             >
-              Download full-day audit trail
+              {isBacktest ? "Download backtest audit trail" : "Download full-day audit trail"}
             </a>
           )}
         </td>
@@ -191,7 +211,11 @@ function RunRow({ run }: { run: BotRun }) {
       {expandable && expanded && (
         <tr>
           <td colSpan={5} className="bg-panel2 p-0">
-            <CycleTable runId={run.id} />
+            {isBacktest && backtestBot ? (
+              <BacktestRunTrades runId={run.id} bot={backtestBot} />
+            ) : (
+              <CycleTable runId={run.id} />
+            )}
           </td>
         </tr>
       )}
@@ -207,7 +231,7 @@ export function BotRunLog() {
       <h2 className="app-text-heading">Activity</h2>
       <p className="app-text-muted mt-1 text-xs">
         Every scan, order, and skip across all bots — including the days nothing happened,
-        and why.
+        and why. Backtests are listed here too, marked, with their trades and audit trail.
       </p>
 
       {isLoading && <p className="app-text-muted mt-4 text-sm">Loading activity…</p>}
