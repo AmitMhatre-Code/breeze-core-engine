@@ -793,35 +793,63 @@ def settings_index_signal_expansion_last_backtest(ctx: RequestContext = Depends(
     return {"run": expansion_backtest.last_run()}
 
 
-@router.get("/index-signal/readings/download")
-async def settings_index_signal_readings_download(
-    index: str = Query(...),
-    days: int = Query(5, ge=1, le=365),
-    ctx: RequestContext = Depends(get_request_context),
-):
-    """The minute readings behind the shadow report as CSV, for Excel or a charting tool: the
-    signal and index level at each reading, and the index 1/5/15 minutes later."""
-    from icici_breeze_backend.app.services.index_signal import shadow_log
-
+def _signal_log_label(index: str) -> str:
     label = index.strip().lower()
-    if label not in (
-        "nifty", "sensex",
-        "nifty:flow", "sensex:flow",
-        "nifty:expansion", "sensex:expansion",
-    ):
+    if label not in _SIGNAL_LOG_LABELS:
         raise HTTPException(
             status_code=400,
-            detail="index must be nifty or sensex, or its :flow or :expansion mechanism",
+            detail="index must be nifty or sensex, its :flow or :expansion mechanism, "
+            "or an :expansion:backtest replay",
         )
+    return label
+
+
+def _csv_download(content: str, filename: str) -> Response:
     return Response(
-        content=shadow_log.readings_csv(label, days=days),
+        content=content,
         media_type="text/csv; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="{shadow_log.readings_filename(label, days)}"',
+            "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-store",
         },
     )
 
+
+@router.get("/index-signal/readings/download")
+async def settings_index_signal_readings_download(
+    index: str = Query(...),
+    days: int = Query(5, ge=1, le=3650),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """The minute readings behind the shadow report as CSV, for Excel or a charting tool: the
+    signal and index level at each reading, and the index 1/5/15 minutes later. A backtest
+    replay's label downloads its replayed readings; `days` then has to reach back to the start
+    of the replayed range, as for its flip list."""
+    from icici_breeze_backend.app.services.index_signal import shadow_log
+
+    label = _signal_log_label(index)
+    return _csv_download(
+        shadow_log.readings_csv(label, days=days), shadow_log.readings_filename(label, days)
+    )
+
+
+@router.get("/index-signal/calls/download")
+async def settings_index_signal_calls_download(
+    index: str = Query(...),
+    days: int = Query(5, ge=1, le=3650),
+    min_move_bps: Optional[float] = Query(None, ge=0, le=100),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """One row per call (each turn bullish or bearish) as CSV: what the mechanism read when it
+    fired, and how the call went at +5 and +15 minutes -- for working out offline which calls
+    fail and why. Judged against the breakeven unless `min_move_bps` is given."""
+    from icici_breeze_backend.app.services.index_signal import shadow_log
+
+    label = _signal_log_label(index)
+    return _csv_download(
+        shadow_log.calls_csv(label, days=days, min_move_bps=min_move_bps),
+        shadow_log.calls_filename(label, days),
+    )
 
 
 def _exchange_calendar_response() -> ExchangeCalendarStateResponse:

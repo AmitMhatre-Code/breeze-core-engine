@@ -346,3 +346,44 @@ def test_only_a_replay_label_may_be_purged_wholesale(tmp_path):
         shadow_log.purge_label("nifty", db_path=db)
     with pytest.raises(ValueError, match="refusing to purge"):
         shadow_log.purge_label("nifty:expansion", db_path=db)
+
+
+def test_a_replayed_call_reaches_the_calls_csv_with_what_fired_it(tmp_path):
+    """Engine -> log -> report: the per-call file must carry the inputs the engine fired on."""
+    import csv
+    import datetime as dtm
+    import io
+
+    from icici_breeze_backend.app.core.timezone import IST
+    from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
+    from icici_breeze_backend.app.services.index_signal import expansion_backtest as bt
+    from icici_breeze_backend.app.services.index_signal import shadow_log
+
+    cache, db = str(tmp_path / "b.sqlite3"), str(tmp_path / "u.sqlite3")
+    store.ensure_tables(cache)
+    start = dtm.datetime(2026, 9, 14, 9, 15)
+    rows, close = [], 100.0
+    for i in range(240):
+        rally = 150 <= i < 170  # a volume-backed rally on rising OI, after a quiet baseline
+        close += 0.05 if rally else 0.0
+        rows.append({
+            "datetime": (start + dtm.timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S"),
+            "open": close, "high": close, "low": close, "close": close,
+            "volume": 500 if rally else 100,
+            "open_interest": 1_000_000 + (50 * i if rally else i),
+        })
+    store.store_candles(rows, stock_code="NIFTY", path=cache)
+    bt.replay("nifty", cache_path=cache, db_path=db)
+
+    now = dtm.datetime(2026, 9, 15, tzinfo=IST).timestamp()
+    calls = list(csv.DictReader(io.StringIO(
+        shadow_log.calls_csv("nifty:expansion:backtest", days=5, min_move_bps=1.0, db_path=db, now=now)
+    )))
+    assert calls and calls[0]["turned"] == "bullish"
+    first = calls[0]
+    assert first["quadrant"] == "new_longs"
+    assert float(first["price_rank"]) >= 0.8 and float(first["volume_rank"]) >= 0.8
+    assert first["price_threshold"] == "0.80" and first["volume_threshold"] == "0.80"
+    assert first["weaker_side"] in ("price", "volume")
+    assert float(first["oi_change"]) > 0
+    assert first["result_5m"] == "right"  # the rally carried on past the call

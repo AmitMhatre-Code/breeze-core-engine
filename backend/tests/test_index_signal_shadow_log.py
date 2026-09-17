@@ -439,3 +439,138 @@ def test_flip_list_is_newest_first_with_outcomes_judged_against_the_bar(tmp_path
     assert up["move_5m_bps"] > 0 and up["right_5m"] is True
     down = out["flips"][0]
     assert down["move_5m_bps"] == 0.0 and down["right_5m"] is False  # flat is not right
+
+
+def _expansion_payload(state: str, *, price_rank: float = 0.9, volume_rank: float = 0.85) -> dict:
+    """What `expansion.ExpansionEngine.snapshot` publishes."""
+    return {
+        "state": state,
+        "reason": None,
+        "signal": price_rank if state != "bearish" else -min(price_rank, volume_rank),
+        "raw_wobi": None,
+        "coverage": 1.0,
+        "thresholds": {"price_percentile": 0.8, "volume_percentile": 0.8},
+        "components": {
+            "price_bps": 12.5,
+            "volume": 1_234_567.0,
+            "oi_delta": 45_000.0,
+            "price_rank": price_rank,
+            "volume_rank": volume_rank,
+            "quadrant": "new_longs",
+            "strength": min(price_rank, volume_rank),
+        },
+    }
+
+
+def test_expansion_components_and_their_thresholds_are_stored_with_the_reading(tmp_path):
+    db = str(tmp_path / "users_test.sqlite3")
+    shadow_log.record("nifty:expansion", _expansion_payload("bullish"), spot=24000.0, now=B, db_path=db)
+    shadow_log.record("nifty", _payload("bullish"), spot=24000.0, now=B, db_path=db)
+
+    parts = shadow_log._components(shadow_log.load_rows("nifty:expansion", B - 1, db)[0])
+    assert parts["volume_rank"] == pytest.approx(0.85)
+    assert parts["quadrant"] == "new_longs"
+    assert parts["thresholds"] == {"price_percentile": 0.8, "volume_percentile": 0.8}
+    # W-OBI publishes no components, and says so with NULL.
+    assert shadow_log.load_rows("nifty", B - 1, db)[0]["components"] is None
+
+
+def test_the_components_column_is_added_to_a_log_written_before_it_existed(tmp_path):
+    db = str(tmp_path / "users_test.sqlite3")
+    with sqlite3.connect(db) as conn:  # the #33 schema, before components
+        conn.execute(
+            """
+            CREATE TABLE index_signal_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL, ts REAL NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL,
+                reason TEXT, signal REAL, raw_wobi REAL, coverage REAL, spot REAL,
+                ofi REAL, aggressor REAL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO index_signal_log (label, ts, kind, state, spot) "
+            "VALUES ('nifty:expansion', ?, 'sample', 'neutral', 24000.0)",
+            (B - 60,),
+        )
+        conn.commit()
+
+    shadow_log.record("nifty:expansion", _expansion_payload("bullish"), spot=24010.0, now=B, db_path=db)
+    old, new = shadow_log.load_rows("nifty:expansion", B - 120, db)
+    assert old["components"] is None and shadow_log._components(old) == {}
+    assert shadow_log._components(new)["price_rank"] == pytest.approx(0.9)
+
+
+def test_expansion_readings_csv_carries_what_the_engine_measured(tmp_path):
+    db = str(tmp_path / "users_test.sqlite3")
+    shadow_log.record("nifty:expansion", _expansion_payload("bullish"), spot=24000.0, now=B, db_path=db)
+    rows = list(csv.DictReader(io.StringIO(
+        shadow_log.readings_csv("nifty:expansion", days=5, db_path=db, now=B + 60)
+    )))
+    assert rows[0]["window_move_bps"] == "12.50"
+    assert rows[0]["volume_rank"] == "0.8500"
+    assert rows[0]["oi_change"] == "45000"
+    assert rows[0]["quadrant"] == "new_longs"
+    assert rows[0]["nifty:expansion_level"] == "24000.00"
+
+
+def test_calls_csv_explains_each_call_and_splits_the_misses(tmp_path):
+    db = str(tmp_path / "users_test.sqlite3")
+    label = "nifty:expansion:backtest"
+
+    def rec(payload, at, spot):
+        shadow_log.record(label, payload, spot=spot, now=B + at, db_path=db)
+
+    neutral = {**_payload("neutral"), "components": {"price_bps": 1.0}}
+    rec(neutral, 0, 24000.0)
+    # Call 1: bullish at 24000 with volume the weaker input; rises 2 bps/min for 3 min, gives it
+    # all back and more, and is let go after 3 minutes.
+    rec(_expansion_payload("bullish", price_rank=0.95, volume_rank=0.82), 60, 24000.0)
+    for k, spot in ((2, 24004.8), (3, 24009.6), (4, 24014.4)):
+        rec(_expansion_payload("bullish"), 60 * k, spot)
+    rec(neutral, 60 * 4 + 1, 24014.4)
+    for k in range(5, 20):
+        rec(neutral, 60 * k, 23990.0)
+    # Call 2: bearish at 23990, and the index drifts down under the bar.
+    rec({**_expansion_payload("bearish"), "components": {**_expansion_payload("bearish")["components"],
+                                                        "quadrant": "new_shorts"}}, 60 * 20, 23990.0)
+    for k in range(21, 40):
+        rec(_expansion_payload("bearish"), 60 * k, 23989.0)
+
+    table = list(csv.DictReader(io.StringIO(
+        shadow_log.calls_csv(label, days=1, min_move_bps=5.0, db_path=db, now=B + 3000)
+    )))
+    assert [c["turned"] for c in table] == ["bullish", "bearish"]  # oldest first, like a log
+
+    up = table[0]
+    assert up["from_state"] == "neutral"
+    assert up["held_minutes"] == "3.0" and up["ended_as"] == "neutral"
+    assert up["dropped_within_5m"] == "yes"
+    assert up["weaker_side"] == "volume" and up["weaker_margin"] == "0.0200"
+    assert up["price_threshold"] == "0.80"
+    assert up["result_5m"] == "wrong_way"  # 24014.4 -> 23990 by +5
+    assert float(up["best_15m_bps"]) == pytest.approx(6.0)  # it was right, then gave it back
+    assert float(up["worst_15m_bps"]) < 0
+    assert up["min_move_bps"] == "5.00"
+
+    down = table[1]
+    assert down["quadrant"] == "new_shorts"
+    assert down["result_5m"] == "too_small"  # the called way, but under the bar
+    assert down["ended_as"] == "session_end" and down["dropped_within_5m"] == "no"
+    assert down["called_way_5m_bps"] == "0.42"  # 23990 -> 23989
+    assert down["result_15m"] == "too_small"
+
+
+def test_calls_csv_has_no_outcome_where_the_session_closed_first(tmp_path):
+    db = str(tmp_path / "users_test.sqlite3")
+    shadow_log.record("nifty", _payload("neutral"), spot=24000.0, now=B, db_path=db)
+    shadow_log.record("nifty", _payload("bullish"), spot=24000.0, now=B + 60, db_path=db)
+    for k in range(2, 8):
+        shadow_log.record("nifty", _payload("bullish"), spot=24000.0 + k, now=B + 60 * k, db_path=db)
+
+    (call,) = list(csv.DictReader(io.StringIO(
+        shadow_log.calls_csv("nifty", days=1, min_move_bps=1.0, db_path=db, now=B + 600)
+    )))
+    assert call["raw_wobi"] == "0.2000"  # W-OBI's inputs, not expansion's
+    assert call["result_5m"] == "right"
+    assert call["result_15m"] == "close" and call["move_15m_bps"] == ""

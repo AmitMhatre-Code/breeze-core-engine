@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 import math
 import sqlite3
@@ -81,6 +82,10 @@ def ensure_log_table(db_path: str | None = None) -> None:
         for ddl in (
             "ALTER TABLE index_signal_log ADD COLUMN ofi REAL",
             "ALTER TABLE index_signal_log ADD COLUMN aggressor REAL",
+            # Added 2026-09-17. What produced each reading (the expansion engine's price and
+            # volume ranks, OI change and quadrant), as JSON: a wrong call could otherwise be
+            # seen but not explained. Mechanism-shaped, so a JSON column rather than one per key.
+            "ALTER TABLE index_signal_log ADD COLUMN components TEXT",
         ):
             try:
                 conn.execute(ddl)
@@ -130,6 +135,35 @@ def _flow_components(payload: dict[str, Any]) -> tuple[float | None, float | Non
     return out[0], out[1]
 
 
+def _components_json(payload: dict[str, Any]) -> str | None:
+    """The payload's `components`, plus the thresholds they were judged against, as JSON.
+
+    Stored as published: the reading is only explainable against the bar it had to clear, and
+    that bar is a setting that can change between one day's rows and the next."""
+    parts = payload.get("components")
+    if not isinstance(parts, dict) or not parts:
+        return None
+    doc: dict[str, Any] = dict(parts)
+    thresholds = payload.get("thresholds")
+    if isinstance(thresholds, dict) and thresholds:
+        doc["thresholds"] = thresholds
+    try:
+        return json.dumps(doc, allow_nan=False, default=str)
+    except ValueError:  # a NaN/inf somewhere: evidence is best-effort, the row still counts
+        return None
+
+
+def _components(row: dict[str, Any]) -> dict[str, Any]:
+    raw = row.get("components")
+    if not raw:
+        return {}
+    try:
+        doc = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
 def record(
     label: str,
     payload: dict[str, Any],
@@ -167,6 +201,7 @@ def record(
     if not ready:
         ensure_log_table(path)
     ofi, aggressor = _flow_components(payload)
+    components = _components_json(payload)
     rows = [
         (
             label,
@@ -180,14 +215,15 @@ def record(
             spot,
             ofi,
             aggressor,
+            components,
         )
         for kind in kinds
     ]
     with sqlite3.connect(path) as conn:
         conn.executemany(
             "INSERT INTO index_signal_log "
-            "(label, ts, kind, state, reason, signal, raw_wobi, coverage, spot, ofi, aggressor) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(label, ts, kind, state, reason, signal, raw_wobi, coverage, spot, ofi, aggressor, "
+            "components) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         today = datetime.fromtimestamp(ts, IST).date().isoformat()
@@ -238,7 +274,7 @@ def load_rows(label: str, since_ts: float, db_path: str | None = None) -> list[d
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT label, ts, kind, state, reason, signal, raw_wobi, coverage, spot, "
-            "ofi, aggressor "
+            "ofi, aggressor, components "
             "FROM index_signal_log WHERE label = ? AND ts >= ? ORDER BY ts, id",
             (label, since_ts),
         ).fetchall()
@@ -291,6 +327,25 @@ class _PriceSeries:
         if target > self._day_last.get(_ist_day(t0), t0):
             return None, None, "day_end"
         return None, None, "gap"
+
+    def extremes(
+        self, t0: float, level0: float | None, horizon: float
+    ) -> tuple[float | None, float | None]:
+        """(highest, lowest) move in bps over the levels logged after `t0` and within `horizon`,
+        on the same IST day. (None, None) with no level to measure from or nothing logged."""
+        if level0 is None:
+            return None, None
+        day = _ist_day(t0)
+        lo = bisect_right(self.times, t0)
+        hi = bisect_right(self.times, t0 + horizon)
+        moves = [
+            (self.levels[k] / level0 - 1.0) * 1e4
+            for k in range(lo, hi)
+            if _ist_day(self.times[k]) == day
+        ]
+        if not moves:
+            return None, None
+        return max(moves), min(moves)
 
 
 def _direction(move_bps: float, min_move_bps: float) -> str:
@@ -396,9 +451,10 @@ def _cell_summary(state: str, t: _Tally, baseline: dict[str, Any]) -> dict[str, 
     return out
 
 
-def _flips(ordered: list[dict[str, Any]]) -> list[tuple[float, str, float | None]]:
-    """(ts, new state, index level) for each transition into bullish/bearish from a live state."""
-    out: list[tuple[float, str, float | None]] = []
+def _flip_events(ordered: list[dict[str, Any]]) -> list[tuple[dict[str, Any], str]]:
+    """(transition row, state it left) for each transition into bullish/bearish from a live
+    state -- the one definition of a flip, which every view of flips counts by."""
+    out: list[tuple[dict[str, Any], str]] = []
     prev: str | None = None
     for r in ordered:
         state = str(r.get("state") or "")
@@ -408,9 +464,14 @@ def _flips(ordered: list[dict[str, Any]]) -> list[tuple[float, str, float | None
             and state in DIRECTIONAL_STATES
             and state != prev
         ):
-            out.append((float(r["ts"]), state, _level(r)))
+            out.append((r, str(prev)))
         prev = state
     return out
+
+
+def _flips(ordered: list[dict[str, Any]]) -> list[tuple[float, str, float | None]]:
+    """(ts, new state, index level) for each transition into bullish/bearish from a live state."""
+    return [(float(r["ts"]), str(r["state"]), _level(r)) for r, _prev in _flip_events(ordered)]
 
 
 def flip_list(
@@ -698,6 +759,37 @@ def _csv_number(value: Any, places: int) -> str:
         return ""
 
 
+# What the expansion engine measured for a reading (`expansion.evaluate`). Blank on rows logged
+# before the log kept components, and while warming up.
+_EXPANSION_CSV_COLUMNS = (
+    "window_move_bps",
+    "price_rank",
+    "volume",
+    "volume_rank",
+    "oi_change",
+    "quadrant",
+)
+
+
+def _is_expansion(label: str) -> bool:
+    return ":expansion" in label
+
+
+def _is_flow(label: str) -> bool:
+    return ":flow" in label
+
+
+def _expansion_cells(parts: dict[str, Any]) -> list[str]:
+    return [
+        _csv_number(parts.get("price_bps"), 2),
+        _csv_number(parts.get("price_rank"), 4),
+        _csv_number(parts.get("volume"), 0),
+        _csv_number(parts.get("volume_rank"), 4),
+        _csv_number(parts.get("oi_delta"), 0),
+        str(parts.get("quadrant") or ""),
+    ]
+
+
 def readings_csv(
     label: str,
     *,
@@ -729,6 +821,7 @@ def readings_csv(
         "ofi",
         "aggressor",
         "coverage",
+        *(_EXPANSION_CSV_COLUMNS if _is_expansion(label) else ()),
         f"{label}_level",
     ]
     for _h, tag in _CSV_HORIZONS:
@@ -748,6 +841,7 @@ def readings_csv(
             _csv_number(r.get("ofi"), 4),
             _csv_number(r.get("aggressor"), 4),
             _csv_number(r.get("coverage"), 4),
+            *(_expansion_cells(_components(r)) if _is_expansion(label) else ()),
             _csv_number(level, 2),
         ]
         for h, _tag in _CSV_HORIZONS:
@@ -760,6 +854,186 @@ def readings_csv(
 def readings_filename(label: str, days: int, now: float | None = None) -> str:
     stamp = datetime.fromtimestamp(time.time() if now is None else now, IST).strftime("%Y-%m-%d")
     return f"{label.replace(':', '-')}-signal-readings-{stamp}-{days}d.csv"
+
+
+_SESSION_OPEN_MINUTES = 9 * 60 + 15
+
+
+def _call_result(called_way_bps: float, bar: float) -> str:
+    """How a call did at one horizon, finer than right/not right, so the misses can be split:
+    `right` (paid for a trade), `too_small` (the called way, but under the bar), `flat`, or
+    `wrong_way`."""
+    if called_way_bps >= bar:
+        return "right"
+    if called_way_bps > 0:
+        return "too_small"
+    if called_way_bps == 0:
+        return "flat"
+    return "wrong_way"
+
+
+def calls_csv(
+    label: str,
+    *,
+    days: int,
+    min_move_bps: float | None = None,
+    db_path: str | None = None,
+    now: float | None = None,
+) -> str:
+    """One row per call -- each time the mechanism turned bullish or bearish -- with what it read
+    when it fired and how the call went, for working out offline which calls fail and why.
+
+    The calls are `_flips`' calls and `result_*` is judged against the same bar as `flip_list`
+    and the readiness verdict (the breakeven when `min_move_bps` is omitted), so filtering this
+    file for `right` reproduces the counts on the Settings screen.
+
+    Per call:
+    - context: minutes since the 09:15 open, and the day's move from its first logged level to
+      the call -- does it fail late in the day, or against the day's trend;
+    - lifetime: how long the call stood before the state changed, what it changed to, and whether
+      it was let go within 5 minutes (the screen's "dropped within 5 minutes");
+    - inputs: for expansion, the window's price move and volume with their percentile ranks and
+      the thresholds they had to beat, the weaker of the two and its margin over its threshold,
+      and the OI change and quadrant; for the flow challenger, its two halves; otherwise the
+      raw imbalance and coverage;
+    - outcome at +5 and +15 minutes: the move, the move in the called direction, and the result;
+      plus the best and worst the called direction got within 15 minutes, which separates a call
+      that was right and gave it back from one that never went its way.
+    """
+    since = (time.time() if now is None else now) - days * 86400.0
+    rows = load_rows(label, since, db_path)
+    prices = _PriceSeries(rows, _FORWARD_TOLERANCE_SECONDS)
+    bar = min_move_bps if min_move_bps is not None else _breakeven_move(label, rows)[1]
+    changes = [float(r["ts"]) for r in rows if r.get("kind") == "transition"]
+    changed_to = [str(r["state"]) for r in rows if r.get("kind") == "transition"]
+    day_open: dict[str, float] = {}
+    for r in rows:
+        level = _level(r)
+        if level is not None:
+            day_open.setdefault(_ist_day(float(r["ts"])), level)
+
+    header = [
+        "time_ist",
+        "turned",
+        "from_state",
+        "level",
+        "minutes_since_open",
+        "day_move_bps",
+        "held_minutes",
+        "ended_as",
+        "dropped_within_5m",
+        "signal",
+    ]
+    if _is_expansion(label):
+        header += [
+            "window_move_bps",
+            "price_rank",
+            "price_threshold",
+            "volume",
+            "volume_rank",
+            "volume_threshold",
+            "weaker_side",
+            "weaker_margin",
+            "oi_change",
+            "quadrant",
+        ]
+    elif _is_flow(label):
+        header += ["ofi", "aggressor", "coverage"]
+    else:
+        header += ["raw_wobi", "coverage"]
+    header.append("min_move_bps")
+    for _h, tag in ((300, "5m"), (900, "15m")):
+        header += [f"level_after_{tag}", f"move_{tag}_bps", f"called_way_{tag}_bps", f"result_{tag}"]
+    header += ["best_15m_bps", "worst_15m_bps"]
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(header)
+    for r, prev in _flip_events(rows):
+        t0 = float(r["ts"])
+        state = str(r["state"])
+        level = _level(r)
+        want = 1.0 if state == "bullish" else -1.0
+        moment = datetime.fromtimestamp(t0, IST)
+        opened = day_open.get(_ist_day(t0))
+
+        held, ended, dropped = "", "", ""
+        j = bisect_right(changes, t0)
+        if j < len(changes) and _ist_day(changes[j]) == _ist_day(t0):
+            held = _csv_number((changes[j] - t0) / 60.0, 1)
+            ended = changed_to[j]
+            dropped = "yes" if changes[j] - t0 < SCALP_HORIZON_SECONDS else "no"
+        else:
+            ended = "session_end"
+            dropped = "no"
+
+        line = [
+            moment.strftime("%Y-%m-%d %H:%M:%S"),
+            state,
+            prev,
+            _csv_number(level, 2),
+            str(moment.hour * 60 + moment.minute - _SESSION_OPEN_MINUTES),
+            _csv_number((level / opened - 1.0) * 1e4, 2) if level and opened else "",
+            held,
+            ended,
+            dropped,
+            _csv_number(r.get("signal"), 4),
+        ]
+        if _is_expansion(label):
+            parts = _components(r)
+            thresholds = parts.get("thresholds") if isinstance(parts.get("thresholds"), dict) else {}
+            margins = []
+            for side in ("price", "volume"):
+                rank, need = parts.get(f"{side}_rank"), thresholds.get(f"{side}_percentile")
+                if isinstance(rank, (int, float)) and isinstance(need, (int, float)):
+                    margins.append((float(rank) - float(need), side))
+            weaker = min(margins) if margins else None
+            line += [
+                _csv_number(parts.get("price_bps"), 2),
+                _csv_number(parts.get("price_rank"), 4),
+                _csv_number(thresholds.get("price_percentile"), 2),
+                _csv_number(parts.get("volume"), 0),
+                _csv_number(parts.get("volume_rank"), 4),
+                _csv_number(thresholds.get("volume_percentile"), 2),
+                weaker[1] if weaker else "",
+                _csv_number(weaker[0], 4) if weaker else "",
+                _csv_number(parts.get("oi_delta"), 0),
+                str(parts.get("quadrant") or ""),
+            ]
+        elif _is_flow(label):
+            line += [
+                _csv_number(r.get("ofi"), 4),
+                _csv_number(r.get("aggressor"), 4),
+                _csv_number(r.get("coverage"), 4),
+            ]
+        else:
+            line += [_csv_number(r.get("raw_wobi"), 4), _csv_number(r.get("coverage"), 4)]
+        line.append(_csv_number(bar, 2))
+        for horizon, _tag in ((SCALP_HORIZON_SECONDS, "5m"), (HOLD_HORIZON_SECONDS, "15m")):
+            later, move, why = prices.forward(t0, level, horizon)
+            if move is None:
+                # No outcome: `day_end` (the close came first), `gap` or `no_level`.
+                line += ["", "", "", "close" if why == "day_end" else str(why)]
+            else:
+                line += [
+                    _csv_number(later, 2),
+                    _csv_number(move, 2),
+                    _csv_number(move * want, 2),
+                    _call_result(move * want, bar),
+                ]
+        high, low = prices.extremes(t0, level, HOLD_HORIZON_SECONDS)
+        if high is None or low is None:
+            line += ["", ""]
+        else:
+            best, worst = (high, low) if want > 0 else (-low, -high)
+            line += [_csv_number(best, 2), _csv_number(worst, 2)]
+        writer.writerow(line)
+    return buf.getvalue()
+
+
+def calls_filename(label: str, days: int, now: float | None = None) -> str:
+    stamp = datetime.fromtimestamp(time.time() if now is None else now, IST).strftime("%Y-%m-%d")
+    return f"{label.replace(':', '-')}-signal-calls-{stamp}-{days}d.csv"
 
 
 def reset_state_for_tests() -> None:

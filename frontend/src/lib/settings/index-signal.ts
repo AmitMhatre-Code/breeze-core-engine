@@ -356,15 +356,42 @@ async function triggerBlobDownload(res: Response, fallbackFilename: string): Pro
   URL.revokeObjectURL(objectUrl);
 }
 
-/** The minute readings behind the shadow report, as CSV for Excel or a charting tool. */
-export async function downloadIndexSignalReadings(label: SignalLabel, days: number): Promise<void> {
-  const url = new URL("/api/settings/index-signal/readings/download", getBackendBaseUrl());
+async function downloadSignalCsv(
+  path: string,
+  label: SignalLabel,
+  days: number,
+  fallbackFilename: string,
+  failure: string,
+): Promise<void> {
+  const url = new URL(path, getBackendBaseUrl());
   url.searchParams.set("index", label);
   url.searchParams.set("days", String(days));
   const res = await fetch(url.toString(), { method: "GET", credentials: "include" });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || "Could not download the readings");
+    throw new Error(text || failure);
   }
-  await triggerBlobDownload(res, `${label.replaceAll(":", "-")}-signal-readings-${days}d.csv`);
+  await triggerBlobDownload(res, fallbackFilename);
+}
+
+/** The minute readings behind the shadow report, as CSV for Excel or a charting tool. */
+export function downloadIndexSignalReadings(label: SignalLabel, days: number): Promise<void> {
+  return downloadSignalCsv(
+    "/api/settings/index-signal/readings/download",
+    label,
+    days,
+    `${label.replaceAll(":", "-")}-signal-readings-${days}d.csv`,
+    "Could not download the readings",
+  );
+}
+
+/** One row per call: what the mechanism read when it fired and how the call went, against the breakeven. */
+export function downloadIndexSignalCalls(label: SignalLabel, days: number): Promise<void> {
+  return downloadSignalCsv(
+    "/api/settings/index-signal/calls/download",
+    label,
+    days,
+    `${label.replaceAll(":", "-")}-signal-calls-${days}d.csv`,
+    "Could not download the calls",
+  );
 }

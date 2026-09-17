@@ -11,6 +11,7 @@ import { SettingsScreenHeader } from "@/components/settings/SettingsScreenHeader
 import { fetchMarketStatus } from "@/lib/market-status";
 import { useIndexQuotes } from "@/lib/use-index-quotes";
 import {
+  downloadIndexSignalCalls,
   downloadIndexSignalReadings,
   fetchIndexSignalFlips,
   fetchIndexSignalPreferences,
@@ -1036,10 +1037,13 @@ function ExpansionBacktestPanel() {
                   </p>
                 ) : (
                   <>
-                    <p className="text-xs text-muted">
-                      <strong className="font-semibold text-foreground">{name}</strong> · {sm.days} sessions ·{" "}
-                      {sm.readings.toLocaleString("en-IN")} readings · {sm.directional_pct}% directional
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs text-muted">
+                        <strong className="font-semibold text-foreground">{name}</strong> · {sm.days} sessions ·{" "}
+                        {sm.readings.toLocaleString("en-IN")} readings · {sm.directional_pct}% directional
+                      </p>
+                      <SignalCsvDownloads label={`${key}:expansion:backtest`} days={run.flip_days} span="the backtest" />
+                    </div>
                     <ReadinessCard name={`${name} · backtest`} readiness={res.readiness} />
                     <FlipList label={`${key}:expansion:backtest`} name={`${name} (backtest)`} days={run.flip_days} />
                   </>
@@ -1362,6 +1366,42 @@ function countLabel(n: number, noun: string): string {
   return `${n.toLocaleString("en-IN")} ${noun}${n === 1 ? "" : "s"}`;
 }
 
+/** The two CSVs behind a mechanism's evidence: every minute reading, and one row per call. */
+function SignalCsvDownloads({ label, days, span }: { label: SignalLabel; days: number; span: string }) {
+  const readings = useMutation({ mutationFn: () => downloadIndexSignalReadings(label, days) });
+  const calls = useMutation({ mutationFn: () => downloadIndexSignalCalls(label, days) });
+  const error = readings.error ?? calls.error;
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="app-btn-outline rounded-[9px] px-3 py-1.5 text-xs"
+          disabled={calls.isPending}
+          aria-busy={calls.isPending}
+          onClick={() => calls.mutate()}
+          title={`One row per call for ${span}: what the signal read when it fired, and how the call went at +5 and +15 minutes`}
+        >
+          <AsyncLabelSpan busy={calls.isPending} idleLabel="Calls CSV" busyLabel="Preparing…" />
+        </button>
+        <button
+          type="button"
+          className="app-btn-outline rounded-[9px] px-3 py-1.5 text-xs"
+          disabled={readings.isPending}
+          aria-busy={readings.isPending}
+          onClick={() => readings.mutate()}
+          title={`Minute readings for ${span} with the index 1, 5 and 15 minutes later, for Excel`}
+        >
+          <AsyncLabelSpan busy={readings.isPending} idleLabel="Readings CSV" busyLabel="Preparing…" />
+        </button>
+      </div>
+      {error ? (
+        <p className="text-xs text-down">{error instanceof Error ? error.message : "Could not download the CSV"}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function ShadowIndexReport({
   label,
   name,
@@ -1373,7 +1413,6 @@ function ShadowIndexReport({
   days: number;
   report: ShadowReport | undefined;
 }) {
-  const download = useMutation({ mutationFn: () => downloadIndexSignalReadings(label, days) });
   return (
     <div className="min-w-0 space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1386,22 +1425,8 @@ function ShadowIndexReport({
             </div>
           ) : null}
         </div>
-        <button
-          type="button"
-          className="app-btn-outline rounded-[9px] px-3 py-1.5 text-xs"
-          disabled={download.isPending}
-          aria-busy={download.isPending}
-          onClick={() => download.mutate()}
-          title={`Minute readings for the last ${days}d with the index 1, 5 and 15 minutes later, for Excel`}
-        >
-          <AsyncLabelSpan busy={download.isPending} idleLabel="Download CSV" busyLabel="Preparing…" />
-        </button>
+        <SignalCsvDownloads label={label} days={days} span={`the last ${days}d`} />
       </div>
-      {download.error ? (
-        <p className="text-xs text-down">
-          {download.error instanceof Error ? download.error.message : "Could not download the readings"}
-        </p>
-      ) : null}
       {report ? (
         <>
           <EvidenceTable title="Every reading" rows={STATES} cells={report.forward_returns} />
