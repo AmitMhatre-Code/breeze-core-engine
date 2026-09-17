@@ -24,6 +24,7 @@ to the last basis point -- the verdict, which is about direction over 5 and 15 m
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 from typing import Any, Optional
 
@@ -48,8 +49,56 @@ def backtest_label(label: str) -> str:
     return f"{label}{MECHANISM_SUFFIX}{BACKTEST_SUFFIX}"
 
 
+LABELS = ("nifty", "sensex")
+STOCK_CODES = {"nifty": "NIFTY", "sensex": "BSESEN"}
+# The last backtest's range and replay summaries, so its results outlive the page and a restart.
+LAST_RUN_META = "index_signal_expansion_last_backtest"
+
+
 def _stock_code(label: str) -> str:
-    return {"nifty": "NIFTY", "sensex": "BSESEN"}[label]
+    return STOCK_CODES[label]
+
+
+def score(label: str, start: datetime.date, end: datetime.date, *, db_path: Optional[str] = None) -> dict[str, Any]:
+    """The live readiness test over exactly the replayed range -- not the 60 days before today,
+    which would score an older range as empty."""
+    now = datetime.datetime.combine(end + datetime.timedelta(days=1), datetime.time()).replace(tzinfo=IST)
+    return shadow_log.readiness(
+        backtest_label(label),
+        now=now.timestamp(),
+        lookback_days=(end - start).days + 2,
+        db_path=db_path,
+    )
+
+
+def save_last_run(run: dict[str, Any], *, cache_path: Optional[str] = None) -> None:
+    from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
+
+    store.ensure_tables(cache_path)
+    store.set_meta(LAST_RUN_META, json.dumps(run), path=cache_path)
+
+
+def last_run(*, cache_path: Optional[str] = None, db_path: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """The last backtest with each index's verdict, or None when none has run."""
+    from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
+
+    store.ensure_tables(cache_path)
+    raw = store.get_meta(LAST_RUN_META, path=cache_path)
+    if not raw:
+        return None
+    try:
+        run = json.loads(raw)
+        start = datetime.date.fromisoformat(run["from"])
+        end = datetime.date.fromisoformat(run["to"])
+    except (ValueError, KeyError, TypeError):
+        return None
+    # The flip list counts days back from today, so it must reach the start of the range.
+    run["flip_days"] = max(1, (datetime.datetime.now(IST).date() - start).days + 1)
+    for label in LABELS:
+        entry = (run.get("indices") or {}).get(label)
+        if entry and entry.get("summary", {}).get("readings"):
+            entry["readiness"] = score(label, start, end, db_path=db_path)
+    return run
 
 
 def replay(
@@ -83,10 +132,7 @@ def replay(
             "readings": 0,
             "days": 0,
             "verdict": "no_data",
-            "message": (
-                "No stored bars for this range. Fetch history first -- the replay never calls "
-                "ICICI itself."
-            ),
+            "message": "No ICICI history is stored for this range.",
         }
 
     engine = expansion.ExpansionEngine(

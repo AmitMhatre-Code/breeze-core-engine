@@ -535,3 +535,86 @@ def start_bot_backtest(
         run.update(status="failed", error="Another backtest was already running.")
         store.save_run(run)
         raise
+
+
+def start_signal_backtest(
+    user_id: str,
+    period: str,
+    from_date: Optional[datetime.date] = None,
+    to_date: Optional[datetime.date] = None,
+) -> dict[str, Any]:
+    """The signals page's clock: one choice of period, like a bot card's (#34, #36).
+
+    Fetches whatever 1-minute futures bars NIFTY and SENSEX are missing for the range, under the
+    same rules as a bot backtest -- live broker only, outside market hours, within today's call
+    budget, and a stopped fetch is a note, never a failure -- then replays both through the
+    expansion mechanism and scores each with the live readiness test.
+    """
+    from icici_breeze_backend.app.services.index_signal import expansion_backtest as bt
+
+    if period not in service.PERIODS:
+        raise ValueError(f"Unknown period {period!r}.")
+    ensure_store()
+    now = now_ist()
+    start, end = service.resolve_period(period, from_date, to_date, now, service.holidays())
+
+    def target() -> None:
+        notes: list[str] = []
+        calls = 0
+        remaining = store.calls_remaining(now.date())
+        block = market_hours_reason()
+        if not broker_live():
+            notes.append(
+                f"Nothing fetched: this instance is in '{cfg.ICICI_BROKER_MODE}' mode, so only "
+                "history already stored was replayed."
+            )
+        elif block:
+            notes.append(
+                "Nothing fetched: ICICI history isn't fetched between 09:00 and 15:45 IST on a "
+                "trading day. Only history already stored was replayed."
+            )
+        elif remaining <= 0:
+            notes.append(
+                f"Nothing fetched: today's budget of {store.DAILY_CALL_BUDGET} ICICI calls is spent. "
+                "Only history already stored was replayed."
+            )
+        else:
+            _log(f"Fetching missing history, {start} to {end}…")
+            with _broker_scope(user_id):
+                fetcher = _fetcher(user_id)
+                fetcher.max_calls = remaining
+                try:
+                    for label in bt.LABELS:
+                        fetcher.fetch_futures(bt.STOCK_CODES[label], start, end)
+                except Stopped as exc:
+                    notes.append(f"Fetch stopped early: {exc}")
+                finally:
+                    calls = fetcher.calls
+                    store.add_calls(now.date(), calls)
+        for text in notes:
+            _log(text)
+
+        indices: dict[str, Any] = {}
+        for label in bt.LABELS:
+            if _cancel.is_set():
+                # A half-finished run must not replace the last complete one.
+                _finish("stopped", message="Stopped at your request.", calls=calls)
+                return
+            _log(f"Replaying {label.upper()}…")
+            indices[label] = {"summary": bt.replay(label, from_date=start, to_date=end)}
+        bt.save_last_run(
+            {
+                "period": period,
+                "from": start.isoformat(),
+                "to": end.isoformat(),
+                "finished_at": now_ist().isoformat(timespec="seconds"),
+                "calls": calls,
+                "notes": notes,
+                "indices": indices,
+            }
+        )
+        _finish("completed", message="Done.", calls=calls)
+
+    return _start(
+        "signal", target, from_date=start.isoformat(), to_date=end.isoformat(), period=period
+    )

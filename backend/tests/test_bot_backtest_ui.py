@@ -507,3 +507,52 @@ class TestOneClickBacktest:
         monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
         with pytest.raises(ValueError, match="margin"):
             jobs.start_bot_backtest("u1", "fly", "last_week")
+
+
+class TestSignalBacktest:
+    """The signals page's clock: a period, a fetch of what is missing, a replay of both indices."""
+
+    @pytest.fixture
+    def signal_log(self, tmp_path, monkeypatch):
+        from icici_breeze_backend.app.services.index_signal import shadow_log
+
+        path = str(tmp_path / "signal.sqlite3")
+        monkeypatch.setattr(shadow_log, "_db_path", lambda: path)
+        return path
+
+    def test_a_run_replays_both_indices_and_keeps_the_result(self, env, signal_log, monkeypatch):
+        from icici_breeze_backend.app.services.index_signal import expansion_backtest as bt
+
+        _cache_trending(env["cache"])
+        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+        # Months after the range: the verdict must score the replayed range, not the 60 days
+        # before today, or every older backtest would read as empty.
+        monkeypatch.setattr(jobs, "now_ist", lambda: _at(2026, 9, 17, 18, 0))
+
+        jobs.start_signal_backtest("u1", "custom", D(2026, 3, 9), D(2026, 3, 9))
+        state = _wait_for_job()
+        assert state["status"] == "completed", state
+
+        run = bt.last_run()
+        assert (run["from"], run["to"]) == ("2026-03-09", "2026-03-09")
+        assert any("mode" in n for n in run["notes"]), "mock mode must say nothing was fetched"
+        assert run["indices"]["nifty"]["summary"]["readings"] > 0
+        assert run["indices"]["nifty"]["readiness"]["sessions"] == 1
+        assert run["indices"]["sensex"]["summary"]["verdict"] == "no_data"
+
+    def test_an_unknown_period_is_refused(self, env):
+        with pytest.raises(ValueError, match="period"):
+            jobs.start_signal_backtest("u1", "last_year")
+
+    def test_retention_never_deletes_a_replay_of_an_older_range(self, signal_log, monkeypatch):
+        from icici_breeze_backend.app.services.index_signal import shadow_log
+
+        old = datetime.datetime(2026, 1, 5, 10, 0, tzinfo=IST_).timestamp()
+        shadow_log.record("nifty:expansion:backtest", {"state": "neutral"}, spot=24_000.0, now=old)
+        shadow_log.record("nifty:expansion", {"state": "neutral"}, spot=24_000.0, now=old)
+        today = datetime.datetime(2026, 9, 17, 10, 0, tzinfo=IST_).timestamp()
+        monkeypatch.setattr(shadow_log, "_last_purge_date", None)
+        shadow_log.record("nifty", {"state": "neutral"}, spot=24_000.0, now=today)
+
+        assert shadow_log.load_rows("nifty:expansion:backtest", 0.0), "the replay must survive"
+        assert shadow_log.load_rows("nifty:expansion", 0.0) == [], "live rows still age out"

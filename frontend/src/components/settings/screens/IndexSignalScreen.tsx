@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { Modal } from "@/components/ui/Modal";
+import { BacktestPeriodPicker } from "@/components/bots/BacktestPeriodPicker";
+import { cancelBacktestJob, fetchBacktestJobStatus, type BacktestPeriod } from "@/lib/bots-backtest";
 import { SettingsScreenHeader } from "@/components/settings/SettingsScreenHeader";
 import { fetchMarketStatus } from "@/lib/market-status";
 import { useIndexQuotes } from "@/lib/use-index-quotes";
@@ -22,11 +25,12 @@ import {
   MECHANISMS,
   mechanismLabel,
   refreshIndexSignalWeights,
-  runExpansionBacktest,
+  startExpansionBacktest,
+  fetchExpansionLastBacktest,
+  EXPANSION_BACKTEST_QUERY_KEY,
   saveIndexSignalPreferences,
   WEIGHTS_SOURCE_LABEL,
   type CallStatus,
-  type ExpansionBacktestResponse,
   type MechanismKey,
   type SignalLabel,
   type IndexLabel,
@@ -767,7 +771,7 @@ function ShadowEvidenceSection() {
           </p>
         ) : null}
 
-        {spec.backtestable ? <ExpansionBacktestPanel days={days} /> : null}
+        {spec.backtestable ? <ExpansionBacktestPanel /> : null}
 
         <div className="grid gap-5 xl:grid-cols-2">
           {INDICES.map(({ key, name }) => {
@@ -982,65 +986,62 @@ function FlipList({
   );
 }
 
-const BACKTEST_DAYS = 180;
+function formatDay(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
 
-/** The clock: replay stored history through this mechanism and judge it with the live test. */
-function ExpansionBacktestPanel({ days }: { days: number }) {
-  const [results, setResults] = useState<Partial<Record<IndexLabel, ExpansionBacktestResponse>>>({});
-  const run = useMutation({
-    mutationFn: async () => {
-      // One index at a time: the replay is CPU work on the API process, not a broker call.
-      const out: Partial<Record<IndexLabel, ExpansionBacktestResponse>> = {};
-      for (const { key } of INDICES) out[key] = await runExpansionBacktest(key, BACKTEST_DAYS);
-      return out;
-    },
-    onSuccess: setResults,
-  });
-  const hasResults = Object.keys(results).length > 0;
+/** The clock: pick a period, and the app fetches what it needs from ICICI and replays it (#34, #36). */
+function ExpansionBacktestPanel() {
+  const [open, setOpen] = useState(false);
+  const last = useQuery({ queryKey: EXPANSION_BACKTEST_QUERY_KEY, queryFn: fetchExpansionLastBacktest });
+  const run = last.data?.run ?? null;
   return (
     <div className="space-y-3 rounded-[10px] border border-border-soft bg-panel2 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="max-w-2xl text-xs leading-relaxed text-muted">
-          <strong className="font-semibold text-foreground">Backtestable.</strong> This mechanism needs no order book,
-          so it can be replayed on up to {BACKTEST_DAYS} days of stored ICICI history and judged by the same test.
-          The replay reads the local cache only and spends no ICICI calls.
+        <p className="text-xs text-muted">
+          {run ? (
+            <>
+              <strong className="font-semibold text-foreground">Last backtest</strong> ·{" "}
+              {run.from === run.to ? formatDay(run.from) : `${formatDay(run.from)} → ${formatDay(run.to)}`}
+            </>
+          ) : (
+            "Test this mechanism on past ICICI history."
+          )}
         </p>
         <button
           type="button"
-          onClick={() => run.mutate()}
-          disabled={run.isPending}
-          aria-busy={run.isPending}
-          title={`Backtest on the last ${BACKTEST_DAYS} days of stored history`}
+          onClick={() => setOpen(true)}
           className="app-btn-outline inline-flex items-center gap-1.5 rounded-[9px] px-3 py-1.5 text-xs"
         >
           <ClockIcon />
-          <AsyncLabelSpan busy={run.isPending} idleLabel="Backtest" busyLabel="Replaying…" />
+          Backtest
         </button>
       </div>
-      {run.error ? (
-        <p className="text-xs text-down">{run.error instanceof Error ? run.error.message : "Backtest failed"}</p>
-      ) : null}
-      {hasResults ? (
+      {run?.notes.map((note) => (
+        <p key={note} className="text-xs text-amber-accent">
+          {note}
+        </p>
+      ))}
+      {run ? (
         <div className="grid gap-5 xl:grid-cols-2">
           {INDICES.map(({ key, name }) => {
-            const res = results[key];
+            const res = run.indices[key];
             if (!res) return null;
             const sm = res.summary;
             return (
               <div key={key} className="min-w-0 space-y-3">
                 {sm.verdict === "no_data" ? (
-                  <p className="rounded-[8px] border border-border px-3 py-2 text-xs text-muted">
-                    <strong className="font-semibold text-foreground">{name}:</strong> {sm.message}
+                  <p className="rounded-[8px] border border-amber-accent/40 px-3 py-2 text-xs text-amber-accent">
+                    <strong className="font-semibold">{name}:</strong> {sm.message}
                   </p>
                 ) : (
                   <>
                     <p className="text-xs text-muted">
-                      <strong className="font-semibold text-foreground">{name} backtest</strong> · {sm.days} sessions
-                      {sm.from ? ` (${sm.from} → ${sm.to})` : ""} · {sm.readings.toLocaleString("en-IN")} readings ·{" "}
-                      {sm.directional_pct}% directional
+                      <strong className="font-semibold text-foreground">{name}</strong> · {sm.days} sessions ·{" "}
+                      {sm.readings.toLocaleString("en-IN")} readings · {sm.directional_pct}% directional
                     </p>
-                    <ReadinessCard name={`${name} · backtest`} readiness={res.readiness ?? undefined} />
-                    <FlipList label={`${key}:expansion:backtest`} name={`${name} (backtest)`} days={Math.max(days, BACKTEST_DAYS + 1)} />
+                    <ReadinessCard name={`${name} · backtest`} readiness={res.readiness} />
+                    <FlipList label={`${key}:expansion:backtest`} name={`${name} (backtest)`} days={run.flip_days} />
                   </>
                 )}
               </div>
@@ -1048,7 +1049,128 @@ function ExpansionBacktestPanel({ days }: { days: number }) {
           })}
         </div>
       ) : null}
+      {open ? <ExpansionBacktestDialog onClose={() => setOpen(false)} /> : null}
     </div>
+  );
+}
+
+function ExpansionBacktestDialog({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const startRef = useRef<HTMLButtonElement>(null);
+  const [period, setPeriod] = useState<BacktestPeriod>("last_week");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const status = useQuery({
+    queryKey: ["bots", "backtest", "job"],
+    queryFn: fetchBacktestJobStatus,
+    refetchInterval: (q) => (q.state.data?.job?.running ? 2_000 : false),
+  });
+  const job = status.data?.job ?? null;
+  const ours = job && jobId && job.id === jobId ? job : null;
+  const running = Boolean(ours?.running);
+  const otherRunning = Boolean(job?.running && !ours);
+
+  const start = useMutation({
+    mutationFn: () =>
+      startExpansionBacktest({ period, ...(period === "custom" ? { from_date: from, to_date: to } : {}) }),
+    onSuccess: (j) => {
+      setJobId(j.id);
+      void status.refetch();
+    },
+  });
+  const stop = useMutation({ mutationFn: cancelBacktestJob });
+
+  // A finished run shows its results on the page, so there is nothing left to say here.
+  const completed = ours?.status === "completed" && !running;
+  const closedRef = useRef(false);
+  useEffect(() => {
+    if (!completed || closedRef.current) return;
+    closedRef.current = true;
+    void qc.invalidateQueries({ queryKey: EXPANSION_BACKTEST_QUERY_KEY }).then(onClose);
+  }, [completed, qc, onClose]);
+
+  const block = status.data?.market_hours_block;
+  const lastLine = ours?.log?.length ? ours.log[ours.log.length - 1] : null;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      pending={start.isPending}
+      titleId="signal-backtest-title"
+      initialFocusRef={startRef}
+      panelClassName="w-full max-w-md rounded-xl border border-border bg-panel p-5 shadow-pop"
+    >
+      <h2 id="signal-backtest-title" className="app-text-heading">
+        Backtest volume expansion
+      </h2>
+      <p className="mt-1 text-xs leading-relaxed text-muted">
+        Fetches NIFTY and SENSEX history from ICICI, replays it and scores it with the same test as live.
+      </p>
+
+      {!ours ? (
+        <>
+          <BacktestPeriodPicker
+            period={period}
+            onPeriod={setPeriod}
+            from={from}
+            onFrom={setFrom}
+            to={to}
+            onTo={setTo}
+            disabled={start.isPending}
+          />
+          {block ? (
+            <p className="mt-3 text-hint leading-relaxed text-amber-accent">
+              ICICI history can&rsquo;t be fetched in market hours. Only history already stored will be replayed.
+            </p>
+          ) : null}
+          {otherRunning ? <p className="mt-2 text-xs text-down">Another backtest is running. Wait for it to finish.</p> : null}
+          {start.error ? (
+            <p className="mt-2 text-xs text-down">
+              {start.error instanceof Error ? start.error.message : "Could not start the backtest."}
+            </p>
+          ) : null}
+          <div className="mt-4 flex justify-end gap-2">
+            <button type="button" className="app-btn-secondary" onClick={onClose} disabled={start.isPending}>
+              Cancel
+            </button>
+            <button
+              ref={startRef}
+              type="button"
+              className="app-btn-primary"
+              disabled={start.isPending || otherRunning || (period === "custom" && (!from || !to))}
+              onClick={() => start.mutate()}
+            >
+              <AsyncLabelSpan busy={start.isPending} idleLabel="Run backtest" busyLabel="Starting…" />
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mt-4 space-y-2 rounded-lg border border-border bg-panel2 p-3 text-xs">
+            <span className="font-semibold text-foreground">
+              {running ? "Running…" : ours.status === "failed" ? "Failed" : ours.status === "stopped" ? "Stopped" : "Done"}
+            </span>
+            {running && lastLine ? <p className="font-mono text-hint text-muted">{lastLine}</p> : null}
+            {!running && (ours.error || ours.message) ? (
+              <p className={ours.error ? "text-down" : "text-foreground"}>{ours.error ?? ours.message}</p>
+            ) : null}
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            {running ? (
+              <button type="button" className="app-btn-secondary" disabled={stop.isPending} onClick={() => stop.mutate()}>
+                Stop
+              </button>
+            ) : null}
+            <button type="button" className="app-btn-primary" onClick={onClose}>
+              {running ? "Close — keeps running" : "Close"}
+            </button>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }
 

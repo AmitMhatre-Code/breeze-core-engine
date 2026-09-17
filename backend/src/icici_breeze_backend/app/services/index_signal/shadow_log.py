@@ -192,8 +192,11 @@ def record(
         )
         today = datetime.fromtimestamp(ts, IST).date().isoformat()
         if _last_purge_date != today:
+            # Replay rows carry historical timestamps, so retention would delete a fresh
+            # backtest of an older range the moment it was written. They are cleared only by
+            # `purge_label`, when the next replay replaces them.
             conn.execute(
-                "DELETE FROM index_signal_log WHERE ts < ?",
+                "DELETE FROM index_signal_log WHERE ts < ? AND label NOT LIKE '%:backtest'",
                 (ts - _retention_days() * 86400.0,),
             )
             _last_purge_date = today
@@ -625,12 +628,17 @@ def readiness(
     *,
     db_path: str | None = None,
     now: float | None = None,
+    lookback_days: int | None = None,
 ) -> dict[str, Any]:
     """Whether the signal has earned a scalping bot's trust, in the terms the Settings screen's
     summary shows. `status`: `ready` (both sides beat the trend at +5 min), `worse` (a side is
     reliably worse than the trend), `no_edge` (enough evidence, no better than the trend), or
-    `too_early` (below a floor)."""
-    since = (time.time() if now is None else now) - READINESS_LOOKBACK_DAYS * 86400.0
+    `too_early` (below a floor).
+
+    `now` and `lookback_days` exist for a replay, whose evidence is the range it replayed rather
+    than the 60 days before today. The test itself is the same either way."""
+    lookback = READINESS_LOOKBACK_DAYS if lookback_days is None else lookback_days
+    since = (time.time() if now is None else now) - lookback * 86400.0
     ordered = load_rows(label, since, db_path)
     be, min_move = _breakeven_move(label, ordered)
     scored = score(ordered, horizons=(SCALP_HORIZON_SECONDS, HOLD_HORIZON_SECONDS), min_move_bps=min_move)
@@ -661,7 +669,7 @@ def readiness(
     return {
         "label": label,
         "status": status,
-        "lookback_days": READINESS_LOOKBACK_DAYS,
+        "lookback_days": lookback,
         "scalp_horizon_seconds": SCALP_HORIZON_SECONDS,
         "hold_horizon_seconds": HOLD_HORIZON_SECONDS,
         "min_move_bps": min_move,

@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/api-client";
 import { getBackendBaseUrl } from "@/lib/config";
+import type { BacktestJob, BacktestPeriod } from "@/lib/bots-backtest";
 
 /** Settings → Index Signal (backend `app/services/index_signal/settings.py`, design-decisions #30). */
 
@@ -197,21 +198,30 @@ export type SignalFlipsResponse = {
   flips: SignalFlip[];
 };
 
-export type ExpansionBacktestResponse = {
-  summary: {
-    label: string;
-    bars: number;
-    readings: number;
-    days: number;
-    from?: string | null;
-    to?: string | null;
-    states?: Record<string, number>;
-    directional_pct?: number;
-    verdict?: "no_data";
-    message?: string;
-  };
-  report: ShadowReport | null;
-  readiness: IndexReadiness | null;
+export type ExpansionBacktestSummary = {
+  label: string;
+  bars: number;
+  readings: number;
+  days: number;
+  from?: string | null;
+  to?: string | null;
+  states?: Record<string, number>;
+  directional_pct?: number;
+  verdict?: "no_data";
+  message?: string;
+};
+
+/** The last backtest of the expansion mechanism: its range, what stopped a fetch, and per index. */
+export type ExpansionBacktestRun = {
+  period: string;
+  from: string;
+  to: string;
+  finished_at: string;
+  calls: number;
+  notes: string[];
+  indices: Partial<Record<IndexLabel, { summary: ExpansionBacktestSummary; readiness?: IndexReadiness }>>;
+  /** Days back from today that reach the start of the range, for the flip list. */
+  flip_days: number;
 };
 
 export type ReadinessStatus = "ready" | "too_early" | "no_edge" | "worse";
@@ -315,13 +325,15 @@ export function fetchIndexSignalFlips(label: SignalLabel, days: number): Promise
   return apiClient.get<SignalFlipsResponse>(`/api/settings/index-signal/flips?${params.toString()}`);
 }
 
-/** Replays stored history only — spends no ICICI calls, and says so when the cache is short. */
-export function runExpansionBacktest(index: IndexLabel, days: number): Promise<ExpansionBacktestResponse> {
-  const params = new URLSearchParams({ index, days: String(days) });
-  return apiClient.post<ExpansionBacktestResponse>(
-    `/api/settings/index-signal/expansion/backtest?${params.toString()}`,
-    {},
-  );
+export const EXPANSION_BACKTEST_QUERY_KEY = [...INDEX_SIGNAL_SHADOW_REPORT_QUERY_KEY, "expansion-backtest"] as const;
+
+/** Starts the shared backtest job: fetches missing ICICI history, then replays both indices. */
+export function startExpansionBacktest(body: { period: BacktestPeriod; from_date?: string; to_date?: string }): Promise<BacktestJob> {
+  return apiClient.post<BacktestJob>("/api/settings/index-signal/expansion/backtest", body);
+}
+
+export function fetchExpansionLastBacktest(): Promise<{ run: ExpansionBacktestRun | null }> {
+  return apiClient.get<{ run: ExpansionBacktestRun | null }>("/api/settings/index-signal/expansion/backtest");
 }
 
 export function fetchIndexSignalReadiness(): Promise<IndexSignalReadinessResponse> {

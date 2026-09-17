@@ -4,12 +4,13 @@ import json
 import logging
 import os
 import sqlite3
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 import httpx
 import time
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel
 
 from icici_breeze_backend.app.services.market_calendar import (
     is_market_open,
@@ -754,38 +755,42 @@ async def settings_index_signal_flips(
     return shadow_log.flip_list(key, days=days, min_move_bps=min_move_bps)
 
 
+class ExpansionBacktestRequest(BaseModel):
+    """The signals page's backtest dialog asks one thing: the period (#36)."""
+
+    period: Literal["last_day", "last_week", "last_month", "custom"]
+    from_date: Optional[datetime.date] = None
+    to_date: Optional[datetime.date] = None
+
+
 @router.post("/index-signal/expansion/backtest")
-async def settings_index_signal_expansion_backtest(
-    index: str = Query(...),
-    days: int = Query(180, ge=1, le=3650),
+def settings_index_signal_expansion_backtest(
+    req: ExpansionBacktestRequest,
     ctx: RequestContext = Depends(get_request_context),
 ):
-    """Replay the expansion mechanism over stored history and score it with the live test (#34).
+    """Start a backtest of the expansion mechanism for both indices (#34).
 
-    Spends no ICICI calls: it reads the local candle cache only, and says so when the cache is
-    short rather than silently narrowing the range. This is the clock icon on the signals page,
-    and it exists only for mechanisms that need no order book -- W-OBI and the flow challengers
-    cannot be replayed at all, because history carries no books and no quotes."""
-    import datetime as _dt
+    Fetches the futures bars the range is missing from ICICI -- live broker, outside market
+    hours, within the day's backtest budget -- then replays and scores them with the live test.
+    Runs as the shared backtest job, polled at `/bots/backtest/job`. Only mechanisms that need
+    no order book have one: W-OBI and the flow challengers cannot be replayed, because history
+    carries no books and no quotes."""
+    from icici_breeze_backend.app.services.bots import backtest_jobs as jobs
 
-    from icici_breeze_backend.app.services.index_signal import expansion_backtest, shadow_log
+    try:
+        return jobs.start_signal_backtest(ctx.user_id, req.period, req.from_date, req.to_date)
+    except jobs.Busy as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
-    label = index.strip().lower()
-    if label not in ("nifty", "sensex"):
-        raise HTTPException(status_code=400, detail="index must be nifty or sensex")
 
-    today = _dt.date.today()
-    summary = expansion_backtest.replay(
-        label, from_date=today - _dt.timedelta(days=days), to_date=today
-    )
-    if summary.get("bars", 0) == 0:
-        return {"summary": summary, "report": None, "readiness": None}
-    scored = expansion_backtest.backtest_label(label)
-    return {
-        "summary": summary,
-        "report": shadow_log.shadow_report(scored, days=days + 1),
-        "readiness": shadow_log.readiness(scored),
-    }
+@router.get("/index-signal/expansion/backtest")
+def settings_index_signal_expansion_last_backtest(ctx: RequestContext = Depends(get_request_context)):
+    """The last backtest: its range, notes, and each index's replay summary and verdict."""
+    from icici_breeze_backend.app.services.index_signal import expansion_backtest
+
+    return {"run": expansion_backtest.last_run()}
 
 
 @router.get("/index-signal/readings/download")
