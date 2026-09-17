@@ -979,6 +979,31 @@ class BotRunRecord(BaseModel):
     audit_log: Optional[str] = None
 
 
+class BotRunBundle(BaseModel):
+    """Back-to-back runs of one bot sharing a day, trigger and outcome, collapsed to one row.
+
+    "Back to back" is per bot: another bot's run in between does not split a bundle, only
+    this bot's own next run with a different trigger or outcome does. The frontend bundles
+    short ranges itself with the same rule (`frontend/src/lib/bot-run-bundles.ts`); keep the
+    two in step. A bundle's runs are exactly this bot's runs with this trigger and status
+    between `first_started_at` and `last_started_at`, which is how they are fetched on
+    expand."""
+
+    bot_type: BotType
+    trigger: BotRunTrigger
+    status: BotRunStatus
+    date: str
+    count: int
+    first_started_at: Optional[str] = None
+    last_started_at: Optional[str] = None
+    latest: BotRunRecord
+    #: Distinct reasons across the bundle; the row shows the latest and "+N other reasons".
+    distinct_reasons: int = 1
+    #: The bot's full-day audit trail for a live bundle. A backtest's trail is per run, so a
+    #: bundle of several backtests carries none here and each run keeps its own link.
+    audit_log: Optional[str] = None
+
+
 class TradingCharges(BaseModel):
     """The shared round-trip cost model, as the API exposes it.
 

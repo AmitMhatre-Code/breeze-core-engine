@@ -2,6 +2,12 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
+import {
+  bundleRuns,
+  CLIENT_BUNDLE_MAX_DAYS,
+  rangeDays,
+  type DateRange,
+} from "@/lib/bot-run-bundles";
 
 export const BOT_HOLDINGS_WRITER = "holdings_writer" as const;
 export const BOT_EXPIRY_INDEX_WRITER = "expiry_index_writer" as const;
@@ -414,6 +420,25 @@ export type BotRun = {
   audit_log: string | null;
 };
 
+/** Back-to-back runs of one bot sharing a day, trigger and outcome (Activity table). Built in
+ *  the browser for ranges up to a week (`runs` present) and by `/bots/runs/bundles` beyond
+ *  that (`runs` absent — fetched on expand). */
+export type BotRunBundle = {
+  bot_type: BotType;
+  trigger: BotRun["trigger"];
+  status: BotRunStatus;
+  date: string;
+  count: number;
+  first_started_at: string | null;
+  last_started_at: string | null;
+  latest: BotRun;
+  distinct_reasons: number;
+  /** The bundle row's download: the bot's full-day trail, or null for several backtests. */
+  audit_log: string | null;
+  /** Newest first. */
+  runs?: BotRun[];
+};
+
 /** Display metadata. Blurbs state each bot's *constraint model* — the part a user cannot
  *  infer from the name — in one line, because on a square card every wrapped line is space
  *  taken from the state and controls below it. */
@@ -577,6 +602,43 @@ export function useBotRuns(botType?: BotType, limit = 50) {
   return useQuery({
     queryKey: ["bots", "runs", botType ?? "all", limit],
     queryFn: ({ signal }) => apiClient.get<BotRun[]>(`/bots/runs?${qs.toString()}`, signal),
+  });
+}
+
+/** The Activity table for a date range, bundled. A week or less is fetched as raw runs and
+ *  bundled here so expanding is instant; anything longer is bundled by the backend so a month
+ *  never ships as tens of thousands of rows. */
+export function useBotRunBundles(range: DateRange | null) {
+  return useQuery({
+    queryKey: ["bots", "runs", "bundles", range?.from, range?.to],
+    enabled: range !== null,
+    queryFn: async ({ signal }): Promise<BotRunBundle[]> => {
+      const r = range as DateRange;
+      const qs = new URLSearchParams({ date_from: r.from, date_to: r.to });
+      if (rangeDays(r) <= CLIENT_BUNDLE_MAX_DAYS) {
+        return bundleRuns(await apiClient.get<BotRun[]>(`/bots/runs?${qs.toString()}`, signal));
+      }
+      return apiClient.get<BotRunBundle[]>(`/bots/runs/bundles?${qs.toString()}`, signal);
+    },
+  });
+}
+
+/** A server-built bundle's runs, fetched when it is expanded. A bundle is exactly its bot's
+ *  runs with its trigger and status between its first and last timestamps. */
+export function useBundleRuns(bundle: BotRunBundle, enabled: boolean) {
+  return useQuery({
+    queryKey: ["bots", "runs", "bundle", bundle.bot_type, bundle.trigger, bundle.status, bundle.first_started_at, bundle.last_started_at],
+    enabled: enabled && !bundle.runs,
+    queryFn: ({ signal }) => {
+      const qs = new URLSearchParams({
+        bot_type: bundle.bot_type,
+        trigger: bundle.trigger,
+        status: bundle.status,
+        started_from: bundle.first_started_at ?? "",
+        started_to: bundle.last_started_at ?? "",
+      });
+      return apiClient.get<BotRun[]>(`/bots/runs?${qs.toString()}`, signal);
+    },
   });
 }
 

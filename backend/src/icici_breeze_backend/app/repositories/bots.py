@@ -517,15 +517,50 @@ def reap_stale_runs(*, older_than_minutes: int | None = None) -> int:
 
 
 def list_runs(
-    user_id: str, *, bot_type: Optional[str] = None, limit: int = 50
+    user_id: str,
+    *,
+    bot_type: Optional[str] = None,
+    limit: Optional[int] = 50,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    trigger: Optional[str] = None,
+    status: Optional[str] = None,
+    started_from: Optional[str] = None,
+    started_to: Optional[str] = None,
 ) -> list[BotRunRecord]:
+    """Newest first. `limit=None` is for bounded queries only -- a date range or a bundle's
+    exact `started_at` window -- where the bound is the range, not a row count.
+
+    Dates and timestamps compare as text: every stored stamp is `YYYY-MM-DD HH:MM:SS` IST, so
+    lexical order is time order and the `(user_id, started_at)` index still applies."""
     sql = "SELECT * FROM bot_runs WHERE user_id = ?"
     args: list[Any] = [user_id]
     if bot_type:
         sql += " AND bot_type = ?"
         args.append(bot_type)
-    sql += " ORDER BY started_at DESC, rowid DESC LIMIT ?"
-    args.append(max(1, min(500, int(limit))))
+    if trigger:
+        sql += " AND trigger = ?"
+        args.append(trigger)
+    if status:
+        sql += " AND status = ?"
+        args.append(status)
+    if date_from:
+        sql += " AND started_at >= ?"
+        args.append(date_from)
+    if date_to:
+        # `< next day` rather than `<= date_to 23:59:59` so a fractional stamp can't slip out.
+        sql += " AND started_at < date(?, '+1 day')"
+        args.append(date_to)
+    if started_from:
+        sql += " AND started_at >= ?"
+        args.append(started_from)
+    if started_to:
+        sql += " AND started_at <= ?"
+        args.append(started_to)
+    sql += " ORDER BY started_at DESC, rowid DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        args.append(max(1, min(500, int(limit))))
     with _connect() as conn:
         rows = conn.execute(sql, args).fetchall()
     return [

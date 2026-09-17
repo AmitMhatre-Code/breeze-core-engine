@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from datetime import date, datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -37,7 +38,10 @@ from icici_breeze_backend.app.domain.bots import (
     BotCycleRecord,
     ApproveProposalRequest,
     BotRecord,
+    BotRunBundle,
     BotRunRecord,
+    BotRunStatus,
+    BotRunTrigger,
     ExpiryIndexWriterConfig,
     HoldingRow,
     HoldingsWriterConfig,
@@ -57,6 +61,7 @@ from icici_breeze_backend.app.domain.bots import (
 from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.app.services.bots.charges import load_charges, save_charges
 from icici_breeze_backend.app.services.bots import proposals
+from icici_breeze_backend.app.services.bots.run_bundles import bundle_audit_log, bundle_runs
 from icici_breeze_backend.audit import bot_audit
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
 
@@ -123,27 +128,110 @@ async def list_bots(ctx: RequestContext = Depends(get_request_context)):
     return repo.list_bots(ctx.user_id)
 
 
+#: The Activity filter's longest range (its Month preset is 30 days, a custom range may be 31).
+RUN_LOG_MAX_RANGE_DAYS = 31
+
+
+def _validate_run_range(date_from: Optional[date], date_to: Optional[date]) -> None:
+    if (date_from is None) != (date_to is None):
+        raise HTTPException(status_code=400, detail="date_from and date_to go together.")
+    if date_from is None or date_to is None:
+        return
+    if date_to < date_from:
+        raise HTTPException(status_code=400, detail="date_to is before date_from.")
+    if (date_to - date_from).days + 1 > RUN_LOG_MAX_RANGE_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A run-log range can span at most {RUN_LOG_MAX_RANGE_DAYS} days.",
+        )
+
+
+def _validate_stamp(value: Optional[str], name: str) -> None:
+    if value is None:
+        return
+    try:
+        datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{name} must be YYYY-MM-DD HH:MM:SS.")
+
+
+def _attach_audit_logs(user_id: str, runs: list[BotRunRecord]) -> None:
+    """Attached here rather than in the repository: this is a filesystem lookup, and the
+    repository's job is the database. A run whose day has aged out of retention simply
+    carries `None` and the UI renders no link. Memoised per bot per day -- a week of scans
+    is thousands of rows but only a handful of files."""
+    day_cache: dict[tuple[str, str], Optional[str]] = {}
+    for run in runs:
+        if run.trigger == "backtest":
+            # A replay's trail is one file for the whole run, not the day's live file (#35).
+            run.audit_log = bot_audit.find_for_backtest_run(user_id, run.bot_type, run.id)
+            continue
+        key = (run.bot_type, (run.started_at or "")[:10])
+        if key not in day_cache:
+            day_cache[key] = bot_audit.find_for_run(user_id, run.bot_type, run.started_at)
+        run.audit_log = day_cache[key]
+
+
 @router.get("/runs", response_model=list[BotRunRecord])
 async def list_runs(
     bot_type: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=500),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    trigger: Optional[BotRunTrigger] = Query(None),
+    status: Optional[BotRunStatus] = Query(None),
+    started_from: Optional[str] = Query(None),
+    started_to: Optional[str] = Query(None),
     ctx: RequestContext = Depends(get_request_context),
 ):
     """The shared cross-bot run log. Unfiltered by default -- the point of the log is that
-    a user can see every bot's activity, including the days nothing happened, in one place."""
+    a user can see every bot's activity, including the days nothing happened, in one place.
+
+    With a date range (at most 31 days) or a `started_from`/`started_to` window -- the latter
+    is how a server-side bundle fetches its runs on expand -- the range bounds the result and
+    `limit` does not apply."""
     if bot_type is not None:
         _validate_bot_type(bot_type)
-    runs = repo.list_runs(ctx.user_id, bot_type=bot_type, limit=limit)
-    # Attached here rather than in the repository: this is a filesystem lookup, and the
-    # repository's job is the database. A run whose day has aged out of retention simply
-    # carries `None` and the UI renders no link.
-    for run in runs:
-        if run.trigger == "backtest":
-            # A replay's trail is one file for the whole run, not the day's live file (#35).
-            run.audit_log = bot_audit.find_for_backtest_run(ctx.user_id, run.bot_type, run.id)
-        else:
-            run.audit_log = bot_audit.find_for_run(ctx.user_id, run.bot_type, run.started_at)
+    _validate_run_range(date_from, date_to)
+    _validate_stamp(started_from, "started_from")
+    _validate_stamp(started_to, "started_to")
+    bounded = date_from is not None or (started_from is not None and started_to is not None)
+    runs = repo.list_runs(
+        ctx.user_id,
+        bot_type=bot_type,
+        limit=None if bounded else limit,
+        date_from=date_from.isoformat() if date_from else None,
+        date_to=date_to.isoformat() if date_to else None,
+        trigger=trigger,
+        status=status,
+        started_from=started_from,
+        started_to=started_to,
+    )
+    _attach_audit_logs(ctx.user_id, runs)
     return runs
+
+
+@router.get("/runs/bundles", response_model=list[BotRunBundle])
+async def list_run_bundles(
+    date_from: date = Query(...),
+    date_to: date = Query(...),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """The run log over a date range, already bundled. The Activity table uses this for ranges
+    longer than a week, where shipping every row to the browser would be tens of thousands."""
+    _validate_run_range(date_from, date_to)
+    runs = repo.list_runs(
+        ctx.user_id,
+        limit=None,
+        date_from=date_from.isoformat(),
+        date_to=date_to.isoformat(),
+    )
+    # Only each bundle's latest run is sent, so only those need a filesystem lookup.
+    bundles = bundle_runs(runs)
+    _attach_audit_logs(ctx.user_id, [b.latest for b in bundles])
+    for b in bundles:
+        b.audit_log = bundle_audit_log(b)
+    return bundles
 
 
 @router.get("/cycles", response_model=list[BotCycleRecord])

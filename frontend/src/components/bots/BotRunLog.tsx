@@ -1,16 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import { BacktestRunTrades } from "@/components/bots/BacktestTrades";
 import { BACKTEST_SLUG, backtestAuditHref } from "@/lib/bots-backtest";
 import { describeFeed, feedToneClass } from "@/lib/scalper-audit";
 import {
+  bundleKey,
+  customRangeError,
+  istToday,
+  presetRange,
+  type DateRange,
+  type RunLogPreset,
+} from "@/lib/bot-run-bundles";
+import {
   isScalper,
   useBotCycles,
-  useBotRuns,
+  useBotRunBundles,
+  useBundleRuns,
   type BotCycle,
   type BotRun,
+  type BotRunBundle,
   type BotRunStatus,
   BOT_META,
 } from "@/lib/use-bots";
@@ -128,7 +138,51 @@ function CycleTable({ runId }: { runId: string }) {
   );
 }
 
-function RunRow({ run }: { run: BotRun }) {
+function AuditLink({ href, backtest }: { href: string; backtest: boolean }) {
+  return (
+    /* One verdict per row; this is every verdict of that day -- or, for a backtest, the
+       whole replay. Rendered as a plain download rather than an expandable panel because the
+       file is meant to be read outside the browser. */
+    <a
+      href={
+        backtest
+          ? backtestAuditHref(href)
+          : `/api/settings/bot-audit-logs/${encodeURIComponent(href)}/download`
+      }
+      className="mt-0.5 block w-fit text-[11px] text-accent underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+    >
+      {backtest ? "Download backtest audit trail" : "Download full-day audit trail"}
+    </a>
+  );
+}
+
+function ExpandToggle({
+  expanded,
+  onToggle,
+  children,
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={expanded}
+      onClick={onToggle}
+      className="inline-flex items-center gap-1.5 rounded text-left transition hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+    >
+      <span aria-hidden className="font-mono text-[10px]">
+        {expanded ? "▾" : "▸"}
+      </span>
+      {children}
+    </button>
+  );
+}
+
+/** One run. `nested` is a member row inside an expanded bundle: the bundle row already states
+ *  the bot, trigger, outcome and day's audit trail, so the member shows only its time and why. */
+function RunRow({ run, nested = false }: { run: BotRun; nested?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   // A scalper session has cycles beneath it, and a backtest has the trades it replayed (#35);
   // the writers resolve in one pass and have nothing to expand into.
@@ -138,32 +192,30 @@ function RunRow({ run }: { run: BotRun }) {
     (isScalper(run.bot_type) && run.trigger === "session") ||
     (isBacktest && run.status === "completed" && Boolean(backtestBot));
   const feed = isBacktest ? null : describeFeed(run.detail);
+  const title = BOT_META[run.bot_type]?.title ?? run.bot_type;
+  const toggle = () => setExpanded((v) => !v);
+  // Live runs share one audit file per day, which a bundle row carries; a backtest's is its own.
+  const showAudit = Boolean(run.audit_log) && (!nested || isBacktest);
 
   return (
     <>
       <tr className="app-table-row align-top">
-        <td className="whitespace-nowrap px-3 py-2 tabular-nums text-xs">
-          {run.started_at ?? "—"}
+        <td
+          className={`whitespace-nowrap py-2 tabular-nums text-xs ${nested ? "pl-8 pr-3 text-muted" : "px-3"}`}
+        >
+          {nested ? cycleTime(run.started_at) : (run.started_at ?? "—")}
         </td>
         <td className="px-3 py-2 text-xs">
           {expandable ? (
-            <button
-              type="button"
-              aria-expanded={expanded}
-              onClick={() => setExpanded((v) => !v)}
-              className="inline-flex items-center gap-1.5 rounded text-left transition hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
-            >
-              <span aria-hidden className="font-mono text-[10px]">
-                {expanded ? "▾" : "▸"}
-              </span>
-              {BOT_META[run.bot_type]?.title ?? run.bot_type}
-            </button>
-          ) : (
-            BOT_META[run.bot_type]?.title ?? run.bot_type
+            <ExpandToggle expanded={expanded} onToggle={toggle}>
+              {nested ? (isBacktest ? "Trades" : "Cycles") : title}
+            </ExpandToggle>
+          ) : nested ? null : (
+            title
           )}
         </td>
         <td className="px-3 py-2 text-xs capitalize">
-          {isBacktest ? (
+          {nested ? null : isBacktest ? (
             /* Marked, not just labelled: a backtest's P&L in this table must never be read as
                money a bot made. */
             <span className="rounded border border-border px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-muted">
@@ -173,39 +225,10 @@ function RunRow({ run }: { run: BotRun }) {
             run.trigger.replace("_", " ")
           )}
         </td>
-        <td className="px-3 py-2">
-          <StatusBadge status={run.status} />
-        </td>
+        <td className="px-3 py-2">{nested ? null : <StatusBadge status={run.status} />}</td>
         <td className="px-3 py-2 text-xs">
-          {/* Both halves matter: the text is for the user, the code is what support and
-              tests can rely on when the text is later reworded. */}
-          <div>{run.reason_text ?? "—"}</div>
-          {run.reason_code && (
-            <code className="app-text-muted text-[11px]">{run.reason_code}</code>
-          )}
-          {feed && (
-            /* The scalpers' reason codes are ambiguous on their own -- `not_warm` covers
-               both a feed that is filling and one that was never subscribed. This is the
-               half that tells them apart, kept in the log so it is still there tomorrow. */
-            <div className={`mt-0.5 font-mono text-[11px] ${feedToneClass(feed.tone)}`}>
-              {feed.text}
-            </div>
-          )}
-          {run.audit_log && (
-            /* The row shows one verdict; this is every verdict of that day -- or, for a
-               backtest, the whole replay. Rendered as a plain download rather than an
-               expandable panel because the file is meant to be read outside the browser. */
-            <a
-              href={
-                isBacktest
-                  ? backtestAuditHref(run.audit_log)
-                  : `/api/settings/bot-audit-logs/${encodeURIComponent(run.audit_log)}/download`
-              }
-              className="mt-0.5 block w-fit text-[11px] text-accent underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
-            >
-              {isBacktest ? "Download backtest audit trail" : "Download full-day audit trail"}
-            </a>
-          )}
+          <RunReason run={run} feed={feed} />
+          {showAudit && run.audit_log && <AuditLink href={run.audit_log} backtest={isBacktest} />}
         </td>
       </tr>
       {expandable && expanded && (
@@ -223,8 +246,140 @@ function RunRow({ run }: { run: BotRun }) {
   );
 }
 
+function RunReason({
+  run,
+  feed,
+  otherReasons = 0,
+}: {
+  run: BotRun;
+  feed: ReturnType<typeof describeFeed>;
+  otherReasons?: number;
+}) {
+  return (
+    <>
+      {/* Both halves matter: the text is for the user, the code is what support and tests can
+          rely on when the text is later reworded. */}
+      <div>{run.reason_text ?? "—"}</div>
+      {(run.reason_code || otherReasons > 0) && (
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          {run.reason_code && (
+            <code className="app-text-muted text-[11px]">{run.reason_code}</code>
+          )}
+          {otherReasons > 0 && (
+            <span className="text-[11px] text-faint">
+              +{otherReasons} other reason{otherReasons === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+      )}
+      {feed && (
+        /* The scalpers' reason codes are ambiguous on their own -- `not_warm` covers both a
+           feed that is filling and one that was never subscribed. This is the half that tells
+           them apart, kept in the log so it is still there tomorrow. */
+        <div className={`mt-0.5 font-mono text-[11px] ${feedToneClass(feed.tone)}`}>
+          {feed.text}
+        </div>
+      )}
+    </>
+  );
+}
+
+function BundleMembers({ bundle }: { bundle: BotRunBundle }) {
+  const { data, isLoading, isError, error } = useBundleRuns(bundle, true);
+  const runs = bundle.runs ?? data;
+
+  if (!runs) {
+    return (
+      <tr>
+        <td colSpan={5} className="py-2 pl-8 pr-3 text-xs">
+          {isError ? (
+            <span className="text-down">
+              Could not load runs: {(error as Error)?.message ?? "unknown error"}
+            </span>
+          ) : (
+            <span className="app-text-muted">{isLoading ? "Loading runs…" : "No runs."}</span>
+          )}
+        </td>
+      </tr>
+    );
+  }
+  return (
+    <>
+      {runs.map((run) => (
+        <RunRow key={run.id} run={run} nested />
+      ))}
+    </>
+  );
+}
+
+/** A stretch of back-to-back runs with the same day, bot, trigger and outcome. A lone run is
+ *  just its row: an arrow that expands into the same single line would be noise. */
+function BundleRow({ bundle }: { bundle: BotRunBundle }) {
+  const [expanded, setExpanded] = useState(false);
+  if (bundle.count === 1) return <RunRow run={bundle.latest} />;
+
+  const { latest } = bundle;
+  const isBacktest = bundle.trigger === "backtest";
+  const title = BOT_META[bundle.bot_type]?.title ?? bundle.bot_type;
+
+  return (
+    <>
+      <tr className="app-table-row align-top">
+        <td className="whitespace-nowrap px-3 py-2 tabular-nums text-xs">
+          {latest.started_at ?? "—"}
+          <span className="ml-2 rounded bg-panel2 px-1.5 py-0.5 font-mono text-[11px] text-muted">
+            ×{bundle.count}
+          </span>
+        </td>
+        <td className="px-3 py-2 text-xs">
+          <ExpandToggle expanded={expanded} onToggle={() => setExpanded((v) => !v)}>
+            {title}
+          </ExpandToggle>
+        </td>
+        <td className="px-3 py-2 text-xs capitalize">
+          {isBacktest ? (
+            <span className="rounded border border-border px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+              Backtest
+            </span>
+          ) : (
+            bundle.trigger.replace("_", " ")
+          )}
+        </td>
+        <td className="px-3 py-2">
+          <StatusBadge status={bundle.status} />
+        </td>
+        <td className="px-3 py-2 text-xs">
+          <RunReason
+            run={latest}
+            feed={isBacktest ? null : describeFeed(latest.detail)}
+            otherReasons={bundle.distinct_reasons - 1}
+          />
+          {bundle.audit_log && <AuditLink href={bundle.audit_log} backtest={isBacktest} />}
+        </td>
+      </tr>
+      {expanded && <BundleMembers bundle={bundle} />}
+    </>
+  );
+}
+
+const PRESETS: readonly (readonly [RunLogPreset, string])[] = [
+  ["today", "Today"],
+  ["week", "Week"],
+  ["month", "Month"],
+  ["custom", "Custom"],
+];
+
 export function BotRunLog() {
-  const { data, isLoading, isError, error } = useBotRuns();
+  // Fixed for the page's life: a tab left open past midnight keeps the day it was opened on
+  // until reloaded, rather than silently emptying under the user.
+  const [today] = useState(istToday);
+  const [preset, setPreset] = useState<RunLogPreset>("today");
+  const [custom, setCustom] = useState<DateRange>(() => presetRange("week", today));
+
+  const customError = preset === "custom" ? customRangeError(custom, today) : null;
+  const range: DateRange | null =
+    preset === "custom" ? (customError ? null : custom) : presetRange(preset, today);
+  const { data, isLoading, isError, error } = useBotRunBundles(range);
 
   return (
     <section className="app-card p-4">
@@ -232,9 +387,60 @@ export function BotRunLog() {
       <p className="app-text-muted mt-1 text-xs">
         Every scan, order, and skip across all bots — including the days nothing happened,
         and why. Backtests are listed here too, marked, with their trades and audit trail.
+        Back-to-back runs with the same outcome are bundled; expand one to see each run.
       </p>
 
-      {isLoading && <p className="app-text-muted mt-4 text-sm">Loading activity…</p>}
+      <div className="mt-4 flex flex-wrap items-center gap-2.5">
+        <div
+          role="group"
+          aria-label="Date range"
+          className="inline-flex rounded-[9px] border border-border bg-panel2 p-[3px]"
+        >
+          {PRESETS.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={preset === value}
+              onClick={() => setPreset(value)}
+              className={[
+                "rounded-[6px] px-3 py-1 font-mono text-xs font-semibold transition",
+                preset === value
+                  ? "bg-accent-strong text-accent-ink"
+                  : "text-muted hover:text-foreground",
+              ].join(" ")}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {preset === "custom" && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <label className="flex items-center gap-1.5">
+              <span className="text-muted">From</span>
+              <input
+                type="date"
+                className="app-input py-1 text-xs"
+                value={custom.from}
+                max={today}
+                onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))}
+              />
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span className="text-muted">To</span>
+              <input
+                type="date"
+                className="app-input py-1 text-xs"
+                value={custom.to}
+                max={today}
+                onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))}
+              />
+            </label>
+            {customError && <span className="text-down">{customError}</span>}
+          </div>
+        )}
+      </div>
+
+      {isLoading && range && <p className="app-text-muted mt-4 text-sm">Loading activity…</p>}
       {isError && (
         <p className="mt-4 text-sm text-rose-600 dark:text-rose-400">
           Could not load activity: {(error as Error)?.message ?? "unknown error"}
@@ -243,7 +449,7 @@ export function BotRunLog() {
 
       {data && data.length === 0 && (
         <p className="app-text-muted mt-4 text-sm">
-          No bot activity yet. Runs appear here once a bot is enabled.
+          No bot activity in this period. Runs appear here once a bot is enabled.
         </p>
       )}
 
@@ -260,8 +466,8 @@ export function BotRunLog() {
               </tr>
             </thead>
             <tbody>
-              {data.map((run) => (
-                <RunRow key={run.id} run={run} />
+              {data.map((bundle) => (
+                <BundleRow key={bundleKey(bundle)} bundle={bundle} />
               ))}
             </tbody>
           </table>

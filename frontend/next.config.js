@@ -188,6 +188,10 @@ const nextConfig = {
         destination: `${backendUpstream}/bots/runs`,
       },
       {
+        source: "/bots/runs/bundles",
+        destination: `${backendUpstream}/bots/runs/bundles`,
+      },
+      {
         source: "/bots/live-eligibility",
         destination: `${backendUpstream}/bots/live-eligibility`,
       },
