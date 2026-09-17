@@ -335,11 +335,27 @@ def _quote_success_rows(quote: dict | None) -> list:
     return rows if isinstance(rows, list) else []
 
 
-# Margin only needs recomputing when a leg's identity actually changes (new
-# contract, qty, or action) -- not on a timer. The cache key encodes that
-# identity, so an unchanged leg reuses the same span_margin_required across
-# repeated /portfolio/data refreshes instead of re-calling margin_calculator.
-_PORTFOLIO_MARGIN_CACHE_TTL_SECONDS = 24 * 60 * 60
+# Within one IST trading day, margin only needs recomputing when a leg's identity
+# changes (new contract, qty, or action) -- so an unchanged leg reuses the same
+# span_margin_required across repeated /portfolio/data refreshes instead of
+# re-calling margin_calculator. It must NOT outlive the day: the key used to carry
+# no date and lived a rolling 24h, so a book carried overnight kept yesterday's
+# figure well into the next session. On a contract's expiry day that hid ICICI's
+# expiry-day ELM (Rs 3.63Cr shown vs Rs 5.15Cr blocked) because the Portfolio ELM
+# overlay is zeroed that day on the assumption the SPAN figure is today's. The key
+# now carries the IST date and the entry expires at IST midnight -- see
+# design-decisions #37. This is the ceiling, not a floor, on staleness.
+_PORTFOLIO_MARGIN_CACHE_MAX_TTL_SECONDS = 24 * 60 * 60
+
+
+def _portfolio_margin_cache_ttl_seconds() -> int:
+    """Seconds until the next IST midnight (at least 1, at most 24h)."""
+    now = now_ist()
+    next_midnight = (now + datetime.timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    remaining = int((next_midnight - now).total_seconds())
+    return max(1, min(remaining, _PORTFOLIO_MARGIN_CACHE_MAX_TTL_SECONDS))
 
 # get_positions() and get_margin_situation() are each independently called by
 # GET /home/data (navbar, every non-dashboard page), GET /dashboard/bootstrap, GET
@@ -393,7 +409,7 @@ def _remember_span_margin_required(cache_key: str, span_margin_required: float) 
     from icici_breeze_backend.app.db.redis_client import cache_set_json
 
     try:
-        cache_set_json(cache_key, span_margin_required, ex=_PORTFOLIO_MARGIN_CACHE_TTL_SECONDS)
+        cache_set_json(cache_key, span_margin_required, ex=_portfolio_margin_cache_ttl_seconds())
     except Exception:
         pass
 
@@ -453,15 +469,20 @@ def _sum_leg_elm(legs: list) -> float | None:
 
 
 def _portfolio_netted_cache_key(user_id: str, exchange_code: str, legs: list) -> str:
-    """Cache key encoding the exact leg composition of a netted SPAN call, so an
-    unchanged group/portfolio reuses its result across polls but any change to a
-    leg's contract/qty/action busts it."""
+    """Cache key encoding the IST trading date and the exact leg composition of a
+    netted SPAN call, so an unchanged group/portfolio reuses its result across polls
+    within the day, but any change to a leg's contract/qty/action -- or the date
+    rolling over -- busts it. The date is not optional: see
+    _PORTFOLIO_MARGIN_CACHE_MAX_TTL_SECONDS."""
     ident = sorted(
         f"{l.get('stock_code')}:{l.get('expiry_date')}:{l.get('strike_price')}:"
         f"{l.get('right')}:{l.get('action')}:{l.get('quantity')}"
         for l in legs
     )
-    return f"portfolio_netmargin:{user_id}:{exchange_code}:" + "|".join(ident)
+    return (
+        f"portfolio_netmargin:{today_ist_date().isoformat()}:{user_id}:{exchange_code}:"
+        + "|".join(ident)
+    )
 
 
 def build_margin_situation_from_raw(margin: dict | None, *, target_margin_ute: float = 100) -> dict:

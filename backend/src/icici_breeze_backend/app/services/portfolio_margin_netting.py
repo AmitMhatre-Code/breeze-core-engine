@@ -43,7 +43,7 @@ class PositionSet:
 def _positions_fingerprint(rows: list[dict[str, Any]]) -> str:
     """Stable hash of leg composition, matching the identity format used by
     processor._portfolio_netted_cache_key (stock:expiry:strike:right:action:qty),
-    so a position set that would hit that 24h cache also produces a stable
+    so a position set that would hit that same-day cache also produces a stable
     fingerprint here. Used to key engine-side margin caches (see helpers.margin_key
     / sizing.structural_margin_key) so a stale netted span can never leak across
     builds after the user's positions change."""

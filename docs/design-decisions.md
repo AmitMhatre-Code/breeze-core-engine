@@ -75,6 +75,7 @@ This document records **why** the modern stack is shaped the way it is. It is no
 **Rationale**:
 
 - ICICI returns errors (e.g. checksum) if sessions are mishandled; the code path documents broker-specific constraints.
+- **A context session is reused only while it still belongs to the caller's current token.** "Request context" is a `ContextVar`, and a request's context dies with the request — but the long-lived background threads (`bot-scheduler`, `bot-exit-arming`, `scalper-loop`, `cas-bingo-loop`) never get a fresh one. Before 2026-09-17 the first session such a thread built was kept for the life of the process: after the midnight IST token rollover every signed call on that thread ran on yesterday's session, while the same call from a request worked. Bot 2 skipped the whole SENSEX expiry morning as "could not be priced" that way, and `_has_session` reported a login that had expired. `get_session_breeze` now stamps each session with the `(user_id, broker_token)` it was built for and discards a context session whose stamp no longer matches (logged as a warning). The check also stops one thread serving several users from handing one user's session to another. A session placed in the context without a stamp (test fakes) is still reused as before.
 
 ---
 
@@ -293,7 +294,7 @@ This document records **why** the modern stack is shaped the way it is. It is no
 
 **Naming collision, worth knowing before touching this code**: this feature's "benefit from netting against open positions" is exposed as `positions_margin_benefit` (backend) / `positionsMarginBenefit` (frontend) — deliberately **not** `margin_benefit`, which was already a different, pre-existing quantity in the same API responses and UI components (`span_portfolio_scan.compute_portfolio_span_margin`'s *intra-structure* netting benefit — a candidate's own legs netted against each other, e.g. an iron condor vs its four legs priced naked; still rendered by `StrategyLegsPanel`/`BasketLegsPanel`). The two are computed differently, answer different questions, and are shown side by side, not merged.
 
-**Trade-off**: More `margin_calculator` calls per build — roughly 2 standalone-only calls per unique structure becomes 3 (no meaningful overlap with the book, the common case) or 4 (real overlap, needing the secant), plus one shared `M(existing)` call per build that's usually served from the 24h Redis cache `_netted_span_for_legs` already maintains for the Portfolio page. Builds against a scrip where the user holds a large existing book will be noticeably slower.
+**Trade-off**: More `margin_calculator` calls per build — roughly 2 standalone-only calls per unique structure becomes 3 (no meaningful overlap with the book, the common case) or 4 (real overlap, needing the secant), plus one shared `M(existing)` call per build that's usually served from the same-day Redis cache `_netted_span_for_legs` already maintains for the Portfolio page (scoped to the IST trading day — see #37). Builds against a scrip where the user holds a large existing book will be noticeably slower.
 
 ---
 
@@ -593,3 +594,25 @@ Note what this does *not* cover: `components` carries `order_flow`/`aggressor` o
 **Why real prices only**: a Black-Scholes fill is a model's opinion of a price, and a backtest shown on a card beside live P&L must not be flattered by a number no one could have traded at. Days with no traded price are skipped and counted.
 
 **What was kept**: the older `/bots/backtest/{overview,probe,fetch,replay,compare}` routes and the model pricer remain for the command-line script and the tests; nothing in the app calls them.
+
+---
+
+## 37. Cached netted margin lives for one IST trading day, never a rolling 24 hours
+
+**Decision**: `processor._netted_span_for_legs` caches ICICI's netted `span_margin_required` in Redis under a key that carries the **IST trading date** as well as the exact leg composition (`portfolio_netmargin:{date}:{user}:{exchange}:{legs}`), and the entry expires at the next IST midnight. Within a day an unchanged book reuses the figure across polls; a new day, or any change to a leg's contract, quantity or action, prices it again.
+
+**Why**: the key used to be composition only, with a rolling 24h TTL. A book carried overnight therefore kept the previous session's figure for most of the next one — the entry was written the first time the book was priced and nothing but a leg change could replace it. On 2026-09-17, SENSEX expiry, Portfolio showed ₹3.63Cr for a short strangle while ICICI blocked ₹5.15Cr (`margin_calculator` returned 51,540,520.64 that morning). Two correct rules combined into a wrong number:
+
+- ICICI folds ELM into its own figure on a contract's expiry day, so the Portfolio ELM overlay is zeroed that day to avoid counting it twice (see the margin-reconciliation model: ELM is otherwise an additive 2%-of-notional overlay).
+- That zeroing assumes the SPAN figure beside it is *today's*. The cached one was yesterday's, which contained no ELM — so the page showed ELM counted zero times, about ₹1.5Cr short on that book.
+
+**Every consumer shared the stale value**, because there is one cache behind one helper:
+
+- Portfolio page — group and portfolio netted SPAN, the SPAN + ELM tile and carry return (`_compute_netted_margins`, via `get_positions`, which the dashboard bootstrap and CAS Bingo's `positions_for_underlying` also call).
+- Strategy Builder's portfolio-aware margin (#23) — `M(existing)` in `route_strategy_builder`, the propose-trades engine, and the covered/uncovered shorts scan. A stale `M(existing)` subtracted from a fresh `M(existing + proposed)` makes the *incremental* figure wrong in either direction, and lots were sized against it.
+
+The engine's own per-build margin dictionaries (`margin_key`, `structural_margin_key`) live only for one build and were not affected; nothing in the frontend persists margin figures.
+
+**The day is a ceiling on staleness, not a guarantee of freshness**: SPAN also moves intraday with the underlying and volatility, and this cache still returns the first figure of the day for an unchanged book. That was already true within a day and is accepted for the same reason as before — the Portfolio page polls continuously and `margin_calculator` is on the rate-limited, per-user serialized budget (#24). The day boundary is not negotiable because it is where margin rules actually change (expiry-day ELM, a contract's last day) and where a whole session's staleness hid a crore-scale difference.
+
+**Trade-off**: one extra `margin_calculator` call per distinct book (per group, and per underlying for the portfolio total) on its first price each day. Entries written under the old undated key format are simply never read again and age out on their existing TTL, so the fix takes effect on deploy with no cache flush.
